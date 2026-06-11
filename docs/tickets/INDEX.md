@@ -29,7 +29,7 @@
 | T017 | error handling と operation log を整える | T013–T016 | done |
 | T021 | commit 行レイアウトを GitKraken 順に変更(ユーザー要望) | T020 | done |
 | T022 | 詳細ペインの縦スクロール + 折り返し廃止(ユーザー報告) | T019, T021 | done |
-| T023 | ペインのリサイズ対応(ユーザー要望) | T021, T022 | todo |
+| T023 | ペインのリサイズ対応(ユーザー要望) | T021, T022 | in-progress |
 | T024 | staging バックエンド(stage/unstage/commit + workdir diff) | T011, T013 | in-progress |
 | T025 | Commit Panel UI(GitKraken 風の作業台) | T024, T018, T022 | todo |
 

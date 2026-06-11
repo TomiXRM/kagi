@@ -17,8 +17,8 @@
 | T008 | GPUI で commit list を表示する(仮想化リスト) | T001, T005 | done |
 | T009 | GPUI で commit graph lane を描画する | T006–T008 | done |
 | T010 | commit selection で metadata panel を表示する | T008 | done |
-| T011 | changed files list を表示する | T010 | in-progress |
-| T012 | file diff viewer を表示する | T011 | todo |
+| T011 | changed files list を表示する | T010 | done |
+| T012 | file diff viewer を表示する | T011 | in-progress |
 | T013 | checkout branch を plan 確認付きで実装する(OperationController 導入) | T005 | todo |
 | T014 | create branch を実装する | T013 | todo |
 | T015 | stash push / list / apply を実装する | T013 | todo |

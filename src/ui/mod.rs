@@ -18,16 +18,17 @@ use gpui::{
     div, prelude::*, px, rgb, uniform_list,
 };
 
-use crate::git::{
+use kagi::git::{
     ChangeKind, CommitId, FileDiff, DiffLineKind, FileStatus, Head, RepoSnapshot, Stash,
     ops::{
-        OperationPlan,
+        OperationPlan, StateSummary,
         execute_checkout, execute_create_branch, plan_checkout, plan_create_branch, preflight_check,
         plan_stash_push, execute_stash_push,
         plan_stash_apply, execute_stash_apply,
         preflight_check_stash,
         plan_cherry_pick, execute_cherry_pick,
     },
+    oplog::{OpLogEntry, OpOutcome, append_oplog},
 };
 use commit_list::{BadgeKind, CommitRow, build_commit_rows};
 use detail_panel::{CommitDetail, build_commit_details, soft_wrap};
@@ -64,6 +65,21 @@ const BG_MODAL_OVERLAY: u32 = 0x000000; // semi-transparent overlay (set opacity
 const BG_MODAL: u32 = 0x313244;         // surface0 — modal background
 
 // ──────────────────────────────────────────────────────────────
+// StatusFooter — last operation result display (T017)
+// ──────────────────────────────────────────────────────────────
+
+/// Outcome kind for the status footer bar (T017).
+#[derive(Clone, Debug)]
+pub enum FooterStatus {
+    /// A git operation completed successfully (shown in green).
+    Success(SharedString),
+    /// A git operation failed (shown in red).
+    Failed(SharedString),
+    /// Idle state: shows repo name / branch info (no colour tint).
+    Idle(SharedString),
+}
+
+// ──────────────────────────────────────────────────────────────
 // FileDiffView — pre-rendered diff rows for the diff panel
 // ──────────────────────────────────────────────────────────────
 
@@ -89,7 +105,9 @@ pub struct FileDiffView {
     pub file_name: SharedString,
     /// All displayable rows: hunk headers + content lines.
     pub rows: Vec<DiffRow>,
-    /// Row index into the commit's changed-files list (used for the back button).
+    /// Row index into the commit's changed-files list (reserved for future
+    /// navigation: e.g. "previous / next file" buttons in the diff panel).
+    #[allow(dead_code)]
     pub file_index: usize,
 }
 
@@ -277,6 +295,8 @@ pub struct KagiApp {
     pub stash_push_focus: Option<FocusHandle>,
     /// When `Some`, the cherry-pick plan modal is visible (T016).
     pub cherry_pick_modal: Option<CherryPickModal>,
+    /// Status footer message (T017): the result of the most recent operation.
+    pub status_footer: FooterStatus,
 }
 
 impl KagiApp {
@@ -360,6 +380,7 @@ impl KagiApp {
             stash_apply_modal: None,
             stash_push_focus: None,
             cherry_pick_modal: None,
+            status_footer: FooterStatus::Idle(SharedString::from("Ready")),
         }
     }
 
@@ -384,6 +405,7 @@ impl KagiApp {
             stash_apply_modal: None,
             stash_push_focus: None,
             cherry_pick_modal: None,
+            status_footer: FooterStatus::Idle(SharedString::from("Ready")),
         }
     }
 
@@ -405,7 +427,7 @@ impl KagiApp {
                 return;
             }
         };
-        let snap = match crate::git::snapshot(&mut repo, 10_000) {
+        let snap = match kagi::git::snapshot(&mut repo, 10_000) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[kagi] reload: snapshot error: {}", e);
@@ -437,6 +459,8 @@ impl KagiApp {
         self.stash_apply_modal = None;
         self.stash_push_focus = None;
         self.cherry_pick_modal = None;
+        // status_footer is intentionally preserved across reloads so the last
+        // operation result remains visible after the commit list refreshes.
     }
 
     /// Open the checkout plan modal for `branch`.
@@ -592,6 +616,14 @@ impl KagiApp {
         // Defence in depth: refuse if blockers exist.
         if !plan.blockers.is_empty() {
             eprintln!("[kagi] refused: create-branch plan has blockers, not executing");
+            if let Some(ref rp) = self.repo_path.clone() {
+                self.record_op(
+                    "create-branch",
+                    plan.current.clone(),
+                    OpOutcome::Refused { blockers: plan.blockers.clone() },
+                    rp,
+                );
+            }
             return;
         }
         let repo_path = match self.repo_path.clone() {
@@ -602,8 +634,15 @@ impl KagiApp {
         let repo = match git2::Repository::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
+                let err_msg = format!("Repo open error: {}", e.message());
+                self.record_op(
+                    "create-branch",
+                    plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() },
+                    &repo_path,
+                );
                 if let Some(ref mut m) = self.create_branch_modal {
-                    m.error = Some(SharedString::from(format!("Repo open error: {}", e.message())));
+                    m.error = Some(SharedString::from(err_msg));
                 }
                 return;
             }
@@ -611,16 +650,30 @@ impl KagiApp {
 
         // Preflight check (re-use checkout preflight: verifies HEAD unchanged).
         if let Err(e) = preflight_check(&repo, &plan) {
+            let err_msg = format!("Preflight failed: {}", e);
+            self.record_op(
+                "create-branch",
+                plan.current.clone(),
+                OpOutcome::Failed { error: err_msg.clone() },
+                &repo_path,
+            );
             if let Some(ref mut m) = self.create_branch_modal {
-                m.error = Some(SharedString::from(format!("Preflight failed: {}", e)));
+                m.error = Some(SharedString::from(err_msg));
             }
             return;
         }
 
         // Execute create-branch.
         if let Err(e) = execute_create_branch(&repo, &modal.input, &modal.at) {
+            let err_msg = format!("Create branch failed: {}", e);
+            self.record_op(
+                "create-branch",
+                plan.current.clone(),
+                OpOutcome::Failed { error: err_msg.clone() },
+                &repo_path,
+            );
             if let Some(ref mut m) = self.create_branch_modal {
-                m.error = Some(SharedString::from(format!("Create branch failed: {}", e)));
+                m.error = Some(SharedString::from(err_msg));
             }
             return;
         }
@@ -644,6 +697,14 @@ impl KagiApp {
         } else {
             eprintln!("[kagi] verify: branch '{}' NOT found after create", modal.input);
         }
+
+        // Record success to oplog + update footer.
+        self.record_op(
+            "create-branch",
+            plan.current.clone(),
+            OpOutcome::Success { after: plan.predicted.clone() },
+            &repo_path,
+        );
 
         // Reload display data (new branch badge should appear).
         self.reload();
@@ -749,6 +810,14 @@ impl KagiApp {
         // Defence in depth: refuse if blockers exist.
         if !plan.blockers.is_empty() {
             eprintln!("[kagi] refused: stash-push plan has blockers, not executing");
+            if let Some(ref rp) = self.repo_path.clone() {
+                self.record_op(
+                    "stash-push",
+                    plan.current.clone(),
+                    OpOutcome::Refused { blockers: plan.blockers.clone() },
+                    rp,
+                );
+            }
             return;
         }
         let repo_path = match self.repo_path.clone() {
@@ -759,17 +828,31 @@ impl KagiApp {
         let mut repo = match git2::Repository::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
+                let err_msg = format!("Repo open error: {}", e.message());
+                self.record_op(
+                    "stash-push",
+                    plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() },
+                    &repo_path,
+                );
                 if let Some(ref mut m) = self.stash_push_modal {
-                    m.error = Some(SharedString::from(format!("Repo open error: {}", e.message())));
+                    m.error = Some(SharedString::from(err_msg));
                 }
                 return;
             }
         };
 
         // Preflight check (HEAD + stash count).
-        if let Err(e) = preflight_check_stash(&mut repo, &plan, plan.stash_count_at_plan) {
+        if let Err(e) = preflight_check_stash(&mut repo, &plan, plan.stash_count_at_plan()) {
+            let err_msg = format!("Preflight failed: {}", e);
+            self.record_op(
+                "stash-push",
+                plan.current.clone(),
+                OpOutcome::Failed { error: err_msg.clone() },
+                &repo_path,
+            );
             if let Some(ref mut m) = self.stash_push_modal {
-                m.error = Some(SharedString::from(format!("Preflight failed: {}", e)));
+                m.error = Some(SharedString::from(err_msg));
             }
             return;
         }
@@ -778,8 +861,15 @@ impl KagiApp {
 
         // Execute stash push.
         if let Err(e) = execute_stash_push(&mut repo, msg_opt) {
+            let err_msg = format!("Stash push failed: {}", e);
+            self.record_op(
+                "stash-push",
+                plan.current.clone(),
+                OpOutcome::Failed { error: err_msg.clone() },
+                &repo_path,
+            );
             if let Some(ref mut m) = self.stash_push_modal {
-                m.error = Some(SharedString::from(format!("Stash push failed: {}", e)));
+                m.error = Some(SharedString::from(err_msg));
             }
             return;
         }
@@ -795,7 +885,7 @@ impl KagiApp {
                 return;
             }
         };
-        match crate::git::snapshot(&mut repo2, 10_000) {
+        let after_summary = match kagi::git::snapshot(&mut repo2, 10_000) {
             Ok(snap) => {
                 let is_clean = !snap.status.is_dirty();
                 let stash_count = snap.stashes.len();
@@ -805,11 +895,24 @@ impl KagiApp {
                     eprintln!("[kagi] verify: working tree NOT clean after stash-push");
                 }
                 eprintln!("[kagi] verified: stash count={}", stash_count);
+                StateSummary {
+                    head: snap.head.display(),
+                    dirty: if is_clean { "clean".to_string() } else { "dirty".to_string() },
+                }
             }
             Err(e) => {
                 eprintln!("[kagi] verify: snapshot error: {}", e);
+                plan.predicted.clone()
             }
-        }
+        };
+
+        // Record success to oplog + update footer.
+        self.record_op(
+            "stash-push",
+            plan.current.clone(),
+            OpOutcome::Success { after: after_summary },
+            &repo_path,
+        );
 
         // Reload display data.
         self.reload();
@@ -875,6 +978,14 @@ impl KagiApp {
         // Defence in depth: refuse if blockers exist.
         if !plan.blockers.is_empty() {
             eprintln!("[kagi] refused: stash-apply plan has blockers, not executing");
+            if let Some(ref rp) = self.repo_path.clone() {
+                self.record_op(
+                    "stash-apply",
+                    plan.current.clone(),
+                    OpOutcome::Refused { blockers: plan.blockers.clone() },
+                    rp,
+                );
+            }
             return;
         }
         let repo_path = match self.repo_path.clone() {
@@ -885,25 +996,46 @@ impl KagiApp {
         let mut repo = match git2::Repository::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
+                let err_msg = format!("Repo open error: {}", e.message());
+                self.record_op(
+                    "stash-apply",
+                    plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() },
+                    &repo_path,
+                );
                 if let Some(ref mut m) = self.stash_apply_modal {
-                    m.error = Some(SharedString::from(format!("Repo open error: {}", e.message())));
+                    m.error = Some(SharedString::from(err_msg));
                 }
                 return;
             }
         };
 
         // Preflight check (HEAD + stash count).
-        if let Err(e) = preflight_check_stash(&mut repo, &plan, plan.stash_count_at_plan) {
+        if let Err(e) = preflight_check_stash(&mut repo, &plan, plan.stash_count_at_plan()) {
+            let err_msg = format!("Preflight failed: {}", e);
+            self.record_op(
+                "stash-apply",
+                plan.current.clone(),
+                OpOutcome::Failed { error: err_msg.clone() },
+                &repo_path,
+            );
             if let Some(ref mut m) = self.stash_apply_modal {
-                m.error = Some(SharedString::from(format!("Preflight failed: {}", e)));
+                m.error = Some(SharedString::from(err_msg));
             }
             return;
         }
 
         // Execute stash apply (apply only — no pop, no drop).
         if let Err(e) = execute_stash_apply(&mut repo, modal.index) {
+            let err_msg = format!("Stash apply failed: {}", e);
+            self.record_op(
+                "stash-apply",
+                plan.current.clone(),
+                OpOutcome::Failed { error: err_msg.clone() },
+                &repo_path,
+            );
             if let Some(ref mut m) = self.stash_apply_modal {
-                m.error = Some(SharedString::from(format!("Stash apply failed: {}", e)));
+                m.error = Some(SharedString::from(err_msg));
             }
             return;
         }
@@ -919,7 +1051,7 @@ impl KagiApp {
                 return;
             }
         };
-        match crate::git::snapshot(&mut repo2, 10_000) {
+        let after_summary = match kagi::git::snapshot(&mut repo2, 10_000) {
             Ok(snap) => {
                 let is_dirty = snap.status.is_dirty();
                 let stash_count = snap.stashes.len();
@@ -929,16 +1061,29 @@ impl KagiApp {
                     eprintln!("[kagi] verify: working tree NOT dirty after stash-apply");
                 }
                 // Stash must remain (apply, not pop).
-                if stash_count >= plan.stash_count_at_plan {
+                if stash_count >= plan.stash_count_at_plan() {
                     eprintln!("[kagi] verified: stash count={} (entry preserved)", stash_count);
                 } else {
-                    eprintln!("[kagi] verify: stash count={} (expected >= {})", stash_count, plan.stash_count_at_plan);
+                    eprintln!("[kagi] verify: stash count={} (expected >= {})", stash_count, plan.stash_count_at_plan());
+                }
+                StateSummary {
+                    head: snap.head.display(),
+                    dirty: if is_dirty { "dirty".to_string() } else { "clean".to_string() },
                 }
             }
             Err(e) => {
                 eprintln!("[kagi] verify: snapshot error: {}", e);
+                plan.predicted.clone()
             }
-        }
+        };
+
+        // Record success to oplog + update footer.
+        self.record_op(
+            "stash-apply",
+            plan.current.clone(),
+            OpOutcome::Success { after: after_summary },
+            &repo_path,
+        );
 
         // Reload display data.
         self.reload();
@@ -1004,6 +1149,14 @@ impl KagiApp {
         // Defence in depth: refuse if blockers exist.
         if !modal.plan.blockers.is_empty() {
             eprintln!("[kagi] refused: cherry-pick plan has blockers, not executing");
+            if let Some(ref rp) = self.repo_path.clone() {
+                self.record_op(
+                    "cherry-pick",
+                    modal.plan.current.clone(),
+                    OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                    rp,
+                );
+            }
             return;
         }
         let repo_path = match self.repo_path.clone() {
@@ -1014,8 +1167,15 @@ impl KagiApp {
         let repo = match git2::Repository::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
+                let err_msg = format!("Repo open error: {}", e.message());
+                self.record_op(
+                    "cherry-pick",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() },
+                    &repo_path,
+                );
                 if let Some(ref mut m) = self.cherry_pick_modal {
-                    m.error = Some(SharedString::from(format!("Repo open error: {}", e.message())));
+                    m.error = Some(SharedString::from(err_msg));
                 }
                 return;
             }
@@ -1023,8 +1183,15 @@ impl KagiApp {
 
         // Preflight check (HEAD unchanged since planning).
         if let Err(e) = preflight_check(&repo, &modal.plan) {
+            let err_msg = format!("Preflight failed: {}", e);
+            self.record_op(
+                "cherry-pick",
+                modal.plan.current.clone(),
+                OpOutcome::Failed { error: err_msg.clone() },
+                &repo_path,
+            );
             if let Some(ref mut m) = self.cherry_pick_modal {
-                m.error = Some(SharedString::from(format!("Preflight failed: {}", e)));
+                m.error = Some(SharedString::from(err_msg));
             }
             return;
         }
@@ -1047,7 +1214,7 @@ impl KagiApp {
                         return;
                     }
                 };
-                match crate::git::snapshot(&mut repo2, 10_000) {
+                let after_summary = match kagi::git::snapshot(&mut repo2, 10_000) {
                     Ok(snap) => {
                         if let Head::Attached { target, branch } = &snap.head {
                             if *target == new_id.0 {
@@ -1058,15 +1225,35 @@ impl KagiApp {
                             let is_clean = !snap.status.is_dirty();
                             eprintln!("[kagi] verified: working tree {}", if is_clean { "clean" } else { "dirty (unexpected)" });
                         }
+                        StateSummary {
+                            head: snap.head.display(),
+                            dirty: if snap.status.is_dirty() { "dirty".to_string() } else { "clean".to_string() },
+                        }
                     }
                     Err(e) => {
                         eprintln!("[kagi] verify: snapshot error: {}", e);
+                        modal.plan.predicted.clone()
                     }
-                }
+                };
+
+                // Record success to oplog + update footer.
+                self.record_op(
+                    "cherry-pick",
+                    modal.plan.current.clone(),
+                    OpOutcome::Success { after: after_summary },
+                    &repo_path,
+                );
             }
             Err(e) => {
+                let err_msg = format!("Cherry-pick failed: {}", e);
+                self.record_op(
+                    "cherry-pick",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() },
+                    &repo_path,
+                );
                 if let Some(ref mut m) = self.cherry_pick_modal {
-                    m.error = Some(SharedString::from(format!("Cherry-pick failed: {}", e)));
+                    m.error = Some(SharedString::from(err_msg));
                 }
                 return;
             }
@@ -1074,6 +1261,61 @@ impl KagiApp {
 
         // Reload display data (new commit should appear in graph).
         self.reload();
+    }
+
+    // ── Oplog + footer helper (T017) ────────────────────────
+
+    /// Record an operation to the oplog and update the status footer.
+    ///
+    /// Write failures are non-fatal: they emit a stderr warning only.
+    fn record_op(
+        &mut self,
+        op: &str,
+        before: StateSummary,
+        outcome: OpOutcome,
+        repo_path: &std::path::Path,
+    ) {
+        // Build the footer message before moving `outcome`.
+        let (footer_msg, footer_ok) = match &outcome {
+            OpOutcome::Success { after } => {
+                (
+                    SharedString::from(format!(
+                        "{}: {} → {}",
+                        op,
+                        before.head,
+                        after.head
+                    )),
+                    true,
+                )
+            }
+            OpOutcome::Failed { error } => {
+                (SharedString::from(format!("{}: failed — {}", op, error)), false)
+            }
+            OpOutcome::Refused { blockers } => (
+                SharedString::from(format!(
+                    "{}: refused ({} blocker{})",
+                    op,
+                    blockers.len(),
+                    if blockers.len() == 1 { "" } else { "s" }
+                )),
+                false,
+            ),
+        };
+
+        let repo_str = repo_path.display().to_string();
+        let entry = OpLogEntry::new(op, &repo_str, before, outcome);
+
+        if let Err(e) = append_oplog(&entry) {
+            eprintln!("[kagi] oplog: write failed (non-fatal): {}", e);
+        }
+
+        if footer_ok {
+            eprintln!("[kagi] footer: {}", footer_msg);
+            self.status_footer = FooterStatus::Success(footer_msg);
+        } else {
+            eprintln!("[kagi] footer: {}", footer_msg);
+            self.status_footer = FooterStatus::Failed(footer_msg);
+        }
     }
 
     /// Confirm the plan: run preflight, execute checkout, then reload.
@@ -1090,6 +1332,14 @@ impl KagiApp {
         // blocked plan.
         if !modal.plan.blockers.is_empty() {
             eprintln!("[kagi] refused: plan has blockers, not executing");
+            if let Some(ref rp) = self.repo_path.clone() {
+                self.record_op(
+                    "checkout",
+                    modal.plan.current.clone(),
+                    OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                    rp,
+                );
+            }
             return;
         }
         let repo_path = match self.repo_path.clone() {
@@ -1110,9 +1360,16 @@ impl KagiApp {
         let repo = match git2::Repository::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
+                let err_msg = format!("Repo open error: {}", e.message());
+                self.record_op(
+                    "checkout",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() },
+                    &repo_path,
+                );
                 self.plan_modal = Some(CheckoutPlanModal {
                     plan: modal.plan.clone(),
-                    error: Some(SharedString::from(format!("Repo open error: {}", e.message()))),
+                    error: Some(SharedString::from(err_msg)),
                 });
                 return;
             }
@@ -1120,18 +1377,32 @@ impl KagiApp {
 
         // Preflight check.
         if let Err(e) = preflight_check(&repo, &modal.plan) {
+            let err_msg = format!("Preflight failed: {}", e);
+            self.record_op(
+                "checkout",
+                modal.plan.current.clone(),
+                OpOutcome::Failed { error: err_msg.clone() },
+                &repo_path,
+            );
             self.plan_modal = Some(CheckoutPlanModal {
                 plan: modal.plan.clone(),
-                error: Some(SharedString::from(format!("Preflight failed: {}", e))),
+                error: Some(SharedString::from(err_msg)),
             });
             return;
         }
 
         // Execute checkout (safe mode only).
         if let Err(e) = execute_checkout(&repo, &branch) {
+            let err_msg = format!("Checkout failed: {}", e);
+            self.record_op(
+                "checkout",
+                modal.plan.current.clone(),
+                OpOutcome::Failed { error: err_msg.clone() },
+                &repo_path,
+            );
             self.plan_modal = Some(CheckoutPlanModal {
                 plan: modal.plan.clone(),
-                error: Some(SharedString::from(format!("Checkout failed: {}", e))),
+                error: Some(SharedString::from(err_msg)),
             });
             return;
         }
@@ -1147,7 +1418,7 @@ impl KagiApp {
                 return;
             }
         };
-        match crate::git::snapshot(&mut repo2, 10_000) {
+        let after_summary = match kagi::git::snapshot(&mut repo2, 10_000) {
             Ok(snap) => {
                 match &snap.head {
                     Head::Attached { branch: actual_branch, .. } if actual_branch == &branch => {
@@ -1157,11 +1428,24 @@ impl KagiApp {
                         eprintln!("[kagi] verify: unexpected HEAD state after checkout: {:?}", other);
                     }
                 }
+                StateSummary {
+                    head: snap.head.display(),
+                    dirty: if snap.status.is_dirty() { "dirty".to_string() } else { "clean".to_string() },
+                }
             }
             Err(e) => {
                 eprintln!("[kagi] verify: snapshot error: {}", e);
+                modal.plan.predicted.clone()
             }
-        }
+        };
+
+        // Record success to oplog + update footer.
+        self.record_op(
+            "checkout",
+            modal.plan.current.clone(),
+            OpOutcome::Success { after: after_summary },
+            &repo_path,
+        );
 
         // Reload display data.
         self.reload();
@@ -1234,7 +1518,7 @@ impl KagiApp {
     /// Fetches the diff via [`commit_file_diff`] and stores a pre-rendered
     /// [`FileDiffView`] in `self.file_diff_view`.  No-op if no commit is selected.
     pub fn open_file_diff(&mut self, file_index: usize) {
-        use crate::git::{CommitId, commit_file_diff};
+        use kagi::git::{CommitId, commit_file_diff};
 
         let selected = match self.selected {
             Some(s) => s,
@@ -1306,7 +1590,7 @@ impl KagiApp {
     /// Fetch changed files for the commit at `index`.  Returns `None` on
     /// failure (so the UI can show "(diff unavailable)").
     fn fetch_changed_files(&self, index: usize) -> Option<Vec<FileStatus>> {
-        use crate::git::{CommitId, commit_changed_files};
+        use kagi::git::{CommitId, commit_changed_files};
 
         let repo_path = self.repo_path.as_ref()?;
         let detail = self.details.get(index)?;
@@ -1363,6 +1647,7 @@ impl Render for KagiApp {
         let stash_push_focus = self.stash_push_focus.clone();
         let stash_apply_modal = self.stash_apply_modal.clone();
         let cherry_pick_modal = self.cherry_pick_modal.clone();
+        let status_footer = self.status_footer.clone();
 
         // ── Normal state: header + body (sidebar + list + optional panel) ─────
         div()
@@ -1460,6 +1745,8 @@ impl Render for KagiApp {
             .when_some(cherry_pick_modal, |el, modal| {
                 el.child(render_cherry_pick_modal(modal, cx))
             })
+            // ── Status footer (T017) — last operation result ─
+            .child(render_status_footer(status_footer))
             .into_any()
     }
 }
@@ -2010,6 +2297,38 @@ fn render_badges(badges: &[commit_list::RefBadge]) -> impl IntoElement {
         row = row.child(chip);
     }
     row
+}
+
+// ──────────────────────────────────────────────────────────────
+// Status footer renderer (T017)
+// ──────────────────────────────────────────────────────────────
+
+/// Render the 22px status footer bar at the bottom of the window.
+///
+/// - [`FooterStatus::Success`] — green text on dark background.
+/// - [`FooterStatus::Failed`] — red text on dark background.
+/// - [`FooterStatus::Idle`] — muted text (default: "Ready").
+fn render_status_footer(status: FooterStatus) -> impl IntoElement {
+    let (text_color, text) = match &status {
+        FooterStatus::Success(msg) => (COLOR_SUCCESS, msg.clone()),
+        FooterStatus::Failed(msg) => (COLOR_BLOCKER, msg.clone()),
+        FooterStatus::Idle(msg) => (TEXT_MUTED, msg.clone()),
+    };
+
+    div()
+        .id("status-footer")
+        .flex()
+        .flex_row()
+        .items_center()
+        .w_full()
+        .h(px(22.))
+        .flex_shrink_0()
+        .px_3()
+        .bg(rgb(BG_PANEL))
+        .text_xs()
+        .text_color(rgb(text_color))
+        .overflow_hidden()
+        .child(text)
 }
 
 // ──────────────────────────────────────────────────────────────

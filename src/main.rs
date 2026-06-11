@@ -1,11 +1,31 @@
-mod git;
-mod graph;
 mod ui;
 
 use std::path::PathBuf;
 
-use git::{Head, open_repository, snapshot};
+use kagi::git::{Head, open_repository, snapshot};
+use kagi::git::oplog::{OpLogEntry, OpOutcome, append_oplog};
+use kagi::git::ops::StateSummary;
 use ui::{KagiApp, StashPushModal, StashApplyModal, CherryPickModal, run_app};
+
+/// Write an oplog entry and emit footer log.  Non-fatal on write error.
+fn record_headless_op(
+    op: &str,
+    before: StateSummary,
+    outcome: OpOutcome,
+    repo_path: &PathBuf,
+) {
+    let repo_str = repo_path.display().to_string();
+    let (kind_str, desc) = match &outcome {
+        OpOutcome::Success { after } => ("Success", format!("{} → {}", before.head, after.head)),
+        OpOutcome::Failed { error } => ("Failed", error.clone()),
+        OpOutcome::Refused { blockers } => ("Refused", format!("{} blocker(s)", blockers.len())),
+    };
+    let entry = OpLogEntry::new(op, &repo_str, before, outcome);
+    if let Err(e) = append_oplog(&entry) {
+        eprintln!("[kagi] oplog: write failed (non-fatal): {}", e);
+    }
+    eprintln!("[kagi] footer: {}: {} ({})", op, desc, kind_str);
+}
 
 fn main() {
     // Collect CLI arguments (skip argv[0]).
@@ -148,7 +168,7 @@ fn main() {
             repo_tmp.and_then(|r| {
                 r.head().ok()
                     .and_then(|h| h.target())
-                    .map(|oid| git::CommitId(oid.to_string()))
+                    .map(|oid| kagi::git::CommitId(oid.to_string()))
             })
         };
 
@@ -156,7 +176,7 @@ fn main() {
             // Plan and log.
             let repo_for_plan = git2::Repository::open(&repo_path).ok();
             if let Some(repo) = repo_for_plan {
-                match git::plan_create_branch(&repo, &branch_name, &at) {
+                match kagi::git::plan_create_branch(&repo, &branch_name, &at) {
                     Ok(plan) => {
                         eprintln!(
                             "[kagi] plan: create-branch '{}' blockers={} warnings={}",
@@ -181,10 +201,14 @@ fn main() {
                                 // Preflight + execute.
                                 let repo2 = git2::Repository::open(&repo_path).ok();
                                 if let Some(r2) = repo2 {
-                                    if let Err(e) = git::preflight_check(&r2, &plan) {
-                                        eprintln!("[kagi] preflight failed: {}", e);
-                                    } else if let Err(e) = git::execute_create_branch(&r2, &branch_name, &at) {
-                                        eprintln!("[kagi] create-branch failed: {}", e);
+                                    if let Err(e) = kagi::git::preflight_check(&r2, &plan) {
+                                        let err_msg = format!("preflight failed: {}", e);
+                                        eprintln!("[kagi] {}", err_msg);
+                                        record_headless_op("create-branch", plan.current.clone(), OpOutcome::Failed { error: err_msg }, &repo_path);
+                                    } else if let Err(e) = kagi::git::execute_create_branch(&r2, &branch_name, &at) {
+                                        let err_msg = format!("create-branch failed: {}", e);
+                                        eprintln!("[kagi] {}", err_msg);
+                                        record_headless_op("create-branch", plan.current.clone(), OpOutcome::Failed { error: err_msg }, &repo_path);
                                     } else {
                                         eprintln!("[kagi] executed: create-branch '{}' @ {}", branch_name, at.short());
                                         // Verify.
@@ -202,6 +226,7 @@ fn main() {
                                                 eprintln!("[kagi] verified: current branch = {}", cur);
                                             }
                                         }
+                                        record_headless_op("create-branch", plan.current.clone(), OpOutcome::Success { after: plan.predicted.clone() }, &repo_path);
                                     }
                                 }
                             } else {
@@ -209,6 +234,7 @@ fn main() {
                                     "[kagi] KAGI_AUTO_CONFIRM=1 but create-branch has {} blocker(s), skipping",
                                     plan.blockers.len()
                                 );
+                                record_headless_op("create-branch", plan.current.clone(), OpOutcome::Refused { blockers: plan.blockers.clone() }, &repo_path);
                             }
                         }
                     }
@@ -236,7 +262,7 @@ fn main() {
             }
         };
 
-        match git::plan_stash_push(&mut repo_sp, None) {
+        match kagi::git::plan_stash_push(&mut repo_sp, None) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: stash-push blockers={} warnings={}",
@@ -247,7 +273,7 @@ fn main() {
                 let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
                 if auto_confirm {
                     if plan.blockers.is_empty() {
-                        let stash_count_at_plan = plan.stash_count_at_plan;
+                        let stash_count_at_plan = plan.stash_count_at_plan();
                         let mut repo2 = match git2::Repository::open(&repo_path) {
                             Ok(r) => r,
                             Err(e) => {
@@ -256,10 +282,14 @@ fn main() {
                                 return;
                             }
                         };
-                        if let Err(e) = git::preflight_check_stash(&mut repo2, &plan, stash_count_at_plan) {
-                            eprintln!("[kagi] preflight failed: {}", e);
-                        } else if let Err(e) = git::execute_stash_push(&mut repo2, None) {
-                            eprintln!("[kagi] stash-push failed: {}", e);
+                        if let Err(e) = kagi::git::preflight_check_stash(&mut repo2, &plan, stash_count_at_plan) {
+                            let err_msg = format!("preflight failed: {}", e);
+                            eprintln!("[kagi] {}", err_msg);
+                            record_headless_op("stash-push", plan.current.clone(), OpOutcome::Failed { error: err_msg }, &repo_path);
+                        } else if let Err(e) = kagi::git::execute_stash_push(&mut repo2, None) {
+                            let err_msg = format!("stash-push failed: {}", e);
+                            eprintln!("[kagi] {}", err_msg);
+                            record_headless_op("stash-push", plan.current.clone(), OpOutcome::Failed { error: err_msg }, &repo_path);
                         } else {
                             eprintln!("[kagi] executed: stash-push");
                             // Verify: working tree clean + stash count.
@@ -281,8 +311,14 @@ fn main() {
                                         eprintln!("[kagi] verify: working tree NOT clean");
                                     }
                                     eprintln!("[kagi] verified: stash count={}", stash_count);
+                                    record_headless_op("stash-push", plan.current.clone(), OpOutcome::Success {
+                                        after: StateSummary { head: snap.head.display(), dirty: if clean { "clean".to_string() } else { "dirty".to_string() } }
+                                    }, &repo_path);
                                 }
-                                Err(e) => eprintln!("[kagi] verify: snapshot error: {}", e),
+                                Err(e) => {
+                                    eprintln!("[kagi] verify: snapshot error: {}", e);
+                                    record_headless_op("stash-push", plan.current.clone(), OpOutcome::Success { after: plan.predicted.clone() }, &repo_path);
+                                }
                             }
                         }
                     } else {
@@ -290,6 +326,7 @@ fn main() {
                             "[kagi] KAGI_AUTO_CONFIRM=1 but stash-push has {} blocker(s), skipping",
                             plan.blockers.len()
                         );
+                        record_headless_op("stash-push", plan.current.clone(), OpOutcome::Refused { blockers: plan.blockers.clone() }, &repo_path);
                     }
                 } else {
                     // Without auto-confirm, surface the modal so it can be inspected headlessly.
@@ -329,7 +366,7 @@ fn main() {
             }
         };
 
-        match git::plan_stash_apply(&mut repo_sa, index) {
+        match kagi::git::plan_stash_apply(&mut repo_sa, index) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: stash-apply index={} blockers={} warnings={}",
@@ -341,7 +378,7 @@ fn main() {
                 let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
                 if auto_confirm {
                     if plan.blockers.is_empty() {
-                        let stash_count_at_plan = plan.stash_count_at_plan;
+                        let stash_count_at_plan = plan.stash_count_at_plan();
                         let mut repo2 = match git2::Repository::open(&repo_path) {
                             Ok(r) => r,
                             Err(e) => {
@@ -350,10 +387,14 @@ fn main() {
                                 return;
                             }
                         };
-                        if let Err(e) = git::preflight_check_stash(&mut repo2, &plan, stash_count_at_plan) {
-                            eprintln!("[kagi] preflight failed: {}", e);
-                        } else if let Err(e) = git::execute_stash_apply(&mut repo2, index) {
-                            eprintln!("[kagi] stash-apply failed: {}", e);
+                        if let Err(e) = kagi::git::preflight_check_stash(&mut repo2, &plan, stash_count_at_plan) {
+                            let err_msg = format!("preflight failed: {}", e);
+                            eprintln!("[kagi] {}", err_msg);
+                            record_headless_op("stash-apply", plan.current.clone(), OpOutcome::Failed { error: err_msg }, &repo_path);
+                        } else if let Err(e) = kagi::git::execute_stash_apply(&mut repo2, index) {
+                            let err_msg = format!("stash-apply failed: {}", e);
+                            eprintln!("[kagi] {}", err_msg);
+                            record_headless_op("stash-apply", plan.current.clone(), OpOutcome::Failed { error: err_msg }, &repo_path);
                         } else {
                             eprintln!("[kagi] executed: stash-apply index={}", index);
                             // Verify: working tree dirty + stash still present.
@@ -375,8 +416,14 @@ fn main() {
                                         eprintln!("[kagi] verify: working tree NOT dirty after apply");
                                     }
                                     eprintln!("[kagi] verified: stash count={} (entry preserved)", stash_count);
+                                    record_headless_op("stash-apply", plan.current.clone(), OpOutcome::Success {
+                                        after: StateSummary { head: snap.head.display(), dirty: if is_dirty { "dirty".to_string() } else { "clean".to_string() } }
+                                    }, &repo_path);
                                 }
-                                Err(e) => eprintln!("[kagi] verify: snapshot error: {}", e),
+                                Err(e) => {
+                                    eprintln!("[kagi] verify: snapshot error: {}", e);
+                                    record_headless_op("stash-apply", plan.current.clone(), OpOutcome::Success { after: plan.predicted.clone() }, &repo_path);
+                                }
                             }
                         }
                     } else {
@@ -384,6 +431,7 @@ fn main() {
                             "[kagi] KAGI_AUTO_CONFIRM=1 but stash-apply has {} blocker(s), skipping",
                             plan.blockers.len()
                         );
+                        record_headless_op("stash-apply", plan.current.clone(), OpOutcome::Refused { blockers: plan.blockers.clone() }, &repo_path);
                     }
                 } else {
                     // Without auto-confirm, surface the modal.
@@ -405,7 +453,7 @@ fn main() {
     // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, execute immediately.
     // For fixture/tempdir testing only.  Do not set in normal use.
     if let Ok(sha_str) = std::env::var("KAGI_CHERRY_PICK") {
-        let commit_id = git::CommitId(sha_str.clone());
+        let commit_id = kagi::git::CommitId(sha_str.clone());
         let repo_cp = match git2::Repository::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
@@ -415,7 +463,7 @@ fn main() {
             }
         };
 
-        match git::plan_cherry_pick(&repo_cp, &commit_id) {
+        match kagi::git::plan_cherry_pick(&repo_cp, &commit_id) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: cherry-pick {} blockers={} preview_files={}",
@@ -446,10 +494,12 @@ fn main() {
                                 return;
                             }
                         };
-                        if let Err(e) = git::preflight_check(&repo2, &plan) {
-                            eprintln!("[kagi] preflight failed: {}", e);
+                        if let Err(e) = kagi::git::preflight_check(&repo2, &plan) {
+                            let err_msg = format!("preflight failed: {}", e);
+                            eprintln!("[kagi] {}", err_msg);
+                            record_headless_op("cherry-pick", plan.current.clone(), OpOutcome::Failed { error: err_msg }, &repo_path);
                         } else {
-                            match git::execute_cherry_pick(&repo2, &commit_id) {
+                            match kagi::git::execute_cherry_pick(&repo2, &commit_id) {
                                 Ok(new_id) => {
                                     eprintln!(
                                         "[kagi] executed: cherry-pick {} -> {}",
@@ -484,13 +534,21 @@ fn main() {
                                             if let Some(c) = snap.commits.first() {
                                                 eprintln!("[kagi] verified: new HEAD message: {}", c.summary);
                                             }
+                                            record_headless_op("cherry-pick", plan.current.clone(), OpOutcome::Success {
+                                                after: StateSummary { head: snap.head.display(), dirty: if is_clean { "clean".to_string() } else { "dirty".to_string() } }
+                                            }, &repo_path);
                                         }
-                                        Err(e) => eprintln!("[kagi] verify: snapshot error: {}", e),
+                                        Err(e) => {
+                                            eprintln!("[kagi] verify: snapshot error: {}", e);
+                                            record_headless_op("cherry-pick", plan.current.clone(), OpOutcome::Success { after: plan.predicted.clone() }, &repo_path);
+                                        }
                                     }
                                     app_state.reload();
                                 }
                                 Err(e) => {
-                                    eprintln!("[kagi] cherry-pick execute failed: {}", e);
+                                    let err_msg = format!("cherry-pick execute failed: {}", e);
+                                    eprintln!("[kagi] {}", err_msg);
+                                    record_headless_op("cherry-pick", plan.current.clone(), OpOutcome::Failed { error: err_msg }, &repo_path);
                                 }
                             }
                         }
@@ -499,6 +557,7 @@ fn main() {
                             "[kagi] KAGI_AUTO_CONFIRM=1 but cherry-pick has {} blocker(s), skipping",
                             plan.blockers.len()
                         );
+                        record_headless_op("cherry-pick", plan.current.clone(), OpOutcome::Refused { blockers: plan.blockers.clone() }, &repo_path);
                     }
                 } else {
                     // Without auto-confirm, surface the cherry-pick modal.

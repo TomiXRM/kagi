@@ -31,7 +31,7 @@ use gpui::{
     App, Bounds, Canvas, PathBuilder, Pixels, Window, canvas, hsla, point, px,
 };
 
-use crate::graph::{EdgeKind, GraphEdge};
+use kagi::graph::{EdgeKind, GraphEdge};
 
 // ──────────────────────────────────────────────────────────────
 // Layout constants

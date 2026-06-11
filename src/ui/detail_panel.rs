@@ -5,7 +5,7 @@
 
 use gpui::SharedString;
 
-use crate::git::{Commit, RepoSnapshot};
+use kagi::git::{Commit, RepoSnapshot};
 
 // ──────────────────────────────────────────────────────────────
 // soft_wrap — display-only ZWSP insertion helper (T019)

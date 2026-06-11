@@ -8,8 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui::SharedString;
 
-use crate::git::{Commit, CommitId, Head, RepoSnapshot};
-use crate::graph::{GraphEdge, layout};
+use kagi::git::{Commit, CommitId, Head, RepoSnapshot};
+use kagi::graph::{GraphEdge, layout};
 
 // ──────────────────────────────────────────────────────────────
 // Badge types

@@ -21,7 +21,7 @@ use std::path::PathBuf;
 
 use gpui::SharedString;
 
-use crate::git::{ChangeKind, FileStatus};
+use kagi::git::{ChangeKind, FileStatus};
 
 // ──────────────────────────────────────────────────────────────
 // Public API

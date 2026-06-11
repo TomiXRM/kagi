@@ -9,6 +9,7 @@
 
 mod diff;
 mod log;
+pub mod oplog;
 pub mod ops;
 mod refs;
 mod snapshot;
@@ -16,6 +17,8 @@ mod status;
 
 #[allow(unused_imports)]
 pub use diff::{DiffLine, DiffLineKind, FileDiff, Hunk, commit_changed_files, commit_file_diff};
+#[allow(unused_imports)]
+pub use oplog::{OpLogEntry, OpOutcome, append_oplog};
 #[allow(unused_imports)]
 pub use log::{Commit, CommitId, Signature, commit_log};
 #[allow(unused_imports)]

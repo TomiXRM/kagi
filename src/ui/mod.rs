@@ -6,6 +6,7 @@
 
 pub mod commit_list;
 pub mod detail_panel;
+pub mod file_tree;
 pub mod graph_view;
 
 use std::collections::HashMap;
@@ -1050,6 +1051,25 @@ impl KagiApp {
                 .unwrap_or(0);
             eprintln!("[kagi] changed files: {}", n);
         }
+
+        // T018: emit tree structure log when KAGI_SELECT_FIRST=1
+        if std::env::var("KAGI_SELECT_FIRST").as_deref() == Ok("1") {
+            const MAX_FILES: usize = 100;
+            if let Some(Some(files)) = self.diff_cache.get(&index) {
+                let truncated: Vec<_> = files.iter().take(MAX_FILES).cloned().collect();
+                let rows = file_tree::build_file_tree(&truncated);
+                for row in &rows {
+                    match row {
+                        file_tree::TreeRow::Dir { depth, name } => {
+                            eprintln!("[kagi] tree: {}DIR  {}", "  ".repeat(*depth), name);
+                        }
+                        file_tree::TreeRow::File { depth, name, file_index, .. } => {
+                            eprintln!("[kagi] tree: {}FILE {} (idx={})", "  ".repeat(*depth), name, file_index);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Open the diff for the file at `file_index` in the currently selected commit.
@@ -1428,52 +1448,68 @@ fn render_detail_panel(
     const COLOR_DELETED: u32 = 0xf38ba8; // red
     const COLOR_RENAMED: u32 = 0x89b4fa; // blue
     const COLOR_TYPECHANGE: u32 = 0x585b70; // gray (muted)
+    const COLOR_DIR: u32 = 0x6c7086; // overlay0 — muted directory label
 
     const MAX_FILES: usize = 100;
 
-    // Build the file rows (up to MAX_FILES) and a truncation notice.
-    let (file_rows, truncated): (Vec<_>, Option<usize>) = match &changed_files {
-        None => (vec![], None),
-        Some(files) => {
-            let total = files.len();
-            let shown = files.iter().take(MAX_FILES).enumerate();
-            let rows: Vec<_> = shown
-                .map(|(file_index, f)| {
-                    let (badge_char, badge_color) = match &f.change {
+    // Suppress unused warning for changed_files_for_click (kept for symmetry / future use).
+    let _ = changed_files_for_click;
+
+    // ── Truncate input files before building the tree (T018 policy) ──────
+    let truncated_files: Option<Vec<FileStatus>> = changed_files.as_ref().map(|files| {
+        files.iter().take(MAX_FILES).cloned().collect()
+    });
+    let total_files = changed_files.as_ref().map(|f| f.len()).unwrap_or(0);
+    let truncated_count = if total_files > MAX_FILES { Some(total_files - MAX_FILES) } else { None };
+
+    // ── Build tree rows from (truncated) file list ────────────────────────
+    let tree_rows = truncated_files.as_ref().map(|files| {
+        file_tree::build_file_tree(files)
+    });
+
+    // ── Build GPUI element rows for the tree ─────────────────────────────
+    let tree_element_rows: Vec<_> = match &tree_rows {
+        None => vec![],
+        Some(rows) => rows.iter().map(|row| {
+            match row {
+                file_tree::TreeRow::Dir { depth, name } => {
+                    let indent = (*depth as f32) * 12.0;
+                    div()
+                        .id(SharedString::from(format!("tree-dir-{}", name.as_ref())))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .pl(px(indent))
+                        .mb_px()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(rgb(COLOR_DIR))
+                                .child(name.clone()),
+                        )
+                        .into_any()
+                }
+                file_tree::TreeRow::File { depth, name, file_index, change } => {
+                    let indent = (*depth as f32) * 12.0;
+                    let (badge_char, badge_color) = match change {
                         ChangeKind::Added      => ("A", COLOR_ADDED),
                         ChangeKind::Modified   => ("M", COLOR_MODIFIED),
                         ChangeKind::Deleted    => ("D", COLOR_DELETED),
                         ChangeKind::Renamed { .. } => ("R", COLOR_RENAMED),
                         ChangeKind::TypeChange => ("T", COLOR_TYPECHANGE),
                     };
-
-                    // Path display: truncate with leading "…" when longer than
-                    // ~40 chars.  Use chars() for correct Unicode counting.
-                    const MAX_PATH_CHARS: usize = 40;
-                    let path_str = f.path.to_string_lossy();
-                    let display_path: String = {
-                        let char_count = path_str.chars().count();
-                        if char_count > MAX_PATH_CHARS {
-                            let skip = char_count - (MAX_PATH_CHARS - 1);
-                            let tail: String = path_str.chars().skip(skip).collect();
-                            format!("\u{2026}{}", tail)
-                        } else {
-                            path_str.into_owned()
-                        }
-                    };
-
-                    // Click handler: open the diff for this file.
+                    let fi = *file_index;
                     let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                        this.open_file_diff(file_index);
+                        this.open_file_diff(fi);
                         cx.notify();
                     });
-
                     div()
-                        .id(("file-row", file_index))
+                        .id(("file-row", fi))
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap_1()
+                        .pl(px(indent))
                         .mb_px()
                         .on_click(click)
                         .child(
@@ -1490,17 +1526,13 @@ fn render_detail_panel(
                                 .text_sm()
                                 .text_color(rgb(TEXT_MAIN))
                                 .overflow_hidden()
-                                .child(SharedString::from(display_path)),
+                                .child(name.clone()),
                         )
-                })
-                .collect();
-            let truncated = if total > MAX_FILES { Some(total - MAX_FILES) } else { None };
-            (rows, truncated)
-        }
+                        .into_any()
+                }
+            }
+        }).collect(),
     };
-
-    // Suppress unused warning for changed_files_for_click (kept for symmetry / future use).
-    let _ = changed_files_for_click;
 
     // ── "Create branch here" button ──────────────────────────
     let create_branch_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
@@ -1547,10 +1579,10 @@ fn render_detail_panel(
                     .child(SharedString::from("(diff unavailable)")),
             );
         } else {
-            for row in file_rows {
+            for row in tree_element_rows {
                 section = section.child(row);
             }
-            if let Some(remaining) = truncated {
+            if let Some(remaining) = truncated_count {
                 section = section.child(
                     div()
                         .text_sm()

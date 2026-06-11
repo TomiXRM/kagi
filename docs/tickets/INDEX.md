@@ -7,8 +7,8 @@
 
 | ID | タイトル | 依存 | Status |
 |----|----------|------|--------|
-| T001 | Rust + GPUI の最小アプリを起動する | - | in-progress |
-| T002 | repo path を指定して git repository を開く(git2 導入, GitBackend trait) | T001 | todo |
+| T001 | Rust + GPUI の最小アプリを起動する | - | done |
+| T002 | repo path を指定して git repository を開く(git2 導入, GitBackend trait) | T001 | in-progress |
 | T003 | working tree status を取得して表示する | T002 | todo |
 | T004 | commit log を取得して内部モデル(Commit)に変換する | T002 | todo |
 | T005 | branch / remote branch / tag / HEAD を取得する(RepoSnapshot 完成) | T004 | todo |
@@ -26,4 +26,4 @@
 | T017 | error handling と operation log を整える | T013–T016 | todo |
 
 補助タスク(ticket 外、PM 管理):
-- fixture repo 生成スクリプト(`scripts/make_fixture.sh`)— T003 着手前に用意
+- fixture repo 生成スクリプト(`scripts/make_fixture.sh`)— 用意済み(merge / ahead 1 / behind 1 / tag / stash / dirty WT を含む)

@@ -150,6 +150,7 @@ fn main() {
                         "[kagi] KAGI_AUTO_CONFIRM=1 but checkout has {} blocker(s), skipping",
                         modal.plan.blockers.len()
                     );
+                    record_headless_op("checkout", modal.plan.current.clone(), OpOutcome::Refused { blockers: modal.plan.blockers.clone() }, &repo_path);
                 }
             }
         }

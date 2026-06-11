@@ -6,6 +6,7 @@
 
 pub mod avatar;
 pub mod commit_list;
+pub mod commit_panel;
 pub mod detail_panel;
 pub mod file_tree;
 pub mod graph_view;
@@ -73,7 +74,9 @@ use kagi::git::{
         plan_cherry_pick, execute_cherry_pick,
     },
     oplog::{OpLogEntry, OpOutcome, append_oplog},
+    stage_file, unstage_file, plan_commit, execute_commit,
 };
+use commit_panel::{CommitPanelState, CommitPanelFileRef, CommitPlanModal, status_badge};
 use commit_list::{BadgeKind, CommitRow, build_commit_rows};
 use detail_panel::{CommitDetail, build_commit_details};
 use graph_view::{graph_canvas, graph_width};
@@ -344,6 +347,13 @@ pub struct KagiApp {
     pub sidebar_width: f32,
     /// Current detail/diff panel width in pixels (T023: user-resizable).
     pub panel_width: f32,
+    // ── T025: Commit Panel ───────────────────────────────────────
+    /// Whether the commit panel is currently open (WIP row selected).
+    pub commit_panel_open: bool,
+    /// Commit panel state (staging lists, diff, message, modal).
+    pub commit_panel: Option<CommitPanelState>,
+    /// Focus handle for the commit message input field.
+    pub commit_msg_focus: Option<FocusHandle>,
 }
 
 impl KagiApp {
@@ -430,6 +440,9 @@ impl KagiApp {
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
             sidebar_width: SIDEBAR_DEFAULT,
             panel_width: PANEL_DEFAULT,
+            commit_panel_open: false,
+            commit_panel: None,
+            commit_msg_focus: None,
         }
     }
 
@@ -457,6 +470,9 @@ impl KagiApp {
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
             sidebar_width: SIDEBAR_DEFAULT,
             panel_width: PANEL_DEFAULT,
+            commit_panel_open: false,
+            commit_panel: None,
+            commit_msg_focus: None,
         }
     }
 
@@ -510,6 +526,10 @@ impl KagiApp {
         self.stash_apply_modal = None;
         self.stash_push_focus = None;
         self.cherry_pick_modal = None;
+        // T025: reset commit panel so it reflects fresh status after reload.
+        self.commit_panel_open = false;
+        self.commit_panel = None;
+        self.commit_msg_focus = None;
         // status_footer is intentionally preserved across reloads so the last
         // operation result remains visible after the commit list refreshes.
         // sidebar_width / panel_width are also preserved so the user's resize
@@ -1504,12 +1524,312 @@ impl KagiApp {
         self.reload();
     }
 
+    // ── T025: Commit Panel ────────────────────────────────────
+
+    /// Open the commit panel (triggered by clicking the WIP row).
+    ///
+    /// Loads the current staging status from the repository.
+    /// Clears any existing commit selection so the two views are exclusive.
+    pub fn open_commit_panel(&mut self, cx: &mut Context<Self>) {
+        if self.commit_msg_focus.is_none() {
+            self.commit_msg_focus = Some(cx.focus_handle());
+        }
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => {
+                eprintln!("[kagi] open_commit_panel: no repo_path set");
+                return;
+            }
+        };
+        let mut panel = CommitPanelState::from_repo(&repo_path);
+        // Preserve message if we're reopening an existing panel.
+        if let Some(ref existing) = self.commit_panel {
+            panel.commit_msg = existing.commit_msg.clone();
+            panel.tree_view = existing.tree_view;
+        }
+        self.commit_panel = Some(panel);
+        self.commit_panel_open = true;
+        self.selected = None;
+        self.file_diff_view = None;
+
+        // Log for headless verification.
+        if let Some(ref p) = self.commit_panel {
+            eprintln!(
+                "[kagi] commit-panel: unstaged={} staged={}",
+                p.unstaged.len(),
+                p.staged.len()
+            );
+        }
+    }
+
+    /// Close the commit panel (returns to normal commit selection mode).
+    pub fn close_commit_panel(&mut self) {
+        self.commit_panel_open = false;
+    }
+
+    /// Stage a single file in the commit panel.
+    ///
+    /// Calls `stage_file` from T024 and then refreshes the staging status.
+    pub fn do_stage_file(&mut self, index: usize) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let path = match self.commit_panel.as_ref().and_then(|p| p.unstaged.get(index)) {
+            Some(f) => f.path.clone(),
+            None => return,
+        };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] stage_file: repo open error: {}", e.message());
+                return;
+            }
+        };
+        if let Err(e) = stage_file(&repo, &path) {
+            eprintln!("[kagi] stage_file error: {}", e);
+        } else {
+            eprintln!("[kagi] staged: {}", path.display());
+        }
+        if let Some(ref mut panel) = self.commit_panel {
+            panel.reload_status(&repo_path);
+            eprintln!(
+                "[kagi] commit-panel: unstaged={} staged={}",
+                panel.unstaged.len(),
+                panel.staged.len()
+            );
+        }
+    }
+
+    /// Unstage a single file in the commit panel.
+    ///
+    /// Calls `unstage_file` from T024 and then refreshes the staging status.
+    pub fn do_unstage_file(&mut self, index: usize) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let path = match self.commit_panel.as_ref().and_then(|p| p.staged.get(index)) {
+            Some(f) => f.path.clone(),
+            None => return,
+        };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] unstage_file: repo open error: {}", e.message());
+                return;
+            }
+        };
+        if let Err(e) = unstage_file(&repo, &path) {
+            eprintln!("[kagi] unstage_file error: {}", e);
+        } else {
+            eprintln!("[kagi] unstaged: {}", path.display());
+        }
+        if let Some(ref mut panel) = self.commit_panel {
+            panel.reload_status(&repo_path);
+            eprintln!(
+                "[kagi] commit-panel: unstaged={} staged={}",
+                panel.unstaged.len(),
+                panel.staged.len()
+            );
+        }
+    }
+
+    /// Select a file in the commit panel and load its diff.
+    pub fn select_commit_panel_file(&mut self, file_ref: CommitPanelFileRef) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        if let Some(ref mut panel) = self.commit_panel {
+            panel.load_diff(file_ref, &repo_path);
+        }
+    }
+
+    /// Toggle tree view in the commit panel.
+    pub fn toggle_commit_panel_tree_view(&mut self) {
+        if let Some(ref mut panel) = self.commit_panel {
+            panel.tree_view = !panel.tree_view;
+        }
+    }
+
+    /// Handle a key-down event for the commit message input.
+    ///
+    /// Uses the T014 simple pattern: printable chars appended, backspace removes last.
+    pub fn handle_commit_msg_key(&mut self, event: &KeyDownEvent) {
+        let panel = match self.commit_panel.as_mut() {
+            Some(p) => p,
+            None => return,
+        };
+        let key = &event.keystroke.key;
+        let modifiers = &event.keystroke.modifiers;
+
+        if modifiers.platform || modifiers.control || modifiers.alt {
+            return;
+        }
+
+        if key == "backspace" {
+            panel.commit_msg.pop();
+        } else if key == "space" {
+            panel.commit_msg.push(' ');
+        } else if key.len() == 1 {
+            let ch = key.chars().next().unwrap();
+            if !ch.is_control() {
+                panel.commit_msg.push(ch);
+            }
+        }
+    }
+
+    /// Open the commit plan modal for the current staged files and message.
+    ///
+    /// Uses `plan_commit` from T024.
+    pub fn open_commit_plan_modal(&mut self) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let msg = match self.commit_panel.as_ref() {
+            Some(p) => p.commit_msg.clone(),
+            None => return,
+        };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] plan_commit: repo open error: {}", e.message());
+                return;
+            }
+        };
+        match plan_commit(&repo, &msg) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: commit blockers={} warnings={}",
+                    plan.blockers.len(),
+                    plan.warnings.len()
+                );
+                if let Some(ref mut panel) = self.commit_panel {
+                    panel.plan_modal = Some(CommitPlanModal {
+                        plan: std::sync::Arc::new(plan),
+                        error: None,
+                    });
+                }
+            }
+            Err(e) => {
+                eprintln!("[kagi] plan_commit error: {}", e);
+            }
+        }
+    }
+
+    /// Cancel the commit plan modal.
+    pub fn cancel_commit_plan_modal(&mut self) {
+        if let Some(ref mut panel) = self.commit_panel {
+            panel.plan_modal = None;
+        }
+    }
+
+    /// Confirm the commit plan: run execute_commit then reload.
+    ///
+    /// On failure the modal remains open with the error text.
+    pub fn confirm_commit(&mut self) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let (msg, plan) = match self.commit_panel.as_ref().and_then(|p| p.plan_modal.as_ref()) {
+            Some(modal) => (
+                self.commit_panel.as_ref().unwrap().commit_msg.clone(),
+                modal.plan.clone(),
+            ),
+            None => return,
+        };
+
+        // Defence: refuse if blockers exist.
+        if !plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: commit plan has blockers");
+            return;
+        }
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                let err_msg = format!("Repo open error: {}", e.message());
+                if let Some(ref mut panel) = self.commit_panel {
+                    if let Some(ref mut modal) = panel.plan_modal {
+                        modal.error = Some(SharedString::from(err_msg.clone()));
+                    }
+                }
+                return;
+            }
+        };
+
+        match execute_commit(&repo, &msg) {
+            Ok(new_id) => {
+                eprintln!("[kagi] executed: commit {}", new_id.short());
+
+                // Verify: re-snapshot, check HEAD is the new commit.
+                let mut repo2 = match git2::Repository::open(&repo_path) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("[kagi] verify: repo open error: {}", e.message());
+                        self.record_op(
+                            "commit",
+                            plan.current.clone(),
+                            OpOutcome::Success { after: plan.predicted.clone() },
+                            &repo_path,
+                        );
+                        self.reload();
+                        return;
+                    }
+                };
+                let after_summary = match kagi::git::snapshot(&mut repo2, 10_000) {
+                    Ok(snap) => {
+                        if let Head::Attached { target, branch } = &snap.head {
+                            if *target == new_id.0 {
+                                eprintln!("[kagi] verified: commit HEAD={} on {}", new_id.short(), branch);
+                            } else {
+                                eprintln!("[kagi] verify: HEAD mismatch after commit");
+                            }
+                        }
+                        // Unstaged should still be there.
+                        let is_dirty = snap.status.is_dirty();
+                        eprintln!("[kagi] verified: working tree {} after commit",
+                            if is_dirty { "dirty (unstaged remain)" } else { "clean" });
+                        StateSummary {
+                            head: snap.head.display(),
+                            dirty: if is_dirty { "dirty".to_string() } else { "clean".to_string() },
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[kagi] verify: snapshot error: {}", e);
+                        plan.predicted.clone()
+                    }
+                };
+
+                self.record_op("commit", plan.current.clone(),
+                    OpOutcome::Success { after: after_summary }, &repo_path);
+                self.reload();
+            }
+            Err(e) => {
+                let err_msg = format!("Commit failed: {}", e);
+                eprintln!("[kagi] {}", err_msg);
+                if let Some(ref mut panel) = self.commit_panel {
+                    if let Some(ref mut modal) = panel.plan_modal {
+                        modal.error = Some(SharedString::from(err_msg));
+                    }
+                }
+            }
+        }
+    }
+
     /// Select the commit at `index` (or deselect if already selected).
     /// Emits a `[kagi] selected:` log for automated verification.
     /// On first selection of a row, fetches changed files on-demand and caches
     /// the result; subsequent selections of the same row reuse the cache.
     /// Clears any open diff view when the selection changes.
+    /// Also closes the commit panel since commit selection and commit panel are exclusive.
     pub fn select(&mut self, index: usize) {
+        // Close commit panel when selecting a normal commit row.
+        self.commit_panel_open = false;
+
         // Toggle: clicking the same row again deselects it.
         if self.selected == Some(index) {
             self.selected = None;
@@ -1733,6 +2053,11 @@ impl Render for KagiApp {
             }
         });
 
+        // T025: extract commit panel state for render.
+        let commit_panel_open = self.commit_panel_open;
+        let commit_panel = self.commit_panel.clone();
+        let commit_msg_focus = self.commit_msg_focus.clone();
+
         // ── Normal state: header + body (sidebar + list + optional panel) ─────
         div()
             .flex()
@@ -1803,15 +2128,63 @@ impl Render for KagiApp {
                         },
                     );
 
-                let mut body_row = div()
-                    .flex()
-                    .flex_row()
+                // ── WIP row (shown above the list when working tree is dirty) ──
+                let wip_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                    this.open_commit_panel(cx);
+                    cx.notify();
+                });
+                let wip_bg = if commit_panel_open { BG_SELECTED } else { 0x2a2a3a };
+
+                let commit_list_col = div()
                     .flex_1()
                     .h_full()
-                    // ── Left sidebar ──────────────────────────
-                    .child(render_sidebar(&branches, &stashes, sidebar_width, cx))
-                    // ── Sidebar divider ───────────────────────
-                    .child(divider1)
+                    .flex()
+                    .flex_col()
+                    // ── WIP row (only when dirty) ────────────
+                    .when(is_dirty, |el| {
+                        el.child(
+                            div()
+                                .id("wip-row")
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .w_full()
+                                .px_3()
+                                .h(px(graph_view::ROW_H))
+                                .bg(rgb(wip_bg))
+                                .on_click(wip_click)
+                                .hover(|s| s.bg(rgb(BG_SELECTED)))
+                                // Badges column: WIP badge
+                                .child(
+                                    div()
+                                        .w(px(150.))
+                                        .flex_shrink_0()
+                                        .overflow_hidden()
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .justify_end()
+                                        .child(
+                                            div()
+                                                .px_1()
+                                                .rounded_sm()
+                                                .bg(rgb(COLOR_WARNING))
+                                                .text_color(rgb(BG_BASE))
+                                                .text_sm()
+                                                .flex_shrink_0()
+                                                .child(SharedString::from("WIP")),
+                                        ),
+                                )
+                                // Summary area: "// WIP — N changes"
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .text_color(rgb(TEXT_MUTED))
+                                        .overflow_hidden()
+                                        .child(SharedString::from("// WIP")),
+                                ),
+                        )
+                    })
                     // ── Virtualized commit list ──────────────
                     .child(
                         uniform_list(
@@ -1822,49 +2195,72 @@ impl Render for KagiApp {
                             }),
                         )
                         .flex_1()
-                        .h_full(),
+                        .min_h(px(0.)),
                     );
 
-                // ── Detail panel + panel divider (only when a row is selected) ──
-                let panel_drag_start_width = panel_width;
-                body_row = body_row.when_some(detail, |el, d| {
-                    // Build divider 2: main | panel.
-                    let divider2 = div()
-                        .id("divider-panel")
-                        .w(px(4.))
-                        .flex_shrink_0()
-                        .h_full()
-                        .bg(rgb(BG_SURFACE))
-                        .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
-                        .cursor_col_resize()
-                        .on_drag(
-                            DividerDrag { kind: DividerKind::Panel, start_x: 0.0, start_width: panel_drag_start_width },
-                            move |drag, position, _window, cx| {
-                                let drag_with_pos = DividerDrag {
-                                    kind: drag.kind,
-                                    start_x: f32::from(position.x),
-                                    start_width: panel_drag_start_width,
-                                };
-                                cx.new(move |_| {
-                                    let _ = drag_with_pos;
-                                    DividerGhost
-                                })
-                            },
-                        );
+                let mut body_row = div()
+                    .flex()
+                    .flex_row()
+                    .flex_1()
+                    .h_full()
+                    // ── Left sidebar ──────────────────────────
+                    .child(render_sidebar(&branches, &stashes, sidebar_width, cx))
+                    // ── Sidebar divider ───────────────────────
+                    .child(divider1)
+                    // ── Commit list column (WIP row + virtualized list) ──
+                    .child(commit_list_col);
 
-                    if let Some(diff_view) = file_diff_view {
-                        // ── Diff view mode ──────────────────
-                        el.child(divider2)
-                            .child(render_diff_panel(diff_view, panel_width, cx))
-                    } else {
-                        // ── Commit metadata + changed files ─
-                        let at = CommitId(d.full_sha.as_ref().to_string());
-                        let files = changed_files.clone();
-                        let files_for_click = changed_files.clone();
-                        el.child(divider2)
-                            .child(render_detail_panel(d, at, files.unwrap_or(None), files_for_click.unwrap_or(None), panel_width, cx))
+                // ── Right panel: commit panel OR detail panel ───────────
+                let panel_drag_start_width = panel_width;
+
+                // Build divider 2 (shared between both panel modes).
+                let divider2 = div()
+                    .id("divider-panel")
+                    .w(px(4.))
+                    .flex_shrink_0()
+                    .h_full()
+                    .bg(rgb(BG_SURFACE))
+                    .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
+                    .cursor_col_resize()
+                    .on_drag(
+                        DividerDrag { kind: DividerKind::Panel, start_x: 0.0, start_width: panel_drag_start_width },
+                        move |drag, position, _window, cx| {
+                            let drag_with_pos = DividerDrag {
+                                kind: drag.kind,
+                                start_x: f32::from(position.x),
+                                start_width: panel_drag_start_width,
+                            };
+                            cx.new(move |_| {
+                                let _ = drag_with_pos;
+                                DividerGhost
+                            })
+                        },
+                    );
+
+                if commit_panel_open {
+                    // ── Commit Panel mode (T025) ──────────────
+                    if let Some(panel_state) = commit_panel.clone() {
+                        body_row = body_row
+                            .child(divider2)
+                            .child(render_commit_panel(panel_state, panel_width, commit_msg_focus.clone(), cx));
                     }
-                });
+                } else {
+                    // ── Normal commit detail panel (existing behaviour) ──
+                    body_row = body_row.when_some(detail, |el, d| {
+                        if let Some(diff_view) = file_diff_view {
+                            // ── Diff view mode ──────────────────
+                            el.child(divider2)
+                                .child(render_diff_panel(diff_view, panel_width, cx))
+                        } else {
+                            // ── Commit metadata + changed files ─
+                            let at = CommitId(d.full_sha.as_ref().to_string());
+                            let files = changed_files.clone();
+                            let files_for_click = changed_files.clone();
+                            el.child(divider2)
+                                .child(render_detail_panel(d, at, files.unwrap_or(None), files_for_click.unwrap_or(None), panel_width, cx))
+                        }
+                    });
+                }
 
                 body_row
             })
@@ -1888,6 +2284,17 @@ impl Render for KagiApp {
             .when_some(cherry_pick_modal, |el, modal| {
                 el.child(render_cherry_pick_modal(modal, cx))
             })
+            // ── Commit plan modal overlay (T025) ─────────────
+            .when(
+                commit_panel_open && commit_panel.as_ref().and_then(|p| p.plan_modal.as_ref()).is_some(),
+                |el| {
+                    if let Some(Some(plan_modal)) = commit_panel.as_ref().map(|p| p.plan_modal.clone()) {
+                        el.child(render_commit_plan_modal(plan_modal, cx))
+                    } else {
+                        el
+                    }
+                },
+            )
             // ── Status footer (T017) — last operation result ─
             .child(render_status_footer(status_footer))
             .into_any()
@@ -3932,6 +4339,862 @@ fn render_cherry_pick_modal(
 }
 
 // ──────────────────────────────────────────────────────────────
+// Commit Panel renderer (T025)
+// ──────────────────────────────────────────────────────────────
+
+/// Render the Commit Panel: unstaged/staged sections + diff viewer + message input + commit button.
+///
+/// Layout (top to bottom in right panel):
+/// 1. Unstaged (N)  [flat|tree] toggle
+/// 2. Staged (M)
+/// 3. Diff viewer (flex_1)
+/// 4. Message input (T014 pattern — simple key handler)
+/// 5. Warning (if unstaged remain)
+/// 6. Commit button (disabled when staged=0 or message empty)
+fn render_commit_panel(
+    panel: CommitPanelState,
+    panel_width: f32,
+    focus_handle: Option<FocusHandle>,
+    cx: &mut Context<KagiApp>,
+) -> impl IntoElement {
+    const COLOR_DIR: u32      = 0x6c7086;
+
+    let tree_view = panel.tree_view;
+    let unstaged_count = panel.unstaged.len();
+    let staged_count = panel.staged.len();
+    let can_commit = panel.can_commit();
+    let has_unstaged_warning = !panel.unstaged.is_empty() && staged_count > 0;
+    let commit_msg = panel.commit_msg.clone();
+    let diff_view = panel.diff_view.clone();
+    let selected_file = panel.selected_file.clone();
+
+    // ── Tree view toggle ─────────────────────────────────────
+    let toggle_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+        this.toggle_commit_panel_tree_view();
+        cx.notify();
+    });
+
+    let toggle_btn = div()
+        .id("cp-tree-toggle")
+        .px_1()
+        .py_px()
+        .rounded_sm()
+        .bg(rgb(BG_SURFACE))
+        .text_xs()
+        .text_color(rgb(if tree_view { COLOR_BRANCH } else { TEXT_MUTED }))
+        .on_click(toggle_click)
+        .hover(|s| s.bg(rgb(BG_SELECTED)))
+        .child(SharedString::from(if tree_view { "tree" } else { "flat" }));
+
+    // ── Helper: build file rows for a section ────────────────
+    // Returns a Vec of (element, depth, name, is_conflicted) as IntoElement.
+    // We render inline to avoid capture issues.
+
+    // ── Unstaged section ─────────────────────────────────────
+    let mut unstaged_section = div()
+        .flex()
+        .flex_col()
+        .flex_shrink_0();
+
+    // Header row
+    unstaged_section = unstaged_section.child(
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .px_2()
+            .py_1()
+            .flex_shrink_0()
+            .child(
+                div()
+                    .flex_1()
+                    .text_sm()
+                    .text_color(rgb(TEXT_LABEL))
+                    .child(SharedString::from(format!("Unstaged ({})", unstaged_count))),
+            )
+            .child(toggle_btn),
+    );
+
+    if tree_view {
+        // Tree view: use build_file_tree
+        let tree_rows = file_tree::build_file_tree(&panel.unstaged);
+        for row in &tree_rows {
+            match row {
+                file_tree::TreeRow::Dir { depth, name } => {
+                    let indent = (*depth as f32) * 12.0;
+                    unstaged_section = unstaged_section.child(
+                        div()
+                            .id(SharedString::from(format!("cp-us-dir-{}", name.as_ref())))
+                            .pl(px(8.0 + indent))
+                            .text_xs()
+                            .text_color(rgb(COLOR_DIR))
+                            .child(name.clone()),
+                    );
+                }
+                file_tree::TreeRow::File { depth, name, file_index, change } => {
+                    let indent = (*depth as f32) * 12.0;
+                    let fi = *file_index;
+                    // Look up the original path to check if conflicted
+                    let is_conflicted_file = panel.unstaged.get(fi)
+                        .map(|f| panel.is_conflicted(&f.path))
+                        .unwrap_or(false);
+                    let (badge, badge_color, _) = status_badge(change, is_conflicted_file);
+                    let is_sel = selected_file == Some(CommitPanelFileRef::Unstaged { index: fi });
+                    let file_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                        this.select_commit_panel_file(CommitPanelFileRef::Unstaged { index: fi });
+                        cx.notify();
+                    });
+                    let stage_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                        this.do_stage_file(fi);
+                        cx.notify();
+                    });
+                    let row_bg = if is_conflicted_file { 0x3a1c1c } else if is_sel { BG_SELECTED } else { BG_PANEL };
+                    let mut file_row = div()
+                        .id(("cp-us-file", fi))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .pl(px(8.0 + indent))
+                        .pr(px(2.0))
+                        .py_px()
+                        .bg(rgb(row_bg))
+                        .hover(|s| s.bg(rgb(BG_SURFACE)))
+                        .on_click(file_click)
+                        .child(
+                            div()
+                                .w(px(12.))
+                                .flex_shrink_0()
+                                .text_xs()
+                                .text_color(rgb(badge_color))
+                                .child(SharedString::from(badge)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_xs()
+                                .text_color(rgb(TEXT_MAIN))
+                                .overflow_hidden()
+                                .truncate()
+                                .child(name.clone()),
+                        );
+                    if !is_conflicted_file {
+                        file_row = file_row.child(
+                            div()
+                                .id(("cp-us-stage-btn", fi))
+                                .px_1()
+                                .py_px()
+                                .rounded_sm()
+                                .flex_shrink_0()
+                                .bg(rgb(COLOR_SUCCESS))
+                                .text_xs()
+                                .text_color(rgb(BG_BASE))
+                                .on_click(stage_click)
+                                .hover(|s| s.opacity(0.8))
+                                .child(SharedString::from("Stage")),
+                        );
+                    } else {
+                        file_row = file_row.child(
+                            div()
+                                .id(("cp-us-conflict-badge", fi))
+                                .px_1()
+                                .py_px()
+                                .rounded_sm()
+                                .flex_shrink_0()
+                                .bg(rgb(0xf38ba8))
+                                .text_xs()
+                                .text_color(rgb(BG_BASE))
+                                .child(SharedString::from("Conflict")),
+                        );
+                    }
+                    unstaged_section = unstaged_section.child(file_row);
+                }
+            }
+        }
+    } else {
+        // Flat view
+        for (fi, f) in panel.unstaged.iter().enumerate() {
+            let name = f.path.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| f.path.to_string_lossy().into_owned());
+            let is_conflicted_file = panel.is_conflicted(&f.path);
+            let (badge, badge_color, _) = status_badge(&f.change, is_conflicted_file);
+            let is_sel = selected_file == Some(CommitPanelFileRef::Unstaged { index: fi });
+            let file_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                this.select_commit_panel_file(CommitPanelFileRef::Unstaged { index: fi });
+                cx.notify();
+            });
+            let stage_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                this.do_stage_file(fi);
+                cx.notify();
+            });
+            // Row background: conflicted files get red tint
+            let row_bg = if is_conflicted_file { 0x3a1c1c } else if is_sel { BG_SELECTED } else { BG_PANEL };
+            let mut file_row = div()
+                .id(("cp-us-flat-file", fi))
+                .flex()
+                .flex_row()
+                .items_center()
+                .px_2()
+                .py_px()
+                .bg(rgb(row_bg))
+                .hover(|s| s.bg(rgb(BG_SURFACE)))
+                .on_click(file_click)
+                .child(
+                    div()
+                        .w(px(12.))
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(rgb(badge_color))
+                        .child(SharedString::from(badge)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .text_xs()
+                        .text_color(rgb(TEXT_MAIN))
+                        .overflow_hidden()
+                        .truncate()
+                        .child(SharedString::from(name)),
+                );
+            // Stage button only for non-conflicted files
+            if !is_conflicted_file {
+                file_row = file_row.child(
+                    div()
+                        .id(("cp-us-flat-stage-btn", fi))
+                        .px_1()
+                        .py_px()
+                        .rounded_sm()
+                        .flex_shrink_0()
+                        .bg(rgb(COLOR_SUCCESS))
+                        .text_xs()
+                        .text_color(rgb(BG_BASE))
+                        .on_click(stage_click)
+                        .hover(|s| s.opacity(0.8))
+                        .child(SharedString::from("Stage")),
+                );
+            } else {
+                file_row = file_row.child(
+                    div()
+                        .id(("cp-us-flat-conflict-badge", fi))
+                        .px_1()
+                        .py_px()
+                        .rounded_sm()
+                        .flex_shrink_0()
+                        .bg(rgb(0xf38ba8)) // red
+                        .text_xs()
+                        .text_color(rgb(BG_BASE))
+                        .child(SharedString::from("Conflict")),
+                );
+            }
+            unstaged_section = unstaged_section.child(file_row);
+        }
+    }
+
+    // ── Staged section ───────────────────────────────────────
+    let mut staged_section = div()
+        .flex()
+        .flex_col()
+        .flex_shrink_0()
+        .mt_1();
+
+    staged_section = staged_section.child(
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .px_2()
+            .py_1()
+            .flex_shrink_0()
+            .child(
+                div()
+                    .flex_1()
+                    .text_sm()
+                    .text_color(rgb(TEXT_LABEL))
+                    .child(SharedString::from(format!("Staged ({})", staged_count))),
+            ),
+    );
+
+    if tree_view {
+        let tree_rows = file_tree::build_file_tree(&panel.staged);
+        for row in &tree_rows {
+            match row {
+                file_tree::TreeRow::Dir { depth, name } => {
+                    let indent = (*depth as f32) * 12.0;
+                    staged_section = staged_section.child(
+                        div()
+                            .id(SharedString::from(format!("cp-st-dir-{}", name.as_ref())))
+                            .pl(px(8.0 + indent))
+                            .text_xs()
+                            .text_color(rgb(COLOR_DIR))
+                            .child(name.clone()),
+                    );
+                }
+                file_tree::TreeRow::File { depth, name, file_index, change } => {
+                    let indent = (*depth as f32) * 12.0;
+                    let fi = *file_index;
+                    let (badge, badge_color, _conflicted) = status_badge(change, false);
+                    let is_sel = selected_file == Some(CommitPanelFileRef::Staged { index: fi });
+                    let file_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                        this.select_commit_panel_file(CommitPanelFileRef::Staged { index: fi });
+                        cx.notify();
+                    });
+                    let unstage_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                        this.do_unstage_file(fi);
+                        cx.notify();
+                    });
+                    staged_section = staged_section.child(
+                        div()
+                            .id(("cp-st-file", fi))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .pl(px(8.0 + indent))
+                            .pr(px(2.0))
+                            .py_px()
+                            .bg(rgb(if is_sel { BG_SELECTED } else { BG_PANEL }))
+                            .hover(|s| s.bg(rgb(BG_SURFACE)))
+                            .on_click(file_click)
+                            .child(
+                                div()
+                                    .w(px(12.))
+                                    .flex_shrink_0()
+                                    .text_xs()
+                                    .text_color(rgb(badge_color))
+                                    .child(SharedString::from(badge)),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_xs()
+                                    .text_color(rgb(TEXT_MAIN))
+                                    .overflow_hidden()
+                                    .truncate()
+                                    .child(name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .id(("cp-st-unstage-btn", fi))
+                                    .px_1()
+                                    .py_px()
+                                    .rounded_sm()
+                                    .flex_shrink_0()
+                                    .bg(rgb(COLOR_WARNING))
+                                    .text_xs()
+                                    .text_color(rgb(BG_BASE))
+                                    .on_click(unstage_click)
+                                    .hover(|s| s.opacity(0.8))
+                                    .child(SharedString::from("Unstage")),
+                            ),
+                    );
+                }
+            }
+        }
+    } else {
+        for (fi, f) in panel.staged.iter().enumerate() {
+            let name = f.path.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| f.path.to_string_lossy().into_owned());
+            let (badge, badge_color, _conflicted) = status_badge(&f.change, false);
+            let is_sel = selected_file == Some(CommitPanelFileRef::Staged { index: fi });
+            let file_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                this.select_commit_panel_file(CommitPanelFileRef::Staged { index: fi });
+                cx.notify();
+            });
+            let unstage_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                this.do_unstage_file(fi);
+                cx.notify();
+            });
+            staged_section = staged_section.child(
+                div()
+                    .id(("cp-st-flat-file", fi))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .px_2()
+                    .py_px()
+                    .bg(rgb(if is_sel { BG_SELECTED } else { BG_PANEL }))
+                    .hover(|s| s.bg(rgb(BG_SURFACE)))
+                    .on_click(file_click)
+                    .child(
+                        div()
+                            .w(px(12.))
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(rgb(badge_color))
+                            .child(SharedString::from(badge)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .text_color(rgb(TEXT_MAIN))
+                            .overflow_hidden()
+                            .truncate()
+                            .child(SharedString::from(name)),
+                    )
+                    .child(
+                        div()
+                            .id(("cp-st-flat-unstage-btn", fi))
+                            .px_1()
+                            .py_px()
+                            .rounded_sm()
+                            .flex_shrink_0()
+                            .bg(rgb(COLOR_WARNING))
+                            .text_xs()
+                            .text_color(rgb(BG_BASE))
+                            .on_click(unstage_click)
+                            .hover(|s| s.opacity(0.8))
+                            .child(SharedString::from("Unstage")),
+                    ),
+            );
+        }
+    }
+
+    // ── Diff viewer ──────────────────────────────────────────
+    let diff_area: gpui::AnyElement = if let Some(dv) = diff_view {
+        let diff_row_count = dv.rows.len();
+        let rows_arc = std::sync::Arc::new(dv.rows);
+        let rows_for_list = rows_arc.clone();
+        uniform_list(
+            "cp-diff-list",
+            diff_row_count,
+            cx.processor(move |_this, range, _window, _cx| {
+                render_diff_rows(&rows_for_list, range)
+            }),
+        )
+        .flex_1()
+        .min_h(px(0.))
+        .into_any_element()
+    } else {
+        div()
+            .flex_1()
+            .min_h(px(0.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_xs()
+            .text_color(rgb(TEXT_MUTED))
+            .child(SharedString::from("Select a file to view diff"))
+            .into_any_element()
+    };
+
+    // ── Commit message input (T014 simple pattern) ────────────
+    let msg_display = SharedString::from(format!("{}_", commit_msg));
+    let key_handler = cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+        this.handle_commit_msg_key(event);
+        cx.notify();
+    });
+    let msg_input_wrapper = if let Some(ref fh) = focus_handle {
+        div()
+            .track_focus(fh)
+            .on_key_down(key_handler)
+            .px_2()
+            .py_1()
+            .bg(rgb(BG_BASE))
+            .rounded_sm()
+            .text_xs()
+            .text_color(rgb(TEXT_MAIN))
+            .child(msg_display)
+            .into_any_element()
+    } else {
+        div()
+            .px_2()
+            .py_1()
+            .bg(rgb(BG_BASE))
+            .rounded_sm()
+            .text_xs()
+            .text_color(rgb(TEXT_MAIN))
+            .child(msg_display)
+            .into_any_element()
+    };
+
+    // ── Commit button ─────────────────────────────────────────
+    let commit_btn = if can_commit {
+        let commit_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+            this.open_commit_plan_modal();
+            cx.notify();
+        });
+        div()
+            .id("cp-commit-btn")
+            .mt_1()
+            .w_full()
+            .px_2()
+            .py_1()
+            .rounded_sm()
+            .bg(rgb(COLOR_BRANCH))
+            .text_sm()
+            .text_color(rgb(BG_BASE))
+            .on_click(commit_click)
+            .hover(|s| s.opacity(0.85))
+            .child(SharedString::from(format!("Commit ({} file{})",
+                staged_count,
+                if staged_count == 1 { "" } else { "s" }
+            )))
+            .into_any_element()
+    } else {
+        div()
+            .id("cp-commit-btn-disabled")
+            .mt_1()
+            .w_full()
+            .px_2()
+            .py_1()
+            .rounded_sm()
+            .bg(rgb(BG_SURFACE))
+            .text_sm()
+            .text_color(rgb(TEXT_MUTED))
+            .child(SharedString::from("Commit (stage files + enter message)"))
+            .into_any_element()
+    };
+
+    // ── Assemble panel ───────────────────────────────────────
+    div()
+        .w(px(panel_width))
+        .flex_shrink_0()
+        .h_full()
+        .flex()
+        .flex_col()
+        .bg(rgb(BG_PANEL))
+        // Header
+        .child(
+            div()
+                .flex_shrink_0()
+                .px_2()
+                .py_1()
+                .bg(rgb(BG_SURFACE))
+                .text_sm()
+                .text_color(rgb(TEXT_MAIN))
+                .child(SharedString::from("Commit Panel")),
+        )
+        // Unstaged section (scrollable within fixed height)
+        .child(
+            div()
+                .id("cp-unstaged-scroll")
+                .flex_shrink_0()
+                .max_h(px(150.))
+                .overflow_y_scroll()
+                .child(unstaged_section),
+        )
+        // Staged section (scrollable within fixed height)
+        .child(
+            div()
+                .id("cp-staged-scroll")
+                .flex_shrink_0()
+                .max_h(px(150.))
+                .overflow_y_scroll()
+                .child(staged_section),
+        )
+        // Diff area (flex_1 — takes remaining space)
+        .child(
+            div()
+                .id("cp-diff-area")
+                .flex_1()
+                .min_h(px(0.))
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .px_2()
+                        .py_px()
+                        .bg(rgb(BG_SURFACE))
+                        .text_xs()
+                        .text_color(rgb(TEXT_MUTED))
+                        .child(SharedString::from("diff")),
+                )
+                .child(diff_area),
+        )
+        // Commit footer: message input + warning + button
+        .child(
+            div()
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .px_2()
+                .py_1()
+                .gap_1()
+                .bg(rgb(BG_SURFACE))
+                // Message label + input
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(TEXT_LABEL))
+                        .child(SharedString::from("Commit message")),
+                )
+                .child(msg_input_wrapper)
+                // Unstaged warning
+                .when(has_unstaged_warning, |el| {
+                    el.child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(COLOR_WARNING))
+                            .child(SharedString::from(format!(
+                                "⚠ {} unstaged change(s) not included",
+                                unstaged_count
+                            ))),
+                    )
+                })
+                // Commit button
+                .child(commit_btn),
+        )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Commit Plan modal renderer (T025)
+// ──────────────────────────────────────────────────────────────
+
+/// Render the commit plan confirmation overlay.
+///
+/// Layout (absolute, full-screen):
+/// - Semi-transparent dark backdrop
+/// - Centred modal card:
+///   - Title
+///   - Preview files (staged files)
+///   - Warnings (unstaged remain)
+///   - Error message (if execute failed)
+///   - `[Cancel]` always; `[Commit]` when no blockers
+fn render_commit_plan_modal(
+    modal: CommitPlanModal,
+    cx: &mut Context<KagiApp>,
+) -> impl IntoElement {
+    let plan = modal.plan.clone();
+    let has_blockers = !plan.blockers.is_empty();
+
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+        this.cancel_commit_plan_modal();
+        cx.notify();
+    });
+
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+        this.confirm_commit();
+        cx.notify();
+    });
+
+    // ── Preview file tree ────────────────────────────────────
+    let tree_rows = file_tree::build_file_tree(&plan.preview_files);
+    let mut preview_col = div().flex().flex_col().gap_px()
+        .child(
+            div()
+                .text_sm()
+                .text_color(rgb(TEXT_LABEL))
+                .mb_1()
+                .child(SharedString::from(format!(
+                    "Staging ({} file{})",
+                    plan.preview_files.len(),
+                    if plan.preview_files.len() == 1 { "" } else { "s" }
+                ))),
+        );
+
+    for row in &tree_rows {
+        match row {
+            file_tree::TreeRow::Dir { depth, name } => {
+                let indent = (*depth as f32) * 12.0;
+                preview_col = preview_col.child(
+                    div()
+                        .id(SharedString::from(format!("cpk-dir-{}", name.as_ref())))
+                        .pl(px(indent))
+                        .text_xs()
+                        .text_color(rgb(0x6c7086u32))
+                        .child(name.clone()),
+                );
+            }
+            file_tree::TreeRow::File { depth, name, file_index, change } => {
+                let indent = (*depth as f32) * 12.0;
+                let (badge, badge_color, _) = status_badge(change, false);
+                let _ = file_index;
+                preview_col = preview_col.child(
+                    div()
+                        .id(("cpk-file", *file_index))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .pl(px(indent))
+                        .child(
+                            div()
+                                .w(px(14.))
+                                .flex_shrink_0()
+                                .text_xs()
+                                .text_color(rgb(badge_color))
+                                .child(SharedString::from(badge)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_xs()
+                                .text_color(rgb(TEXT_MAIN))
+                                .overflow_hidden()
+                                .child(name.clone()),
+                        ),
+                );
+            }
+        }
+    }
+
+    let mut card = div()
+        .w(px(480.))
+        .bg(rgb(BG_MODAL))
+        .rounded_lg()
+        .p_4()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(
+            div()
+                .text_color(rgb(TEXT_MAIN))
+                .text_xl()
+                .child(SharedString::from(plan.title.clone())),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_LABEL))
+                        .child(SharedString::from("Current")),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .text_sm()
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_MAIN))
+                                .child(SharedString::from(plan.current.head.clone())),
+                        )
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_SUB))
+                                .child(SharedString::from(format!("[{}]", plan.current.dirty))),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_LABEL))
+                        .child(SharedString::from("\u{2192} Predicted")),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_MAIN))
+                        .child(SharedString::from(plan.predicted.head.clone())),
+                ),
+        )
+        // Preview files
+        .child(preview_col);
+
+    // Warnings
+    if !plan.warnings.is_empty() {
+        let mut warn_col = div().flex().flex_col().gap_1();
+        for w in &plan.warnings {
+            warn_col = warn_col.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(COLOR_WARNING))
+                    .overflow_hidden()
+                    .child(SharedString::from(format!("\u{26a0} {}", w))),
+            );
+        }
+        card = card.child(warn_col);
+    }
+
+    // Blockers
+    if !plan.blockers.is_empty() {
+        let mut block_col = div().flex().flex_col().gap_1();
+        for b in &plan.blockers {
+            block_col = block_col.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(COLOR_BLOCKER))
+                    .overflow_hidden()
+                    .child(SharedString::from(format!("\u{2717} {}", b))),
+            );
+        }
+        card = card.child(block_col);
+    }
+
+    // Error
+    if let Some(ref err) = modal.error {
+        card = card.child(
+            div()
+                .text_sm()
+                .text_color(rgb(COLOR_BLOCKER))
+                .overflow_hidden()
+                .child(err.clone()),
+        );
+    }
+
+    let mut button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(
+            div()
+                .id("commit-plan-cancel")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(BG_SURFACE))
+                .text_sm()
+                .text_color(rgb(TEXT_MAIN))
+                .on_click(cancel_handler)
+                .hover(|style| style.bg(rgb(BG_SELECTED)))
+                .child(SharedString::from("Cancel")),
+        );
+
+    if !has_blockers {
+        button_row = button_row.child(
+            div()
+                .id("commit-plan-confirm")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(COLOR_BRANCH))
+                .text_sm()
+                .text_color(rgb(BG_BASE))
+                .on_click(confirm_handler)
+                .hover(|style| style.opacity(0.85))
+                .child(SharedString::from("Commit")),
+        );
+    }
+
+    card = card.child(button_row);
+
+    div()
+        .size_full()
+        .absolute()
+        .top_0()
+        .left_0()
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .bg(rgb(BG_MODAL_OVERLAY))
+                .opacity(0.65),
+        )
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .items_center()
+                .child(card),
+        )
+}
+
+// ──────────────────────────────────────────────────────────────
 // Application entry point helper
 // ──────────────────────────────────────────────────────────────
 
@@ -3940,6 +5203,9 @@ pub fn run_app(app_state: KagiApp) {
     use gpui::{Application, Bounds, WindowBounds, WindowOptions, size};
 
     Application::new().run(move |cx: &mut App| {
+        // T025: initialize gpui-component (registers key bindings, themes, etc.)
+        gpui_component::init(cx);
+
         let bounds = Bounds::centered(None, size(px(1024.), px(768.)), cx);
         cx.open_window(
             WindowOptions {

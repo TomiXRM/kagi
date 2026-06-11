@@ -6,6 +6,7 @@ use kagi::git::{Head, open_repository, snapshot};
 use kagi::git::oplog::{OpLogEntry, OpOutcome, append_oplog};
 use kagi::git::ops::StateSummary;
 use ui::{KagiApp, StashPushModal, StashApplyModal, CherryPickModal, run_app};
+use ui::commit_panel::CommitPanelState;
 
 /// Write an oplog entry and emit footer log.  Non-fatal on write error.
 fn record_headless_op(
@@ -573,6 +574,143 @@ fn main() {
                 eprintln!("[kagi] plan: cherry-pick error: {}", e);
             }
         }
+    }
+
+    // ── T025: headless commit panel env vars ─────────────────
+    //
+    // KAGI_COMMIT_PANEL=1: open commit panel and log counts.
+    // KAGI_STAGE_FILE=<path>: stage one file and log counts.
+    // KAGI_UNSTAGE_FILE=<path>: unstage one file and log counts.
+    // KAGI_COMMIT_MSG=<msg> + KAGI_AUTO_CONFIRM=1: plan + execute commit.
+    // All operations use fixture/tempdir repos only.
+
+    if std::env::var("KAGI_COMMIT_PANEL").as_deref() == Ok("1") {
+        let mut panel = CommitPanelState::from_repo(&repo_path);
+        eprintln!(
+            "[kagi] commit-panel: unstaged={} staged={}",
+            panel.unstaged.len(),
+            panel.staged.len()
+        );
+
+        // KAGI_STAGE_FILE: stage a file and log updated counts.
+        if let Ok(path_str) = std::env::var("KAGI_STAGE_FILE") {
+            use std::path::Path;
+            let repo_s = git2::Repository::open(&repo_path).ok();
+            if let Some(repo_s) = repo_s {
+                match kagi::git::stage_file(&repo_s, Path::new(&path_str)) {
+                    Ok(_) => {
+                        eprintln!("[kagi] staged: {}", path_str);
+                        panel.reload_status(&repo_path);
+                        eprintln!(
+                            "[kagi] commit-panel: unstaged={} staged={}",
+                            panel.unstaged.len(),
+                            panel.staged.len()
+                        );
+                    }
+                    Err(e) => eprintln!("[kagi] KAGI_STAGE_FILE error: {}", e),
+                }
+            }
+        }
+
+        // KAGI_UNSTAGE_FILE: unstage a file and log updated counts.
+        if let Ok(path_str) = std::env::var("KAGI_UNSTAGE_FILE") {
+            use std::path::Path;
+            let repo_u = git2::Repository::open(&repo_path).ok();
+            if let Some(repo_u) = repo_u {
+                match kagi::git::unstage_file(&repo_u, Path::new(&path_str)) {
+                    Ok(_) => {
+                        eprintln!("[kagi] unstaged: {}", path_str);
+                        panel.reload_status(&repo_path);
+                        eprintln!(
+                            "[kagi] commit-panel: unstaged={} staged={}",
+                            panel.unstaged.len(),
+                            panel.staged.len()
+                        );
+                    }
+                    Err(e) => eprintln!("[kagi] KAGI_UNSTAGE_FILE error: {}", e),
+                }
+            }
+        }
+
+        // KAGI_COMMIT_MSG + KAGI_AUTO_CONFIRM=1: plan and execute commit.
+        if let Ok(commit_msg) = std::env::var("KAGI_COMMIT_MSG") {
+            let repo_c = git2::Repository::open(&repo_path).ok();
+            if let Some(repo_c) = repo_c {
+                match kagi::git::plan_commit(&repo_c, &commit_msg) {
+                    Ok(plan) => {
+                        eprintln!(
+                            "[kagi] plan: commit blockers={} warnings={}",
+                            plan.blockers.len(),
+                            plan.warnings.len()
+                        );
+                        for w in &plan.warnings {
+                            eprintln!("[kagi] plan: warning: {}", w);
+                        }
+                        for b in &plan.blockers {
+                            eprintln!("[kagi] plan: blocker: {}", b);
+                        }
+
+                        let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
+                        if auto_confirm && plan.blockers.is_empty() {
+                            let repo_e = git2::Repository::open(&repo_path).ok();
+                            if let Some(repo_e) = repo_e {
+                                match kagi::git::execute_commit(&repo_e, &commit_msg) {
+                                    Ok(new_id) => {
+                                        eprintln!("[kagi] executed: commit {}", new_id.short());
+                                        // Verify: check new commit exists and untracked remain.
+                                        let mut repo_v = match git2::Repository::open(&repo_path) {
+                                            Ok(r) => r,
+                                            Err(e) => {
+                                                eprintln!("[kagi] verify: repo open error: {}", e.message());
+                                                run_app(app_state);
+                                                return;
+                                            }
+                                        };
+                                        match kagi::git::snapshot(&mut repo_v, 10_000) {
+                                            Ok(snap) => {
+                                                eprintln!(
+                                                    "[kagi] verified: commit count={}",
+                                                    snap.commits.len()
+                                                );
+                                                if let Some(c) = snap.commits.first() {
+                                                    eprintln!("[kagi] verified: HEAD message: {}", c.summary);
+                                                }
+                                                let is_dirty = snap.status.is_dirty();
+                                                if is_dirty {
+                                                    eprintln!("[kagi] verified: working tree dirty (unstaged remain)");
+                                                } else {
+                                                    eprintln!("[kagi] verified: working tree clean");
+                                                }
+                                                record_headless_op(
+                                                    "commit",
+                                                    StateSummary { head: snap.head.display(), dirty: plan.current.dirty.clone() },
+                                                    OpOutcome::Success {
+                                                        after: StateSummary { head: snap.head.display(), dirty: if is_dirty { "dirty".to_string() } else { "clean".to_string() } }
+                                                    },
+                                                    &repo_path,
+                                                );
+                                            }
+                                            Err(e) => eprintln!("[kagi] verify: snapshot error: {}", e),
+                                        }
+                                    }
+                                    Err(e) => eprintln!("[kagi] execute_commit error: {}", e),
+                                }
+                            }
+                        } else if auto_confirm && !plan.blockers.is_empty() {
+                            eprintln!(
+                                "[kagi] KAGI_AUTO_CONFIRM=1 but commit has {} blocker(s), skipping",
+                                plan.blockers.len()
+                            );
+                        }
+                    }
+                    Err(e) => eprintln!("[kagi] plan_commit error: {}", e),
+                }
+            }
+        }
+
+        // Set up commit panel state in app_state for UI inspection.
+        app_state.commit_panel = Some(panel);
+        app_state.commit_panel_open = true;
     }
 
     run_app(app_state);

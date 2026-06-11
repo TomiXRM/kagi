@@ -1,0 +1,219 @@
+//! Commit Panel — T025
+//!
+//! GitKraken 風の作業台: staging / unstaging / diff / commit message / commit button。
+//! `src/git/staging.rs` (T024) の 6 API のみを使う。
+//!
+//! ## headless 検証 env vars
+//! - `KAGI_COMMIT_PANEL=1`       起動時に Commit Panel を開き件数をログ
+//! - `KAGI_STAGE_FILE=<path>`    起動時に1ファイル stage
+//! - `KAGI_UNSTAGE_FILE=<path>`  起動時に1ファイル unstage
+//! - `KAGI_COMMIT_MSG=<msg>`     コミットメッセージ設定 + KAGI_AUTO_CONFIRM=1 で実際にコミット
+
+use std::path::PathBuf;
+
+use gpui::SharedString;
+
+use kagi::git::{
+    ChangeKind, DiffLineKind, FileStatus,
+};
+
+use super::FileDiffView;
+
+// ──────────────────────────────────────────────────────────────
+// CommitPanelFileRef — which file is selected in the panel
+// ──────────────────────────────────────────────────────────────
+
+/// Identifies a selected file in the Commit Panel: which section (staged/unstaged)
+/// and its index within that section.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CommitPanelFileRef {
+    /// File is in the Unstaged section (unstaged or untracked).
+    Unstaged { index: usize },
+    /// File is in the Staged section.
+    Staged { index: usize },
+}
+
+// ──────────────────────────────────────────────────────────────
+// CommitPlanModal — plan confirmation for commit
+// ──────────────────────────────────────────────────────────────
+
+/// State for an in-progress commit plan confirmation.
+#[derive(Clone)]
+pub struct CommitPlanModal {
+    /// The computed plan (warnings for unstaged remains, preview_files = staged).
+    pub plan: std::sync::Arc<kagi::git::ops::OperationPlan>,
+    /// Error message to show if execute or preflight failed.
+    pub error: Option<SharedString>,
+}
+
+// ──────────────────────────────────────────────────────────────
+// CommitPanelState — all mutable state for the commit panel
+// ──────────────────────────────────────────────────────────────
+
+/// All mutable state for the Commit Panel.
+///
+/// Stored in `KagiApp` and reset on `reload()`.
+#[derive(Clone)]
+pub struct CommitPanelState {
+    /// Files in the unstaged section (modified + untracked, including conflicted).
+    pub unstaged: Vec<FileStatus>,
+    /// Files in the staged section.
+    pub staged: Vec<FileStatus>,
+    /// Paths of conflicted files (subset of unstaged — these cannot be staged).
+    pub conflicted_paths: std::collections::HashSet<PathBuf>,
+    /// Currently selected file (for diff display).
+    pub selected_file: Option<CommitPanelFileRef>,
+    /// Pre-rendered diff for the selected file (None = not yet loaded or failed).
+    pub diff_view: Option<FileDiffView>,
+    /// Commit message text (simple String; IME fallback — T014 pattern).
+    pub commit_msg: String,
+    /// When Some, the commit plan confirmation modal is shown.
+    pub plan_modal: Option<CommitPlanModal>,
+    /// Whether the file list is in tree view (true) or flat view (false).
+    pub tree_view: bool,
+}
+
+impl CommitPanelState {
+    /// Create a new CommitPanelState from the current repo status.
+    pub fn from_repo(repo_path: &PathBuf) -> Self {
+        let mut state = CommitPanelState {
+            unstaged: Vec::new(),
+            staged: Vec::new(),
+            conflicted_paths: std::collections::HashSet::new(),
+            selected_file: None,
+            diff_view: None,
+            commit_msg: String::new(),
+            plan_modal: None,
+            tree_view: false,
+        };
+        state.reload_status(repo_path);
+        state
+    }
+
+    /// Returns true if the given unstaged file path is conflicted (cannot be staged).
+    pub fn is_conflicted(&self, path: &PathBuf) -> bool {
+        self.conflicted_paths.contains(path)
+    }
+
+    /// Reload unstaged/staged lists from the repository.
+    pub fn reload_status(&mut self, repo_path: &PathBuf) {
+        use kagi::git::working_tree_status;
+        let repo = match git2::Repository::open(repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] commit_panel: repo open error: {}", e.message());
+                return;
+            }
+        };
+        match working_tree_status(&repo) {
+            Ok(status) => {
+                // Track conflicted paths for UI (these cannot be staged).
+                self.conflicted_paths = status.conflicted.iter().cloned().collect();
+
+                // Unstaged = modified + untracked combined
+                let mut unstaged = status.unstaged;
+                // Append untracked as Added entries
+                for p in &status.untracked {
+                    unstaged.push(FileStatus {
+                        path: p.clone(),
+                        change: ChangeKind::Added,
+                    });
+                }
+                // Append conflicted as non-stageable entries (shown in unstaged section)
+                for p in &status.conflicted {
+                    unstaged.push(FileStatus {
+                        path: p.clone(),
+                        change: ChangeKind::Modified, // displayed with "C" badge via is_conflicted()
+                    });
+                }
+                self.unstaged = unstaged;
+                self.staged = status.staged;
+                // Invalidate diff cache on status change
+                self.diff_view = None;
+                self.selected_file = None;
+            }
+            Err(e) => {
+                eprintln!("[kagi] commit_panel: working_tree_status error: {}", e);
+            }
+        }
+    }
+
+    /// Return true if commit is possible (staged > 0 and message non-empty).
+    pub fn can_commit(&self) -> bool {
+        !self.staged.is_empty() && !self.commit_msg.trim().is_empty()
+    }
+
+    /// Total number of "changes" in the working tree (for WIP badge label).
+    pub fn total_changes(&self) -> usize {
+        self.unstaged.len() + self.staged.len()
+    }
+
+    /// Load the diff for the given file reference and store in diff_view.
+    pub fn load_diff(&mut self, file_ref: CommitPanelFileRef, repo_path: &PathBuf) {
+        use kagi::git::{unstaged_file_diff, staged_file_diff};
+
+        let (is_staged, path) = match &file_ref {
+            CommitPanelFileRef::Unstaged { index } => {
+                if let Some(f) = self.unstaged.get(*index) {
+                    (false, f.path.clone())
+                } else {
+                    return;
+                }
+            }
+            CommitPanelFileRef::Staged { index } => {
+                if let Some(f) = self.staged.get(*index) {
+                    (true, f.path.clone())
+                } else {
+                    return;
+                }
+            }
+        };
+
+        let repo = match git2::Repository::open(repo_path) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+
+        let file_diff_result = if is_staged {
+            staged_file_diff(&repo, &path)
+        } else {
+            unstaged_file_diff(&repo, &path)
+        };
+
+        match file_diff_result {
+            Ok(fd) => {
+                let added: usize = fd.hunks.iter().flat_map(|h| h.lines.iter())
+                    .filter(|l| l.kind == DiffLineKind::Added).count();
+                let removed: usize = fd.hunks.iter().flat_map(|h| h.lines.iter())
+                    .filter(|l| l.kind == DiffLineKind::Removed).count();
+                eprintln!("[kagi] commit-panel diff: {} (+{} -{})", path.display(), added, removed);
+                let fv = FileDiffView::from_file_diff(&fd, 0);
+                self.diff_view = Some(fv);
+            }
+            Err(e) => {
+                eprintln!("[kagi] commit-panel diff error: {}", e);
+                self.diff_view = None;
+            }
+        }
+        self.selected_file = Some(file_ref);
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Status badge helpers for staging panel
+// ──────────────────────────────────────────────────────────────
+
+/// Map a `ChangeKind` to a 1-char status badge and its colour.
+/// Returns `(char, color_u32, is_conflicted)`.
+pub fn status_badge(change: &ChangeKind, is_conflicted: bool) -> (&'static str, u32, bool) {
+    if is_conflicted {
+        return ("C", 0xf38ba8, true); // red background for conflicted
+    }
+    match change {
+        ChangeKind::Added      => ("A", 0xa6e3a1, false), // green
+        ChangeKind::Modified   => ("M", 0xf9e2af, false), // yellow
+        ChangeKind::Deleted    => ("D", 0xf38ba8, false), // red
+        ChangeKind::Renamed{..} => ("R", 0x89b4fa, false), // blue
+        ChangeKind::TypeChange => ("T", 0x585b70, false), // gray
+    }
+}

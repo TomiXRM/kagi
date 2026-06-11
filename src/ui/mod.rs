@@ -17,8 +17,14 @@ use gpui::{
 };
 
 use crate::git::{
-    ChangeKind, CommitId, FileDiff, DiffLineKind, FileStatus, Head, RepoSnapshot,
-    ops::{OperationPlan, execute_checkout, execute_create_branch, plan_checkout, plan_create_branch, preflight_check},
+    ChangeKind, CommitId, FileDiff, DiffLineKind, FileStatus, Head, RepoSnapshot, Stash,
+    ops::{
+        OperationPlan,
+        execute_checkout, execute_create_branch, plan_checkout, plan_create_branch, preflight_check,
+        plan_stash_push, execute_stash_push,
+        plan_stash_apply, execute_stash_apply,
+        preflight_check_stash,
+    },
 };
 use commit_list::{BadgeKind, CommitRow, build_commit_rows};
 use detail_panel::{CommitDetail, build_commit_details};
@@ -169,6 +175,39 @@ pub struct CreateBranchModal {
 }
 
 // ──────────────────────────────────────────────────────────────
+// StashPushModal — state for the stash push confirmation overlay (T015)
+// ──────────────────────────────────────────────────────────────
+
+/// State for an in-progress stash push confirmation.
+///
+/// The user may optionally type a stash message; the live plan is regenerated
+/// on each keystroke.
+#[derive(Clone)]
+pub struct StashPushModal {
+    /// Optional stash message (empty string → None passed to stash_save2).
+    pub input: String,
+    /// Live plan (re-generated each keystroke from `input`).
+    pub plan: Option<std::sync::Arc<OperationPlan>>,
+    /// Error message to show if execute or preflight failed.
+    pub error: Option<SharedString>,
+}
+
+// ──────────────────────────────────────────────────────────────
+// StashApplyModal — state for the stash apply confirmation overlay (T015)
+// ──────────────────────────────────────────────────────────────
+
+/// State for an in-progress stash apply confirmation.
+#[derive(Clone)]
+pub struct StashApplyModal {
+    /// The stash index to apply.
+    pub index: usize,
+    /// The computed plan.
+    pub plan: std::sync::Arc<OperationPlan>,
+    /// Error message to show if execute or preflight failed.
+    pub error: Option<SharedString>,
+}
+
+// ──────────────────────────────────────────────────────────────
 // KagiApp — root view
 // ──────────────────────────────────────────────────────────────
 
@@ -205,6 +244,16 @@ pub struct KagiApp {
     /// Focus handle used to receive keyboard events for the create-branch modal.
     /// Allocated on demand when the modal is first opened.
     pub modal_focus: Option<FocusHandle>,
+    /// Stash entries from the snapshot, ordered by index (newest = index 0).
+    pub stashes: Vec<Stash>,
+    /// Whether the working tree is dirty (used to show/hide the Stash button).
+    pub is_dirty: bool,
+    /// When `Some`, the stash push confirmation modal is visible.
+    pub stash_push_modal: Option<StashPushModal>,
+    /// When `Some`, the stash apply confirmation modal is visible.
+    pub stash_apply_modal: Option<StashApplyModal>,
+    /// Focus handle for the stash push modal text input.
+    pub stash_push_focus: Option<FocusHandle>,
 }
 
 impl KagiApp {
@@ -266,6 +315,9 @@ impl KagiApp {
             })
             .collect();
 
+        let is_dirty = snap.status.is_dirty();
+        let stashes = snap.stashes.clone();
+
         KagiApp {
             header,
             rows,
@@ -279,6 +331,11 @@ impl KagiApp {
             plan_modal: None,
             create_branch_modal: None,
             modal_focus: None,
+            stashes,
+            is_dirty,
+            stash_push_modal: None,
+            stash_apply_modal: None,
+            stash_push_focus: None,
         }
     }
 
@@ -297,6 +354,11 @@ impl KagiApp {
             plan_modal: None,
             create_branch_modal: None,
             modal_focus: None,
+            stashes: Vec::new(),
+            is_dirty: false,
+            stash_push_modal: None,
+            stash_apply_modal: None,
+            stash_push_focus: None,
         }
     }
 
@@ -344,6 +406,11 @@ impl KagiApp {
         self.plan_modal = None;
         self.create_branch_modal = None;
         self.modal_focus = None;
+        self.stashes = fresh.stashes;
+        self.is_dirty = fresh.is_dirty;
+        self.stash_push_modal = None;
+        self.stash_apply_modal = None;
+        self.stash_push_focus = None;
     }
 
     /// Open the checkout plan modal for `branch`.
@@ -553,6 +620,301 @@ impl KagiApp {
         }
 
         // Reload display data (new branch badge should appear).
+        self.reload();
+    }
+
+    // ── Stash push modal (T015) ──────────────────────────────
+
+    /// Open the stash push modal.
+    ///
+    /// Plans the stash push immediately and stores the result in
+    /// `self.stash_push_modal`.  The input is initially empty (no message).
+    pub fn open_stash_push_modal(&mut self, cx: &mut Context<Self>) {
+        if self.stash_push_focus.is_none() {
+            self.stash_push_focus = Some(cx.focus_handle());
+        }
+        self.stash_push_modal = Some(StashPushModal {
+            input: String::new(),
+            plan: None,
+            error: None,
+        });
+        self.replan_stash_push();
+    }
+
+    /// Close the stash push modal without making any changes.
+    pub fn cancel_stash_push_modal(&mut self) {
+        self.stash_push_modal = None;
+    }
+
+    /// Handle a key-down event for the stash push message input.
+    pub fn handle_stash_push_key(&mut self, event: &KeyDownEvent) {
+        let modal = match self.stash_push_modal.as_mut() {
+            Some(m) => m,
+            None => return,
+        };
+        let key = &event.keystroke.key;
+        let modifiers = &event.keystroke.modifiers;
+
+        if modifiers.platform || modifiers.control || modifiers.alt {
+            return;
+        }
+
+        if key == "backspace" {
+            modal.input.pop();
+        } else if key == "space" {
+            modal.input.push(' ');
+        } else if key.len() == 1 {
+            let ch = key.chars().next().unwrap();
+            if !ch.is_control() {
+                modal.input.push(ch);
+            }
+        }
+        modal.error = None;
+        self.replan_stash_push();
+    }
+
+    /// Re-generate the live stash push plan from the current input.
+    fn replan_stash_push(&mut self) {
+        let message_str = match self.stash_push_modal.as_ref() {
+            Some(m) => m.input.clone(),
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let mut repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] replan_stash_push: repo open error: {}", e.message());
+                return;
+            }
+        };
+        let msg_opt = if message_str.is_empty() { None } else { Some(message_str.as_str()) };
+        match plan_stash_push(&mut repo, msg_opt) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: stash-push blockers={} warnings={}",
+                    plan.blockers.len(),
+                    plan.warnings.len()
+                );
+                if let Some(ref mut modal) = self.stash_push_modal {
+                    modal.plan = Some(std::sync::Arc::new(plan));
+                }
+            }
+            Err(e) => {
+                eprintln!("[kagi] plan: stash-push error: {}", e);
+            }
+        }
+    }
+
+    /// Confirm the stash push plan: run preflight, execute, then reload.
+    ///
+    /// On failure the modal remains open and shows the error text.
+    pub fn confirm_stash_push(&mut self) {
+        let modal = match self.stash_push_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let plan = match modal.plan.as_ref() {
+            Some(p) => p.clone(),
+            None => return,
+        };
+        // Defence in depth: refuse if blockers exist.
+        if !plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: stash-push plan has blockers, not executing");
+            return;
+        }
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+
+        let mut repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                if let Some(ref mut m) = self.stash_push_modal {
+                    m.error = Some(SharedString::from(format!("Repo open error: {}", e.message())));
+                }
+                return;
+            }
+        };
+
+        // Preflight check (HEAD + stash count).
+        if let Err(e) = preflight_check_stash(&mut repo, &plan, plan.stash_count_at_plan) {
+            if let Some(ref mut m) = self.stash_push_modal {
+                m.error = Some(SharedString::from(format!("Preflight failed: {}", e)));
+            }
+            return;
+        }
+
+        let msg_opt: Option<&str> = if modal.input.is_empty() { None } else { Some(modal.input.as_str()) };
+
+        // Execute stash push.
+        if let Err(e) = execute_stash_push(&mut repo, msg_opt) {
+            if let Some(ref mut m) = self.stash_push_modal {
+                m.error = Some(SharedString::from(format!("Stash push failed: {}", e)));
+            }
+            return;
+        }
+
+        eprintln!("[kagi] executed: stash-push message={:?}", modal.input);
+
+        // Verify: check working tree is now clean and stash count increased.
+        let mut repo2 = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] verify: repo open error: {}", e.message());
+                self.reload();
+                return;
+            }
+        };
+        match crate::git::snapshot(&mut repo2, 10_000) {
+            Ok(snap) => {
+                let is_clean = !snap.status.is_dirty();
+                let stash_count = snap.stashes.len();
+                if is_clean {
+                    eprintln!("[kagi] verified: working tree clean after stash-push");
+                } else {
+                    eprintln!("[kagi] verify: working tree NOT clean after stash-push");
+                }
+                eprintln!("[kagi] verified: stash count={}", stash_count);
+            }
+            Err(e) => {
+                eprintln!("[kagi] verify: snapshot error: {}", e);
+            }
+        }
+
+        // Reload display data.
+        self.reload();
+    }
+
+    // ── Stash apply modal (T015) ─────────────────────────────
+
+    /// Open the stash apply modal for stash entry at `index`.
+    ///
+    /// Plans the apply using the current repository state and stores the result.
+    pub fn open_stash_apply_modal(&mut self, index: usize) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => {
+                eprintln!("[kagi] open_stash_apply_modal: no repo_path set");
+                return;
+            }
+        };
+
+        let mut repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] plan: stash-apply repo open error: {}", e.message());
+                return;
+            }
+        };
+
+        match plan_stash_apply(&mut repo, index) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: stash-apply index={} blockers={} warnings={}",
+                    index,
+                    plan.blockers.len(),
+                    plan.warnings.len()
+                );
+                self.stash_apply_modal = Some(StashApplyModal {
+                    index,
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                eprintln!("[kagi] plan: stash-apply error: {}", e);
+            }
+        }
+    }
+
+    /// Close the stash apply modal without making any changes.
+    pub fn cancel_stash_apply_modal(&mut self) {
+        self.stash_apply_modal = None;
+    }
+
+    /// Confirm the stash apply plan: run preflight, execute, then reload.
+    ///
+    /// On failure the modal remains open and shows the error text.
+    /// The stash entry is **never** removed (apply, not pop).
+    pub fn confirm_stash_apply(&mut self) {
+        let modal = match self.stash_apply_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let plan = modal.plan.clone();
+        // Defence in depth: refuse if blockers exist.
+        if !plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: stash-apply plan has blockers, not executing");
+            return;
+        }
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+
+        let mut repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                if let Some(ref mut m) = self.stash_apply_modal {
+                    m.error = Some(SharedString::from(format!("Repo open error: {}", e.message())));
+                }
+                return;
+            }
+        };
+
+        // Preflight check (HEAD + stash count).
+        if let Err(e) = preflight_check_stash(&mut repo, &plan, plan.stash_count_at_plan) {
+            if let Some(ref mut m) = self.stash_apply_modal {
+                m.error = Some(SharedString::from(format!("Preflight failed: {}", e)));
+            }
+            return;
+        }
+
+        // Execute stash apply (apply only — no pop, no drop).
+        if let Err(e) = execute_stash_apply(&mut repo, modal.index) {
+            if let Some(ref mut m) = self.stash_apply_modal {
+                m.error = Some(SharedString::from(format!("Stash apply failed: {}", e)));
+            }
+            return;
+        }
+
+        eprintln!("[kagi] executed: stash-apply index={}", modal.index);
+
+        // Verify: check working tree is dirty and stash entry still exists.
+        let mut repo2 = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] verify: repo open error: {}", e.message());
+                self.reload();
+                return;
+            }
+        };
+        match crate::git::snapshot(&mut repo2, 10_000) {
+            Ok(snap) => {
+                let is_dirty = snap.status.is_dirty();
+                let stash_count = snap.stashes.len();
+                if is_dirty {
+                    eprintln!("[kagi] verified: working tree dirty (stash applied)");
+                } else {
+                    eprintln!("[kagi] verify: working tree NOT dirty after stash-apply");
+                }
+                // Stash must remain (apply, not pop).
+                if stash_count >= plan.stash_count_at_plan {
+                    eprintln!("[kagi] verified: stash count={} (entry preserved)", stash_count);
+                } else {
+                    eprintln!("[kagi] verify: stash count={} (expected >= {})", stash_count, plan.stash_count_at_plan);
+                }
+            }
+            Err(e) => {
+                eprintln!("[kagi] verify: snapshot error: {}", e);
+            }
+        }
+
+        // Reload display data.
         self.reload();
     }
 
@@ -815,9 +1177,14 @@ impl Render for KagiApp {
 
         // Clone branch list and modal state for render.
         let branches = self.branches.clone();
+        let stashes = self.stashes.clone();
+        let is_dirty = self.is_dirty;
         let plan_modal = self.plan_modal.clone();
         let create_branch_modal = self.create_branch_modal.clone();
         let modal_focus = self.modal_focus.clone();
+        let stash_push_modal = self.stash_push_modal.clone();
+        let stash_push_focus = self.stash_push_focus.clone();
+        let stash_apply_modal = self.stash_apply_modal.clone();
 
         // ── Normal state: header + body (sidebar + list + optional panel) ─────
         div()
@@ -826,17 +1193,40 @@ impl Render for KagiApp {
             .size_full()
             .bg(rgb(BG_BASE))
             // ── Header bar ──────────────────────────────────
-            .child(
-                div()
+            .child({
+                let stash_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+                    this.open_stash_push_modal(cx);
+                    cx.notify();
+                });
+                let mut header_bar = div()
                     .flex()
                     .flex_row()
+                    .items_center()
                     .w_full()
                     .px_3()
                     .py_1()
                     .bg(rgb(BG_SURFACE))
                     .text_color(rgb(TEXT_SUB))
-                    .child(header),
-            )
+                    .child(div().flex_1().child(header));
+                // Show Stash button only when working tree is dirty.
+                if is_dirty {
+                    header_bar = header_bar.child(
+                        div()
+                            .id("stash-push-btn")
+                            .ml_2()
+                            .px_2()
+                            .py_px()
+                            .rounded_sm()
+                            .bg(rgb(COLOR_WARNING))
+                            .text_sm()
+                            .text_color(rgb(BG_BASE))
+                            .on_click(stash_click)
+                            .hover(|style| style.opacity(0.85))
+                            .child(SharedString::from("Stash")),
+                    );
+                }
+                header_bar
+            })
             // ── Body row: sidebar + list (flex_1) + optional panel ─────
             .child(
                 div()
@@ -845,7 +1235,7 @@ impl Render for KagiApp {
                     .flex_1()
                     .h_full()
                     // ── Left sidebar ──────────────────────────
-                    .child(render_sidebar(&branches, cx))
+                    .child(render_sidebar(&branches, &stashes, cx))
                     // ── Virtualized commit list ──────────────
                     .child(
                         uniform_list(
@@ -879,6 +1269,14 @@ impl Render for KagiApp {
             // ── Create-branch modal overlay (above everything) ──
             .when_some(create_branch_modal, |el, modal| {
                 el.child(render_create_branch_modal(modal, modal_focus, cx))
+            })
+            // ── Stash push modal overlay ─────────────────────
+            .when_some(stash_push_modal, |el, modal| {
+                el.child(render_stash_push_modal(modal, stash_push_focus, cx))
+            })
+            // ── Stash apply modal overlay ────────────────────
+            .when_some(stash_apply_modal, |el, modal| {
+                el.child(render_stash_apply_modal(modal, cx))
             })
             .into_any()
     }
@@ -1363,13 +1761,14 @@ fn render_badges(badges: &[commit_list::RefBadge]) -> impl IntoElement {
 // Sidebar renderer (T013)
 // ──────────────────────────────────────────────────────────────
 
-/// Render the left sidebar showing local branches.
+/// Render the left sidebar showing local branches and stash entries.
 ///
-/// Each branch is clickable.  Clicking the HEAD branch (marked with ✓) does
-/// nothing (it is already checked out).  Clicking any other branch opens the
-/// checkout plan modal.
+/// - Local branches: clicking the HEAD branch does nothing (already checked out).
+///   Clicking any other branch opens the checkout plan modal.
+/// - Stash entries: clicking any stash entry opens the stash apply modal.
 fn render_sidebar(
     branches: &[(String, bool)],
+    stashes: &[Stash],
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let mut col = div()
@@ -1380,7 +1779,7 @@ fn render_sidebar(
         .flex_col()
         .bg(rgb(BG_SIDEBAR))
         .py_2()
-        // ── Section label ─────────────────────────────────
+        // ── LOCAL BRANCHES label ──────────────────────────
         .child(
             div()
                 .px_3()
@@ -1433,6 +1832,52 @@ fn render_sidebar(
         };
 
         col = col.child(row);
+    }
+
+    // ── STASHES section ──────────────────────────────────
+    if !stashes.is_empty() {
+        col = col.child(
+            div()
+                .px_3()
+                .pt_3()
+                .pb_1()
+                .text_sm()
+                .text_color(rgb(TEXT_MUTED))
+                .child(SharedString::from("STASHES")),
+        );
+
+        for stash in stashes {
+            let idx = stash.index;
+            // Display as "stash@{N}: <message>", truncated.
+            let raw_label = format!("stash@{{{}}}: {}", idx, stash.message);
+            const MAX_STASH_CHARS: usize = 28;
+            let display_label = if raw_label.chars().count() > MAX_STASH_CHARS {
+                let tail: String = raw_label.chars().take(MAX_STASH_CHARS - 1).collect();
+                format!("{}\u{2026}", tail)
+            } else {
+                raw_label
+            };
+
+            let click_handler = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                this.open_stash_apply_modal(idx);
+                cx.notify();
+            });
+
+            col = col.child(
+                div()
+                    .id(("sidebar-stash", idx))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .px_3()
+                    .py_1()
+                    .text_sm()
+                    .text_color(rgb(COLOR_WARNING))
+                    .on_click(click_handler)
+                    .hover(|style| style.bg(rgb(BG_SURFACE)))
+                    .child(SharedString::from(display_label)),
+            );
+        }
     }
 
     col
@@ -1896,6 +2341,461 @@ fn render_create_branch_modal(
                 .justify_center()
                 .items_center()
                 .child(focusable_card),
+        )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Stash push modal renderer (T015)
+// ──────────────────────────────────────────────────────────────
+
+/// Render the stash push confirmation overlay.
+///
+/// Layout (absolute, full-screen):
+/// - Semi-transparent dark backdrop
+/// - Centred modal card:
+///   - Title
+///   - Optional message text input (reuses T014 key-input pattern)
+///   - Live plan: Current → Predicted state
+///   - Warnings (yellow) if any
+///   - Blockers (red) if any
+///   - Error message (if execute failed)
+///   - `[Cancel]` always; `[Stash]` only when no blockers
+fn render_stash_push_modal(
+    modal: StashPushModal,
+    focus_handle: Option<FocusHandle>,
+    cx: &mut Context<KagiApp>,
+) -> impl IntoElement {
+    let plan = modal.plan.clone();
+    let has_blockers = plan.as_ref().map(|p| !p.blockers.is_empty()).unwrap_or(true);
+    let input_display = SharedString::from(format!("{}_", modal.input));
+
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+        this.cancel_stash_push_modal();
+        cx.notify();
+    });
+
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+        this.confirm_stash_push();
+        cx.notify();
+    });
+
+    let key_handler = cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+        this.handle_stash_push_key(event);
+        cx.notify();
+    });
+
+    let mut card = div()
+        .w(px(480.))
+        .bg(rgb(BG_MODAL))
+        .rounded_lg()
+        .p_4()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(
+            div()
+                .text_color(rgb(TEXT_MAIN))
+                .text_xl()
+                .child(SharedString::from("Stash push — save local modifications")),
+        )
+        // ── Message input ──────────────────────────────────
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_LABEL))
+                        .child(SharedString::from("Message (optional)")),
+                )
+                .child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .bg(rgb(BG_BASE))
+                        .rounded_sm()
+                        .text_color(rgb(TEXT_MAIN))
+                        .child(input_display),
+                ),
+        );
+
+    // ── Plan state (current → predicted) ─────────────────
+    if let Some(ref p) = plan {
+        card = card.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_LABEL))
+                        .child(SharedString::from("Current")),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .text_sm()
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_MAIN))
+                                .child(SharedString::from(p.current.head.clone())),
+                        )
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_SUB))
+                                .child(SharedString::from(format!("[{}]", p.current.dirty))),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_LABEL))
+                        .child(SharedString::from("\u{2192} Predicted")),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .text_sm()
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_MAIN))
+                                .child(SharedString::from(p.predicted.head.clone())),
+                        )
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_SUB))
+                                .child(SharedString::from(format!("[{}]", p.predicted.dirty))),
+                        ),
+                ),
+        );
+
+        // ── Warnings ──────────────────────────────────────
+        if !p.warnings.is_empty() {
+            let mut warn_col = div().flex().flex_col().gap_1();
+            for w in &p.warnings {
+                warn_col = warn_col.child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(COLOR_WARNING))
+                        .child(SharedString::from(format!("\u{26a0} {}", w))),
+                );
+            }
+            card = card.child(warn_col);
+        }
+
+        // ── Blockers ──────────────────────────────────────
+        if !p.blockers.is_empty() {
+            let mut block_col = div().flex().flex_col().gap_1();
+            for b in &p.blockers {
+                block_col = block_col.child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(COLOR_BLOCKER))
+                        .child(SharedString::from(format!("\u{2717} {}", b))),
+                );
+            }
+            card = card.child(block_col);
+        }
+
+        // ── Recovery ──────────────────────────────────────
+        card = card.child(
+            div()
+                .text_xs()
+                .text_color(rgb(TEXT_MUTED))
+                .child(SharedString::from(p.recovery.clone())),
+        );
+    }
+
+    // ── Error message ──────────────────────────────────
+    if let Some(ref err) = modal.error {
+        card = card.child(
+            div()
+                .text_sm()
+                .text_color(rgb(COLOR_BLOCKER))
+                .child(err.clone()),
+        );
+    }
+
+    // ── Buttons ───────────────────────────────────────────
+    let mut button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(
+            div()
+                .id("stash-push-cancel")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(BG_SURFACE))
+                .text_sm()
+                .text_color(rgb(TEXT_MAIN))
+                .on_click(cancel_handler)
+                .hover(|style| style.bg(rgb(BG_SELECTED)))
+                .child(SharedString::from("Cancel")),
+        );
+
+    if !has_blockers {
+        button_row = button_row.child(
+            div()
+                .id("stash-push-confirm")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(COLOR_WARNING))
+                .text_sm()
+                .text_color(rgb(BG_BASE))
+                .on_click(confirm_handler)
+                .hover(|style| style.opacity(0.85))
+                .child(SharedString::from("Stash")),
+        );
+    }
+
+    card = card.child(button_row);
+
+    // ── Key-capture wrapper ─────────────────────────────────
+    let focusable_card = if let Some(ref fh) = focus_handle {
+        div()
+            .track_focus(fh)
+            .on_key_down(key_handler)
+            .child(card)
+    } else {
+        div().child(card)
+    };
+
+    // ── Full-screen overlay wrapper ─────────────────────────
+    div()
+        .size_full()
+        .absolute()
+        .top_0()
+        .left_0()
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .bg(rgb(BG_MODAL_OVERLAY))
+                .opacity(0.65),
+        )
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .items_center()
+                .child(focusable_card),
+        )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Stash apply modal renderer (T015)
+// ──────────────────────────────────────────────────────────────
+
+/// Render the stash apply confirmation overlay.
+///
+/// Layout (absolute, full-screen):
+/// - Semi-transparent dark backdrop
+/// - Centred modal card:
+///   - Title (showing stash index)
+///   - Current → Predicted state
+///   - Blockers (red) if any
+///   - Recovery text
+///   - Error message (if execute failed)
+///   - `[Cancel]` always; `[Apply]` only when no blockers
+fn render_stash_apply_modal(
+    modal: StashApplyModal,
+    cx: &mut Context<KagiApp>,
+) -> impl IntoElement {
+    let plan = modal.plan.clone();
+    let has_blockers = !plan.blockers.is_empty();
+
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+        this.cancel_stash_apply_modal();
+        cx.notify();
+    });
+
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+        this.confirm_stash_apply();
+        cx.notify();
+    });
+
+    let mut card = div()
+        .w(px(480.))
+        .bg(rgb(BG_MODAL))
+        .rounded_lg()
+        .p_4()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(
+            div()
+                .text_color(rgb(TEXT_MAIN))
+                .text_xl()
+                .child(SharedString::from(plan.title.clone())),
+        )
+        // ── Current → Predicted ─────────────────────────────
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_LABEL))
+                        .child(SharedString::from("Current")),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .text_sm()
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_MAIN))
+                                .child(SharedString::from(plan.current.head.clone())),
+                        )
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_SUB))
+                                .child(SharedString::from(format!("[{}]", plan.current.dirty))),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_LABEL))
+                        .child(SharedString::from("\u{2192} Predicted")),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .text_sm()
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_MAIN))
+                                .child(SharedString::from(plan.predicted.head.clone())),
+                        )
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_SUB))
+                                .child(SharedString::from(format!("[{}]", plan.predicted.dirty))),
+                        ),
+                ),
+        );
+
+    // ── Blockers ──────────────────────────────────────────
+    if !plan.blockers.is_empty() {
+        let mut block_col = div().flex().flex_col().gap_1();
+        for b in &plan.blockers {
+            block_col = block_col.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(COLOR_BLOCKER))
+                    .child(SharedString::from(format!("\u{2717} {}", b))),
+            );
+        }
+        card = card.child(block_col);
+    }
+
+    // ── Recovery ──────────────────────────────────────────
+    card = card.child(
+        div()
+            .text_xs()
+            .text_color(rgb(TEXT_MUTED))
+            .child(SharedString::from(plan.recovery.clone())),
+    );
+
+    // ── Error message ────────────────────────────────────
+    if let Some(ref err) = modal.error {
+        card = card.child(
+            div()
+                .text_sm()
+                .text_color(rgb(COLOR_BLOCKER))
+                .child(err.clone()),
+        );
+    }
+
+    // ── Buttons ───────────────────────────────────────────
+    let mut button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(
+            div()
+                .id("stash-apply-cancel")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(BG_SURFACE))
+                .text_sm()
+                .text_color(rgb(TEXT_MAIN))
+                .on_click(cancel_handler)
+                .hover(|style| style.bg(rgb(BG_SELECTED)))
+                .child(SharedString::from("Cancel")),
+        );
+
+    if !has_blockers {
+        button_row = button_row.child(
+            div()
+                .id("stash-apply-confirm")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(COLOR_SUCCESS))
+                .text_sm()
+                .text_color(rgb(BG_BASE))
+                .on_click(confirm_handler)
+                .hover(|style| style.opacity(0.85))
+                .child(SharedString::from("Apply")),
+        );
+    }
+
+    card = card.child(button_row);
+
+    // ── Full-screen overlay wrapper ─────────────────────────
+    div()
+        .size_full()
+        .absolute()
+        .top_0()
+        .left_0()
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .bg(rgb(BG_MODAL_OVERLAY))
+                .opacity(0.65),
+        )
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .items_center()
+                .child(card),
         )
 }
 

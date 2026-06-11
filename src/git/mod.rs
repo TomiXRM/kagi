@@ -23,6 +23,9 @@ pub use ops::{
     OperationPlan, StateSummary,
     execute_checkout, plan_checkout, preflight_check,
     plan_create_branch, execute_create_branch,
+    plan_stash_push, execute_stash_push,
+    plan_stash_apply, execute_stash_apply,
+    preflight_check_stash,
 };
 #[allow(unused_imports)]
 pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo};

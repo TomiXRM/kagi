@@ -1,8 +1,10 @@
-//! Checkout and create-branch operation pipelines — T013, T014
+//! Checkout, create-branch, stash-push, and stash-apply operation pipelines — T013, T014, T015
 //!
 //! Implements the **plan → preflight → execute** pipeline for:
 //! - `checkout` (ADR-0004, Guarded class): `plan_checkout` / `preflight_check` / `execute_checkout`
 //! - `create-branch` (ADR-0004, Safe class): `plan_create_branch` / `execute_create_branch`
+//! - `stash-push` (ADR-0004, Guarded class): `plan_stash_push` / `execute_stash_push`
+//! - `stash-apply` (ADR-0004, Guarded class): `plan_stash_apply` / `execute_stash_apply`
 //!
 //! The checkout operation is **always safe-mode only**: `CheckoutBuilder::safe()` is the only
 //! strategy used.  Force-checkout and any reset/clean APIs are intentionally absent.
@@ -10,13 +12,22 @@
 //! The create-branch operation uses `repo.branch(name, &commit, false)` — force=false is a
 //! **literal constant** and must never be changed.
 //!
+//! The stash-apply operation uses `repo.stash_apply(index, None)` **only**.
+//! `stash_pop` and `stash_drop` are **never** called — apply is chosen so the
+//! stash entry is preserved (safe side).
+//!
 //! # Public API
 //!
-//! - [`plan_checkout`]        — generate an [`OperationPlan`] for checkout
-//! - [`preflight_check`]      — verify HEAD has not moved since planning
-//! - [`execute_checkout`]     — perform the checkout (safe-mode only)
-//! - [`plan_create_branch`]   — generate an [`OperationPlan`] for branch creation
-//! - [`execute_create_branch`] — create the branch (force=false, no checkout)
+//! - [`plan_checkout`]          — generate an [`OperationPlan`] for checkout
+//! - [`preflight_check`]        — verify HEAD has not moved since planning
+//! - [`execute_checkout`]       — perform the checkout (safe-mode only)
+//! - [`plan_create_branch`]     — generate an [`OperationPlan`] for branch creation
+//! - [`execute_create_branch`]  — create the branch (force=false, no checkout)
+//! - [`plan_stash_push`]        — generate an [`OperationPlan`] for stash push
+//! - [`execute_stash_push`]     — stash local modifications (INCLUDE_UNTRACKED)
+//! - [`plan_stash_apply`]       — generate an [`OperationPlan`] for stash apply
+//! - [`execute_stash_apply`]    — apply a stash entry (apply only, no pop/drop)
+//! - [`preflight_check_stash`]  — verify HEAD + stash count unchanged since planning
 //!
 //! # Environment variables (test / headless use only)
 //!
@@ -24,9 +35,11 @@
 //! |---------------------|--------|
 //! | `KAGI_PLAN_CHECKOUT=<branch>`  | generate a plan for `<branch>` and emit a plan log |
 //! | `KAGI_CREATE_BRANCH=<name>`    | generate a create-branch plan for HEAD and emit a plan log |
+//! | `KAGI_STASH_PUSH=1`            | generate a stash-push plan and emit a plan log |
+//! | `KAGI_STASH_APPLY=<index>`     | generate a stash-apply plan for `<index>` and emit a plan log |
 //! | `KAGI_AUTO_CONFIRM=1`          | **(TEST-ONLY)** if there are no blockers, proceed directly to execute after planning. **Never set this in normal use.** |
 
-use git2::{BranchType, Repository};
+use git2::{BranchType, Repository, StashFlags};
 
 use super::{GitError, Head, resolve_head, status::working_tree_status};
 use super::log::CommitId;
@@ -47,7 +60,7 @@ pub struct StateSummary {
     pub dirty: String,
 }
 
-/// A complete plan describing what a checkout operation will do, including
+/// A complete plan describing what an operation will do, including
 /// any blockers that prevent execution and warnings that should be surfaced.
 ///
 /// If `blockers` is non-empty the UI **must not** offer the Execute button.
@@ -63,13 +76,27 @@ pub struct OperationPlan {
     /// proceed if there are warnings but no blockers.
     pub warnings: Vec<String>,
     /// Conditions that prevent execution (shown in red).  At least one blocker
-    /// means the Checkout button must be hidden.
+    /// means the Execute button must be hidden.
     pub blockers: Vec<String>,
     /// Plain-text recovery guidance shown to the user before they confirm.
     pub recovery: String,
     /// The HEAD state captured *at plan time*, used by [`preflight_check`] to
     /// detect whether the repo has changed between planning and execution.
     pub(crate) head_at_plan: Head,
+    /// Number of stash entries captured at plan time.  Used by
+    /// [`preflight_check_stash`] to detect concurrent stash modifications.
+    /// For non-stash operations this is always `0`.
+    pub(crate) stash_count_at_plan: usize,
+}
+
+impl OperationPlan {
+    /// Return the stash entry count captured at plan time.
+    ///
+    /// Pass this value to [`preflight_check_stash`] to verify that the stash
+    /// list has not changed since the plan was generated.
+    pub fn stash_count_at_plan(&self) -> usize {
+        self.stash_count_at_plan
+    }
 }
 
 // ────────────────────────────────────────────────────────────
@@ -215,6 +242,7 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
         blockers,
         recovery,
         head_at_plan: head,
+        stash_count_at_plan: 0,
     })
 }
 
@@ -425,6 +453,7 @@ pub fn plan_create_branch(
         blockers,
         recovery,
         head_at_plan: head,
+        stash_count_at_plan: 0,
     })
 }
 
@@ -462,4 +491,410 @@ pub fn execute_create_branch(
         .map_err(|e| GitError::Other(format!("branch creation failed: {}", e.message())))?;
 
     Ok(())
+}
+
+// ────────────────────────────────────────────────────────────
+// plan_stash_push
+// ────────────────────────────────────────────────────────────
+
+/// Analyse whether a stash push is safe and return an [`OperationPlan`].
+///
+/// Stash push is a **Guarded-class** operation (ADR-0004): it modifies the
+/// working tree and index by saving all local modifications to a new stash
+/// entry, leaving the working tree clean.
+///
+/// # Blocker conditions
+///
+/// - There are no local modifications (staged, unstaged, untracked all empty) —
+///   nothing to stash.
+/// - The repository is in a conflict state — stash cannot be created during
+///   a merge conflict.
+///
+/// # Warning conditions
+///
+/// - Untracked files are included in the stash (equivalent to `git stash -u`).
+///   This is intentional for convenience but is surfaced as a warning.
+///
+/// # Predicted state
+///
+/// - Working tree will be clean after the push.
+/// - Stash count will increase by 1.
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] if the repository cannot be queried.
+pub fn plan_stash_push(
+    repo: &mut Repository,
+    message: Option<&str>,
+) -> Result<OperationPlan, GitError> {
+    // ── 1. Current HEAD and status ───────────────────────────
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+
+    // ── 2. Count existing stashes ────────────────────────────
+    let stash_count = count_stashes(repo)?;
+
+    // ── 3. Build current StateSummary ────────────────────────
+    let head_display = head.display();
+
+    let dirty_parts: Vec<String> = [
+        (!status.staged.is_empty())
+            .then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty())
+            .then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty())
+            .then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty())
+            .then(|| format!("{} conflicted", status.conflicted.len())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let dirty_display = if dirty_parts.is_empty() {
+        "clean".to_string()
+    } else {
+        dirty_parts.join(", ")
+    };
+
+    let current = StateSummary {
+        head: head_display.clone(),
+        dirty: dirty_display,
+    };
+
+    // ── 4. Check blockers ────────────────────────────────────
+    let mut blockers: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Nothing to stash.
+    if !status.is_dirty() {
+        blockers.push(
+            "Nothing to stash: working tree is already clean \
+             (no staged, modified, or untracked files)."
+                .to_string(),
+        );
+    }
+
+    // Conflict state.
+    if !status.conflicted.is_empty() {
+        blockers.push(format!(
+            "Repository has {} conflicted file(s). \
+             Resolve conflicts before stashing.",
+            status.conflicted.len()
+        ));
+    }
+
+    // Untracked files included in stash (warning, not blocker).
+    if !status.untracked.is_empty() {
+        warnings.push(format!(
+            "{} untracked file(s) will be included in the stash \
+             (equivalent to `git stash push -u`).",
+            status.untracked.len()
+        ));
+    }
+
+    // ── 5. Predicted StateSummary ─────────────────────────────
+    // After push: working tree is clean, stash count +1.
+    let msg_label = message.unwrap_or("(no message)");
+    let predicted = StateSummary {
+        head: head_display.clone(),
+        dirty: "clean".to_string(),
+    };
+
+    // ── 6. Recovery guidance ──────────────────────────────────
+    let recovery = format!(
+        "To inspect stash entries:  git stash list\n\
+         To restore without removing the stash entry:  git stash apply stash@{{0}}\n\
+         Stash message that will be used: \"{}\"",
+        msg_label
+    );
+
+    Ok(OperationPlan {
+        title: format!(
+            "Stash push — save local modifications ({})",
+            stash_count + 1
+        ),
+        current,
+        predicted,
+        warnings,
+        blockers,
+        recovery,
+        head_at_plan: head,
+        stash_count_at_plan: stash_count,
+    })
+}
+
+// ────────────────────────────────────────────────────────────
+// execute_stash_push
+// ────────────────────────────────────────────────────────────
+
+/// Execute a stash push: save all local modifications (including untracked
+/// files) to a new stash entry.
+///
+/// Uses `repo.stash_save2(&sig, message, Some(StashFlags::INCLUDE_UNTRACKED))`.
+/// The signature is read from the repository config (`user.name` / `user.email`);
+/// if either is absent, falls back to `"kagi <kagi@local>"`.
+///
+/// **stash_pop and stash_drop are never called in this module.**
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] on any libgit2 failure.
+pub fn execute_stash_push(
+    repo: &mut Repository,
+    message: Option<&str>,
+) -> Result<(), GitError> {
+    // Build the signature from repo config, with fallback.
+    let sig = build_signature(repo)?;
+
+    repo.stash_save2(&sig, message, Some(StashFlags::INCLUDE_UNTRACKED))
+        .map_err(|e| GitError::Other(format!("stash push failed: {}", e.message())))?;
+
+    Ok(())
+}
+
+// ────────────────────────────────────────────────────────────
+// plan_stash_apply
+// ────────────────────────────────────────────────────────────
+
+/// Analyse whether applying stash entry at `index` is safe and return an
+/// [`OperationPlan`].
+///
+/// Stash apply is a **Guarded-class** operation (ADR-0004): applying to a
+/// dirty working tree risks mixing changes, so we require a clean tree.
+///
+/// # Blocker conditions
+///
+/// - `index` is out of range (no stash entry at that position).
+/// - The repository is in a conflict state.
+/// - The working tree is dirty (staged or unstaged changes exist) — applying
+///   to a dirty tree risks unexpected merge conflicts mixing two sets of
+///   changes.
+///
+/// # Predicted state
+///
+/// - Working tree will contain the stashed changes (dirty again).
+/// - The stash entry **remains** in the stash list (apply, not pop).
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] if the repository cannot be queried.
+pub fn plan_stash_apply(
+    repo: &mut Repository,
+    index: usize,
+) -> Result<OperationPlan, GitError> {
+    // ── 1. Current HEAD and status ───────────────────────────
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+
+    // ── 2. Collect stash entries ─────────────────────────────
+    let stashes = collect_stash_entries(repo)?;
+    let stash_count = stashes.len();
+
+    // ── 3. Build current StateSummary ────────────────────────
+    let head_display = head.display();
+
+    let dirty_parts: Vec<String> = [
+        (!status.staged.is_empty())
+            .then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty())
+            .then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty())
+            .then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty())
+            .then(|| format!("{} conflicted", status.conflicted.len())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let dirty_display = if dirty_parts.is_empty() {
+        "clean".to_string()
+    } else {
+        dirty_parts.join(", ")
+    };
+
+    let current = StateSummary {
+        head: head_display.clone(),
+        dirty: dirty_display.clone(),
+    };
+
+    // ── 4. Check blockers ────────────────────────────────────
+    let mut blockers: Vec<String> = Vec::new();
+
+    // Index out of range.
+    if index >= stash_count {
+        blockers.push(format!(
+            "Stash index {} is out of range (only {} stash entr{} exist).",
+            index,
+            stash_count,
+            if stash_count == 1 { "y" } else { "ies" }
+        ));
+    }
+
+    // Conflict state.
+    if !status.conflicted.is_empty() {
+        blockers.push(format!(
+            "Repository has {} conflicted file(s). \
+             Resolve conflicts before applying a stash.",
+            status.conflicted.len()
+        ));
+    }
+
+    // Dirty working tree (staged or unstaged) — MVP policy: clean only.
+    if !status.staged.is_empty() || !status.unstaged.is_empty() {
+        let mut parts = Vec::new();
+        if !status.staged.is_empty() {
+            parts.push(format!("{} staged", status.staged.len()));
+        }
+        if !status.unstaged.is_empty() {
+            parts.push(format!("{} modified", status.unstaged.len()));
+        }
+        blockers.push(format!(
+            "Working tree is dirty ({}) — stash apply is only allowed on a clean \
+             working tree to prevent accidental merge conflicts.",
+            parts.join(", ")
+        ));
+    }
+
+    // ── 5. Predicted StateSummary ─────────────────────────────
+    // After apply: working tree will reflect the stash content.
+    // The stash entry **remains** (apply, not pop).
+    let stash_message = stashes
+        .get(index)
+        .map(|(_, msg)| msg.clone())
+        .unwrap_or_else(|| format!("stash@{{{}}}", index));
+
+    let predicted = StateSummary {
+        head: head_display.clone(),
+        dirty: format!("restored from stash@{{{}}}", index),
+    };
+
+    // ── 6. Recovery guidance ──────────────────────────────────
+    let recovery = format!(
+        "The stash entry stash@{{{}}} is NOT removed by apply — it remains in the list.\n\
+         If the apply caused conflicts, resolve them manually; the stash is safely preserved.\n\
+         To see remaining stash entries:  git stash list\n\
+         Stash message: \"{}\"",
+        index, stash_message
+    );
+
+    Ok(OperationPlan {
+        title: format!("Stash apply — restore stash@{{{}}}", index),
+        current,
+        predicted,
+        warnings: Vec::new(),
+        blockers,
+        recovery,
+        head_at_plan: head,
+        stash_count_at_plan: stash_count,
+    })
+}
+
+// ────────────────────────────────────────────────────────────
+// execute_stash_apply
+// ────────────────────────────────────────────────────────────
+
+/// Apply the stash entry at `index` to the working tree.
+///
+/// Uses `repo.stash_apply(index, None)`.
+///
+/// **stash_pop and stash_drop are never called in this module.**
+/// The stash entry at `index` is preserved after this call.
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] on any libgit2 failure (including apply
+/// conflicts — in that case the stash entry remains intact).
+pub fn execute_stash_apply(
+    repo: &mut Repository,
+    index: usize,
+) -> Result<(), GitError> {
+    repo.stash_apply(index, None)
+        .map_err(|e| GitError::Other(format!("stash apply failed: {}", e.message())))?;
+    Ok(())
+}
+
+// ────────────────────────────────────────────────────────────
+// preflight_check_stash
+// ────────────────────────────────────────────────────────────
+
+/// Extended preflight check for stash operations.
+///
+/// Verifies both:
+/// 1. HEAD has not changed since the plan was generated (delegates to
+///    [`preflight_check`]).
+/// 2. The number of stash entries matches `expected_stash_count` — if another
+///    process pushed or dropped a stash between planning and execution, abort.
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] when HEAD or stash count has changed, or on
+/// unexpected failures.
+pub fn preflight_check_stash(
+    repo: &mut Repository,
+    plan: &OperationPlan,
+    expected_stash_count: usize,
+) -> Result<(), GitError> {
+    // 1. Head check (re-use existing).
+    preflight_check(repo, plan)?;
+
+    // 2. Stash count check.
+    let current_count = count_stashes(repo)?;
+    if current_count != expected_stash_count {
+        return Err(GitError::Other(format!(
+            "Stash list changed since planning: expected {} entr{}, \
+             found {}. Please re-plan before proceeding.",
+            expected_stash_count,
+            if expected_stash_count == 1 { "y" } else { "ies" },
+            current_count,
+        )));
+    }
+    Ok(())
+}
+
+// ────────────────────────────────────────────────────────────
+// Internal helpers (stash)
+// ────────────────────────────────────────────────────────────
+
+/// Count the number of stash entries without allocating message strings.
+fn count_stashes(repo: &mut Repository) -> Result<usize, GitError> {
+    let mut count = 0usize;
+    repo.stash_foreach(|_index, _message, _oid| {
+        count += 1;
+        true
+    })
+    .map_err(|e| GitError::Other(e.message().to_string()))?;
+    Ok(count)
+}
+
+/// Collect `(index, message)` pairs for all stash entries.
+fn collect_stash_entries(repo: &mut Repository) -> Result<Vec<(usize, String)>, GitError> {
+    let mut entries: Vec<(usize, String)> = Vec::new();
+    repo.stash_foreach(|index, message, _oid| {
+        entries.push((index, message.to_owned()));
+        true
+    })
+    .map_err(|e| GitError::Other(e.message().to_string()))?;
+    Ok(entries)
+}
+
+/// Build a `git2::Signature` from the repository config.
+///
+/// Falls back to `"kagi <kagi@local>"` if either `user.name` or `user.email`
+/// is not configured.
+fn build_signature(repo: &Repository) -> Result<git2::Signature<'static>, GitError> {
+    let config = repo
+        .config()
+        .map_err(|e| GitError::Other(format!("failed to open config: {}", e.message())))?;
+
+    let name = config
+        .get_string("user.name")
+        .unwrap_or_else(|_| "kagi".to_string());
+    let email = config
+        .get_string("user.email")
+        .unwrap_or_else(|_| "kagi@local".to_string());
+
+    git2::Signature::now(&name, &email)
+        .map_err(|e| GitError::Other(format!("failed to create signature: {}", e.message())))
 }

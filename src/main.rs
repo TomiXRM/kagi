@@ -5,7 +5,7 @@ mod ui;
 use std::path::PathBuf;
 
 use git::{Head, open_repository, snapshot};
-use ui::{KagiApp, run_app};
+use ui::{KagiApp, StashPushModal, StashApplyModal, run_app};
 
 fn main() {
     // Collect CLI arguments (skip argv[0]).
@@ -219,6 +219,184 @@ fn main() {
             }
         } else {
             eprintln!("[kagi] KAGI_CREATE_BRANCH: could not resolve HEAD commit");
+        }
+    }
+
+    // ── T015: headless stash push plan / execute ─────────────
+    // KAGI_STASH_PUSH=1: generate a stash-push plan and log it.
+    // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, execute immediately.
+    // For fixture/tempdir testing only.  Do not set in normal use.
+    if std::env::var("KAGI_STASH_PUSH").as_deref() == Ok("1") {
+        let mut repo_sp = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] KAGI_STASH_PUSH: repo open error: {}", e.message());
+                run_app(app_state);
+                return;
+            }
+        };
+
+        match git::plan_stash_push(&mut repo_sp, None) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: stash-push blockers={} warnings={}",
+                    plan.blockers.len(),
+                    plan.warnings.len()
+                );
+
+                let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
+                if auto_confirm {
+                    if plan.blockers.is_empty() {
+                        let stash_count_at_plan = plan.stash_count_at_plan;
+                        let mut repo2 = match git2::Repository::open(&repo_path) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                eprintln!("[kagi] KAGI_STASH_PUSH: repo open error: {}", e.message());
+                                run_app(app_state);
+                                return;
+                            }
+                        };
+                        if let Err(e) = git::preflight_check_stash(&mut repo2, &plan, stash_count_at_plan) {
+                            eprintln!("[kagi] preflight failed: {}", e);
+                        } else if let Err(e) = git::execute_stash_push(&mut repo2, None) {
+                            eprintln!("[kagi] stash-push failed: {}", e);
+                        } else {
+                            eprintln!("[kagi] executed: stash-push");
+                            // Verify: working tree clean + stash count.
+                            let mut repo3 = match git2::Repository::open(&repo_path) {
+                                Ok(r) => r,
+                                Err(e) => {
+                                    eprintln!("[kagi] verify: repo open error: {}", e.message());
+                                    run_app(app_state);
+                                    return;
+                                }
+                            };
+                            match snapshot(&mut repo3, 10_000) {
+                                Ok(snap) => {
+                                    let clean = !snap.status.is_dirty();
+                                    let stash_count = snap.stashes.len();
+                                    if clean {
+                                        eprintln!("[kagi] verified: working tree clean");
+                                    } else {
+                                        eprintln!("[kagi] verify: working tree NOT clean");
+                                    }
+                                    eprintln!("[kagi] verified: stash count={}", stash_count);
+                                }
+                                Err(e) => eprintln!("[kagi] verify: snapshot error: {}", e),
+                            }
+                        }
+                    } else {
+                        eprintln!(
+                            "[kagi] KAGI_AUTO_CONFIRM=1 but stash-push has {} blocker(s), skipping",
+                            plan.blockers.len()
+                        );
+                    }
+                } else {
+                    // Without auto-confirm, surface the modal so it can be inspected headlessly.
+                    app_state.stash_push_modal = Some(StashPushModal {
+                        input: String::new(),
+                        plan: Some(std::sync::Arc::new(plan)),
+                        error: None,
+                    });
+                }
+            }
+            Err(e) => {
+                eprintln!("[kagi] plan: stash-push error: {}", e);
+            }
+        }
+    }
+
+    // ── T015: headless stash apply plan / execute ─────────────
+    // KAGI_STASH_APPLY=<index>: generate a stash-apply plan for stash@{index}.
+    // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, execute immediately.
+    // For fixture/tempdir testing only.  Do not set in normal use.
+    if let Ok(idx_str) = std::env::var("KAGI_STASH_APPLY") {
+        let index: usize = match idx_str.parse() {
+            Ok(i) => i,
+            Err(_) => {
+                eprintln!("[kagi] KAGI_STASH_APPLY: invalid index '{}'", idx_str);
+                run_app(app_state);
+                return;
+            }
+        };
+
+        let mut repo_sa = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] KAGI_STASH_APPLY: repo open error: {}", e.message());
+                run_app(app_state);
+                return;
+            }
+        };
+
+        match git::plan_stash_apply(&mut repo_sa, index) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: stash-apply index={} blockers={} warnings={}",
+                    index,
+                    plan.blockers.len(),
+                    plan.warnings.len()
+                );
+
+                let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
+                if auto_confirm {
+                    if plan.blockers.is_empty() {
+                        let stash_count_at_plan = plan.stash_count_at_plan;
+                        let mut repo2 = match git2::Repository::open(&repo_path) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                eprintln!("[kagi] KAGI_STASH_APPLY: repo open error: {}", e.message());
+                                run_app(app_state);
+                                return;
+                            }
+                        };
+                        if let Err(e) = git::preflight_check_stash(&mut repo2, &plan, stash_count_at_plan) {
+                            eprintln!("[kagi] preflight failed: {}", e);
+                        } else if let Err(e) = git::execute_stash_apply(&mut repo2, index) {
+                            eprintln!("[kagi] stash-apply failed: {}", e);
+                        } else {
+                            eprintln!("[kagi] executed: stash-apply index={}", index);
+                            // Verify: working tree dirty + stash still present.
+                            let mut repo3 = match git2::Repository::open(&repo_path) {
+                                Ok(r) => r,
+                                Err(e) => {
+                                    eprintln!("[kagi] verify: repo open error: {}", e.message());
+                                    run_app(app_state);
+                                    return;
+                                }
+                            };
+                            match snapshot(&mut repo3, 10_000) {
+                                Ok(snap) => {
+                                    let is_dirty = snap.status.is_dirty();
+                                    let stash_count = snap.stashes.len();
+                                    if is_dirty {
+                                        eprintln!("[kagi] verified: working tree dirty (restored)");
+                                    } else {
+                                        eprintln!("[kagi] verify: working tree NOT dirty after apply");
+                                    }
+                                    eprintln!("[kagi] verified: stash count={} (entry preserved)", stash_count);
+                                }
+                                Err(e) => eprintln!("[kagi] verify: snapshot error: {}", e),
+                            }
+                        }
+                    } else {
+                        eprintln!(
+                            "[kagi] KAGI_AUTO_CONFIRM=1 but stash-apply has {} blocker(s), skipping",
+                            plan.blockers.len()
+                        );
+                    }
+                } else {
+                    // Without auto-confirm, surface the modal.
+                    app_state.stash_apply_modal = Some(StashApplyModal {
+                        index,
+                        plan: std::sync::Arc::new(plan),
+                        error: None,
+                    });
+                }
+            }
+            Err(e) => {
+                eprintln!("[kagi] plan: stash-apply error: {}", e);
+            }
         }
     }
 

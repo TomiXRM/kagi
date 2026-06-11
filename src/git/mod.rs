@@ -1,8 +1,14 @@
-//! Git backend — T002: repository open
+//! Git backend — T002: repository open / T003: working tree status
 //!
-//! This module provides the entry point for opening a local Git repository
-//! and extracting basic metadata (repo name, workdir path, HEAD state).
+//! This module provides the entry point for opening a local Git repository,
+//! extracting basic metadata (repo name, workdir path, HEAD state), and
+//! querying the working tree status.
 //! Network transports (https/ssh) are not used in the MVP.
+
+mod status;
+
+#[allow(unused_imports)]
+pub use status::{ChangeKind, FileStatus, WorkingTreeStatus, working_tree_status};
 
 use std::path::{Path, PathBuf};
 

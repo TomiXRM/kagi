@@ -7,7 +7,7 @@ use gpui::{
     div, prelude::*, px, rgb, size,
 };
 
-use git::open_repository;
+use git::{open_repository, working_tree_status};
 
 /// State held by the GPUI application.
 struct KagiApp {
@@ -59,16 +59,104 @@ fn main() {
         match open_repository(&repo_path) {
             Ok(info) => {
                 let msg = format!("repo: {}", info.name);
-                let details = vec![
+                let mut details = vec![
                     format!("path: {}", info.workdir.display()),
                     format!("HEAD: {}", info.head.display()),
                 ];
+
                 // Log to stderr so automated tests can verify output without
                 // needing to inspect the GPU window.
                 eprintln!("[kagi] {}", msg);
                 for d in &details {
                     eprintln!("[kagi] {}", d);
                 }
+
+                // ── Working tree status ──────────────────────────────────
+                // Re-open via git2 to obtain status; open_repository returns
+                // RepoInfo (no git2::Repository handle in the public API yet).
+                match git2::Repository::open(&repo_path) {
+                    Ok(repo2) => {
+                        match working_tree_status(&repo2) {
+                            Ok(status) => {
+                                if status.is_dirty() {
+                                    // Staged
+                                    if !status.staged.is_empty() {
+                                        let header =
+                                            format!("Staged ({})", status.staged.len());
+                                        eprintln!("[kagi] {}", header);
+                                        details.push(header);
+                                        for f in status.staged.iter().take(20) {
+                                            let line = format!(
+                                                "  [{}] {}",
+                                                f.change.label(),
+                                                f.path.display()
+                                            );
+                                            eprintln!("[kagi] {}", line);
+                                            details.push(line);
+                                        }
+                                    }
+                                    // Unstaged
+                                    if !status.unstaged.is_empty() {
+                                        let header =
+                                            format!("Unstaged ({})", status.unstaged.len());
+                                        eprintln!("[kagi] {}", header);
+                                        details.push(header);
+                                        for f in status.unstaged.iter().take(20) {
+                                            let line = format!(
+                                                "  [{}] {}",
+                                                f.change.label(),
+                                                f.path.display()
+                                            );
+                                            eprintln!("[kagi] {}", line);
+                                            details.push(line);
+                                        }
+                                    }
+                                    // Untracked
+                                    if !status.untracked.is_empty() {
+                                        let header =
+                                            format!("Untracked ({})", status.untracked.len());
+                                        eprintln!("[kagi] {}", header);
+                                        details.push(header);
+                                        for p in status.untracked.iter().take(20) {
+                                            let line =
+                                                format!("  {}", p.display());
+                                            eprintln!("[kagi] {}", line);
+                                            details.push(line);
+                                        }
+                                    }
+                                    // Conflicted
+                                    if !status.conflicted.is_empty() {
+                                        let header =
+                                            format!("Conflicted ({})", status.conflicted.len());
+                                        eprintln!("[kagi] {}", header);
+                                        details.push(header);
+                                        for p in status.conflicted.iter().take(20) {
+                                            let line =
+                                                format!("  {}", p.display());
+                                            eprintln!("[kagi] {}", line);
+                                            details.push(line);
+                                        }
+                                    }
+                                } else {
+                                    let line = "Working tree clean".to_string();
+                                    eprintln!("[kagi] {}", line);
+                                    details.push(line);
+                                }
+                            }
+                            Err(e) => {
+                                let line = format!("status error: {}", e);
+                                eprintln!("[kagi] {}", line);
+                                details.push(line);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let line = format!("status error: {}", e.message());
+                        eprintln!("[kagi] {}", line);
+                        details.push(line);
+                    }
+                }
+
                 (msg, details)
             }
             Err(e) => {

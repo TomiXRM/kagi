@@ -1,4 +1,4 @@
-//! UI module — T008: GPUI commit list / T009: commit graph lane / T010: commit selection + detail panel / T011: changed files list
+//! UI module — T008: GPUI commit list / T009: commit graph lane / T010: commit selection + detail panel / T011: changed files list / T012: file diff viewer
 //!
 //! This module lives in the binary crate (`main.rs` does `mod ui;`).
 //! It must not be added to `src/lib.rs` so that domain tests stay
@@ -16,7 +16,7 @@ use gpui::{
     div, prelude::*, px, rgb, uniform_list,
 };
 
-use crate::git::{ChangeKind, FileStatus, Head, RepoSnapshot};
+use crate::git::{ChangeKind, FileDiff, DiffLineKind, FileStatus, Head, RepoSnapshot};
 use commit_list::{BadgeKind, CommitRow, build_commit_rows};
 use detail_panel::{CommitDetail, build_commit_details};
 use graph_view::{graph_canvas, graph_width};
@@ -37,6 +37,93 @@ const COLOR_HEAD: u32 = 0xf38ba8; // red  — HEAD / attached branch
 const COLOR_BRANCH: u32 = 0x89b4fa; // blue — local branch
 const COLOR_REMOTE: u32 = 0xa6e3a1; // green — remote branch
 const COLOR_TAG: u32 = 0xfab387; // peach — tag
+
+// Diff display colours
+const BG_DIFF_ADDED: u32 = 0x1c3a2a;   // dark green background for added lines
+const BG_DIFF_REMOVED: u32 = 0x3a1c1c; // dark red background for removed lines
+const COLOR_DIFF_HUNK: u32 = 0x89b4fa; // blue — hunk header
+
+// ──────────────────────────────────────────────────────────────
+// FileDiffView — pre-rendered diff rows for the diff panel
+// ──────────────────────────────────────────────────────────────
+
+/// A single displayable row in the diff viewer.
+#[derive(Clone)]
+pub enum DiffRow {
+    /// A hunk header line (`@@ -a,b +c,d @@`).
+    HunkHeader(SharedString),
+    /// A content line (context / added / removed).
+    Line {
+        kind: DiffLineKind,
+        /// The line content as a displayable string (with leading sigil stripped).
+        text: SharedString,
+    },
+    /// Placeholder shown for binary files.
+    Binary,
+}
+
+/// Pre-computed state for the diff view panel.
+#[derive(Clone)]
+pub struct FileDiffView {
+    /// Display name of the file (path component).
+    pub file_name: SharedString,
+    /// All displayable rows: hunk headers + content lines.
+    pub rows: Vec<DiffRow>,
+    /// Row index into the commit's changed-files list (used for the back button).
+    pub file_index: usize,
+}
+
+impl FileDiffView {
+    /// Build a [`FileDiffView`] from a [`FileDiff`] result.
+    pub fn from_file_diff(file_diff: &FileDiff, file_index: usize) -> Self {
+        let path = file_diff
+            .new_path
+            .as_ref()
+            .or(file_diff.old_path.as_ref());
+        let file_name = SharedString::from(
+            path.map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        );
+
+        let mut rows: Vec<DiffRow> = Vec::new();
+
+        if file_diff.is_binary {
+            rows.push(DiffRow::Binary);
+        } else {
+            for hunk in &file_diff.hunks {
+                // Build hunk header string.
+                let (os, oc) = hunk.old_range;
+                let (ns, nc) = hunk.new_range;
+                let header = SharedString::from(format!(
+                    "@@ -{},{} +{},{} @@",
+                    os, oc, ns, nc
+                ));
+                rows.push(DiffRow::HunkHeader(header));
+
+                for line in &hunk.lines {
+                    // Strip the trailing newline for display (keep content clean).
+                    let raw = line.content.trim_end_matches('\n').trim_end_matches('\r');
+                    // Add leading sigil for clarity.
+                    let text = match line.kind {
+                        DiffLineKind::Added   => SharedString::from(format!("+{}", raw)),
+                        DiffLineKind::Removed => SharedString::from(format!("-{}", raw)),
+                        DiffLineKind::Context => SharedString::from(format!(" {}", raw)),
+                    };
+                    rows.push(DiffRow::Line {
+                        kind: line.kind.clone(),
+                        text,
+                    });
+                }
+            }
+        }
+
+        FileDiffView {
+            file_name,
+            rows,
+            file_index,
+        }
+    }
+}
 
 // ──────────────────────────────────────────────────────────────
 // KagiApp — root view
@@ -60,6 +147,10 @@ pub struct KagiApp {
     /// Cache of changed-files results keyed by row index.
     /// `None` value means the diff was attempted but failed (show unavailable).
     pub diff_cache: HashMap<usize, Option<Vec<FileStatus>>>,
+    /// When `Some`, the detail panel shows the diff for this file instead of
+    /// the commit metadata + changed-files list.  Cleared whenever
+    /// `selected` changes.
+    pub file_diff_view: Option<FileDiffView>,
 }
 
 impl KagiApp {
@@ -115,6 +206,7 @@ impl KagiApp {
             error: None,
             repo_path: None,
             diff_cache: HashMap::new(),
+            file_diff_view: None,
         }
     }
 
@@ -128,6 +220,7 @@ impl KagiApp {
             error: Some(SharedString::from(message.into())),
             repo_path: None,
             diff_cache: HashMap::new(),
+            file_diff_view: None,
         }
     }
 
@@ -135,13 +228,17 @@ impl KagiApp {
     /// Emits a `[kagi] selected:` log for automated verification.
     /// On first selection of a row, fetches changed files on-demand and caches
     /// the result; subsequent selections of the same row reuse the cache.
+    /// Clears any open diff view when the selection changes.
     pub fn select(&mut self, index: usize) {
         // Toggle: clicking the same row again deselects it.
         if self.selected == Some(index) {
             self.selected = None;
+            self.file_diff_view = None;
             return;
         }
         self.selected = Some(index);
+        // Clear any open file diff when the commit selection changes.
+        self.file_diff_view = None;
 
         if let Some(detail) = self.details.get(index) {
             let parent_count = detail.parent_ids.len();
@@ -168,6 +265,80 @@ impl KagiApp {
                 .unwrap_or(0);
             eprintln!("[kagi] changed files: {}", n);
         }
+    }
+
+    /// Open the diff for the file at `file_index` in the currently selected commit.
+    ///
+    /// Fetches the diff via [`commit_file_diff`] and stores a pre-rendered
+    /// [`FileDiffView`] in `self.file_diff_view`.  No-op if no commit is selected.
+    pub fn open_file_diff(&mut self, file_index: usize) {
+        use crate::git::{CommitId, commit_file_diff};
+
+        let selected = match self.selected {
+            Some(s) => s,
+            None => return,
+        };
+        let repo_path = match self.repo_path.as_ref() {
+            Some(p) => p.clone(),
+            None => return,
+        };
+        let detail = match self.details.get(selected) {
+            Some(d) => d,
+            None => return,
+        };
+        let files = match self.diff_cache.get(&selected).and_then(|v| v.as_ref()) {
+            Some(f) => f,
+            None => return,
+        };
+        let file_status = match files.get(file_index) {
+            Some(f) => f,
+            None => return,
+        };
+
+        let id = CommitId(detail.full_sha.as_ref().to_string());
+        let path = file_status.path.clone();
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+
+        match commit_file_diff(&repo, &id, &path) {
+            Ok(file_diff) => {
+                // Count added / removed lines for the log.
+                let added: usize = file_diff
+                    .hunks
+                    .iter()
+                    .flat_map(|h| h.lines.iter())
+                    .filter(|l| l.kind == DiffLineKind::Added)
+                    .count();
+                let removed: usize = file_diff
+                    .hunks
+                    .iter()
+                    .flat_map(|h| h.lines.iter())
+                    .filter(|l| l.kind == DiffLineKind::Removed)
+                    .count();
+                let hunks = file_diff.hunks.len();
+
+                eprintln!(
+                    "[kagi] diff: {} hunks={} (+{} -{})",
+                    path.display(),
+                    hunks,
+                    added,
+                    removed,
+                );
+
+                self.file_diff_view = Some(FileDiffView::from_file_diff(&file_diff, file_index));
+            }
+            Err(e) => {
+                eprintln!("[kagi] diff error: {}", e);
+            }
+        }
+    }
+
+    /// Close the current file diff view and return to the changed-files list.
+    pub fn close_file_diff(&mut self) {
+        self.file_diff_view = None;
     }
 
     /// Fetch changed files for the commit at `index`.  Returns `None` on
@@ -216,6 +387,9 @@ impl Render for KagiApp {
         let changed_files: Option<Option<Vec<FileStatus>>> = selected
             .map(|i| self.diff_cache.get(&i).cloned().unwrap_or(None));
 
+        // Clone the file diff view if present.
+        let file_diff_view = self.file_diff_view.clone();
+
         // ── Normal state: header + (list | list + panel) ─────
         div()
             .flex()
@@ -255,10 +429,15 @@ impl Render for KagiApp {
                     )
                     // ── Detail panel (only when a row is selected) ──
                     .when_some(detail, |el, d| {
-                        // Pair the CommitDetail with the changed-files list.
-                        // changed_files is Some(...) when a row is selected.
-                        let files = changed_files.clone();
-                        el.child(render_detail_panel(d, files.unwrap_or(None)))
+                        if let Some(diff_view) = file_diff_view {
+                            // ── Diff view mode ──────────────────
+                            el.child(render_diff_panel(diff_view, cx))
+                        } else {
+                            // ── Commit metadata + changed files ─
+                            let files = changed_files.clone();
+                            let files_for_click = changed_files.clone();
+                            el.child(render_detail_panel(d, files.unwrap_or(None), files_for_click.unwrap_or(None), cx))
+                        }
                     }),
             )
             .into_any()
@@ -302,15 +481,8 @@ fn render_rows(
             let g_w = graph_width(row.lane_count);
 
             // on_click handler: update KagiApp.selected via cx.listener.
-            // cx.listener signature:
-            //   fn listener<E: ?Sized>(
-            //       &self,
-            //       f: impl Fn(&mut T, &E, &mut Window, &mut Context<T>) + 'static,
-            //   ) -> impl Fn(&E, &mut Window, &mut App) + 'static
             let click_handler = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
                 this.select(ix);
-                // State changed — request a re-render so the highlight and
-                // detail panel actually update on screen.
                 cx.notify();
             });
 
@@ -321,14 +493,9 @@ fn render_rows(
                 .items_center()
                 .w_full()
                 .px_3()
-                // Fixed row height with NO vertical padding: the graph canvas
-                // must span the full row so Pass edges connect seamlessly
-                // across row boundaries.
                 .h(px(graph_view::ROW_H))
                 .bg(rgb(row_bg))
                 .on_click(click_handler)
-                // Graph lane canvas — wrapped in a sized div so we can call
-                // .w() / .h() on the container (canvas returns opaque type).
                 .when(g_w > 0.0, |el| {
                     el.child(
                         div()
@@ -341,7 +508,6 @@ fn render_rows(
                             ),
                     )
                 })
-                // Short SHA (monospace-ish, muted teal)
                 .child(
                     div()
                         .w(px(72.))
@@ -349,9 +515,7 @@ fn render_rows(
                         .text_color(rgb(COLOR_SHA))
                         .child(row.short_id.clone()),
                 )
-                // Badge chips
                 .child(render_badges(&row.badges))
-                // Summary (fills remaining space)
                 .child(
                     div()
                         .flex_1()
@@ -359,7 +523,6 @@ fn render_rows(
                         .overflow_hidden()
                         .child(row.summary.clone()),
                 )
-                // Author
                 .child(
                     div()
                         .w(px(130.))
@@ -368,7 +531,6 @@ fn render_rows(
                         .overflow_hidden()
                         .child(row.author.clone()),
                 )
-                // Date
                 .child(
                     div()
                         .w(px(72.))
@@ -384,11 +546,15 @@ fn render_rows(
 // Detail panel renderer
 // ──────────────────────────────────────────────────────────────
 
-/// Render the 360 px right-side detail panel for the selected commit.
+/// Render the right-side detail panel showing commit metadata + changed files.
 ///
-/// `changed_files` is `None` when the diff has not been loaded or failed
-/// (shows "(diff unavailable)"), or `Some(Vec<FileStatus>)` with the list.
-fn render_detail_panel(d: CommitDetail, changed_files: Option<Vec<FileStatus>>) -> impl IntoElement {
+/// Each changed-file row is clickable: clicking opens the file diff view.
+fn render_detail_panel(
+    d: CommitDetail,
+    changed_files: Option<Vec<FileStatus>>,
+    changed_files_for_click: Option<Vec<FileStatus>>,
+    cx: &mut Context<KagiApp>,
+) -> impl IntoElement {
     // Helper: one labelled field row.
     let field = |label: &'static str, value: SharedString| {
         div()
@@ -416,26 +582,6 @@ fn render_detail_panel(d: CommitDetail, changed_files: Option<Vec<FileStatus>>) 
         SharedString::from(d.parent_ids.iter().map(|s| s.as_ref()).collect::<Vec<_>>().join("  "))
     };
 
-    let mut panel = div()
-        .w(px(360.))
-        .flex_shrink_0()
-        .h_full()
-        .flex()
-        .flex_col()
-        .bg(rgb(BG_PANEL))
-        .px_3()
-        .py_2()
-        // ── Full SHA ────────────────────────────────────────
-        .child(field("SHA", d.full_sha))
-        // ── Author ──────────────────────────────────────────
-        .child(field("Author", d.author_line));
-
-    // Committer (only when different from author)
-    if let Some(committer) = d.committer_line {
-        panel = panel.child(field("Committer", committer));
-    }
-
-    // ── Changed files section ────────────────────────────────────────────────
     // Colour constants for change-kind badges (A/M/D/R/T).
     const COLOR_ADDED:   u32 = 0xa6e3a1; // green
     const COLOR_MODIFIED: u32 = 0xf9e2af; // yellow
@@ -447,15 +593,12 @@ fn render_detail_panel(d: CommitDetail, changed_files: Option<Vec<FileStatus>>) 
 
     // Build the file rows (up to MAX_FILES) and a truncation notice.
     let (file_rows, truncated): (Vec<_>, Option<usize>) = match &changed_files {
-        None => {
-            // Diff unavailable: single notice row.
-            (vec![], None)
-        }
+        None => (vec![], None),
         Some(files) => {
             let total = files.len();
-            let shown = files.iter().take(MAX_FILES);
+            let shown = files.iter().take(MAX_FILES).enumerate();
             let rows: Vec<_> = shown
-                .map(|f| {
+                .map(|(file_index, f)| {
                     let (badge_char, badge_color) = match &f.change {
                         ChangeKind::Added      => ("A", COLOR_ADDED),
                         ChangeKind::Modified   => ("M", COLOR_MODIFIED),
@@ -471,7 +614,6 @@ fn render_detail_panel(d: CommitDetail, changed_files: Option<Vec<FileStatus>>) 
                     let display_path: String = {
                         let char_count = path_str.chars().count();
                         if char_count > MAX_PATH_CHARS {
-                            // Keep the last MAX_PATH_CHARS-1 chars (to leave room for "…").
                             let skip = char_count - (MAX_PATH_CHARS - 1);
                             let tail: String = path_str.chars().skip(skip).collect();
                             format!("\u{2026}{}", tail)
@@ -480,14 +622,21 @@ fn render_detail_panel(d: CommitDetail, changed_files: Option<Vec<FileStatus>>) 
                         }
                     };
 
+                    // Click handler: open the diff for this file.
+                    let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                        this.open_file_diff(file_index);
+                        cx.notify();
+                    });
+
                     div()
+                        .id(("file-row", file_index))
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap_1()
                         .mb_px()
+                        .on_click(click)
                         .child(
-                            // Kind badge: single letter in a small colored chip.
                             div()
                                 .w(px(14.))
                                 .flex_shrink_0()
@@ -510,6 +659,9 @@ fn render_detail_panel(d: CommitDetail, changed_files: Option<Vec<FileStatus>>) 
         }
     };
 
+    // Suppress unused warning for changed_files_for_click (kept for symmetry / future use).
+    let _ = changed_files_for_click;
+
     let files_section = {
         let section_label = match &changed_files {
             None => SharedString::from("Changed files"),
@@ -529,7 +681,6 @@ fn render_detail_panel(d: CommitDetail, changed_files: Option<Vec<FileStatus>>) 
             );
 
         if changed_files.is_none() {
-            // Diff unavailable.
             section = section.child(
                 div()
                     .text_sm()
@@ -553,7 +704,21 @@ fn render_detail_panel(d: CommitDetail, changed_files: Option<Vec<FileStatus>>) 
         section
     };
 
-    panel
+    div()
+        .w(px(360.))
+        .flex_shrink_0()
+        .h_full()
+        .flex()
+        .flex_col()
+        .bg(rgb(BG_PANEL))
+        .px_3()
+        .py_2()
+        // ── Full SHA ────────────────────────────────────────
+        .child(field("SHA", d.full_sha))
+        // ── Author ──────────────────────────────────────────
+        .child(field("Author", d.author_line))
+        // ── Committer (only when different from author) ──────
+        .when_some(d.committer_line, |el, c| el.child(field("Committer", c)))
         // ── Parents ─────────────────────────────────────────
         .child(field("Parents", parents_value))
         // ── Message ─────────────────────────────────────────
@@ -577,6 +742,136 @@ fn render_detail_panel(d: CommitDetail, changed_files: Option<Vec<FileStatus>>) 
         )
         // ── Changed files ─────────────────────────────────
         .child(files_section)
+}
+
+// ──────────────────────────────────────────────────────────────
+// Diff panel renderer
+// ──────────────────────────────────────────────────────────────
+
+/// Render the diff view panel for a single file.
+///
+/// Layout:
+/// - `← back` row (click to return to the changed-files list)
+/// - File name
+/// - Virtualized diff line list (`uniform_list` with id `"diff-list"`)
+fn render_diff_panel(view: FileDiffView, cx: &mut Context<KagiApp>) -> impl IntoElement {
+    let row_count = view.rows.len();
+    let rows = std::sync::Arc::new(view.rows);
+    let rows_for_list = rows.clone();
+
+    // "← back" click handler: close the diff view.
+    let back_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+        this.close_file_diff();
+        cx.notify();
+    });
+
+    div()
+        .w(px(560.))
+        .flex_shrink_0()
+        .h_full()
+        .flex()
+        .flex_col()
+        .bg(rgb(BG_PANEL))
+        .px_0()
+        .py_0()
+        // ── Back row ──────────────────────────────────────────
+        .child(
+            div()
+                .id("diff-back")
+                .flex()
+                .flex_row()
+                .items_center()
+                .px_3()
+                .py_1()
+                .bg(rgb(BG_SURFACE))
+                .on_click(back_click)
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_SUB))
+                        .child(SharedString::from("\u{2190} back")),
+                )
+                .child(
+                    div()
+                        .ml_2()
+                        .flex_1()
+                        .text_sm()
+                        .text_color(rgb(TEXT_MAIN))
+                        .overflow_hidden()
+                        .child(view.file_name),
+                ),
+        )
+        // ── Diff body ──────────────────────────────────────────
+        .child(
+            uniform_list(
+                "diff-list",
+                row_count,
+                cx.processor(move |_this, range, _window, _cx| {
+                    render_diff_rows(&rows_for_list, range)
+                }),
+            )
+            .flex_1()
+            .h_full(),
+        )
+}
+
+/// Render a range of diff rows for the `"diff-list"` uniform_list.
+fn render_diff_rows(
+    rows: &[DiffRow],
+    range: std::ops::Range<usize>,
+) -> Vec<impl IntoElement> {
+    range
+        .filter_map(|i| rows.get(i).map(|row| (i, row)))
+        .map(|(i, row)| match row {
+            DiffRow::HunkHeader(header) => {
+                div()
+                    .id(("diff-hunk", i))
+                    .w_full()
+                    .px_2()
+                    .py_px()
+                    .bg(rgb(BG_SURFACE))
+                    .text_sm()
+                    .text_color(rgb(COLOR_DIFF_HUNK))
+                    .overflow_hidden()
+                    .child(header.clone())
+                    .into_any()
+            }
+            DiffRow::Line { kind, text } => {
+                let bg = match kind {
+                    DiffLineKind::Added   => BG_DIFF_ADDED,
+                    DiffLineKind::Removed => BG_DIFF_REMOVED,
+                    DiffLineKind::Context => BG_BASE,
+                };
+                let text_color = match kind {
+                    DiffLineKind::Added   => 0xa6e3a1u32, // green
+                    DiffLineKind::Removed => 0xf38ba8u32, // red
+                    DiffLineKind::Context => TEXT_MAIN,
+                };
+                div()
+                    .id(("diff-line", i))
+                    .w_full()
+                    .px_2()
+                    .py_px()
+                    .bg(rgb(bg))
+                    .text_sm()
+                    .text_color(rgb(text_color))
+                    .overflow_hidden()
+                    .child(text.clone())
+                    .into_any()
+            }
+            DiffRow::Binary => {
+                div()
+                    .id(("diff-binary", i))
+                    .w_full()
+                    .px_2()
+                    .py_1()
+                    .text_sm()
+                    .text_color(rgb(TEXT_MUTED))
+                    .child(SharedString::from("Binary file (no diff)"))
+                    .into_any()
+            }
+        })
+        .collect()
 }
 
 /// Render the badge chips for one commit row as a horizontal flex container.

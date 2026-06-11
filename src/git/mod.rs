@@ -14,7 +14,7 @@ mod snapshot;
 mod status;
 
 #[allow(unused_imports)]
-pub use diff::commit_changed_files;
+pub use diff::{DiffLine, DiffLineKind, FileDiff, Hunk, commit_changed_files, commit_file_diff};
 #[allow(unused_imports)]
 pub use log::{Commit, CommitId, Signature, commit_log};
 #[allow(unused_imports)]

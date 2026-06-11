@@ -102,5 +102,12 @@ fn main() {
         }
     }
 
+    // KAGI_OPEN_FIRST_FILE=1 (requires KAGI_SELECT_FIRST=1): after selecting
+    // the first commit, automatically open the diff for its first changed file.
+    // Emits `[kagi] diff: <path> hunks=N (+A -R)` for headless verification (T012).
+    if std::env::var("KAGI_OPEN_FIRST_FILE").as_deref() == Ok("1") {
+        app_state.open_file_diff(0);
+    }
+
     run_app(app_state);
 }

@@ -45,7 +45,6 @@ const TEXT_MAIN: u32 = 0xcdd6f4;
 const TEXT_SUB: u32 = 0xa6adc8;
 const TEXT_MUTED: u32 = 0x585b70;
 const TEXT_LABEL: u32 = 0x6c7086; // overlay0 — field labels in detail panel
-const COLOR_SHA: u32 = 0x89dceb; // teal
 const COLOR_HEAD: u32 = 0xf38ba8; // red  — HEAD / attached branch
 const COLOR_BRANCH: u32 = 0x89b4fa; // blue — local branch
 const COLOR_REMOTE: u32 = 0xa6e3a1; // green — remote branch
@@ -1809,6 +1808,9 @@ fn render_rows(
                 .h(px(graph_view::ROW_H))
                 .bg(rgb(row_bg))
                 .on_click(click_handler)
+                // ── Badges column: fixed 150px, right-aligned, graph side (T021) ──
+                .child(render_badges_column(&row.badges))
+                // ── Graph lane area (T009) ────────────────────────
                 .when(g_w > 0.0, |el| {
                     el.child(
                         div()
@@ -1821,7 +1823,7 @@ fn render_rows(
                             ),
                     )
                 })
-                // ── Author avatar: 18px circle between graph and SHA ──
+                // ── Author avatar: 18px circle after graph ────────
                 .child(
                     div()
                         .w(px(18.))
@@ -1840,14 +1842,6 @@ fn render_rows(
                                 .child(avatar_init),
                         ),
                 )
-                .child(
-                    div()
-                        .w(px(72.))
-                        .flex_shrink_0()
-                        .text_color(rgb(COLOR_SHA))
-                        .child(row.short_id.clone()),
-                )
-                .child(render_badges(&row.badges))
                 .child(
                     div()
                         .flex_1()
@@ -2270,17 +2264,47 @@ fn render_diff_rows(
 ///
 /// Badge labels are capped at 24 visible chars with a trailing `…` to prevent
 /// very long branch names from overflowing the commit list row (T019).
-fn render_badges(badges: &[commit_list::RefBadge]) -> impl IntoElement {
+/// Sort key for badge priority: HeadBranch=0, Branch=1, Tag=2, Remote=3.
+/// Right-aligned layout means the last-rendered badge is closest to the graph,
+/// so we want the most important badge last → highest priority rendered last.
+/// We render in priority order (0→3) so HeadBranch ends up leftmost and
+/// Remote rightmost within the 150px column (closest to the graph).
+fn badge_priority(kind: &BadgeKind) -> u8 {
+    match kind {
+        BadgeKind::HeadBranch => 0,
+        BadgeKind::Branch => 1,
+        BadgeKind::Tag => 2,
+        BadgeKind::Remote => 3,
+    }
+}
+
+/// Render the badges column: fixed 150px, right-aligned (`justify_end`),
+/// `overflow_hidden`.  An empty badges list still occupies the full 150px so
+/// that all rows share the same graph start position (GitKraken layout, T021).
+fn render_badges_column(badges: &[commit_list::RefBadge]) -> impl IntoElement {
     const MAX_BADGE_CHARS: usize = 24;
-    let mut row = div().flex().flex_row().gap_1().flex_shrink_0().mr_2();
-    for badge in badges {
+
+    // Highest-priority badge (HEAD) goes RIGHTMOST: the column is
+    // right-justified and clips on the left, so the rightmost badge — the
+    // one nearest the graph — is the one that survives clipping.
+    let mut sorted: Vec<&commit_list::RefBadge> = badges.iter().collect();
+    sorted.sort_by_key(|b| std::cmp::Reverse(badge_priority(&b.kind)));
+
+    let mut inner = div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_end()
+        .gap_1();
+
+    for badge in &sorted {
         let color = match badge.kind {
             BadgeKind::HeadBranch => COLOR_HEAD,
             BadgeKind::Branch => COLOR_BRANCH,
             BadgeKind::Remote => COLOR_REMOTE,
             BadgeKind::Tag => COLOR_TAG,
         };
-        // Truncate long labels so they don't overflow the row.
+        // Truncate long labels so they don't overflow the column.
         let label: SharedString = if badge.label.chars().count() > MAX_BADGE_CHARS {
             let s: String = badge.label.chars().take(MAX_BADGE_CHARS - 1).collect();
             SharedString::from(format!("{}\u{2026}", s))
@@ -2293,10 +2317,21 @@ fn render_badges(badges: &[commit_list::RefBadge]) -> impl IntoElement {
             .bg(rgb(color))
             .text_color(rgb(BG_BASE))
             .text_sm()
+            .flex_shrink_0()
             .child(label);
-        row = row.child(chip);
+        inner = inner.child(chip);
     }
-    row
+
+    // Fixed 150px container, overflow clipped so long badge lists don't push graph.
+    div()
+        .w(px(150.))
+        .flex_shrink_0()
+        .overflow_hidden()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_end()
+        .child(inner)
 }
 
 // ──────────────────────────────────────────────────────────────

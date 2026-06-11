@@ -111,7 +111,8 @@ pub fn build_badge_map(snap: &RepoSnapshot) -> HashMap<CommitId, Vec<RefBadge>> 
 /// them without re-allocating.
 #[derive(Clone)]
 pub struct CommitRow {
-    /// Short (8-hex) commit id.
+    /// Short (8-hex) commit id. Retained for Detail Panel / oplog (T021: not rendered in row).
+    #[allow(dead_code)]
     pub short_id: SharedString,
     /// First line of the commit message (truncated to 72 chars at build time).
     pub summary: SharedString,

@@ -1562,11 +1562,6 @@ impl KagiApp {
         }
     }
 
-    /// Close the commit panel (returns to normal commit selection mode).
-    pub fn close_commit_panel(&mut self) {
-        self.commit_panel_open = false;
-    }
-
     /// Stage a single file in the commit panel.
     ///
     /// Calls `stage_file` from T024 and then refreshes the staging status.

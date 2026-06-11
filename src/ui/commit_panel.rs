@@ -143,11 +143,6 @@ impl CommitPanelState {
         !self.staged.is_empty() && !self.commit_msg.trim().is_empty()
     }
 
-    /// Total number of "changes" in the working tree (for WIP badge label).
-    pub fn total_changes(&self) -> usize {
-        self.unstaged.len() + self.staged.len()
-    }
-
     /// Load the diff for the given file reference and store in diff_view.
     pub fn load_diff(&mut self, file_ref: CommitPanelFileRef, repo_path: &PathBuf) {
         use kagi::git::{unstaged_file_diff, staged_file_diff};

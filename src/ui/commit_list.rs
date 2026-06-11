@@ -115,8 +115,10 @@ pub struct CommitRow {
     pub short_id: SharedString,
     /// First line of the commit message (truncated to 72 chars at build time).
     pub summary: SharedString,
-    /// Author name.
+    /// Author name (display only).
     pub author: SharedString,
+    /// Author email — used by the avatar helper to derive a stable colour.
+    pub author_email: String,
     /// Relative date string, e.g. `"3d ago"`, `"2y ago"`.
     pub date: SharedString,
     /// Ref badges for this commit, if any.
@@ -177,10 +179,11 @@ fn commit_to_row(
     };
 
     let author = SharedString::from(c.author.name.clone());
+    let author_email = c.author.email.clone();
     let date = SharedString::from(relative_time(c.author.time, now_secs));
     let badges = badge_map.get(&c.id).cloned().unwrap_or_default();
 
-    CommitRow { short_id, summary, author, date, badges, lane, edges, lane_count }
+    CommitRow { short_id, summary, author, author_email, date, badges, lane, edges, lane_count }
 }
 
 // ──────────────────────────────────────────────────────────────

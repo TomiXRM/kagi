@@ -1,4 +1,4 @@
-//! Commit graph lane drawing — T009
+//! Commit graph lane drawing — T009 / T020 (rounded-corner edges + avatar node)
 //!
 //! This module renders the visual commit graph (nodes ● and edges) into the
 //! left-hand "graph area" of each commit row.  Drawing is done via the gpui
@@ -15,8 +15,17 @@
 //!   - Edge top endpoint: y = 0 (= row top, connects to row above seamlessly).
 //!   - Edge bottom endpoint: y = ROW_H (= row bottom, connects to row below).
 //!   - Pass edges: vertical line from y=0 to y=ROW_H at the lane's x centre.
-//!   - IntoNode: line from (from_lane x, 0) → (node x, ROW_H/2).
-//!   - OutOfNode: line from (node x, ROW_H/2) → (to_lane x, ROW_H).
+//!   - IntoNode: from (x_from, 0) descends vertically to corner, then arcs to
+//!     (x_node, mid_y).  Corner is a quadratic Bézier (GitKraken style).
+//!   - OutOfNode: from (x_node, mid_y) arcs to corner, then descends vertically
+//!     to (x_to, ROW_H).
+//!
+//! # Corner-radius clamping (T020)
+//!
+//! `CORNER_R = 6.0` px.  Before drawing, R is clamped to:
+//!   `R = min(CORNER_R, |dx| / 2, available_vertical / 2)`
+//! so the curve never exceeds the available space regardless of lane spacing
+//! or row height.
 
 use gpui::{
     App, Bounds, Canvas, PathBuilder, Pixels, Window, canvas, hsla, point, px,
@@ -39,6 +48,8 @@ pub const ROW_H: f32 = 24.0;
 const NODE_R: f32 = 4.0;
 /// Edge stroke width in pixels.
 const EDGE_W: f32 = 1.5;
+/// Desired corner radius in pixels (T020). Will be clamped per-edge.
+const CORNER_R: f32 = 6.0;
 
 // ──────────────────────────────────────────────────────────────
 // Lane colour palette (6 colours, Catppuccin-inspired)
@@ -67,6 +78,97 @@ fn lane_color(lane: usize) -> gpui::Hsla {
 /// Compute the pixel width of the graph area for a given lane count.
 pub fn graph_width(lane_count: usize) -> f32 {
     (lane_count.min(MAX_LANES) as f32) * LANE_W
+}
+
+// ──────────────────────────────────────────────────────────────
+// Rounded-corner edge helper (T020)
+// ──────────────────────────────────────────────────────────────
+
+/// Draw an **IntoNode** edge with a rounded corner.
+///
+/// Path:  `(x_from, y_top)` ↓ vertical → quadratic Bézier arc → `(x_node, mid_y)`
+///
+/// The corner bends at `mid_y` (row horizontal centre):
+/// - vertical segment:  `(x_from, y_top)` → `(x_from, mid_y - R)`
+/// - arc (quad Bézier): control at `(x_from, mid_y)`, end at `(x_node ± R, mid_y)`
+///   where the sign depends on which side `x_node` is relative to `x_from`.
+/// - horizontal segment: `(x_node ± R, mid_y)` → `(x_node, mid_y)`
+///
+/// The `R` value is clamped so neither half-segment underflows.
+fn draw_into_node(
+    builder: &mut PathBuilder,
+    x_from: f32,
+    y_top: f32,
+    x_node: f32,
+    mid_y: f32,
+) {
+    let dx = (x_node - x_from).abs();
+    // Available vertical from y_top to mid_y.
+    let avail_v = (mid_y - y_top).max(0.0);
+    // Clamp R so curves fit within the available space.
+    let r = CORNER_R.min(dx / 2.0).min(avail_v / 2.0);
+
+    if r < 0.5 || dx < 0.5 {
+        // Fallback: draw a straight diagonal line (from == node or very close).
+        builder.move_to(point(px(x_from), px(y_top)));
+        builder.line_to(point(px(x_node), px(mid_y)));
+        return;
+    }
+
+    // Corner direction: is x_node to the right (+1) or left (-1) of x_from?
+    let dir: f32 = if x_node > x_from { 1.0 } else { -1.0 };
+
+    // Vertical segment: descend from y_top to the arc start.
+    builder.move_to(point(px(x_from), px(y_top)));
+    builder.line_to(point(px(x_from), px(mid_y - r)));
+
+    // Quadratic Bézier: control at corner point, end at horizontal lane.
+    // The arc begins at (x_from, mid_y - r) and ends at (x_from + dir*r, mid_y).
+    let ctrl = point(px(x_from), px(mid_y));
+    let end  = point(px(x_from + dir * r), px(mid_y));
+    builder.curve_to(end, ctrl);
+
+    // Horizontal segment from arc end to node centre.
+    builder.line_to(point(px(x_node), px(mid_y)));
+}
+
+/// Draw an **OutOfNode** edge with a rounded corner.
+///
+/// Path:  `(x_node, mid_y)` → horizontal → quadratic Bézier arc → `(x_to, y_bot)` ↓
+///
+/// Mirror image of [`draw_into_node`].
+fn draw_out_of_node(
+    builder: &mut PathBuilder,
+    x_node: f32,
+    mid_y: f32,
+    x_to: f32,
+    y_bot: f32,
+) {
+    let dx = (x_to - x_node).abs();
+    let avail_v = (y_bot - mid_y).max(0.0);
+    let r = CORNER_R.min(dx / 2.0).min(avail_v / 2.0);
+
+    if r < 0.5 || dx < 0.5 {
+        // Fallback: straight diagonal.
+        builder.move_to(point(px(x_node), px(mid_y)));
+        builder.line_to(point(px(x_to), px(y_bot)));
+        return;
+    }
+
+    // Corner direction.
+    let dir: f32 = if x_to > x_node { 1.0 } else { -1.0 };
+
+    // Start at node centre, run horizontal to arc start.
+    builder.move_to(point(px(x_node), px(mid_y)));
+    builder.line_to(point(px(x_to - dir * r), px(mid_y)));
+
+    // Quadratic Bézier: control at corner point, end on vertical lane.
+    let ctrl = point(px(x_to), px(mid_y));
+    let end  = point(px(x_to), px(mid_y + r));
+    builder.curve_to(end, ctrl);
+
+    // Vertical segment from arc end to bottom of row.
+    builder.line_to(point(px(x_to), px(y_bot)));
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -111,25 +213,39 @@ pub fn graph_canvas(
                     EdgeKind::Pass => lane_color(edge.from_lane),
                 };
 
-                let (x0, y0, x1, y1) = match edge.kind {
+                let mut builder = PathBuilder::stroke(px(EDGE_W));
+
+                match edge.kind {
                     EdgeKind::Pass => {
                         // Straight vertical line, full row height.
                         let x = lane_x(edge.from_lane);
-                        (x, oy, x, oy + row_h)
+                        builder.move_to(point(px(x), px(oy)));
+                        builder.line_to(point(px(x), px(oy + row_h)));
                     }
                     EdgeKind::IntoNode => {
-                        // From the top of from_lane → node centre.
-                        (lane_x(edge.from_lane), oy, lane_x(node_lane), mid_y)
+                        let x_from = lane_x(edge.from_lane);
+                        let x_node = lane_x(node_lane);
+                        if edge.from_lane == node_lane {
+                            // Same lane: straight vertical.
+                            builder.move_to(point(px(x_from), px(oy)));
+                            builder.line_to(point(px(x_node), px(mid_y)));
+                        } else {
+                            draw_into_node(&mut builder, x_from, oy, x_node, mid_y);
+                        }
                     }
                     EdgeKind::OutOfNode => {
-                        // From node centre → bottom of to_lane.
-                        (lane_x(node_lane), mid_y, lane_x(edge.to_lane), oy + row_h)
+                        let x_node = lane_x(node_lane);
+                        let x_to = lane_x(edge.to_lane);
+                        if node_lane == edge.to_lane {
+                            // Same lane: straight vertical.
+                            builder.move_to(point(px(x_node), px(mid_y)));
+                            builder.line_to(point(px(x_to), px(oy + row_h)));
+                        } else {
+                            draw_out_of_node(&mut builder, x_node, mid_y, x_to, oy + row_h);
+                        }
                     }
-                };
+                }
 
-                let mut builder = PathBuilder::stroke(px(EDGE_W));
-                builder.move_to(point(px(x0), px(y0)));
-                builder.line_to(point(px(x1), px(y1)));
                 if let Ok(path) = builder.build() {
                     window.paint_path(path, color);
                 }

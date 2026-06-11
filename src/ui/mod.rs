@@ -4,6 +4,7 @@
 //! It must not be added to `src/lib.rs` so that domain tests stay
 //! independent of GPUI.
 
+pub mod avatar;
 pub mod commit_list;
 pub mod detail_panel;
 pub mod file_tree;
@@ -1505,6 +1506,12 @@ fn render_rows(
                 cx.notify();
             });
 
+            // ── Avatar (T020) ─────────────────────────────────
+            let avatar_color = avatar::avatar_color(&row.author_email);
+            let avatar_init = SharedString::from(avatar::avatar_initial(&row.author));
+            // Convert Hsla to the rgb u32 that gpui's `bg()` accepts via hsla().
+            let av_bg = avatar_color;
+
             div()
                 .id(ix)
                 .flex()
@@ -1527,6 +1534,25 @@ fn render_rows(
                             ),
                     )
                 })
+                // ── Author avatar: 18px circle between graph and SHA ──
+                .child(
+                    div()
+                        .w(px(18.))
+                        .h(px(18.))
+                        .flex_shrink_0()
+                        .mr(px(4.))
+                        .rounded_full()
+                        .bg(av_bg)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .text_color(gpui::white())
+                                .text_xs()
+                                .child(avatar_init),
+                        ),
+                )
                 .child(
                     div()
                         .w(px(72.))

@@ -2475,7 +2475,8 @@ fn render_create_branch_modal(
                     div()
                         .text_sm()
                         .text_color(rgb(COLOR_BLOCKER))
-                        .child(SharedString::from(format!("\u{2717} {}", b))),
+                        .overflow_hidden()
+                        .child(SharedString::from(soft_wrap(&format!("\u{2717} {}", b), 16))),
                 );
             }
             card = card.child(block_col);
@@ -2486,7 +2487,8 @@ fn render_create_branch_modal(
             div()
                 .text_xs()
                 .text_color(rgb(TEXT_MUTED))
-                .child(SharedString::from(p.recovery.clone())),
+                .overflow_hidden()
+                .child(SharedString::from(soft_wrap(&p.recovery, 16))),
         );
     }
 
@@ -2496,7 +2498,8 @@ fn render_create_branch_modal(
             div()
                 .text_sm()
                 .text_color(rgb(COLOR_BLOCKER))
-                .child(err.clone()),
+                .overflow_hidden()
+                .child(SharedString::from(soft_wrap(err, 16))),
         );
     }
 
@@ -2719,7 +2722,8 @@ fn render_stash_push_modal(
                     div()
                         .text_sm()
                         .text_color(rgb(COLOR_WARNING))
-                        .child(SharedString::from(format!("\u{26a0} {}", w))),
+                        .overflow_hidden()
+                        .child(SharedString::from(soft_wrap(&format!("\u{26a0} {}", w), 16))),
                 );
             }
             card = card.child(warn_col);
@@ -2733,7 +2737,8 @@ fn render_stash_push_modal(
                     div()
                         .text_sm()
                         .text_color(rgb(COLOR_BLOCKER))
-                        .child(SharedString::from(format!("\u{2717} {}", b))),
+                        .overflow_hidden()
+                        .child(SharedString::from(soft_wrap(&format!("\u{2717} {}", b), 16))),
                 );
             }
             card = card.child(block_col);
@@ -2744,7 +2749,8 @@ fn render_stash_push_modal(
             div()
                 .text_xs()
                 .text_color(rgb(TEXT_MUTED))
-                .child(SharedString::from(p.recovery.clone())),
+                .overflow_hidden()
+                .child(SharedString::from(soft_wrap(&p.recovery, 16))),
         );
     }
 
@@ -2754,7 +2760,8 @@ fn render_stash_push_modal(
             div()
                 .text_sm()
                 .text_color(rgb(COLOR_BLOCKER))
-                .child(err.clone()),
+                .overflow_hidden()
+                .child(SharedString::from(soft_wrap(err, 16))),
         );
     }
 
@@ -2943,7 +2950,8 @@ fn render_stash_apply_modal(
                 div()
                     .text_sm()
                     .text_color(rgb(COLOR_BLOCKER))
-                    .child(SharedString::from(format!("\u{2717} {}", b))),
+                    .overflow_hidden()
+                    .child(SharedString::from(soft_wrap(&format!("\u{2717} {}", b), 16))),
             );
         }
         card = card.child(block_col);
@@ -2954,7 +2962,8 @@ fn render_stash_apply_modal(
         div()
             .text_xs()
             .text_color(rgb(TEXT_MUTED))
-            .child(SharedString::from(plan.recovery.clone())),
+            .overflow_hidden()
+            .child(SharedString::from(soft_wrap(&plan.recovery, 16))),
     );
 
     // ── Error message ────────────────────────────────────
@@ -2963,7 +2972,8 @@ fn render_stash_apply_modal(
             div()
                 .text_sm()
                 .text_color(rgb(COLOR_BLOCKER))
-                .child(err.clone()),
+                .overflow_hidden()
+                .child(SharedString::from(soft_wrap(err, 16))),
         );
     }
 
@@ -3231,7 +3241,8 @@ fn render_cherry_pick_modal(
                 div()
                     .text_sm()
                     .text_color(rgb(COLOR_WARNING))
-                    .child(SharedString::from(format!("\u{26a0} {}", w))),
+                    .overflow_hidden()
+                    .child(SharedString::from(soft_wrap(&format!("\u{26a0} {}", w), 16))),
             );
         }
         card = card.child(warn_col);
@@ -3245,7 +3256,8 @@ fn render_cherry_pick_modal(
                 div()
                     .text_sm()
                     .text_color(rgb(COLOR_BLOCKER))
-                    .child(SharedString::from(format!("\u{2717} {}", b))),
+                    .overflow_hidden()
+                    .child(SharedString::from(soft_wrap(&format!("\u{2717} {}", b), 16))),
             );
         }
         card = card.child(block_col);
@@ -3256,7 +3268,8 @@ fn render_cherry_pick_modal(
         div()
             .text_xs()
             .text_color(rgb(TEXT_MUTED))
-            .child(SharedString::from(plan.recovery.clone())),
+            .overflow_hidden()
+            .child(SharedString::from(soft_wrap(&plan.recovery, 16))),
     );
 
     // ── Error message (preflight / execute failure) ───────
@@ -3265,7 +3278,8 @@ fn render_cherry_pick_modal(
             div()
                 .text_sm()
                 .text_color(rgb(COLOR_BLOCKER))
-                .child(err.clone()),
+                .overflow_hidden()
+                .child(SharedString::from(soft_wrap(err, 16))),
         );
     }
 

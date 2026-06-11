@@ -19,7 +19,11 @@ pub use diff::{DiffLine, DiffLineKind, FileDiff, Hunk, commit_changed_files, com
 #[allow(unused_imports)]
 pub use log::{Commit, CommitId, Signature, commit_log};
 #[allow(unused_imports)]
-pub use ops::{OperationPlan, StateSummary, execute_checkout, plan_checkout, preflight_check};
+pub use ops::{
+    OperationPlan, StateSummary,
+    execute_checkout, plan_checkout, preflight_check,
+    plan_create_branch, execute_create_branch,
+};
 #[allow(unused_imports)]
 pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo};
 #[allow(unused_imports)]

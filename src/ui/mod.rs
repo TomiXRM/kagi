@@ -12,13 +12,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use gpui::{
-    App, Context, Entity, SharedString, Window,
+    App, Context, Entity, FocusHandle, KeyDownEvent, SharedString, Window,
     div, prelude::*, px, rgb, uniform_list,
 };
 
 use crate::git::{
-    ChangeKind, FileDiff, DiffLineKind, FileStatus, Head, RepoSnapshot,
-    ops::{OperationPlan, execute_checkout, plan_checkout, preflight_check},
+    ChangeKind, CommitId, FileDiff, DiffLineKind, FileStatus, Head, RepoSnapshot,
+    ops::{OperationPlan, execute_checkout, execute_create_branch, plan_checkout, plan_create_branch, preflight_check},
 };
 use commit_list::{BadgeKind, CommitRow, build_commit_rows};
 use detail_panel::{CommitDetail, build_commit_details};
@@ -150,6 +150,25 @@ pub struct CheckoutPlanModal {
 }
 
 // ──────────────────────────────────────────────────────────────
+// CreateBranchModal — state for the create-branch overlay (T014)
+// ──────────────────────────────────────────────────────────────
+
+/// State for an in-progress create-branch confirmation.
+///
+/// The user types a branch name; the plan is regenerated live on each keystroke.
+#[derive(Clone)]
+pub struct CreateBranchModal {
+    /// The commit at which the branch will be created.
+    pub at: CommitId,
+    /// Current text in the branch-name input field.
+    pub input: String,
+    /// Live plan (re-generated each keystroke from `input` and `at`).
+    pub plan: Option<std::sync::Arc<OperationPlan>>,
+    /// Error message to show if execute or preflight failed.
+    pub error: Option<SharedString>,
+}
+
+// ──────────────────────────────────────────────────────────────
 // KagiApp — root view
 // ──────────────────────────────────────────────────────────────
 
@@ -181,6 +200,11 @@ pub struct KagiApp {
     pub branches: Vec<(String, bool)>,
     /// When `Some`, the plan confirmation modal is visible.
     pub plan_modal: Option<CheckoutPlanModal>,
+    /// When `Some`, the create-branch modal is visible.
+    pub create_branch_modal: Option<CreateBranchModal>,
+    /// Focus handle used to receive keyboard events for the create-branch modal.
+    /// Allocated on demand when the modal is first opened.
+    pub modal_focus: Option<FocusHandle>,
 }
 
 impl KagiApp {
@@ -253,6 +277,8 @@ impl KagiApp {
             file_diff_view: None,
             branches,
             plan_modal: None,
+            create_branch_modal: None,
+            modal_focus: None,
         }
     }
 
@@ -269,6 +295,8 @@ impl KagiApp {
             file_diff_view: None,
             branches: Vec::new(),
             plan_modal: None,
+            create_branch_modal: None,
+            modal_focus: None,
         }
     }
 
@@ -314,6 +342,8 @@ impl KagiApp {
         self.diff_cache = HashMap::new();
         self.file_diff_view = None;
         self.plan_modal = None;
+        self.create_branch_modal = None;
+        self.modal_focus = None;
     }
 
     /// Open the checkout plan modal for `branch`.
@@ -357,9 +387,173 @@ impl KagiApp {
         }
     }
 
-    /// Cancel and close the plan modal without making any changes.
+    /// Cancel and close the checkout plan modal without making any changes.
     pub fn cancel_modal(&mut self) {
         self.plan_modal = None;
+    }
+
+    // ── Create-branch modal (T014) ───────────────────────────
+
+    /// Open the create-branch modal for the commit at `at`.
+    ///
+    /// The input is initially empty; the live plan will show a "name is empty"
+    /// blocker until the user types a valid name.
+    pub fn open_create_branch_modal(&mut self, at: CommitId, cx: &mut Context<Self>) {
+        // Allocate a focus handle if we don't have one yet.
+        if self.modal_focus.is_none() {
+            self.modal_focus = Some(cx.focus_handle());
+        }
+        self.create_branch_modal = Some(CreateBranchModal {
+            at,
+            input: String::new(),
+            plan: None,
+            error: None,
+        });
+        // Re-plan immediately (empty name → blocker).
+        self.replan_create_branch();
+    }
+
+    /// Close the create-branch modal without making any changes.
+    pub fn cancel_create_branch_modal(&mut self) {
+        self.create_branch_modal = None;
+    }
+
+    /// Handle a key-down event for the create-branch name input.
+    ///
+    /// Accepted characters: ASCII alphanumeric, `-`, `_`, `/`, `.`.
+    /// `backspace` removes the last character.
+    /// All other keys (including modifier combos) are ignored.
+    pub fn handle_create_branch_key(&mut self, event: &KeyDownEvent) {
+        let modal = match self.create_branch_modal.as_mut() {
+            Some(m) => m,
+            None => return,
+        };
+        let key = &event.keystroke.key;
+        let modifiers = &event.keystroke.modifiers;
+
+        // Ignore any modifier combos (cmd/ctrl/alt).
+        if modifiers.platform || modifiers.control || modifiers.alt {
+            return;
+        }
+
+        if key == "backspace" {
+            modal.input.pop();
+        } else if key.len() == 1 {
+            let ch = key.chars().next().unwrap();
+            // Allow: a-z A-Z 0-9 - _ / .
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '/' || ch == '.' {
+                modal.input.push(ch);
+            }
+        }
+        modal.error = None;
+        self.replan_create_branch();
+    }
+
+    /// Re-generate the live plan from the current modal input.
+    fn replan_create_branch(&mut self) {
+        let (at, name) = match self.create_branch_modal.as_ref() {
+            Some(m) => (m.at.clone(), m.input.clone()),
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] replan_create_branch: repo open error: {}", e.message());
+                return;
+            }
+        };
+        match plan_create_branch(&repo, &name, &at) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: create-branch '{}' blockers={} warnings={}",
+                    name,
+                    plan.blockers.len(),
+                    plan.warnings.len()
+                );
+                if let Some(ref mut modal) = self.create_branch_modal {
+                    modal.plan = Some(std::sync::Arc::new(plan));
+                }
+            }
+            Err(e) => {
+                eprintln!("[kagi] plan: create-branch error: {}", e);
+            }
+        }
+    }
+
+    /// Confirm the create-branch plan: run preflight, execute, then reload.
+    ///
+    /// On failure the modal remains open and shows the error text.
+    pub fn confirm_create_branch(&mut self) {
+        let modal = match self.create_branch_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let plan = match modal.plan.as_ref() {
+            Some(p) => p.clone(),
+            None => return,
+        };
+        // Defence in depth: refuse if blockers exist.
+        if !plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: create-branch plan has blockers, not executing");
+            return;
+        }
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                if let Some(ref mut m) = self.create_branch_modal {
+                    m.error = Some(SharedString::from(format!("Repo open error: {}", e.message())));
+                }
+                return;
+            }
+        };
+
+        // Preflight check (re-use checkout preflight: verifies HEAD unchanged).
+        if let Err(e) = preflight_check(&repo, &plan) {
+            if let Some(ref mut m) = self.create_branch_modal {
+                m.error = Some(SharedString::from(format!("Preflight failed: {}", e)));
+            }
+            return;
+        }
+
+        // Execute create-branch.
+        if let Err(e) = execute_create_branch(&repo, &modal.input, &modal.at) {
+            if let Some(ref mut m) = self.create_branch_modal {
+                m.error = Some(SharedString::from(format!("Create branch failed: {}", e)));
+            }
+            return;
+        }
+
+        eprintln!("[kagi] executed: create-branch '{}' @ {}", modal.input, modal.at.short());
+
+        // Verify: confirm the branch now exists.
+        let repo2 = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] verify: repo open error: {}", e.message());
+                self.reload();
+                return;
+            }
+        };
+        let branch_exists = repo2
+            .find_branch(&modal.input, git2::BranchType::Local)
+            .is_ok();
+        if branch_exists {
+            eprintln!("[kagi] verified: branch '{}' exists", modal.input);
+        } else {
+            eprintln!("[kagi] verify: branch '{}' NOT found after create", modal.input);
+        }
+
+        // Reload display data (new branch badge should appear).
+        self.reload();
     }
 
     /// Confirm the plan: run preflight, execute checkout, then reload.
@@ -622,6 +816,8 @@ impl Render for KagiApp {
         // Clone branch list and modal state for render.
         let branches = self.branches.clone();
         let plan_modal = self.plan_modal.clone();
+        let create_branch_modal = self.create_branch_modal.clone();
+        let modal_focus = self.modal_focus.clone();
 
         // ── Normal state: header + body (sidebar + list + optional panel) ─────
         div()
@@ -669,15 +865,20 @@ impl Render for KagiApp {
                             el.child(render_diff_panel(diff_view, cx))
                         } else {
                             // ── Commit metadata + changed files ─
+                            let at = CommitId(d.full_sha.as_ref().to_string());
                             let files = changed_files.clone();
                             let files_for_click = changed_files.clone();
-                            el.child(render_detail_panel(d, files.unwrap_or(None), files_for_click.unwrap_or(None), cx))
+                            el.child(render_detail_panel(d, at, files.unwrap_or(None), files_for_click.unwrap_or(None), cx))
                         }
                     }),
             )
             // ── Plan modal overlay (above everything) ──────
             .when_some(plan_modal, |el, modal| {
                 el.child(render_plan_modal(modal, cx))
+            })
+            // ── Create-branch modal overlay (above everything) ──
+            .when_some(create_branch_modal, |el, modal| {
+                el.child(render_create_branch_modal(modal, modal_focus, cx))
             })
             .into_any()
     }
@@ -788,8 +989,10 @@ fn render_rows(
 /// Render the right-side detail panel showing commit metadata + changed files.
 ///
 /// Each changed-file row is clickable: clicking opens the file diff view.
+/// A `+ Create branch here` button at the top opens the create-branch modal.
 fn render_detail_panel(
     d: CommitDetail,
+    at: CommitId,
     changed_files: Option<Vec<FileStatus>>,
     changed_files_for_click: Option<Vec<FileStatus>>,
     cx: &mut Context<KagiApp>,
@@ -901,6 +1104,25 @@ fn render_detail_panel(
     // Suppress unused warning for changed_files_for_click (kept for symmetry / future use).
     let _ = changed_files_for_click;
 
+    // ── "Create branch here" button ──────────────────────────
+    let create_branch_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+        this.open_create_branch_modal(at.clone(), cx);
+        cx.notify();
+    });
+
+    let create_branch_button = div()
+        .id("create-branch-btn")
+        .mb_2()
+        .px_2()
+        .py_1()
+        .rounded_sm()
+        .bg(rgb(BG_SURFACE))
+        .text_sm()
+        .text_color(rgb(COLOR_BRANCH))
+        .on_click(create_branch_click)
+        .hover(|style| style.bg(rgb(BG_SELECTED)))
+        .child(SharedString::from("+ Create branch here"));
+
     let files_section = {
         let section_label = match &changed_files {
             None => SharedString::from("Changed files"),
@@ -952,6 +1174,8 @@ fn render_detail_panel(
         .bg(rgb(BG_PANEL))
         .px_3()
         .py_2()
+        // ── Create branch here button ────────────────────────
+        .child(create_branch_button)
         // ── Full SHA ────────────────────────────────────────
         .child(field("SHA", d.full_sha))
         // ── Author ──────────────────────────────────────────
@@ -1433,6 +1657,246 @@ fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> imp
                 .child(card),
         )
 
+}
+
+// ──────────────────────────────────────────────────────────────
+// Create-branch modal renderer (T014)
+// ──────────────────────────────────────────────────────────────
+
+/// Render the create-branch confirmation overlay.
+///
+/// Layout (absolute, full-screen):
+/// - Semi-transparent dark backdrop
+/// - Centred modal card:
+///   - Title
+///   - Branch name text input (live KeyDown handler)
+///   - Live plan: Current → Predicted state
+///   - Blockers (red) if any
+///   - Error message (if preflight/execute failed)
+///   - `[Cancel]` always; `[Create]` only when no blockers and name is non-empty
+fn render_create_branch_modal(
+    modal: CreateBranchModal,
+    focus_handle: Option<FocusHandle>,
+    cx: &mut Context<KagiApp>,
+) -> impl IntoElement {
+    let plan = modal.plan.clone();
+    let has_blockers = plan.as_ref().map(|p| !p.blockers.is_empty()).unwrap_or(true);
+    let input_display = SharedString::from(format!("{}_", modal.input)); // cursor indicator
+
+    // ── Cancel handler ──────────────────────────────────────
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+        this.cancel_create_branch_modal();
+        cx.notify();
+    });
+
+    // ── Confirm handler (only created when no blockers) ─────
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+        this.confirm_create_branch();
+        cx.notify();
+    });
+
+    // ── Key handler for the input ─────────────────────────────
+    let key_handler = cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+        this.handle_create_branch_key(event);
+        cx.notify();
+    });
+
+    // ── Build modal card ────────────────────────────────────
+    let mut card = div()
+        .w(px(480.))
+        .bg(rgb(BG_MODAL))
+        .rounded_lg()
+        .p_4()
+        .flex()
+        .flex_col()
+        .gap_3()
+        // ── Title ─────────────────────────────────────────
+        .child(
+            div()
+                .text_color(rgb(TEXT_MAIN))
+                .text_xl()
+                .child(SharedString::from(format!(
+                    "Create branch @ {}",
+                    modal.at.short()
+                ))),
+        )
+        // ── Name input ────────────────────────────────────
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_LABEL))
+                        .child(SharedString::from("Branch name")),
+                )
+                .child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .bg(rgb(BG_BASE))
+                        .rounded_sm()
+                        .text_color(rgb(TEXT_MAIN))
+                        .child(input_display),
+                ),
+        );
+
+    // ── Plan state (current → predicted) ─────────────────
+    if let Some(ref p) = plan {
+        card = card.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_LABEL))
+                        .child(SharedString::from("Current")),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .text_sm()
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_MAIN))
+                                .child(SharedString::from(p.current.head.clone())),
+                        )
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_SUB))
+                                .child(SharedString::from(format!("[{}]", p.current.dirty))),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_LABEL))
+                        .child(SharedString::from("\u{2192} Predicted")),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_MUTED))
+                        .child(SharedString::from(p.title.clone())),
+                ),
+        );
+
+        // ── Blockers ──────────────────────────────────────
+        if !p.blockers.is_empty() {
+            let mut block_col = div().flex().flex_col().gap_1();
+            for b in &p.blockers {
+                block_col = block_col.child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(COLOR_BLOCKER))
+                        .child(SharedString::from(format!("\u{2717} {}", b))),
+                );
+            }
+            card = card.child(block_col);
+        }
+
+        // ── Recovery ──────────────────────────────────────
+        card = card.child(
+            div()
+                .text_xs()
+                .text_color(rgb(TEXT_MUTED))
+                .child(SharedString::from(p.recovery.clone())),
+        );
+    }
+
+    // ── Error message (preflight / execute failure) ───────
+    if let Some(ref err) = modal.error {
+        card = card.child(
+            div()
+                .text_sm()
+                .text_color(rgb(COLOR_BLOCKER))
+                .child(err.clone()),
+        );
+    }
+
+    // ── Buttons ───────────────────────────────────────────
+    let mut button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(
+            div()
+                .id("create-branch-cancel")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(BG_SURFACE))
+                .text_sm()
+                .text_color(rgb(TEXT_MAIN))
+                .on_click(cancel_handler)
+                .hover(|style| style.bg(rgb(BG_SELECTED)))
+                .child(SharedString::from("Cancel")),
+        );
+
+    // Create button: only shown when there are no blockers.
+    if !has_blockers {
+        button_row = button_row.child(
+            div()
+                .id("create-branch-confirm")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(COLOR_SUCCESS))
+                .text_sm()
+                .text_color(rgb(BG_BASE))
+                .on_click(confirm_handler)
+                .hover(|style| style.opacity(0.85))
+                .child(SharedString::from("Create")),
+        );
+    }
+
+    card = card.child(button_row);
+
+    // ── Key-capture wrapper ─────────────────────────────────
+    // We wrap the card in a focusable container that captures key-down events.
+    let focusable_card = if let Some(ref fh) = focus_handle {
+        div()
+            .track_focus(fh)
+            .on_key_down(key_handler)
+            .child(card)
+    } else {
+        div().child(card)
+    };
+
+    // ── Full-screen overlay wrapper ─────────────────────────
+    div()
+        .size_full()
+        .absolute()
+        .top_0()
+        .left_0()
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .bg(rgb(BG_MODAL_OVERLAY))
+                .opacity(0.65),
+        )
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .items_center()
+                .child(focusable_card),
+        )
 }
 
 // ──────────────────────────────────────────────────────────────

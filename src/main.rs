@@ -135,5 +135,92 @@ fn main() {
         }
     }
 
+    // ── T014: headless create-branch plan / execute ──────────
+    // KAGI_CREATE_BRANCH=<name>: generate a create-branch plan using HEAD commit
+    // as the starting point and log it.
+    // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, execute immediately.
+    // For fixture/tempdir testing only.  Do not set in normal use.
+    if let Ok(branch_name) = std::env::var("KAGI_CREATE_BRANCH") {
+        // Resolve HEAD commit id.
+        let repo_path2 = repo_path.clone();
+        let head_commit_id = {
+            let repo_tmp = git2::Repository::open(&repo_path2).ok();
+            repo_tmp.and_then(|r| {
+                r.head().ok()
+                    .and_then(|h| h.target())
+                    .map(|oid| git::CommitId(oid.to_string()))
+            })
+        };
+
+        if let Some(at) = head_commit_id {
+            // Plan and log.
+            let repo_for_plan = git2::Repository::open(&repo_path).ok();
+            if let Some(repo) = repo_for_plan {
+                match git::plan_create_branch(&repo, &branch_name, &at) {
+                    Ok(plan) => {
+                        eprintln!(
+                            "[kagi] plan: create-branch '{}' blockers={} warnings={}",
+                            branch_name,
+                            plan.blockers.len(),
+                            plan.warnings.len()
+                        );
+
+                        let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
+                        if !auto_confirm {
+                            // Without auto-confirm, surface the modal itself so
+                            // the create-branch UI can be inspected headlessly.
+                            app_state.create_branch_modal = Some(ui::CreateBranchModal {
+                                at: at.clone(),
+                                input: branch_name.clone(),
+                                plan: Some(std::sync::Arc::new(plan.clone())),
+                                error: None,
+                            });
+                        }
+                        if auto_confirm {
+                            if plan.blockers.is_empty() {
+                                // Preflight + execute.
+                                let repo2 = git2::Repository::open(&repo_path).ok();
+                                if let Some(r2) = repo2 {
+                                    if let Err(e) = git::preflight_check(&r2, &plan) {
+                                        eprintln!("[kagi] preflight failed: {}", e);
+                                    } else if let Err(e) = git::execute_create_branch(&r2, &branch_name, &at) {
+                                        eprintln!("[kagi] create-branch failed: {}", e);
+                                    } else {
+                                        eprintln!("[kagi] executed: create-branch '{}' @ {}", branch_name, at.short());
+                                        // Verify.
+                                        let repo3 = git2::Repository::open(&repo_path).ok();
+                                        if let Some(r3) = repo3 {
+                                            let exists = r3.find_branch(&branch_name, git2::BranchType::Local).is_ok();
+                                            if exists {
+                                                eprintln!("[kagi] verified: branch '{}' exists", branch_name);
+                                            } else {
+                                                eprintln!("[kagi] verify: branch '{}' NOT found", branch_name);
+                                            }
+                                            // Log current branch to confirm HEAD unchanged.
+                                            if let Ok(head_ref) = r3.head() {
+                                                let cur = head_ref.shorthand().unwrap_or("?");
+                                                eprintln!("[kagi] verified: current branch = {}", cur);
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                eprintln!(
+                                    "[kagi] KAGI_AUTO_CONFIRM=1 but create-branch has {} blocker(s), skipping",
+                                    plan.blockers.len()
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[kagi] plan: create-branch error: {}", e);
+                    }
+                }
+            }
+        } else {
+            eprintln!("[kagi] KAGI_CREATE_BRANCH: could not resolve HEAD commit");
+        }
+    }
+
     run_app(app_state);
 }

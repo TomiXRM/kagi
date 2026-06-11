@@ -1,4 +1,5 @@
-//! Integration tests for checkout operation pipeline (T013).
+//! Integration tests for checkout operation pipeline (T013) and
+//! create-branch operation pipeline (T014).
 //!
 //! All write operations are confined to `TempDir` repositories created within
 //! each test.  This project's own repository and any other existing repository
@@ -11,8 +12,8 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi::git::{
-    Head,
-    ops::{execute_checkout, plan_checkout, preflight_check},
+    CommitId, Head,
+    ops::{execute_checkout, execute_create_branch, plan_checkout, plan_create_branch, preflight_check},
     snapshot,
 };
 
@@ -337,5 +338,254 @@ fn test_plan_recovery_mentions_original_branch() {
         plan.recovery.contains("reflog"),
         "recovery text should mention 'reflog', got: {:?}",
         plan.recovery
+    );
+}
+
+// ────────────────────────────────────────────────────────────
+// T014: create-branch tests
+// ────────────────────────────────────────────────────────────
+
+/// Helper: resolve HEAD commit id from a repo.
+fn head_commit_id(repo: &Repository) -> CommitId {
+    let oid = repo
+        .head()
+        .expect("repo.head()")
+        .target()
+        .expect("head target oid");
+    CommitId(oid.to_string())
+}
+
+// ── T014-1: normal case — branch created, HEAD unchanged, WT unchanged ──
+
+#[test]
+fn test_create_branch_normal_creates_branch() {
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, repo) = build_two_branch_repo(&tmp);
+
+    let at = head_commit_id(&repo);
+    let plan = plan_create_branch(&repo, "new-feature", &at)
+        .expect("plan_create_branch failed");
+
+    assert!(
+        plan.blockers.is_empty(),
+        "no blockers expected for valid name + existing commit, got: {:?}",
+        plan.blockers
+    );
+
+    // Execute.
+    execute_create_branch(&repo, "new-feature", &at)
+        .expect("execute_create_branch failed");
+
+    // Branch must exist.
+    let branch_exists = repo
+        .find_branch("new-feature", git2::BranchType::Local)
+        .is_ok();
+    assert!(branch_exists, "branch 'new-feature' should exist after creation");
+
+    // HEAD must still be on main.
+    let head_ref = repo.head().expect("repo.head()");
+    assert_eq!(
+        head_ref.shorthand().unwrap_or(""),
+        "main",
+        "HEAD should still be 'main' after create-branch"
+    );
+
+    // Working tree file must be intact.
+    assert!(
+        repo_dir.join("README.md").exists(),
+        "README.md should still exist after create-branch"
+    );
+}
+
+#[test]
+fn test_create_branch_head_and_wt_unchanged() {
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, repo) = build_two_branch_repo(&tmp);
+
+    let at = head_commit_id(&repo);
+
+    // Capture HEAD oid before.
+    let head_oid_before = repo
+        .head()
+        .unwrap()
+        .target()
+        .map(|o| o.to_string())
+        .unwrap_or_default();
+
+    execute_create_branch(&repo, "stable-branch", &at)
+        .expect("execute_create_branch failed");
+
+    // HEAD oid must be unchanged.
+    let head_oid_after = repo
+        .head()
+        .unwrap()
+        .target()
+        .map(|o| o.to_string())
+        .unwrap_or_default();
+    assert_eq!(head_oid_before, head_oid_after, "HEAD OID should not change");
+
+    // Branch must point to same commit.
+    let branch_ref = repo
+        .find_branch("stable-branch", git2::BranchType::Local)
+        .expect("branch should exist");
+    let branch_oid = branch_ref
+        .get()
+        .target()
+        .map(|o| o.to_string())
+        .unwrap_or_default();
+    assert_eq!(
+        head_oid_before, branch_oid,
+        "new branch should point to the same commit as HEAD"
+    );
+
+    // Existing files must be intact.
+    assert!(repo_dir.join("README.md").exists());
+}
+
+// ── T014-2: same-name blocker ────────────────────────────────
+
+#[test]
+fn test_create_branch_same_name_blocker() {
+    let tmp = TempDir::new().unwrap();
+    let (_repo_dir, repo) = build_two_branch_repo(&tmp);
+
+    let at = head_commit_id(&repo);
+
+    // 'main' already exists.
+    let plan = plan_create_branch(&repo, "main", &at)
+        .expect("plan_create_branch failed");
+
+    assert!(
+        !plan.blockers.is_empty(),
+        "creating a branch with an existing name should have a blocker"
+    );
+    let has_already_exists = plan
+        .blockers
+        .iter()
+        .any(|b| b.contains("already exists") || b.contains("already exist"));
+    assert!(
+        has_already_exists,
+        "blocker should mention 'already exists', got: {:?}",
+        plan.blockers
+    );
+}
+
+// ── T014-3: invalid name — 3 variants ────────────────────────
+
+#[test]
+fn test_create_branch_invalid_name_with_space() {
+    let tmp = TempDir::new().unwrap();
+    let (_repo_dir, repo) = build_two_branch_repo(&tmp);
+
+    let at = head_commit_id(&repo);
+    let plan = plan_create_branch(&repo, "has space", &at)
+        .expect("plan_create_branch failed");
+
+    assert!(
+        !plan.blockers.is_empty(),
+        "branch name with space should produce a blocker"
+    );
+    let has_invalid = plan
+        .blockers
+        .iter()
+        .any(|b| b.contains("not a valid") || b.contains("invalid"));
+    assert!(
+        has_invalid,
+        "blocker should mention invalid name, got: {:?}",
+        plan.blockers
+    );
+}
+
+#[test]
+fn test_create_branch_invalid_name_double_dot() {
+    let tmp = TempDir::new().unwrap();
+    let (_repo_dir, repo) = build_two_branch_repo(&tmp);
+
+    let at = head_commit_id(&repo);
+    let plan = plan_create_branch(&repo, "feat..broken", &at)
+        .expect("plan_create_branch failed");
+
+    assert!(
+        !plan.blockers.is_empty(),
+        "branch name with '..' should produce a blocker"
+    );
+}
+
+#[test]
+fn test_create_branch_invalid_name_leading_dash() {
+    let tmp = TempDir::new().unwrap();
+    let (_repo_dir, repo) = build_two_branch_repo(&tmp);
+
+    let at = head_commit_id(&repo);
+    let plan = plan_create_branch(&repo, "-bad-name", &at)
+        .expect("plan_create_branch failed");
+
+    assert!(
+        !plan.blockers.is_empty(),
+        "branch name with leading '-' should produce a blocker"
+    );
+}
+
+// ── T014-4: empty name blocker ───────────────────────────────
+
+#[test]
+fn test_create_branch_empty_name_blocker() {
+    let tmp = TempDir::new().unwrap();
+    let (_repo_dir, repo) = build_two_branch_repo(&tmp);
+
+    let at = head_commit_id(&repo);
+    let plan = plan_create_branch(&repo, "", &at)
+        .expect("plan_create_branch failed");
+
+    assert!(
+        !plan.blockers.is_empty(),
+        "empty branch name should produce a blocker"
+    );
+}
+
+// ── T014-5: force=false prevents overwriting existing branch ─
+
+#[test]
+fn test_execute_create_branch_does_not_overwrite_existing() {
+    let tmp = TempDir::new().unwrap();
+    let (_repo_dir, repo) = build_two_branch_repo(&tmp);
+
+    // 'feature/one' already exists at a different commit from HEAD (main).
+    // find its tip commit.
+    let feature_branch = repo
+        .find_branch("feature/one", git2::BranchType::Local)
+        .expect("feature/one should exist");
+    let feature_oid = feature_branch
+        .get()
+        .target()
+        .expect("feature/one target");
+    let feature_commit_id_str = feature_oid.to_string();
+
+    // We are on main; HEAD is at a different commit.
+    let main_at = head_commit_id(&repo);
+    assert_ne!(
+        main_at.0, feature_commit_id_str,
+        "HEAD (main) and feature/one should be at different commits"
+    );
+
+    // Calling execute_create_branch with force=false must fail, not overwrite.
+    let result = execute_create_branch(&repo, "feature/one", &main_at);
+    assert!(
+        result.is_err(),
+        "execute_create_branch with an existing branch name must return Err (force=false)"
+    );
+
+    // feature/one must still point to its original commit.
+    let still_feature = repo
+        .find_branch("feature/one", git2::BranchType::Local)
+        .expect("feature/one should still exist");
+    let still_oid = still_feature
+        .get()
+        .target()
+        .map(|o| o.to_string())
+        .unwrap_or_default();
+    assert_eq!(
+        still_oid, feature_commit_id_str,
+        "feature/one must not be moved after failed create_branch (force=false)"
     );
 }

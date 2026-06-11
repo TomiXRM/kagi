@@ -1,26 +1,35 @@
-//! Checkout operation pipeline — T013
+//! Checkout and create-branch operation pipelines — T013, T014
 //!
-//! Implements the **plan → preflight → execute** pipeline for the `checkout`
-//! operation (ADR-0004, Guarded class).  The operation is **always safe-mode
-//! only**: `CheckoutBuilder::safe()` is the only strategy used.  Force-checkout
-//! and any reset/clean APIs are intentionally absent from this module.
+//! Implements the **plan → preflight → execute** pipeline for:
+//! - `checkout` (ADR-0004, Guarded class): `plan_checkout` / `preflight_check` / `execute_checkout`
+//! - `create-branch` (ADR-0004, Safe class): `plan_create_branch` / `execute_create_branch`
+//!
+//! The checkout operation is **always safe-mode only**: `CheckoutBuilder::safe()` is the only
+//! strategy used.  Force-checkout and any reset/clean APIs are intentionally absent.
+//!
+//! The create-branch operation uses `repo.branch(name, &commit, false)` — force=false is a
+//! **literal constant** and must never be changed.
 //!
 //! # Public API
 //!
-//! - [`plan_checkout`]   — generate an [`OperationPlan`] (blockers / warnings)
-//! - [`preflight_check`] — verify HEAD has not moved since planning
-//! - [`execute_checkout`] — perform the checkout (safe-mode only)
+//! - [`plan_checkout`]        — generate an [`OperationPlan`] for checkout
+//! - [`preflight_check`]      — verify HEAD has not moved since planning
+//! - [`execute_checkout`]     — perform the checkout (safe-mode only)
+//! - [`plan_create_branch`]   — generate an [`OperationPlan`] for branch creation
+//! - [`execute_create_branch`] — create the branch (force=false, no checkout)
 //!
 //! # Environment variables (test / headless use only)
 //!
 //! | Variable            | Effect |
 //! |---------------------|--------|
-//! | `KAGI_PLAN_CHECKOUT=<branch>` | generate a plan for `<branch>` and emit a plan log |
-//! | `KAGI_AUTO_CONFIRM=1`         | **(TEST-ONLY)** if there are no blockers, proceed directly to execute after planning. **Never set this in normal use.** |
+//! | `KAGI_PLAN_CHECKOUT=<branch>`  | generate a plan for `<branch>` and emit a plan log |
+//! | `KAGI_CREATE_BRANCH=<name>`    | generate a create-branch plan for HEAD and emit a plan log |
+//! | `KAGI_AUTO_CONFIRM=1`          | **(TEST-ONLY)** if there are no blockers, proceed directly to execute after planning. **Never set this in normal use.** |
 
 use git2::{BranchType, Repository};
 
 use super::{GitError, Head, resolve_head, status::working_tree_status};
+use super::log::CommitId;
 
 // ────────────────────────────────────────────────────────────
 // Public types
@@ -281,6 +290,176 @@ pub fn execute_checkout(repo: &Repository, branch: &str) -> Result<(), GitError>
     let refname = format!("refs/heads/{}", branch);
     repo.set_head(&refname)
         .map_err(|e| GitError::Other(format!("set_head failed: {}", e.message())))?;
+
+    Ok(())
+}
+
+// ────────────────────────────────────────────────────────────
+// plan_create_branch
+// ────────────────────────────────────────────────────────────
+
+/// Analyse whether creating a new local branch at `at` is safe and return an
+/// [`OperationPlan`].
+///
+/// This is a **Safe-class** operation (ADR-0004): it does not modify HEAD or the
+/// working tree.  No warnings are produced; only blockers.
+///
+/// # Blocker conditions
+///
+/// - `name` is empty.
+/// - `name` fails `git2::Reference::is_valid_name("refs/heads/<name>")` — e.g.
+///   names containing `..`, a leading `-`, spaces, or other invalid characters.
+/// - A local branch with `name` already exists.
+/// - The commit `at` does not exist in the repository.
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] if the repository cannot be queried.
+pub fn plan_create_branch(
+    repo: &Repository,
+    name: &str,
+    at: &CommitId,
+) -> Result<OperationPlan, GitError> {
+    // ── 1. Current HEAD ──────────────────────────────────────
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+
+    // ── 2. Build current StateSummary ────────────────────────
+    let head_display = head.display();
+
+    let dirty_parts: Vec<String> = [
+        (!status.staged.is_empty())
+            .then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty())
+            .then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty())
+            .then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty())
+            .then(|| format!("{} conflicted", status.conflicted.len())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let dirty_display = if dirty_parts.is_empty() {
+        "clean".to_string()
+    } else {
+        dirty_parts.join(", ")
+    };
+
+    let current = StateSummary {
+        head: head_display.clone(),
+        dirty: dirty_display.clone(),
+    };
+
+    // ── 3. Check blockers ────────────────────────────────────
+    let mut blockers: Vec<String> = Vec::new();
+
+    // Empty name.
+    if name.is_empty() {
+        blockers.push("Branch name must not be empty.".to_string());
+    }
+
+    // Invalid name (use git2 ref validation on the full ref path).
+    if !name.is_empty()
+        && !git2::Reference::is_valid_name(&format!("refs/heads/{}", name))
+    {
+        blockers.push(format!(
+            "Branch name '{}' is not a valid git ref name \
+             (no spaces, '..', or other invalid characters).",
+            name
+        ));
+    }
+
+    // Leading `-` is rejected explicitly: although git2 considers it a valid ref name,
+    // it is ambiguous on the command line (may be interpreted as a flag).
+    if !name.is_empty() && name.starts_with('-') {
+        blockers.push(format!(
+            "Branch name '{}' must not start with '-'.",
+            name
+        ));
+    }
+
+    // Already-exists check.
+    if !name.is_empty() && repo.find_branch(name, BranchType::Local).is_ok() {
+        blockers.push(format!(
+            "A branch named '{}' already exists in this repository.",
+            name
+        ));
+    }
+
+    // Commit existence check.
+    let oid = git2::Oid::from_str(&at.0)
+        .map_err(|e| GitError::Other(format!("invalid commit id '{}': {}", at.0, e.message())));
+    let commit_exists = match oid {
+        Ok(oid) => repo.find_commit(oid).is_ok(),
+        Err(_) => false,
+    };
+    if !commit_exists {
+        blockers.push(format!(
+            "Commit '{}' does not exist in this repository.",
+            at.short()
+        ));
+    }
+
+    // ── 4. Predicted StateSummary ─────────────────────────────
+    // HEAD is unchanged; the new branch appears as an additional ref.
+    let short_sha = at.short().to_string();
+    let predicted = StateSummary {
+        head: head_display.clone(),
+        dirty: dirty_display,
+    };
+
+    // ── 5. Recovery guidance ──────────────────────────────────
+    let recovery = format!(
+        "The new branch '{}' can be removed without side effects:\n  git branch -d {}\n\
+         (Branch creation does not move HEAD or alter the working tree.)",
+        name, name
+    );
+
+    Ok(OperationPlan {
+        title: format!("Create branch '{}' @ {}", name, short_sha),
+        current,
+        predicted,
+        warnings: Vec::new(),
+        blockers,
+        recovery,
+        head_at_plan: head,
+    })
+}
+
+// ────────────────────────────────────────────────────────────
+// execute_create_branch
+// ────────────────────────────────────────────────────────────
+
+/// Create a new local branch named `name` pointing at commit `at`.
+///
+/// Uses `repo.branch(name, &commit, false)` — the `force` argument is **always
+/// `false`** (a literal constant) to prevent overwriting an existing branch.
+///
+/// **This function does not perform a checkout.**  HEAD remains unchanged.
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] if:
+/// - `at` is not a valid or existing commit OID.
+/// - A branch named `name` already exists (`force=false` is enforced by libgit2).
+/// - Any other libgit2 failure.
+pub fn execute_create_branch(
+    repo: &Repository,
+    name: &str,
+    at: &CommitId,
+) -> Result<(), GitError> {
+    // Resolve the target commit.
+    let oid = git2::Oid::from_str(&at.0)
+        .map_err(|e| GitError::Other(format!("invalid commit id '{}': {}", at.0, e.message())))?;
+    let commit = repo
+        .find_commit(oid)
+        .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", at.short(), e.message())))?;
+
+    // Create the branch.  force=false is a literal constant — never change this.
+    repo.branch(name, &commit, false)
+        .map_err(|e| GitError::Other(format!("branch creation failed: {}", e.message())))?;
 
     Ok(())
 }

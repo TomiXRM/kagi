@@ -8,8 +8,8 @@
 | ID | タイトル | 依存 | Status |
 |----|----------|------|--------|
 | T001 | Rust + GPUI の最小アプリを起動する | - | done |
-| T002 | repo path を指定して git repository を開く(git2 導入, GitBackend trait) | T001 | in-progress |
-| T003 | working tree status を取得して表示する | T002 | todo |
+| T002 | repo path を指定して git repository を開く(git2 導入, GitBackend trait) | T001 | done |
+| T003 | working tree status を取得して表示する | T002 | in-progress |
 | T004 | commit log を取得して内部モデル(Commit)に変換する | T002 | todo |
 | T005 | branch / remote branch / tag / HEAD を取得する(RepoSnapshot 完成) | T004 | todo |
 | T006 | commit graph layout の pure Rust モジュールを実装する | T004 | todo |

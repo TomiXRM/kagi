@@ -25,8 +25,8 @@
 | T018 | changed files をファイルツリー表示にする(ユーザー要望) | T011, T012 | done |
 | T016 | cherry-pick dry-run preview を実装する | T013 | done |
 | T019 | テキストオーバーフロー修正(ユーザー報告バグ) | T010, T012 | done |
-| T020 | グラフエッジの直角(角R)化 + コミッターアバター(ユーザー要望) | T008, T009 | in-progress |
-| T017 | error handling と operation log を整える | T013–T016 | todo |
+| T020 | グラフエッジの直角(角R)化 + コミッターアバター(ユーザー要望) | T008, T009 | done |
+| T017 | error handling と operation log を整える | T013–T016 | in-progress |
 
 補助タスク(ticket 外、PM 管理):
 - fixture repo 生成スクリプト(`scripts/make_fixture.sh`)— 用意済み(merge / ahead 1 / behind 1 / tag / stash / dirty WT を含む)

@@ -109,5 +109,31 @@ fn main() {
         app_state.open_file_diff(0);
     }
 
+    // ── T013: headless checkout plan / execute ───────────────
+    // KAGI_PLAN_CHECKOUT=<branch>: generate a plan for the branch and log it.
+    // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, proceed to execute.
+    // Both variables are for fixture/tempdir testing only.  Do not set them
+    // in normal use.
+    if let Ok(target_branch) = std::env::var("KAGI_PLAN_CHECKOUT") {
+        // open_plan_modal logs the plan via [kagi] plan: ...
+        app_state.open_plan_modal(&target_branch);
+
+        let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
+        if auto_confirm {
+            // confirm_checkout runs preflight → execute → reload and logs
+            // [kagi] executed: and [kagi] verified: entries.
+            if let Some(ref modal) = app_state.plan_modal.clone() {
+                if modal.plan.blockers.is_empty() {
+                    app_state.confirm_checkout();
+                } else {
+                    eprintln!(
+                        "[kagi] KAGI_AUTO_CONFIRM=1 but checkout has {} blocker(s), skipping",
+                        modal.plan.blockers.len()
+                    );
+                }
+            }
+        }
+    }
+
     run_app(app_state);
 }

@@ -1,4 +1,4 @@
-//! UI module — T008: GPUI commit list / T009: commit graph lane / T010: commit selection + detail panel / T011: changed files list / T012: file diff viewer
+//! UI module — T008: GPUI commit list / T009: commit graph lane / T010: commit selection + detail panel / T011: changed files list / T012: file diff viewer / T013: checkout plan modal + sidebar
 //!
 //! This module lives in the binary crate (`main.rs` does `mod ui;`).
 //! It must not be added to `src/lib.rs` so that domain tests stay
@@ -16,7 +16,10 @@ use gpui::{
     div, prelude::*, px, rgb, uniform_list,
 };
 
-use crate::git::{ChangeKind, FileDiff, DiffLineKind, FileStatus, Head, RepoSnapshot};
+use crate::git::{
+    ChangeKind, FileDiff, DiffLineKind, FileStatus, Head, RepoSnapshot,
+    ops::{OperationPlan, execute_checkout, plan_checkout, preflight_check},
+};
 use commit_list::{BadgeKind, CommitRow, build_commit_rows};
 use detail_panel::{CommitDetail, build_commit_details};
 use graph_view::{graph_canvas, graph_width};
@@ -42,6 +45,14 @@ const COLOR_TAG: u32 = 0xfab387; // peach — tag
 const BG_DIFF_ADDED: u32 = 0x1c3a2a;   // dark green background for added lines
 const BG_DIFF_REMOVED: u32 = 0x3a1c1c; // dark red background for removed lines
 const COLOR_DIFF_HUNK: u32 = 0x89b4fa; // blue — hunk header
+
+// Sidebar / modal colours (T013)
+const BG_SIDEBAR: u32 = 0x11111b;       // crust — sidebar background
+const COLOR_WARNING: u32 = 0xf9e2af;    // yellow — warning text
+const COLOR_BLOCKER: u32 = 0xf38ba8;    // red — blocker text
+const COLOR_SUCCESS: u32 = 0xa6e3a1;    // green — success / checked-out mark
+const BG_MODAL_OVERLAY: u32 = 0x000000; // semi-transparent overlay (set opacity in render)
+const BG_MODAL: u32 = 0x313244;         // surface0 — modal background
 
 // ──────────────────────────────────────────────────────────────
 // FileDiffView — pre-rendered diff rows for the diff panel
@@ -126,6 +137,19 @@ impl FileDiffView {
 }
 
 // ──────────────────────────────────────────────────────────────
+// CheckoutPlanModal — state for the plan confirmation overlay (T013)
+// ──────────────────────────────────────────────────────────────
+
+/// State for an in-progress checkout plan confirmation.
+#[derive(Clone)]
+pub struct CheckoutPlanModal {
+    /// The computed plan (title, current, predicted, warnings, blockers, recovery).
+    pub plan: std::sync::Arc<OperationPlan>,
+    /// Error message to show if execute or preflight failed (replaces normal buttons).
+    pub error: Option<SharedString>,
+}
+
+// ──────────────────────────────────────────────────────────────
 // KagiApp — root view
 // ──────────────────────────────────────────────────────────────
 
@@ -151,6 +175,12 @@ pub struct KagiApp {
     /// the commit metadata + changed-files list.  Cleared whenever
     /// `selected` changes.
     pub file_diff_view: Option<FileDiffView>,
+    /// Local branch names from the snapshot, ordered by name.
+    /// Used to render the sidebar.  The first element of the tuple is the
+    /// branch name; the second is whether it is the current HEAD branch.
+    pub branches: Vec<(String, bool)>,
+    /// When `Some`, the plan confirmation modal is visible.
+    pub plan_modal: Option<CheckoutPlanModal>,
 }
 
 impl KagiApp {
@@ -198,6 +228,20 @@ impl KagiApp {
         eprintln!("[kagi] graph: lane_count={}", lane_count);
         eprintln!("[kagi] commit list rows: {}", rows.len());
 
+        // Build branch list: (name, is_head).
+        let head_branch = match &snap.head {
+            Head::Attached { branch, .. } => Some(branch.clone()),
+            _ => None,
+        };
+        let branches: Vec<(String, bool)> = snap
+            .branches
+            .iter()
+            .map(|b| {
+                let is_head = head_branch.as_deref() == Some(&b.name);
+                (b.name.clone(), is_head)
+            })
+            .collect();
+
         KagiApp {
             header,
             rows,
@@ -207,6 +251,8 @@ impl KagiApp {
             repo_path: None,
             diff_cache: HashMap::new(),
             file_diff_view: None,
+            branches,
+            plan_modal: None,
         }
     }
 
@@ -221,7 +267,190 @@ impl KagiApp {
             repo_path: None,
             diff_cache: HashMap::new(),
             file_diff_view: None,
+            branches: Vec::new(),
+            plan_modal: None,
         }
+    }
+
+    /// Reload all display data from the repository at `repo_path`.
+    ///
+    /// Called after a successful checkout to update the commit list, header,
+    /// branch list, and badges without restarting the application.
+    pub fn reload(&mut self) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+
+        // Re-open and snapshot.
+        let mut repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] reload: repo open error: {}", e.message());
+                return;
+            }
+        };
+        let snap = match crate::git::snapshot(&mut repo, 10_000) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[kagi] reload: snapshot error: {}", e);
+                return;
+            }
+        };
+
+        // Derive repo name from path.
+        let repo_name = repo_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| repo_path.display().to_string());
+
+        // Rebuild display data in-place.
+        let fresh = KagiApp::from_snapshot(&repo_name, &snap);
+        self.header = fresh.header;
+        self.rows = fresh.rows;
+        self.details = fresh.details;
+        self.branches = fresh.branches;
+        self.selected = None;
+        self.diff_cache = HashMap::new();
+        self.file_diff_view = None;
+        self.plan_modal = None;
+    }
+
+    /// Open the checkout plan modal for `branch`.
+    ///
+    /// Plans the checkout using the current repository state and stores the
+    /// result in `self.plan_modal`.  Emits a plan log entry.
+    pub fn open_plan_modal(&mut self, branch: impl Into<String>) {
+        let branch = branch.into();
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => {
+                eprintln!("[kagi] open_plan_modal: no repo_path set");
+                return;
+            }
+        };
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] plan: repo open error: {}", e.message());
+                return;
+            }
+        };
+
+        match plan_checkout(&repo, &branch) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: checkout {} blockers={} warnings={}",
+                    branch,
+                    plan.blockers.len(),
+                    plan.warnings.len()
+                );
+                self.plan_modal = Some(CheckoutPlanModal {
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                eprintln!("[kagi] plan: error: {}", e);
+            }
+        }
+    }
+
+    /// Cancel and close the plan modal without making any changes.
+    pub fn cancel_modal(&mut self) {
+        self.plan_modal = None;
+    }
+
+    /// Confirm the plan: run preflight, execute checkout, then reload.
+    ///
+    /// On preflight or execute failure the modal remains open and shows the
+    /// error text + recovery guidance.  The app never crashes.
+    pub fn confirm_checkout(&mut self) {
+        let modal = match self.plan_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        // Defence in depth: the UI never renders the confirm button when
+        // blockers exist, but refuse here too so no code path can execute a
+        // blocked plan.
+        if !modal.plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: plan has blockers, not executing");
+            return;
+        }
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let branch = match modal.plan.predicted.head.strip_prefix("branch: ") {
+            Some(b) => b.to_string(),
+            None => {
+                self.plan_modal = Some(CheckoutPlanModal {
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from("Internal error: could not determine target branch.")),
+                });
+                return;
+            }
+        };
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.plan_modal = Some(CheckoutPlanModal {
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(format!("Repo open error: {}", e.message()))),
+                });
+                return;
+            }
+        };
+
+        // Preflight check.
+        if let Err(e) = preflight_check(&repo, &modal.plan) {
+            self.plan_modal = Some(CheckoutPlanModal {
+                plan: modal.plan.clone(),
+                error: Some(SharedString::from(format!("Preflight failed: {}", e))),
+            });
+            return;
+        }
+
+        // Execute checkout (safe mode only).
+        if let Err(e) = execute_checkout(&repo, &branch) {
+            self.plan_modal = Some(CheckoutPlanModal {
+                plan: modal.plan.clone(),
+                error: Some(SharedString::from(format!("Checkout failed: {}", e))),
+            });
+            return;
+        }
+
+        eprintln!("[kagi] executed: checkout {}", branch);
+
+        // Verify: re-snapshot and confirm HEAD.
+        let mut repo2 = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] verify: repo open error: {}", e.message());
+                self.reload();
+                return;
+            }
+        };
+        match crate::git::snapshot(&mut repo2, 10_000) {
+            Ok(snap) => {
+                match &snap.head {
+                    Head::Attached { branch: actual_branch, .. } if actual_branch == &branch => {
+                        eprintln!("[kagi] verified: HEAD={}", actual_branch);
+                    }
+                    other => {
+                        eprintln!("[kagi] verify: unexpected HEAD state after checkout: {:?}", other);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("[kagi] verify: snapshot error: {}", e);
+            }
+        }
+
+        // Reload display data.
+        self.reload();
     }
 
     /// Select the commit at `index` (or deselect if already selected).
@@ -390,7 +619,11 @@ impl Render for KagiApp {
         // Clone the file diff view if present.
         let file_diff_view = self.file_diff_view.clone();
 
-        // ── Normal state: header + (list | list + panel) ─────
+        // Clone branch list and modal state for render.
+        let branches = self.branches.clone();
+        let plan_modal = self.plan_modal.clone();
+
+        // ── Normal state: header + body (sidebar + list + optional panel) ─────
         div()
             .flex()
             .flex_col()
@@ -408,13 +641,15 @@ impl Render for KagiApp {
                     .text_color(rgb(TEXT_SUB))
                     .child(header),
             )
-            // ── Body row: list (flex_1) + optional panel ─────
+            // ── Body row: sidebar + list (flex_1) + optional panel ─────
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .flex_1()
                     .h_full()
+                    // ── Left sidebar ──────────────────────────
+                    .child(render_sidebar(&branches, cx))
                     // ── Virtualized commit list ──────────────
                     .child(
                         uniform_list(
@@ -440,6 +675,10 @@ impl Render for KagiApp {
                         }
                     }),
             )
+            // ── Plan modal overlay (above everything) ──────
+            .when_some(plan_modal, |el, modal| {
+                el.child(render_plan_modal(modal, cx))
+            })
             .into_any()
     }
 }
@@ -894,6 +1133,306 @@ fn render_badges(badges: &[commit_list::RefBadge]) -> impl IntoElement {
         row = row.child(chip);
     }
     row
+}
+
+// ──────────────────────────────────────────────────────────────
+// Sidebar renderer (T013)
+// ──────────────────────────────────────────────────────────────
+
+/// Render the left sidebar showing local branches.
+///
+/// Each branch is clickable.  Clicking the HEAD branch (marked with ✓) does
+/// nothing (it is already checked out).  Clicking any other branch opens the
+/// checkout plan modal.
+fn render_sidebar(
+    branches: &[(String, bool)],
+    cx: &mut Context<KagiApp>,
+) -> impl IntoElement {
+    let mut col = div()
+        .w(px(200.))
+        .flex_shrink_0()
+        .h_full()
+        .flex()
+        .flex_col()
+        .bg(rgb(BG_SIDEBAR))
+        .py_2()
+        // ── Section label ─────────────────────────────────
+        .child(
+            div()
+                .px_3()
+                .py_1()
+                .text_sm()
+                .text_color(rgb(TEXT_MUTED))
+                .child(SharedString::from("LOCAL BRANCHES")),
+        );
+
+    for (branch_name, is_head) in branches {
+        let label = if *is_head {
+            SharedString::from(format!("\u{2713} {}", branch_name))
+        } else {
+            SharedString::from(branch_name.clone())
+        };
+        let text_color = if *is_head { COLOR_SUCCESS } else { TEXT_MAIN };
+        let branch_for_click = branch_name.clone();
+        let is_head = *is_head;
+
+        let row = if is_head {
+            // HEAD branch: not clickable.
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .px_3()
+                .py_1()
+                .text_sm()
+                .text_color(rgb(text_color))
+                .child(label)
+                .into_any()
+        } else {
+            let click_handler = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                this.open_plan_modal(branch_for_click.clone());
+                cx.notify();
+            });
+            div()
+                .id(SharedString::from(format!("sidebar-branch-{}", branch_name)))
+                .flex()
+                .flex_row()
+                .items_center()
+                .px_3()
+                .py_1()
+                .text_sm()
+                .text_color(rgb(text_color))
+                .on_click(click_handler)
+                .hover(|style| style.bg(rgb(BG_SURFACE)))
+                .child(label)
+                .into_any()
+        };
+
+        col = col.child(row);
+    }
+
+    col
+}
+
+// ──────────────────────────────────────────────────────────────
+// Plan modal renderer (T013)
+// ──────────────────────────────────────────────────────────────
+
+/// Render the plan confirmation overlay.
+///
+/// Layout (absolute, full-screen):
+/// - Semi-transparent dark backdrop
+/// - Centred modal card:
+///   - Title
+///   - Current → Predicted state
+///   - Warnings (yellow) if any
+///   - Blockers (red) if any
+///   - Recovery text
+///   - Error message (if preflight/execute failed)
+///   - `[Cancel]` always present; `[Checkout]` only when no blockers
+fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> impl IntoElement {
+    let plan = modal.plan.clone();
+    let has_blockers = !plan.blockers.is_empty();
+
+    // ── Cancel handler ──────────────────────────────────────
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+        this.cancel_modal();
+        cx.notify();
+    });
+
+    // ── Confirm handler (only created when no blockers) ─────
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+        this.confirm_checkout();
+        cx.notify();
+    });
+
+    // ── Build modal card ────────────────────────────────────
+    let mut card = div()
+        .w(px(480.))
+        .bg(rgb(BG_MODAL))
+        .rounded_lg()
+        .p_4()
+        .flex()
+        .flex_col()
+        .gap_3()
+        // ── Title ─────────────────────────────────────────
+        .child(
+            div()
+                .text_color(rgb(TEXT_MAIN))
+                .text_xl()
+                .child(SharedString::from(plan.title.clone())),
+        )
+        // ── Current → Predicted ───────────────────────────
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_LABEL))
+                        .child(SharedString::from("Current")),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .text_sm()
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_MAIN))
+                                .child(SharedString::from(plan.current.head.clone())),
+                        )
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_SUB))
+                                .child(SharedString::from(format!("[{}]", plan.current.dirty))),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_LABEL))
+                        .child(SharedString::from("\u{2192} Predicted")),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .text_sm()
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_MAIN))
+                                .child(SharedString::from(plan.predicted.head.clone())),
+                        )
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_SUB))
+                                .child(SharedString::from(format!("[{}]", plan.predicted.dirty))),
+                        ),
+                ),
+        );
+
+    // ── Warnings ─────────────────────────────────────────
+    if !plan.warnings.is_empty() {
+        let mut warn_col = div().flex().flex_col().gap_1();
+        for w in &plan.warnings {
+            warn_col = warn_col.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(COLOR_WARNING))
+                    .child(SharedString::from(format!("\u{26a0} {}", w))),
+            );
+        }
+        card = card.child(warn_col);
+    }
+
+    // ── Blockers ──────────────────────────────────────────
+    if !plan.blockers.is_empty() {
+        let mut block_col = div().flex().flex_col().gap_1();
+        for b in &plan.blockers {
+            block_col = block_col.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(COLOR_BLOCKER))
+                    .child(SharedString::from(format!("\u{2717} {}", b))),
+            );
+        }
+        card = card.child(block_col);
+    }
+
+    // ── Recovery ──────────────────────────────────────────
+    card = card.child(
+        div()
+            .text_xs()
+            .text_color(rgb(TEXT_MUTED))
+            .child(SharedString::from(plan.recovery.clone())),
+    );
+
+    // ── Error message (preflight / execute failure) ───────
+    if let Some(err) = &modal.error {
+        card = card.child(
+            div()
+                .text_sm()
+                .text_color(rgb(COLOR_BLOCKER))
+                .child(err.clone()),
+        );
+    }
+
+    // ── Buttons ───────────────────────────────────────────
+    let mut button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        // Cancel button (always present — safe default)
+        .child(
+            div()
+                .id("plan-cancel")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(BG_SURFACE))
+                .text_sm()
+                .text_color(rgb(TEXT_MAIN))
+                .on_click(cancel_handler)
+                .hover(|style| style.bg(rgb(BG_SELECTED)))
+                .child(SharedString::from("Cancel")),
+        );
+
+    // Checkout button: only shown when there are no blockers.
+    if !has_blockers {
+        button_row = button_row.child(
+            div()
+                .id("plan-confirm")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(COLOR_BRANCH))
+                .text_sm()
+                .text_color(rgb(BG_BASE))
+                .on_click(confirm_handler)
+                .hover(|style| style.opacity(0.85))
+                .child(SharedString::from("Checkout")),
+        );
+    }
+
+    card = card.child(button_row);
+
+    // ── Full-screen overlay wrapper ─────────────────────────────────────
+    // Two layers: backdrop (semi-transparent) + centred card.
+    div()
+        .size_full()
+        .absolute()
+        .top_0()
+        .left_0()
+        // Backdrop (dark, semi-transparent).
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .bg(rgb(BG_MODAL_OVERLAY))
+                .opacity(0.65),
+        )
+        // Card centred on top of the backdrop.
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .items_center()
+                .child(card),
+        )
+
 }
 
 // ──────────────────────────────────────────────────────────────

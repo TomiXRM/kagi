@@ -1,4 +1,4 @@
-//! Git backend — T002: repository open / T003: working tree status / T004: commit log / T005: refs + snapshot / T011: commit diff
+//! Git backend — T002: repository open / T003: working tree status / T004: commit log / T005: refs + snapshot / T011: commit diff / T013: checkout ops
 //!
 //! This module provides the entry point for opening a local Git repository,
 //! extracting basic metadata (repo name, workdir path, HEAD state), querying
@@ -9,6 +9,7 @@
 
 mod diff;
 mod log;
+pub mod ops;
 mod refs;
 mod snapshot;
 mod status;
@@ -17,6 +18,8 @@ mod status;
 pub use diff::{DiffLine, DiffLineKind, FileDiff, Hunk, commit_changed_files, commit_file_diff};
 #[allow(unused_imports)]
 pub use log::{Commit, CommitId, Signature, commit_log};
+#[allow(unused_imports)]
+pub use ops::{OperationPlan, StateSummary, execute_checkout, plan_checkout, preflight_check};
 #[allow(unused_imports)]
 pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo};
 #[allow(unused_imports)]

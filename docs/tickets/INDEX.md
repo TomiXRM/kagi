@@ -14,8 +14,8 @@
 | T005 | branch / remote branch / tag / HEAD を取得する(RepoSnapshot 完成) | T004 | done |
 | T006 | commit graph layout の pure Rust モジュールを実装する | T004 | done |
 | T007 | graph layout の unit test を作る(直線/分岐/merge/octopus/複数root) | T006 | done |
-| T008 | GPUI で commit list を表示する(仮想化リスト) | T001, T005 | in-progress |
-| T009 | GPUI で commit graph lane を描画する | T006–T008 | todo |
+| T008 | GPUI で commit list を表示する(仮想化リスト) | T001, T005 | done |
+| T009 | GPUI で commit graph lane を描画する | T006–T008 | in-progress |
 | T010 | commit selection で metadata panel を表示する | T008 | todo |
 | T011 | changed files list を表示する | T010 | todo |
 | T012 | file diff viewer を表示する | T011 | todo |

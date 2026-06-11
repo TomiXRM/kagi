@@ -7,7 +7,7 @@ use gpui::{
     div, prelude::*, px, rgb, size,
 };
 
-use git::{open_repository, working_tree_status};
+use git::{commit_log, open_repository, working_tree_status};
 
 /// State held by the GPUI application.
 struct KagiApp {
@@ -152,6 +152,38 @@ fn main() {
                     }
                     Err(e) => {
                         let line = format!("status error: {}", e.message());
+                        eprintln!("[kagi] {}", line);
+                        details.push(line);
+                    }
+                }
+
+                // ── Commit log ──────────────────────────────────────────
+                match git2::Repository::open(&repo_path) {
+                    Ok(repo3) => {
+                        match commit_log(&repo3, 10_000) {
+                            Ok(commits) => {
+                                let header = format!("Commits: {}", commits.len());
+                                eprintln!("[kagi] {}", header);
+                                details.push(header);
+                                for c in commits.iter().take(3) {
+                                    let line = format!(
+                                        "  {} {}",
+                                        c.id.short(),
+                                        c.summary
+                                    );
+                                    eprintln!("[kagi] {}", line);
+                                    details.push(line);
+                                }
+                            }
+                            Err(e) => {
+                                let line = format!("commit log error: {}", e);
+                                eprintln!("[kagi] {}", line);
+                                details.push(line);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let line = format!("commit log error: {}", e.message());
                         eprintln!("[kagi] {}", line);
                         details.push(line);
                     }

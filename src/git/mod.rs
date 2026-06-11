@@ -1,12 +1,15 @@
-//! Git backend — T002: repository open / T003: working tree status
+//! Git backend — T002: repository open / T003: working tree status / T004: commit log
 //!
 //! This module provides the entry point for opening a local Git repository,
-//! extracting basic metadata (repo name, workdir path, HEAD state), and
-//! querying the working tree status.
+//! extracting basic metadata (repo name, workdir path, HEAD state), querying
+//! the working tree status, and retrieving the commit log.
 //! Network transports (https/ssh) are not used in the MVP.
 
+mod log;
 mod status;
 
+#[allow(unused_imports)]
+pub use log::{Commit, CommitId, Signature, commit_log};
 #[allow(unused_imports)]
 pub use status::{ChangeKind, FileStatus, WorkingTreeStatus, working_tree_status};
 

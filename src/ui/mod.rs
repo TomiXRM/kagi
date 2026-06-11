@@ -29,7 +29,7 @@ use crate::git::{
     },
 };
 use commit_list::{BadgeKind, CommitRow, build_commit_rows};
-use detail_panel::{CommitDetail, build_commit_details};
+use detail_panel::{CommitDetail, build_commit_details, soft_wrap};
 use graph_view::{graph_canvas, graph_width};
 
 // ──────────────────────────────────────────────────────────────
@@ -1384,7 +1384,7 @@ impl Render for KagiApp {
                     .py_1()
                     .bg(rgb(BG_SURFACE))
                     .text_color(rgb(TEXT_SUB))
-                    .child(div().flex_1().child(header));
+                    .child(div().flex_1().overflow_hidden().child(header));
                 // Show Stash button only when working tree is dirty.
                 if is_dirty {
                     header_bar = header_bar.child(
@@ -1642,10 +1642,12 @@ fn render_detail_panel(
                         .items_center()
                         .pl(px(indent))
                         .mb_px()
+                        .overflow_hidden()
                         .child(
                             div()
                                 .text_sm()
                                 .text_color(rgb(COLOR_DIR))
+                                .overflow_hidden()
                                 .child(name.clone()),
                         )
                         .into_any()
@@ -1783,14 +1785,15 @@ fn render_detail_panel(
         .flex()
         .flex_col()
         .bg(rgb(BG_PANEL))
+        .overflow_hidden()
         .px_3()
         .py_2()
         // ── Create branch here button ────────────────────────
         .child(create_branch_button)
         // ── Cherry-pick onto HEAD button (T016) ─────────────
         .child(cherry_pick_button)
-        // ── Full SHA ────────────────────────────────────────
-        .child(field("SHA", d.full_sha))
+        // ── Full SHA (display version: ZWSP every 8 chars for wrap) ──
+        .child(field("SHA", d.sha_display))
         // ── Author ──────────────────────────────────────────
         .child(field("Author", d.author_line))
         // ── Committer (only when different from author) ──────
@@ -1951,7 +1954,11 @@ fn render_diff_rows(
 }
 
 /// Render the badge chips for one commit row as a horizontal flex container.
+///
+/// Badge labels are capped at 24 visible chars with a trailing `…` to prevent
+/// very long branch names from overflowing the commit list row (T019).
 fn render_badges(badges: &[commit_list::RefBadge]) -> impl IntoElement {
+    const MAX_BADGE_CHARS: usize = 24;
     let mut row = div().flex().flex_row().gap_1().flex_shrink_0().mr_2();
     for badge in badges {
         let color = match badge.kind {
@@ -1960,13 +1967,20 @@ fn render_badges(badges: &[commit_list::RefBadge]) -> impl IntoElement {
             BadgeKind::Remote => COLOR_REMOTE,
             BadgeKind::Tag => COLOR_TAG,
         };
+        // Truncate long labels so they don't overflow the row.
+        let label: SharedString = if badge.label.chars().count() > MAX_BADGE_CHARS {
+            let s: String = badge.label.chars().take(MAX_BADGE_CHARS - 1).collect();
+            SharedString::from(format!("{}\u{2026}", s))
+        } else {
+            badge.label.clone()
+        };
         let chip = div()
             .px_1()
             .rounded_sm()
             .bg(rgb(color))
             .text_color(rgb(BG_BASE))
             .text_sm()
-            .child(badge.label.clone());
+            .child(label);
         row = row.child(chip);
     }
     row
@@ -2024,6 +2038,7 @@ fn render_sidebar(
                 .py_1()
                 .text_sm()
                 .text_color(rgb(text_color))
+                .overflow_hidden()
                 .child(label)
                 .into_any()
         } else {
@@ -2040,6 +2055,7 @@ fn render_sidebar(
                 .py_1()
                 .text_sm()
                 .text_color(rgb(text_color))
+                .overflow_hidden()
                 .on_click(click_handler)
                 .hover(|style| style.bg(rgb(BG_SURFACE)))
                 .child(label)
@@ -2208,7 +2224,8 @@ fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> imp
                 div()
                     .text_sm()
                     .text_color(rgb(COLOR_WARNING))
-                    .child(SharedString::from(format!("\u{26a0} {}", w))),
+                    .overflow_hidden()
+                    .child(SharedString::from(soft_wrap(&format!("\u{26a0} {}", w), 16))),
             );
         }
         card = card.child(warn_col);
@@ -2222,7 +2239,8 @@ fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> imp
                 div()
                     .text_sm()
                     .text_color(rgb(COLOR_BLOCKER))
-                    .child(SharedString::from(format!("\u{2717} {}", b))),
+                    .overflow_hidden()
+                    .child(SharedString::from(soft_wrap(&format!("\u{2717} {}", b), 16))),
             );
         }
         card = card.child(block_col);
@@ -2233,7 +2251,8 @@ fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> imp
         div()
             .text_xs()
             .text_color(rgb(TEXT_MUTED))
-            .child(SharedString::from(plan.recovery.clone())),
+            .overflow_hidden()
+            .child(SharedString::from(soft_wrap(&plan.recovery, 16))),
     );
 
     // ── Error message (preflight / execute failure) ───────
@@ -2242,7 +2261,8 @@ fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> imp
             div()
                 .text_sm()
                 .text_color(rgb(COLOR_BLOCKER))
-                .child(err.clone()),
+                .overflow_hidden()
+                .child(SharedString::from(soft_wrap(err, 16))),
         );
     }
 

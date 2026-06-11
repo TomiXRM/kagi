@@ -90,6 +90,15 @@ fn main() {
     eprintln!("[kagi] stashes: {}", snap.stashes.len());
 
     // ── Build app state and launch window ────────────────────
-    let app_state = KagiApp::from_snapshot(&info.name, &snap);
+    let mut app_state = KagiApp::from_snapshot(&info.name, &snap);
+
+    // KAGI_SELECT_FIRST=1: auto-select row 0 at startup for headless
+    // verification of the detail panel render path (T010).
+    if std::env::var("KAGI_SELECT_FIRST").as_deref() == Ok("1") {
+        if !app_state.rows.is_empty() {
+            app_state.select(0);
+        }
+    }
+
     run_app(app_state);
 }

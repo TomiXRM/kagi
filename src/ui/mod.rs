@@ -1,10 +1,11 @@
-//! UI module — T008: GPUI commit list / T009: commit graph lane
+//! UI module — T008: GPUI commit list / T009: commit graph lane / T010: commit selection + detail panel
 //!
 //! This module lives in the binary crate (`main.rs` does `mod ui;`).
 //! It must not be added to `src/lib.rs` so that domain tests stay
 //! independent of GPUI.
 
 pub mod commit_list;
+pub mod detail_panel;
 pub mod graph_view;
 
 use gpui::{
@@ -14,6 +15,7 @@ use gpui::{
 
 use crate::git::{Head, RepoSnapshot};
 use commit_list::{BadgeKind, CommitRow, build_commit_rows};
+use detail_panel::{CommitDetail, build_commit_details};
 use graph_view::{graph_canvas, graph_width};
 
 // ──────────────────────────────────────────────────────────────
@@ -21,9 +23,12 @@ use graph_view::{graph_canvas, graph_width};
 // ──────────────────────────────────────────────────────────────
 const BG_BASE: u32 = 0x1e1e2e;
 const BG_SURFACE: u32 = 0x313244;
+const BG_SELECTED: u32 = 0x45475a; // surface1 — selected row highlight
+const BG_PANEL: u32 = 0x181825;    // mantle — detail panel background
 const TEXT_MAIN: u32 = 0xcdd6f4;
 const TEXT_SUB: u32 = 0xa6adc8;
 const TEXT_MUTED: u32 = 0x585b70;
+const TEXT_LABEL: u32 = 0x6c7086; // overlay0 — field labels in detail panel
 const COLOR_SHA: u32 = 0x89dceb; // teal
 const COLOR_HEAD: u32 = 0xf38ba8; // red  — HEAD / attached branch
 const COLOR_BRANCH: u32 = 0x89b4fa; // blue — local branch
@@ -41,6 +46,10 @@ pub struct KagiApp {
     pub header: SharedString,
     /// Pre-computed commit rows (built once from the snapshot).
     pub rows: Vec<CommitRow>,
+    /// Pre-computed detail panel data, parallel to `rows`.
+    pub details: Vec<CommitDetail>,
+    /// Currently selected row index (None = no selection).
+    pub selected: Option<usize>,
     /// Error or informational message shown instead of the commit list.
     pub error: Option<SharedString>,
 }
@@ -83,13 +92,14 @@ impl KagiApp {
         ));
 
         let rows = build_commit_rows(snap);
+        let details = build_commit_details(snap);
 
         // T009: log lane count derived from the first row (all rows share the same value).
         let lane_count = rows.first().map(|r| r.lane_count).unwrap_or(0);
         eprintln!("[kagi] graph: lane_count={}", lane_count);
         eprintln!("[kagi] commit list rows: {}", rows.len());
 
-        KagiApp { header, rows, error: None }
+        KagiApp { header, rows, details, selected: None, error: None }
     }
 
     /// Construct a placeholder for the no-argument / error case.
@@ -97,7 +107,28 @@ impl KagiApp {
         KagiApp {
             header: SharedString::from("kagi"),
             rows: Vec::new(),
+            details: Vec::new(),
+            selected: None,
             error: Some(SharedString::from(message.into())),
+        }
+    }
+
+    /// Select the commit at `index` (or deselect if already selected).
+    /// Emits a `[kagi] selected:` log for automated verification.
+    pub fn select(&mut self, index: usize) {
+        // Toggle: clicking the same row again deselects it.
+        if self.selected == Some(index) {
+            self.selected = None;
+            return;
+        }
+        self.selected = Some(index);
+        if let Some(detail) = self.details.get(index) {
+            let parent_count = detail.parent_ids.len();
+            eprintln!(
+                "[kagi] selected: {} parents={}",
+                detail.full_sha.as_ref().get(..8).unwrap_or(&detail.full_sha),
+                parent_count,
+            );
         }
     }
 }
@@ -106,6 +137,7 @@ impl Render for KagiApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = self.header.clone();
         let row_count = self.rows.len();
+        let selected = self.selected;
 
         if let Some(err) = &self.error {
             // ── Error / usage state ──────────────────────────
@@ -126,7 +158,10 @@ impl Render for KagiApp {
                 .into_any();
         }
 
-        // ── Normal state: header + commit list ───────────────
+        // ── Pre-fetch detail for panel (if any row is selected) ─
+        let detail = selected.and_then(|i| self.details.get(i)).cloned();
+
+        // ── Normal state: header + (list | list + panel) ─────
         div()
             .flex()
             .flex_col()
@@ -144,18 +179,29 @@ impl Render for KagiApp {
                     .text_color(rgb(TEXT_SUB))
                     .child(header),
             )
-            // ── Virtualized commit list ──────────────────────
+            // ── Body row: list (flex_1) + optional panel ─────
             .child(
-                uniform_list(
-                    "commit-list",
-                    row_count,
-                    cx.processor(move |this, range, _window, _cx| {
-                        render_rows(&this.rows, range)
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_1()
+                    .h_full()
+                    // ── Virtualized commit list ──────────────
+                    .child(
+                        uniform_list(
+                            "commit-list",
+                            row_count,
+                            cx.processor(move |this, range, _window, cx| {
+                                render_rows(&this.rows, range, selected, cx)
+                            }),
+                        )
+                        .flex_1()
+                        .h_full(),
+                    )
+                    // ── Detail panel (only when a row is selected) ──
+                    .when_some(detail, |el, d| {
+                        el.child(render_detail_panel(d))
                     }),
-                )
-                .flex_1()
-                .h_full()
-                .w_full(),
             )
             .into_any()
     }
@@ -167,23 +213,48 @@ impl Render for KagiApp {
 
 /// Render commit rows for the given range.  Called by `uniform_list`
 /// with only the visible subset, so this must be cheap.
+///
+/// `selected` — the currently selected row index (None = no selection).
+/// `cx` — the `Context<KagiApp>` from the `cx.processor` closure;
+///         used to build `cx.listener(...)` for the on_click handler.
 fn render_rows(
     rows: &[CommitRow],
     range: std::ops::Range<usize>,
+    selected: Option<usize>,
+    cx: &mut Context<KagiApp>,
 ) -> Vec<impl IntoElement> {
     range
         .filter_map(|i| rows.get(i).map(|row| (i, row)))
         .map(|(ix, row)| {
             let row = row.clone();
-            // Alternate row background for readability.  Parity must come
-            // from the absolute row index so stripes stay attached to rows
-            // while scrolling.
-            let row_bg = if ix % 2 == 0 { BG_BASE } else { 0x1a1a2a };
+
+            // Selected row gets a prominent surface highlight;
+            // even/odd stripes apply otherwise.
+            let row_bg = if selected == Some(ix) {
+                BG_SELECTED
+            } else if ix % 2 == 0 {
+                BG_BASE
+            } else {
+                0x1a1a2a
+            };
 
             // ── Graph lane area (T009) ────────────────────────
             // Width is clamped to MAX_LANES lanes; unborn/empty repos
             // get lane_count=0 → graph_w=0 → no canvas rendered.
             let g_w = graph_width(row.lane_count);
+
+            // on_click handler: update KagiApp.selected via cx.listener.
+            // cx.listener signature:
+            //   fn listener<E: ?Sized>(
+            //       &self,
+            //       f: impl Fn(&mut T, &E, &mut Window, &mut Context<T>) + 'static,
+            //   ) -> impl Fn(&E, &mut Window, &mut App) + 'static
+            let click_handler = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                this.select(ix);
+                // State changed — request a re-render so the highlight and
+                // detail panel actually update on screen.
+                cx.notify();
+            });
 
             div()
                 .id(ix)
@@ -197,6 +268,7 @@ fn render_rows(
                 // across row boundaries.
                 .h(px(graph_view::ROW_H))
                 .bg(rgb(row_bg))
+                .on_click(click_handler)
                 // Graph lane canvas — wrapped in a sized div so we can call
                 // .w() / .h() on the container (canvas returns opaque type).
                 .when(g_w > 0.0, |el| {
@@ -248,6 +320,82 @@ fn render_rows(
                 )
         })
         .collect()
+}
+
+// ──────────────────────────────────────────────────────────────
+// Detail panel renderer
+// ──────────────────────────────────────────────────────────────
+
+/// Render the 360 px right-side detail panel for the selected commit.
+fn render_detail_panel(d: CommitDetail) -> impl IntoElement {
+    // Helper: one labelled field row.
+    let field = |label: &'static str, value: SharedString| {
+        div()
+            .flex()
+            .flex_col()
+            .mb_2()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(TEXT_LABEL))
+                    .child(SharedString::from(label)),
+            )
+            .child(
+                div()
+                    .text_color(rgb(TEXT_MAIN))
+                    .overflow_hidden()
+                    .child(value),
+            )
+    };
+
+    // Parents section: "none" for root commits, short ids otherwise.
+    let parents_value = if d.parent_ids.is_empty() {
+        SharedString::from("(root commit)")
+    } else {
+        SharedString::from(d.parent_ids.iter().map(|s| s.as_ref()).collect::<Vec<_>>().join("  "))
+    };
+
+    let mut panel = div()
+        .w(px(360.))
+        .flex_shrink_0()
+        .h_full()
+        .flex()
+        .flex_col()
+        .bg(rgb(BG_PANEL))
+        .px_3()
+        .py_2()
+        // ── Full SHA ────────────────────────────────────────
+        .child(field("SHA", d.full_sha))
+        // ── Author ──────────────────────────────────────────
+        .child(field("Author", d.author_line));
+
+    // Committer (only when different from author)
+    if let Some(committer) = d.committer_line {
+        panel = panel.child(field("Committer", committer));
+    }
+
+    panel
+        // ── Parents ─────────────────────────────────────────
+        .child(field("Parents", parents_value))
+        // ── Message ─────────────────────────────────────────
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_LABEL))
+                        .child(SharedString::from("Message")),
+                )
+                .child(
+                    div()
+                        .text_color(rgb(TEXT_MAIN))
+                        .overflow_hidden()
+                        .flex_1()
+                        .child(d.full_message),
+                ),
+        )
 }
 
 /// Render the badge chips for one commit row as a horizontal flex container.

@@ -13,6 +13,7 @@ pub mod oplog;
 pub mod ops;
 mod refs;
 mod snapshot;
+mod staging;
 mod status;
 
 #[allow(unused_imports)]
@@ -35,6 +36,12 @@ pub use ops::{
 pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo};
 #[allow(unused_imports)]
 pub use snapshot::{RepoSnapshot, snapshot};
+#[allow(unused_imports)]
+pub use staging::{
+    stage_file, unstage_file,
+    unstaged_file_diff, staged_file_diff,
+    plan_commit, execute_commit,
+};
 #[allow(unused_imports)]
 pub use status::{ChangeKind, FileStatus, WorkingTreeStatus, working_tree_status};
 

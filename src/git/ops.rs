@@ -899,7 +899,7 @@ fn collect_stash_entries(repo: &mut Repository) -> Result<Vec<(usize, String)>, 
 ///
 /// Falls back to `"kagi <kagi@local>"` if either `user.name` or `user.email`
 /// is not configured.
-fn build_signature(repo: &Repository) -> Result<git2::Signature<'static>, GitError> {
+pub(crate) fn build_signature(repo: &Repository) -> Result<git2::Signature<'static>, GitError> {
     let config = repo
         .config()
         .map_err(|e| GitError::Other(format!("failed to open config: {}", e.message())))?;

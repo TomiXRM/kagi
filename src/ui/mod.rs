@@ -1,4 +1,4 @@
-//! UI module — T008: GPUI commit list / T009: commit graph lane / T010: commit selection + detail panel / T011: changed files list / T012: file diff viewer / T013: checkout plan modal + sidebar
+//! UI module — T008: GPUI commit list / T009: commit graph lane / T010: commit selection + detail panel / T011: changed files list / T012: file diff viewer / T013: checkout plan modal + sidebar / T023: pane resize
 //!
 //! This module lives in the binary crate (`main.rs` does `mod ui;`).
 //! It must not be added to `src/lib.rs` so that domain tests stay
@@ -17,6 +17,50 @@ use gpui::{
     App, Context, Entity, FocusHandle, KeyDownEvent, SharedString, Window,
     div, prelude::*, px, rgb, uniform_list,
 };
+
+// ──────────────────────────────────────────────────────────────
+// T023: Pane resize — divider drag state
+// ──────────────────────────────────────────────────────────────
+
+/// Which divider is being dragged.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DividerKind {
+    /// The divider between the sidebar and the commit list.
+    Sidebar,
+    /// The divider between the commit list and the detail/diff panel.
+    Panel,
+}
+
+/// Drag state stored in the active drag.  Carries the divider kind and the
+/// cursor X at drag start, together with the pane width at drag start so we
+/// can compute the delta accurately.
+#[derive(Clone, Copy, Debug)]
+pub struct DividerDrag {
+    pub kind: DividerKind,
+    /// Cursor X position (window-relative, pixels) when the drag started.
+    pub start_x: f32,
+    /// Sidebar/panel width at drag start.
+    pub start_width: f32,
+}
+
+/// Invisible ghost view rendered during a divider drag.  gpui requires a
+/// `Render`-able entity as the drag ghost, so we use this zero-size placeholder.
+struct DividerGhost;
+impl gpui::Render for DividerGhost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
+        div()
+    }
+}
+
+// Sidebar / panel width limits.
+const SIDEBAR_MIN: f32 = 120.0;
+const SIDEBAR_MAX: f32 = 400.0;
+const PANEL_MIN: f32 = 240.0;
+const PANEL_MAX: f32 = 800.0;
+
+// Default widths (matching the pre-T023 hard-coded values).
+const SIDEBAR_DEFAULT: f32 = 200.0;
+const PANEL_DEFAULT: f32 = 360.0;
 
 use kagi::git::{
     ChangeKind, CommitId, FileDiff, DiffLineKind, FileStatus, Head, RepoSnapshot, Stash,
@@ -296,6 +340,10 @@ pub struct KagiApp {
     pub cherry_pick_modal: Option<CherryPickModal>,
     /// Status footer message (T017): the result of the most recent operation.
     pub status_footer: FooterStatus,
+    /// Current sidebar width in pixels (T023: user-resizable).
+    pub sidebar_width: f32,
+    /// Current detail/diff panel width in pixels (T023: user-resizable).
+    pub panel_width: f32,
 }
 
 impl KagiApp {
@@ -380,6 +428,8 @@ impl KagiApp {
             stash_push_focus: None,
             cherry_pick_modal: None,
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
+            sidebar_width: SIDEBAR_DEFAULT,
+            panel_width: PANEL_DEFAULT,
         }
     }
 
@@ -405,6 +455,8 @@ impl KagiApp {
             stash_push_focus: None,
             cherry_pick_modal: None,
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
+            sidebar_width: SIDEBAR_DEFAULT,
+            panel_width: PANEL_DEFAULT,
         }
     }
 
@@ -460,6 +512,8 @@ impl KagiApp {
         self.cherry_pick_modal = None;
         // status_footer is intentionally preserved across reloads so the last
         // operation result remains visible after the commit list refreshes.
+        // sidebar_width / panel_width are also preserved so the user's resize
+        // is not lost on checkout/reload (T023).
     }
 
     /// Open the checkout plan modal for `branch`.
@@ -1648,12 +1702,45 @@ impl Render for KagiApp {
         let cherry_pick_modal = self.cherry_pick_modal.clone();
         let status_footer = self.status_footer.clone();
 
+        // T023: pane widths for divider rendering.
+        let sidebar_width = self.sidebar_width;
+        let panel_width = self.panel_width;
+
+        // T023: divider drag-move handler callback (single listener handles both dividers).
+        // Placed on the root div so it fires even when the mouse moves outside
+        // the narrow 4px divider strip.
+        let divider_drag_move = cx.listener(move |this, event: &gpui::DragMoveEvent<DividerDrag>, _window, cx| {
+            let drag = *event.drag(cx);
+            let cursor_x = f32::from(event.event.position.x);
+            let delta = cursor_x - drag.start_x;
+            match drag.kind {
+                DividerKind::Sidebar => {
+                    let new_width = (drag.start_width + delta).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+                    if (new_width - this.sidebar_width).abs() > 0.5 {
+                        this.sidebar_width = new_width;
+                        cx.notify();
+                    }
+                }
+                DividerKind::Panel => {
+                    // Panel divider is on the LEFT edge of the panel, so dragging
+                    // right (positive delta) makes the panel narrower.
+                    let new_width = (drag.start_width - delta).clamp(PANEL_MIN, PANEL_MAX);
+                    if (new_width - this.panel_width).abs() > 0.5 {
+                        this.panel_width = new_width;
+                        cx.notify();
+                    }
+                }
+            }
+        });
+
         // ── Normal state: header + body (sidebar + list + optional panel) ─────
         div()
             .flex()
             .flex_col()
             .size_full()
             .bg(rgb(BG_BASE))
+            // T023: capture drag-move for both dividers on the root element.
+            .on_drag_move::<DividerDrag>(divider_drag_move)
             // ── Header bar ──────────────────────────────────
             .child({
                 let stash_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
@@ -1689,15 +1776,42 @@ impl Render for KagiApp {
                 }
                 header_bar
             })
-            // ── Body row: sidebar + list (flex_1) + optional panel ─────
-            .child(
-                div()
+            // ── Body row: sidebar | divider1 | list (flex_1) | divider2 | optional panel ─
+            .child({
+                // Build divider 1: sidebar | main.
+                let sidebar_drag_start_width = sidebar_width;
+                let divider1 = div()
+                    .id("divider-sidebar")
+                    .w(px(4.))
+                    .flex_shrink_0()
+                    .h_full()
+                    .bg(rgb(BG_SURFACE))
+                    .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
+                    .cursor_col_resize()
+                    .on_drag(
+                        DividerDrag { kind: DividerKind::Sidebar, start_x: 0.0, start_width: sidebar_drag_start_width },
+                        move |drag, position, _window, cx| {
+                            let drag_with_pos = DividerDrag {
+                                kind: drag.kind,
+                                start_x: f32::from(position.x),
+                                start_width: sidebar_drag_start_width,
+                            };
+                            cx.new(move |_| {
+                                let _ = drag_with_pos;
+                                DividerGhost
+                            })
+                        },
+                    );
+
+                let mut body_row = div()
                     .flex()
                     .flex_row()
                     .flex_1()
                     .h_full()
                     // ── Left sidebar ──────────────────────────
-                    .child(render_sidebar(&branches, &stashes, cx))
+                    .child(render_sidebar(&branches, &stashes, sidebar_width, cx))
+                    // ── Sidebar divider ───────────────────────
+                    .child(divider1)
                     // ── Virtualized commit list ──────────────
                     .child(
                         uniform_list(
@@ -1709,21 +1823,51 @@ impl Render for KagiApp {
                         )
                         .flex_1()
                         .h_full(),
-                    )
-                    // ── Detail panel (only when a row is selected) ──
-                    .when_some(detail, |el, d| {
-                        if let Some(diff_view) = file_diff_view {
-                            // ── Diff view mode ──────────────────
-                            el.child(render_diff_panel(diff_view, cx))
-                        } else {
-                            // ── Commit metadata + changed files ─
-                            let at = CommitId(d.full_sha.as_ref().to_string());
-                            let files = changed_files.clone();
-                            let files_for_click = changed_files.clone();
-                            el.child(render_detail_panel(d, at, files.unwrap_or(None), files_for_click.unwrap_or(None), cx))
-                        }
-                    }),
-            )
+                    );
+
+                // ── Detail panel + panel divider (only when a row is selected) ──
+                let panel_drag_start_width = panel_width;
+                body_row = body_row.when_some(detail, |el, d| {
+                    // Build divider 2: main | panel.
+                    let divider2 = div()
+                        .id("divider-panel")
+                        .w(px(4.))
+                        .flex_shrink_0()
+                        .h_full()
+                        .bg(rgb(BG_SURFACE))
+                        .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
+                        .cursor_col_resize()
+                        .on_drag(
+                            DividerDrag { kind: DividerKind::Panel, start_x: 0.0, start_width: panel_drag_start_width },
+                            move |drag, position, _window, cx| {
+                                let drag_with_pos = DividerDrag {
+                                    kind: drag.kind,
+                                    start_x: f32::from(position.x),
+                                    start_width: panel_drag_start_width,
+                                };
+                                cx.new(move |_| {
+                                    let _ = drag_with_pos;
+                                    DividerGhost
+                                })
+                            },
+                        );
+
+                    if let Some(diff_view) = file_diff_view {
+                        // ── Diff view mode ──────────────────
+                        el.child(divider2)
+                            .child(render_diff_panel(diff_view, panel_width, cx))
+                    } else {
+                        // ── Commit metadata + changed files ─
+                        let at = CommitId(d.full_sha.as_ref().to_string());
+                        let files = changed_files.clone();
+                        let files_for_click = changed_files.clone();
+                        el.child(divider2)
+                            .child(render_detail_panel(d, at, files.unwrap_or(None), files_for_click.unwrap_or(None), panel_width, cx))
+                    }
+                });
+
+                body_row
+            })
             // ── Plan modal overlay (above everything) ──────
             .when_some(plan_modal, |el, modal| {
                 el.child(render_plan_modal(modal, cx))
@@ -1887,6 +2031,7 @@ fn render_detail_panel(
     at: CommitId,
     changed_files: Option<Vec<FileStatus>>,
     changed_files_for_click: Option<Vec<FileStatus>>,
+    panel_width: f32,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     // Helper: one labelled field row.  Value is single-line + truncate.
@@ -2159,9 +2304,9 @@ fn render_detail_panel(
         // ── Changed files ─────────────────────────────────
         .child(files_section);
 
-    // ── Outer panel: fixed width, full height, flex_col ──────────────────
+    // ── Outer panel: user-resizable width, full height, flex_col ─────────
     div()
-        .w(px(360.))
+        .w(px(panel_width))
         .flex_shrink_0()
         .h_full()
         .flex()
@@ -2188,7 +2333,8 @@ fn render_detail_panel(
 /// - `← back` row (click to return to the changed-files list)
 /// - File name
 /// - Virtualized diff line list (`uniform_list` with id `"diff-list"`)
-fn render_diff_panel(view: FileDiffView, cx: &mut Context<KagiApp>) -> impl IntoElement {
+/// T023: `panel_width` replaces the hard-coded 560px diff-view special case.
+fn render_diff_panel(view: FileDiffView, panel_width: f32, cx: &mut Context<KagiApp>) -> impl IntoElement {
     let row_count = view.rows.len();
     let rows = std::sync::Arc::new(view.rows);
     let rows_for_list = rows.clone();
@@ -2204,7 +2350,7 @@ fn render_diff_panel(view: FileDiffView, cx: &mut Context<KagiApp>) -> impl Into
     // below its natural height, so the uniform_list overflows the panel and
     // the diff rows are pushed outside the visible area.
     div()
-        .w(px(560.))
+        .w(px(panel_width))
         .flex_shrink_0()
         .h_full()
         .flex()
@@ -2428,13 +2574,15 @@ fn render_status_footer(status: FooterStatus) -> impl IntoElement {
 /// - Local branches: clicking the HEAD branch does nothing (already checked out).
 ///   Clicking any other branch opens the checkout plan modal.
 /// - Stash entries: clicking any stash entry opens the stash apply modal.
+/// - `width` — the current sidebar width in pixels (T023: user-resizable).
 fn render_sidebar(
     branches: &[(String, bool)],
     stashes: &[Stash],
+    width: f32,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let mut col = div()
-        .w(px(200.))
+        .w(px(width))
         .flex_shrink_0()
         .h_full()
         .flex()

@@ -1,4 +1,4 @@
-//! Commit list row data and badge helpers — T008
+//! Commit list row data and badge helpers — T008 / T009
 //!
 //! All display strings are pre-computed at snapshot time; the render closure
 //! only clones SharedString values, never calling format! per frame.
@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use gpui::SharedString;
 
 use crate::git::{Commit, CommitId, Head, RepoSnapshot};
+use crate::graph::{GraphEdge, layout};
 
 // ──────────────────────────────────────────────────────────────
 // Badge types
@@ -120,25 +121,48 @@ pub struct CommitRow {
     pub date: SharedString,
     /// Ref badges for this commit, if any.
     pub badges: Vec<RefBadge>,
+    // ── Graph layout fields (T009) ────────────────────────────
+    /// Lane index for the commit node (●) in this row.
+    pub lane: usize,
+    /// All edges passing through this row (Pass / IntoNode / OutOfNode).
+    pub edges: Vec<GraphEdge>,
+    /// Total lane count across the entire graph (needed to compute graph width).
+    pub lane_count: usize,
 }
 
 /// Build the full list of [`CommitRow`]s from a snapshot, pre-computing all
 /// display strings.  This is called once when the snapshot is ingested; the
 /// render closure only clones SharedStrings.
+///
+/// Also runs [`layout`] once to compute graph lane / edge data (T009).
 pub fn build_commit_rows(snap: &RepoSnapshot) -> Vec<CommitRow> {
     let badge_map = build_badge_map(snap);
     let now_secs = now_unix_secs();
 
+    // Compute commit graph layout once up-front (T009).
+    let graph = layout(&snap.commits);
+    let lane_count = graph.lane_count;
+
     snap.commits
         .iter()
-        .map(|c| commit_to_row(c, &badge_map, now_secs))
+        .enumerate()
+        .map(|(i, c)| {
+            let graph_row = graph.rows.get(i);
+            let lane = graph_row.map(|r| r.lane).unwrap_or(0);
+            let edges = graph_row.map(|r| r.edges.clone()).unwrap_or_default();
+            commit_to_row(c, &badge_map, now_secs, lane, edges, lane_count)
+        })
         .collect()
 }
+
 
 fn commit_to_row(
     c: &Commit,
     badge_map: &HashMap<CommitId, Vec<RefBadge>>,
     now_secs: i64,
+    lane: usize,
+    edges: Vec<GraphEdge>,
+    lane_count: usize,
 ) -> CommitRow {
     let short_id = SharedString::from(c.id.short().to_string());
 
@@ -156,7 +180,7 @@ fn commit_to_row(
     let date = SharedString::from(relative_time(c.author.time, now_secs));
     let badges = badge_map.get(&c.id).cloned().unwrap_or_default();
 
-    CommitRow { short_id, summary, author, date, badges }
+    CommitRow { short_id, summary, author, date, badges, lane, edges, lane_count }
 }
 
 // ──────────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 mod git;
+mod graph;
 mod ui;
 
 use std::path::PathBuf;

@@ -1,10 +1,11 @@
-//! UI module — T008: GPUI commit list
+//! UI module — T008: GPUI commit list / T009: commit graph lane
 //!
 //! This module lives in the binary crate (`main.rs` does `mod ui;`).
 //! It must not be added to `src/lib.rs` so that domain tests stay
 //! independent of GPUI.
 
 pub mod commit_list;
+pub mod graph_view;
 
 use gpui::{
     App, Context, Entity, SharedString, Window,
@@ -13,6 +14,7 @@ use gpui::{
 
 use crate::git::{Head, RepoSnapshot};
 use commit_list::{BadgeKind, CommitRow, build_commit_rows};
+use graph_view::{graph_canvas, graph_width};
 
 // ──────────────────────────────────────────────────────────────
 // Catppuccin Mocha palette (subset)
@@ -82,6 +84,9 @@ impl KagiApp {
 
         let rows = build_commit_rows(snap);
 
+        // T009: log lane count derived from the first row (all rows share the same value).
+        let lane_count = rows.first().map(|r| r.lane_count).unwrap_or(0);
+        eprintln!("[kagi] graph: lane_count={}", lane_count);
         eprintln!("[kagi] commit list rows: {}", rows.len());
 
         KagiApp { header, rows, error: None }
@@ -175,14 +180,37 @@ fn render_rows(
             // while scrolling.
             let row_bg = if ix % 2 == 0 { BG_BASE } else { 0x1a1a2a };
 
+            // ── Graph lane area (T009) ────────────────────────
+            // Width is clamped to MAX_LANES lanes; unborn/empty repos
+            // get lane_count=0 → graph_w=0 → no canvas rendered.
+            let g_w = graph_width(row.lane_count);
+
             div()
                 .id(ix)
                 .flex()
                 .flex_row()
+                .items_center()
                 .w_full()
                 .px_3()
-                .py(px(3.))
+                // Fixed row height with NO vertical padding: the graph canvas
+                // must span the full row so Pass edges connect seamlessly
+                // across row boundaries.
+                .h(px(graph_view::ROW_H))
                 .bg(rgb(row_bg))
+                // Graph lane canvas — wrapped in a sized div so we can call
+                // .w() / .h() on the container (canvas returns opaque type).
+                .when(g_w > 0.0, |el| {
+                    el.child(
+                        div()
+                            .w(px(g_w))
+                            .h_full()
+                            .flex_shrink_0()
+                            .child(
+                                graph_canvas(row.lane, row.edges.clone())
+                                    .size_full(),
+                            ),
+                    )
+                })
                 // Short SHA (monospace-ish, muted teal)
                 .child(
                     div()

@@ -25,6 +25,7 @@ use crate::git::{
         plan_stash_push, execute_stash_push,
         plan_stash_apply, execute_stash_apply,
         preflight_check_stash,
+        plan_cherry_pick, execute_cherry_pick,
     },
 };
 use commit_list::{BadgeKind, CommitRow, build_commit_rows};
@@ -209,6 +210,24 @@ pub struct StashApplyModal {
 }
 
 // ──────────────────────────────────────────────────────────────
+// CherryPickModal — state for the cherry-pick plan overlay (T016)
+// ──────────────────────────────────────────────────────────────
+
+/// State for an in-progress cherry-pick plan confirmation.
+///
+/// The modal shows a preview of affected files and any blockers before
+/// the user confirms execution.
+#[derive(Clone)]
+pub struct CherryPickModal {
+    /// The commit id that will be cherry-picked.
+    pub commit_id: CommitId,
+    /// The computed plan (title, current, predicted, preview_files, blockers, recovery).
+    pub plan: std::sync::Arc<OperationPlan>,
+    /// Error message to show if execute or preflight failed.
+    pub error: Option<SharedString>,
+}
+
+// ──────────────────────────────────────────────────────────────
 // KagiApp — root view
 // ──────────────────────────────────────────────────────────────
 
@@ -255,6 +274,8 @@ pub struct KagiApp {
     pub stash_apply_modal: Option<StashApplyModal>,
     /// Focus handle for the stash push modal text input.
     pub stash_push_focus: Option<FocusHandle>,
+    /// When `Some`, the cherry-pick plan modal is visible (T016).
+    pub cherry_pick_modal: Option<CherryPickModal>,
 }
 
 impl KagiApp {
@@ -337,6 +358,7 @@ impl KagiApp {
             stash_push_modal: None,
             stash_apply_modal: None,
             stash_push_focus: None,
+            cherry_pick_modal: None,
         }
     }
 
@@ -360,6 +382,7 @@ impl KagiApp {
             stash_push_modal: None,
             stash_apply_modal: None,
             stash_push_focus: None,
+            cherry_pick_modal: None,
         }
     }
 
@@ -412,6 +435,7 @@ impl KagiApp {
         self.stash_push_modal = None;
         self.stash_apply_modal = None;
         self.stash_push_focus = None;
+        self.cherry_pick_modal = None;
     }
 
     /// Open the checkout plan modal for `branch`.
@@ -919,6 +943,138 @@ impl KagiApp {
         self.reload();
     }
 
+    // ── Cherry-pick modal (T016) ─────────────────────────────
+
+    /// Open the cherry-pick plan modal for commit `id`.
+    ///
+    /// Plans the cherry-pick using the current repository state (in-memory,
+    /// no working-tree modification) and stores the result in
+    /// `self.cherry_pick_modal`.  Emits a plan log entry.
+    pub fn open_cherry_pick_modal(&mut self, commit_id: CommitId) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => {
+                eprintln!("[kagi] open_cherry_pick_modal: no repo_path set");
+                return;
+            }
+        };
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] cherry-pick plan: repo open error: {}", e.message());
+                return;
+            }
+        };
+
+        match plan_cherry_pick(&repo, &commit_id) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: cherry-pick {} blockers={} preview_files={}",
+                    commit_id.short(),
+                    plan.blockers.len(),
+                    plan.preview_files.len()
+                );
+                self.cherry_pick_modal = Some(CherryPickModal {
+                    commit_id,
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                eprintln!("[kagi] cherry-pick plan: error: {}", e);
+            }
+        }
+    }
+
+    /// Cancel and close the cherry-pick modal without making any changes.
+    pub fn cancel_cherry_pick_modal(&mut self) {
+        self.cherry_pick_modal = None;
+    }
+
+    /// Confirm the cherry-pick plan: run preflight, execute, then reload.
+    ///
+    /// On failure the modal remains open and shows the error text.
+    pub fn confirm_cherry_pick(&mut self) {
+        let modal = match self.cherry_pick_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        // Defence in depth: refuse if blockers exist.
+        if !modal.plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: cherry-pick plan has blockers, not executing");
+            return;
+        }
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                if let Some(ref mut m) = self.cherry_pick_modal {
+                    m.error = Some(SharedString::from(format!("Repo open error: {}", e.message())));
+                }
+                return;
+            }
+        };
+
+        // Preflight check (HEAD unchanged since planning).
+        if let Err(e) = preflight_check(&repo, &modal.plan) {
+            if let Some(ref mut m) = self.cherry_pick_modal {
+                m.error = Some(SharedString::from(format!("Preflight failed: {}", e)));
+            }
+            return;
+        }
+
+        // Execute cherry-pick (in-memory index → commit → checkout_head safe).
+        match execute_cherry_pick(&repo, &modal.commit_id) {
+            Ok(new_id) => {
+                eprintln!(
+                    "[kagi] executed: cherry-pick {} -> {}",
+                    modal.commit_id.short(),
+                    new_id.short()
+                );
+
+                // Verify: re-snapshot, check HEAD is a new commit.
+                let mut repo2 = match git2::Repository::open(&repo_path) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("[kagi] verify: repo open error: {}", e.message());
+                        self.reload();
+                        return;
+                    }
+                };
+                match crate::git::snapshot(&mut repo2, 10_000) {
+                    Ok(snap) => {
+                        if let Head::Attached { target, branch } = &snap.head {
+                            if *target == new_id.0 {
+                                eprintln!("[kagi] verified: cherry-pick HEAD={} on {}", new_id.short(), branch);
+                            } else {
+                                eprintln!("[kagi] verify: HEAD={} expected {}", &target[..8.min(target.len())], new_id.short());
+                            }
+                            let is_clean = !snap.status.is_dirty();
+                            eprintln!("[kagi] verified: working tree {}", if is_clean { "clean" } else { "dirty (unexpected)" });
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[kagi] verify: snapshot error: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                if let Some(ref mut m) = self.cherry_pick_modal {
+                    m.error = Some(SharedString::from(format!("Cherry-pick failed: {}", e)));
+                }
+                return;
+            }
+        }
+
+        // Reload display data (new commit should appear in graph).
+        self.reload();
+    }
+
     /// Confirm the plan: run preflight, execute checkout, then reload.
     ///
     /// On preflight or execute failure the modal remains open and shows the
@@ -1205,6 +1361,7 @@ impl Render for KagiApp {
         let stash_push_modal = self.stash_push_modal.clone();
         let stash_push_focus = self.stash_push_focus.clone();
         let stash_apply_modal = self.stash_apply_modal.clone();
+        let cherry_pick_modal = self.cherry_pick_modal.clone();
 
         // ── Normal state: header + body (sidebar + list + optional panel) ─────
         div()
@@ -1297,6 +1454,10 @@ impl Render for KagiApp {
             // ── Stash apply modal overlay ────────────────────
             .when_some(stash_apply_modal, |el, modal| {
                 el.child(render_stash_apply_modal(modal, cx))
+            })
+            // ── Cherry-pick modal overlay (T016) ────────────
+            .when_some(cherry_pick_modal, |el, modal| {
+                el.child(render_cherry_pick_modal(modal, cx))
             })
             .into_any()
     }
@@ -1535,6 +1696,7 @@ fn render_detail_panel(
     };
 
     // ── "Create branch here" button ──────────────────────────
+    let at_for_cherry = at.clone();
     let create_branch_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
         this.open_create_branch_modal(at.clone(), cx);
         cx.notify();
@@ -1542,7 +1704,7 @@ fn render_detail_panel(
 
     let create_branch_button = div()
         .id("create-branch-btn")
-        .mb_2()
+        .mb_1()
         .px_2()
         .py_1()
         .rounded_sm()
@@ -1552,6 +1714,25 @@ fn render_detail_panel(
         .on_click(create_branch_click)
         .hover(|style| style.bg(rgb(BG_SELECTED)))
         .child(SharedString::from("+ Create branch here"));
+
+    // ── "Cherry-pick onto HEAD" button (T016) ────────────────
+    let cherry_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+        this.open_cherry_pick_modal(at_for_cherry.clone());
+        cx.notify();
+    });
+
+    let cherry_pick_button = div()
+        .id("cherry-pick-btn")
+        .mb_2()
+        .px_2()
+        .py_1()
+        .rounded_sm()
+        .bg(rgb(BG_SURFACE))
+        .text_sm()
+        .text_color(rgb(0xcba6f7)) // Catppuccin mauve — cherry-pick distinct from branch color
+        .on_click(cherry_click)
+        .hover(|style| style.bg(rgb(BG_SELECTED)))
+        .child(SharedString::from("\u{1f352} Cherry-pick onto HEAD branch"));
 
     let files_section = {
         let section_label = match &changed_files {
@@ -1606,6 +1787,8 @@ fn render_detail_panel(
         .py_2()
         // ── Create branch here button ────────────────────────
         .child(create_branch_button)
+        // ── Cherry-pick onto HEAD button (T016) ─────────────
+        .child(cherry_pick_button)
         // ── Full SHA ────────────────────────────────────────
         .child(field("SHA", d.full_sha))
         // ── Author ──────────────────────────────────────────
@@ -2797,6 +2980,308 @@ fn render_stash_apply_modal(
                 .on_click(confirm_handler)
                 .hover(|style| style.opacity(0.85))
                 .child(SharedString::from("Apply")),
+        );
+    }
+
+    card = card.child(button_row);
+
+    // ── Full-screen overlay wrapper ─────────────────────────
+    div()
+        .size_full()
+        .absolute()
+        .top_0()
+        .left_0()
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .bg(rgb(BG_MODAL_OVERLAY))
+                .opacity(0.65),
+        )
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .items_center()
+                .child(card),
+        )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Cherry-pick modal renderer (T016)
+// ──────────────────────────────────────────────────────────────
+
+/// Render the cherry-pick plan confirmation overlay.
+///
+/// Layout (absolute, full-screen):
+/// - Semi-transparent dark backdrop
+/// - Centred modal card:
+///   - Title (commit short sha + summary onto HEAD branch)
+///   - Current → Predicted state
+///   - Preview files section (file tree, reusing T018 build_file_tree)
+///   - Blockers (red) if any — includes conflict file names
+///   - Recovery text
+///   - Error message (if preflight/execute failed)
+///   - `[Cancel]` always; `[Cherry-pick]` only when no blockers
+fn render_cherry_pick_modal(
+    modal: CherryPickModal,
+    cx: &mut Context<KagiApp>,
+) -> impl IntoElement {
+    let plan = modal.plan.clone();
+    let has_blockers = !plan.blockers.is_empty();
+
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+        this.cancel_cherry_pick_modal();
+        cx.notify();
+    });
+
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+        this.confirm_cherry_pick();
+        cx.notify();
+    });
+
+    // Colour constants mirroring the detail panel.
+    const COLOR_ADDED:    u32 = 0xa6e3a1;
+    const COLOR_MODIFIED: u32 = 0xf9e2af;
+    const COLOR_DELETED:  u32 = 0xf38ba8;
+    const COLOR_RENAMED:  u32 = 0x89b4fa;
+    const COLOR_TYPECHANGE: u32 = 0x585b70;
+    const COLOR_DIR:      u32 = 0x6c7086;
+
+    // ── Build preview file tree rows ────────────────────────
+    let tree_rows = file_tree::build_file_tree(&plan.preview_files);
+    let tree_element_rows: Vec<_> = tree_rows.iter().map(|row| {
+        match row {
+            file_tree::TreeRow::Dir { depth, name } => {
+                let indent = (*depth as f32) * 12.0;
+                div()
+                    .id(SharedString::from(format!("cpk-dir-{}", name.as_ref())))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .pl(px(indent))
+                    .mb_px()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(COLOR_DIR))
+                            .child(name.clone()),
+                    )
+                    .into_any()
+            }
+            file_tree::TreeRow::File { depth, name, file_index, change } => {
+                let indent = (*depth as f32) * 12.0;
+                let (badge_char, badge_color) = match change {
+                    ChangeKind::Added      => ("A", COLOR_ADDED),
+                    ChangeKind::Modified   => ("M", COLOR_MODIFIED),
+                    ChangeKind::Deleted    => ("D", COLOR_DELETED),
+                    ChangeKind::Renamed { .. } => ("R", COLOR_RENAMED),
+                    ChangeKind::TypeChange => ("T", COLOR_TYPECHANGE),
+                };
+                let _ = file_index; // not clickable in preview
+                div()
+                    .id(("cpk-file", *file_index))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .pl(px(indent))
+                    .mb_px()
+                    .child(
+                        div()
+                            .w(px(14.))
+                            .flex_shrink_0()
+                            .text_sm()
+                            .text_color(rgb(badge_color))
+                            .child(SharedString::from(badge_char)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_sm()
+                            .text_color(rgb(TEXT_MAIN))
+                            .overflow_hidden()
+                            .child(name.clone()),
+                    )
+                    .into_any()
+            }
+        }
+    }).collect();
+
+    // ── Build modal card ────────────────────────────────────
+    let mut card = div()
+        .w(px(520.))
+        .bg(rgb(BG_MODAL))
+        .rounded_lg()
+        .p_4()
+        .flex()
+        .flex_col()
+        .gap_3()
+        // ── Title ─────────────────────────────────────────
+        .child(
+            div()
+                .text_color(rgb(TEXT_MAIN))
+                .text_xl()
+                .child(SharedString::from(plan.title.clone())),
+        )
+        // ── Current → Predicted ───────────────────────────
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_LABEL))
+                        .child(SharedString::from("Current")),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .text_sm()
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_MAIN))
+                                .child(SharedString::from(plan.current.head.clone())),
+                        )
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_SUB))
+                                .child(SharedString::from(format!("[{}]", plan.current.dirty))),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_LABEL))
+                        .child(SharedString::from("\u{2192} Predicted")),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .text_sm()
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT_MAIN))
+                                .child(SharedString::from(plan.predicted.head.clone())),
+                        ),
+                ),
+        );
+
+    // ── Preview files section ─────────────────────────────
+    if !plan.preview_files.is_empty() {
+        let mut preview_col = div()
+            .flex()
+            .flex_col()
+            .gap_px()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(TEXT_LABEL))
+                    .mb_1()
+                    .child(SharedString::from(format!(
+                        "Preview ({} file{})",
+                        plan.preview_files.len(),
+                        if plan.preview_files.len() == 1 { "" } else { "s" }
+                    ))),
+            );
+        for row in tree_element_rows {
+            preview_col = preview_col.child(row);
+        }
+        card = card.child(preview_col);
+    }
+
+    // ── Warnings ──────────────────────────────────────────
+    if !plan.warnings.is_empty() {
+        let mut warn_col = div().flex().flex_col().gap_1();
+        for w in &plan.warnings {
+            warn_col = warn_col.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(COLOR_WARNING))
+                    .child(SharedString::from(format!("\u{26a0} {}", w))),
+            );
+        }
+        card = card.child(warn_col);
+    }
+
+    // ── Blockers ──────────────────────────────────────────
+    if !plan.blockers.is_empty() {
+        let mut block_col = div().flex().flex_col().gap_1();
+        for b in &plan.blockers {
+            block_col = block_col.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(COLOR_BLOCKER))
+                    .child(SharedString::from(format!("\u{2717} {}", b))),
+            );
+        }
+        card = card.child(block_col);
+    }
+
+    // ── Recovery ──────────────────────────────────────────
+    card = card.child(
+        div()
+            .text_xs()
+            .text_color(rgb(TEXT_MUTED))
+            .child(SharedString::from(plan.recovery.clone())),
+    );
+
+    // ── Error message (preflight / execute failure) ───────
+    if let Some(ref err) = modal.error {
+        card = card.child(
+            div()
+                .text_sm()
+                .text_color(rgb(COLOR_BLOCKER))
+                .child(err.clone()),
+        );
+    }
+
+    // ── Buttons ───────────────────────────────────────────
+    let mut button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(
+            div()
+                .id("cherry-pick-cancel")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(BG_SURFACE))
+                .text_sm()
+                .text_color(rgb(TEXT_MAIN))
+                .on_click(cancel_handler)
+                .hover(|style| style.bg(rgb(BG_SELECTED)))
+                .child(SharedString::from("Cancel")),
+        );
+
+    if !has_blockers {
+        button_row = button_row.child(
+            div()
+                .id("cherry-pick-confirm")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(0xcba6f7)) // mauve
+                .text_sm()
+                .text_color(rgb(BG_BASE))
+                .on_click(confirm_handler)
+                .hover(|style| style.opacity(0.85))
+                .child(SharedString::from("Cherry-pick")),
         );
     }
 

@@ -5,7 +5,7 @@ mod ui;
 use std::path::PathBuf;
 
 use git::{Head, open_repository, snapshot};
-use ui::{KagiApp, StashPushModal, StashApplyModal, run_app};
+use ui::{KagiApp, StashPushModal, StashApplyModal, CherryPickModal, run_app};
 
 fn main() {
     // Collect CLI arguments (skip argv[0]).
@@ -396,6 +396,121 @@ fn main() {
             }
             Err(e) => {
                 eprintln!("[kagi] plan: stash-apply error: {}", e);
+            }
+        }
+    }
+
+    // ── T016: headless cherry-pick plan / execute ────────────
+    // KAGI_CHERRY_PICK=<sha>: generate a cherry-pick plan and log it.
+    // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, execute immediately.
+    // For fixture/tempdir testing only.  Do not set in normal use.
+    if let Ok(sha_str) = std::env::var("KAGI_CHERRY_PICK") {
+        let commit_id = git::CommitId(sha_str.clone());
+        let repo_cp = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] KAGI_CHERRY_PICK: repo open error: {}", e.message());
+                run_app(app_state);
+                return;
+            }
+        };
+
+        match git::plan_cherry_pick(&repo_cp, &commit_id) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: cherry-pick {} blockers={} preview_files={}",
+                    commit_id.short(),
+                    plan.blockers.len(),
+                    plan.preview_files.len()
+                );
+                for b in &plan.blockers {
+                    eprintln!("[kagi] plan: blocker: {}", b);
+                }
+                for f in &plan.preview_files {
+                    eprintln!(
+                        "[kagi] plan: preview_file: {} ({})",
+                        f.path.display(),
+                        f.change.label()
+                    );
+                }
+
+                let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
+                if auto_confirm {
+                    if plan.blockers.is_empty() {
+                        // Preflight + execute.
+                        let repo2 = match git2::Repository::open(&repo_path) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                eprintln!("[kagi] KAGI_CHERRY_PICK: repo open error: {}", e.message());
+                                run_app(app_state);
+                                return;
+                            }
+                        };
+                        if let Err(e) = git::preflight_check(&repo2, &plan) {
+                            eprintln!("[kagi] preflight failed: {}", e);
+                        } else {
+                            match git::execute_cherry_pick(&repo2, &commit_id) {
+                                Ok(new_id) => {
+                                    eprintln!(
+                                        "[kagi] executed: cherry-pick {} -> {}",
+                                        commit_id.short(),
+                                        new_id.short()
+                                    );
+                                    // Verify: HEAD is the new commit + WT clean + message matches.
+                                    let mut repo3 = match git2::Repository::open(&repo_path) {
+                                        Ok(r) => r,
+                                        Err(e) => {
+                                            eprintln!("[kagi] verify: repo open error: {}", e.message());
+                                            run_app(app_state);
+                                            return;
+                                        }
+                                    };
+                                    match snapshot(&mut repo3, 10_000) {
+                                        Ok(snap) => {
+                                            if let Head::Attached { target, branch } = &snap.head {
+                                                if *target == new_id.0 {
+                                                    eprintln!("[kagi] verified: HEAD={} on {}", new_id.short(), branch);
+                                                } else {
+                                                    eprintln!("[kagi] verify: HEAD={} (expected {})", &target[..8.min(target.len())], new_id.short());
+                                                }
+                                            }
+                                            let is_clean = !snap.status.is_dirty();
+                                            if is_clean {
+                                                eprintln!("[kagi] verified: working tree clean after cherry-pick");
+                                            } else {
+                                                eprintln!("[kagi] verify: working tree dirty after cherry-pick (unexpected)");
+                                            }
+                                            // Log first commit message for manual inspection.
+                                            if let Some(c) = snap.commits.first() {
+                                                eprintln!("[kagi] verified: new HEAD message: {}", c.summary);
+                                            }
+                                        }
+                                        Err(e) => eprintln!("[kagi] verify: snapshot error: {}", e),
+                                    }
+                                    app_state.reload();
+                                }
+                                Err(e) => {
+                                    eprintln!("[kagi] cherry-pick execute failed: {}", e);
+                                }
+                            }
+                        }
+                    } else {
+                        eprintln!(
+                            "[kagi] KAGI_AUTO_CONFIRM=1 but cherry-pick has {} blocker(s), skipping",
+                            plan.blockers.len()
+                        );
+                    }
+                } else {
+                    // Without auto-confirm, surface the cherry-pick modal.
+                    app_state.cherry_pick_modal = Some(CherryPickModal {
+                        commit_id,
+                        plan: std::sync::Arc::new(plan),
+                        error: None,
+                    });
+                }
+            }
+            Err(e) => {
+                eprintln!("[kagi] plan: cherry-pick error: {}", e);
             }
         }
     }

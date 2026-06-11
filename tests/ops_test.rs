@@ -19,6 +19,7 @@ use kagi::git::{
         plan_stash_push, execute_stash_push,
         plan_stash_apply, execute_stash_apply,
         preflight_check_stash,
+        plan_cherry_pick, execute_cherry_pick,
     },
     snapshot,
 };
@@ -886,5 +887,471 @@ fn test_preflight_check_stash_detects_count_change() {
     assert!(
         result.is_err(),
         "preflight_check_stash must return Err when stash count changed since planning"
+    );
+}
+
+// ────────────────────────────────────────────────────────────
+// T016: cherry-pick tests
+// ────────────────────────────────────────────────────────────
+
+/// Build a repo with two branches diverged from `main`:
+/// - `main`: initial commit + "main-only" file
+/// - `feature/two`: initial commit + "feature-two" file
+///
+/// HEAD is on `main`.  Returns (repo_dir, repo, feature_commit_id).
+fn build_cherry_pick_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository, CommitId) {
+    let d = tmp.path();
+    git(d, &["init", "-q", "-b", "main", "."]);
+    git(d, &["config", "user.name", "Test"]);
+    git(d, &["config", "user.email", "test@example.com"]);
+    git(d, &["config", "commit.gpgsign", "false"]);
+
+    // Initial commit on main.
+    write_file(d, "base.txt", "base content\n");
+    git(d, &["add", "base.txt"]);
+    git(d, &["commit", "-qm", "initial commit"]);
+
+    // Create feature/two from main and add a new file.
+    git(d, &["checkout", "-qb", "feature/two"]);
+    write_file(d, "feat_two.txt", "feature two content\n");
+    git(d, &["add", "feat_two.txt"]);
+    git(d, &["commit", "-qm", "add feat_two.txt"]);
+
+    // Capture the feature commit id.
+    let repo_tmp = Repository::open(d).expect("open repo");
+    let feature_oid = repo_tmp
+        .head()
+        .expect("head")
+        .target()
+        .expect("head target");
+    let feature_id = CommitId(feature_oid.to_string());
+
+    // Return to main.
+    git(d, &["checkout", "-q", "main"]);
+
+    let repo = Repository::open(d).expect("re-open repo on main");
+    (d.to_path_buf(), repo, feature_id)
+}
+
+// ── T016-1: normal case — plan has no blockers, correct preview_files ───────
+
+#[test]
+fn test_cherry_pick_plan_normal_no_blockers() {
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, repo, feature_id) = build_cherry_pick_repo(&tmp);
+    let _ = repo_dir;
+
+    let plan = plan_cherry_pick(&repo, &feature_id).expect("plan_cherry_pick failed");
+
+    assert!(
+        plan.blockers.is_empty(),
+        "clean repo + valid commit should have no blockers, got: {:?}",
+        plan.blockers
+    );
+    // Plan must not have modified HEAD or WT.
+    let repo2 = Repository::open(tmp.path()).expect("re-open");
+    let head_branch = repo2.head().expect("head").shorthand().map(|s| s.to_string()).unwrap_or_default();
+    assert_eq!(head_branch, "main", "plan_cherry_pick must not change HEAD branch");
+
+    // preview_files must be non-empty (feat_two.txt should appear).
+    assert!(
+        !plan.preview_files.is_empty(),
+        "preview_files must be non-empty for a normal cherry-pick"
+    );
+    let has_feat_two = plan
+        .preview_files
+        .iter()
+        .any(|f| f.path.to_string_lossy().contains("feat_two"));
+    assert!(
+        has_feat_two,
+        "preview_files should include feat_two.txt, got: {:?}",
+        plan.preview_files.iter().map(|f| f.path.display().to_string()).collect::<Vec<_>>()
+    );
+}
+
+// ── T016-2: normal execute — new commit on HEAD, message/author preserved ───
+
+#[test]
+fn test_cherry_pick_execute_normal() {
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, repo, feature_id) = build_cherry_pick_repo(&tmp);
+
+    // Capture HEAD before.
+    let head_before = repo
+        .head()
+        .expect("head")
+        .target()
+        .expect("target")
+        .to_string();
+
+    let plan = plan_cherry_pick(&repo, &feature_id).expect("plan_cherry_pick failed");
+    assert!(plan.blockers.is_empty(), "expected no blockers");
+
+    preflight_check(&repo, &plan).expect("preflight failed");
+
+    let new_id = execute_cherry_pick(&repo, &feature_id).expect("execute_cherry_pick failed");
+
+    // Head must have advanced.
+    let repo2 = Repository::open(&repo_dir).expect("re-open");
+    let head_after = repo2
+        .head()
+        .expect("head")
+        .target()
+        .expect("target")
+        .to_string();
+    assert_ne!(head_before, head_after, "HEAD must advance after cherry-pick");
+    assert_eq!(head_after, new_id.0, "HEAD must point to the new commit");
+
+    // New commit must be on 'main'.
+    let head_branch = repo2.head().expect("head").shorthand().map(|s| s.to_string()).unwrap_or_default();
+    assert_eq!(head_branch, "main", "HEAD branch must still be main");
+
+    // Parent of new commit must be old HEAD.
+    let new_commit = repo2.find_commit(git2::Oid::from_str(&new_id.0).unwrap()).expect("find new commit");
+    assert_eq!(new_commit.parent_count(), 1, "new commit should have one parent");
+    let parent_oid = new_commit.parent(0).expect("parent").id().to_string();
+    assert_eq!(parent_oid, head_before, "parent of new commit must be old HEAD");
+
+    // Message must match the cherry-picked commit.
+    let original_commit = repo2
+        .find_commit(git2::Oid::from_str(&feature_id.0).unwrap())
+        .expect("find feature commit");
+    let original_msg = original_commit.message().expect("original message");
+    let new_msg = new_commit.message().expect("new commit message");
+    assert_eq!(new_msg, original_msg, "cherry-pick must preserve commit message");
+
+    // Author must match.
+    let orig_author = original_commit.author();
+    let new_author = new_commit.author();
+    assert_eq!(orig_author.name(), new_author.name(), "author name must be preserved");
+    assert_eq!(orig_author.email(), new_author.email(), "author email must be preserved");
+
+    // Working tree must reflect the cherry-picked file.
+    assert!(
+        repo_dir.join("feat_two.txt").exists(),
+        "feat_two.txt must exist in working tree after cherry-pick"
+    );
+
+    // Status must be clean.
+    let mut repo3 = Repository::open(&repo_dir).expect("re-open3");
+    let snap = snapshot(&mut repo3, 100).expect("snapshot after cherry-pick");
+    assert!(
+        !snap.status.is_dirty(),
+        "working tree must be clean after cherry-pick, got: staged={} unstaged={}",
+        snap.status.staged.len(),
+        snap.status.unstaged.len()
+    );
+}
+
+// ── T016-3: conflict prediction — plan blocked, WT untouched ────────────────
+
+#[test]
+fn test_cherry_pick_plan_conflict_blocker_wt_intact() {
+    let tmp = TempDir::new().unwrap();
+    let d = tmp.path();
+    git(d, &["init", "-q", "-b", "main", "."]);
+    git(d, &["config", "user.name", "Test"]);
+    git(d, &["config", "user.email", "test@example.com"]);
+    git(d, &["config", "commit.gpgsign", "false"]);
+
+    // Initial commit: file.txt = "line A\n"
+    write_file(d, "file.txt", "line A\n");
+    git(d, &["add", "file.txt"]);
+    git(d, &["commit", "-qm", "initial"]);
+
+    // Branch 'conflict-branch': modify file.txt to "line B\n"
+    git(d, &["checkout", "-qb", "conflict-branch"]);
+    write_file(d, "file.txt", "line B\n");
+    git(d, &["add", "file.txt"]);
+    git(d, &["commit", "-qm", "set line B"]);
+
+    let repo_tmp = Repository::open(d).expect("open repo");
+    let conflict_oid = repo_tmp.head().expect("head").target().expect("target");
+    let conflict_id = CommitId(conflict_oid.to_string());
+
+    // Return to main and also modify the same line.
+    git(d, &["checkout", "-q", "main"]);
+    write_file(d, "file.txt", "line C\n");
+    git(d, &["add", "file.txt"]);
+    git(d, &["commit", "-qm", "set line C"]);
+
+    let repo = Repository::open(d).expect("open repo on main");
+
+    // Capture WT content before plan.
+    let wt_before = std::fs::read_to_string(d.join("file.txt")).expect("read file.txt before");
+
+    let plan = plan_cherry_pick(&repo, &conflict_id).expect("plan_cherry_pick failed");
+
+    // Must have a conflict blocker.
+    assert!(
+        !plan.blockers.is_empty(),
+        "conflicting cherry-pick should produce blockers"
+    );
+    let has_conflict_blocker = plan
+        .blockers
+        .iter()
+        .any(|b| b.contains("conflict") || b.contains("Conflict"));
+    assert!(
+        has_conflict_blocker,
+        "blocker should mention conflict, got: {:?}",
+        plan.blockers
+    );
+
+    // WT must be intact (plan must not touch working tree).
+    let wt_after = std::fs::read_to_string(d.join("file.txt")).expect("read file.txt after");
+    assert_eq!(wt_before, wt_after, "plan_cherry_pick must not modify working tree content");
+
+    // HEAD must be unchanged.
+    let repo2 = Repository::open(d).expect("re-open");
+    let head_branch = repo2.head().expect("head").shorthand().map(|s| s.to_string()).unwrap_or_default();
+    assert_eq!(head_branch, "main", "HEAD branch must remain main after conflict plan");
+}
+
+// ── T016-4: dirty working tree — plan blocked ──────────────────────────────
+
+#[test]
+fn test_cherry_pick_plan_dirty_wt_blocker() {
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, repo, feature_id) = build_cherry_pick_repo(&tmp);
+
+    // Dirty the working tree.
+    write_file(&repo_dir, "base.txt", "modified content\n");
+
+    let plan = plan_cherry_pick(&repo, &feature_id).expect("plan_cherry_pick failed");
+
+    assert!(
+        !plan.blockers.is_empty(),
+        "dirty working tree should produce blockers"
+    );
+    let has_dirty_blocker = plan
+        .blockers
+        .iter()
+        .any(|b| b.contains("staged") || b.contains("modified") || b.contains("dirty") || b.contains("Working tree"));
+    assert!(
+        has_dirty_blocker,
+        "blocker should mention dirty tree, got: {:?}",
+        plan.blockers
+    );
+
+    // HEAD must be unchanged.
+    let repo2 = Repository::open(tmp.path()).expect("re-open");
+    let head_branch = repo2.head().expect("head").shorthand().map(|s| s.to_string()).unwrap_or_default();
+    assert_eq!(head_branch, "main", "HEAD must remain main");
+}
+
+// ── T016-5: merge commit — plan blocked ─────────────────────────────────────
+
+#[test]
+fn test_cherry_pick_plan_merge_commit_blocker() {
+    let tmp = TempDir::new().unwrap();
+    let d = tmp.path();
+    git(d, &["init", "-q", "-b", "main", "."]);
+    git(d, &["config", "user.name", "Test"]);
+    git(d, &["config", "user.email", "test@example.com"]);
+    git(d, &["config", "commit.gpgsign", "false"]);
+
+    // Initial commit.
+    write_file(d, "base.txt", "base\n");
+    git(d, &["add", "base.txt"]);
+    git(d, &["commit", "-qm", "initial"]);
+
+    // Create two branches diverging from main.
+    git(d, &["checkout", "-qb", "side-a"]);
+    write_file(d, "side_a.txt", "side a\n");
+    git(d, &["add", "side_a.txt"]);
+    git(d, &["commit", "-qm", "side a"]);
+
+    git(d, &["checkout", "-q", "main"]);
+    git(d, &["checkout", "-qb", "side-b"]);
+    write_file(d, "side_b.txt", "side b\n");
+    git(d, &["add", "side_b.txt"]);
+    git(d, &["commit", "-qm", "side b"]);
+
+    // Merge side-a into side-b to create a merge commit.
+    git(d, &["merge", "-q", "--no-ff", "-m", "merge side-a", "side-a"]);
+
+    // Capture merge commit id.
+    let repo_tmp = Repository::open(d).expect("open repo");
+    let merge_oid = repo_tmp.head().expect("head").target().expect("target");
+    let merge_id = CommitId(merge_oid.to_string());
+
+    // Return to main.
+    git(d, &["checkout", "-q", "main"]);
+    let repo = Repository::open(d).expect("open repo on main");
+
+    let plan = plan_cherry_pick(&repo, &merge_id).expect("plan_cherry_pick failed");
+
+    assert!(
+        !plan.blockers.is_empty(),
+        "merge commit should produce a blocker"
+    );
+    let has_merge_blocker = plan
+        .blockers
+        .iter()
+        .any(|b| b.contains("merge") || b.contains("parent"));
+    assert!(
+        has_merge_blocker,
+        "blocker should mention merge commit, got: {:?}",
+        plan.blockers
+    );
+
+    // HEAD must be unchanged.
+    let repo2 = Repository::open(d).expect("re-open");
+    let head_branch = repo2.head().expect("head").shorthand().map(|s| s.to_string()).unwrap_or_default();
+    assert_eq!(head_branch, "main", "HEAD must remain main");
+}
+
+// ── T016-6: HEAD-same commit — plan blocked ──────────────────────────────────
+
+#[test]
+fn test_cherry_pick_plan_head_same_blocker() {
+    let tmp = TempDir::new().unwrap();
+    let (_repo_dir, repo, _feature_id) = build_cherry_pick_repo(&tmp);
+
+    // Get current HEAD commit id.
+    let head_oid = repo.head().expect("head").target().expect("target");
+    let head_id = CommitId(head_oid.to_string());
+
+    let plan = plan_cherry_pick(&repo, &head_id).expect("plan_cherry_pick failed");
+
+    assert!(
+        !plan.blockers.is_empty(),
+        "cherry-picking the current HEAD commit should produce a blocker"
+    );
+    let has_same_blocker = plan
+        .blockers
+        .iter()
+        .any(|b| b.contains("current HEAD") || b.contains("same") || b.contains("HEAD commit"));
+    assert!(
+        has_same_blocker,
+        "blocker should mention HEAD-same, got: {:?}",
+        plan.blockers
+    );
+}
+
+// ── T016-7: already-applied (empty result) — plan blocked ──────────────────
+
+#[test]
+fn test_cherry_pick_plan_already_applied_blocker() {
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, repo, feature_id) = build_cherry_pick_repo(&tmp);
+
+    // Execute the cherry-pick first.
+    let plan = plan_cherry_pick(&repo, &feature_id).expect("plan failed");
+    assert!(plan.blockers.is_empty(), "first plan should have no blockers");
+    execute_cherry_pick(&repo, &feature_id).expect("execute failed");
+
+    // Re-open the repo after the cherry-pick.
+    let repo2 = Repository::open(&repo_dir).expect("re-open");
+
+    // Now plan again — should be blocked (already applied).
+    let plan2 = plan_cherry_pick(&repo2, &feature_id).expect("second plan failed");
+
+    assert!(
+        !plan2.blockers.is_empty(),
+        "cherry-picking an already-applied commit should produce a blocker"
+    );
+    // Depending on timing, the blocker may be either:
+    // - "no changes / already applied" (different commit hash) — preferred
+    // - "HEAD same" (deterministic commit hash due to same tree/parent/author/timestamp)
+    // Both are valid indicators that the commit cannot/should not be cherry-picked again.
+    let has_applied_blocker = plan2
+        .blockers
+        .iter()
+        .any(|b| {
+            b.contains("no changes")
+                || b.contains("applied already")
+                || b.contains("empty")
+                || b.contains("current HEAD")  // HEAD-same check fires when hash is deterministic
+                || b.contains("same")
+        });
+    assert!(
+        has_applied_blocker,
+        "blocker should indicate commit is already applied or HEAD-same, got: {:?}",
+        plan2.blockers
+    );
+}
+
+// ── T016-8: preview_files match actual changed files ────────────────────────
+
+#[test]
+fn test_cherry_pick_plan_preview_files_match() {
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, repo, feature_id) = build_cherry_pick_repo(&tmp);
+    let _ = repo_dir;
+
+    let plan = plan_cherry_pick(&repo, &feature_id).expect("plan_cherry_pick failed");
+
+    assert!(plan.blockers.is_empty(), "expected no blockers");
+
+    // preview_files should contain exactly feat_two.txt as Added.
+    assert_eq!(
+        plan.preview_files.len(),
+        1,
+        "should have exactly 1 preview file, got: {:?}",
+        plan.preview_files.iter().map(|f| f.path.display().to_string()).collect::<Vec<_>>()
+    );
+    let pf = &plan.preview_files[0];
+    assert!(
+        pf.path.to_string_lossy().contains("feat_two"),
+        "preview file should be feat_two.txt, got: {}",
+        pf.path.display()
+    );
+    use kagi::git::ChangeKind;
+    assert!(
+        matches!(pf.change, ChangeKind::Added),
+        "change kind should be Added, got: {:?}",
+        pf.change
+    );
+}
+
+// ── T016-9: plan does not change repo state (status / HEAD / branch tips) ───
+
+#[test]
+fn test_cherry_pick_plan_does_not_change_repo() {
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, repo, feature_id) = build_cherry_pick_repo(&tmp);
+
+    // Capture state before planning.
+    let head_oid_before = repo
+        .head()
+        .expect("head")
+        .target()
+        .expect("target")
+        .to_string();
+    let wt_content_before = std::fs::read_to_string(repo_dir.join("base.txt")).expect("read");
+
+    // Run the plan (may produce any result — we only care that repo is unchanged).
+    let _ = plan_cherry_pick(&repo, &feature_id);
+
+    // HEAD must not have changed.
+    let repo2 = Repository::open(tmp.path()).expect("re-open");
+    let head_oid_after = repo2
+        .head()
+        .expect("head")
+        .target()
+        .expect("target")
+        .to_string();
+    assert_eq!(head_oid_before, head_oid_after, "plan must not change HEAD OID");
+
+    // WT content must not have changed.
+    let wt_content_after = std::fs::read_to_string(repo_dir.join("base.txt")).expect("read after");
+    assert_eq!(wt_content_before, wt_content_after, "plan must not modify working tree");
+
+    // main branch tip must not have changed.
+    let main_tip = repo2
+        .find_branch("main", git2::BranchType::Local)
+        .expect("find main")
+        .get()
+        .target()
+        .expect("main tip")
+        .to_string();
+    assert_eq!(head_oid_before, main_tip, "main branch tip must not change after plan");
+
+    // Repo state must not be CHERRYPICK (no .git/CHERRY_PICK_HEAD).
+    let cherry_pick_head = repo_dir.join(".git").join("CHERRY_PICK_HEAD");
+    assert!(
+        !cherry_pick_head.exists(),
+        ".git/CHERRY_PICK_HEAD must not exist after plan (in-memory only)"
     );
 }

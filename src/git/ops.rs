@@ -1,10 +1,11 @@
-//! Checkout, create-branch, stash-push, and stash-apply operation pipelines — T013, T014, T015
+//! Checkout, create-branch, stash-push, stash-apply, and cherry-pick operation pipelines — T013, T014, T015, T016
 //!
 //! Implements the **plan → preflight → execute** pipeline for:
 //! - `checkout` (ADR-0004, Guarded class): `plan_checkout` / `preflight_check` / `execute_checkout`
 //! - `create-branch` (ADR-0004, Safe class): `plan_create_branch` / `execute_create_branch`
 //! - `stash-push` (ADR-0004, Guarded class): `plan_stash_push` / `execute_stash_push`
 //! - `stash-apply` (ADR-0004, Guarded class): `plan_stash_apply` / `execute_stash_apply`
+//! - `cherry-pick` (ADR-0004/0005, Guarded class): `plan_cherry_pick` / `execute_cherry_pick`
 //!
 //! The checkout operation is **always safe-mode only**: `CheckoutBuilder::safe()` is the only
 //! strategy used.  Force-checkout and any reset/clean APIs are intentionally absent.
@@ -15,6 +16,10 @@
 //! The stash-apply operation uses `repo.stash_apply(index, None)` **only**.
 //! `stash_pop` and `stash_drop` are **never** called — apply is chosen so the
 //! stash entry is preserved (safe side).
+//!
+//! The cherry-pick operation uses `repo.cherrypick_commit(&commit, &head_commit, 0, None)`
+//! **exclusively** for both plan and execute — the working-tree variant `repo.cherrypick()` is
+//! **never used**.  This keeps the repo state clean (no CHERRYPICK state, no abort needed).
 //!
 //! # Public API
 //!
@@ -28,6 +33,8 @@
 //! - [`plan_stash_apply`]       — generate an [`OperationPlan`] for stash apply
 //! - [`execute_stash_apply`]    — apply a stash entry (apply only, no pop/drop)
 //! - [`preflight_check_stash`]  — verify HEAD + stash count unchanged since planning
+//! - [`plan_cherry_pick`]       — generate an [`OperationPlan`] for cherry-pick (in-memory, no WT touch)
+//! - [`execute_cherry_pick`]    — apply a cherry-pick commit (in-memory → commit → checkout_head safe)
 //!
 //! # Environment variables (test / headless use only)
 //!
@@ -37,11 +44,12 @@
 //! | `KAGI_CREATE_BRANCH=<name>`    | generate a create-branch plan for HEAD and emit a plan log |
 //! | `KAGI_STASH_PUSH=1`            | generate a stash-push plan and emit a plan log |
 //! | `KAGI_STASH_APPLY=<index>`     | generate a stash-apply plan for `<index>` and emit a plan log |
+//! | `KAGI_CHERRY_PICK=<sha>`       | generate a cherry-pick plan for `<sha>` and emit a plan log |
 //! | `KAGI_AUTO_CONFIRM=1`          | **(TEST-ONLY)** if there are no blockers, proceed directly to execute after planning. **Never set this in normal use.** |
 
 use git2::{BranchType, Repository, StashFlags};
 
-use super::{GitError, Head, resolve_head, status::working_tree_status};
+use super::{GitError, Head, resolve_head, status::{working_tree_status, ChangeKind, FileStatus}};
 use super::log::CommitId;
 
 // ────────────────────────────────────────────────────────────
@@ -87,6 +95,10 @@ pub struct OperationPlan {
     /// [`preflight_check_stash`] to detect concurrent stash modifications.
     /// For non-stash operations this is always `0`.
     pub(crate) stash_count_at_plan: usize,
+    /// Files that will be changed by the operation, as computed by an in-memory
+    /// dry run.  Non-empty only for cherry-pick plans.  Used by the plan modal
+    /// to render a preview file tree (T016).
+    pub preview_files: Vec<FileStatus>,
 }
 
 impl OperationPlan {
@@ -243,6 +255,7 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
         recovery,
         head_at_plan: head,
         stash_count_at_plan: 0,
+        preview_files: Vec::new(),
     })
 }
 
@@ -454,6 +467,7 @@ pub fn plan_create_branch(
         recovery,
         head_at_plan: head,
         stash_count_at_plan: 0,
+        preview_files: Vec::new(),
     })
 }
 
@@ -621,6 +635,7 @@ pub fn plan_stash_push(
         recovery,
         head_at_plan: head,
         stash_count_at_plan: stash_count,
+        preview_files: Vec::new(),
     })
 }
 
@@ -788,6 +803,7 @@ pub fn plan_stash_apply(
         recovery,
         head_at_plan: head,
         stash_count_at_plan: stash_count,
+        preview_files: Vec::new(),
     })
 }
 
@@ -897,4 +913,513 @@ fn build_signature(repo: &Repository) -> Result<git2::Signature<'static>, GitErr
 
     git2::Signature::now(&name, &email)
         .map_err(|e| GitError::Other(format!("failed to create signature: {}", e.message())))
+}
+
+// ────────────────────────────────────────────────────────────
+// plan_cherry_pick  (T016)
+// ────────────────────────────────────────────────────────────
+
+/// Analyse whether cherry-picking `id` onto HEAD is safe and return an
+/// [`OperationPlan`] with a preview of the files that would change.
+///
+/// # Core design (ADR-0005)
+///
+/// Uses `repo.cherrypick_commit(&commit, &head_commit, 0, None)` to build an
+/// **in-memory index** — the working tree and repository state are **never
+/// modified** by this function.  The `mainline` argument `0` is correct for
+/// non-merge commits; merge commits are rejected as a blocker before reaching
+/// this call.
+///
+/// # Blocker conditions
+///
+/// - Working tree has staged or unstaged changes (dirty).
+/// - Repository is in a conflict state.
+/// - `id` is a merge commit (parent_count > 1).
+/// - `id` is identical to the current HEAD commit.
+/// - HEAD is unborn (no commits) or detached.
+/// - The cherry-pick produces no changes (already applied).
+/// - The in-memory merge predicts conflicts.
+///
+/// # Warnings
+///
+/// - Untracked files are present (they are not touched).
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] on any libgit2 failure.
+pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPlan, GitError> {
+    // ── 1. Resolve HEAD ──────────────────────────────────────
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+
+    // ── 2. Build current StateSummary ────────────────────────
+    let head_display = head.display();
+
+    let dirty_parts: Vec<String> = [
+        (!status.staged.is_empty())
+            .then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty())
+            .then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty())
+            .then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty())
+            .then(|| format!("{} conflicted", status.conflicted.len())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let dirty_display = if dirty_parts.is_empty() {
+        "clean".to_string()
+    } else {
+        dirty_parts.join(", ")
+    };
+
+    let current = StateSummary {
+        head: head_display.clone(),
+        dirty: dirty_display,
+    };
+
+    // ── 3. Early blockers (before touching git objects) ──────
+    let mut blockers: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Unborn HEAD: no commits → cannot cherry-pick.
+    if let Head::Unborn { .. } = &head {
+        blockers.push(
+            "HEAD is unborn (no commits exist). Cannot cherry-pick onto an empty branch."
+                .to_string(),
+        );
+    }
+
+    // Detached HEAD: MVP requires an attached branch.
+    if let Head::Detached { .. } = &head {
+        blockers.push(
+            "HEAD is detached. Cherry-pick is only supported when HEAD is on a branch."
+                .to_string(),
+        );
+    }
+
+    // Conflict state in repo.
+    if !status.conflicted.is_empty() {
+        blockers.push(format!(
+            "Repository has {} conflicted file(s). Resolve conflicts before cherry-picking.",
+            status.conflicted.len()
+        ));
+    }
+
+    // Dirty working tree (staged / unstaged).
+    if !status.staged.is_empty() || !status.unstaged.is_empty() {
+        let mut parts = Vec::new();
+        if !status.staged.is_empty() {
+            parts.push(format!("{} staged", status.staged.len()));
+        }
+        if !status.unstaged.is_empty() {
+            parts.push(format!("{} modified", status.unstaged.len()));
+        }
+        blockers.push(format!(
+            "Working tree has {} — stash or commit changes before cherry-picking.",
+            parts.join(", ")
+        ));
+    }
+
+    // Untracked files: warning only.
+    if !status.untracked.is_empty() {
+        warnings.push(format!(
+            "{} untracked file(s) will remain untouched after cherry-pick.",
+            status.untracked.len()
+        ));
+    }
+
+    // ── 4. Resolve target commit ──────────────────────────────
+    // Try both full and prefix match.
+    let target_oid = git2::Oid::from_str(&id.0)
+        .or_else(|_| {
+            // Try short-sha prefix lookup via revparse.
+            repo.revparse_single(&id.0)
+                .map(|obj| obj.id())
+        })
+        .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.0, e.message())))?;
+
+    let commit = repo
+        .find_commit(target_oid)
+        .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.short(), e.message())))?;
+
+    // Merge commit check.
+    if commit.parent_count() > 1 {
+        blockers.push(format!(
+            "Commit {} is a merge commit ({} parents). Cherry-picking merge commits \
+             requires explicit mainline selection, which is not supported in MVP.",
+            id.short(),
+            commit.parent_count()
+        ));
+    }
+
+    // HEAD-same check: resolve HEAD commit.
+    let head_oid_opt = match &head {
+        Head::Attached { target, .. } => git2::Oid::from_str(target).ok(),
+        Head::Detached { target } => git2::Oid::from_str(target).ok(),
+        Head::Unborn { .. } => None,
+    };
+
+    if let Some(head_oid) = head_oid_opt {
+        if head_oid == target_oid {
+            blockers.push(format!(
+                "Commit {} is the current HEAD commit. Nothing to cherry-pick.",
+                id.short()
+            ));
+        }
+    }
+
+    // ── 5. If early blockers, return without in-memory merge ─
+    // (Prevents calling cherrypick_commit on unborn/detached/merge/HEAD-same)
+    if !blockers.is_empty() {
+        let branch_name = match &head {
+            Head::Attached { branch, .. } => branch.clone(),
+            _ => "(unknown)".to_string(),
+        };
+        let predicted = StateSummary {
+            head: head_display.clone(),
+            dirty: current.dirty.clone(),
+        };
+        let recovery = format!(
+            "To undo a cherry-pick after execution, use:\n  git revert <new-commit-sha>\n\
+             The previous HEAD sha is recorded in the reflog:\n  git reflog"
+        );
+        return Ok(OperationPlan {
+            title: format!("Cherry-pick {} onto {}", id.short(), branch_name),
+            current,
+            predicted,
+            warnings,
+            blockers,
+            recovery,
+            head_at_plan: head,
+            stash_count_at_plan: 0,
+            preview_files: Vec::new(),
+        });
+    }
+
+    // ── 6. Resolve HEAD commit (guaranteed to exist at this point) ─
+    let head_commit = repo
+        .find_commit(head_oid_opt.unwrap())
+        .map_err(|e| GitError::Other(format!("HEAD commit lookup failed: {}", e.message())))?;
+
+    // ── 7. In-memory cherry-pick (core dry-run) ───────────────
+    // repo.cherrypick_commit(&commit, &head_commit, mainline=0, None)
+    // mainline=0 is correct for non-merge commits (already guarded above).
+    // This does NOT modify the working tree or repo state.
+    let mut index = repo
+        .cherrypick_commit(&commit, &head_commit, 0, None)
+        .map_err(|e| GitError::Other(format!("cherry-pick in-memory failed: {}", e.message())))?;
+
+    // ── 8. Conflict detection ─────────────────────────────────
+    let mut conflict_files: Vec<String> = Vec::new();
+    if index.has_conflicts() {
+        // Collect conflicting paths.
+        let conflicts = index
+            .conflicts()
+            .map_err(|e| GitError::Other(format!("index.conflicts() failed: {}", e.message())))?;
+        for conflict_result in conflicts {
+            let conflict = conflict_result
+                .map_err(|e| GitError::Other(format!("conflict entry error: {}", e.message())))?;
+            // Each of ours/theirs/ancestor may be Some; grab whichever has a path.
+            // In git2, IndexEntry.path is a Vec<u8>.
+            let path_bytes: Option<Vec<u8>> = conflict
+                .our
+                .as_ref()
+                .map(|e| e.path.clone())
+                .or_else(|| conflict.their.as_ref().map(|e| e.path.clone()))
+                .or_else(|| conflict.ancestor.as_ref().map(|e| e.path.clone()));
+            if let Some(p) = path_bytes {
+                let path_str = String::from_utf8_lossy(&p).into_owned();
+                conflict_files.push(path_str);
+            }
+        }
+        blockers.push(format!(
+            "Cherry-pick would produce {} conflict(s): {}. Resolve divergence before cherry-picking.",
+            conflict_files.len(),
+            conflict_files.join(", ")
+        ));
+        let branch_name = match &head {
+            Head::Attached { branch, .. } => branch.clone(),
+            _ => "(unknown)".to_string(),
+        };
+        let predicted = StateSummary {
+            head: head_display.clone(),
+            dirty: current.dirty.clone(),
+        };
+        let recovery = format!(
+            "To undo a cherry-pick after execution, use:\n  git revert <new-commit-sha>\n\
+             The previous HEAD sha is recorded in the reflog:\n  git reflog"
+        );
+        return Ok(OperationPlan {
+            title: format!("Cherry-pick {} onto {}", id.short(), branch_name),
+            current,
+            predicted,
+            warnings,
+            blockers,
+            recovery,
+            head_at_plan: head,
+            stash_count_at_plan: 0,
+            preview_files: Vec::new(),
+        });
+    }
+
+    // ── 9. Write in-memory tree and compute preview_files ─────
+    // index.write_tree_to(repo) writes the in-memory tree without touching WT.
+    let new_tree_oid = index
+        .write_tree_to(repo)
+        .map_err(|e| GitError::Other(format!("index.write_tree_to failed: {}", e.message())))?;
+
+    let new_tree = repo
+        .find_tree(new_tree_oid)
+        .map_err(|e| GitError::Other(format!("find_tree for preview failed: {}", e.message())))?;
+
+    let head_tree = head_commit
+        .tree()
+        .map_err(|e| GitError::Other(format!("head tree lookup failed: {}", e.message())))?;
+
+    // Diff head tree → cherry-picked tree to get preview files.
+    let mut diff = repo
+        .diff_tree_to_tree(Some(&head_tree), Some(&new_tree), None)
+        .map_err(|e| GitError::Other(format!("diff_tree_to_tree for preview failed: {}", e.message())))?;
+
+    // Enable rename detection (same as commit_changed_files).
+    let mut find_opts = git2::DiffFindOptions::new();
+    find_opts.renames(true);
+    diff.find_similar(Some(&mut find_opts))
+        .map_err(|e| GitError::Other(format!("diff find_similar failed: {}", e.message())))?;
+
+    let mut preview_files: Vec<FileStatus> = Vec::new();
+    for delta in diff.deltas() {
+        use git2::Delta;
+        let change = match delta.status() {
+            Delta::Added => ChangeKind::Added,
+            Delta::Deleted => ChangeKind::Deleted,
+            Delta::Modified => ChangeKind::Modified,
+            Delta::Renamed => {
+                let from = delta
+                    .old_file()
+                    .path()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_default();
+                ChangeKind::Renamed { from }
+            }
+            Delta::Typechange => ChangeKind::TypeChange,
+            _ => ChangeKind::Modified,
+        };
+        let path = delta
+            .new_file()
+            .path()
+            .map(std::path::PathBuf::from)
+            .or_else(|| delta.old_file().path().map(std::path::PathBuf::from))
+            .unwrap_or_default();
+        preview_files.push(FileStatus { path, change });
+    }
+
+    // ── 10. Empty-result check (already applied) ─────────────
+    if preview_files.is_empty() {
+        blockers.push(format!(
+            "Cherry-picking {} would produce no changes — it appears to have been applied already.",
+            id.short()
+        ));
+        let branch_name = match &head {
+            Head::Attached { branch, .. } => branch.clone(),
+            _ => "(unknown)".to_string(),
+        };
+        let predicted = StateSummary {
+            head: head_display.clone(),
+            dirty: current.dirty.clone(),
+        };
+        let recovery = format!(
+            "To undo a cherry-pick after execution, use:\n  git revert <new-commit-sha>\n\
+             The previous HEAD sha is recorded in the reflog:\n  git reflog"
+        );
+        return Ok(OperationPlan {
+            title: format!("Cherry-pick {} onto {}", id.short(), branch_name),
+            current,
+            predicted,
+            warnings,
+            blockers,
+            recovery,
+            head_at_plan: head,
+            stash_count_at_plan: 0,
+            preview_files: Vec::new(),
+        });
+    }
+
+    // ── 11. Build plan ─────────────────────────────────────────
+    let branch_name = match &head {
+        Head::Attached { branch, .. } => branch.clone(),
+        _ => "(unknown)".to_string(),
+    };
+
+    // summary() returns Result<Option<&str>, Error> in git2 0.21.
+    let summary_line: String = commit
+        .summary()
+        .ok()
+        .flatten()
+        .unwrap_or("(no message)")
+        .chars()
+        .take(72)
+        .collect();
+
+    let predicted = StateSummary {
+        head: format!(
+            "branch: {} (+1 commit: '{}' applied)",
+            branch_name,
+            summary_line
+        ),
+        dirty: "clean".to_string(),
+    };
+
+    let recovery = format!(
+        "To undo a cherry-pick after execution, use:\n  git revert <new-commit-sha>\n\
+         The previous HEAD sha is recorded in the reflog:\n  git reflog"
+    );
+
+    Ok(OperationPlan {
+        title: format!(
+            "Cherry-pick {} '{}' onto {}",
+            id.short(),
+            summary_line,
+            branch_name
+        ),
+        current,
+        predicted,
+        warnings,
+        blockers,
+        recovery,
+        head_at_plan: head,
+        stash_count_at_plan: 0,
+        preview_files,
+    })
+}
+
+// ────────────────────────────────────────────────────────────
+// execute_cherry_pick  (T016)
+// ────────────────────────────────────────────────────────────
+
+/// Execute a cherry-pick of commit `id` onto HEAD using an **in-memory index**.
+///
+/// # Design (ADR-0005, T016)
+///
+/// 1. Calls `repo.cherrypick_commit(&commit, &head_commit, 0, None)` to build
+///    an in-memory index — identical to [`plan_cherry_pick`].  This does NOT
+///    set the repository into CHERRYPICK state (unlike `repo.cherrypick()`
+///    which is **never called** in this codebase).
+/// 2. Verifies there are no conflicts (preflight-style double-check).  If
+///    conflicts are detected, returns an error without writing anything.
+/// 3. Calls `index.write_tree_to(repo)` to write the result tree to the ODB.
+/// 4. Creates a new commit via `repo.commit(Some("HEAD"), original_author,
+///    committer_from_config, original_message, &tree, &[&head_commit])`.
+///    Author and message are preserved from the source commit; committer is
+///    read from repo config (falls back to `"kagi <kagi@local>"`).
+/// 5. Syncs the working tree to the new HEAD with
+///    `repo.checkout_head(Some(CheckoutBuilder::new().safe()))`.
+///
+/// Returns the new commit's [`CommitId`].
+///
+/// **`repo.cherrypick()` (the working-tree variant) is never called.**
+/// **No reset/force/clean APIs are used.**
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] on any failure.
+pub fn execute_cherry_pick(repo: &Repository, id: &CommitId) -> Result<CommitId, GitError> {
+    // ── 1. Resolve target commit ──────────────────────────────
+    let target_oid = git2::Oid::from_str(&id.0)
+        .or_else(|_| repo.revparse_single(&id.0).map(|obj| obj.id()))
+        .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.0, e.message())))?;
+
+    let commit = repo
+        .find_commit(target_oid)
+        .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.short(), e.message())))?;
+
+    // ── 2. Resolve HEAD commit ────────────────────────────────
+    let head_ref = repo
+        .head()
+        .map_err(|e| GitError::Other(format!("HEAD lookup failed: {}", e.message())))?;
+    let head_oid = head_ref
+        .target()
+        .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
+    let head_commit = repo
+        .find_commit(head_oid)
+        .map_err(|e| GitError::Other(format!("HEAD commit lookup failed: {}", e.message())))?;
+
+    // ── 3. In-memory cherry-pick (no WT, no repo state change) ─
+    // mainline=0 is correct for non-merge commits.
+    let mut index = repo
+        .cherrypick_commit(&commit, &head_commit, 0, None)
+        .map_err(|e| GitError::Other(format!("cherry-pick in-memory failed: {}", e.message())))?;
+
+    // ── 4. Conflict preflight double-check ───────────────────
+    if index.has_conflicts() {
+        return Err(GitError::Other(format!(
+            "Cherry-pick of {} would produce conflicts. Re-plan before executing.",
+            id.short()
+        )));
+    }
+
+    // ── 5. Write in-memory tree to ODB ───────────────────────
+    let new_tree_oid = index
+        .write_tree_to(repo)
+        .map_err(|e| GitError::Other(format!("index.write_tree_to failed: {}", e.message())))?;
+    let new_tree = repo
+        .find_tree(new_tree_oid)
+        .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?;
+
+    // ── 6. Build committer signature ──────────────────────────
+    let committer = build_signature(repo)?;
+
+    // ── 7. Preserve author and message from source commit ────
+    let original_author = commit.author();
+    // message() returns Result<&str, Error> in git2 0.21.
+    let original_message = commit
+        .message()
+        .unwrap_or("(cherry-picked commit)")
+        .to_string();
+
+    // ── 8. Create the new commit on HEAD ─────────────────────
+    let new_oid = repo
+        .commit(
+            Some("HEAD"),
+            &original_author,
+            &committer,
+            &original_message,
+            &new_tree,
+            &[&head_commit],
+        )
+        .map_err(|e| GitError::Other(format!("commit creation failed: {}", e.message())))?;
+
+    // ── 9. Update the git index to match the new HEAD tree ───
+    // repo.commit() creates the commit object but does NOT update the git
+    // index on disk.  We must synchronise it so that the index matches the
+    // new HEAD tree before updating the working tree.  Without this, the
+    // working tree appears dirty (staged/unstaged mismatches).
+    {
+        let mut git_index = repo
+            .index()
+            .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+        git_index
+            .read_tree(&new_tree)
+            .map_err(|e| GitError::Other(format!("index.read_tree failed: {}", e.message())))?;
+        git_index
+            .write()
+            .map_err(|e| GitError::Other(format!("index.write failed: {}", e.message())))?;
+    }
+
+    // ── 10. Sync working tree to new HEAD (safe mode) ─────────
+    // checkout_head(safe) + recreate_missing: the WT was clean before
+    // execution, so safe mode will not refuse.  recreate_missing ensures that
+    // new files introduced by the cherry-pick are written to disk (safe mode
+    // alone does not guarantee that files absent from both baseline and workdir
+    // are created).
+    let mut cb = git2::build::CheckoutBuilder::new();
+    cb.safe();
+    cb.recreate_missing(true);
+    repo.checkout_head(Some(&mut cb))
+        .map_err(|e| GitError::Other(format!("checkout_head after cherry-pick failed: {}", e.message())))?;
+
+    Ok(CommitId(new_oid.to_string()))
 }

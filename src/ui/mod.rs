@@ -18,6 +18,7 @@ use gpui::{
     App, Context, Entity, FocusHandle, KeyDownEvent, SharedString, Window,
     div, prelude::*, px, rgb, uniform_list,
 };
+use gpui_component::input::{Input, InputState};
 
 // ──────────────────────────────────────────────────────────────
 // T023: Pane resize — divider drag state
@@ -32,16 +33,12 @@ pub enum DividerKind {
     Panel,
 }
 
-/// Drag state stored in the active drag.  Carries the divider kind and the
-/// cursor X at drag start, together with the pane width at drag start so we
-/// can compute the delta accurately.
+/// Drag payload for a divider drag.  Only the divider kind is needed: widths
+/// are derived from the absolute cursor position during drag-move (see the
+/// drag-move listener), so no drag-start anchor has to be carried around.
 #[derive(Clone, Copy, Debug)]
 pub struct DividerDrag {
     pub kind: DividerKind,
-    /// Cursor X position (window-relative, pixels) when the drag started.
-    pub start_x: f32,
-    /// Sidebar/panel width at drag start.
-    pub start_width: f32,
 }
 
 /// Invisible ghost view rendered during a divider drag.  gpui requires a
@@ -352,8 +349,10 @@ pub struct KagiApp {
     pub commit_panel_open: bool,
     /// Commit panel state (staging lists, diff, message, modal).
     pub commit_panel: Option<CommitPanelState>,
-    /// Focus handle for the commit message input field.
-    pub commit_msg_focus: Option<FocusHandle>,
+    // ── T026: gpui-component Input for commit message (IME対応) ───
+    /// InputState entity for the commit message field (gpui-component IME対応).
+    /// Created lazily when the commit panel is first opened (requires &mut Window).
+    pub commit_input: Option<Entity<InputState>>,
 }
 
 impl KagiApp {
@@ -442,7 +441,7 @@ impl KagiApp {
             panel_width: PANEL_DEFAULT,
             commit_panel_open: false,
             commit_panel: None,
-            commit_msg_focus: None,
+            commit_input: None,
         }
     }
 
@@ -472,7 +471,7 @@ impl KagiApp {
             panel_width: PANEL_DEFAULT,
             commit_panel_open: false,
             commit_panel: None,
-            commit_msg_focus: None,
+            commit_input: None,
         }
     }
 
@@ -526,10 +525,10 @@ impl KagiApp {
         self.stash_apply_modal = None;
         self.stash_push_focus = None;
         self.cherry_pick_modal = None;
-        // T025: reset commit panel so it reflects fresh status after reload.
+        // T025/T026: reset commit panel and input so it reflects fresh status after reload.
         self.commit_panel_open = false;
         self.commit_panel = None;
-        self.commit_msg_focus = None;
+        self.commit_input = None;
         // status_footer is intentionally preserved across reloads so the last
         // operation result remains visible after the commit list refreshes.
         // sidebar_width / panel_width are also preserved so the user's resize
@@ -1530,9 +1529,11 @@ impl KagiApp {
     ///
     /// Loads the current staging status from the repository.
     /// Clears any existing commit selection so the two views are exclusive.
-    pub fn open_commit_panel(&mut self, cx: &mut Context<Self>) {
-        if self.commit_msg_focus.is_none() {
-            self.commit_msg_focus = Some(cx.focus_handle());
+    pub fn open_commit_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // T026: lazy-create the InputState (requires &mut Window) on first open.
+        if self.commit_input.is_none() {
+            let input_entity = cx.new(|cx| InputState::new(window, cx).placeholder("Commit message"));
+            self.commit_input = Some(input_entity);
         }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
@@ -1542,15 +1543,21 @@ impl KagiApp {
             }
         };
         let mut panel = CommitPanelState::from_repo(&repo_path);
-        // Preserve message if we're reopening an existing panel.
+        // Preserve tree_view toggle if we're reopening an existing panel.
         if let Some(ref existing) = self.commit_panel {
-            panel.commit_msg = existing.commit_msg.clone();
             panel.tree_view = existing.tree_view;
         }
         self.commit_panel = Some(panel);
         self.commit_panel_open = true;
         self.selected = None;
         self.file_diff_view = None;
+
+        // T026: focus the InputState after opening the panel.
+        if let Some(ref input_entity) = self.commit_input {
+            input_entity.update(cx, |state, cx| {
+                state.focus(window, cx);
+            });
+        }
 
         // Log for headless verification.
         if let Some(ref p) = self.commit_panel {
@@ -1651,6 +1658,7 @@ impl KagiApp {
     /// Handle a key-down event for the commit message input.
     ///
     /// Uses the T014 simple pattern: printable chars appended, backspace removes last.
+    #[allow(dead_code)]
     pub fn handle_commit_msg_key(&mut self, event: &KeyDownEvent) {
         let panel = match self.commit_panel.as_mut() {
             Some(p) => p,
@@ -1678,15 +1686,25 @@ impl KagiApp {
     /// Open the commit plan modal for the current staged files and message.
     ///
     /// Uses `plan_commit` from T024.
-    pub fn open_commit_plan_modal(&mut self) {
+    /// T026: reads message from InputState if available, else falls back to commit_panel.commit_msg
+    /// (used by the headless KAGI_COMMIT_MSG path).
+    pub fn open_commit_plan_modal(&mut self, cx: &mut Context<Self>) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let msg = match self.commit_panel.as_ref() {
-            Some(p) => p.commit_msg.clone(),
-            None => return,
+        // T026: prefer InputState value (UI path); fall back to commit_msg (headless path).
+        let msg: String = if let Some(ref input_entity) = self.commit_input {
+            input_entity.read(cx).value().to_string()
+        } else {
+            match self.commit_panel.as_ref() {
+                Some(p) => p.commit_msg.clone(),
+                None => return,
+            }
         };
+        if msg.trim().is_empty() {
+            return;
+        }
         let repo = match git2::Repository::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
@@ -1724,14 +1742,21 @@ impl KagiApp {
     /// Confirm the commit plan: run execute_commit then reload.
     ///
     /// On failure the modal remains open with the error text.
-    pub fn confirm_commit(&mut self) {
+    /// T026: cx is needed to read the InputState value.
+    pub fn confirm_commit(&mut self, cx: &mut Context<Self>) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
+        // T026: read message from InputState if available, else from commit_panel.commit_msg.
+        let commit_message: String = if let Some(ref input_entity) = self.commit_input {
+            input_entity.read(cx).value().to_string()
+        } else {
+            self.commit_panel.as_ref().map(|p| p.commit_msg.clone()).unwrap_or_default()
+        };
         let (msg, plan) = match self.commit_panel.as_ref().and_then(|p| p.plan_modal.as_ref()) {
             Some(modal) => (
-                self.commit_panel.as_ref().unwrap().commit_msg.clone(),
+                commit_message,
                 modal.plan.clone(),
             ),
             None => return,
@@ -2024,22 +2049,28 @@ impl Render for KagiApp {
         // T023: divider drag-move handler callback (single listener handles both dividers).
         // Placed on the root div so it fires even when the mouse moves outside
         // the narrow 4px divider strip.
-        let divider_drag_move = cx.listener(move |this, event: &gpui::DragMoveEvent<DividerDrag>, _window, cx| {
+        // Widths are derived from the ABSOLUTE cursor position, not deltas:
+        // the sidebar starts at the window's left edge and the panel ends at
+        // its right edge, so the divider should simply track the cursor.
+        // (The previous delta-based approach needed a drag-start anchor that
+        // `on_drag` cannot provide, which made the divider jump to its
+        // clamp bounds — the "two positions / inverted" bug.)
+        let divider_drag_move = cx.listener(move |this, event: &gpui::DragMoveEvent<DividerDrag>, window, cx| {
             let drag = *event.drag(cx);
             let cursor_x = f32::from(event.event.position.x);
-            let delta = cursor_x - drag.start_x;
             match drag.kind {
                 DividerKind::Sidebar => {
-                    let new_width = (drag.start_width + delta).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+                    // Divider sits at x = sidebar_width; centre it on the cursor.
+                    let new_width = (cursor_x - 2.0).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
                     if (new_width - this.sidebar_width).abs() > 0.5 {
                         this.sidebar_width = new_width;
                         cx.notify();
                     }
                 }
                 DividerKind::Panel => {
-                    // Panel divider is on the LEFT edge of the panel, so dragging
-                    // right (positive delta) makes the panel narrower.
-                    let new_width = (drag.start_width - delta).clamp(PANEL_MIN, PANEL_MAX);
+                    // Divider sits at x = viewport_width - panel_width.
+                    let viewport_w = f32::from(window.viewport_size().width);
+                    let new_width = (viewport_w - cursor_x - 2.0).clamp(PANEL_MIN, PANEL_MAX);
                     if (new_width - this.panel_width).abs() > 0.5 {
                         this.panel_width = new_width;
                         cx.notify();
@@ -2048,10 +2079,10 @@ impl Render for KagiApp {
             }
         });
 
-        // T025: extract commit panel state for render.
+        // T025/T026: extract commit panel state for render.
         let commit_panel_open = self.commit_panel_open;
         let commit_panel = self.commit_panel.clone();
-        let commit_msg_focus = self.commit_msg_focus.clone();
+        let commit_input = self.commit_input.clone();
 
         // ── Normal state: header + body (sidebar + list + optional panel) ─────
         div()
@@ -2099,7 +2130,6 @@ impl Render for KagiApp {
             // ── Body row: sidebar | divider1 | list (flex_1) | divider2 | optional panel ─
             .child({
                 // Build divider 1: sidebar | main.
-                let sidebar_drag_start_width = sidebar_width;
                 let divider1 = div()
                     .id("divider-sidebar")
                     .w(px(4.))
@@ -2109,23 +2139,13 @@ impl Render for KagiApp {
                     .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
                     .cursor_col_resize()
                     .on_drag(
-                        DividerDrag { kind: DividerKind::Sidebar, start_x: 0.0, start_width: sidebar_drag_start_width },
-                        move |drag, position, _window, cx| {
-                            let drag_with_pos = DividerDrag {
-                                kind: drag.kind,
-                                start_x: f32::from(position.x),
-                                start_width: sidebar_drag_start_width,
-                            };
-                            cx.new(move |_| {
-                                let _ = drag_with_pos;
-                                DividerGhost
-                            })
-                        },
+                        DividerDrag { kind: DividerKind::Sidebar },
+                        |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
                     );
 
                 // ── WIP row (shown above the list when working tree is dirty) ──
-                let wip_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                    this.open_commit_panel(cx);
+                let wip_click = cx.listener(move |this, _event: &gpui::ClickEvent, window, cx| {
+                    this.open_commit_panel(window, cx);
                     cx.notify();
                 });
                 let wip_bg = if commit_panel_open { BG_SELECTED } else { 0x2a2a3a };
@@ -2206,8 +2226,6 @@ impl Render for KagiApp {
                     .child(commit_list_col);
 
                 // ── Right panel: commit panel OR detail panel ───────────
-                let panel_drag_start_width = panel_width;
-
                 // Build divider 2 (shared between both panel modes).
                 let divider2 = div()
                     .id("divider-panel")
@@ -2218,18 +2236,8 @@ impl Render for KagiApp {
                     .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
                     .cursor_col_resize()
                     .on_drag(
-                        DividerDrag { kind: DividerKind::Panel, start_x: 0.0, start_width: panel_drag_start_width },
-                        move |drag, position, _window, cx| {
-                            let drag_with_pos = DividerDrag {
-                                kind: drag.kind,
-                                start_x: f32::from(position.x),
-                                start_width: panel_drag_start_width,
-                            };
-                            cx.new(move |_| {
-                                let _ = drag_with_pos;
-                                DividerGhost
-                            })
-                        },
+                        DividerDrag { kind: DividerKind::Panel },
+                        |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
                     );
 
                 if commit_panel_open {
@@ -2237,7 +2245,7 @@ impl Render for KagiApp {
                     if let Some(panel_state) = commit_panel.clone() {
                         body_row = body_row
                             .child(divider2)
-                            .child(render_commit_panel(panel_state, panel_width, commit_msg_focus.clone(), cx));
+                            .child(render_commit_panel(panel_state, panel_width, commit_input.clone(), cx));
                     }
                 } else {
                     // ── Normal commit detail panel (existing behaviour) ──
@@ -4349,7 +4357,7 @@ fn render_cherry_pick_modal(
 fn render_commit_panel(
     panel: CommitPanelState,
     panel_width: f32,
-    focus_handle: Option<FocusHandle>,
+    commit_input: Option<Entity<InputState>>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     const COLOR_DIR: u32      = 0x6c7086;
@@ -4357,9 +4365,13 @@ fn render_commit_panel(
     let tree_view = panel.tree_view;
     let unstaged_count = panel.unstaged.len();
     let staged_count = panel.staged.len();
-    let can_commit = panel.can_commit();
+    // T026: can_commit uses InputState value if available, else commit_msg (headless).
+    let input_msg_nonempty = commit_input
+        .as_ref()
+        .map(|e| !e.read(cx).value().trim().is_empty())
+        .unwrap_or(!panel.commit_msg.trim().is_empty());
+    let can_commit = !panel.staged.is_empty() && input_msg_nonempty;
     let has_unstaged_warning = !panel.unstaged.is_empty() && staged_count > 0;
-    let commit_msg = panel.commit_msg.clone();
     let diff_view = panel.diff_view.clone();
     let selected_file = panel.selected_file.clone();
 
@@ -4773,40 +4785,30 @@ fn render_commit_panel(
             .into_any_element()
     };
 
-    // ── Commit message input (T014 simple pattern) ────────────
-    let msg_display = SharedString::from(format!("{}_", commit_msg));
-    let key_handler = cx.listener(|this, event: &KeyDownEvent, _window, cx| {
-        this.handle_commit_msg_key(event);
-        cx.notify();
-    });
-    let msg_input_wrapper = if let Some(ref fh) = focus_handle {
-        div()
-            .track_focus(fh)
-            .on_key_down(key_handler)
-            .px_2()
-            .py_1()
-            .bg(rgb(BG_BASE))
-            .rounded_sm()
-            .text_xs()
-            .text_color(rgb(TEXT_MAIN))
-            .child(msg_display)
+    // ── Commit message input (T026: gpui-component Input with IME support) ────────────
+    let msg_input_wrapper: gpui::AnyElement = if let Some(ref input_entity) = commit_input {
+        // Use gpui-component Input element — handles IME, clipboard, arrow keys, etc.
+        Input::new(input_entity)
+            .appearance(true)
+            .bordered(true)
             .into_any_element()
     } else {
+        // Fallback for headless / no-window case (should not occur in normal UI flow).
         div()
             .px_2()
             .py_1()
             .bg(rgb(BG_BASE))
             .rounded_sm()
             .text_xs()
-            .text_color(rgb(TEXT_MAIN))
-            .child(msg_display)
+            .text_color(rgb(TEXT_MUTED))
+            .child(SharedString::from("(commit message input unavailable)"))
             .into_any_element()
     };
 
     // ── Commit button ─────────────────────────────────────────
     let commit_btn = if can_commit {
         let commit_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
-            this.open_commit_plan_modal();
+            this.open_commit_plan_modal(cx);
             cx.notify();
         });
         div()
@@ -4827,6 +4829,14 @@ fn render_commit_panel(
             )))
             .into_any_element()
     } else {
+        // Tell the user exactly why the button is disabled.
+        let reason = if staged_count == 0 && !input_msg_nonempty {
+            "Commit — stage a file and enter a message first"
+        } else if staged_count == 0 {
+            "Commit — stage at least one file first"
+        } else {
+            "Commit — enter a commit message first"
+        };
         div()
             .id("cp-commit-btn-disabled")
             .mt_1()
@@ -4837,7 +4847,7 @@ fn render_commit_panel(
             .bg(rgb(BG_SURFACE))
             .text_sm()
             .text_color(rgb(TEXT_MUTED))
-            .child(SharedString::from("Commit (stage files + enter message)"))
+            .child(SharedString::from(reason))
             .into_any_element()
     };
 
@@ -4960,7 +4970,7 @@ fn render_commit_plan_modal(
     });
 
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
-        this.confirm_commit();
+        this.confirm_commit(cx);
         cx.notify();
     });
 

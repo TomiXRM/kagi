@@ -1,15 +1,22 @@
-//! Git backend — T002: repository open / T003: working tree status / T004: commit log
+//! Git backend — T002: repository open / T003: working tree status / T004: commit log / T005: refs + snapshot
 //!
 //! This module provides the entry point for opening a local Git repository,
 //! extracting basic metadata (repo name, workdir path, HEAD state), querying
-//! the working tree status, and retrieving the commit log.
+//! the working tree status, retrieving the commit log, and reading branch /
+//! remote branch / tag / stash information as a [`RepoSnapshot`].
 //! Network transports (https/ssh) are not used in the MVP.
 
 mod log;
+mod refs;
+mod snapshot;
 mod status;
 
 #[allow(unused_imports)]
 pub use log::{Commit, CommitId, Signature, commit_log};
+#[allow(unused_imports)]
+pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo};
+#[allow(unused_imports)]
+pub use snapshot::{RepoSnapshot, snapshot};
 #[allow(unused_imports)]
 pub use status::{ChangeKind, FileStatus, WorkingTreeStatus, working_tree_status};
 
@@ -152,7 +159,7 @@ pub fn open_repository(path: &Path) -> Result<RepoInfo, GitError> {
 // ────────────────────────────────────────────────────────────
 
 /// Determine the current HEAD state of `repo`.
-fn resolve_head(repo: &Repository) -> Result<Head, GitError> {
+pub(crate) fn resolve_head(repo: &Repository) -> Result<Head, GitError> {
     match repo.head() {
         Ok(reference) => {
             if reference.is_branch() {

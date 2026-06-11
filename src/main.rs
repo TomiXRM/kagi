@@ -7,7 +7,7 @@ use gpui::{
     div, prelude::*, px, rgb, size,
 };
 
-use git::{commit_log, open_repository, working_tree_status};
+use git::{Head, open_repository, snapshot};
 
 /// State held by the GPUI application.
 struct KagiApp {
@@ -71,13 +71,15 @@ fn main() {
                     eprintln!("[kagi] {}", d);
                 }
 
-                // ── Working tree status ──────────────────────────────────
-                // Re-open via git2 to obtain status; open_repository returns
-                // RepoInfo (no git2::Repository handle in the public API yet).
+                // ── Single Repository open + snapshot ───────────────────
+                // T003/T004 used separate Repository::open calls (known debt).
+                // T005 resolves this: open once, call snapshot() for all data.
                 match git2::Repository::open(&repo_path) {
-                    Ok(repo2) => {
-                        match working_tree_status(&repo2) {
-                            Ok(status) => {
+                    Ok(mut repo) => {
+                        match snapshot(&mut repo, 10_000) {
+                            Ok(snap) => {
+                                // ── Working tree status ──────────────────
+                                let status = &snap.status;
                                 if status.is_dirty() {
                                     // Staged
                                     if !status.staged.is_empty() {
@@ -118,8 +120,7 @@ fn main() {
                                         eprintln!("[kagi] {}", header);
                                         details.push(header);
                                         for p in status.untracked.iter().take(20) {
-                                            let line =
-                                                format!("  {}", p.display());
+                                            let line = format!("  {}", p.display());
                                             eprintln!("[kagi] {}", line);
                                             details.push(line);
                                         }
@@ -131,8 +132,7 @@ fn main() {
                                         eprintln!("[kagi] {}", header);
                                         details.push(header);
                                         for p in status.conflicted.iter().take(20) {
-                                            let line =
-                                                format!("  {}", p.display());
+                                            let line = format!("  {}", p.display());
                                             eprintln!("[kagi] {}", line);
                                             details.push(line);
                                         }
@@ -142,48 +142,95 @@ fn main() {
                                     eprintln!("[kagi] {}", line);
                                     details.push(line);
                                 }
-                            }
-                            Err(e) => {
-                                let line = format!("status error: {}", e);
-                                eprintln!("[kagi] {}", line);
-                                details.push(line);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let line = format!("status error: {}", e.message());
-                        eprintln!("[kagi] {}", line);
-                        details.push(line);
-                    }
-                }
 
-                // ── Commit log ──────────────────────────────────────────
-                match git2::Repository::open(&repo_path) {
-                    Ok(repo3) => {
-                        match commit_log(&repo3, 10_000) {
-                            Ok(commits) => {
-                                let header = format!("Commits: {}", commits.len());
+                                // ── Commit log ──────────────────────────
+                                let header = format!("Commits: {}", snap.commits.len());
                                 eprintln!("[kagi] {}", header);
                                 details.push(header);
-                                for c in commits.iter().take(3) {
-                                    let line = format!(
-                                        "  {} {}",
-                                        c.id.short(),
-                                        c.summary
-                                    );
+                                for c in snap.commits.iter().take(3) {
+                                    let line =
+                                        format!("  {} {}", c.id.short(), c.summary);
                                     eprintln!("[kagi] {}", line);
                                     details.push(line);
                                 }
+
+                                // ── Branches ────────────────────────────
+                                {
+                                    let header = "BRANCHES:".to_string();
+                                    eprintln!("[kagi] {}", header);
+                                    details.push(header);
+
+                                    let head_branch = match &snap.head {
+                                        Head::Attached { branch, .. } => Some(branch.clone()),
+                                        _ => None,
+                                    };
+
+                                    for b in &snap.branches {
+                                        let mut line = b.name.clone();
+                                        if let Some(up) = &b.upstream {
+                                            if up.ahead > 0 {
+                                                line.push_str(&format!(" \u{2191}{}", up.ahead));
+                                            }
+                                            if up.behind > 0 {
+                                                line.push_str(&format!(" \u{2193}{}", up.behind));
+                                            }
+                                        }
+                                        if head_branch.as_deref() == Some(b.name.as_str()) {
+                                            line.push_str(" [HEAD]");
+                                        }
+                                        eprintln!("[kagi]   {}", line);
+                                        details.push(format!("  {}", line));
+                                    }
+                                }
+
+                                // ── Remote branches ─────────────────────
+                                {
+                                    let header = "REMOTE BRANCHES:".to_string();
+                                    eprintln!("[kagi] {}", header);
+                                    details.push(header);
+                                    for rb in &snap.remote_branches {
+                                        let line = format!("  {}/{}", rb.remote, rb.name);
+                                        eprintln!("[kagi] {}", line);
+                                        details.push(line);
+                                    }
+                                }
+
+                                // ── Tags ────────────────────────────────
+                                {
+                                    let header = "TAGS:".to_string();
+                                    eprintln!("[kagi] {}", header);
+                                    details.push(header);
+                                    for t in &snap.tags {
+                                        let line = format!("  {}", t.name);
+                                        eprintln!("[kagi] {}", line);
+                                        details.push(line);
+                                    }
+                                }
+
+                                // ── Stashes ─────────────────────────────
+                                {
+                                    let header = "STASHES:".to_string();
+                                    eprintln!("[kagi] {}", header);
+                                    details.push(header);
+                                    for s in &snap.stashes {
+                                        let line = format!(
+                                            "  stash@{{{}}} {}",
+                                            s.index, s.message
+                                        );
+                                        eprintln!("[kagi] {}", line);
+                                        details.push(line);
+                                    }
+                                }
                             }
                             Err(e) => {
-                                let line = format!("commit log error: {}", e);
+                                let line = format!("snapshot error: {}", e);
                                 eprintln!("[kagi] {}", line);
                                 details.push(line);
                             }
                         }
                     }
                     Err(e) => {
-                        let line = format!("commit log error: {}", e.message());
+                        let line = format!("repo open error: {}", e.message());
                         eprintln!("[kagi] {}", line);
                         details.push(line);
                     }

@@ -1,4 +1,4 @@
-//! UI module — T008: GPUI commit list / T009: commit graph lane / T010: commit selection + detail panel
+//! UI module — T008: GPUI commit list / T009: commit graph lane / T010: commit selection + detail panel / T011: changed files list
 //!
 //! This module lives in the binary crate (`main.rs` does `mod ui;`).
 //! It must not be added to `src/lib.rs` so that domain tests stay
@@ -8,12 +8,15 @@ pub mod commit_list;
 pub mod detail_panel;
 pub mod graph_view;
 
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use gpui::{
     App, Context, Entity, SharedString, Window,
     div, prelude::*, px, rgb, uniform_list,
 };
 
-use crate::git::{Head, RepoSnapshot};
+use crate::git::{ChangeKind, FileStatus, Head, RepoSnapshot};
 use commit_list::{BadgeKind, CommitRow, build_commit_rows};
 use detail_panel::{CommitDetail, build_commit_details};
 use graph_view::{graph_canvas, graph_width};
@@ -52,6 +55,11 @@ pub struct KagiApp {
     pub selected: Option<usize>,
     /// Error or informational message shown instead of the commit list.
     pub error: Option<SharedString>,
+    /// Absolute path to the repository root; used for on-demand diff fetches.
+    pub repo_path: Option<PathBuf>,
+    /// Cache of changed-files results keyed by row index.
+    /// `None` value means the diff was attempted but failed (show unavailable).
+    pub diff_cache: HashMap<usize, Option<Vec<FileStatus>>>,
 }
 
 impl KagiApp {
@@ -99,7 +107,15 @@ impl KagiApp {
         eprintln!("[kagi] graph: lane_count={}", lane_count);
         eprintln!("[kagi] commit list rows: {}", rows.len());
 
-        KagiApp { header, rows, details, selected: None, error: None }
+        KagiApp {
+            header,
+            rows,
+            details,
+            selected: None,
+            error: None,
+            repo_path: None,
+            diff_cache: HashMap::new(),
+        }
     }
 
     /// Construct a placeholder for the no-argument / error case.
@@ -110,11 +126,15 @@ impl KagiApp {
             details: Vec::new(),
             selected: None,
             error: Some(SharedString::from(message.into())),
+            repo_path: None,
+            diff_cache: HashMap::new(),
         }
     }
 
     /// Select the commit at `index` (or deselect if already selected).
     /// Emits a `[kagi] selected:` log for automated verification.
+    /// On first selection of a row, fetches changed files on-demand and caches
+    /// the result; subsequent selections of the same row reuse the cache.
     pub fn select(&mut self, index: usize) {
         // Toggle: clicking the same row again deselects it.
         if self.selected == Some(index) {
@@ -122,6 +142,7 @@ impl KagiApp {
             return;
         }
         self.selected = Some(index);
+
         if let Some(detail) = self.details.get(index) {
             let parent_count = detail.parent_ids.len();
             eprintln!(
@@ -130,6 +151,36 @@ impl KagiApp {
                 parent_count,
             );
         }
+
+        // Fetch changed files on-demand (only once per row).
+        if !self.diff_cache.contains_key(&index) {
+            let files_opt = self.fetch_changed_files(index);
+            let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
+            eprintln!("[kagi] changed files: {}", n);
+            self.diff_cache.insert(index, files_opt);
+        } else {
+            // Already cached — just emit the log.
+            let n = self
+                .diff_cache
+                .get(&index)
+                .and_then(|v| v.as_ref())
+                .map(|v| v.len())
+                .unwrap_or(0);
+            eprintln!("[kagi] changed files: {}", n);
+        }
+    }
+
+    /// Fetch changed files for the commit at `index`.  Returns `None` on
+    /// failure (so the UI can show "(diff unavailable)").
+    fn fetch_changed_files(&self, index: usize) -> Option<Vec<FileStatus>> {
+        use crate::git::{CommitId, commit_changed_files};
+
+        let repo_path = self.repo_path.as_ref()?;
+        let detail = self.details.get(index)?;
+        let id = CommitId(detail.full_sha.as_ref().to_string());
+
+        let repo = git2::Repository::open(repo_path).ok()?;
+        commit_changed_files(&repo, &id).ok()
     }
 }
 
@@ -160,6 +211,10 @@ impl Render for KagiApp {
 
         // ── Pre-fetch detail for panel (if any row is selected) ─
         let detail = selected.and_then(|i| self.details.get(i)).cloned();
+        // Clone cached changed-files list for the render closure.
+        // `None` outer = no selection; `Some(None)` = diff unavailable; `Some(Some(v))` = files.
+        let changed_files: Option<Option<Vec<FileStatus>>> = selected
+            .map(|i| self.diff_cache.get(&i).cloned().unwrap_or(None));
 
         // ── Normal state: header + (list | list + panel) ─────
         div()
@@ -200,7 +255,10 @@ impl Render for KagiApp {
                     )
                     // ── Detail panel (only when a row is selected) ──
                     .when_some(detail, |el, d| {
-                        el.child(render_detail_panel(d))
+                        // Pair the CommitDetail with the changed-files list.
+                        // changed_files is Some(...) when a row is selected.
+                        let files = changed_files.clone();
+                        el.child(render_detail_panel(d, files.unwrap_or(None)))
                     }),
             )
             .into_any()
@@ -327,7 +385,10 @@ fn render_rows(
 // ──────────────────────────────────────────────────────────────
 
 /// Render the 360 px right-side detail panel for the selected commit.
-fn render_detail_panel(d: CommitDetail) -> impl IntoElement {
+///
+/// `changed_files` is `None` when the diff has not been loaded or failed
+/// (shows "(diff unavailable)"), or `Some(Vec<FileStatus>)` with the list.
+fn render_detail_panel(d: CommitDetail, changed_files: Option<Vec<FileStatus>>) -> impl IntoElement {
     // Helper: one labelled field row.
     let field = |label: &'static str, value: SharedString| {
         div()
@@ -374,6 +435,124 @@ fn render_detail_panel(d: CommitDetail) -> impl IntoElement {
         panel = panel.child(field("Committer", committer));
     }
 
+    // ── Changed files section ────────────────────────────────────────────────
+    // Colour constants for change-kind badges (A/M/D/R/T).
+    const COLOR_ADDED:   u32 = 0xa6e3a1; // green
+    const COLOR_MODIFIED: u32 = 0xf9e2af; // yellow
+    const COLOR_DELETED: u32 = 0xf38ba8; // red
+    const COLOR_RENAMED: u32 = 0x89b4fa; // blue
+    const COLOR_TYPECHANGE: u32 = 0x585b70; // gray (muted)
+
+    const MAX_FILES: usize = 100;
+
+    // Build the file rows (up to MAX_FILES) and a truncation notice.
+    let (file_rows, truncated): (Vec<_>, Option<usize>) = match &changed_files {
+        None => {
+            // Diff unavailable: single notice row.
+            (vec![], None)
+        }
+        Some(files) => {
+            let total = files.len();
+            let shown = files.iter().take(MAX_FILES);
+            let rows: Vec<_> = shown
+                .map(|f| {
+                    let (badge_char, badge_color) = match &f.change {
+                        ChangeKind::Added      => ("A", COLOR_ADDED),
+                        ChangeKind::Modified   => ("M", COLOR_MODIFIED),
+                        ChangeKind::Deleted    => ("D", COLOR_DELETED),
+                        ChangeKind::Renamed { .. } => ("R", COLOR_RENAMED),
+                        ChangeKind::TypeChange => ("T", COLOR_TYPECHANGE),
+                    };
+
+                    // Path display: truncate with leading "…" when longer than
+                    // ~40 chars.  Use chars() for correct Unicode counting.
+                    const MAX_PATH_CHARS: usize = 40;
+                    let path_str = f.path.to_string_lossy();
+                    let display_path: String = {
+                        let char_count = path_str.chars().count();
+                        if char_count > MAX_PATH_CHARS {
+                            // Keep the last MAX_PATH_CHARS-1 chars (to leave room for "…").
+                            let skip = char_count - (MAX_PATH_CHARS - 1);
+                            let tail: String = path_str.chars().skip(skip).collect();
+                            format!("\u{2026}{}", tail)
+                        } else {
+                            path_str.into_owned()
+                        }
+                    };
+
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .mb_px()
+                        .child(
+                            // Kind badge: single letter in a small colored chip.
+                            div()
+                                .w(px(14.))
+                                .flex_shrink_0()
+                                .text_sm()
+                                .text_color(rgb(badge_color))
+                                .child(SharedString::from(badge_char)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_sm()
+                                .text_color(rgb(TEXT_MAIN))
+                                .overflow_hidden()
+                                .child(SharedString::from(display_path)),
+                        )
+                })
+                .collect();
+            let truncated = if total > MAX_FILES { Some(total - MAX_FILES) } else { None };
+            (rows, truncated)
+        }
+    };
+
+    let files_section = {
+        let section_label = match &changed_files {
+            None => SharedString::from("Changed files"),
+            Some(files) => SharedString::from(format!("Changed files ({})", files.len())),
+        };
+
+        let mut section = div()
+            .flex()
+            .flex_col()
+            .mt_2()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(TEXT_LABEL))
+                    .mb_1()
+                    .child(section_label),
+            );
+
+        if changed_files.is_none() {
+            // Diff unavailable.
+            section = section.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(TEXT_MUTED))
+                    .child(SharedString::from("(diff unavailable)")),
+            );
+        } else {
+            for row in file_rows {
+                section = section.child(row);
+            }
+            if let Some(remaining) = truncated {
+                section = section.child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_MUTED))
+                        .child(SharedString::from(format!("\u{2026} and {} more", remaining))),
+                );
+            }
+        }
+
+        section
+    };
+
     panel
         // ── Parents ─────────────────────────────────────────
         .child(field("Parents", parents_value))
@@ -396,6 +575,8 @@ fn render_detail_panel(d: CommitDetail) -> impl IntoElement {
                         .child(d.full_message),
                 ),
         )
+        // ── Changed files ─────────────────────────────────
+        .child(files_section)
 }
 
 /// Render the badge chips for one commit row as a horizontal flex container.

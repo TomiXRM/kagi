@@ -91,6 +91,8 @@ fn main() {
 
     // ── Build app state and launch window ────────────────────
     let mut app_state = KagiApp::from_snapshot(&info.name, &snap);
+    // T011: store repo path so the UI can fetch changed files on-demand.
+    app_state.repo_path = Some(repo_path.clone());
 
     // KAGI_SELECT_FIRST=1: auto-select row 0 at startup for headless
     // verification of the detail panel render path (T010).

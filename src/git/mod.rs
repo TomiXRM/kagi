@@ -1,16 +1,20 @@
-//! Git backend — T002: repository open / T003: working tree status / T004: commit log / T005: refs + snapshot
+//! Git backend — T002: repository open / T003: working tree status / T004: commit log / T005: refs + snapshot / T011: commit diff
 //!
 //! This module provides the entry point for opening a local Git repository,
 //! extracting basic metadata (repo name, workdir path, HEAD state), querying
-//! the working tree status, retrieving the commit log, and reading branch /
-//! remote branch / tag / stash information as a [`RepoSnapshot`].
+//! the working tree status, retrieving the commit log, reading branch /
+//! remote branch / tag / stash information as a [`RepoSnapshot`], and
+//! computing the file-level diff for a single commit.
 //! Network transports (https/ssh) are not used in the MVP.
 
+mod diff;
 mod log;
 mod refs;
 mod snapshot;
 mod status;
 
+#[allow(unused_imports)]
+pub use diff::commit_changed_files;
 #[allow(unused_imports)]
 pub use log::{Commit, CommitId, Signature, commit_log};
 #[allow(unused_imports)]

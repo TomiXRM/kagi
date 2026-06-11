@@ -31,7 +31,7 @@ use kagi::git::{
     oplog::{OpLogEntry, OpOutcome, append_oplog},
 };
 use commit_list::{BadgeKind, CommitRow, build_commit_rows};
-use detail_panel::{CommitDetail, build_commit_details, soft_wrap};
+use detail_panel::{CommitDetail, build_commit_details};
 use graph_view::{graph_canvas, graph_width};
 
 // ──────────────────────────────────────────────────────────────
@@ -1874,6 +1874,12 @@ fn render_rows(
 
 /// Render the right-side detail panel showing commit metadata + changed files.
 ///
+/// T022: The metadata area is now vertically scrollable (`overflow_y_scroll()`
+/// via `.id("detail-scroll")`).  All text fields use `truncate()` (single-line
+/// + ellipsis) except the commit message, which is split on `'\n'` so that
+/// each original line is truncated independently (no artificial soft-wrap).
+/// Empty message lines are preserved as full-height spacer rows.
+///
 /// Each changed-file row is clickable: clicking opens the file diff view.
 /// A `+ Create branch here` button at the top opens the create-branch modal.
 fn render_detail_panel(
@@ -1883,7 +1889,7 @@ fn render_detail_panel(
     changed_files_for_click: Option<Vec<FileStatus>>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
-    // Helper: one labelled field row.
+    // Helper: one labelled field row.  Value is single-line + truncate.
     let field = |label: &'static str, value: SharedString| {
         div()
             .flex()
@@ -1898,7 +1904,7 @@ fn render_detail_panel(
             .child(
                 div()
                     .text_color(rgb(TEXT_MAIN))
-                    .overflow_hidden()
+                    .truncate()
                     .child(value),
             )
     };
@@ -1954,7 +1960,7 @@ fn render_detail_panel(
                             div()
                                 .text_sm()
                                 .text_color(rgb(COLOR_DIR))
-                                .overflow_hidden()
+                                .truncate()
                                 .child(name.clone()),
                         )
                         .into_any()
@@ -1995,7 +2001,7 @@ fn render_detail_panel(
                                 .flex_1()
                                 .text_sm()
                                 .text_color(rgb(TEXT_MAIN))
-                                .overflow_hidden()
+                                .truncate()
                                 .child(name.clone()),
                         )
                         .into_any()
@@ -2043,6 +2049,30 @@ fn render_detail_panel(
         .hover(|style| style.bg(rgb(BG_SELECTED)))
         .child(SharedString::from("\u{1f352} Cherry-pick onto HEAD branch"));
 
+    // ── Message: split on '\n', each line truncated independently ────────
+    // Empty lines are rendered as a full-height spacer (non-breaking space).
+    let message_lines: Vec<_> = d.full_message
+        .as_ref()
+        .split('\n')
+        .map(|line| {
+            let text = if line.is_empty() {
+                // Preserve empty lines as visible spacers.
+                SharedString::from("\u{00A0}") // NBSP — gives the row its line height
+            } else {
+                SharedString::from(line.to_string())
+            };
+            div()
+                .flex()
+                .flex_row()
+                .w_full()
+                .text_color(rgb(TEXT_MAIN))
+                .text_sm()
+                .truncate()
+                .child(text)
+                .into_any()
+        })
+        .collect();
+
     let files_section = {
         let section_label = match &changed_files {
             None => SharedString::from("Changed files"),
@@ -2085,6 +2115,51 @@ fn render_detail_panel(
         section
     };
 
+    // ── Build the scrollable content block ───────────────────────────────
+    // All metadata + file tree goes inside a single scrollable div with `.id()`.
+    // The outer panel is `flex_col` + `h_full`; the inner scroll area is `flex_1`
+    // with `min_h(px(0.))` so it can shrink below its natural height.
+    let mut scroll_content = div()
+        .flex()
+        .flex_col()
+        .px_3()
+        .py_2()
+        // ── Create branch here button ────────────────────────
+        .child(create_branch_button)
+        // ── Cherry-pick onto HEAD button (T016) ─────────────
+        .child(cherry_pick_button)
+        // ── Full SHA — single-line + truncate ────────────────
+        .child(field("SHA", d.full_sha))
+        // ── Author — single-line + truncate ──────────────────
+        .child(field("Author", d.author_line))
+        // ── Committer (only when different from author) ──────
+        .when_some(d.committer_line, |el, c| el.child(field("Committer", c)))
+        // ── Parents — single-line + truncate ─────────────────
+        .child(field("Parents", parents_value))
+        // ── Message — per-line truncate, no soft-wrap ────────
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .mb_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_LABEL))
+                        .mb_1()
+                        .child(SharedString::from("Message")),
+                ),
+        );
+
+    for line_el in message_lines {
+        scroll_content = scroll_content.child(line_el);
+    }
+
+    scroll_content = scroll_content
+        // ── Changed files ─────────────────────────────────
+        .child(files_section);
+
+    // ── Outer panel: fixed width, full height, flex_col ──────────────────
     div()
         .w(px(360.))
         .flex_shrink_0()
@@ -2092,42 +2167,15 @@ fn render_detail_panel(
         .flex()
         .flex_col()
         .bg(rgb(BG_PANEL))
-        .overflow_hidden()
-        .px_3()
-        .py_2()
-        // ── Create branch here button ────────────────────────
-        .child(create_branch_button)
-        // ── Cherry-pick onto HEAD button (T016) ─────────────
-        .child(cherry_pick_button)
-        // ── Full SHA (display version: ZWSP every 8 chars for wrap) ──
-        .child(field("SHA", d.sha_display))
-        // ── Author ──────────────────────────────────────────
-        .child(field("Author", d.author_line))
-        // ── Committer (only when different from author) ──────
-        .when_some(d.committer_line, |el, c| el.child(field("Committer", c)))
-        // ── Parents ─────────────────────────────────────────
-        .child(field("Parents", parents_value))
-        // ── Message ─────────────────────────────────────────
+        // ── Scrollable area (flex_1 + min_h(0) so it can shrink) ─────────
         .child(
             div()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(TEXT_LABEL))
-                        .child(SharedString::from("Message")),
-                )
-                .child(
-                    div()
-                        .text_color(rgb(TEXT_MAIN))
-                        .overflow_hidden()
-                        .flex_1()
-                        .child(d.full_message),
-                ),
+                .id("detail-scroll")
+                .flex_1()
+                .min_h(px(0.))
+                .overflow_y_scroll()
+                .child(scroll_content),
         )
-        // ── Changed files ─────────────────────────────────
-        .child(files_section)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -2151,6 +2199,10 @@ fn render_diff_panel(view: FileDiffView, cx: &mut Context<KagiApp>) -> impl Into
         cx.notify();
     });
 
+    // T022: `min_h(px(0.))` on the uniform_list wrapper is the fix for
+    // "file diff not visible" — without it, the flex child does not shrink
+    // below its natural height, so the uniform_list overflows the panel and
+    // the diff rows are pushed outside the visible area.
     div()
         .w(px(560.))
         .flex_shrink_0()
@@ -2160,13 +2212,14 @@ fn render_diff_panel(view: FileDiffView, cx: &mut Context<KagiApp>) -> impl Into
         .bg(rgb(BG_PANEL))
         .px_0()
         .py_0()
-        // ── Back row ──────────────────────────────────────────
+        // ── Back row (fixed height — does NOT participate in flex shrinking) ──
         .child(
             div()
                 .id("diff-back")
                 .flex()
                 .flex_row()
                 .items_center()
+                .flex_shrink_0()
                 .px_3()
                 .py_1()
                 .bg(rgb(BG_SURFACE))
@@ -2183,11 +2236,11 @@ fn render_diff_panel(view: FileDiffView, cx: &mut Context<KagiApp>) -> impl Into
                         .flex_1()
                         .text_sm()
                         .text_color(rgb(TEXT_MAIN))
-                        .overflow_hidden()
+                        .truncate()
                         .child(view.file_name),
                 ),
         )
-        // ── Diff body ──────────────────────────────────────────
+        // ── Diff body: flex_1 + min_h(0) ensures it fills remaining space ──
         .child(
             uniform_list(
                 "diff-list",
@@ -2197,7 +2250,7 @@ fn render_diff_panel(view: FileDiffView, cx: &mut Context<KagiApp>) -> impl Into
                 }),
             )
             .flex_1()
-            .h_full(),
+            .min_h(px(0.)),
         )
 }
 
@@ -2605,7 +2658,7 @@ fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> imp
                     .text_sm()
                     .text_color(rgb(COLOR_WARNING))
                     .overflow_hidden()
-                    .child(SharedString::from(soft_wrap(&format!("\u{26a0} {}", w), 16))),
+                    .child(SharedString::from(format!("\u{26a0} {}", w))),
             );
         }
         card = card.child(warn_col);
@@ -2620,7 +2673,7 @@ fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> imp
                     .text_sm()
                     .text_color(rgb(COLOR_BLOCKER))
                     .overflow_hidden()
-                    .child(SharedString::from(soft_wrap(&format!("\u{2717} {}", b), 16))),
+                    .child(SharedString::from(format!("\u{2717} {}", b))),
             );
         }
         card = card.child(block_col);
@@ -2632,7 +2685,7 @@ fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> imp
             .text_xs()
             .text_color(rgb(TEXT_MUTED))
             .overflow_hidden()
-            .child(SharedString::from(soft_wrap(&plan.recovery, 16))),
+            .child(SharedString::from(plan.recovery.clone())),
     );
 
     // ── Error message (preflight / execute failure) ───────
@@ -2642,7 +2695,7 @@ fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> imp
                 .text_sm()
                 .text_color(rgb(COLOR_BLOCKER))
                 .overflow_hidden()
-                .child(SharedString::from(soft_wrap(err, 16))),
+                .child(err.clone()),
         );
     }
 
@@ -2856,7 +2909,7 @@ fn render_create_branch_modal(
                         .text_sm()
                         .text_color(rgb(COLOR_BLOCKER))
                         .overflow_hidden()
-                        .child(SharedString::from(soft_wrap(&format!("\u{2717} {}", b), 16))),
+                        .child(SharedString::from(format!("\u{2717} {}", b))),
                 );
             }
             card = card.child(block_col);
@@ -2868,7 +2921,7 @@ fn render_create_branch_modal(
                 .text_xs()
                 .text_color(rgb(TEXT_MUTED))
                 .overflow_hidden()
-                .child(SharedString::from(soft_wrap(&p.recovery, 16))),
+                .child(SharedString::from(p.recovery.clone())),
         );
     }
 
@@ -2879,7 +2932,7 @@ fn render_create_branch_modal(
                 .text_sm()
                 .text_color(rgb(COLOR_BLOCKER))
                 .overflow_hidden()
-                .child(SharedString::from(soft_wrap(err, 16))),
+                .child(err.clone()),
         );
     }
 
@@ -3103,7 +3156,7 @@ fn render_stash_push_modal(
                         .text_sm()
                         .text_color(rgb(COLOR_WARNING))
                         .overflow_hidden()
-                        .child(SharedString::from(soft_wrap(&format!("\u{26a0} {}", w), 16))),
+                        .child(SharedString::from(format!("\u{26a0} {}", w))),
                 );
             }
             card = card.child(warn_col);
@@ -3118,7 +3171,7 @@ fn render_stash_push_modal(
                         .text_sm()
                         .text_color(rgb(COLOR_BLOCKER))
                         .overflow_hidden()
-                        .child(SharedString::from(soft_wrap(&format!("\u{2717} {}", b), 16))),
+                        .child(SharedString::from(format!("\u{2717} {}", b))),
                 );
             }
             card = card.child(block_col);
@@ -3130,7 +3183,7 @@ fn render_stash_push_modal(
                 .text_xs()
                 .text_color(rgb(TEXT_MUTED))
                 .overflow_hidden()
-                .child(SharedString::from(soft_wrap(&p.recovery, 16))),
+                .child(SharedString::from(p.recovery.clone())),
         );
     }
 
@@ -3141,7 +3194,7 @@ fn render_stash_push_modal(
                 .text_sm()
                 .text_color(rgb(COLOR_BLOCKER))
                 .overflow_hidden()
-                .child(SharedString::from(soft_wrap(err, 16))),
+                .child(err.clone()),
         );
     }
 
@@ -3331,7 +3384,7 @@ fn render_stash_apply_modal(
                     .text_sm()
                     .text_color(rgb(COLOR_BLOCKER))
                     .overflow_hidden()
-                    .child(SharedString::from(soft_wrap(&format!("\u{2717} {}", b), 16))),
+                    .child(SharedString::from(format!("\u{2717} {}", b))),
             );
         }
         card = card.child(block_col);
@@ -3343,7 +3396,7 @@ fn render_stash_apply_modal(
             .text_xs()
             .text_color(rgb(TEXT_MUTED))
             .overflow_hidden()
-            .child(SharedString::from(soft_wrap(&plan.recovery, 16))),
+            .child(SharedString::from(plan.recovery.clone())),
     );
 
     // ── Error message ────────────────────────────────────
@@ -3353,7 +3406,7 @@ fn render_stash_apply_modal(
                 .text_sm()
                 .text_color(rgb(COLOR_BLOCKER))
                 .overflow_hidden()
-                .child(SharedString::from(soft_wrap(err, 16))),
+                .child(err.clone()),
         );
     }
 
@@ -3622,7 +3675,7 @@ fn render_cherry_pick_modal(
                     .text_sm()
                     .text_color(rgb(COLOR_WARNING))
                     .overflow_hidden()
-                    .child(SharedString::from(soft_wrap(&format!("\u{26a0} {}", w), 16))),
+                    .child(SharedString::from(format!("\u{26a0} {}", w))),
             );
         }
         card = card.child(warn_col);
@@ -3637,7 +3690,7 @@ fn render_cherry_pick_modal(
                     .text_sm()
                     .text_color(rgb(COLOR_BLOCKER))
                     .overflow_hidden()
-                    .child(SharedString::from(soft_wrap(&format!("\u{2717} {}", b), 16))),
+                    .child(SharedString::from(format!("\u{2717} {}", b))),
             );
         }
         card = card.child(block_col);
@@ -3649,7 +3702,7 @@ fn render_cherry_pick_modal(
             .text_xs()
             .text_color(rgb(TEXT_MUTED))
             .overflow_hidden()
-            .child(SharedString::from(soft_wrap(&plan.recovery, 16))),
+            .child(SharedString::from(plan.recovery.clone())),
     );
 
     // ── Error message (preflight / execute failure) ───────
@@ -3659,7 +3712,7 @@ fn render_cherry_pick_modal(
                 .text_sm()
                 .text_color(rgb(COLOR_BLOCKER))
                 .overflow_hidden()
-                .child(SharedString::from(soft_wrap(err, 16))),
+                .child(err.clone()),
         );
     }
 

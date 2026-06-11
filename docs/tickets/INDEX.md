@@ -20,8 +20,8 @@
 | T011 | changed files list を表示する | T010 | done |
 | T012 | file diff viewer を表示する | T011 | done |
 | T013 | checkout branch を plan 確認付きで実装する(OperationController 導入) | T005 | done |
-| T014 | create branch を実装する | T013 | in-progress |
-| T015 | stash push / list / apply を実装する | T013 | todo |
+| T014 | create branch を実装する | T013 | done |
+| T015 | stash push / list / apply を実装する | T013 | in-progress |
 | T016 | cherry-pick dry-run preview を実装する | T013 | todo |
 | T017 | error handling と operation log を整える | T013–T016 | todo |
 

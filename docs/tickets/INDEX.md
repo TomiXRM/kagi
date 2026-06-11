@@ -12,8 +12,8 @@
 | T003 | working tree status を取得して表示する | T002 | done |
 | T004 | commit log を取得して内部モデル(Commit)に変換する | T002 | done |
 | T005 | branch / remote branch / tag / HEAD を取得する(RepoSnapshot 完成) | T004 | done |
-| T006 | commit graph layout の pure Rust モジュールを実装する | T004 | in-progress |
-| T007 | graph layout の unit test を作る(直線/分岐/merge/octopus/複数root) | T006 | todo |
+| T006 | commit graph layout の pure Rust モジュールを実装する | T004 | done |
+| T007 | graph layout の unit test を作る(直線/分岐/merge/octopus/複数root) | T006 | in-progress |
 | T008 | GPUI で commit list を表示する(仮想化リスト) | T001, T005 | todo |
 | T009 | GPUI で commit graph lane を描画する | T006–T008 | todo |
 | T010 | commit selection で metadata panel を表示する | T008 | todo |

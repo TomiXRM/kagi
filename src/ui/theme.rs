@@ -204,7 +204,7 @@ pub fn set_active(slug: &str) -> bool {
 /// Resolve the path to `settings.json` (`$KAGI_LOG_DIR/settings.json` first,
 /// then `$HOME/.kagi/settings.json`).  Returns `None` if no directory can be
 /// determined.
-fn settings_path() -> Option<PathBuf> {
+pub fn settings_path() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("KAGI_LOG_DIR") {
         if !dir.is_empty() {
             return Some(PathBuf::from(dir).join("settings.json"));
@@ -218,43 +218,95 @@ fn settings_path() -> Option<PathBuf> {
 }
 
 /// Read the persisted theme slug from `settings.json`, if present and valid.
-///
-/// The parser is intentionally minimal — it scans for `"theme"` and extracts
-/// the following double-quoted string value.  No JSON dependency is added.
 pub fn load_settings_slug() -> Option<String> {
-    let path = settings_path()?;
-    let text = std::fs::read_to_string(&path).ok()?;
-    parse_theme_slug(&text)
+    read_setting("theme")
 }
 
-/// Extract the value of the `"theme"` key from a JSON object string.
-fn parse_theme_slug(text: &str) -> Option<String> {
-    let key_pos = text.find("\"theme\"")?;
-    let after = &text[key_pos + "\"theme\"".len()..];
+/// Extract the value of `"<key>"` from a flat JSON object string.
+///
+/// Intentionally minimal — scans for `"<key>"` and extracts the following
+/// double-quoted string value.  No JSON dependency is added.  Values written by
+/// [`write_setting`] contain no escapes, so closing-quote scanning is exact.
+pub fn parse_string_value(text: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{}\"", key);
+    let key_pos = text.find(&needle)?;
+    let after = &text[key_pos + needle.len()..];
     let colon = after.find(':')?;
     let rest = &after[colon + 1..];
-    // Find the opening quote of the value.
     let open = rest.find('"')?;
     let value_start = open + 1;
-    // Find the closing quote (slugs contain no escapes).
     let close = rest[value_start..].find('"')?;
     Some(rest[value_start..value_start + close].to_string())
 }
 
-/// Persist the theme slug to `settings.json` (best-effort; failures are
-/// logged but non-fatal).  Creates the parent directory if needed.
-pub fn save_settings(slug: &str) {
+/// Read a single string-valued setting from `settings.json`.
+pub fn read_setting(key: &str) -> Option<String> {
+    let path = settings_path()?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    parse_string_value(&text, key)
+}
+
+/// Persist (or remove with `value = None`) one string-valued setting in
+/// `settings.json`, **preserving all other keys**.  Best-effort; failures are
+/// logged but non-fatal.  Creates the parent directory if needed.
+///
+/// The file is treated as a flat `{ "k": "v", ... }` object (the only shape kagi
+/// ever writes).  Existing keys are re-read, the target key is upserted, and the
+/// whole object is rewritten — so smart-commit keys never clobber `theme` and
+/// vice-versa.
+pub fn write_setting(key: &str, value: Option<&str>) {
     let path = match settings_path() {
         Some(p) => p,
         None => return,
     };
+    // Re-read existing keys so we don't drop them.
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        for k in &SETTINGS_KEYS {
+            if *k == key {
+                continue;
+            }
+            if let Some(v) = parse_string_value(&text, k) {
+                pairs.push(((*k).to_string(), v));
+            }
+        }
+    }
+    if let Some(v) = value {
+        pairs.push((key.to_string(), v.to_string()));
+    }
+
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let json = format!("{{\n  \"theme\": \"{}\"\n}}\n", slug);
+    let body: Vec<String> = pairs
+        .iter()
+        .map(|(k, v)| format!("  \"{}\": \"{}\"", k, settings_escape(v)))
+        .collect();
+    let json = format!("{{\n{}\n}}\n", body.join(",\n"));
     if let Err(e) = std::fs::write(&path, json) {
         eprintln!("[kagi] settings: write failed (non-fatal): {}", e);
     }
+}
+
+/// Minimal escaping for settings values (`"` and `\`).  kagi only stores slugs /
+/// model names / flags, so this is sufficient.
+fn settings_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// All known string-valued `settings.json` keys.  Listed so [`write_setting`]
+/// can round-trip every key it doesn't recognise as the current target.
+const SETTINGS_KEYS: [&str; 5] = [
+    "theme",
+    "smart_commit_llm_enabled",
+    "smart_commit_model",
+    "smart_commit_lang",
+    "smart_commit_style",
+];
+
+/// Persist the theme slug to `settings.json` (preserving other keys).
+pub fn save_settings(slug: &str) {
+    write_setting("theme", Some(slug));
 }
 
 /// Initialise the active theme at startup.
@@ -957,11 +1009,24 @@ mod tests {
     #[test]
     fn parse_theme_slug_basic() {
         assert_eq!(
-            parse_theme_slug("{\n  \"theme\": \"one-dark\"\n}\n").as_deref(),
+            parse_string_value("{\n  \"theme\": \"one-dark\"\n}\n", "theme").as_deref(),
             Some("one-dark")
         );
-        assert_eq!(parse_theme_slug("{}"), None);
-        assert_eq!(parse_theme_slug("garbage"), None);
+        assert_eq!(parse_string_value("{}", "theme"), None);
+        assert_eq!(parse_string_value("garbage", "theme"), None);
+    }
+
+    #[test]
+    fn parse_string_value_preserves_multiple_keys() {
+        // write_setting round-trips every known key — make sure parsing finds
+        // each one independently (smart-commit keys must not clobber theme).
+        let json = "{\n  \"theme\": \"one-dark\",\n  \"smart_commit_model\": \"gemma:2b\"\n}\n";
+        assert_eq!(parse_string_value(json, "theme").as_deref(), Some("one-dark"));
+        assert_eq!(
+            parse_string_value(json, "smart_commit_model").as_deref(),
+            Some("gemma:2b")
+        );
+        assert_eq!(parse_string_value(json, "missing"), None);
     }
 
     #[test]

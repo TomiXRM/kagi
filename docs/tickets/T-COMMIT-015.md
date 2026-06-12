@@ -57,3 +57,15 @@ staged diff から commit message を生成。ローカル LLM(ollama)第一、r
 - staged diff を外部へ送らない(既定 loopback or ローカル計算)。external backend は本チケット対象外
 - ureq 再利用、新依存禁止。手書き JSON(serde 禁止)
 - **ADR-0044 Proposed の間は着手しない**(既定 backend / model 選択の決定待ち)
+
+## 実装メモ (W14-SMART backend, completed)
+
+- 新規 `src/git/message_gen.rs`、`src/git/mod.rs` に re-export 追加。`Cargo.toml` 変更なし(ureq 3 再利用、serde 不使用 = 手書き JSON)。
+- `enum MessageBackend { Ollama { host, model }, RuleBased }` + `Lang { Ja, En }` + `Style { ConventionalCommits, Plain }`。trait なし(ADR-0044)。
+- `collect_staged_diff(&Repository) -> String`: HEAD tree ↔ index(`diff_tree_to_index`)で **staged のみ**。unstaged/untracked は構造上含まれない(integration test で検証: `STAGED_CONTENT_MARKER` のみ、`UNSTAGED_*` 漏れなし、partial-stage の unstaged hunk も漏れなし)。`>8KB` は行境界で truncate + `[... diff truncated ...]` + `Files: A/M/D ...` サマリ。`show_binary(false)`。
+- `collect_staged_files(&Repository) -> Vec<FileStatus>`: 同じ diff から A/M/D/R/T を抽出(rule_based と prompt サマリ用)。
+- `rule_based(&GenInput, &[FileStatus]) -> String`: 純関数・**必ず非空**。type 推定 = tests のみ→test / docs のみ→docs / config のみ→chore / 新規 code あり→feat / 全 modify→fix / 全 delete→chore。単一: `<type>: add|remove|rename|update <file>`(EN)/`<file> を追加|削除|... `(JA)。複数: `<type>(<scope>): update N files`(scope=共通 top dir、なければ省略)。Plain は type prefix なし。
+- `generate_message(backend, input, files)`: RuleBased は infallible / 非空。Ollama は `KAGI_OFFLINE=1`→`Err(Offline)`、HTTP/timeout/parse 失敗→`Err`。呼び出し側が rule_based に静かに fallback。
+- ollama: `POST http://<host>/api/generate {model,prompt,stream:false}`(ureq3 + `timeout_global(20s)`)、応答 `"response"` を手書き parse(`\uXXXX`含むエスケープ復号)。`parse_ollama_tags`(`/api/tags` の `"name"` 列挙)。`ollama_available`/`ollama_list_models` は到達確認のみ(diff 送らない)。
+- unit test 25(rule_based 各種 / truncate / file_summary / JSON parse(response/tags/escape/empty)/ request body escape / clean_llm_message / offline dispatch)+ integration `tests/message_gen_test.rs` 5(staged-only 3 / rule_based / offline fallback)。`cargo test` 全パス、own-code warning 0、clippy 0(自ファイル)。
+- 触ったファイル: `src/git/message_gen.rs`(新)/ `src/git/mod.rs`(mod + re-export)/ `tests/message_gen_test.rs`(新)。`src/ui/*` は触っていない(UI は T-COMMIT-016)。

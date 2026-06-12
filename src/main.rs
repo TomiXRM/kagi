@@ -131,6 +131,16 @@ fn main() {
         app_state.jump_to_branch(&jump_branch);
     }
 
+    // ── T-CM-004: headless commit context menu model ───────────
+    // KAGI_CONTEXT_MENU=<row>: simulate right-clicking a commit row and log
+    // the pure menu model. Used only with fixture/tempdir repositories.
+    if let Ok(row_str) = std::env::var("KAGI_CONTEXT_MENU") {
+        match row_str.parse::<usize>() {
+            Ok(row) => app_state.open_commit_menu_headless(row),
+            Err(_) => eprintln!("[kagi] context-menu: invalid row '{}'", row_str),
+        }
+    }
+
     // KAGI_OPEN_FIRST_FILE=1 (requires KAGI_SELECT_FIRST=1): after selecting
     // the first commit, automatically open the diff for its first changed file
     // in the full-width main pane (T-UI-003).

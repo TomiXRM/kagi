@@ -4685,6 +4685,38 @@ pub fn execute_delete_branch(
         .find_branch(name, BranchType::Local)
         .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", name, e.message())))?;
 
+    // ── 2.5 Pre-clean the branch's config section ─────────────
+    // gh CLI is known to write duplicated `branch.<name>.*` keys (e.g.
+    // github-pr-owner-number, one copy per `gh pr` invocation). libgit2's
+    // Branch::delete() wipes the section key-by-key and aborts on the
+    // duplicates ("could not find key … to delete") BEFORE deleting the
+    // ref — so the first attempt fails and a retry succeeds. Remove the
+    // section's entries tolerantly here so the ref deletion below cannot
+    // be blocked by config garbage. Best-effort: a key that is already
+    // gone (or lives in a read-only level) is not an error.
+    {
+        let prefix = format!("branch.{}.", name);
+        if let Ok(mut config) = repo.config() {
+            let mut keys: Vec<String> = Vec::new();
+            if let Ok(snap) = config.snapshot() {
+                if let Ok(mut entries) = snap.entries(None) {
+                    while let Some(Ok(entry)) = entries.next() {
+                        if let Ok(k) = entry.name() {
+                            if k.starts_with(&prefix) && !keys.iter().any(|e| e == k) {
+                                keys.push(k.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            for key in keys {
+                if config.remove_multivar(&key, ".*").is_err() {
+                    let _ = config.remove(&key);
+                }
+            }
+        }
+    }
+
     // ── 3. Delete the branch ref (ref-only, no WT change) ─────
     // Branch::delete() removes refs/heads/<name>. force=false would be the
     // --delete flag; here we rely on plan-time merged check instead.

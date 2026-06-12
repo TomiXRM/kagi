@@ -357,3 +357,53 @@ fn test_delete_branch_upstream_warning() {
         warn_msg
     );
 }
+
+// ────────────────────────────────────────────────────────────
+// Regression: duplicated gh CLI branch config keys must not
+// break deletion (user repo had dozens of duplicated
+// `branch.<name>.github-pr-owner-number` entries written by
+// `gh pr`, making the 1st delete fail and the 2nd succeed).
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn test_delete_branch_with_duplicated_gh_config_keys() {
+    let r = setup_repo();
+
+    // Simulate gh CLI's duplicated-key pollution on the merged branch.
+    for _ in 0..3 {
+        git(
+            &r.path,
+            &[
+                "config",
+                "--add",
+                "branch.merged.github-pr-owner-number",
+                "owner#repo#42",
+            ],
+        );
+    }
+    // A second polluted key, plus a normal upstream-style key.
+    git(&r.path, &["config", "--add", "branch.merged.gh-merge-base", "main"]);
+    git(&r.path, &["config", "--add", "branch.merged.gh-merge-base", "main"]);
+
+    let repo = Repository::open(&r.path).unwrap();
+    let plan = plan_delete_branch(&repo, "merged").expect("plan should succeed");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+
+    // First attempt must succeed (this used to fail with
+    // "could not find key '…github-pr-owner-number' to delete").
+    execute_delete_branch(&repo, &plan, "merged")
+        .expect("delete must succeed on the FIRST attempt despite duplicated config keys");
+
+    assert!(
+        repo.find_branch("merged", git2::BranchType::Local).is_err(),
+        "branch must be gone"
+    );
+    // The polluted section must be cleaned up.
+    let cfg = repo.config().unwrap().snapshot().unwrap();
+    let mut leftover = 0;
+    let mut entries = cfg.entries(Some("branch\\.merged\\..*")).unwrap();
+    while let Some(_) = entries.next() {
+        leftover += 1;
+    }
+    assert_eq!(leftover, 0, "branch.merged.* config entries must be removed");
+}

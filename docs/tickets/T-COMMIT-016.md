@@ -1,6 +1,6 @@
 # T-COMMIT-016: Smart Commit Message — UI(Generate ボタン / 日英トグル / 静かな fallback)
 
-- Status: blocked(T-COMMIT-015 backend 待ち / ADR-0044 Proposed)/ v0.2
+- Status: todo(ADR-0044 決定済み: rule-based 既定 / Ollama 検出のみ / LLM は明示 opt-in + 初回同意)
 - 依存: T-COMMIT-015 / ADR-0044
 - 関連: lane W14-SMART(UI は PM 主体)
 

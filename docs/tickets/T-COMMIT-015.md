@@ -1,6 +1,6 @@
 # T-COMMIT-015: Smart Commit Message — backend(enum dispatch + ollama + rule-based fallback)
 
-- Status: blocked(ADR-0044 の既定バックエンド/model が **Proposed** — ユーザー決定後に着手)/ v0.2
+- Status: todo(ADR-0044 決定済み: rule-based 既定 / Ollama 検出のみ / LLM は明示 opt-in + 初回同意)
 - 依存: ADR-0044 / 0037 / 既存 ureq(avatar_fetch.rs)
 - 関連: lane W14-SMART
 

@@ -1,6 +1,7 @@
 # ADR-0044: Smart Commit Message Generation
 
-- Status: **Proposed**(既定バックエンドの確定がユーザー判断点 — 後述)/ Date: 2026-06-13
+- Status: **Accepted**(2026-06-13、ユーザー決定: 案B寄り — 検出は行うが LLM 生成は既定無効・明示 opt-in)
+- Date: 2026-06-13(改訂)
 
 ## Context
 
@@ -63,17 +64,54 @@ pub fn generate_message(backend: &MessageBackend, input: &GenInput) -> Result<St
 - `Style::ConventionalCommits`(既定)で `type(scope): summary` を促す。プレーンも可。
 - `Lang::Ja | En` で prompt と rule-based の語彙を切替(UI トグル。既定はユーザーの選択を draft と同様に記憶)。
 
-### 既定バックエンド(★ユーザー判断点 — Proposed)
+### 既定方針(ユーザー決定済み: 案B寄り)
 
-- **案 A(ollama 既定で自動検出)**: 起動時に `localhost:11434` を軽く叩いて到達可能なら ollama を既定に、
-  不可なら rule-based。設定ゼロで「ある人は LLM、無い人は定型」。**推奨**(備考の ollama 環境に合致)。
-  - 要決定: 既定 model 名(`gemma` 等)をどう選ぶか。`/api/tags` で入っている model を列挙し先頭/設定値を使う。
-- **案 B(既定 rule-based、LLM は明示 opt-in)**: 最も保守的。LLM を使う人だけ設定で有効化。
-- **推奨**: A(到達確認つき自動)。ただし「常に localhost を叩く」ことの可否と既定 model 選択はユーザー決定。→ **要決定**。
+**判断**(原文準拠):
+- **Ollama の自動検出は行う**(到達確認のみ。検出結果は「Local LLM available」と表示)
+- ただし **LLM 生成は既定では無効**。Smart Commit Message の**既定は rule-based 生成**
+- LLM 生成は**ユーザーが明示的に有効化した場合のみ**(設定 or Generate ボタンからの有効化導線)
+- **初回有効化時に「staged diff がローカル LLM に渡される」ことを明示**する同意ダイアログを出す
+- 生成対象は **staged diff のみ**。**unstaged diff は絶対に含めない**
+- **remote LLM / 外部 API は MVP では使わない**。対象は **localhost Ollama のみ**
+- Ollama が見つからない場合は **rule-based のみで動作**する
+
+**理由**: localhost であっても staged diff をモデルに読ませる機能であり、社内コード・secret・未公開仕様・
+顧客情報が含まれうるため、既定 ON にはしない。検出自体は UX 改善になるため行う。
+
+### モデル選択(ユーザー決定済み)
+
+- 設定でモデル指定があればそれを使う
+- 設定がなければ **LLM 機能は未設定状態**(rule-based のみ)
+- installed model が **1つだけでも初回はユーザー確認を挟む**
+- **複数モデルがある場合は必ずユーザーに選ばせる**(`/api/tags` で列挙)
+- 選択後は設定(settings.json)に保存する
+
+### UI 方針(ユーザー決定済み)
+
+- **Rule-based suggestion: 常に利用可能**
+- **Local LLM suggestion: Ollama detected + user enabled の場合のみ利用可能**
+- **「Generate with Local LLM」ボタンを押した時だけ** staged diff を渡す(自動送信しない)
+- **初回だけ確認ダイアログ**を出す(文言は以下を必ず含む):
+  - "Only staged diff will be sent"
+  - "Unstaged changes will not be included"
+  - "The request stays on localhost Ollama"
+  - "Secrets may still exist in staged diff; review before generating"
+
+### 実装優先度(ユーザー決定済み)
+
+| フェーズ | 内容 |
+|----------|------|
+| **MVP** | rule-based 生成 / Ollama 自動検出 / LLM disabled by default / staged diff only / 初回同意 UI / model selection UI / selected model persistence |
+| **v0.2** | Conventional Commits mode / language selection / scope suggestion / body・test・risk セクション生成 |
+| **v0.3+** | custom prompt template / repository-specific style memory / **remote LLM は検討のみ・別 ADR 必須** |
+
+(注: 上記により本文前段の「Conventional Commits 既定」は v0.2 扱いに更新。MVP の rule-based は
+プレーン形式の叩き台生成でよい)
 
 ## Consequences
 
-- staged diff が外部に出るのは「ユーザーが external backend を明示設定」した時のみ。既定は loopback or ローカル計算
-- trait なし・enum dispatch でバックエンド追加は分岐追加で済む(将来 external も同様)
+- staged diff がプロセス外に出るのは「Ollama detected + user enabled + Generate 押下」が揃った時のみで、
+  宛先は loopback に限定される。外部 API は別 ADR なしに実装しない
+- trait なし・enum dispatch でバックエンド追加は分岐追加で済む
 - ureq 再利用で依存純度を保つ
-- Proposed のため、実装チケット(T-COMMIT-015〜017)は**既定バックエンドと model 選択の決定後**に backend 確定
+- T-COMMIT-015/016 は **unblocked**(本決定が backend 仕様)

@@ -10,6 +10,7 @@
 pub mod cli;
 mod diff;
 mod log;
+pub mod message_gen;
 pub mod oplog;
 pub mod ops;
 mod refs;
@@ -22,6 +23,12 @@ pub use diff::{
     DiffLine, DiffLineKind, FileDiff, Hunk, commit_changed_files, commit_file_diff,
     compare_commit_to_workdir, compare_commit_to_workdir_file_diff, compare_commits,
     compare_file_diff,
+};
+#[allow(unused_imports)]
+pub use message_gen::{
+    GenError, GenInput, Lang, MessageBackend, Style,
+    collect_staged_diff, collect_staged_files, generate_message, rule_based,
+    ollama_available, ollama_list_models,
 };
 #[allow(unused_imports)]
 pub use oplog::{OpLogEntry, OpOutcome, append_oplog, read_oplog_tail};

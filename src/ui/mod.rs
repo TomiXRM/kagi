@@ -16,12 +16,15 @@ pub mod file_tree;
 pub mod graph_view;
 pub mod inspector;
 pub mod sidebar;
+pub mod smart_commit;
 pub mod tabs;
 pub mod terminal;
 pub mod theme;
 pub mod watcher;
 
 use theme::theme;
+
+use kagi::git::message_gen;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -1179,6 +1182,14 @@ pub struct KagiApp {
     /// InputState entity for the commit message field (gpui-component IME対応).
     /// Created lazily when the commit panel is first opened (requires &mut Window).
     pub commit_input: Option<Entity<InputState>>,
+    // ── T-COMMIT-016: Smart Commit Message (W14-SMART) ───────────
+    /// Smart Commit state: rule-based always on, LLM opt-in + detection.
+    pub smart_commit: smart_commit::SmartCommitState,
+    /// Guard so Ollama detection runs at most once per repo path.
+    pub smart_commit_detected_for: Option<PathBuf>,
+    /// A generated message produced on a background thread, queued for the next
+    /// render to push into the commit-message Input (which needs `&mut Window`).
+    pub pending_smart_msg: Option<String>,
     // ── T028: branch jump (scroll to commit) ─────────────────
     /// Scroll handle for the "commit-list" uniform_list.
     /// Stored in KagiApp so it persists across render frames.
@@ -1546,6 +1557,9 @@ impl KagiApp {
             commit_panel_open: false,
             commit_panel: None,
             commit_input: None,
+            smart_commit: smart_commit::SmartCommitState::load(),
+            smart_commit_detected_for: None,
+            pending_smart_msg: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
             branch_targets,
             commit_row_index,
@@ -1636,6 +1650,9 @@ impl KagiApp {
             commit_panel_open: false,
             commit_panel: None,
             commit_input: None,
+            smart_commit: smart_commit::SmartCommitState::load(),
+            smart_commit_detected_for: None,
+            pending_smart_msg: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
             branch_targets: HashMap::new(),
             commit_row_index: HashMap::new(),
@@ -4470,6 +4487,265 @@ impl KagiApp {
                 p.staged.len()
             );
         }
+
+        // T-COMMIT-016: probe for a local Ollama server (reachability only;
+        // no diff is sent). Runs at most once per repo, off the UI thread.
+        self.ensure_smart_commit_detection(cx);
+    }
+
+    // ── T-COMMIT-016: Smart Commit Message (W14-SMART) ───────────
+
+    /// Probe for a reachable local Ollama server in the background.
+    ///
+    /// Reachability only — a single short GET to `/api/tags`; the staged diff is
+    /// **never** sent here.  Runs at most once per repo path, off the UI thread.
+    /// On success the panel shows "Local LLM available".  No-op when
+    /// `KAGI_OFFLINE=1`.
+    fn ensure_smart_commit_detection(&mut self, cx: &mut Context<Self>) {
+        let Some(repo_path) = self.repo_path.clone() else { return };
+        if self.smart_commit_detected_for.as_deref() == Some(repo_path.as_path()) {
+            return;
+        }
+        self.smart_commit_detected_for = Some(repo_path);
+
+        if message_gen::offline() {
+            eprintln!("[kagi] smart-commit: offline (detection skipped)");
+            return;
+        }
+
+        let host = smart_commit::SmartCommitState::ollama_host();
+        let task = cx.background_spawn(async move {
+            let available = message_gen::ollama_available(&host);
+            let models = if available {
+                message_gen::ollama_list_models(&host)
+            } else {
+                Vec::new()
+            };
+            (available, models)
+        });
+        cx.spawn(async move |this, acx| {
+            let (available, models) = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.smart_commit.ollama_available = available;
+                app.smart_commit.detected_models = models;
+                eprintln!(
+                    "[kagi] smart-commit: ollama_available={} models={}",
+                    available,
+                    app.smart_commit.detected_models.len()
+                );
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Read the current commit-message Input value (UI) or headless `commit_msg`.
+    fn smart_commit_current_msg(&self, cx: &Context<Self>) -> String {
+        if let Some(ref input) = self.commit_input {
+            input.read(cx).value().to_string()
+        } else {
+            self.commit_panel
+                .as_ref()
+                .map(|p| p.commit_msg.clone())
+                .unwrap_or_default()
+        }
+    }
+
+    /// Write `msg` into the commit-message Input (and the headless mirror).
+    /// Only overwrites a non-empty existing message after the caller has
+    /// decided to (rule-based/LLM both call this to *insert* the draft).
+    fn smart_commit_set_msg(&mut self, msg: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(input) = self.commit_input.clone() {
+            input.update(cx, |state, cx| {
+                state.set_value(msg.to_string(), window, cx);
+            });
+        }
+        if let Some(panel) = self.commit_panel.as_mut() {
+            panel.commit_msg = msg.to_string();
+        }
+    }
+
+    /// "Suggest" button — rule-based draft (always available, never networked).
+    ///
+    /// Inserts the draft into the message Input.  If the Input already holds a
+    /// non-empty message it is left untouched (the user's text wins; ticket:
+    /// overwrite only when empty).
+    pub fn smart_suggest(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo_path) = self.repo_path.clone() else { return };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let files = message_gen::collect_staged_files(&repo);
+        let gi = message_gen::GenInput {
+            diff: String::new(),
+            lang: self.smart_commit.lang,
+            style: self.smart_commit.style,
+        };
+        let msg = message_gen::rule_based(&gi, &files);
+        if std::env::var("KAGI_SMART_SUGGEST").as_deref() == Ok("1") {
+            eprintln!("[kagi] smart-suggest: {}", msg);
+        }
+        let existing = self.smart_commit_current_msg(cx);
+        if existing.trim().is_empty() {
+            self.smart_commit_set_msg(&msg, window, cx);
+            self.smart_commit.status = Some("Rule-based suggestion inserted".to_string());
+        } else {
+            self.smart_commit.status =
+                Some("Message not empty — kept your text".to_string());
+        }
+        cx.notify();
+    }
+
+    /// "Generate with Local LLM" button.
+    ///
+    /// Enforces the opt-in gates: if the user has not yet enabled LLM generation
+    /// (or never confirmed a model) the consent / model-picker modal is shown
+    /// first.  Only when all gates are cleared is the staged diff collected and
+    /// sent to loopback Ollama (in the background, with a timeout).  Any failure
+    /// falls back **quietly** to the rule-based draft.
+    pub fn smart_generate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if message_gen::offline() {
+            // Offline → straight to rule-based, no modal.
+            self.smart_suggest(window, cx);
+            return;
+        }
+        // Gate 1: first-time consent.
+        if !self.smart_commit.llm_enabled {
+            self.smart_commit.modal = Some(smart_commit::SmartCommitModal::Consent);
+            cx.notify();
+            return;
+        }
+        // Gate 2: model selection (1 model still needs confirmation, multiple
+        // must be chosen — both surface as the picker on first use).
+        if self.smart_commit.model.is_none() {
+            self.open_smart_model_picker(cx);
+            return;
+        }
+        self.run_smart_generation(window, cx);
+    }
+
+    /// Show the model picker, listing the detected models (`/api/tags`).
+    fn open_smart_model_picker(&mut self, cx: &mut Context<Self>) {
+        let models = self.smart_commit.detected_models.clone();
+        if models.is_empty() {
+            // No models installed → nothing to pick; fall back quietly.
+            self.smart_commit.status =
+                Some("No local models found — using rule-based".to_string());
+            cx.notify();
+            return;
+        }
+        self.smart_commit.modal = Some(smart_commit::SmartCommitModal::ModelPicker { models });
+        cx.notify();
+    }
+
+    /// Consent dialog confirmed: enable LLM, then proceed to model selection.
+    pub fn confirm_smart_consent(&mut self, cx: &mut Context<Self>) {
+        self.smart_commit.set_enabled(true);
+        self.smart_commit.modal = None;
+        eprintln!("[kagi] smart-commit: llm enabled (consent given)");
+        // Move on to picking a model (always confirm at least once per ADR).
+        if self.smart_commit.model.is_none() {
+            self.open_smart_model_picker(cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    /// Model chosen from the picker: persist it and continue to generation.
+    pub fn choose_smart_model(
+        &mut self,
+        model: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.smart_commit.set_model(model.clone());
+        self.smart_commit.modal = None;
+        eprintln!("[kagi] smart-commit: model selected = {}", model);
+        self.run_smart_generation(window, cx);
+    }
+
+    /// Dismiss any Smart Commit modal without action.
+    pub fn cancel_smart_modal(&mut self, cx: &mut Context<Self>) {
+        self.smart_commit.modal = None;
+        cx.notify();
+    }
+
+    /// Collect the staged diff and dispatch generation on a background thread.
+    ///
+    /// Sends only the staged diff to loopback Ollama (ureq + global timeout in
+    /// the backend).  On any `Err` the result falls back to the rule-based draft
+    /// so the UI never blocks or shows a blocking error.
+    fn run_smart_generation(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo_path) = self.repo_path.clone() else { return };
+        let (Some(model), lang, style) = (
+            self.smart_commit.model.clone(),
+            self.smart_commit.lang,
+            self.smart_commit.style,
+        ) else {
+            return;
+        };
+        let host = smart_commit::SmartCommitState::ollama_host();
+        let overwrite_ok = self.smart_commit_current_msg(cx).trim().is_empty();
+
+        self.smart_commit.generating = true;
+        self.smart_commit.status = Some("Generating with local LLM…".to_string());
+        cx.notify();
+
+        let task = cx.background_spawn(async move {
+            let repo = match git2::Repository::open(&repo_path) {
+                Ok(r) => r,
+                Err(_) => return None,
+            };
+            let files = message_gen::collect_staged_files(&repo);
+            let diff = message_gen::collect_staged_diff(&repo);
+            let gi = message_gen::GenInput { diff, lang, style };
+            // LLM first; on Err fall back to the rule-based draft (quietly).
+            let backend = message_gen::MessageBackend::Ollama { host, model };
+            let (msg, used_llm) = match message_gen::generate_message(&backend, &gi, &files) {
+                Ok(m) => (m, true),
+                Err(e) => {
+                    eprintln!("[kagi] smart-commit: llm failed ({}) → rule-based", e);
+                    (message_gen::rule_based(&gi, &files), false)
+                }
+            };
+            Some((msg, used_llm))
+        });
+
+        cx.spawn(async move |this, acx| {
+            let out = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.smart_commit.generating = false;
+                match out {
+                    Some((msg, used_llm)) if !msg.trim().is_empty() => {
+                        if overwrite_ok {
+                            // The Input's set_value needs `&mut Window`, which is
+                            // unavailable here. Mirror into the panel state and
+                            // queue the message; the next render (which has a
+                            // Window) pushes it into the Input.
+                            if let Some(panel) = app.commit_panel.as_mut() {
+                                panel.commit_msg = msg.clone();
+                            }
+                            app.pending_smart_msg = Some(msg.clone());
+                            app.smart_commit.status = Some(if used_llm {
+                                "Generated with local LLM".to_string()
+                            } else {
+                                "LLM unavailable — used rule-based".to_string()
+                            });
+                        } else {
+                            app.smart_commit.status =
+                                Some("Message not empty — kept your text".to_string());
+                        }
+                    }
+                    _ => {
+                        app.smart_commit.status =
+                            Some("Generation failed — edit manually".to_string());
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Stage a single file in the commit panel.
@@ -5749,6 +6025,17 @@ impl Render for KagiApp {
         // Modal text inputs: lazy-create + sync (needs Window).
         self.sync_modal_inputs(window, cx);
 
+        // T-COMMIT-016: a Smart Commit message generated on a background thread
+        // is pushed into the commit-message Input here, where `&mut Window` is
+        // available (set_value requires it).
+        if let Some(msg) = self.pending_smart_msg.take() {
+            if let Some(input) = self.commit_input.clone() {
+                input.update(cx, |state, cx| {
+                    state.set_value(msg, window, cx);
+                });
+            }
+        }
+
         // Graph horizontal scroll: clamp against the current repo's lane
         // count so the offset self-heals after tab switches and column
         // resizes.
@@ -6133,6 +6420,10 @@ impl Render for KagiApp {
                     }
                 },
             )
+            // ── Smart Commit modal overlay (T-COMMIT-016) ────
+            .when_some(self.smart_commit.modal.clone(), |el, modal| {
+                el.child(render_smart_commit_modal(modal, cx))
+            })
             // ── Status bar slot (T017) — last operation result ─
             .child(self.render_status_bar(status_footer, bottom_panel_open, cx))
             // ── W3-NOTIFY: toast stack (above everything) ──────
@@ -6936,7 +7227,7 @@ impl KagiApp {
             if let Some(panel_state) = commit_panel.clone() {
                 body_row = body_row
                     .child(divider2)
-                    .child(render_commit_panel(panel_state, panel_width, commit_input.clone(), active_wip.clone(), cx));
+                    .child(render_commit_panel(panel_state, panel_width, commit_input.clone(), active_wip.clone(), self.smart_commit.clone(), cx));
             }
         } else if self.inspector_visible {
             // ── Commit Inspector panel (W2-INSPECTOR; W5-MENU toggle) ──
@@ -10013,6 +10304,7 @@ fn render_commit_panel(
     panel_width: f32,
     commit_input: Option<Entity<InputState>>,
     active_wip: Option<(bool, PathBuf)>,
+    smart: smart_commit::SmartCommitState,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     // theme().change_dir now sourced from theme().change_dir (W9-THEME).
@@ -10553,6 +10845,131 @@ fn render_commit_panel(
             .into_any_element()
     };
 
+    // ── Smart Commit Message toolbar (T-COMMIT-016) ───────────
+    // Rule-based "Suggest" is always available; "Generate with Local LLM" is
+    // offered only when an Ollama server is detected and the user opted in.
+    let staged_empty = panel.staged.is_empty();
+    let smart_toolbar = {
+        // Small reusable button factory.
+        let pill = |id: &'static str, label: SharedString, enabled: bool, accent: u32| {
+            let mut b = div()
+                .id(id)
+                .px_1p5()
+                .py_px()
+                .rounded_sm()
+                .text_xs()
+                .bg(rgb(theme().surface))
+                .text_color(rgb(if enabled { accent } else { theme().text_muted }))
+                .child(label);
+            if enabled {
+                b = b.hover(|s| s.bg(rgb(theme().selected)).cursor_pointer());
+            }
+            b
+        };
+
+        // Suggest (rule-based) — always available when something is staged.
+        let suggest_click = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+            this.smart_suggest(window, cx);
+        });
+        let suggest_btn = pill(
+            "cp-smart-suggest",
+            SharedString::from("Suggest"),
+            !staged_empty,
+            theme().color_branch,
+        )
+        .when(!staged_empty, |el| el.on_click(suggest_click));
+
+        // Lang toggle (En / 日本語).
+        let lang_label = match smart.lang {
+            message_gen::Lang::En => "Lang: EN",
+            message_gen::Lang::Ja => "Lang: 日本語",
+        };
+        let lang_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
+            this.smart_commit.toggle_lang();
+            cx.notify();
+        });
+        let lang_btn = pill("cp-smart-lang", SharedString::from(lang_label), true, theme().text_main)
+            .on_click(lang_click);
+
+        // Style toggle (Conventional / Plain).
+        let style_label = match smart.style {
+            message_gen::Style::ConventionalCommits => "Style: CC",
+            message_gen::Style::Plain => "Style: Plain",
+        };
+        let style_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
+            this.smart_commit.toggle_style();
+            cx.notify();
+        });
+        let style_btn = pill("cp-smart-style", SharedString::from(style_label), true, theme().text_main)
+            .on_click(style_click);
+
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .items_center()
+            .gap_1()
+            .child(suggest_btn)
+            .child(lang_btn)
+            .child(style_btn);
+
+        // Generate with Local LLM — only when offered (detected + enabled).
+        if smart.llm_offered() {
+            let gen_enabled = !staged_empty && !smart.generating;
+            let gen_label = if smart.generating {
+                "Generating…".to_string()
+            } else {
+                "Generate with Local LLM".to_string()
+            };
+            let gen_click = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+                this.smart_generate(window, cx);
+            });
+            let gen_btn = pill(
+                "cp-smart-generate",
+                SharedString::from(gen_label),
+                gen_enabled,
+                theme().color_success,
+            )
+            .when(gen_enabled, |el| el.on_click(gen_click));
+            row = row.child(gen_btn);
+        } else if smart.ollama_available && !smart.llm_enabled {
+            // Detected but not yet enabled: offer an enable affordance that
+            // triggers the consent flow.
+            let enable_click = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+                this.smart_generate(window, cx);
+            });
+            let enable_btn = pill(
+                "cp-smart-enable-llm",
+                SharedString::from("Enable Local LLM…"),
+                !staged_empty,
+                theme().color_success,
+            )
+            .when(!staged_empty, |el| el.on_click(enable_click));
+            row = row.child(enable_btn);
+        }
+
+        // "Local LLM available" indicator.
+        let mut col = div().flex().flex_col().gap_px().child(row);
+        if smart.ollama_available {
+            col = col.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme().color_success))
+                    .child(SharedString::from("● Local LLM available")),
+            );
+        }
+        // Transient status line (rule-based inserted / generating / fell back).
+        if let Some(ref status) = smart.status {
+            col = col.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(status.clone())),
+            );
+        }
+        col
+    };
+
     // ── Assemble panel ───────────────────────────────────────
     // T-UI-003: diff ボックス廃止。Unstaged/Staged 箱が flex_1 で全体を占める(1:1)。
     div()
@@ -10632,6 +11049,8 @@ fn render_commit_panel(
                         .child(SharedString::from("Commit message")),
                 )
                 .child(msg_input_wrapper)
+                // Smart Commit Message toolbar (Suggest / Generate / toggles)
+                .child(smart_toolbar)
                 // Unstaged warning
                 .when(has_unstaged_warning, |el| {
                     el.child(
@@ -10897,6 +11316,205 @@ fn render_commit_plan_modal(
                 .left_0()
                 // Block mouse events from reaching the UI beneath the modal
                 // (user-reported click-through on the create-branch dialog).
+                .occlude()
+                .bg(rgb(theme().modal_overlay))
+                .opacity(0.65),
+        )
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .items_center()
+                .child(card),
+        )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Smart Commit modal renderer (T-COMMIT-016, ADR-0044)
+// ──────────────────────────────────────────────────────────────
+
+/// Render the Smart Commit consent / model-picker overlay.
+///
+/// * `Consent` — the first-time opt-in dialog carrying the four mandated
+///   statements ([`smart_commit::CONSENT_LINES`]).  Confirm enables LLM
+///   generation and proceeds to model selection.
+/// * `ModelPicker` — choose one installed model; the choice is persisted.
+fn render_smart_commit_modal(
+    modal: smart_commit::SmartCommitModal,
+    cx: &mut Context<KagiApp>,
+) -> impl IntoElement {
+    let card = match modal {
+        smart_commit::SmartCommitModal::Consent => {
+            let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
+                this.cancel_smart_modal(cx);
+            });
+            let confirm = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
+                this.confirm_smart_consent(cx);
+            });
+            let mut lines_col = div().flex().flex_col().gap_1();
+            for line in smart_commit::CONSENT_LINES {
+                lines_col = lines_col.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_1()
+                        .text_sm()
+                        .child(
+                            div()
+                                .text_color(rgb(theme().color_branch))
+                                .child(SharedString::from("•")),
+                        )
+                        .child(
+                            div()
+                                .text_color(rgb(theme().text_main))
+                                .child(SharedString::from(line)),
+                        ),
+                );
+            }
+            div()
+                .w(px(460.))
+                .bg(rgb(theme().modal))
+                .rounded_lg()
+                .p_4()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(
+                    div()
+                        .text_xl()
+                        .text_color(rgb(theme().text_main))
+                        .child(SharedString::from("Enable Local LLM generation?")),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(theme().text_sub))
+                        .child(SharedString::from(
+                            "Pressing Generate sends your staged diff to a local Ollama \
+                             model on this machine. Please review:",
+                        )),
+                )
+                .child(lines_col)
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .justify_end()
+                        .child(
+                            div()
+                                .id("smart-consent-cancel")
+                                .px_3()
+                                .py_1()
+                                .rounded_sm()
+                                .bg(rgb(theme().surface))
+                                .text_sm()
+                                .text_color(rgb(theme().text_main))
+                                .on_click(cancel)
+                                .hover(|s| s.bg(rgb(theme().selected)))
+                                .child(SharedString::from("Cancel")),
+                        )
+                        .child(
+                            div()
+                                .id("smart-consent-confirm")
+                                .px_3()
+                                .py_1()
+                                .rounded_sm()
+                                .bg(rgb(theme().color_success))
+                                .text_sm()
+                                .text_color(rgb(theme().bg_base))
+                                .on_click(confirm)
+                                .hover(|s| s.opacity(0.85))
+                                .child(SharedString::from("Enable & continue")),
+                        ),
+                )
+        }
+        smart_commit::SmartCommitModal::ModelPicker { models } => {
+            let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
+                this.cancel_smart_modal(cx);
+            });
+            let mut list = div().flex().flex_col().gap_1();
+            for (i, m) in models.iter().enumerate() {
+                let model_name = m.clone();
+                let pick = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+                    this.choose_smart_model(model_name.clone(), window, cx);
+                });
+                list = list.child(
+                    div()
+                        .id(("smart-model", i))
+                        .px_3()
+                        .py_1()
+                        .rounded_sm()
+                        .bg(rgb(theme().surface))
+                        .text_sm()
+                        .text_color(rgb(theme().text_main))
+                        .on_click(pick)
+                        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+                        .child(SharedString::from(m.clone())),
+                );
+            }
+            div()
+                .w(px(420.))
+                .bg(rgb(theme().modal))
+                .rounded_lg()
+                .p_4()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(
+                    div()
+                        .text_xl()
+                        .text_color(rgb(theme().text_main))
+                        .child(SharedString::from("Select a local model")),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(theme().text_sub))
+                        .child(SharedString::from(
+                            "Choose which installed Ollama model to use. \
+                             Your choice is remembered.",
+                        )),
+                )
+                .child(list)
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .justify_end()
+                        .child(
+                            div()
+                                .id("smart-model-cancel")
+                                .px_3()
+                                .py_1()
+                                .rounded_sm()
+                                .bg(rgb(theme().surface))
+                                .text_sm()
+                                .text_color(rgb(theme().text_main))
+                                .on_click(cancel)
+                                .hover(|s| s.bg(rgb(theme().selected)))
+                                .child(SharedString::from("Cancel")),
+                        ),
+                )
+        }
+    };
+
+    div()
+        .size_full()
+        .absolute()
+        .top_0()
+        .left_0()
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
                 .occlude()
                 .bg(rgb(theme().modal_overlay))
                 .opacity(0.65),

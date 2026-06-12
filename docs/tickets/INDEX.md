@@ -76,3 +76,37 @@
 | W2-GRAPH | HEAD/merge node 視覚区別 / 選択強調 / compact mode / label接続 | ADR-0016 | done |
 | W2-DELETE | plan_delete_branch backend(merged のみ、plan 経由)+ sidebar ✕ 起動 | ADR-0014 | done |
 | W3-NOTIFY | スナックバー通知 + pull/push 非同期化(ユーザー要望) | - | done |
+| T-CM-001 | Commit row の right-click event 取得 | ADR-0020 | todo |
+| T-CM-002 | 右クリック commit を selection state に反映 | T-CM-001 | todo |
+| T-CM-003 | Context Menu component(overlay 描画 + dismiss) | T-CM-001, T-CM-004, ADR-0020 | todo |
+| T-CM-004 | Menu item model + availability 純関数 | ADR-0021 | todo |
+| T-CM-005 | disabled reason と tooltip 表示 | T-CM-003, T-CM-004 | todo |
+| T-CM-010 | Copy full SHA(menu 統合) | T-CM-003, ADR-0022 | todo |
+| T-CM-011 | Copy short SHA | T-CM-010 | todo |
+| T-CM-012 | Copy commit message | T-CM-010 | todo |
+| T-CM-013 | Show commit details(selection 統合) | T-CM-002, T-CM-003 | todo |
+| T-CM-020 | Create branch here の plan 統合(checkout オプション込み) | T-CM-003, ADR-0022(既存 plan_create_branch) | todo |
+| T-CM-021 | Create branch dialog の menu 起点対応 | T-CM-020 | todo |
+| T-CM-022 | Create worktree here の ADR | - | done(ADR-0025) |
+| T-CM-023 | Create worktree here の plan + 実行 | ADR-0025, T-CM-024 | todo |
+| T-CM-024 | Worktree path validation | ADR-0025 | todo |
+| T-CM-030 | Cherry-pick availability 判定 | T-CM-004 | todo |
+| T-CM-031 | Cherry-pick の menu 統合(既存 plan 流用) | T-CM-030, ADR-0022 | todo |
+| T-CM-032 | Cherry-pick conflict handling の確認・補強 | T-CM-031 | todo |
+| T-CM-033 | Revert の ADR | - | done(ADR-0023 §Revert + ADR-0022 §Revert 実行設計) |
+| T-CM-034 | Revert の plan + 実行 | ADR-0022, T-CM-004 | todo |
+| T-CM-040 | Checkout this commit の availability 判定 | T-CM-004 | todo |
+| T-CM-041 | Checkout commit(detached)の plan + 実行 + 警告 | T-CM-040, ADR-0022 | todo |
+| T-CM-042 | Compare with HEAD | ADR-0026, T-CM-004 | todo |
+| T-CM-043 | Compare with working tree / local changes | T-CM-042 | todo |
+| T-CM-044 | Compare View の Right Panel / Diff Viewer 統合確認 | T-CM-042, T-CM-043 | todo |
+| T-CM-050 | Reset Semantics ADR | - | done(ADR-0024) |
+| T-CM-051 | Reset menu 項目(disabled)の追加 | T-CM-003, ADR-0024 | todo |
+| T-CM-052 | Soft reset の plan + 実行 | ADR-0024 実装承認 | later |
+| T-CM-053 | Mixed reset の plan + 実行 | T-CM-052 | later |
+| T-CM-054 | Hard reset(設計完了まで実装しない) | T-CM-053, ADR-0024 §hard の追加設計 | later |
+| T-CM-060 | Context Menu 操作の Operation Log 記録 | T-CM-020〜041 | todo |
+| T-CM-061 | 操作後 refresh の統合確認 | T-CM-060 | todo |
+| T-CM-062 | Inspector Actions と Context Menu の handler 統合 | T-CM-010, T-CM-021, T-CM-031 | todo |
+| T-CM-063 | 状況別 availability の unit test | T-CM-004 | todo |
+| T-CM-064 | fixture での E2E 検証(cherry-pick/revert/checkout/compare) | T-CM-031, T-CM-034, T-CM-041, T-CM-043 | todo |

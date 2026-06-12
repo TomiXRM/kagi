@@ -112,3 +112,4 @@
 | T-CM-064 | fixture での E2E 検証(cherry-pick/revert/checkout/compare) | T-CM-031, T-CM-034, T-CM-041, T-CM-043 | todo |
 | W4-TABS | リポジトリ tab 切り替え + ディレクトリ選択(ADR-0027/0028) | - | in-progress |
 | W5-MENU | メニューバー + Command Registry(ADR-0029) | W4-TABS | in-progress |
+| W6-TABSPEED | tab 切替高速化(キャッシュ + 非同期読込、ADR-0030) | W4-TABS | in-progress |

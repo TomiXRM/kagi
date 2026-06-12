@@ -152,9 +152,9 @@ const INNER_DIV_W: f32 = 4.0;
 
 // ── W2-GRAPH: compact mode ────────────────────────────────────
 /// Row height for normal (full) mode.
-const ROW_H_FULL: f32 = graph_view::ROW_H;  // 24.0
+const ROW_H_FULL: f32 = graph_view::ROW_H;  // 29.0 (= 24 * 1.2)
 /// Row height for compact mode.
-const ROW_H_COMPACT: f32 = 18.0;
+const ROW_H_COMPACT: f32 = 22.0;  // 18.0 * 1.2 (keeps compact:full ratio)
 
 /// Return the row height for the current compact mode setting.
 #[inline]

@@ -47,7 +47,7 @@ pub const LANE_W: f32 = 14.0;
 pub const MAX_LANES: usize = 8;
 /// Row height in pixels (must match what uniform_list computes for each row).
 /// T008 rows use `py(px(3.))` (6 px total padding) plus text ≈ 18 px → 24 px.
-pub const ROW_H: f32 = 24.0;
+pub const ROW_H: f32 = 29.0;  // 24.0 * 1.2 (user request: +20% row spacing)
 /// Node circle radius in pixels.
 const NODE_R: f32 = 4.0;
 /// Edge stroke width in pixels.

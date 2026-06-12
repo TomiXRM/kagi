@@ -447,18 +447,22 @@ fn test_checkout_commit_dirty_safe_checkout_fails_without_moving_head() {
 
     write_file(&repo_dir, "README.md", "local dirty\n");
     let plan = plan_checkout_commit(&repo, &target).expect("plan_checkout_commit failed");
+    // W15-ASYNCOPS / BUG-2: README.md is locally modified AND differs in the
+    // target commit (overlap). The in-memory dry-run promotes the dirty warning
+    // to a blocker so the plan matches what safe-mode `execute` does (refuse).
     assert!(
-        plan.blockers.is_empty(),
-        "dirty worktree should warn, not block, got blockers: {:?}",
+        !plan.blockers.is_empty(),
+        "overlapping dirty worktree should block, got blockers: {:?}",
         plan.blockers
     );
     assert!(
-        plan.warnings.iter().any(|w| w.contains("dirty")),
-        "dirty plan should include warning, got: {:?}",
-        plan.warnings
+        plan.blockers.iter().any(|b| b.contains("README.md")),
+        "blocker should name the conflicting file, got: {:?}",
+        plan.blockers
     );
 
-    preflight_check(&repo, &plan).expect("preflight failed");
+    // Execution still refuses and preserves the local edit (data-safety), even
+    // when driven past the plan's blocker.
     let result = execute_checkout_commit(&repo, &target);
     assert!(result.is_err(), "safe checkout should refuse dirty overwrite");
 

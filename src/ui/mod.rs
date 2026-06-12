@@ -2381,10 +2381,20 @@ impl KagiApp {
         }
     }
 
-    pub fn confirm_create_worktree(&mut self) {
-        // The live plan is debounced; rebuild it from the latest input so a
-        // fast type-then-click can never execute a stale plan.
+    /// W15-ASYNCOPS: UI-path create-worktree — checks out a full tree into a new
+    /// linked worktree on a background thread. The headless KAGI_* path executes
+    /// `execute_create_worktree` directly (no confirm_* wrapper). On failure the
+    /// footer/toast carry the error (the modal is already closed, matching the
+    /// stash async path).
+    pub fn start_create_worktree(&mut self, cx: &mut Context<Self>) {
+        // Rebuild from the latest input so a fast type-then-click can't execute
+        // a stale plan.
         self.run_modal_replans();
+        if self.busy_op.is_some() {
+            self.status_footer =
+                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+            return;
+        }
         let modal = match self.create_worktree_modal.clone() {
             Some(m) => m,
             None => return,
@@ -2409,86 +2419,51 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match git2::Repository::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                let err_msg = format!("Repo open error: {}", e.message());
-                self.record_op(
-                    "create-worktree",
-                    plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() },
-                    &repo_path,
-                );
-                if let Some(ref mut m) = self.create_worktree_modal {
-                    m.error = Some(SharedString::from(err_msg));
-                }
-                return;
-            }
-        };
-        if let Err(e) = preflight_check(&repo, &plan) {
-            let err_msg = format!("Preflight failed: {}", e);
-            self.record_op(
-                "create-worktree",
-                plan.current.clone(),
-                OpOutcome::Failed { error: err_msg.clone() },
-                &repo_path,
-            );
-            if let Some(ref mut m) = self.create_worktree_modal {
-                m.error = Some(SharedString::from(err_msg));
-            }
-            return;
-        }
-        if let Err(e) = execute_create_worktree(&repo, &modal.branch_input, &modal.path_input, &modal.at) {
-            let err_msg = format!("Create worktree failed: {}", e);
-            self.record_op(
-                "create-worktree",
-                plan.current.clone(),
-                OpOutcome::Failed { error: err_msg.clone() },
-                &repo_path,
-            );
-            if let Some(ref mut m) = self.create_worktree_modal {
-                m.error = Some(SharedString::from(err_msg));
-            }
-            return;
-        }
 
-        eprintln!(
-            "[kagi] executed: create-worktree '{}' path='{}' @ {}",
-            modal.branch_input,
-            modal.path_input,
-            modal.at.short()
-        );
-        let verify_path = {
-            let path = std::path::PathBuf::from(&modal.path_input);
-            if path.is_absolute() {
-                path
-            } else {
-                repo_path.join(path)
-            }
-        };
-        match git2::Repository::open(&verify_path) {
-            Ok(linked) => {
-                let head = linked
-                    .head()
-                    .ok()
-                    .and_then(|h| h.shorthand().ok().map(|s| s.to_string()));
-                eprintln!(
-                    "[kagi] verified: worktree '{}' HEAD={}",
-                    verify_path.display(),
-                    head.unwrap_or_else(|| "?".to_string())
-                );
-            }
-            Err(e) => {
-                eprintln!("[kagi] verify: worktree open error: {}", e.message());
-            }
-        }
-        self.record_op(
-            "create-worktree",
-            plan.current.clone(),
-            OpOutcome::Success { after: plan.predicted.clone() },
-            &repo_path,
-        );
-        self.reload();
+        self.busy_op = Some("create-worktree");
+        self.create_worktree_modal = None;
+        self.status_footer = FooterStatus::Busy(SharedString::from("create worktree 実行中…"));
+        self.push_toast(ToastKind::Info, "create-worktree: 開始しました");
+        eprintln!("[kagi] async: create-worktree started");
+
+        let branch_input = modal.branch_input.clone();
+        let path_input = modal.path_input.clone();
+        let at = modal.at.clone();
+        let bg_path = repo_path.clone();
+        let bg_plan = plan.clone();
+        let task = cx.background_spawn(async move {
+            create_worktree_blocking(&bg_path, &bg_plan, &branch_input, &path_input, &at)
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok(after) => {
+                        eprintln!("[kagi] async: create-worktree finished");
+                        app.record_op(
+                            "create-worktree",
+                            plan.current.clone(),
+                            OpOutcome::Success { after },
+                            &repo_path,
+                        );
+                        app.reload();
+                    }
+                    Err(err_msg) => {
+                        eprintln!("[kagi] async: create-worktree failed — {}", err_msg);
+                        app.record_op(
+                            "create-worktree",
+                            plan.current.clone(),
+                            OpOutcome::Failed { error: err_msg },
+                            &repo_path,
+                        );
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     // ── Stash push modal (T015) ──────────────────────────────
@@ -2858,15 +2833,18 @@ impl KagiApp {
         self.cherry_pick_modal = None;
     }
 
-    /// Confirm the cherry-pick plan: run preflight, execute, then reload.
-    ///
-    /// On failure the modal remains open and shows the error text.
-    pub fn confirm_cherry_pick(&mut self) {
+    /// W15-ASYNCOPS: UI-path cherry-pick — background thread + start/finish
+    /// toasts. The headless KAGI_* path executes `execute_cherry_pick` directly.
+    pub fn start_cherry_pick(&mut self, cx: &mut Context<Self>) {
         let modal = match self.cherry_pick_modal.clone() {
             Some(m) => m,
             None => return,
         };
-        // Defence in depth: refuse if blockers exist.
+        if self.busy_op.is_some() {
+            self.status_footer =
+                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+            return;
+        }
         if !modal.plan.blockers.is_empty() {
             eprintln!("[kagi] refused: cherry-pick plan has blockers, not executing");
             if let Some(ref rp) = self.repo_path.clone() {
@@ -2877,6 +2855,8 @@ impl KagiApp {
                     rp,
                 );
             }
+            self.cherry_pick_modal = None;
+            cx.notify();
             return;
         }
         let repo_path = match self.repo_path.clone() {
@@ -2884,103 +2864,55 @@ impl KagiApp {
             None => return,
         };
 
-        let repo = match git2::Repository::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                let err_msg = format!("Repo open error: {}", e.message());
-                self.record_op(
-                    "cherry-pick",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() },
-                    &repo_path,
-                );
-                if let Some(ref mut m) = self.cherry_pick_modal {
-                    m.error = Some(SharedString::from(err_msg));
+        self.busy_op = Some("cherry-pick");
+        self.cherry_pick_modal = None;
+        self.status_footer = FooterStatus::Busy(SharedString::from("cherry-pick 実行中…"));
+        self.push_toast(ToastKind::Info, "cherry-pick: 開始しました");
+        eprintln!("[kagi] async: cherry-pick started");
+
+        let plan = modal.plan.clone();
+        let commit_id = modal.commit_id.clone();
+        let bg_path = repo_path.clone();
+        let bg_plan = plan.clone();
+        let bg_commit = commit_id.clone();
+        let task = cx.background_spawn(async move {
+            cherry_pick_blocking(&bg_path, &bg_plan, &bg_commit)
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok((_summary, after)) => {
+                        eprintln!("[kagi] async: cherry-pick finished");
+                        app.record_op(
+                            "cherry-pick",
+                            plan.current.clone(),
+                            OpOutcome::Success { after },
+                            &repo_path,
+                        );
+                        app.reload();
+                    }
+                    Err(err_msg) => {
+                        eprintln!("[kagi] async: cherry-pick failed — {}", err_msg);
+                        app.record_op(
+                            "cherry-pick",
+                            plan.current.clone(),
+                            OpOutcome::Failed { error: err_msg.clone() },
+                            &repo_path,
+                        );
+                        app.cherry_pick_modal = Some(CherryPickModal {
+                            commit_id: commit_id.clone(),
+                            plan: plan.clone(),
+                            error: Some(SharedString::from(err_msg)),
+                        });
+                    }
                 }
-                return;
-            }
-        };
-
-        // Preflight check (HEAD unchanged since planning).
-        if let Err(e) = preflight_check(&repo, &modal.plan) {
-            let err_msg = format!("Preflight failed: {}", e);
-            self.record_op(
-                "cherry-pick",
-                modal.plan.current.clone(),
-                OpOutcome::Failed { error: err_msg.clone() },
-                &repo_path,
-            );
-            if let Some(ref mut m) = self.cherry_pick_modal {
-                m.error = Some(SharedString::from(err_msg));
-            }
-            return;
-        }
-
-        // Execute cherry-pick (in-memory index → commit → checkout_head safe).
-        match execute_cherry_pick(&repo, &modal.commit_id) {
-            Ok(new_id) => {
-                eprintln!(
-                    "[kagi] executed: cherry-pick {} -> {}",
-                    modal.commit_id.short(),
-                    new_id.short()
-                );
-
-                // Verify: re-snapshot, check HEAD is a new commit.
-                let mut repo2 = match git2::Repository::open(&repo_path) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        eprintln!("[kagi] verify: repo open error: {}", e.message());
-                        self.reload();
-                        return;
-                    }
-                };
-                let after_summary = match kagi::git::snapshot(&mut repo2, 10_000) {
-                    Ok(snap) => {
-                        if let Head::Attached { target, branch } = &snap.head {
-                            if *target == new_id.0 {
-                                eprintln!("[kagi] verified: cherry-pick HEAD={} on {}", new_id.short(), branch);
-                            } else {
-                                eprintln!("[kagi] verify: HEAD={} expected {}", &target[..8.min(target.len())], new_id.short());
-                            }
-                            let is_clean = !snap.status.is_dirty();
-                            eprintln!("[kagi] verified: working tree {}", if is_clean { "clean" } else { "dirty (unexpected)" });
-                        }
-                        StateSummary {
-                            head: snap.head.display(),
-                            dirty: if snap.status.is_dirty() { "dirty".to_string() } else { "clean".to_string() },
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("[kagi] verify: snapshot error: {}", e);
-                        modal.plan.predicted.clone()
-                    }
-                };
-
-                // Record success to oplog + update footer.
-                self.record_op(
-                    "cherry-pick",
-                    modal.plan.current.clone(),
-                    OpOutcome::Success { after: after_summary },
-                    &repo_path,
-                );
-            }
-            Err(e) => {
-                let err_msg = format!("Cherry-pick failed: {}", e);
-                self.record_op(
-                    "cherry-pick",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() },
-                    &repo_path,
-                );
-                if let Some(ref mut m) = self.cherry_pick_modal {
-                    m.error = Some(SharedString::from(err_msg));
-                }
-                return;
-            }
-        }
-
-        // Reload display data (new commit should appear in graph).
-        self.reload();
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     // ── Revert modal (T-CM-034) ─────────────────────────────
@@ -3028,12 +2960,18 @@ impl KagiApp {
         self.revert_modal = None;
     }
 
-    /// Confirm the revert plan: run preflight, execute, verify, record, reload.
-    pub fn confirm_revert(&mut self) {
+    /// W15-ASYNCOPS: UI-path revert — background thread + start/finish toasts.
+    /// The headless KAGI_* path executes `execute_revert` directly.
+    pub fn start_revert(&mut self, cx: &mut Context<Self>) {
         let modal = match self.revert_modal.clone() {
             Some(m) => m,
             None => return,
         };
+        if self.busy_op.is_some() {
+            self.status_footer =
+                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+            return;
+        }
         if !modal.plan.blockers.is_empty() {
             eprintln!("[kagi] refused: revert plan has blockers, not executing");
             if let Some(ref rp) = self.repo_path.clone() {
@@ -3044,6 +2982,8 @@ impl KagiApp {
                     rp,
                 );
             }
+            self.revert_modal = None;
+            cx.notify();
             return;
         }
         let repo_path = match self.repo_path.clone() {
@@ -3051,96 +2991,55 @@ impl KagiApp {
             None => return,
         };
 
-        let repo = match git2::Repository::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                let err_msg = format!("Repo open error: {}", e.message());
-                self.record_op(
-                    "revert",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() },
-                    &repo_path,
-                );
-                if let Some(ref mut m) = self.revert_modal {
-                    m.error = Some(SharedString::from(err_msg));
+        self.busy_op = Some("revert");
+        self.revert_modal = None;
+        self.status_footer = FooterStatus::Busy(SharedString::from("revert 実行中…"));
+        self.push_toast(ToastKind::Info, "revert: 開始しました");
+        eprintln!("[kagi] async: revert started");
+
+        let plan = modal.plan.clone();
+        let commit_id = modal.commit_id.clone();
+        let bg_path = repo_path.clone();
+        let bg_plan = plan.clone();
+        let bg_commit = commit_id.clone();
+        let task = cx.background_spawn(async move {
+            revert_blocking(&bg_path, &bg_plan, &bg_commit)
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok((_summary, after)) => {
+                        eprintln!("[kagi] async: revert finished");
+                        app.record_op(
+                            "revert",
+                            plan.current.clone(),
+                            OpOutcome::Success { after },
+                            &repo_path,
+                        );
+                        app.reload();
+                    }
+                    Err(err_msg) => {
+                        eprintln!("[kagi] async: revert failed — {}", err_msg);
+                        app.record_op(
+                            "revert",
+                            plan.current.clone(),
+                            OpOutcome::Failed { error: err_msg.clone() },
+                            &repo_path,
+                        );
+                        app.revert_modal = Some(RevertModal {
+                            commit_id: commit_id.clone(),
+                            plan: plan.clone(),
+                            error: Some(SharedString::from(err_msg)),
+                        });
+                    }
                 }
-                return;
-            }
-        };
-
-        if let Err(e) = preflight_check(&repo, &modal.plan) {
-            let err_msg = format!("Preflight failed: {}", e);
-            self.record_op(
-                "revert",
-                modal.plan.current.clone(),
-                OpOutcome::Failed { error: err_msg.clone() },
-                &repo_path,
-            );
-            if let Some(ref mut m) = self.revert_modal {
-                m.error = Some(SharedString::from(err_msg));
-            }
-            return;
-        }
-
-        match execute_revert(&repo, &modal.commit_id) {
-            Ok(new_id) => {
-                eprintln!(
-                    "[kagi] executed: revert {} -> {}",
-                    modal.commit_id.short(),
-                    new_id.short()
-                );
-
-                let mut repo2 = match git2::Repository::open(&repo_path) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        eprintln!("[kagi] verify: repo open error: {}", e.message());
-                        self.reload();
-                        return;
-                    }
-                };
-                let after_summary = match kagi::git::snapshot(&mut repo2, 10_000) {
-                    Ok(snap) => {
-                        if let Head::Attached { target, branch } = &snap.head {
-                            if *target == new_id.0 {
-                                eprintln!("[kagi] verified: revert HEAD={} on {}", new_id.short(), branch);
-                            } else {
-                                eprintln!("[kagi] verify: HEAD={} expected {}", &target[..8.min(target.len())], new_id.short());
-                            }
-                        }
-                        StateSummary {
-                            head: snap.head.display(),
-                            dirty: if snap.status.is_dirty() { "dirty".to_string() } else { "clean".to_string() },
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("[kagi] verify: snapshot error: {}", e);
-                        modal.plan.predicted.clone()
-                    }
-                };
-
-                self.record_op(
-                    "revert",
-                    modal.plan.current.clone(),
-                    OpOutcome::Success { after: after_summary },
-                    &repo_path,
-                );
-            }
-            Err(e) => {
-                let err_msg = format!("Revert failed: {}", e);
-                self.record_op(
-                    "revert",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() },
-                    &repo_path,
-                );
-                if let Some(ref mut m) = self.revert_modal {
-                    m.error = Some(SharedString::from(err_msg));
-                }
-                return;
-            }
-        }
-
-        self.reload();
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     // ── Oplog + footer helper (T017) ────────────────────────
@@ -3815,6 +3714,103 @@ impl KagiApp {
         self.reload();
     }
 
+    /// W15-ASYNCOPS: UI-path checkout — runs `checkout_blocking` on a background
+    /// thread so a large `checkout_tree` write never freezes the window. The
+    /// headless `KAGI_CHECKOUT*` path keeps using `confirm_checkout` (sync).
+    pub fn start_checkout(&mut self, cx: &mut Context<Self>) {
+        let modal = match self.plan_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        if self.busy_op.is_some() {
+            self.status_footer =
+                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+            return;
+        }
+        // Enter-checkout on a dirty tree: stash the changes first (synchronous;
+        // armed/two-stage style state stays on the main thread). A refused/failed
+        // auto-stash aborts the checkout with the error shown in the modal.
+        if modal.stash_first && self.status_summary.is_dirty {
+            if !self.stash_before_checkout() {
+                return;
+            }
+        }
+        // Defence in depth: never execute a blocked plan.
+        if !modal.plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: plan has blockers, not executing");
+            if let Some(ref rp) = self.repo_path.clone() {
+                self.record_op(
+                    "checkout",
+                    modal.plan.current.clone(),
+                    OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                    rp,
+                );
+            }
+            self.plan_modal = None;
+            cx.notify();
+            return;
+        }
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let op_name = match &modal.target {
+            CheckoutPlanTarget::Branch(_) => "checkout",
+            CheckoutPlanTarget::Commit(_) => "checkout-commit",
+        };
+
+        self.busy_op = Some("checkout");
+        self.plan_modal = None;
+        self.status_footer = FooterStatus::Busy(SharedString::from("checkout 実行中…"));
+        self.push_toast(ToastKind::Info, "checkout: 開始しました");
+        eprintln!("[kagi] async: checkout started");
+
+        let plan = modal.plan.clone();
+        let target = modal.target.clone();
+        let bg_path = repo_path.clone();
+        let bg_plan = plan.clone();
+        let bg_target = target.clone();
+        let task = cx.background_spawn(async move {
+            checkout_blocking(&bg_path, &bg_plan, &bg_target)
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok((_summary, after)) => {
+                        eprintln!("[kagi] async: checkout finished");
+                        app.record_op(
+                            op_name,
+                            plan.current.clone(),
+                            OpOutcome::Success { after },
+                            &repo_path,
+                        );
+                        app.reload();
+                    }
+                    Err(err_msg) => {
+                        eprintln!("[kagi] async: checkout failed — {}", err_msg);
+                        app.record_op(
+                            op_name,
+                            plan.current.clone(),
+                            OpOutcome::Failed { error: err_msg.clone() },
+                            &repo_path,
+                        );
+                        app.plan_modal = Some(CheckoutPlanModal {
+                            stash_first: false,
+                            target: target.clone(),
+                            plan: plan.clone(),
+                            error: Some(SharedString::from(err_msg)),
+                        });
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     // ── T-HT-003: Pull ────────────────────────────────────────
 
     /// Build a pull plan and open the confirmation modal.
@@ -4378,6 +4374,85 @@ impl KagiApp {
         }
     }
 
+    /// W15-ASYNCOPS: UI-path amend. The two-stage confirm (armed state) stays on
+    /// the main thread; only the final armed execute (history rewrite — tree
+    /// build + commit replace) runs on a background thread. Headless keeps
+    /// `confirm_amend` (sync).
+    pub fn start_amend(&mut self, cx: &mut Context<Self>) {
+        let modal = match self.amend_modal.clone() { Some(m) => m, None => return };
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+
+        // Defence: never execute with blockers present.
+        if !modal.plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: amend plan has blockers, not executing");
+            self.record_op("amend", modal.plan.current.clone(),
+                OpOutcome::Refused { blockers: modal.plan.blockers.clone() }, &repo_path);
+            return;
+        }
+
+        // First click only arms (main thread) — matches confirm_amend exactly.
+        if !modal.confirm_armed {
+            self.amend_modal = Some(AmendPlanModal { confirm_armed: true, ..modal });
+            eprintln!("[kagi] amend: armed (second confirm required — history rewrite)");
+            return;
+        }
+
+        // Armed → background execute. Refuse a concurrent background op.
+        if self.busy_op.is_some() {
+            self.status_footer =
+                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+            return;
+        }
+
+        self.busy_op = Some("amend");
+        self.amend_modal = None;
+        self.status_footer = FooterStatus::Busy(SharedString::from("amend 実行中…"));
+        self.push_toast(ToastKind::Info, "amend: 開始しました");
+        eprintln!("[kagi] async: amend started");
+
+        let plan = modal.plan.clone();
+        let mode = modal.mode;
+        let message = modal.message.clone();
+        let bg_path = repo_path.clone();
+        let bg_plan = plan.clone();
+        let bg_msg = message.clone();
+        let task = cx.background_spawn(async move {
+            amend_blocking(&bg_path, &bg_plan, mode, &bg_msg)
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok((after, old, new)) => {
+                        eprintln!("[kagi] async: amend finished");
+                        app.record_op("amend", plan.current.clone(),
+                            OpOutcome::Success { after }, &repo_path);
+                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                            "amend: {} → {} (restore: git reset --hard {})",
+                            old.short(), new.short(), old.short())));
+                        app.reload();
+                    }
+                    Err(err_msg) => {
+                        eprintln!("[kagi] async: amend failed — {}", err_msg);
+                        app.record_op("amend", plan.current.clone(),
+                            OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
+                        app.amend_modal = Some(AmendPlanModal {
+                            plan: plan.clone(),
+                            error: Some(SharedString::from(err_msg)),
+                            mode,
+                            message: message.clone(),
+                            confirm_armed: false,
+                        });
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     /// Build a stash-pop plan and open the confirmation modal.
     pub fn open_pop_modal(&mut self, index: usize) {
         let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
@@ -4445,6 +4520,69 @@ impl KagiApp {
                 self.pop_modal = Some(PopPlanModal { plan: modal.plan.clone(), error: Some(SharedString::from(err_msg)), stash_index: modal.stash_index });
             }
         }
+    }
+
+    /// W15-ASYNCOPS: UI-path stash-pop — background thread + start/finish toasts.
+    /// Headless keeps `confirm_pop` (sync).
+    pub fn start_pop(&mut self, cx: &mut Context<Self>) {
+        let modal = match self.pop_modal.clone() { Some(m) => m, None => return };
+        if self.busy_op.is_some() {
+            self.status_footer =
+                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+            return;
+        }
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        if !modal.plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: pop plan has blockers, not executing");
+            self.record_op("stash-pop", modal.plan.current.clone(),
+                OpOutcome::Refused { blockers: modal.plan.blockers.clone() }, &repo_path);
+            self.pop_modal = None;
+            cx.notify();
+            return;
+        }
+
+        self.busy_op = Some("stash-pop");
+        self.pop_modal = None;
+        self.status_footer = FooterStatus::Busy(SharedString::from("stash pop 実行中…"));
+        self.push_toast(ToastKind::Info, "stash pop: 開始しました");
+        eprintln!("[kagi] async: stash-pop started");
+
+        let plan = modal.plan.clone();
+        let stash_index = modal.stash_index;
+        let bg_path = repo_path.clone();
+        let bg_plan = plan.clone();
+        let task = cx.background_spawn(async move {
+            stash_pop_blocking(&bg_path, &bg_plan, stash_index)
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok((summary, after)) => {
+                        eprintln!("[kagi] async: stash-pop finished");
+                        app.record_op("stash-pop", plan.current.clone(),
+                            OpOutcome::Success { after }, &repo_path);
+                        app.status_footer = FooterStatus::Success(SharedString::from(
+                            format!("stash pop: {}", summary)));
+                        app.reload();
+                    }
+                    Err(err_msg) => {
+                        eprintln!("[kagi] async: stash-pop failed — {}", err_msg);
+                        app.record_op("stash-pop", plan.current.clone(),
+                            OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
+                        app.pop_modal = Some(PopPlanModal {
+                            plan: plan.clone(),
+                            error: Some(SharedString::from(err_msg)),
+                            stash_index,
+                        });
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     // ── W2-DELETE: Delete-branch modal ───────────────────────
@@ -4591,6 +4729,100 @@ impl KagiApp {
                 });
             }
         }
+    }
+
+    /// W15-ASYNCOPS: UI-path delete-branch — background thread + start/finish
+    /// toasts (ref delete is lightweight, but kept on the background path for a
+    /// uniform busy/disabled experience). Headless keeps `confirm_delete_branch`.
+    pub fn start_delete_branch(&mut self, cx: &mut Context<Self>) {
+        let modal = match self.delete_branch_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        if self.busy_op.is_some() {
+            self.status_footer =
+                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+            return;
+        }
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        if !modal.plan.blockers.is_empty() {
+            eprintln!(
+                "[kagi] refused: delete-branch plan has {} blocker(s), not executing",
+                modal.plan.blockers.len()
+            );
+            self.record_op(
+                "delete-branch",
+                modal.plan.current.clone(),
+                kagi::git::oplog::OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                &repo_path,
+            );
+            self.delete_branch_modal = None;
+            cx.notify();
+            return;
+        }
+
+        self.busy_op = Some("delete-branch");
+        self.delete_branch_modal = None;
+        self.status_footer = FooterStatus::Busy(SharedString::from("delete branch 実行中…"));
+        self.push_toast(ToastKind::Info, "delete-branch: 開始しました");
+        eprintln!("[kagi] async: delete-branch started");
+
+        let plan = modal.plan.clone();
+        let branch_name = modal.branch_name.clone();
+        let bg_path = repo_path.clone();
+        let bg_plan = plan.clone();
+        let bg_branch = branch_name.clone();
+        let task = cx.background_spawn(async move {
+            delete_branch_blocking(&bg_path, &bg_plan, &bg_branch)
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok(after) => {
+                        eprintln!("[kagi] async: delete-branch finished");
+                        let recovery_line = plan
+                            .recovery
+                            .lines()
+                            .nth(1)
+                            .unwrap_or("git branch …")
+                            .to_string();
+                        app.record_op(
+                            "delete-branch",
+                            plan.current.clone(),
+                            kagi::git::oplog::OpOutcome::Success { after },
+                            &repo_path,
+                        );
+                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                            "delete-branch: '{}' deleted (restore: {})",
+                            branch_name, recovery_line
+                        )));
+                        app.reload();
+                    }
+                    Err(err_msg) => {
+                        eprintln!("[kagi] async: delete-branch failed — {}", err_msg);
+                        app.record_op(
+                            "delete-branch",
+                            plan.current.clone(),
+                            kagi::git::oplog::OpOutcome::Failed { error: err_msg.clone() },
+                            &repo_path,
+                        );
+                        app.delete_branch_modal = Some(DeleteBranchModal {
+                            branch_name: branch_name.clone(),
+                            plan: plan.clone(),
+                            error: Some(SharedString::from(err_msg)),
+                        });
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     // ── T025: Commit Panel ────────────────────────────────────
@@ -5118,113 +5350,78 @@ impl KagiApp {
         }
     }
 
-    /// Confirm the commit plan: run execute_commit then reload.
-    ///
-    /// On failure the modal remains open with the error text.
-    /// T026: cx is needed to read the InputState value.
-    pub fn confirm_commit(&mut self, cx: &mut Context<Self>) {
+    /// W15-ASYNCOPS: UI-path commit — tree-build + write on a background thread.
+    /// The message is read from the Input on the main thread; the branch draft is
+    /// cleared in the finish step (also main thread). The headless KAGI_* path
+    /// executes `execute_commit` directly.
+    pub fn start_commit(&mut self, cx: &mut Context<Self>) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        // T026: read message from InputState if available, else from commit_panel.commit_msg.
+        if self.busy_op.is_some() {
+            self.status_footer =
+                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+            return;
+        }
         let commit_message: String = if let Some(ref input_entity) = self.commit_input {
             input_entity.read(cx).value().to_string()
         } else {
             self.commit_panel.as_ref().map(|p| p.commit_msg.clone()).unwrap_or_default()
         };
-        let (msg, plan) = match self.commit_panel.as_ref().and_then(|p| p.plan_modal.as_ref()) {
-            Some(modal) => (
-                commit_message,
-                modal.plan.clone(),
-            ),
+        let plan = match self.commit_panel.as_ref().and_then(|p| p.plan_modal.as_ref()) {
+            Some(modal) => modal.plan.clone(),
             None => return,
         };
-
-        // Defence: refuse if blockers exist.
         if !plan.blockers.is_empty() {
             eprintln!("[kagi] refused: commit plan has blockers");
             return;
         }
 
-        let repo = match git2::Repository::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                let err_msg = format!("Repo open error: {}", e.message());
-                if let Some(ref mut panel) = self.commit_panel {
-                    if let Some(ref mut modal) = panel.plan_modal {
-                        modal.error = Some(SharedString::from(err_msg.clone()));
+        self.busy_op = Some("commit");
+        self.status_footer = FooterStatus::Busy(SharedString::from("commit 実行中…"));
+        self.push_toast(ToastKind::Info, "commit: 開始しました");
+        eprintln!("[kagi] async: commit started");
+
+        let bg_path = repo_path.clone();
+        let bg_plan = plan.clone();
+        let bg_msg = commit_message.clone();
+        let task = cx.background_spawn(async move {
+            commit_blocking(&bg_path, &bg_plan, &bg_msg)
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok((_new_short, after)) => {
+                        eprintln!("[kagi] async: commit finished");
+                        // A successful commit clears the branch draft (T-COMMIT-007).
+                        let branch = app.status_summary.branch.clone();
+                        let _ = kagi::git::clear_draft(&repo_path, &branch);
+                        eprintln!("[kagi] draft: cleared {}", branch);
+                        app.last_draft_value = String::new();
+
+                        app.record_op("commit", plan.current.clone(),
+                            OpOutcome::Success { after }, &repo_path);
+                        app.reload();
                     }
-                }
-                return;
-            }
-        };
-
-        match execute_commit(&repo, &msg) {
-            Ok(new_id) => {
-                eprintln!("[kagi] executed: commit {}", new_id.short());
-
-                // T-COMMIT-007: a successful commit clears the branch draft.
-                {
-                    let branch = self.status_summary.branch.clone();
-                    let _ = kagi::git::clear_draft(&repo_path, &branch);
-                    eprintln!("[kagi] draft: cleared {}", branch);
-                    self.last_draft_value = String::new();
-                }
-
-                // Verify: re-snapshot, check HEAD is the new commit.
-                let mut repo2 = match git2::Repository::open(&repo_path) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        eprintln!("[kagi] verify: repo open error: {}", e.message());
-                        self.record_op(
-                            "commit",
-                            plan.current.clone(),
-                            OpOutcome::Success { after: plan.predicted.clone() },
-                            &repo_path,
-                        );
-                        self.reload();
-                        return;
-                    }
-                };
-                let after_summary = match kagi::git::snapshot(&mut repo2, 10_000) {
-                    Ok(snap) => {
-                        if let Head::Attached { target, branch } = &snap.head {
-                            if *target == new_id.0 {
-                                eprintln!("[kagi] verified: commit HEAD={} on {}", new_id.short(), branch);
-                            } else {
-                                eprintln!("[kagi] verify: HEAD mismatch after commit");
+                    Err(err_msg) => {
+                        eprintln!("[kagi] async: commit failed — {}", err_msg);
+                        app.record_op("commit", plan.current.clone(),
+                            OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
+                        if let Some(ref mut panel) = app.commit_panel {
+                            if let Some(ref mut modal) = panel.plan_modal {
+                                modal.error = Some(SharedString::from(err_msg));
                             }
                         }
-                        // Unstaged should still be there.
-                        let is_dirty = snap.status.is_dirty();
-                        eprintln!("[kagi] verified: working tree {} after commit",
-                            if is_dirty { "dirty (unstaged remain)" } else { "clean" });
-                        StateSummary {
-                            head: snap.head.display(),
-                            dirty: if is_dirty { "dirty".to_string() } else { "clean".to_string() },
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("[kagi] verify: snapshot error: {}", e);
-                        plan.predicted.clone()
-                    }
-                };
-
-                self.record_op("commit", plan.current.clone(),
-                    OpOutcome::Success { after: after_summary }, &repo_path);
-                self.reload();
-            }
-            Err(e) => {
-                let err_msg = format!("Commit failed: {}", e);
-                eprintln!("[kagi] {}", err_msg);
-                if let Some(ref mut panel) = self.commit_panel {
-                    if let Some(ref mut modal) = panel.plan_modal {
-                        modal.error = Some(SharedString::from(err_msg));
                     }
                 }
-            }
-        }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     /// Select the commit at `index` (or deselect if already selected).
@@ -8765,6 +8962,327 @@ fn verify_after_snapshot(repo_path: &std::path::Path, plan: &OperationPlan) -> S
 }
 
 // ──────────────────────────────────────────────────────────────
+// W15-ASYNCOPS: blocking cores for the tree-size-proportional ops
+//
+// Same shape as the pull/push/stash cores above: repo open → preflight →
+// execute → verify snapshot, free of `&mut KagiApp`, so the UI button path can
+// run them via `cx.background_spawn`. The headless KAGI_* path keeps calling the
+// synchronous `confirm_*` methods (unchanged log文言/order). ref-order rules and
+// in-memory semantics are unchanged — only the threading moved.
+// ──────────────────────────────────────────────────────────────
+
+/// Blocking part of checkout (branch or commit). `checkout_tree` writes the
+/// working tree on disk, which scales with tree size.
+fn checkout_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    target: &CheckoutPlanTarget,
+) -> Result<(String, StateSummary), String> {
+    let repo = git2::Repository::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+
+    let execute_result = match target {
+        CheckoutPlanTarget::Branch(branch) => execute_checkout(&repo, branch),
+        CheckoutPlanTarget::Commit(commit_id) => execute_checkout_commit(&repo, commit_id),
+    };
+    execute_result.map_err(|e| format!("Checkout failed: {}", e))?;
+
+    let summary = match target {
+        CheckoutPlanTarget::Branch(branch) => {
+            eprintln!("[kagi] executed: checkout {}", branch);
+            format!("checkout {}", branch)
+        }
+        CheckoutPlanTarget::Commit(commit_id) => {
+            eprintln!("[kagi] executed: checkout-commit {}", commit_id.short());
+            format!("detached: {}", commit_id.short())
+        }
+    };
+
+    // Verify: re-snapshot and confirm HEAD.
+    let after = match git2::Repository::open(repo_path) {
+        Ok(mut repo2) => match kagi::git::snapshot(&mut repo2, 10_000) {
+            Ok(snap) => {
+                match (target, &snap.head) {
+                    (
+                        CheckoutPlanTarget::Branch(branch),
+                        Head::Attached { branch: actual_branch, .. },
+                    ) if actual_branch == branch => {
+                        eprintln!("[kagi] verified: HEAD={}", actual_branch);
+                    }
+                    (CheckoutPlanTarget::Commit(commit_id), Head::Detached { target: t })
+                        if t == &commit_id.0 =>
+                    {
+                        eprintln!("[kagi] verified: detached HEAD={}", commit_id.short());
+                    }
+                    other => {
+                        eprintln!(
+                            "[kagi] verify: unexpected HEAD state after checkout: {:?}",
+                            other
+                        );
+                    }
+                }
+                StateSummary {
+                    head: snap.head.display(),
+                    dirty: if snap.status.is_dirty() { "dirty".to_string() } else { "clean".to_string() },
+                }
+            }
+            Err(e) => {
+                eprintln!("[kagi] verify: snapshot error: {}", e);
+                plan.predicted.clone()
+            }
+        },
+        Err(e) => {
+            eprintln!("[kagi] verify: repo open error: {}", e.message());
+            plan.predicted.clone()
+        }
+    };
+    Ok((summary, after))
+}
+
+/// Blocking part of cherry-pick (in-memory index merge → commit → safe
+/// checkout_head). Scales with the diff size.
+fn cherry_pick_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    commit_id: &CommitId,
+) -> Result<(String, StateSummary), String> {
+    let repo = git2::Repository::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+
+    let new_id = execute_cherry_pick(&repo, commit_id)
+        .map_err(|e| format!("Cherry-pick failed: {}", e))?;
+    eprintln!("[kagi] executed: cherry-pick {} -> {}", commit_id.short(), new_id.short());
+
+    let after = verify_new_commit_snapshot(repo_path, plan, &new_id, "cherry-pick");
+    Ok((format!("{} applied", commit_id.short()), after))
+}
+
+/// Blocking part of revert (in-memory inverse merge → commit). Scales with the
+/// diff size.
+fn revert_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    commit_id: &CommitId,
+) -> Result<(String, StateSummary), String> {
+    let repo = git2::Repository::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+
+    let new_id =
+        execute_revert(&repo, commit_id).map_err(|e| format!("Revert failed: {}", e))?;
+    eprintln!("[kagi] executed: revert {} -> {}", commit_id.short(), new_id.short());
+
+    let after = verify_new_commit_snapshot(repo_path, plan, &new_id, "revert");
+    Ok((format!("reverted {}", commit_id.short()), after))
+}
+
+/// Blocking part of commit (tree-build + write). Scales with the staged tree.
+/// Returns the new commit id alongside the after-state so the UI finish step can
+/// clear the branch draft on the main thread.
+fn commit_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    message: &str,
+) -> Result<(String, StateSummary), String> {
+    let repo = git2::Repository::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+
+    let new_id =
+        execute_commit(&repo, message).map_err(|e| format!("Commit failed: {}", e))?;
+    eprintln!("[kagi] executed: commit {}", new_id.short());
+
+    // Verify: re-snapshot, check HEAD is the new commit, unstaged remain.
+    let after = match git2::Repository::open(repo_path) {
+        Ok(mut repo2) => match kagi::git::snapshot(&mut repo2, 10_000) {
+            Ok(snap) => {
+                if let Head::Attached { target, branch } = &snap.head {
+                    if *target == new_id.0 {
+                        eprintln!("[kagi] verified: commit HEAD={} on {}", new_id.short(), branch);
+                    } else {
+                        eprintln!("[kagi] verify: HEAD mismatch after commit");
+                    }
+                }
+                let is_dirty = snap.status.is_dirty();
+                eprintln!(
+                    "[kagi] verified: working tree {} after commit",
+                    if is_dirty { "dirty (unstaged remain)" } else { "clean" }
+                );
+                StateSummary {
+                    head: snap.head.display(),
+                    dirty: if is_dirty { "dirty".to_string() } else { "clean".to_string() },
+                }
+            }
+            Err(e) => {
+                eprintln!("[kagi] verify: snapshot error: {}", e);
+                plan.predicted.clone()
+            }
+        },
+        Err(e) => {
+            eprintln!("[kagi] verify: repo open error: {}", e.message());
+            plan.predicted.clone()
+        }
+    };
+    Ok((new_id.short().to_string(), after))
+}
+
+/// Blocking part of stash-pop (preflight + apply-then-drop). Re-snapshots HEAD
+/// for the after-state.
+fn stash_pop_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    stash_index: usize,
+) -> Result<(String, StateSummary), String> {
+    let mut repo = git2::Repository::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+
+    execute_stash_pop(&mut repo, stash_index).map_err(|e| format!("Pop failed: {}", e))?;
+    eprintln!("[kagi] executed: stash-pop index={}", stash_index);
+
+    let after = StateSummary {
+        head: plan.current.head.clone(),
+        dirty: "changes restored (stash removed)".to_string(),
+    };
+    Ok(("applied and dropped".to_string(), after))
+}
+
+/// Blocking part of amend (history rewrite: tree-build + commit-replace).
+/// Returns (summary-suffix, after, old, new) so the UI footer can render the
+/// 旧→新 SHA transition and the restore hint.
+fn amend_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    mode: AmendMode,
+    message: &str,
+) -> Result<(StateSummary, CommitId, CommitId), String> {
+    let repo = git2::Repository::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+
+    let msg_opt = if message.trim().is_empty() { None } else { Some(message) };
+    let outcome = execute_amend(&repo, mode, msg_opt).map_err(|e| format!("Amend failed: {}", e))?;
+    eprintln!("[kagi] executed: amend {} -> {}", outcome.old.short(), outcome.new.short());
+
+    let after = StateSummary {
+        head: format!("branch @ {} (was {})", outcome.new.short(), outcome.old.short()),
+        dirty: "amended".to_string(),
+    };
+    Ok((after, outcome.old, outcome.new))
+}
+
+/// Blocking part of delete-branch (preflight → ref delete). Lightweight, but
+/// kept on the background path for consistency with the other confirm flows.
+fn delete_branch_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    branch_name: &str,
+) -> Result<StateSummary, String> {
+    let repo = git2::Repository::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    kagi::git::ops::preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+
+    execute_delete_branch(&repo, plan, branch_name)
+        .map_err(|e| format!("Delete failed: {}", e))?;
+    eprintln!("[kagi] executed: delete-branch {}", branch_name);
+
+    Ok(StateSummary {
+        head: plan.current.head.clone(),
+        dirty: format!("branch '{}' deleted", branch_name),
+    })
+}
+
+/// Blocking part of create-worktree (checks out a full tree into a new linked
+/// worktree on disk — scales with tree size).
+fn create_worktree_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    branch_input: &str,
+    path_input: &str,
+    at: &CommitId,
+) -> Result<StateSummary, String> {
+    let repo = git2::Repository::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+
+    execute_create_worktree(&repo, branch_input, path_input, at)
+        .map_err(|e| format!("Create worktree failed: {}", e))?;
+    eprintln!(
+        "[kagi] executed: create-worktree '{}' path='{}' @ {}",
+        branch_input,
+        path_input,
+        at.short()
+    );
+
+    // Verify: open the linked worktree and log its HEAD.
+    let verify_path = {
+        let path = std::path::PathBuf::from(path_input);
+        if path.is_absolute() { path } else { repo_path.join(path) }
+    };
+    match git2::Repository::open(&verify_path) {
+        Ok(linked) => {
+            let head = linked
+                .head()
+                .ok()
+                .and_then(|h| h.shorthand().ok().map(|s| s.to_string()));
+            eprintln!(
+                "[kagi] verified: worktree '{}' HEAD={}",
+                verify_path.display(),
+                head.unwrap_or_else(|| "?".to_string())
+            );
+        }
+        Err(e) => eprintln!("[kagi] verify: worktree open error: {}", e.message()),
+    }
+
+    Ok(plan.predicted.clone())
+}
+
+/// Re-snapshot after a new-commit op (cherry-pick / revert) for the after-state,
+/// logging the verified HEAD. Falls back to the plan prediction on failure.
+fn verify_new_commit_snapshot(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    new_id: &CommitId,
+    op: &str,
+) -> StateSummary {
+    match git2::Repository::open(repo_path) {
+        Ok(mut repo2) => match kagi::git::snapshot(&mut repo2, 10_000) {
+            Ok(snap) => {
+                if let Head::Attached { target, branch } = &snap.head {
+                    if *target == new_id.0 {
+                        eprintln!("[kagi] verified: {} HEAD={} on {}", op, new_id.short(), branch);
+                    } else {
+                        eprintln!(
+                            "[kagi] verify: HEAD={} expected {}",
+                            &target[..8.min(target.len())],
+                            new_id.short()
+                        );
+                    }
+                    let is_clean = !snap.status.is_dirty();
+                    eprintln!(
+                        "[kagi] verified: working tree {}",
+                        if is_clean { "clean" } else { "dirty (unexpected)" }
+                    );
+                }
+                StateSummary {
+                    head: snap.head.display(),
+                    dirty: if snap.status.is_dirty() { "dirty".to_string() } else { "clean".to_string() },
+                }
+            }
+            Err(e) => {
+                eprintln!("[kagi] verify: snapshot error: {}", e);
+                plan.predicted.clone()
+            }
+        },
+        Err(e) => {
+            eprintln!("[kagi] verify: repo open error: {}", e.message());
+            plan.predicted.clone()
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
 // Status footer renderer (T017)
 // ──────────────────────────────────────────────────────────────
 
@@ -8830,7 +9348,7 @@ fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> gpu
         cx.notify();
     });
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.confirm_checkout();
+        this.start_checkout(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh);
         }
@@ -8904,8 +9422,8 @@ fn render_amend_modal(modal: AmendPlanModal, cx: &mut Context<KagiApp>) -> gpui:
         cx.notify();
     });
     let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        // First click arms; second click executes (handled in confirm_amend).
-        this.confirm_amend();
+        // First click arms; second click executes (handled in start_amend).
+        this.start_amend(cx);
         if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
         cx.notify();
     });
@@ -9101,7 +9619,7 @@ fn render_pop_modal(modal: PopPlanModal, cx: &mut Context<KagiApp>) -> gpui::Any
         cx.notify();
     });
     let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.confirm_pop();
+        this.start_pop(cx);
         if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
         cx.notify();
     });
@@ -9144,7 +9662,7 @@ fn render_delete_branch_modal(
         cx.notify();
     });
     let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.confirm_delete_branch();
+        this.start_delete_branch(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh);
         }
@@ -9175,7 +9693,7 @@ fn render_revert_modal(
         cx.notify();
     });
     let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.confirm_revert();
+        this.start_revert(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh);
         }
@@ -9781,7 +10299,7 @@ fn render_create_worktree_modal(
         cx.notify();
     });
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.confirm_create_worktree();
+        this.start_create_worktree(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh);
         }
@@ -10486,7 +11004,7 @@ fn render_cherry_pick_modal(
     });
 
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.confirm_cherry_pick();
+        this.start_cherry_pick(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh);
         }
@@ -11620,7 +12138,7 @@ fn render_commit_plan_modal(
     });
 
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.confirm_commit(cx);
+        this.start_commit(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh);
         }

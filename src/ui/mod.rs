@@ -195,6 +195,14 @@ pub struct StatusBarSummary {
     pub no_upstream: bool,
     /// Wall-clock time (seconds since Unix epoch) of the last reload.
     pub last_refresh_secs: i64,
+    /// Whether HEAD is detached (T-HT-001: used for toolbar disabled logic).
+    pub is_detached: bool,
+    /// Whether HEAD is unborn (no commits yet) (T-HT-001: used for toolbar disabled logic).
+    pub is_unborn: bool,
+    /// Number of stash entries (T-HT-001: used for Pop button disabled logic).
+    pub stash_count: usize,
+    /// Short repo name derived from path (T-HT-001: displayed in toolbar).
+    pub repo_name: String,
 }
 
 impl StatusBarSummary {
@@ -203,7 +211,7 @@ impl StatusBarSummary {
         use kagi::git::Head;
         use commit_list::now_unix_secs;
 
-        let (branch, ahead, behind, no_upstream) = match &snap.head {
+        let (branch, ahead, behind, no_upstream, is_detached, is_unborn) = match &snap.head {
             Head::Attached { branch, .. } => {
                 // Look up upstream info for this branch.
                 let upstream = snap
@@ -212,16 +220,16 @@ impl StatusBarSummary {
                     .find(|b| &b.name == branch)
                     .and_then(|b| b.upstream.as_ref());
                 match upstream {
-                    Some(u) => (branch.clone(), Some(u.ahead), Some(u.behind), false),
-                    None => (branch.clone(), None, None, true),
+                    Some(u) => (branch.clone(), Some(u.ahead), Some(u.behind), false, false, false),
+                    None => (branch.clone(), None, None, true, false, false),
                 }
             }
             Head::Detached { target } => {
                 let short = target.get(..8).unwrap_or(target).to_string();
-                (format!("detached HEAD ({})", short), None, None, false)
+                (format!("detached HEAD ({})", short), None, None, false, true, false)
             }
             Head::Unborn { branch } => {
-                (format!("no commits yet ({})", branch), None, None, false)
+                (format!("no commits yet ({})", branch), None, None, false, false, true)
             }
         };
 
@@ -234,6 +242,10 @@ impl StatusBarSummary {
             behind,
             no_upstream,
             last_refresh_secs: now_unix_secs(),
+            is_detached,
+            is_unborn,
+            stash_count: snap.stashes.len(),
+            repo_name: String::new(), // filled in by caller after from_snapshot
         }
     }
 
@@ -246,6 +258,68 @@ impl StatusBarSummary {
         eprintln!(
             "[kagi] statusbar: {} \u{2191}{} \u{2193}{} staged={} unstaged={}",
             self.branch, ahead, behind, self.staged, self.unstaged
+        );
+    }
+
+    /// Derive toolbar enabled/disabled flags from this summary.
+    ///
+    /// Returns `ToolbarState` for use in rendering and headless logging (T-HT-001).
+    pub fn toolbar_state(&self) -> ToolbarState {
+        // detached or unborn HEAD: no upstream possible, so also disables push/pull.
+        let not_attached = self.is_detached || self.is_unborn;
+        // no_upstream covers Attached branch with no upstream configured.
+        let no_upstream = self.no_upstream || not_attached;
+
+        let pull_on = !no_upstream; // Pull: disabled if no upstream (incl. detached/unborn)
+        let push_on = !no_upstream && self.ahead.unwrap_or(0) > 0; // also disabled if ahead=0
+        let stash_on = self.is_dirty; // Stash: disabled if working tree is clean
+        let pop_on = self.stash_count > 0; // Pop: disabled if no stashes
+        let undo_on = !not_attached && self.ahead.unwrap_or(0) > 0; // disabled if detached/unborn or ahead=0
+
+        ToolbarState {
+            pull_on,
+            push_on,
+            stash_on,
+            pop_on,
+            undo_on,
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
+// T-HT-001: ToolbarState — pre-computed button enabled flags
+// ──────────────────────────────────────────────────────────────
+
+/// Pre-computed enabled/disabled flags for each toolbar button (T-HT-001).
+///
+/// Derived from [`StatusBarSummary`] on every reload.  The render path
+/// uses these values; the headless path logs them.
+#[derive(Clone, Debug, Default)]
+pub struct ToolbarState {
+    /// Whether the Pull button is enabled.
+    pub pull_on: bool,
+    /// Whether the Push button is enabled.
+    pub push_on: bool,
+    /// Whether the Stash button is enabled.
+    pub stash_on: bool,
+    /// Whether the Pop button is enabled.
+    pub pop_on: bool,
+    /// Whether the Undo button is enabled.
+    pub undo_on: bool,
+}
+
+impl ToolbarState {
+    /// Emit the headless toolbar log line required by T-HT-001.
+    ///
+    /// Format: `[kagi] toolbar: pull=on/off push=on/off stash=on/off pop=on/off undo=on/off`
+    pub fn log_headless(&self) {
+        eprintln!(
+            "[kagi] toolbar: pull={} push={} stash={} pop={} undo={}",
+            if self.pull_on { "on" } else { "off" },
+            if self.push_on { "on" } else { "off" },
+            if self.stash_on { "on" } else { "off" },
+            if self.pop_on { "on" } else { "off" },
+            if self.undo_on { "on" } else { "off" },
         );
     }
 }
@@ -542,6 +616,10 @@ pub struct KagiApp {
     /// Pre-computed status bar data (branch, ahead/behind, staged, unstaged).
     /// Updated on every reload; rendered by `render_status_bar`.
     pub status_summary: StatusBarSummary,
+    // ── T-HT-001: Toolbar state ──────────────────────────────────
+    /// Pre-computed toolbar button enabled/disabled flags.
+    /// Updated on every reload; rendered by `render_header_slot`.
+    pub toolbar_state: ToolbarState,
     // ── T-BP-004: Operation Log entries ─────────────────────────
     /// In-memory operation log ring-buffer (max 500, newest at index 0).
     pub op_entries: VecDeque<OpLogEntry>,
@@ -634,8 +712,14 @@ impl KagiApp {
             .collect();
 
         // T-BP-003: build StatusBarSummary and emit the headless log.
-        let status_summary = StatusBarSummary::from_snapshot(snap);
+        let mut status_summary = StatusBarSummary::from_snapshot(snap);
+        // T-HT-001: fill repo_name for toolbar display.
+        status_summary.repo_name = repo_name.to_string();
         status_summary.log_headless();
+
+        // T-HT-001: derive toolbar state and emit headless log.
+        let toolbar_state = status_summary.toolbar_state();
+        toolbar_state.log_headless();
 
         // T-BP-004: load up to 100 entries from the oplog file at startup.
         let op_entries: VecDeque<OpLogEntry> = read_oplog_tail(OP_ENTRIES_LOAD).into();
@@ -675,6 +759,7 @@ impl KagiApp {
             branch_targets,
             commit_row_index,
             status_summary,
+            toolbar_state,
             op_entries,
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
@@ -719,6 +804,7 @@ impl KagiApp {
             branch_targets: HashMap::new(),
             commit_row_index: HashMap::new(),
             status_summary: StatusBarSummary::default(),
+            toolbar_state: ToolbarState::default(),
             op_entries: VecDeque::new(),
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
@@ -785,6 +871,8 @@ impl KagiApp {
         self.commit_row_index = fresh.commit_row_index;
         // T-BP-003: update StatusBarSummary (already logged by from_snapshot above).
         self.status_summary = fresh.status_summary;
+        // T-HT-001: update ToolbarState (already logged by from_snapshot above).
+        self.toolbar_state = fresh.toolbar_state;
         // commit_scroll_handle is preserved so the existing Rc<RefCell<...>> reference
         // wired into the uniform_list continues to work after reload.
         // status_footer is intentionally preserved across reloads so the last
@@ -2407,7 +2495,6 @@ impl KagiApp {
 
 impl Render for KagiApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let header = self.header.clone();
         let row_count = self.rows.len();
         let selected = self.selected;
 
@@ -2452,6 +2539,9 @@ impl Render for KagiApp {
         let stash_apply_modal = self.stash_apply_modal.clone();
         let cherry_pick_modal = self.cherry_pick_modal.clone();
         let status_footer = self.status_footer.clone();
+        // T-HT-001: clone toolbar/summary state for header render.
+        let toolbar_state = self.toolbar_state.clone();
+        let status_summary = self.status_summary.clone();
 
         // T023: pane widths for divider rendering.
         let sidebar_width = self.sidebar_width;
@@ -2561,7 +2651,7 @@ impl Render for KagiApp {
             // T-BP-002: cmd-j toggle action (window-wide via on_action on root div).
             .on_action(toggle_bottom_panel)
             // ── Header slot ──────────────────────────────────
-            .child(self.render_header_slot(header, is_dirty, cx))
+            .child(self.render_header_slot(toolbar_state, status_summary, cx))
             // ── Body slot: sidebar | list | optional panel ───
             .child(self.render_body(
                 row_count, selected, detail, changed_files, file_diff_view,
@@ -2616,48 +2706,245 @@ impl Render for KagiApp {
 // (T-BP-002, T-HT-001, …) can extend their signatures without
 // touching the caller site.
 impl KagiApp {
-    /// Header slot — the top bar showing repo name, HEAD info, and the Stash button.
+    /// Header slot — the Toolbar bar (T-HT-001).
     ///
-    /// Today this is identical to the former inline header bar block.
-    /// T-HT-001 will add toolbar buttons here.
+    /// Layout (34 px):  repo-name | Pull Push | Branch Stash Pop | Undo | Refresh  [right→] branch ↑A ↓B
     fn render_header_slot(
         &mut self,
-        header: SharedString,
-        is_dirty: bool,
+        toolbar: ToolbarState,
+        summary: StatusBarSummary,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let stash_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
-            this.open_stash_push_modal(cx);
+        // ── Click handlers ──────────────────────────────────────────────────
+        // Pull (not implemented yet — footer notice only).
+        let pull_on = toolbar.pull_on;
+        let pull_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+            if pull_on {
+                this.status_footer = FooterStatus::Idle(SharedString::from(
+                    "Pull: T-HT-003 で実装予定",
+                ));
+            } else {
+                let reason = if this.status_summary.is_detached {
+                    "Pull: detached HEAD — branch に切り替えてください"
+                } else if this.status_summary.is_unborn {
+                    "Pull: no commits yet — upstream がありません"
+                } else {
+                    "Pull: upstream が設定されていません (no upstream)"
+                };
+                this.status_footer = FooterStatus::Idle(SharedString::from(reason));
+            }
             cx.notify();
         });
-        let mut header_bar = div()
+
+        // Push (not implemented yet — footer notice only).
+        let push_on = toolbar.push_on;
+        let push_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+            if push_on {
+                this.status_footer = FooterStatus::Idle(SharedString::from(
+                    "Push: T-HT-004 で実装予定",
+                ));
+            } else {
+                let reason = if this.status_summary.is_detached {
+                    "Push: detached HEAD — branch に切り替えてください"
+                } else if this.status_summary.is_unborn {
+                    "Push: no commits yet — upstream がありません"
+                } else if this.status_summary.no_upstream {
+                    "Push: upstream が設定されていません (no upstream)"
+                } else {
+                    "Push: nothing to push (ahead=0)"
+                };
+                this.status_footer = FooterStatus::Idle(SharedString::from(reason));
+            }
+            cx.notify();
+        });
+
+        // Branch — always enabled; use selected commit if any, else HEAD.
+        let branch_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
+            // Resolve target commit: selected row → HEAD commit (first detail).
+            let at = this.selected
+                .and_then(|i| this.details.get(i))
+                .map(|d| CommitId(d.full_sha.to_string()))
+                .or_else(|| {
+                    // Fall back to HEAD commit (first detail entry).
+                    this.details.first().map(|d| CommitId(d.full_sha.to_string()))
+                });
+            if let Some(id) = at {
+                this.open_create_branch_modal(id, cx);
+            }
+            cx.notify();
+        });
+
+        // Stash — enabled only when dirty.
+        let stash_on = toolbar.stash_on;
+        let stash_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+            if stash_on {
+                this.open_stash_push_modal(cx);
+            } else {
+                this.status_footer = FooterStatus::Idle(SharedString::from(
+                    "Stash: working tree is clean — nothing to stash",
+                ));
+            }
+            cx.notify();
+        });
+
+        // Pop — enabled only when stash exists.
+        let pop_on = toolbar.pop_on;
+        let pop_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+            if pop_on {
+                // Apply the newest stash (index 0).
+                this.open_stash_apply_modal(0);
+            } else {
+                this.status_footer = FooterStatus::Idle(SharedString::from(
+                    "Pop: stash が空です",
+                ));
+            }
+            cx.notify();
+        });
+
+        // Undo (not implemented yet — footer notice only).
+        let undo_on = toolbar.undo_on;
+        let undo_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+            if undo_on {
+                this.status_footer = FooterStatus::Idle(SharedString::from(
+                    "Undo: T-HT-009 で実装予定",
+                ));
+            } else {
+                let reason = if this.status_summary.is_detached {
+                    "Undo: detached HEAD — undo できません"
+                } else if this.status_summary.is_unborn {
+                    "Undo: no commits yet — undo できません"
+                } else {
+                    "Undo: ahead=0 — push 済みの commit はここでは undo できません"
+                };
+                this.status_footer = FooterStatus::Idle(SharedString::from(reason));
+            }
+            cx.notify();
+        });
+
+        // Refresh — always enabled.
+        let refresh_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
+            this.reload();
+            this.status_footer = FooterStatus::Idle(SharedString::from("Refreshed"));
+            cx.notify();
+        });
+
+        // ── Helper: build a single toolbar button ───────────────────────────
+        // `id` must be a unique string for GPUI element tracking.
+        // `enabled` controls opacity; `label` is the button text.
+        let make_btn = |id: &'static str, label: &'static str, enabled: bool| {
+            let text_color = if enabled { TEXT_MAIN } else { TEXT_MUTED };
+            let bg_color = if enabled { BG_SELECTED } else { BG_SURFACE };
+            div()
+                .id(id)
+                .px_2()
+                .py_px()
+                .rounded_sm()
+                .bg(rgb(bg_color))
+                .text_sm()
+                .text_color(rgb(text_color))
+                .hover(|style| style.opacity(if enabled { 0.85 } else { 0.6 }))
+                .cursor(if enabled { gpui::CursorStyle::PointingHand } else { gpui::CursorStyle::Arrow })
+                .child(SharedString::from(label))
+        };
+
+        // ── Ahead/behind display (right side) ──────────────────────────────
+        let ab_label = if summary.is_detached {
+            "detached HEAD".to_string()
+        } else if summary.is_unborn {
+            "no commits yet".to_string()
+        } else if summary.no_upstream {
+            "no upstream".to_string()
+        } else {
+            let ahead = summary.ahead.unwrap_or(0);
+            let behind = summary.behind.unwrap_or(0);
+            format!("{} \u{2191}{} \u{2193}{}", summary.branch, ahead, behind)
+        };
+
+        // ── Vertical separator ──────────────────────────────────────────────
+        let sep = || {
+            div()
+                .w(px(1.0))
+                .h(px(16.0))
+                .bg(rgb(TEXT_MUTED))
+                .mx_1()
+                .flex_shrink_0()
+        };
+
+        // ── Toolbar bar (34 px) ─────────────────────────────────────────────
+        div()
+            .id("toolbar-bar")
             .flex()
             .flex_row()
             .items_center()
             .w_full()
             .px_3()
-            .py_1()
+            .h(px(34.0))
+            .flex_shrink_0()
             .bg(rgb(BG_SURFACE))
             .text_color(rgb(TEXT_SUB))
-            .child(div().flex_1().overflow_hidden().child(header));
-        // Show Stash button only when working tree is dirty.
-        if is_dirty {
-            header_bar = header_bar.child(
+            // Repo name (left anchor)
+            .child(
                 div()
-                    .id("stash-push-btn")
-                    .ml_2()
-                    .px_2()
-                    .py_px()
-                    .rounded_sm()
-                    .bg(rgb(COLOR_WARNING))
                     .text_sm()
-                    .text_color(rgb(BG_BASE))
-                    .on_click(stash_click)
-                    .hover(|style| style.opacity(0.85))
-                    .child(SharedString::from("Stash")),
-            );
-        }
-        header_bar
+                    .text_color(rgb(TEXT_MAIN))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .mr_2()
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .child(SharedString::from(summary.repo_name.clone())),
+            )
+            .child(sep())
+            // Pull
+            .child(
+                make_btn("tb-pull", "Pull", toolbar.pull_on)
+                    .on_click(pull_click),
+            )
+            .child(div().w(px(4.0)))
+            // Push
+            .child(
+                make_btn("tb-push", "Push", toolbar.push_on)
+                    .on_click(push_click),
+            )
+            .child(sep())
+            // Branch
+            .child(
+                make_btn("tb-branch", "Branch", true)
+                    .on_click(branch_click),
+            )
+            .child(div().w(px(4.0)))
+            // Stash
+            .child(
+                make_btn("tb-stash", "Stash", toolbar.stash_on)
+                    .on_click(stash_click),
+            )
+            .child(div().w(px(4.0)))
+            // Pop
+            .child(
+                make_btn("tb-pop", "Pop", toolbar.pop_on)
+                    .on_click(pop_click),
+            )
+            .child(sep())
+            // Undo
+            .child(
+                make_btn("tb-undo", "Undo", toolbar.undo_on)
+                    .on_click(undo_click),
+            )
+            .child(sep())
+            // Refresh
+            .child(
+                make_btn("tb-refresh", "Refresh", true)
+                    .on_click(refresh_click),
+            )
+            // Spacer — pushes ahead/behind to the right
+            .child(div().flex_1())
+            // Branch + ahead/behind (right anchor)
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(TEXT_SUB))
+                    .flex_shrink_0()
+                    .child(SharedString::from(ab_label)),
+            )
     }
 
     /// Body slot — the main content area: sidebar | divider | commit list | optional panel.

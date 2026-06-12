@@ -35,6 +35,7 @@ pub use ops::{
     preflight_check_stash,
     plan_cherry_pick, execute_cherry_pick,
     plan_pull, execute_pull, PullOutcome,
+    plan_push, execute_push, PushOutcome,
 };
 #[allow(unused_imports)]
 pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo};

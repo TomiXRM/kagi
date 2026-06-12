@@ -130,6 +130,7 @@ use kagi::git::{
         plan_stash_push, execute_stash_push,
         plan_stash_apply, execute_stash_apply,
         plan_pull, execute_pull, PullOutcome,
+        plan_push, execute_push,
         preflight_check_stash,
         plan_cherry_pick, execute_cherry_pick,
     },
@@ -204,6 +205,8 @@ pub struct StatusBarSummary {
     pub stash_count: usize,
     /// Short repo name derived from path (T-HT-001: displayed in toolbar).
     pub repo_name: String,
+    /// Whether at least one remote is configured (T-HT-004: push set-upstream flow).
+    pub has_remote: bool,
 }
 
 impl StatusBarSummary {
@@ -234,6 +237,9 @@ impl StatusBarSummary {
             }
         };
 
+        // Derive has_remote from remote_branches (any entry means at least one remote exists).
+        let has_remote = !snap.remote_branches.is_empty();
+
         StatusBarSummary {
             branch,
             is_dirty: snap.status.is_dirty(),
@@ -247,6 +253,7 @@ impl StatusBarSummary {
             is_unborn,
             stash_count: snap.stashes.len(),
             repo_name: String::new(), // filled in by caller after from_snapshot
+            has_remote,
         }
     }
 
@@ -272,7 +279,10 @@ impl StatusBarSummary {
         let no_upstream = self.no_upstream || not_attached;
 
         let pull_on = !no_upstream; // Pull: disabled if no upstream (incl. detached/unborn)
-        let push_on = !no_upstream && self.ahead.unwrap_or(0) > 0; // also disabled if ahead=0
+        // Push: enabled when (upstream && ahead>0) OR (no-upstream && attached && remote exists).
+        // Dirty WT is irrelevant — push never changes local state.
+        let push_on = (!no_upstream && self.ahead.unwrap_or(0) > 0)
+            || (self.no_upstream && !not_attached && self.has_remote);
         let stash_on = self.is_dirty; // Stash: disabled if working tree is clean
         let pop_on = self.stash_count > 0; // Pop: disabled if no stashes
         let undo_on = !not_attached && self.ahead.unwrap_or(0) > 0; // disabled if detached/unborn or ahead=0
@@ -464,6 +474,16 @@ pub struct PullPlanModal {
     pub error: Option<SharedString>,
 }
 
+/// State for an in-progress push confirmation (T-HT-004).  Same shape as
+/// [`PullPlanModal`] but kept separate so the confirm path can't be mixed up.
+#[derive(Clone)]
+pub struct PushPlanModal {
+    /// The computed push plan.
+    pub plan: std::sync::Arc<OperationPlan>,
+    /// Error message to show if execute or preflight failed.
+    pub error: Option<SharedString>,
+}
+
 // ──────────────────────────────────────────────────────────────
 // CreateBranchModal — state for the create-branch overlay (T014)
 // ──────────────────────────────────────────────────────────────
@@ -572,6 +592,8 @@ pub struct KagiApp {
     pub plan_modal: Option<CheckoutPlanModal>,
     /// When `Some`, the pull plan confirmation modal is visible (T-HT-003).
     pub pull_modal: Option<PullPlanModal>,
+    /// When `Some`, the push plan confirmation modal is visible (T-HT-004).
+    pub push_modal: Option<PushPlanModal>,
     /// When `Some`, the create-branch modal is visible.
     pub create_branch_modal: Option<CreateBranchModal>,
     /// Focus handle used to receive keyboard events for the create-branch modal.
@@ -750,6 +772,7 @@ impl KagiApp {
             branches,
             plan_modal: None,
             pull_modal: None,
+            push_modal: None,
             create_branch_modal: None,
             modal_focus: None,
             stashes,
@@ -796,6 +819,7 @@ impl KagiApp {
             branches: Vec::new(),
             plan_modal: None,
             pull_modal: None,
+            push_modal: None,
             create_branch_modal: None,
             modal_focus: None,
             stashes: Vec::new(),
@@ -2140,6 +2164,156 @@ impl KagiApp {
         }
     }
 
+    // ── T-HT-004: Push ────────────────────────────────────────
+
+    /// Build a push plan and open the confirmation modal.
+    pub fn open_push_modal(&mut self) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("push: repo open error: {}", e.message())));
+                return;
+            }
+        };
+        match plan_push(&repo) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: push blockers={} warnings={} preview_commits={}",
+                    plan.blockers.len(),
+                    plan.warnings.len(),
+                    plan.preview_commits.len(),
+                );
+                self.push_modal = Some(PushPlanModal {
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("push plan error: {}", e)));
+            }
+        }
+    }
+
+    /// Close the push modal without executing.
+    pub fn cancel_push_modal(&mut self) {
+        self.push_modal = None;
+    }
+
+    /// Confirm the push plan: preflight, execute push via CLI.
+    /// Mirrors `confirm_pull`'s pipeline.
+    pub fn confirm_push(&mut self) {
+        let modal = match self.push_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        // Defence in depth: refuse blocked plans even if a code path slips through.
+        if !modal.plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: push plan has blockers, not executing");
+            self.record_op(
+                "push",
+                modal.plan.current.clone(),
+                OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                &repo_path,
+            );
+            return;
+        }
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                let err_msg = format!("Repo open error: {}", e.message());
+                self.record_op(
+                    "push",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() },
+                    &repo_path,
+                );
+                self.push_modal = Some(PushPlanModal {
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
+                return;
+            }
+        };
+
+        if let Err(e) = preflight_check(&repo, &modal.plan) {
+            let err_msg = format!("Preflight failed: {}", e);
+            self.record_op(
+                "push",
+                modal.plan.current.clone(),
+                OpOutcome::Failed { error: err_msg.clone() },
+                &repo_path,
+            );
+            self.push_modal = Some(PushPlanModal {
+                plan: modal.plan.clone(),
+                error: Some(SharedString::from(err_msg)),
+            });
+            return;
+        }
+
+        match execute_push(&repo, &repo_path) {
+            Ok(outcome) => {
+                let summary = if outcome.set_upstream {
+                    format!("pushed {} commit(s), set upstream", outcome.pushed)
+                } else {
+                    format!("pushed {} commit(s)", outcome.pushed)
+                };
+                eprintln!("[kagi] executed: push — {}", summary);
+                self.push_modal = None;
+
+                // Verify: re-snapshot for the after-state.
+                let after_summary = match git2::Repository::open(&repo_path) {
+                    Ok(mut repo2) => match kagi::git::snapshot(&mut repo2, 10_000) {
+                        Ok(snap) => StateSummary {
+                            head: snap.head.display(),
+                            dirty: if snap.status.is_dirty() {
+                                "dirty".to_string()
+                            } else {
+                                "clean".to_string()
+                            },
+                        },
+                        Err(_) => modal.plan.predicted.clone(),
+                    },
+                    Err(_) => modal.plan.predicted.clone(),
+                };
+                eprintln!("[kagi] verified: push after = {}", after_summary.head);
+
+                self.record_op(
+                    "push",
+                    modal.plan.current.clone(),
+                    OpOutcome::Success { after: after_summary },
+                    &repo_path,
+                );
+                self.status_footer =
+                    FooterStatus::Success(SharedString::from(format!("push: {}", summary)));
+                self.reload();
+            }
+            Err(e) => {
+                let err_msg = format!("Push failed: {}", e);
+                self.record_op(
+                    "push",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() },
+                    &repo_path,
+                );
+                self.push_modal = Some(PushPlanModal {
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
+            }
+        }
+    }
+
     // ── T025: Commit Panel ────────────────────────────────────
 
     /// Open the commit panel (triggered by clicking the WIP row).
@@ -2698,6 +2872,7 @@ impl Render for KagiApp {
         let is_dirty = self.is_dirty;
         let plan_modal = self.plan_modal.clone();
         let pull_modal = self.pull_modal.clone();
+        let push_modal = self.push_modal.clone();
         let create_branch_modal = self.create_branch_modal.clone();
         let modal_focus = self.modal_focus.clone();
         let stash_push_modal = self.stash_push_modal.clone();
@@ -2836,6 +3011,10 @@ impl Render for KagiApp {
             .when_some(pull_modal, |el, modal| {
                 el.child(render_pull_modal(modal, cx))
             })
+            // ── Push plan modal overlay (T-HT-004) ──────────
+            .when_some(push_modal, |el, modal| {
+                el.child(render_push_modal(modal, cx))
+            })
             // ── Create-branch modal overlay (above everything) ──
             .when_some(create_branch_modal, |el, modal| {
                 el.child(render_create_branch_modal(modal, modal_focus, cx))
@@ -2904,20 +3083,18 @@ impl KagiApp {
             cx.notify();
         });
 
-        // Push (not implemented yet — footer notice only).
+        // Push (T-HT-004).
         let push_on = toolbar.push_on;
         let push_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
             if push_on {
-                this.status_footer = FooterStatus::Idle(SharedString::from(
-                    "Push: T-HT-004 で実装予定",
-                ));
+                this.open_push_modal();
             } else {
                 let reason = if this.status_summary.is_detached {
                     "Push: detached HEAD — branch に切り替えてください"
                 } else if this.status_summary.is_unborn {
                     "Push: no commits yet — upstream がありません"
-                } else if this.status_summary.no_upstream {
-                    "Push: upstream が設定されていません (no upstream)"
+                } else if this.status_summary.no_upstream && !this.status_summary.has_remote {
+                    "Push: no upstream and no remote configured"
                 } else {
                     "Push: nothing to push (ahead=0)"
                 };
@@ -4830,6 +5007,27 @@ fn render_pull_modal(modal: PullPlanModal, cx: &mut Context<KagiApp>) -> gpui::A
         .into_any_element()
 }
 
+/// Push plan confirmation overlay (T-HT-004) — same card as the pull
+/// plan modal, wired to `confirm_push`.
+fn render_push_modal(modal: PushPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+        this.cancel_push_modal();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+        this.confirm_push();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    render_plan_modal_card(modal.plan, modal.error, "Push", cancel_handler, confirm_handler)
+        .into_any_element()
+}
+
 /// Shared plan-confirmation card: title / current→predicted / warnings /
 /// blockers / recovery / error / Cancel + confirm buttons.  The confirm
 /// button is hidden whenever the plan has blockers.
@@ -4925,6 +5123,43 @@ fn render_plan_modal_card(
             );
         }
         card = card.child(warn_col);
+    }
+
+    // ── Commits to push (T-HT-004) ────────────────────────
+    // Shown only when preview_commits is non-empty (push plans).
+    if !plan.preview_commits.is_empty() {
+        let total = plan.preview_commits.len();
+        let show_count = total.min(10);
+        let label = format!("Commits to push ({})", total);
+        let mut commit_col = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(TEXT_LABEL))
+                    .child(SharedString::from(label)),
+            );
+        for entry in plan.preview_commits.iter().take(show_count) {
+            let line: String = entry.chars().take(72).collect();
+            commit_col = commit_col.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(TEXT_SUB))
+                    .overflow_hidden()
+                    .child(SharedString::from(line)),
+            );
+        }
+        if total > 10 {
+            commit_col = commit_col.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(TEXT_MUTED))
+                    .child(SharedString::from(format!("\u{2026} and {} more", total - 10))),
+            );
+        }
+        card = card.child(commit_col);
     }
 
     // ── Blockers ──────────────────────────────────────────

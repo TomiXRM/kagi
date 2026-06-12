@@ -1,4 +1,4 @@
-//! Checkout, create-branch, stash-push, stash-apply, cherry-pick, and pull operation pipelines — T013, T014, T015, T016, T-HT-003
+//! Checkout, create-branch, stash-push, stash-apply, cherry-pick, pull, and push operation pipelines — T013, T014, T015, T016, T-HT-003, T-HT-004
 //!
 //! Implements the **plan → preflight → execute** pipeline for:
 //! - `checkout` (ADR-0004, Guarded class): `plan_checkout` / `preflight_check` / `execute_checkout`
@@ -106,6 +106,10 @@ pub struct OperationPlan {
     /// dry run.  Non-empty only for cherry-pick plans.  Used by the plan modal
     /// to render a preview file tree (T016).
     pub preview_files: Vec<FileStatus>,
+    /// Commits that will be pushed, as `"<short>  <summary>"` strings.
+    /// Non-empty only for push plans (T-HT-004).  Shown in the plan modal
+    /// (newest first, capped at 100 entries at plan time).
+    pub preview_commits: Vec<String>,
 }
 
 impl OperationPlan {
@@ -263,6 +267,7 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
+        preview_commits: Vec::new(),
     })
 }
 
@@ -475,6 +480,7 @@ pub fn plan_create_branch(
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
+        preview_commits: Vec::new(),
     })
 }
 
@@ -643,6 +649,7 @@ pub fn plan_stash_push(
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         preview_files: Vec::new(),
+        preview_commits: Vec::new(),
     })
 }
 
@@ -811,6 +818,7 @@ pub fn plan_stash_apply(
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         preview_files: Vec::new(),
+        preview_commits: Vec::new(),
     })
 }
 
@@ -1103,6 +1111,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             head_at_plan: head,
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
+            preview_commits: Vec::new(),
         });
     }
 
@@ -1169,6 +1178,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             head_at_plan: head,
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
+            preview_commits: Vec::new(),
         });
     }
 
@@ -1252,6 +1262,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             head_at_plan: head,
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
+            preview_commits: Vec::new(),
         });
     }
 
@@ -1300,6 +1311,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files,
+        preview_commits: Vec::new(),
     })
 }
 
@@ -1618,6 +1630,7 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
+        preview_commits: Vec::new(),
     })
 }
 
@@ -1962,4 +1975,421 @@ fn predict_merge_conflict(
     } else {
         Ok(None)
     }
+}
+
+// ────────────────────────────────────────────────────────────
+// PushOutcome  (T-HT-004)
+// ────────────────────────────────────────────────────────────
+
+/// The outcome of a successful [`execute_push`] call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushOutcome {
+    /// Number of commits that were in the push plan (approximate; taken from
+    /// the `preview_commits` count at plan time).
+    pub pushed: usize,
+    /// Whether `--set-upstream` (`-u`) was passed (i.e. the branch had no
+    /// upstream configured before the push).
+    pub set_upstream: bool,
+}
+
+// ────────────────────────────────────────────────────────────
+// plan_push  (T-HT-004)
+// ────────────────────────────────────────────────────────────
+
+/// Analyse whether a push is safe and return an [`OperationPlan`].
+///
+/// # Blocker conditions (ADR-0009 Guarded policy)
+///
+/// - HEAD is detached or unborn.
+/// - Upstream is configured **and** ahead count is 0 (nothing to push).
+/// - No upstream configured **and** no remote exists anywhere in the repo.
+///
+/// # Set-upstream flow
+///
+/// If no upstream is configured but at least one remote exists (prefer
+/// `origin`; fall back to the only remote), the push is **not** blocked.
+/// The title is set to `"Push '<branch>' to '<remote>' (set upstream)"` and
+/// `execute_push` will pass `-u` to set the upstream automatically.
+///
+/// # Preview commits
+///
+/// - Upstream configured: revwalk from HEAD, hiding the upstream tip.
+/// - Set-upstream flow: revwalk from HEAD (no hide — all commits are "new").
+/// Both paths are capped at 100 commits.
+///
+/// # Warning
+///
+/// - `"Non-fast-forward pushes will fail — force is not used."` (always shown).
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] if the repository cannot be queried.
+pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
+    // ── 1. Resolve HEAD ──────────────────────────────────────
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+
+    // ── 2. Build current StateSummary ────────────────────────
+    let head_display = head.display();
+
+    let dirty_parts: Vec<String> = [
+        (!status.staged.is_empty())
+            .then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty())
+            .then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty())
+            .then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty())
+            .then(|| format!("{} conflicted", status.conflicted.len())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let dirty_display = if dirty_parts.is_empty() {
+        "clean".to_string()
+    } else {
+        dirty_parts.join(", ")
+    };
+
+    let current = StateSummary {
+        head: head_display.clone(),
+        dirty: dirty_display,
+    };
+
+    // ── 3. Early blockers (before touching git objects) ──────
+    let mut blockers: Vec<String> = Vec::new();
+    let warnings: Vec<String> = vec![
+        "Non-fast-forward pushes will fail — force is not used.".to_string(),
+    ];
+
+    // Detached HEAD.
+    if let Head::Detached { .. } = &head {
+        blockers.push(
+            "HEAD is detached. Push is only supported when HEAD is on a branch.".to_string(),
+        );
+    }
+
+    // Unborn HEAD.
+    if let Head::Unborn { .. } = &head {
+        blockers.push(
+            "HEAD is unborn (no commits exist). Cannot push an empty branch.".to_string(),
+        );
+    }
+
+    // ── 4. Only proceed with upstream/remote analysis for Attached HEAD ──
+    let branch_name = match &head {
+        Head::Attached { branch, .. } => branch.clone(),
+        _ => {
+            // Blockers already set; build minimal plan.
+            let predicted = StateSummary {
+                head: head_display.clone(),
+                dirty: current.dirty.clone(),
+            };
+            let recovery = "Push requires a branch. Use `git checkout <branch>` to attach HEAD.".to_string();
+            return Ok(OperationPlan {
+                title: "Push (blocked)".to_string(),
+                current,
+                predicted,
+                warnings,
+                blockers,
+                recovery,
+                head_at_plan: head,
+                stash_count_at_plan: 0,
+                preview_files: Vec::new(),
+                preview_commits: Vec::new(),
+            });
+        }
+    };
+
+    // ── 5. Upstream check ────────────────────────────────────
+    // Try to resolve upstream info; Ok → upstream configured,
+    // Err → no upstream (set-upstream flow or hard blocker).
+    let upstream_info = resolve_upstream_info(repo, &branch_name);
+
+    let (has_upstream, remote_name, ahead_count) = match upstream_info {
+        Ok((_, remote, _behind)) => {
+            // Compute ahead count (HEAD vs upstream tip).
+            let branch_ref = repo
+                .find_branch(&branch_name, BranchType::Local)
+                .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", branch_name, e.message())))?;
+            let upstream_ref = branch_ref
+                .upstream()
+                .map_err(|e| GitError::Other(format!("upstream lookup failed: {}", e.message())))?;
+            let head_oid = branch_ref
+                .get()
+                .target()
+                .ok_or_else(|| GitError::Other("branch has no target".to_string()))?;
+            let upstream_oid = upstream_ref
+                .get()
+                .target()
+                .ok_or_else(|| GitError::Other("upstream has no target".to_string()))?;
+            let (ahead, _) = repo
+                .graph_ahead_behind(head_oid, upstream_oid)
+                .unwrap_or((0, 0));
+            (true, remote, ahead)
+        }
+        Err(_) => {
+            // No upstream configured — find a remote to use (set-upstream flow).
+            let remotes = repo
+                .remotes()
+                .map_err(|e| GitError::Other(format!("failed to list remotes: {}", e.message())))?;
+            let remote_names: Vec<String> = remotes
+                .iter()
+                .filter_map(|s| s.ok().flatten())
+                .map(|s| s.to_owned())
+                .collect();
+
+            if remote_names.is_empty() {
+                blockers.push(format!(
+                    "No upstream configured for branch '{}' and no remotes exist. \
+                     Add a remote with `git remote add origin <url>`.",
+                    branch_name
+                ));
+                (false, String::new(), 0usize)
+            } else {
+                // Prefer "origin"; fall back to the only remote.
+                let chosen = if remote_names.iter().any(|r| r == "origin") {
+                    "origin".to_string()
+                } else {
+                    remote_names[0].clone()
+                };
+                (false, chosen, usize::MAX) // MAX sentinel: compute below
+            }
+        }
+    };
+
+    // ── 6. Upstream-configured but nothing to push ───────────
+    if has_upstream && ahead_count == 0 {
+        blockers.push(format!(
+            "Branch '{}' is already up to date with its upstream — nothing to push.",
+            branch_name
+        ));
+    }
+
+    // ── 7. Determine title ────────────────────────────────────
+    let is_set_upstream_flow = !has_upstream && blockers.is_empty();
+    let title = if is_set_upstream_flow {
+        format!("Push '{}' to '{}' (set upstream)", branch_name, remote_name)
+    } else if has_upstream {
+        format!("Push '{}' to '{}'", branch_name, remote_name)
+    } else {
+        "Push (blocked)".to_string()
+    };
+
+    // ── 8. Build preview_commits (revwalk) ───────────────────
+    // Only collect when no blockers (pointless otherwise).
+    let preview_commits: Vec<String> = if blockers.is_empty() {
+        build_push_preview(repo, &branch_name, &remote_name, has_upstream)
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    // For set-upstream flow: use actual commit count as ahead_count substitute.
+    let effective_ahead = if is_set_upstream_flow {
+        preview_commits.len()
+    } else {
+        ahead_count
+    };
+
+    // ── 9. Predicted StateSummary ─────────────────────────────
+    let predicted = StateSummary {
+        head: format!("branch: {} (pushed {} commit(s))", branch_name, effective_ahead),
+        dirty: current.dirty.clone(),
+    };
+
+    // ── 10. Recovery guidance ─────────────────────────────────
+    let recovery = format!(
+        "Push only sends commits to the remote — the local repository is never modified.\n\
+         If the push is rejected (non-fast-forward), pull first and re-plan:\n  \
+         git pull\n  git push\n\
+         The reflog records every HEAD movement:\n  git reflog"
+    );
+
+    Ok(OperationPlan {
+        title,
+        current,
+        predicted,
+        warnings,
+        blockers,
+        recovery,
+        head_at_plan: head,
+        stash_count_at_plan: 0,
+        preview_files: Vec::new(),
+        preview_commits,
+    })
+}
+
+// ────────────────────────────────────────────────────────────
+// execute_push  (T-HT-004)
+// ────────────────────────────────────────────────────────────
+
+/// Execute a push.
+///
+/// - If the current branch has an upstream configured:
+///   `git push <remote> <branch>`
+/// - If no upstream is configured (set-upstream flow):
+///   `git push -u <remote> <branch>`
+///
+/// **force / --force / --force-with-lease are never used.**
+///
+/// Non-fast-forward pushes are rejected by the remote and returned as
+/// `GitError::Other` with the full stderr.  The local repository is left
+/// completely untouched on failure.
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] on any failure.
+pub fn execute_push(repo: &Repository, repo_path: &Path) -> Result<PushOutcome, GitError> {
+    // ── 1. Resolve current branch ─────────────────────────────
+    let head_ref = repo
+        .head()
+        .map_err(|e| GitError::Other(format!("HEAD lookup failed: {}", e.message())))?;
+    let branch_name = head_ref
+        .shorthand()
+        .map_err(|e| GitError::Other(format!("HEAD shorthand failed: {}", e.message())))?
+        .to_string();
+
+    // ── 2. Check for upstream ─────────────────────────────────
+    let upstream_result = resolve_upstream_info(repo, &branch_name);
+    let (has_upstream, remote_name) = match upstream_result {
+        Ok((_, remote, _)) => (true, remote),
+        Err(_) => {
+            // No upstream — pick a remote (prefer origin).
+            let remotes = repo
+                .remotes()
+                .map_err(|e| GitError::Other(format!("failed to list remotes: {}", e.message())))?;
+            let remote_names: Vec<String> = remotes
+                .iter()
+                .filter_map(|s| s.ok().flatten())
+                .map(|s| s.to_owned())
+                .collect();
+            if remote_names.is_empty() {
+                return Err(GitError::Other(
+                    "No remote configured. Cannot push.".to_string(),
+                ));
+            }
+            let chosen = if remote_names.iter().any(|r| r == "origin") {
+                "origin".to_string()
+            } else {
+                remote_names[0].clone()
+            };
+            (false, chosen)
+        }
+    };
+
+    // ── 3. Compute ahead count for PushOutcome.pushed ────────
+    let pushed_count = if has_upstream {
+        let branch_ref2 = repo
+            .find_branch(&branch_name, BranchType::Local)
+            .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", branch_name, e.message())))?;
+        let upstream_ref = branch_ref2
+            .upstream()
+            .map_err(|e| GitError::Other(format!("upstream lookup failed: {}", e.message())))?;
+        let head_oid2 = branch_ref2.get().target()
+            .ok_or_else(|| GitError::Other("branch has no target".to_string()))?;
+        let upstream_oid2 = upstream_ref.get().target()
+            .ok_or_else(|| GitError::Other("upstream has no target".to_string()))?;
+        let (ahead, _) = repo.graph_ahead_behind(head_oid2, upstream_oid2).unwrap_or((0, 0));
+        ahead
+    } else {
+        // Set-upstream flow: use revwalk count.
+        build_push_preview(repo, &branch_name, &remote_name, false)
+            .map(|v| v.len())
+            .unwrap_or(0)
+    };
+
+    // ── 4. Build git args (no --force, ever) ─────────────────
+    let args: Vec<&str> = if has_upstream {
+        vec!["push", &remote_name, &branch_name]
+    } else {
+        vec!["push", "-u", &remote_name, &branch_name]
+    };
+
+    // ── 5. Run git push via CLI ───────────────────────────────
+    let out = run_git(repo_path, &args)
+        .map_err(|e| GitError::Other(format!("push failed: {}", e)))?;
+
+    if out.status != 0 {
+        return Err(GitError::Other(format!(
+            "push failed (exit {}): {}",
+            out.status,
+            out.stderr.trim()
+        )));
+    }
+
+    Ok(PushOutcome {
+        pushed: pushed_count,
+        set_upstream: !has_upstream,
+    })
+}
+
+// ────────────────────────────────────────────────────────────
+// Internal helpers (push)
+// ────────────────────────────────────────────────────────────
+
+/// Build the preview_commits list for a push plan.
+///
+/// - `has_upstream=true`:  walk HEAD, hide the upstream OID  (`upstream..HEAD`).
+/// - `has_upstream=false`: walk all commits reachable from HEAD (set-upstream flow).
+/// Both paths are capped at 100 commits, newest first.
+///
+/// Returns an empty Vec on any error (non-fatal — preview is best-effort).
+fn build_push_preview(
+    repo: &Repository,
+    branch_name: &str,
+    remote_name: &str,
+    has_upstream: bool,
+) -> Result<Vec<String>, GitError> {
+    const MAX_PREVIEW: usize = 100;
+
+    let head_oid = repo
+        .head()
+        .ok()
+        .and_then(|r| r.target())
+        .ok_or_else(|| GitError::Other("HEAD has no target".to_string()))?;
+
+    let mut walk = repo
+        .revwalk()
+        .map_err(|e| GitError::Other(format!("revwalk init failed: {}", e.message())))?;
+
+    walk.push(head_oid)
+        .map_err(|e| GitError::Other(format!("revwalk push failed: {}", e.message())))?;
+
+    // Hide the upstream tip so we only see commits not yet on the remote.
+    if has_upstream {
+        if let Ok(upstream_oid) = resolve_upstream_oid(repo, branch_name, remote_name) {
+            let _ = walk.hide(upstream_oid);
+        }
+    }
+
+    // Topological sort, newest first.
+    walk.set_sorting(git2::Sort::TOPOLOGICAL)
+        .map_err(|e| GitError::Other(format!("revwalk sort failed: {}", e.message())))?;
+
+    let mut result: Vec<String> = Vec::new();
+    for oid_result in walk {
+        if result.len() >= MAX_PREVIEW {
+            break;
+        }
+        let oid = oid_result
+            .map_err(|e| GitError::Other(format!("revwalk iter failed: {}", e.message())))?;
+        let commit = repo
+            .find_commit(oid)
+            .map_err(|e| GitError::Other(format!("commit lookup failed: {}", e.message())))?;
+
+        let short = &oid.to_string()[..8];
+        let summary: String = commit
+            .summary()
+            .ok()
+            .flatten()
+            .unwrap_or("(no message)")
+            .chars()
+            .take(72)
+            .collect();
+        result.push(format!("{}  {}", short, summary));
+    }
+
+    Ok(result)
 }

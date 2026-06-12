@@ -164,6 +164,32 @@ fn main() {
         }
     }
 
+    // ── T-HT-004: headless push plan / execute ──────────────
+    // KAGI_PUSH=1: generate a push plan and log it.
+    // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, execute the push.
+    // For fixture/tempdir testing only.  Do not set in normal use.
+    if std::env::var("KAGI_PUSH").as_deref() == Ok("1") {
+        // open_push_modal logs the plan via [kagi] plan: push ...
+        app_state.open_push_modal();
+
+        let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
+        if auto_confirm {
+            if let Some(ref modal) = app_state.push_modal.clone() {
+                if modal.plan.blockers.is_empty() {
+                    // confirm_push runs preflight → execute_push and logs
+                    // [kagi] executed: push / [kagi] verified: entries.
+                    app_state.confirm_push();
+                } else {
+                    eprintln!(
+                        "[kagi] KAGI_AUTO_CONFIRM=1 but push has {} blocker(s), skipping",
+                        modal.plan.blockers.len()
+                    );
+                    record_headless_op("push", modal.plan.current.clone(), OpOutcome::Refused { blockers: modal.plan.blockers.clone() }, &repo_path);
+                }
+            }
+        }
+    }
+
     // ── T013: headless checkout plan / execute ───────────────
     // KAGI_PLAN_CHECKOUT=<branch>: generate a plan for the branch and log it.
     // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, proceed to execute.

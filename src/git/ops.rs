@@ -4031,8 +4031,7 @@ pub fn plan_amend(
 
     let mut blockers: Vec<String> = Vec::new();
     // `warnings` stays empty in MVP; the checklist lane (ADR-0043) will push into
-    // it once `run_checklist` is wired in step 5 below.
-    let warnings: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
 
     // ── 2. Structural blockers (HEAD shape) ──────────────────
     if let Head::Detached { .. } = &head {
@@ -4136,16 +4135,14 @@ pub fn plan_amend(
         );
     }
 
-    // ── 5. Checklist (ADR-0043 / 0043) ───────────────────────
-    // The shared checklist module (`src/git/checklist.rs::run_checklist`) is being
-    // implemented by the W14-CHECK lane.  Once merged, call it here over the staged
-    // contents and append its blockers/warnings — same call `plan_commit` will use:
-    //
-    //   let (cl_blockers, cl_warnings) = checklist::run_checklist(repo, &status.staged)?;
-    //   blockers.extend(cl_blockers);
-    //   warnings.extend(cl_warnings);
-    //
-    // TODO(PM, merge): wire run_checklist once W14-CHECK lands (ADR-0043 §override).
+    // ── 5. Checklist (ADR-0039 / 0043) — same rules as plan_commit ────
+    // Only meaningful when staged content is being folded in; message-only
+    // amends keep the old tree, so there is nothing new to scan.
+    if mode.includes_staged() {
+        let (cl_blockers, cl_warnings) = crate::git::checklist::checklist(repo, &status)?;
+        blockers.extend(cl_blockers);
+        warnings.extend(cl_warnings);
+    }
 
     // ── 6. Predicted state (SHA change is the headline) ──────
     let predicted_head = if old_short.is_empty() {

@@ -16,7 +16,7 @@
 
 use gpui::{App, Bounds, Context, IntoElement, Pixels, SharedString, Window, canvas, div, prelude::*, px, relative, rgb};
 
-use kagi::git::{ChangeKind, CommitId, FileStatus};
+use kagi::git::{ChangeKind, CommitId, FileDiffStat, FileStatus, find_stat};
 
 use super::{
     CompareView, DividerDrag, DividerGhost, DividerKind, KagiApp,
@@ -24,6 +24,7 @@ use super::{
     commit_list::{BadgeKind, RefBadge},
     context_menu::CommitAction,
     detail_panel::CommitDetail,
+    diffstat_bar::diffstat_unit,
     file_tree,
 };
 
@@ -56,6 +57,9 @@ pub fn render_inspector(
     at: CommitId,
     badges: Vec<RefBadge>,
     changed_files: Option<Vec<FileStatus>>,
+    // W16-DIFFSTAT: per-file additions/deletions for the changed files (commit
+    // vs parent). `None` when unavailable or in compare mode.
+    changed_diffstat: Option<Vec<FileDiffStat>>,
     compare_view: Option<CompareView>,
     active_file: Option<usize>,
     tree_view: bool,
@@ -152,6 +156,7 @@ pub fn render_inspector(
                         let indent = (*depth as f32) * 12.0;
                         let (badge_char, badge_color) = change_badge(change);
                         let fi = *file_index;
+                        let stat = stat_for_index(truncated_files.as_ref(), changed_diffstat.as_ref(), fi);
                         let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
                             this.open_main_diff_inspector_file(fi);
                             cx.notify();
@@ -169,11 +174,12 @@ pub fn render_inspector(
                                     .child(SharedString::from(badge_char)),
                             )
                             .child(
-                                div().flex_1()
+                                div().flex_1().min_w(px(0.))
                                     .text_sm().text_color(rgb(theme().text_main))
                                     .truncate()
                                     .child(name.clone()),
                             )
+                            .child(diffstat_unit(fi, stat))
                             .into_any()
                     }
                 }
@@ -188,6 +194,9 @@ pub fn render_inspector(
                 let path_text = SharedString::from(
                     fs.path.to_string_lossy().into_owned()
                 );
+                let stat = changed_diffstat
+                    .as_ref()
+                    .and_then(|stats| find_stat(stats, &fs.path));
                 let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
                     this.open_main_diff_inspector_file(fi);
                     cx.notify();
@@ -205,11 +214,12 @@ pub fn render_inspector(
                             .child(SharedString::from(badge_char)),
                     )
                     .child(
-                        div().flex_1()
+                        div().flex_1().min_w(px(0.))
                             .text_sm().text_color(rgb(theme().text_main))
                             .truncate()
                             .child(path_text),
                     )
+                    .child(diffstat_unit(fi, stat))
                     .into_any()
             }).collect(),
         }
@@ -669,6 +679,18 @@ fn action_button(
         .on_click(click)
         .hover(|style| style.bg(rgb(theme().selected)))
         .child(SharedString::from(label))
+}
+
+/// W16-DIFFSTAT: look up the [`FileDiffStat`] for the file at `file_index` in
+/// the truncated file list, matching by path.  Returns `None` when either the
+/// file list or the diffstat is unavailable.
+fn stat_for_index<'a>(
+    files: Option<&Vec<FileStatus>>,
+    stats: Option<&'a Vec<FileDiffStat>>,
+    file_index: usize,
+) -> Option<&'a FileDiffStat> {
+    let fs = files?.get(file_index)?;
+    find_stat(stats?, &fs.path)
 }
 
 /// Change-kind badge char and colour.

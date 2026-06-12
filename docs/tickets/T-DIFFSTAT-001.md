@@ -11,3 +11,9 @@
 ## 完了条件
 
 - [ ] model 定義 + re-export、`cargo test` 全パス、own-code warning 0
+
+## 実装メモ (done)
+
+- Status: done
+- `src/git/diffstat.rs` に `FileDiffStat { path, change: ChangeKind, additions, deletions, is_binary }` を定義(`total()` ヘルパ付き)。`src/git/mod.rs` から re-export。
+- `change` は `ChangeKind` を流用(spec 許諾どおり)。rename は `ChangeKind::Renamed { from }` が old path を保持。

@@ -14,3 +14,11 @@
 
 - [ ] 全 6 テーマで成立(dark/light 両方で視認)
 - [ ] `cargo test` 全パス、own-code warning 0
+
+## 実装メモ (done)
+
+- Status: done
+- `src/ui/diffstat_bar.rs` に `diffstat_unit(id_seed, Option<&FileDiffStat>) -> impl IntoElement`。`+N -M` 数値(緑=additions/赤=deletions)+ 固定幅5segment bar(緑→赤→muted残track)を右揃え・flex_shrink_0 で返す。
+- 色は全て theme()(change_added / change_deleted / surface / text_muted)。ハードコードなし→6テーマ成立。
+- binary→`BIN`、変更0→薄い placeholder track、None→空spacer(列 alignment維持)。
+- MAX_SEGMENTS=5(spec 5–8 内)。

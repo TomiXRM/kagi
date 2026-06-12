@@ -12,6 +12,7 @@ pub mod commit_list;
 pub mod commit_panel;
 pub mod context_menu;
 pub mod detail_panel;
+pub mod diffstat_bar;
 pub mod file_tree;
 pub mod graph_view;
 pub mod inspector;
@@ -176,7 +177,7 @@ fn row_height(compact: bool) -> f32 {
 }
 
 use kagi::git::{
-    ChangeKind, CommitId, FileDiff, DiffLineKind, FileStatus, Head, RemoteBranch, RepoSnapshot, Stash, Tag, UpstreamInfo, Worktree,
+    ChangeKind, CommitId, FileDiff, DiffLineKind, FileDiffStat, FileStatus, Head, RemoteBranch, RepoSnapshot, Stash, Tag, UpstreamInfo, Worktree,
     ops::{
         OperationPlan, StateSummary,
         execute_checkout, execute_checkout_commit, execute_create_branch,
@@ -1132,6 +1133,10 @@ pub struct KagiApp {
     /// Cache of changed-files results keyed by row index.
     /// `None` value means the diff was attempted but failed (show unavailable).
     pub diff_cache: HashMap<usize, Option<Vec<FileStatus>>>,
+    /// W16-DIFFSTAT: per-file additions/deletions for the selected commit,
+    /// keyed by row index. Computed lazily alongside `diff_cache` and consumed
+    /// by the Inspector changed-files list (truncated set only).
+    pub diffstat_cache: HashMap<usize, Vec<FileDiffStat>>,
     /// T-UI-003: When `Some`, the main pane shows this diff (full-width) instead
     /// of the commit graph list.  Cleared when `selected` changes or on reload.
     pub main_diff: Option<MainDiffView>,
@@ -1563,6 +1568,7 @@ impl KagiApp {
             error: None,
             repo_path: None,
             diff_cache: HashMap::new(),
+            diffstat_cache: HashMap::new(),
             main_diff: None,
             compare_view: None,
             main_diff_scroll_handle: UniformListScrollHandle::new(),
@@ -1661,6 +1667,7 @@ impl KagiApp {
             error: Some(SharedString::from(message.into())),
             repo_path: None,
             diff_cache: HashMap::new(),
+            diffstat_cache: HashMap::new(),
             main_diff: None,
             compare_view: None,
             main_diff_scroll_handle: UniformListScrollHandle::new(),
@@ -1788,6 +1795,7 @@ impl KagiApp {
         // Per-repo transient state reset (unchanged behaviour).
         self.selected = None;
         self.diff_cache = HashMap::new();
+        self.diffstat_cache = HashMap::new();
         self.main_diff = None;
         self.compare_view = None;
         self.plan_modal = None;
@@ -5642,6 +5650,10 @@ impl KagiApp {
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             eprintln!("[kagi] changed files: {}", n);
             self.diff_cache.insert(index, files_opt);
+            // W16-DIFFSTAT: aggregate per-file additions/deletions alongside.
+            if let Some(stats) = self.fetch_diffstat(index) {
+                self.diffstat_cache.insert(index, stats);
+            }
         } else {
             // Already cached — just emit the log.
             let n = self
@@ -6011,6 +6023,19 @@ impl KagiApp {
         commit_changed_files(&repo, &id).ok()
     }
 
+    /// W16-DIFFSTAT: aggregate per-file additions/deletions for the commit at
+    /// `index`.  Returns `None` on failure (the UI simply omits the bar).
+    fn fetch_diffstat(&self, index: usize) -> Option<Vec<FileDiffStat>> {
+        use kagi::git::{CommitId, commit_diffstat};
+
+        let repo_path = self.repo_path.as_ref()?;
+        let detail = self.details.get(index)?;
+        let id = CommitId(detail.full_sha.as_ref().to_string());
+
+        let repo = git2::Repository::open(repo_path).ok()?;
+        commit_diffstat(&repo, &id).ok()
+    }
+
     pub fn close_compare_view(&mut self) {
         self.compare_view = None;
         self.main_diff = None;
@@ -6029,6 +6054,9 @@ impl KagiApp {
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             eprintln!("[kagi] changed files: {}", n);
             self.diff_cache.insert(row_index, files_opt);
+            if let Some(stats) = self.fetch_diffstat(row_index) {
+                self.diffstat_cache.insert(row_index, stats);
+            }
         }
     }
 
@@ -6657,6 +6685,9 @@ impl Render for KagiApp {
         // `None` outer = no selection; `Some(None)` = diff unavailable; `Some(Some(v))` = files.
         let changed_files: Option<Option<Vec<FileStatus>>> = selected
             .map(|i| self.diff_cache.get(&i).cloned().unwrap_or(None));
+        // W16-DIFFSTAT: per-file additions/deletions for the selected commit.
+        let changed_diffstat: Option<Vec<FileDiffStat>> = selected
+            .and_then(|i| self.diffstat_cache.get(&i).cloned());
         // W2-INSPECTOR: badges for the selected commit row and tree-view toggle state.
         let selected_badges: Vec<commit_list::RefBadge> =
             selected.and_then(|i| self.rows.get(i)).map(|r| r.badges.clone()).unwrap_or_default();
@@ -6933,7 +6964,7 @@ impl Render for KagiApp {
             .child(self.render_header_slot(toolbar_state, status_summary, self.rows.first().map(|r| r.summary.to_string()), cx))
             // ── Body slot: sidebar | list | optional panel ───
             .child(self.render_body(
-                row_count, selected, detail, changed_files, selected_badges, inspector_tree_view,
+                row_count, selected, detail, changed_files, changed_diffstat, selected_badges, inspector_tree_view,
                 main_diff, compare_view, main_diff_scroll_handle,
                 branches, remote_branches, tags, stashes, worktrees, branch_upstream_info,
                 sidebar_collapsed, branch_groups_collapsed, sidebar_filter,
@@ -7503,6 +7534,7 @@ impl KagiApp {
         selected: Option<usize>,
         detail: Option<detail_panel::CommitDetail>,
         changed_files: Option<Option<Vec<FileStatus>>>,
+        changed_diffstat: Option<Vec<FileDiffStat>>,
         selected_badges: Vec<commit_list::RefBadge>,
         inspector_tree_view: bool,
         main_diff: Option<MainDiffView>,
@@ -7864,10 +7896,17 @@ impl KagiApp {
                     .as_ref()
                     .map(|view| Some(view.files.clone()))
                     .unwrap_or_else(|| changed_files.clone().unwrap_or(None));
+                // W16-DIFFSTAT: only the commit-vs-parent view has aggregated
+                // diffstat; compare mode is out of scope for this lane.
+                let diffstat = if compare_for_panel.is_some() {
+                    None
+                } else {
+                    changed_diffstat.clone()
+                };
                 el.child(divider2)
                     .child(inspector::render_inspector(
                         d, at, selected_badges.clone(),
-                        files, compare_for_panel,
+                        files, diffstat, compare_for_panel,
                         active_commit_file, inspector_tree_view,
                         self.inspector_split, self.inspector_geom.clone(), panel_width,
                         &avatar_images, cx,
@@ -11693,12 +11732,18 @@ fn render_commit_panel(
                         .child(
                             div()
                                 .flex_1()
+                                .min_w(px(0.))
                                 .text_xs()
                                 .text_color(rgb(theme().text_main))
                                 .overflow_hidden()
                                 .truncate()
                                 .child(name.clone()),
-                        );
+                        )
+                        .child(diffstat_bar::diffstat_unit(
+                            fi,
+                            panel.unstaged.get(fi)
+                                .and_then(|f| kagi::git::find_stat(&panel.unstaged_stats, &f.path)),
+                        ));
                     if !is_conflicted_file {
                         file_row = file_row.child(
                             div()
@@ -11778,12 +11823,17 @@ fn render_commit_panel(
                 .child(
                     div()
                         .flex_1()
+                        .min_w(px(0.))
                         .text_xs()
                         .text_color(rgb(theme().text_main))
                         .overflow_hidden()
                         .truncate()
                         .child(SharedString::from(name)),
-                );
+                )
+                .child(diffstat_bar::diffstat_unit(
+                    fi,
+                    kagi::git::find_stat(&panel.unstaged_stats, &f.path),
+                ));
             // Stage button only for non-conflicted files
             if !is_conflicted_file {
                 file_row = file_row.child(
@@ -11918,12 +11968,18 @@ fn render_commit_panel(
                             .child(
                                 div()
                                     .flex_1()
+                                    .min_w(px(0.))
                                     .text_xs()
                                     .text_color(rgb(theme().text_main))
                                     .overflow_hidden()
                                     .truncate()
                                     .child(name.clone()),
                             )
+                            .child(diffstat_bar::diffstat_unit(
+                                fi + 100_000,
+                                panel.staged.get(fi)
+                                    .and_then(|f| kagi::git::find_stat(&panel.staged_stats, &f.path)),
+                            ))
                             .child(
                                 div()
                                     .id(("cp-st-unstage-btn", fi))
@@ -11985,12 +12041,17 @@ fn render_commit_panel(
                     .child(
                         div()
                             .flex_1()
+                            .min_w(px(0.))
                             .text_xs()
                             .text_color(rgb(theme().text_main))
                             .overflow_hidden()
                             .truncate()
                             .child(SharedString::from(name)),
                     )
+                    .child(diffstat_bar::diffstat_unit(
+                        fi + 100_000,
+                        kagi::git::find_stat(&panel.staged_stats, &f.path),
+                    ))
                     .child(
                         div()
                             .id(("cp-st-flat-unstage-btn", fi))

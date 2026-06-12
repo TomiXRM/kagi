@@ -353,6 +353,10 @@ pub struct CherryPickModal {
 /// Root GPUI view.  Holds all pre-computed display data so the render
 /// closure never calls `format!` on hot paths.
 pub struct KagiApp {
+    /// Root focus handle.  Created when the window opens and focused by
+    /// default — without a focused element gpui never dispatches key events,
+    /// so window-wide actions like cmd-j would silently do nothing.
+    pub root_focus: Option<gpui::FocusHandle>,
     /// One-line header text: repo name + HEAD + status summary.
     pub header: SharedString,
     /// Pre-computed commit rows (built once from the snapshot).
@@ -512,6 +516,7 @@ impl KagiApp {
             .collect();
 
         KagiApp {
+            root_focus: None,
             header,
             rows,
             details,
@@ -550,6 +555,7 @@ impl KagiApp {
     /// Construct a placeholder for the no-argument / error case.
     pub fn with_error(message: impl Into<String>) -> Self {
         KagiApp {
+            root_focus: None,
             header: SharedString::from("kagi"),
             rows: Vec::new(),
             details: Vec::new(),
@@ -2340,6 +2346,9 @@ impl Render for KagiApp {
             .flex_col()
             .size_full()
             .bg(rgb(BG_BASE))
+            // Key events only dispatch along the focus path, so the root must
+            // own (and initially hold) focus for window-wide actions to work.
+            .when_some(self.root_focus.clone(), |el, fh| el.track_focus(&fh))
             // T023: capture drag-move for both dividers on the root element.
             .on_drag_move::<DividerDrag>(divider_drag_move)
             // T-BP-002: cmd-j toggle action (window-wide via on_action on root div).
@@ -5848,7 +5857,7 @@ fn render_commit_plan_modal(
 // ──────────────────────────────────────────────────────────────
 
 /// Open the GPUI window and start the event loop.
-pub fn run_app(app_state: KagiApp) {
+pub fn run_app(mut app_state: KagiApp) {
     use gpui::{Application, Bounds, Timer, WindowBounds, WindowOptions, size};
     use std::sync::mpsc;
     use std::time::Duration;
@@ -5877,7 +5886,16 @@ pub fn run_app(app_state: KagiApp) {
                 // first layer to be a `gpui_component::Root`; rendering
                 // KagiApp directly panics inside Root::read (user-reported
                 // crash when opening the commit panel).
-                let kagi: Entity<KagiApp> = cx.new(|_| app_state);
+                let kagi: Entity<KagiApp> = cx.new(|cx| {
+                    // Root focus handle: without a focused element gpui never
+                    // dispatches key events, so cmd-j (and future shortcuts)
+                    // would silently do nothing.
+                    app_state.root_focus = Some(cx.focus_handle());
+                    app_state
+                });
+                if let Some(fh) = kagi.read(cx).root_focus.clone() {
+                    window.focus(&fh);
+                }
                 // Regression coverage for the Root::read crash: with
                 // KAGI_COMMIT_PANEL=1, open the panel through the real
                 // window-context path so the InputState + Input element

@@ -123,6 +123,14 @@ fn main() {
         }
     }
 
+    // ── T028: headless branch jump ────────────────────────────
+    // KAGI_JUMP=<branch>: simulate a single-click on the named branch.
+    // Emits `[kagi] jump: <branch> -> row N` + selected log.
+    // Used for fixture/tempdir headless verification only.
+    if let Ok(jump_branch) = std::env::var("KAGI_JUMP") {
+        app_state.jump_to_branch(&jump_branch);
+    }
+
     // KAGI_OPEN_FIRST_FILE=1 (requires KAGI_SELECT_FIRST=1): after selecting
     // the first commit, automatically open the diff for its first changed file.
     // Emits `[kagi] diff: <path> hunks=N (+A -R)` for headless verification (T012).

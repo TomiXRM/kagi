@@ -16,6 +16,7 @@ use std::path::PathBuf;
 
 use gpui::{
     App, Context, Entity, FocusHandle, KeyDownEvent, SharedString, Window,
+    UniformListScrollHandle, ScrollStrategy,
     div, prelude::*, px, rgb, uniform_list,
 };
 use gpui_component::input::{Input, InputState};
@@ -353,6 +354,16 @@ pub struct KagiApp {
     /// InputState entity for the commit message field (gpui-component IME対応).
     /// Created lazily when the commit panel is first opened (requires &mut Window).
     pub commit_input: Option<Entity<InputState>>,
+    // ── T028: branch jump (scroll to commit) ─────────────────
+    /// Scroll handle for the "commit-list" uniform_list.
+    /// Stored in KagiApp so it persists across render frames.
+    pub commit_scroll_handle: UniformListScrollHandle,
+    /// Maps local branch name → the CommitId it points to.
+    /// Built at snapshot time; used by jump_to_branch.
+    pub branch_targets: HashMap<String, CommitId>,
+    /// Maps CommitId → row index in `self.rows`.
+    /// Built at snapshot time; used by jump_to_branch.
+    pub commit_row_index: HashMap<CommitId, usize>,
 }
 
 impl KagiApp {
@@ -417,6 +428,22 @@ impl KagiApp {
         let is_dirty = snap.status.is_dirty();
         let stashes = snap.stashes.clone();
 
+        // T028: build branch_targets (branch name → CommitId) from the snapshot.
+        let branch_targets: HashMap<String, CommitId> = snap
+            .branches
+            .iter()
+            .map(|b| (b.name.clone(), b.target.clone()))
+            .collect();
+
+        // T028: build commit_row_index (CommitId → row index in rows/commits).
+        // snap.commits is the authoritative ordering; rows is built from it 1-to-1.
+        let commit_row_index: HashMap<CommitId, usize> = snap
+            .commits
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.id.clone(), i))
+            .collect();
+
         KagiApp {
             header,
             rows,
@@ -442,6 +469,9 @@ impl KagiApp {
             commit_panel_open: false,
             commit_panel: None,
             commit_input: None,
+            commit_scroll_handle: UniformListScrollHandle::new(),
+            branch_targets,
+            commit_row_index,
         }
     }
 
@@ -472,6 +502,9 @@ impl KagiApp {
             commit_panel_open: false,
             commit_panel: None,
             commit_input: None,
+            commit_scroll_handle: UniformListScrollHandle::new(),
+            branch_targets: HashMap::new(),
+            commit_row_index: HashMap::new(),
         }
     }
 
@@ -529,6 +562,11 @@ impl KagiApp {
         self.commit_panel_open = false;
         self.commit_panel = None;
         self.commit_input = None;
+        // T028: refresh branch/commit lookup maps so jump works after checkout.
+        self.branch_targets = fresh.branch_targets;
+        self.commit_row_index = fresh.commit_row_index;
+        // commit_scroll_handle is preserved so the existing Rc<RefCell<...>> reference
+        // wired into the uniform_list continues to work after reload.
         // status_footer is intentionally preserved across reloads so the last
         // operation result remains visible after the commit list refreshes.
         // sidebar_width / panel_width are also preserved so the user's resize
@@ -1992,6 +2030,53 @@ impl KagiApp {
         let repo = git2::Repository::open(repo_path).ok()?;
         commit_changed_files(&repo, &id).ok()
     }
+
+    // ── T028: branch jump ────────────────────────────────────
+
+    /// Jump to the commit at the tip of `branch_name` in the commit list.
+    ///
+    /// - Scrolls the "commit-list" uniform_list to the row via the stored
+    ///   [`UniformListScrollHandle`].
+    /// - Selects the row (detail panel opens).
+    /// - Emits `[kagi] jump: <branch> -> row N` for headless verification.
+    /// - If the branch target is outside the 10 k commit window (not in
+    ///   `commit_row_index`), logs a warning and returns without crashing.
+    pub fn jump_to_branch(&mut self, branch_name: &str) {
+        // Look up the CommitId the branch points to.
+        let target = match self.branch_targets.get(branch_name) {
+            Some(t) => t.clone(),
+            None => {
+                eprintln!("[kagi] jump: branch '{}' not found in branch_targets", branch_name);
+                return;
+            }
+        };
+
+        // Look up the row index for that commit.
+        let row_ix = match self.commit_row_index.get(&target) {
+            Some(&ix) => ix,
+            None => {
+                eprintln!(
+                    "[kagi] jump: branch '{}' tip commit {} is outside the 10k window — cannot jump",
+                    branch_name,
+                    target.short()
+                );
+                self.status_footer = FooterStatus::Idle(SharedString::from(format!(
+                    "Cannot jump to '{}': commit is outside the loaded window",
+                    branch_name
+                )));
+                return;
+            }
+        };
+
+        eprintln!("[kagi] jump: {} -> row {}", branch_name, row_ix);
+
+        // Scroll the list so the row is visible (centered in viewport).
+        self.commit_scroll_handle
+            .scroll_to_item(row_ix, ScrollStrategy::Center);
+
+        // Select the row (opens detail panel, emits selected log).
+        self.select(row_ix);
+    }
 }
 
 impl Render for KagiApp {
@@ -2045,6 +2130,9 @@ impl Render for KagiApp {
         // T023: pane widths for divider rendering.
         let sidebar_width = self.sidebar_width;
         let panel_width = self.panel_width;
+
+        // T028: clone scroll handle for wiring into uniform_list via track_scroll.
+        let commit_scroll_handle = self.commit_scroll_handle.clone();
 
         // T023: divider drag-move handler callback (single listener handles both dividers).
         // Placed on the root div so it fires even when the mouse moves outside
@@ -2209,6 +2297,8 @@ impl Render for KagiApp {
                                 render_rows(&this.rows, range, selected, cx)
                             }),
                         )
+                        // T028: wire scroll handle so jump_to_branch can scroll the list.
+                        .track_scroll(commit_scroll_handle)
                         .flex_1()
                         .min_h(px(0.)),
                     );
@@ -3064,8 +3154,22 @@ fn render_sidebar(
                 .child(label)
                 .into_any()
         } else {
-            let click_handler = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                this.open_plan_modal(branch_for_click.clone());
+            // T028: single-click = jump to branch tip commit in graph;
+            //        double-click = open checkout plan modal.
+            // ClickEvent::click_count() returns the OS-level click count:
+            //   1 = single click, 2 = double-click.
+            // Note: for a double-click, gpui fires the on_click handler TWICE:
+            // once with click_count=1 and once with click_count=2.  This means
+            // the first click always performs the jump first — which is the
+            // natural / intended behaviour (same as GitKraken).
+            let click_handler = cx.listener(move |this, event: &gpui::ClickEvent, _window, cx| {
+                if event.click_count() >= 2 {
+                    // Double-click: open the checkout plan modal.
+                    this.open_plan_modal(branch_for_click.clone());
+                } else {
+                    // Single-click: jump (scroll + select) to the branch tip.
+                    this.jump_to_branch(&branch_for_click);
+                }
                 cx.notify();
             });
             div()

@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 use std::sync::Mutex;
-use kagi::git::oplog::{OpLogEntry, OpOutcome, append_oplog};
+use kagi::git::oplog::{OpLogEntry, OpOutcome, append_oplog, read_oplog_tail};
 use kagi::git::ops::StateSummary;
 
 /// Serialize all env-var-using tests to prevent KAGI_LOG_DIR races.
@@ -205,6 +205,192 @@ fn explicit_kagi_log_dir_overrides_home() {
         "path {:?} does not start with tempdir {:?}",
         path, expected_prefix
     );
+
+    match prev { Some(v) => std::env::set_var("KAGI_LOG_DIR", v), None => std::env::remove_var("KAGI_LOG_DIR") }
+    drop(dir);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// T-BP-004: read_oplog_tail parser tests
+// ────────────────────────────────────────────────────────────────────────────
+
+// ── Test 6: read_oplog_tail returns empty vec when file does not exist ──────
+
+#[test]
+fn read_tail_empty_when_no_file() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let (dir, log_dir) = with_tempdir();
+    let prev = std::env::var("KAGI_LOG_DIR").ok();
+    std::env::set_var("KAGI_LOG_DIR", &log_dir);
+
+    // No file written — should return empty.
+    let entries = read_oplog_tail(100);
+    assert!(entries.is_empty(), "expected empty vec when no file, got {} entries", entries.len());
+
+    match prev { Some(v) => std::env::set_var("KAGI_LOG_DIR", v), None => std::env::remove_var("KAGI_LOG_DIR") }
+    drop(dir);
+}
+
+// ── Test 7: read_oplog_tail round-trips Success, Failed, Refused ──────────
+
+#[test]
+fn read_tail_round_trips_all_outcome_kinds() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let (dir, log_dir) = with_tempdir();
+    let prev = std::env::var("KAGI_LOG_DIR").ok();
+    std::env::set_var("KAGI_LOG_DIR", &log_dir);
+
+    let entries_to_write = vec![
+        make_entry("checkout", 1001,
+            OpOutcome::Success { after: make_summary("branch: feature", "clean") }),
+        make_entry("stash-push", 1002,
+            OpOutcome::Failed { error: "nothing to stash".to_string() }),
+        make_entry("stash-apply", 1003,
+            OpOutcome::Refused { blockers: vec!["dirty tree".to_string(), "conflict".to_string()] }),
+    ];
+    for e in &entries_to_write {
+        append_oplog(e).expect("write");
+    }
+
+    let read = read_oplog_tail(100);
+    // Returned newest-first: index 0 = Refused, 1 = Failed, 2 = Success.
+    assert_eq!(read.len(), 3, "expected 3 entries, got {}", read.len());
+
+    // Newest first: Refused
+    assert_eq!(read[0].op, "stash-apply");
+    assert_eq!(read[0].timestamp, 1003);
+    match &read[0].outcome {
+        OpOutcome::Refused { blockers } => {
+            assert_eq!(blockers.len(), 2);
+            assert!(blockers[0].contains("dirty tree"));
+            assert!(blockers[1].contains("conflict"));
+        }
+        _ => panic!("expected Refused for entry 0"),
+    }
+
+    // Second: Failed
+    assert_eq!(read[1].op, "stash-push");
+    assert_eq!(read[1].timestamp, 1002);
+    match &read[1].outcome {
+        OpOutcome::Failed { error } => {
+            assert!(error.contains("nothing to stash"), "error: {}", error);
+        }
+        _ => panic!("expected Failed for entry 1"),
+    }
+
+    // Oldest: Success
+    assert_eq!(read[2].op, "checkout");
+    assert_eq!(read[2].timestamp, 1001);
+    match &read[2].outcome {
+        OpOutcome::Success { after } => {
+            assert_eq!(after.head, "branch: feature");
+            assert_eq!(after.dirty, "clean");
+        }
+        _ => panic!("expected Success for entry 2"),
+    }
+
+    match prev { Some(v) => std::env::set_var("KAGI_LOG_DIR", v), None => std::env::remove_var("KAGI_LOG_DIR") }
+    drop(dir);
+}
+
+// ── Test 8: read_oplog_tail tail limit is respected ───────────────────────
+
+#[test]
+fn read_tail_limits_to_n() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let (dir, log_dir) = with_tempdir();
+    let prev = std::env::var("KAGI_LOG_DIR").ok();
+    std::env::set_var("KAGI_LOG_DIR", &log_dir);
+
+    // Write 5 entries.
+    for i in 0..5i64 {
+        let e = make_entry("checkout", i,
+            OpOutcome::Success { after: make_summary("branch: main", "clean") });
+        append_oplog(&e).expect("write");
+    }
+
+    // Read only the last 3 (newest first).
+    let read = read_oplog_tail(3);
+    assert_eq!(read.len(), 3, "expected 3 entries (tail 3 of 5)");
+    // Newest = ts=4.
+    assert_eq!(read[0].timestamp, 4);
+    assert_eq!(read[1].timestamp, 3);
+    assert_eq!(read[2].timestamp, 2);
+
+    match prev { Some(v) => std::env::set_var("KAGI_LOG_DIR", v), None => std::env::remove_var("KAGI_LOG_DIR") }
+    drop(dir);
+}
+
+// ── Test 9: malformed lines are skipped ───────────────────────────────────
+
+#[test]
+fn read_tail_skips_malformed_lines() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let (dir, log_dir) = with_tempdir();
+    let prev = std::env::var("KAGI_LOG_DIR").ok();
+    std::env::set_var("KAGI_LOG_DIR", &log_dir);
+
+    // Write one valid entry.
+    let valid = make_entry("checkout", 9000,
+        OpOutcome::Success { after: make_summary("branch: main", "clean") });
+    let path = append_oplog(&valid).expect("write");
+
+    // Append broken lines directly.
+    {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path).expect("open");
+        writeln!(f, "{{this is not valid json}}").expect("write bad line");
+        writeln!(f, "also not json at all").expect("write bad line 2");
+    }
+
+    // Append another valid entry after the broken ones.
+    let valid2 = make_entry("create-branch", 9001,
+        OpOutcome::Success { after: make_summary("branch: feat", "clean") });
+    append_oplog(&valid2).expect("write");
+
+    let read = read_oplog_tail(100);
+    // Only 2 valid entries expected; bad lines skipped.
+    assert_eq!(read.len(), 2, "expected 2 valid entries, got {}", read.len());
+    // Newest first.
+    assert_eq!(read[0].timestamp, 9001);
+    assert_eq!(read[1].timestamp, 9000);
+
+    match prev { Some(v) => std::env::set_var("KAGI_LOG_DIR", v), None => std::env::remove_var("KAGI_LOG_DIR") }
+    drop(dir);
+}
+
+// ── Test 10: escaped strings are correctly restored ───────────────────────
+
+#[test]
+fn read_tail_restores_escaped_strings() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let (dir, log_dir) = with_tempdir();
+    let prev = std::env::var("KAGI_LOG_DIR").ok();
+    std::env::set_var("KAGI_LOG_DIR", &log_dir);
+
+    let entry = OpLogEntry {
+        timestamp: 42,
+        op: "checkout".to_string(),
+        repo: "/path/with \"quotes\" and \\backslash".to_string(),
+        before: make_summary("branch: feat/x", "1 modified\nfile"),
+        outcome: OpOutcome::Failed {
+            error: "error with \"quotes\"\nand newline".to_string(),
+        },
+    };
+    append_oplog(&entry).expect("write");
+
+    let read = read_oplog_tail(1);
+    assert_eq!(read.len(), 1, "expected 1 entry");
+    let e = &read[0];
+    assert_eq!(e.repo, "/path/with \"quotes\" and \\backslash", "repo roundtrip");
+    assert_eq!(e.before.dirty, "1 modified\nfile", "before.dirty roundtrip with embedded newline");
+    match &e.outcome {
+        OpOutcome::Failed { error } => {
+            assert!(error.contains("\"quotes\""), "error quote roundtrip");
+            assert!(error.contains('\n'), "error newline roundtrip");
+        }
+        _ => panic!("expected Failed"),
+    }
 
     match prev { Some(v) => std::env::set_var("KAGI_LOG_DIR", v), None => std::env::remove_var("KAGI_LOG_DIR") }
     drop(dir);

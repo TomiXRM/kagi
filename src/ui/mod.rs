@@ -12,7 +12,7 @@ pub mod file_tree;
 pub mod graph_view;
 pub mod watcher;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 
 use gpui::{
@@ -91,6 +91,10 @@ const PANEL_MAX: f32 = 800.0;
 const SIDEBAR_DEFAULT: f32 = 200.0;
 const PANEL_DEFAULT: f32 = 360.0;
 
+// T-BP-004: Operation Log ring-buffer size and initial load count.
+const OP_ENTRIES_MAX: usize = 500;
+const OP_ENTRIES_LOAD: usize = 100;
+
 // T-BP-002: Bottom panel height limits and default.
 const BOTTOM_PANEL_MIN_H: f32 = 80.0;
 const BOTTOM_PANEL_DEFAULT_H: f32 = 220.0;
@@ -127,7 +131,7 @@ use kagi::git::{
         preflight_check_stash,
         plan_cherry_pick, execute_cherry_pick,
     },
-    oplog::{OpLogEntry, OpOutcome, append_oplog},
+    oplog::{OpLogEntry, OpOutcome, append_oplog, read_oplog_tail},
     stage_file, unstage_file, plan_commit, execute_commit,
 };
 use commit_panel::{CommitPanelState, CommitPanelFileRef, CommitPlanModal, status_badge};
@@ -537,6 +541,13 @@ pub struct KagiApp {
     /// Pre-computed status bar data (branch, ahead/behind, staged, unstaged).
     /// Updated on every reload; rendered by `render_status_bar`.
     pub status_summary: StatusBarSummary,
+    // ── T-BP-004: Operation Log entries ─────────────────────────
+    /// In-memory operation log ring-buffer (max 500, newest at index 0).
+    pub op_entries: VecDeque<OpLogEntry>,
+    /// Scroll handle for the Operation Log uniform_list.
+    pub oplog_scroll_handle: UniformListScrollHandle,
+    /// Which row index (0 = newest) is currently expanded; None = none.
+    pub oplog_expanded: Option<usize>,
 }
 
 impl KagiApp {
@@ -621,6 +632,9 @@ impl KagiApp {
         let status_summary = StatusBarSummary::from_snapshot(snap);
         status_summary.log_headless();
 
+        // T-BP-004: load up to 100 entries from the oplog file at startup.
+        let op_entries: VecDeque<OpLogEntry> = read_oplog_tail(OP_ENTRIES_LOAD).into();
+
         KagiApp {
             root_focus: None,
             header,
@@ -656,6 +670,9 @@ impl KagiApp {
             branch_targets,
             commit_row_index,
             status_summary,
+            op_entries,
+            oplog_scroll_handle: UniformListScrollHandle::new(),
+            oplog_expanded: None,
         }
     }
 
@@ -696,6 +713,9 @@ impl KagiApp {
             branch_targets: HashMap::new(),
             commit_row_index: HashMap::new(),
             status_summary: StatusBarSummary::default(),
+            op_entries: VecDeque::new(),
+            oplog_scroll_handle: UniformListScrollHandle::new(),
+            oplog_expanded: None,
         }
     }
 
@@ -764,6 +784,8 @@ impl KagiApp {
         // operation result remains visible after the commit list refreshes.
         // sidebar_width / panel_width are also preserved so the user's resize
         // is not lost on checkout/reload (T023).
+        // T-BP-004: op_entries, oplog_scroll_handle, oplog_expanded are preserved
+        // so the Operation Log keeps its contents across repository reloads.
     }
 
     /// Reload triggered by an external git change (T029: FS watcher).
@@ -1641,11 +1663,29 @@ impl KagiApp {
             ),
         };
 
+        // T-BP-004: auto-open bottom panel on Failed.
+        let is_failed = matches!(outcome, OpOutcome::Failed { .. });
+
         let repo_str = repo_path.display().to_string();
         let entry = OpLogEntry::new(op, &repo_str, before, outcome);
 
         if let Err(e) = append_oplog(&entry) {
             eprintln!("[kagi] oplog: write failed (non-fatal): {}", e);
+        }
+
+        // T-BP-004: push to in-memory ring-buffer (newest at front).
+        self.op_entries.push_front(entry);
+        if self.op_entries.len() > OP_ENTRIES_MAX {
+            self.op_entries.pop_back();
+        }
+        // Reset expanded state when new entries arrive.
+        self.oplog_expanded = None;
+
+        // T-BP-004: auto-open panel on failure.
+        if is_failed {
+            self.bottom_panel_open = true;
+            self.bottom_tab = BottomTab::OperationLog;
+            eprintln!("[kagi] bottom-panel: open (Failed auto-open)");
         }
 
         if footer_ok {
@@ -2910,16 +2950,20 @@ impl KagiApp {
                 )
         };
 
-        // ── Body placeholder ──
-        let body = div()
-            .flex_1()
-            .min_h(px(0.))
-            .bg(rgb(BG_PANEL))
-            .px_3()
-            .py_2()
-            .text_sm()
-            .text_color(rgb(TEXT_MUTED))
-            .child(SharedString::from("(empty — T-BP-004/007)"));
+        // ── Body: Operation Log or Terminal placeholder ──
+        let body = match active_tab {
+            BottomTab::OperationLog => self.render_oplog_body(cx),
+            BottomTab::Terminal => div()
+                .flex_1()
+                .min_h(px(0.))
+                .bg(rgb(BG_PANEL))
+                .px_3()
+                .py_2()
+                .text_sm()
+                .text_color(rgb(TEXT_MUTED))
+                .child(SharedString::from("(Terminal — T-BP-007)"))
+                .into_any(),
+        };
 
         // ── Panel container (height = fixed, flex_shrink_0) ──
         let panel_h = height + BOTTOM_PANEL_DIVIDER_H + BOTTOM_PANEL_TAB_H;
@@ -2935,6 +2979,163 @@ impl KagiApp {
                 .child(tab_bar)
                 .child(body),
         )
+    }
+
+    /// Render the Operation Log tab body (T-BP-004).
+    ///
+    /// Uses `uniform_list` for virtual scroll.  Each row shows:
+    ///   `HH:MM:SS  op  outcome-summary` (outcome coloured green/red/yellow).
+    /// Clicking a row toggles single-row expansion (before/after + error/blockers).
+    fn render_oplog_body(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let entry_count = self.op_entries.len();
+
+        if entry_count == 0 {
+            return div()
+                .flex_1()
+                .min_h(px(0.))
+                .bg(rgb(BG_PANEL))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(rgb(TEXT_MUTED))
+                .child(SharedString::from("No operations yet"))
+                .into_any();
+        }
+
+        let scroll_handle = self.oplog_scroll_handle.clone();
+
+        uniform_list(
+            "oplog-list",
+            entry_count,
+            cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                let entries: Vec<OpLogEntry> = this.op_entries.iter().cloned().collect();
+                let expanded = this.oplog_expanded;
+                range.filter_map(|i| entries.get(i).cloned().map(|e| (i, e)))
+                    .map(move |(i, entry)| {
+                        let time_label = SharedString::from(format_hms(entry.timestamp));
+                        let op_label = SharedString::from(entry.op.clone());
+
+                        let (outcome_label, outcome_color) = match &entry.outcome {
+                            OpOutcome::Success { after } => (
+                                SharedString::from(format!("Success \u{2192} {}", after.head)),
+                                COLOR_SUCCESS,
+                            ),
+                            OpOutcome::Failed { error } => (
+                                SharedString::from(format!("Failed: {}", error)),
+                                COLOR_BLOCKER,
+                            ),
+                            OpOutcome::Refused { blockers } => (
+                                SharedString::from(format!(
+                                    "Refused ({} blocker{})",
+                                    blockers.len(),
+                                    if blockers.len() == 1 { "" } else { "s" }
+                                )),
+                                COLOR_WARNING,
+                            ),
+                        };
+
+                        let is_expanded = expanded == Some(i);
+
+                        let row_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+                            this.oplog_expanded = if this.oplog_expanded == Some(i) {
+                                None
+                            } else {
+                                Some(i)
+                            };
+                            cx.notify();
+                        });
+
+                        let row_bg = if i % 2 == 0 { BG_PANEL } else { BG_BASE };
+
+                        // Summary row.
+                        let mut row_div = div()
+                            .id(("oplog-row", i))
+                            .flex()
+                            .flex_col()
+                            .w_full()
+                            .bg(rgb(row_bg))
+                            .hover(|s| s.bg(rgb(BG_SURFACE)).cursor_pointer())
+                            .on_click(row_click)
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .px_3()
+                                    .h(px(22.))
+                                    .child(
+                                        div()
+                                            .w(px(60.))
+                                            .flex_shrink_0()
+                                            .text_xs()
+                                            .text_color(rgb(TEXT_MUTED))
+                                            .child(time_label),
+                                    )
+                                    .child(
+                                        div()
+                                            .w(px(100.))
+                                            .flex_shrink_0()
+                                            .ml(px(6.))
+                                            .text_xs()
+                                            .text_color(rgb(TEXT_SUB))
+                                            .child(op_label),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .ml(px(6.))
+                                            .text_xs()
+                                            .text_color(rgb(outcome_color))
+                                            .truncate()
+                                            .child(outcome_label),
+                                    ),
+                            );
+
+                        // Expansion detail rows (before + outcome specifics).
+                        if is_expanded {
+                            let mut detail_lines: Vec<SharedString> = Vec::new();
+                            detail_lines.push(SharedString::from(format!("  before:  {}", entry.before.head)));
+                            detail_lines.push(SharedString::from(format!("  dirty:   {}", entry.before.dirty)));
+                            match &entry.outcome {
+                                OpOutcome::Success { after } => {
+                                    detail_lines.push(SharedString::from(format!("  after:   {}", after.head)));
+                                    detail_lines.push(SharedString::from(format!("  dirty:   {}", after.dirty)));
+                                }
+                                OpOutcome::Failed { error } => {
+                                    detail_lines.push(SharedString::from(format!("  error:   {}", error)));
+                                }
+                                OpOutcome::Refused { blockers } => {
+                                    for b in blockers {
+                                        detail_lines.push(SharedString::from(format!("  blocker: {}", b)));
+                                    }
+                                }
+                            }
+                            let detail_div = div()
+                                .flex()
+                                .flex_col()
+                                .w_full()
+                                .px_3()
+                                .py_1()
+                                .bg(rgb(BG_SELECTED))
+                                .text_xs()
+                                .text_color(rgb(TEXT_SUB))
+                                .children(detail_lines.into_iter().map(|line| {
+                                    div().child(line)
+                                }));
+                            row_div = row_div.child(detail_div);
+                        }
+
+                        row_div
+                    })
+                    .collect()
+            }),
+        )
+        .track_scroll(scroll_handle)
+        .flex_1()
+        .min_h(px(0.))
+        .bg(rgb(BG_PANEL))
+        .into_any()
     }
 
     /// Status bar slot — the 22 px footer (T-BP-003 full implementation).

@@ -723,6 +723,7 @@ fn main() {
 
     // ── T-BP-002: KAGI_BOTTOM_PANEL=1 — open bottom panel at startup ──
     // Emits `[kagi] bottom-panel: open height=H tab=T` for headless verification.
+    // T-BP-004: also emits `[kagi] oplog-tab: N entries` (loaded from JSONL at startup).
     if std::env::var("KAGI_BOTTOM_PANEL").as_deref() == Ok("1") {
         app_state.bottom_panel_open = true;
         let h = app_state.bottom_panel_height;
@@ -732,6 +733,7 @@ fn main() {
             ui::BottomTab::Terminal => "Terminal",
         };
         eprintln!("[kagi] bottom-panel: open height={} tab={}", h, tab_label);
+        eprintln!("[kagi] oplog-tab: {} entries", app_state.op_entries.len());
     }
 
     run_app(app_state);

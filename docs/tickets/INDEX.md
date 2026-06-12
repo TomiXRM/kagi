@@ -75,3 +75,4 @@
 | W2-STATUS | Status Bar 拡張(conflict/stash/upstream/Busy)+ Bottom default 18% | ADR-0017 | done |
 | W2-GRAPH | HEAD/merge node 視覚区別 / 選択強調 / compact mode / label接続 | ADR-0016 | done |
 | W2-DELETE | plan_delete_branch backend(merged のみ、plan 経由)+ sidebar ✕ 起動 | ADR-0014 | done |
+| W3-NOTIFY | スナックバー通知 + pull/push 非同期化(ユーザー要望) | - | done |

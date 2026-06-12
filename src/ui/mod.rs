@@ -18,6 +18,7 @@ pub mod watcher;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use gpui::{
     App, Context, Entity, FocusHandle, KeyDownEvent, KeyBinding, SharedString, Window,
@@ -535,11 +536,57 @@ pub enum FooterStatus {
     /// Idle state: shows repo name / branch info (no colour tint).
     Idle(SharedString),
     /// W2-STATUS: a git operation is in progress (shown in blue with ⟳).
-    /// Operations are currently synchronous, so this renders only once they
-    /// become async — the state machinery is wired ahead of that.
-    #[allow(dead_code)]
     Busy(SharedString),
 }
+
+// ──────────────────────────────────────────────────────────────
+// W3-NOTIFY: toast (snackbar) notifications
+// ──────────────────────────────────────────────────────────────
+
+/// Visual kind of a toast notification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToastKind {
+    /// Operation started / neutral info (blue, 4s).
+    Info,
+    /// Operation succeeded (green, 4s).
+    Success,
+    /// Operation failed or was refused (red, 8s).
+    Error,
+}
+
+/// One snackbar entry, stacked bottom-right above the status bar.
+///
+/// Rendered by `render_toasts`; pruned by a 500ms ticker task that runs only
+/// while toasts exist (spawned lazily from `push_toast`/`render`).
+/// We deliberately do NOT use gpui-component's Root notification layer:
+/// pushing into it requires `Root::update` and our render runs *inside*
+/// Root's render pass, so that would re-entrantly borrow the Root entity.
+#[derive(Clone, Debug)]
+pub struct Toast {
+    /// Unique id (for the dismiss button element id).
+    pub id: u64,
+    pub kind: ToastKind,
+    pub message: SharedString,
+    /// Creation time; used by the pruner for auto-dismiss.
+    pub born: std::time::Instant,
+}
+
+impl Toast {
+    /// Auto-dismiss lifetime by kind (errors stay longer).
+    fn lifetime(&self) -> Duration {
+        match self.kind {
+            ToastKind::Error => Duration::from_secs(8),
+            _ => Duration::from_secs(4),
+        }
+    }
+
+    fn expired(&self) -> bool {
+        self.born.elapsed() >= self.lifetime()
+    }
+}
+
+/// Maximum simultaneously visible toasts (oldest dropped beyond this).
+const TOASTS_MAX: usize = 4;
 
 // ──────────────────────────────────────────────────────────────
 // FileDiffView — pre-rendered diff rows for the diff panel
@@ -1068,6 +1115,17 @@ pub struct KagiApp {
     /// Lazy InputState for the sidebar filter input (gpui-component IME対応).
     /// Created on first click of the filter area (requires &mut Window).
     pub sidebar_filter: Option<Entity<InputState>>,
+    // ── W3-NOTIFY: snackbar toasts + async-op state ──────────────
+    /// Visible toast stack (bottom-right). Newest last.
+    pub toasts: Vec<Toast>,
+    /// Monotonic id source for toasts.
+    pub next_toast_id: u64,
+    /// True while the 500ms auto-dismiss ticker task is alive.
+    pub toast_ticker_alive: bool,
+    /// Name of the git operation currently running on a background thread
+    /// (e.g. "pull"/"push"). While `Some`, toolbar git buttons are disabled
+    /// and new plan modals are refused so operations never overlap.
+    pub busy_op: Option<&'static str>,
     // ── W2-DELETE: Delete-branch modal ───────────────────────
     /// When `Some`, the delete-branch confirmation modal is visible.
     pub delete_branch_modal: Option<DeleteBranchModal>,
@@ -1237,6 +1295,11 @@ impl KagiApp {
             branch_upstream_info,
             sidebar_collapsed: HashSet::new(),
             sidebar_filter: None,
+            // W3-NOTIFY
+            toasts: Vec::new(),
+            next_toast_id: 0,
+            toast_ticker_alive: false,
+            busy_op: None,
             // W2-DELETE
             delete_branch_modal: None,
         }
@@ -1297,6 +1360,11 @@ impl KagiApp {
             branch_upstream_info: HashMap::new(),
             sidebar_collapsed: HashSet::new(),
             sidebar_filter: None,
+            // W3-NOTIFY
+            toasts: Vec::new(),
+            next_toast_id: 0,
+            toast_ticker_alive: false,
+            busy_op: None,
             // W2-DELETE
             delete_branch_modal: None,
         }
@@ -2223,6 +2291,123 @@ impl KagiApp {
     /// Record an operation to the oplog and update the status footer.
     ///
     /// Write failures are non-fatal: they emit a stderr warning only.
+    // ── W3-NOTIFY: toast helpers ──────────────────────────────
+
+    /// Queue a snackbar toast (bottom-right). Callable without a Window:
+    /// the auto-dismiss ticker is (re)started from `render`.
+    fn push_toast(&mut self, kind: ToastKind, message: impl Into<SharedString>) {
+        let id = self.next_toast_id;
+        self.next_toast_id += 1;
+        self.toasts.push(Toast {
+            id,
+            kind,
+            message: message.into(),
+            born: Instant::now(),
+        });
+        if self.toasts.len() > TOASTS_MAX {
+            self.toasts.remove(0);
+        }
+    }
+
+    /// Remove a toast by id (× button).
+    pub fn dismiss_toast(&mut self, id: u64) {
+        self.toasts.retain(|t| t.id != id);
+    }
+
+    /// Spawn the 500ms auto-dismiss ticker if toasts exist and it is not
+    /// already running. The task exits as soon as the stack drains.
+    fn ensure_toast_ticker(&mut self, cx: &mut Context<Self>) {
+        if self.toast_ticker_alive || self.toasts.is_empty() {
+            return;
+        }
+        self.toast_ticker_alive = true;
+        cx.spawn(async move |this, acx| {
+            loop {
+                gpui::Timer::after(Duration::from_millis(500)).await;
+                let finished = this.update(acx, |app, cx| {
+                    let before = app.toasts.len();
+                    app.toasts.retain(|t| !t.expired());
+                    if app.toasts.len() != before {
+                        cx.notify();
+                    }
+                    if app.toasts.is_empty() {
+                        app.toast_ticker_alive = false;
+                        true
+                    } else {
+                        false
+                    }
+                });
+                match finished {
+                    Ok(true) | Err(_) => break,
+                    Ok(false) => {}
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Render the toast stack as an absolute overlay (bottom-right, above
+    /// the status bar). Returns `None` when there is nothing to show.
+    fn render_toasts(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        if self.toasts.is_empty() {
+            return None;
+        }
+        let mut stack = div()
+            .absolute()
+            .bottom(px(34.))
+            .right(px(12.))
+            .w(px(360.))
+            .flex()
+            .flex_col()
+            .gap_2();
+
+        for toast in &self.toasts {
+            let (accent, icon) = match toast.kind {
+                ToastKind::Info => (COLOR_BRANCH, "\u{27f3}"),    // ⟳
+                ToastKind::Success => (COLOR_SUCCESS, "\u{2713}"), // ✓
+                ToastKind::Error => (COLOR_BLOCKER, "\u{2715}"),   // ✕
+            };
+            let id = toast.id;
+            let dismiss = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+                this.dismiss_toast(id);
+                cx.notify();
+            });
+            stack = stack.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap_2()
+                    .px_3()
+                    .py_2()
+                    .rounded(px(6.))
+                    .bg(rgb(BG_PANEL))
+                    .border_1()
+                    .border_color(rgb(accent))
+                    .text_sm()
+                    .text_color(rgb(TEXT_MAIN))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_color(rgb(accent))
+                            .child(SharedString::from(icon)),
+                    )
+                    .child(div().flex_1().overflow_hidden().child(toast.message.clone()))
+                    .child(
+                        div()
+                            .id(("toast-dismiss", id))
+                            .flex_shrink_0()
+                            .px_1()
+                            .text_color(rgb(TEXT_MUTED))
+                            .hover(|s| s.text_color(rgb(TEXT_MAIN)))
+                            .on_click(dismiss)
+                            .child(SharedString::from("\u{00d7}")),
+                    ),
+            );
+        }
+        Some(stack.into_any())
+    }
+
     fn record_op(
         &mut self,
         op: &str,
@@ -2256,6 +2441,15 @@ impl KagiApp {
                 false,
             ),
         };
+
+        // W3-NOTIFY: snackbar mirror of the footer message — every plan-pipeline
+        // outcome (Success / Failed / Refused) becomes a toast.
+        let toast_kind = if matches!(outcome, OpOutcome::Success { .. }) {
+            ToastKind::Success
+        } else {
+            ToastKind::Error
+        };
+        self.push_toast(toast_kind, footer_msg.clone());
 
         // T-BP-004: auto-open bottom panel on Failed.
         let is_failed = matches!(outcome, OpOutcome::Failed { .. });
@@ -2478,6 +2672,12 @@ impl KagiApp {
 
     /// Build a pull plan and open the confirmation modal.
     pub fn open_pull_modal(&mut self) {
+        // W3-NOTIFY: refuse while a background op runs.
+        if self.busy_op.is_some() {
+            self.status_footer =
+                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -2514,8 +2714,10 @@ impl KagiApp {
         self.pull_modal = None;
     }
 
-    /// Confirm the pull plan: preflight, fetch via CLI, then FF / in-memory
-    /// merge (see `execute_pull`).  Mirrors `confirm_checkout`'s pipeline.
+    /// Confirm the pull plan synchronously: preflight, fetch via CLI, then
+    /// FF / in-memory merge (see `execute_pull`).  Used by the headless
+    /// KAGI_PULL path (no event loop). The UI button uses `start_pull`,
+    /// which runs the same blocking core on a background thread (W3-NOTIFY).
     pub fn confirm_pull(&mut self) {
         let modal = match self.pull_modal.clone() {
             Some(m) => m,
@@ -2537,66 +2739,9 @@ impl KagiApp {
             return;
         }
 
-        let repo = match git2::Repository::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                let err_msg = format!("Repo open error: {}", e.message());
-                self.record_op(
-                    "pull",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() },
-                    &repo_path,
-                );
-                self.pull_modal = Some(PullPlanModal {
-                    plan: modal.plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                });
-                return;
-            }
-        };
-
-        if let Err(e) = preflight_check(&repo, &modal.plan) {
-            let err_msg = format!("Preflight failed: {}", e);
-            self.record_op(
-                "pull",
-                modal.plan.current.clone(),
-                OpOutcome::Failed { error: err_msg.clone() },
-                &repo_path,
-            );
-            self.pull_modal = Some(PullPlanModal {
-                plan: modal.plan.clone(),
-                error: Some(SharedString::from(err_msg)),
-            });
-            return;
-        }
-
-        match execute_pull(&repo, &repo_path) {
-            Ok(outcome) => {
-                let summary = match &outcome {
-                    PullOutcome::UpToDate => "already up to date".to_string(),
-                    PullOutcome::FastForward { to } => format!("fast-forward to {}", to.short()),
-                    PullOutcome::Merged { commit } => format!("merge commit {}", commit.short()),
-                };
-                eprintln!("[kagi] executed: pull — {}", summary);
+        match pull_blocking(&repo_path, &modal.plan) {
+            Ok((summary, after_summary)) => {
                 self.pull_modal = None;
-
-                // Verify: re-snapshot for the after-state.
-                let after_summary = match git2::Repository::open(&repo_path) {
-                    Ok(mut repo2) => match kagi::git::snapshot(&mut repo2, 10_000) {
-                        Ok(snap) => StateSummary {
-                            head: snap.head.display(),
-                            dirty: if snap.status.is_dirty() {
-                                "dirty".to_string()
-                            } else {
-                                "clean".to_string()
-                            },
-                        },
-                        Err(_) => modal.plan.predicted.clone(),
-                    },
-                    Err(_) => modal.plan.predicted.clone(),
-                };
-                eprintln!("[kagi] verified: pull after = {}", after_summary.head);
-
                 self.record_op(
                     "pull",
                     modal.plan.current.clone(),
@@ -2607,8 +2752,7 @@ impl KagiApp {
                     FooterStatus::Success(SharedString::from(format!("pull: {}", summary)));
                 self.reload();
             }
-            Err(e) => {
-                let err_msg = format!("Pull failed: {}", e);
+            Err(err_msg) => {
                 self.record_op(
                     "pull",
                     modal.plan.current.clone(),
@@ -2623,10 +2767,99 @@ impl KagiApp {
         }
     }
 
+    /// W3-NOTIFY: UI-path pull — runs `pull_blocking` on a background thread
+    /// so the window stays responsive, with start/finish toasts.
+    pub fn start_pull(&mut self, cx: &mut Context<Self>) {
+        if self.busy_op.is_some() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(
+                "別の操作が実行中です",
+            ));
+            return;
+        }
+        let modal = match self.pull_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        if !modal.plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: pull plan has blockers, not executing");
+            self.record_op(
+                "pull",
+                modal.plan.current.clone(),
+                OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                &repo_path,
+            );
+            self.pull_modal = None;
+            cx.notify();
+            return;
+        }
+
+        self.busy_op = Some("pull");
+        self.pull_modal = None;
+        self.status_footer = FooterStatus::Busy(SharedString::from("pull 実行中…"));
+        self.push_toast(ToastKind::Info, "pull: 開始しました");
+        eprintln!("[kagi] async: pull started");
+
+        let plan = modal.plan.clone();
+        let bg_path = repo_path.clone();
+        let task = cx.background_spawn(async move { pull_blocking(&bg_path, &plan) });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.finish_pull(result, modal, repo_path);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Apply the result of a background pull on the main thread.
+    fn finish_pull(
+        &mut self,
+        result: Result<(String, StateSummary), String>,
+        modal: PullPlanModal,
+        repo_path: PathBuf,
+    ) {
+        self.busy_op = None;
+        match result {
+            Ok((summary, after_summary)) => {
+                eprintln!("[kagi] async: pull finished — {}", summary);
+                self.record_op(
+                    "pull",
+                    modal.plan.current.clone(),
+                    OpOutcome::Success { after: after_summary },
+                    &repo_path,
+                );
+                self.status_footer =
+                    FooterStatus::Success(SharedString::from(format!("pull: {}", summary)));
+                self.reload();
+            }
+            Err(err_msg) => {
+                eprintln!("[kagi] async: pull failed — {}", err_msg);
+                self.record_op(
+                    "pull",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg },
+                    &repo_path,
+                );
+            }
+        }
+    }
+
     // ── T-HT-004: Push ────────────────────────────────────────
 
     /// Build a push plan and open the confirmation modal.
     pub fn open_push_modal(&mut self) {
+        // W3-NOTIFY: refuse while a background op runs.
+        if self.busy_op.is_some() {
+            self.status_footer =
+                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -2664,8 +2897,9 @@ impl KagiApp {
         self.push_modal = None;
     }
 
-    /// Confirm the push plan: preflight, execute push via CLI.
-    /// Mirrors `confirm_pull`'s pipeline.
+    /// Confirm the push plan synchronously: preflight, execute push via CLI.
+    /// Used by the headless KAGI_PUSH path. The UI button uses `start_push`
+    /// (background thread + toasts, W3-NOTIFY).
     pub fn confirm_push(&mut self) {
         let modal = match self.push_modal.clone() {
             Some(m) => m,
@@ -2687,66 +2921,9 @@ impl KagiApp {
             return;
         }
 
-        let repo = match git2::Repository::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                let err_msg = format!("Repo open error: {}", e.message());
-                self.record_op(
-                    "push",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() },
-                    &repo_path,
-                );
-                self.push_modal = Some(PushPlanModal {
-                    plan: modal.plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                });
-                return;
-            }
-        };
-
-        if let Err(e) = preflight_check(&repo, &modal.plan) {
-            let err_msg = format!("Preflight failed: {}", e);
-            self.record_op(
-                "push",
-                modal.plan.current.clone(),
-                OpOutcome::Failed { error: err_msg.clone() },
-                &repo_path,
-            );
-            self.push_modal = Some(PushPlanModal {
-                plan: modal.plan.clone(),
-                error: Some(SharedString::from(err_msg)),
-            });
-            return;
-        }
-
-        match execute_push(&repo, &repo_path) {
-            Ok(outcome) => {
-                let summary = if outcome.set_upstream {
-                    format!("pushed {} commit(s), set upstream", outcome.pushed)
-                } else {
-                    format!("pushed {} commit(s)", outcome.pushed)
-                };
-                eprintln!("[kagi] executed: push — {}", summary);
+        match push_blocking(&repo_path, &modal.plan) {
+            Ok((summary, after_summary)) => {
                 self.push_modal = None;
-
-                // Verify: re-snapshot for the after-state.
-                let after_summary = match git2::Repository::open(&repo_path) {
-                    Ok(mut repo2) => match kagi::git::snapshot(&mut repo2, 10_000) {
-                        Ok(snap) => StateSummary {
-                            head: snap.head.display(),
-                            dirty: if snap.status.is_dirty() {
-                                "dirty".to_string()
-                            } else {
-                                "clean".to_string()
-                            },
-                        },
-                        Err(_) => modal.plan.predicted.clone(),
-                    },
-                    Err(_) => modal.plan.predicted.clone(),
-                };
-                eprintln!("[kagi] verified: push after = {}", after_summary.head);
-
                 self.record_op(
                     "push",
                     modal.plan.current.clone(),
@@ -2757,8 +2934,7 @@ impl KagiApp {
                     FooterStatus::Success(SharedString::from(format!("push: {}", summary)));
                 self.reload();
             }
-            Err(e) => {
-                let err_msg = format!("Push failed: {}", e);
+            Err(err_msg) => {
                 self.record_op(
                     "push",
                     modal.plan.current.clone(),
@@ -2769,6 +2945,88 @@ impl KagiApp {
                     plan: modal.plan.clone(),
                     error: Some(SharedString::from(err_msg)),
                 });
+            }
+        }
+    }
+
+    /// W3-NOTIFY: UI-path push — background thread + start/finish toasts.
+    pub fn start_push(&mut self, cx: &mut Context<Self>) {
+        if self.busy_op.is_some() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(
+                "別の操作が実行中です",
+            ));
+            return;
+        }
+        let modal = match self.push_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        if !modal.plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: push plan has blockers, not executing");
+            self.record_op(
+                "push",
+                modal.plan.current.clone(),
+                OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                &repo_path,
+            );
+            self.push_modal = None;
+            cx.notify();
+            return;
+        }
+
+        self.busy_op = Some("push");
+        self.push_modal = None;
+        self.status_footer = FooterStatus::Busy(SharedString::from("push 実行中…"));
+        self.push_toast(ToastKind::Info, "push: 開始しました");
+        eprintln!("[kagi] async: push started");
+
+        let plan = modal.plan.clone();
+        let bg_path = repo_path.clone();
+        let task = cx.background_spawn(async move { push_blocking(&bg_path, &plan) });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.finish_push(result, modal, repo_path);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Apply the result of a background push on the main thread.
+    fn finish_push(
+        &mut self,
+        result: Result<(String, StateSummary), String>,
+        modal: PushPlanModal,
+        repo_path: PathBuf,
+    ) {
+        self.busy_op = None;
+        match result {
+            Ok((summary, after_summary)) => {
+                eprintln!("[kagi] async: push finished — {}", summary);
+                self.record_op(
+                    "push",
+                    modal.plan.current.clone(),
+                    OpOutcome::Success { after: after_summary },
+                    &repo_path,
+                );
+                self.status_footer =
+                    FooterStatus::Success(SharedString::from(format!("push: {}", summary)));
+                self.reload();
+            }
+            Err(err_msg) => {
+                eprintln!("[kagi] async: push failed — {}", err_msg);
+                self.record_op(
+                    "push",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg },
+                    &repo_path,
+                );
             }
         }
     }
@@ -3825,6 +4083,11 @@ impl Render for KagiApp {
             );
         }
 
+        // W3-NOTIFY: drop expired toasts and keep the auto-dismiss ticker
+        // alive while any remain.
+        self.toasts.retain(|t| !t.expired());
+        self.ensure_toast_ticker(cx);
+
         let row_count = self.rows.len();
         let selected = self.selected;
 
@@ -3886,7 +4149,16 @@ impl Render for KagiApp {
         let cherry_pick_modal = self.cherry_pick_modal.clone();
         let status_footer = self.status_footer.clone();
         // T-HT-001: clone toolbar/summary state for header render.
-        let toolbar_state = self.toolbar_state.clone();
+        // W3-NOTIFY: while a background git op runs, disable every git button
+        // so operations never overlap.
+        let mut toolbar_state = self.toolbar_state.clone();
+        if self.busy_op.is_some() {
+            toolbar_state.pull_on = false;
+            toolbar_state.push_on = false;
+            toolbar_state.stash_on = false;
+            toolbar_state.pop_on = false;
+            toolbar_state.undo_on = false;
+        }
         let status_summary = self.status_summary.clone();
 
         // T023: pane widths for divider rendering.
@@ -4082,6 +4354,8 @@ impl Render for KagiApp {
             )
             // ── Status bar slot (T017) — last operation result ─
             .child(self.render_status_bar(status_footer, bottom_panel_open, cx))
+            // ── W3-NOTIFY: toast stack (above everything) ──────
+            .children(self.render_toasts(cx))
             .into_any()
     }
 
@@ -4114,7 +4388,9 @@ impl KagiApp {
             if pull_on {
                 this.open_pull_modal();
             } else {
-                let reason = if this.status_summary.is_detached {
+                let reason = if this.busy_op.is_some() {
+                    "Pull: 別の操作が実行中です"
+                } else if this.status_summary.is_detached {
                     "Pull: detached HEAD — branch に切り替えてください"
                 } else if this.status_summary.is_unborn {
                     "Pull: no commits yet — upstream がありません"
@@ -4134,7 +4410,9 @@ impl KagiApp {
             if push_on {
                 this.open_push_modal();
             } else {
-                let reason = if this.status_summary.is_detached {
+                let reason = if this.busy_op.is_some() {
+                    "Push: 別の操作が実行中です"
+                } else if this.status_summary.is_detached {
                     "Push: detached HEAD — branch に切り替えてください"
                 } else if this.status_summary.is_unborn {
                     "Push: no commits yet — upstream がありません"
@@ -4213,6 +4491,9 @@ impl KagiApp {
         let refresh_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
             this.reload();
             this.status_footer = FooterStatus::Idle(SharedString::from("Refreshed"));
+            // W3-NOTIFY: explicit refresh gets a completion toast (the
+            // watcher's automatic reloads stay silent to avoid spam).
+            this.push_toast(ToastKind::Success, "Refreshed");
             cx.notify();
         });
 
@@ -5774,6 +6055,80 @@ fn render_badges_column(badges: &[commit_list::RefBadge], badge_col_w: f32) -> i
 }
 
 // ──────────────────────────────────────────────────────────────
+// W3-NOTIFY: blocking cores for pull / push
+//
+// Everything that may take seconds (repo open → preflight → execute →
+// verify snapshot) lives here, free of `&mut KagiApp`, so the UI path can
+// run it via `cx.background_spawn` while the headless path calls it inline.
+// ──────────────────────────────────────────────────────────────
+
+/// Blocking part of pull. Returns (human summary, after-state) or an error
+/// message suitable for the oplog / modal.
+fn pull_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+) -> Result<(String, StateSummary), String> {
+    let repo = git2::Repository::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+
+    let outcome = execute_pull(&repo, repo_path).map_err(|e| format!("Pull failed: {}", e))?;
+    let summary = match &outcome {
+        PullOutcome::UpToDate => "already up to date".to_string(),
+        PullOutcome::FastForward { to } => format!("fast-forward to {}", to.short()),
+        PullOutcome::Merged { commit } => format!("merge commit {}", commit.short()),
+    };
+    eprintln!("[kagi] executed: pull — {}", summary);
+
+    // Verify: re-snapshot for the after-state.
+    let after_summary = verify_after_snapshot(repo_path, plan);
+    eprintln!("[kagi] verified: pull after = {}", after_summary.head);
+    Ok((summary, after_summary))
+}
+
+/// Blocking part of push. Returns (human summary, after-state) or an error
+/// message suitable for the oplog / modal.
+fn push_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+) -> Result<(String, StateSummary), String> {
+    let repo = git2::Repository::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+
+    let outcome = execute_push(&repo, repo_path).map_err(|e| format!("Push failed: {}", e))?;
+    let summary = if outcome.set_upstream {
+        format!("pushed {} commit(s), set upstream", outcome.pushed)
+    } else {
+        format!("pushed {} commit(s)", outcome.pushed)
+    };
+    eprintln!("[kagi] executed: push — {}", summary);
+
+    let after_summary = verify_after_snapshot(repo_path, plan);
+    eprintln!("[kagi] verified: push after = {}", after_summary.head);
+    Ok((summary, after_summary))
+}
+
+/// Re-snapshot the repo for the verified after-state; falls back to the
+/// plan's prediction when the snapshot fails (non-fatal).
+fn verify_after_snapshot(repo_path: &std::path::Path, plan: &OperationPlan) -> StateSummary {
+    match git2::Repository::open(repo_path) {
+        Ok(mut repo2) => match kagi::git::snapshot(&mut repo2, 10_000) {
+            Ok(snap) => StateSummary {
+                head: snap.head.display(),
+                dirty: if snap.status.is_dirty() {
+                    "dirty".to_string()
+                } else {
+                    "clean".to_string()
+                },
+            },
+            Err(_) => plan.predicted.clone(),
+        },
+        Err(_) => plan.predicted.clone(),
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
 // Status footer renderer (T017)
 // ──────────────────────────────────────────────────────────────
 
@@ -5856,7 +6211,8 @@ fn render_pull_modal(modal: PullPlanModal, cx: &mut Context<KagiApp>) -> gpui::A
         cx.notify();
     });
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.confirm_pull();
+        // W3-NOTIFY: run on a background thread (start/finish toasts).
+        this.start_pull(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh);
         }
@@ -5909,7 +6265,8 @@ fn render_push_modal(modal: PushPlanModal, cx: &mut Context<KagiApp>) -> gpui::A
         cx.notify();
     });
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.confirm_push();
+        // W3-NOTIFY: run on a background thread (start/finish toasts).
+        this.start_push(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh);
         }

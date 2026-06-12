@@ -1219,6 +1219,12 @@ pub struct KagiApp {
     /// and the changed-files list (bottom) inside the inspector.  `0.5` = 1:1.
     /// Clamped to `0.2..=0.8` when dragged via the `InspectorSplit` divider.
     pub inspector_split: f32,
+    /// Measured (top, bottom) window-px bounds of the inspector's
+    /// message+files region, written by a paint-time canvas in inspector.rs.
+    /// The drag handler maps cursor_y against these real bounds; static
+    /// offsets cannot account for the variable-height header (caused a
+    /// visible jump on drag start).
+    pub inspector_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     // ── W2-SIDEBAR: Repository Navigator ────────────────────────
     /// Remote-tracking branches from the snapshot (for REMOTE BRANCHES section).
     pub remote_branches: Vec<RemoteBranch>,
@@ -1516,6 +1522,7 @@ impl KagiApp {
             watcher_generation: 0,
             inspector_tree_view: true,
             inspector_split: INSPECTOR_SPLIT_DEFAULT,
+            inspector_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: false,
             // W2-SIDEBAR
             remote_branches,
@@ -1598,6 +1605,7 @@ impl KagiApp {
             watcher_generation: 0,
             inspector_tree_view: true,
             inspector_split: INSPECTOR_SPLIT_DEFAULT,
+            inspector_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: false,
             // W2-SIDEBAR
             remote_branches: Vec::new(),
@@ -5559,21 +5567,34 @@ impl Render for KagiApp {
                     }
                 }
                 DividerKind::InspectorSplit => {
-                    // W7-INSPECTOR2: absolute-coordinate ratio.  The inspector
-                    // content area spans [top, bottom]:
-                    //   top    = tab strip + header toolbar (INSPECTOR_TOP_OFFSET)
-                    //   bottom = viewport_h - status bar - bottom panel (if open)
-                    // ratio = (cursor_y - top) / (bottom - top), clamped 0.2..=0.8.
-                    let viewport_h = f32::from(window.viewport_size().height);
+                    // W7-INSPECTOR2: absolute-coordinate ratio against the
+                    // *measured* message+files region (paint-time canvas in
+                    // inspector.rs).  Static offsets miss the variable-height
+                    // header above the region, which showed up as a ~2cm jump
+                    // when starting a drag.  Falls back to the constant-based
+                    // approximation until the first paint has run.
                     let cursor_y = f32::from(event.event.position.y);
-                    let bottom_taken = if this.bottom_panel_open {
-                        STATUS_BAR_H + this.bottom_panel_height + BOTTOM_PANEL_DIVIDER_H
+                    let (geom_top, geom_bottom) = this.inspector_geom.get();
+                    let (top, bottom) = if geom_bottom - geom_top > 1.0 {
+                        (geom_top, geom_bottom)
                     } else {
-                        STATUS_BAR_H
+                        let viewport_h = f32::from(window.viewport_size().height);
+                        let bottom_taken = if this.bottom_panel_open {
+                            STATUS_BAR_H + this.bottom_panel_height + BOTTOM_PANEL_DIVIDER_H
+                        } else {
+                            STATUS_BAR_H
+                        };
+                        (INSPECTOR_TOP_OFFSET, viewport_h - bottom_taken)
                     };
-                    let top = INSPECTOR_TOP_OFFSET;
-                    let bottom = viewport_h - bottom_taken;
-                    let span = bottom - top;
+                    // The divider itself occupies INSPECTOR_SPLIT_DIVIDER_H of
+                    // the region; the flex split applies to the remainder.
+                    let span = bottom - top - inspector::INSPECTOR_SPLIT_DIVIDER_H;
+                    if std::env::var("KAGI_DEBUG_SPLIT").as_deref() == Ok("1") {
+                        eprintln!(
+                            "[kagi] split-drag: cursor_y={:.1} top={:.1} bottom={:.1} split={:.3}",
+                            cursor_y, top, bottom, this.inspector_split
+                        );
+                    }
                     if span > 1.0 {
                         let ratio = ((cursor_y - top) / span)
                             .clamp(INSPECTOR_SPLIT_MIN, INSPECTOR_SPLIT_MAX);
@@ -6432,7 +6453,7 @@ impl KagiApp {
                         d, at, selected_badges.clone(),
                         files, compare_for_panel,
                         active_commit_file, inspector_tree_view,
-                        self.inspector_split, panel_width, cx,
+                        self.inspector_split, self.inspector_geom.clone(), panel_width, cx,
                     ))
             });
         }

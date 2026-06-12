@@ -14,7 +14,7 @@
 //! The hash chip shows the full SHA in a tooltip and copies it on click
 //! (replacing the old always-on Metadata column of Parents / full SHA).
 
-use gpui::{Context, IntoElement, SharedString, div, prelude::*, px, relative, rgb};
+use gpui::{App, Bounds, Context, IntoElement, Pixels, SharedString, Window, canvas, div, prelude::*, px, relative, rgb};
 
 use kagi::git::{ChangeKind, CommitId, FileStatus};
 
@@ -55,7 +55,7 @@ const MAX_BADGE_CHARS: usize = 20;
 // handler in mod.rs is the source of truth — these guard the flex_basis only).
 const INSPECTOR_SPLIT_MIN: f32 = 0.2;
 const INSPECTOR_SPLIT_MAX: f32 = 0.8;
-const INSPECTOR_SPLIT_DIVIDER_H: f32 = 4.0;
+pub(super) const INSPECTOR_SPLIT_DIVIDER_H: f32 = 4.0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public entry-point
@@ -78,6 +78,9 @@ pub fn render_inspector(
     active_file: Option<usize>,
     tree_view: bool,
     inspector_split: f32,
+    // Measured (top, bottom) of the message+files region, written at paint
+    // time and read by the InspectorSplit drag handler in mod.rs.
+    split_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     panel_width: f32,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
@@ -126,6 +129,7 @@ pub fn render_inspector(
             };
             div()
                 .flex().flex_row().w_full()
+                .flex_shrink_0()
                 .text_color(rgb(TEXT_MAIN))
                 .text_sm()
                 .truncate()
@@ -150,6 +154,7 @@ pub fn render_inspector(
                             .id(SharedString::from(format!("tree-dir-{}", name.as_ref())))
                             .flex().flex_row().items_center()
                             .pl(px(indent)).mb_px()
+                            .flex_shrink_0()
                             .overflow_hidden()
                             .child(
                                 div()
@@ -171,6 +176,7 @@ pub fn render_inspector(
                             .id(("file-row", fi))
                             .flex().flex_row().items_center().gap_1()
                             .pl(px(indent)).mb_px()
+                            .flex_shrink_0()
                             .when(active_file == Some(fi), |el| el.bg(rgb(BG_SELECTED)).rounded_sm())
                             .on_click(click)
                             .child(
@@ -206,6 +212,7 @@ pub fn render_inspector(
                     .id(("file-flat", fi))
                     .flex().flex_row().items_center().gap_1()
                     .mb_px()
+                    .flex_shrink_0()
                     .when(active_file == Some(fi), |el| el.bg(rgb(BG_SELECTED)).rounded_sm())
                     .on_click(click)
                     .child(
@@ -558,7 +565,39 @@ pub fn render_inspector(
         .child(badges_row)
         .child(actions_row);
 
-    // ── Outer panel: header │ message box │ divider │ files box ───────────
+    // ── Split region: message │ divider │ files ───────────────────────────
+    // Grouped under one flex_1 column so the split ratio is relative to the
+    // *remaining* height (excluding the variable-height header), and so a
+    // measuring canvas can record the region's real window coordinates for
+    // the drag handler (static offsets miss the header height — that was the
+    // user-visible "jumps ~2cm on drag start" bug).
+    let measure = {
+        let geom = split_geom.clone();
+        canvas(
+            move |_bounds: Bounds<Pixels>, _window: &mut Window, _cx: &mut App| {},
+            move |bounds: Bounds<Pixels>, _prepaint: (), _window: &mut Window, _cx: &mut App| {
+                let top = f32::from(bounds.origin.y);
+                let bottom = top + f32::from(bounds.size.height);
+                geom.set((top, bottom));
+            },
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+    };
+    let split_region = div()
+        .flex_1()
+        .min_h(px(0.))
+        .relative()
+        .flex()
+        .flex_col()
+        .child(measure)
+        .child(message_box)
+        .child(split_divider)
+        .child(files_box);
+
+    // ── Outer panel: header │ split region ────────────────────────────────
     div()
         .w(px(panel_width))
         .flex_shrink_0()
@@ -566,9 +605,7 @@ pub fn render_inspector(
         .flex().flex_col()
         .bg(rgb(BG_PANEL))
         .child(header_region)
-        .child(message_box)
-        .child(split_divider)
-        .child(files_box)
+        .child(split_region)
 }
 
 /// Parse `name  <email>  date` (detail_panel format) into `(name, email)`.

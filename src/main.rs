@@ -209,6 +209,23 @@ fn main() {
         }
     }
 
+    // ── ADR-0026: headless compare paths ─────────────────────
+    // KAGI_COMPARE_HEAD=<row>: compare the row commit with HEAD.
+    // KAGI_COMPARE_WT=<row>: compare the row commit with the working tree
+    // (staged + unstaged + untracked). Read-only.
+    if let Ok(row_str) = std::env::var("KAGI_COMPARE_HEAD") {
+        match row_str.parse::<usize>() {
+            Ok(row) => app_state.open_compare_with_head_row(row),
+            Err(_) => eprintln!("[kagi] compare: invalid row '{}'", row_str),
+        }
+    }
+    if let Ok(row_str) = std::env::var("KAGI_COMPARE_WT") {
+        match row_str.parse::<usize>() {
+            Ok(row) => app_state.open_compare_with_working_tree_row(row),
+            Err(_) => eprintln!("[kagi] compare: invalid row '{}'", row_str),
+        }
+    }
+
     // KAGI_OPEN_FIRST_FILE=1 (requires KAGI_SELECT_FIRST=1): after selecting
     // the first commit, automatically open the diff for its first changed file
     // in the full-width main pane (T-UI-003).

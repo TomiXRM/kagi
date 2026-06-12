@@ -21,6 +21,7 @@ mod refs;
 mod snapshot;
 mod staging;
 mod status;
+mod trailers;
 
 #[allow(unused_imports)]
 pub use diff::{
@@ -85,6 +86,8 @@ pub use staging::{
 };
 #[allow(unused_imports)]
 pub use status::{ChangeKind, FileStatus, WorkingTreeStatus, working_tree_status};
+#[allow(unused_imports)]
+pub use trailers::{CoAuthor, parse_coauthors};
 
 use std::path::{Path, PathBuf};
 

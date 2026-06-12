@@ -16,7 +16,7 @@
 
 use gpui::{App, Bounds, Context, IntoElement, Pixels, SharedString, Window, canvas, div, prelude::*, px, relative, rgb};
 
-use kagi::git::{ChangeKind, CommitId, FileDiffStat, FileStatus, find_stat};
+use kagi::git::{ChangeKind, CommitId, FileDiffStat, FileStatus, find_stat, parse_coauthors};
 
 use super::{
     CompareView, DividerDrag, DividerGhost, DividerKind, KagiApp,
@@ -498,6 +498,95 @@ pub fn render_inspector(
         )
         .child(hash_chip);
 
+    // ── Co-author rows (W18-COAUTHOR-COPY) ────────────────────────────────
+    // Parse `Co-authored-by:` trailers from the full message.  Each co-author
+    // gets a muted text_xs row with a 16px avatar (resolved GitHub image when
+    // available, else the initial-on-colour circle) and the email in a
+    // tooltip.  Nothing is rendered when there are no co-authors.
+    let coauthors = parse_coauthors(d.full_message.as_ref());
+    let coauthor_rows: Vec<gpui::AnyElement> = coauthors
+        .iter()
+        .enumerate()
+        .map(|(i, ca)| {
+            let display_name = if ca.name.is_empty() {
+                ca.email.clone()
+            } else {
+                ca.name.clone()
+            };
+            let name_short: SharedString = if display_name.chars().count() > 28 {
+                let s: String = display_name.chars().take(27).collect();
+                SharedString::from(format!("{}\u{2026}", s))
+            } else {
+                SharedString::from(display_name.clone())
+            };
+
+            // 16px avatar reusing the author avatar machinery.
+            let ca_initial = SharedString::from(avatar_initial(&display_name));
+            let ca_hsla = avatar_color(&ca.email);
+            let ca_avatar = {
+                let circle = div()
+                    .w(px(16.)).h(px(16.)).flex_shrink_0()
+                    .rounded_full()
+                    .overflow_hidden();
+                match avatar_images.get(&ca.email).cloned() {
+                    Some(image) => circle.child(
+                        gpui::img(gpui::ImageSource::Image(image))
+                            .size_full()
+                            .rounded_full(),
+                    ),
+                    None => circle
+                        .flex().items_center().justify_center()
+                        .bg(ca_hsla)
+                        .text_color(rgb(theme().bg_base))
+                        .child(
+                            div().text_size(px(9.)).child(ca_initial),
+                        ),
+                }
+            };
+
+            // Email tooltip (only when an email is present).
+            let email_tooltip: Option<SharedString> = if ca.email.is_empty() {
+                None
+            } else {
+                Some(SharedString::from(ca.email.clone()))
+            };
+
+            let mut row = div()
+                .id(("inspector-coauthor", i))
+                .flex().flex_row().items_center().gap_2()
+                .child(ca_avatar)
+                .child(
+                    div().flex_1().min_w(px(0.))
+                        .text_xs().text_color(rgb(theme().text_muted))
+                        .truncate()
+                        .child(name_short),
+                );
+            if let Some(email) = email_tooltip {
+                row = row.tooltip(move |_window, cx| {
+                    cx.new(|_| HashTooltip { sha: email.clone() }).into()
+                });
+            }
+            row.into_any()
+        })
+        .collect();
+
+    // "Co-authored by" caption shown above the co-author rows (only when any).
+    let coauthors_block: Option<gpui::AnyElement> = if coauthor_rows.is_empty() {
+        None
+    } else {
+        let mut block = div()
+            .flex().flex_col().gap_px().mb_2()
+            .child(
+                div()
+                    .text_xs().text_color(rgb(theme().text_muted))
+                    .child(SharedString::from("Co-authored by")),
+            );
+        for r in coauthor_rows {
+            block = block.child(r);
+        }
+        Some(block.into_any())
+    };
+
     // ── Ref badges row ────────────────────────────────────────────────────
     let badges_row = {
         let mut row = div().flex().flex_row().items_center().flex_wrap().gap_1().mb_1();
@@ -572,6 +661,7 @@ pub fn render_inspector(
         .px_3().pt_2().pb_1()
         .child(title_el)
         .child(meta_row)
+        .children(coauthors_block)
         .child(badges_row)
         .child(actions_row);
 

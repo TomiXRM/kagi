@@ -33,6 +33,8 @@
 | T024 | staging バックエンド(stage/unstage/commit + workdir diff) | T011, T013 | done |
 | T025 | Commit Panel UI(GitKraken 風の作業台) | T024, T018, T022 | done |
 | T026 | commit message 入力の IME 対応(gpui-component Input) | T025 | done |
+| T027 | Commit Panel の Unstaged/Staged を 1:1 独立スクロールボックスに | T025, T026 | in-progress |
+| T029 | 外部変更の自動追従(.git 監視リフレッシュ) | T005 | todo |
 
 補助タスク(ticket 外、PM 管理):
 - fixture repo 生成スクリプト(`scripts/make_fixture.sh`)— 用意済み(merge / ahead 1 / behind 1 / tag / stash / dirty WT を含む)

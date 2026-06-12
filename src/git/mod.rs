@@ -13,6 +13,7 @@ mod diff;
 pub mod drafts;
 mod log;
 pub mod message_gen;
+pub mod message_template;
 pub mod oplog;
 pub mod ops;
 mod refs;
@@ -32,6 +33,8 @@ pub use message_gen::{
     collect_staged_diff, collect_staged_files, generate_message, rule_based,
     ollama_available, ollama_list_models,
 };
+#[allow(unused_imports)]
+pub use message_template::{TemplateFields, TYPE_CHOICES, assemble, parse_message};
 #[allow(unused_imports)]
 pub use oplog::{OpLogEntry, OpOutcome, append_oplog, read_oplog_tail};
 #[allow(unused_imports)]

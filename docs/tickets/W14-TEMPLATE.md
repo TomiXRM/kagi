@@ -1,6 +1,6 @@
 # W14-TEMPLATE: Message Template(type/scope/summary/body/test/risk + plain⇄template)
 
-- Status: in-progress
+- Status: done
 - 担当: worktree agent(Opus)
 - チケット: T-COMMIT-009(完了条件・ファイル制約はチケットが正)
 - 関連: ADR-0042(draft の mode フィールド)
@@ -19,3 +19,13 @@
 - `cargo test` は exit code を確認(パイプで握りつぶさない)。own-code warning 0
 - macOS に `timeout` コマンドはない。`cargo build` 後の GUI 起動確認は PM が行う
 - 完了時: 担当チケット末尾に実装メモ追記 + Status 更新、worktree branch に commit
+
+## 実装メモ (done)
+
+- 純関数 `src/git/message_template.rs`(新規)+ `tests/message_template_test.rs`(新規・20 ケース)。
+  `assemble` / `parse_message` / `TemplateFields` / `TYPE_CHOICES`。詳細は T-COMMIT-009 末尾参照。
+- UI 配線は `src/ui/mod.rs`(`commit_panel.rs` は無改変)。6 欄すべて gpui-component InputState
+  (body は multi_line + auto_grow)。plain⇄template トグル + type quick-pick chips。色は theme() 経由。
+- draft autosave(既存 250ms debounce)に統合: 保存値は展開済み plain text、`mode` に現モードを渡す。
+  `drafts.rs` は無改変(API/`mode` のみ使用)。復元時 `mode=="template"` は再 parse して template で開く。
+- `cargo build` green / own-code warning 0、`cargo test` 全 suite pass(exit 0 確認)。Cargo.toml 無改変。

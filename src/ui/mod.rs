@@ -144,7 +144,7 @@ const COL_HEADER_H: f32 = 20.0;
 
 // W7-INSPECTOR2: inspector message/files vertical split.
 /// Default split ratio (message:files = 1:1).
-const INSPECTOR_SPLIT_DEFAULT: f32 = 0.5;
+const INSPECTOR_SPLIT_DEFAULT: f32 = 0.35;  // message 35% : files 65% (user request: files +30%)
 /// Clamp bounds for the split ratio when dragging the divider.
 const INSPECTOR_SPLIT_MIN: f32 = 0.2;
 const INSPECTOR_SPLIT_MAX: f32 = 0.8;
@@ -1540,9 +1540,9 @@ impl KagiApp {
             panel_width: PANEL_DEFAULT,
             badge_col_w: BADGE_COL_DEFAULT,
             graph_col_w: GRAPH_COL_DEFAULT,
-            bottom_panel_open: false,
+            bottom_panel_open: true, // user request: terminal visible by default
             bottom_panel_height: BOTTOM_PANEL_H_UNSET,
-            bottom_tab: BottomTab::OperationLog,
+            bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
             commit_panel_open: false,
             commit_panel: None,
             commit_input: None,
@@ -1630,9 +1630,9 @@ impl KagiApp {
             panel_width: PANEL_DEFAULT,
             badge_col_w: BADGE_COL_DEFAULT,
             graph_col_w: GRAPH_COL_DEFAULT,
-            bottom_panel_open: false,
+            bottom_panel_open: true, // user request: terminal visible by default
             bottom_panel_height: BOTTOM_PANEL_H_UNSET,
-            bottom_tab: BottomTab::OperationLog,
+            bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
             commit_panel_open: false,
             commit_panel: None,
             commit_input: None,
@@ -11021,9 +11021,14 @@ pub fn run_app(mut app_state: KagiApp) {
                     kagi.update(cx, |app, cx| app.open_commit_panel(window, cx));
                 }
 
-                // T-BP-007: KAGI_TERMINAL=1 (requires KAGI_BOTTOM_PANEL=1) starts
-                // the terminal session now that a Window context is available.
-                if std::env::var("KAGI_TERMINAL").as_deref() == Ok("1") {
+                // The bottom panel now opens on the Terminal tab by default
+                // (user request) — start the shell as soon as a Window
+                // context exists. ensure_terminal is a no-op without a repo
+                // (welcome screen) and KAGI_TERMINAL=1 stays as an explicit
+                // headless trigger.
+                if std::env::var("KAGI_TERMINAL").as_deref() == Ok("1")
+                    || kagi.read(cx).bottom_panel_open
+                {
                     kagi.update(cx, |app, cx| app.ensure_terminal(window, cx));
                 }
 

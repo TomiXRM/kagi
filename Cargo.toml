@@ -10,6 +10,11 @@ gpui-terminal = { path = "vendor/gpui-terminal" }  # vendored fork (ADR-0035): s
 portable-pty = "0.9"
 git2 = { version = "0.21", default-features = false }
 notify = "7"
+# W11-AVATAR (ADR-0037): blocking HTTP for GitHub avatar fetch. gpui 0.2.2 ships
+# only the `gpui_http_client` *trait* crate (NullHttpClient by default; no
+# concrete network client published), so a small blocking client is required.
+# rustls-tls reuses the rustls 0.23 / ring already present via gpui's tree.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
 tempfile = "3"

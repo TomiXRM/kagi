@@ -64,6 +64,8 @@ pub fn render_inspector(
     // time and read by the InspectorSplit drag handler in mod.rs.
     split_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     panel_width: f32,
+    // W11-AVATAR: resolved GitHub avatar images keyed by author email.
+    avatar_images: &std::collections::HashMap<String, std::sync::Arc<gpui::Image>>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     // ── Truncate input files before building the tree (T018 policy) ──────
@@ -416,15 +418,28 @@ pub fn render_inspector(
         .child(title_text);
 
     // ── Meta row: avatar · author name · committed date · short-hash chip ──
+    // W11-AVATAR: show the resolved GitHub avatar image when available; else
+    // the initial-on-colour circle (T020 fallback).
     let avatar_hsla = avatar_color(&author_email);
     let initial = SharedString::from(avatar_initial(&author_name));
-    let avatar_el = div()
-        .w(px(18.)).h(px(18.)).flex_shrink_0()
-        .flex().items_center().justify_center()
-        .rounded_full()
-        .bg(avatar_hsla)
-        .text_xs().text_color(rgb(theme().bg_base))
-        .child(initial);
+    let avatar_el = {
+        let circle = div()
+            .w(px(18.)).h(px(18.)).flex_shrink_0()
+            .rounded_full()
+            .overflow_hidden();
+        match avatar_images.get(&author_email).cloned() {
+            Some(image) => circle.child(
+                gpui::img(gpui::ImageSource::Image(image))
+                    .size_full()
+                    .rounded_full(),
+            ),
+            None => circle
+                .flex().items_center().justify_center()
+                .bg(avatar_hsla)
+                .text_xs().text_color(rgb(theme().bg_base))
+                .child(initial),
+        }
+    };
 
     let author_name_short: SharedString = if author_name.chars().count() > 24 {
         let s: String = author_name.chars().take(23).collect();

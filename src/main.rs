@@ -298,7 +298,7 @@ fn main() {
             }
         };
 
-        match kagi::git::plan_stash_push(&mut repo_sp, None) {
+        match kagi::git::plan_stash_push(&mut repo_sp, None, true) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: stash-push blockers={} warnings={}",
@@ -322,7 +322,7 @@ fn main() {
                             let err_msg = format!("preflight failed: {}", e);
                             eprintln!("[kagi] {}", err_msg);
                             record_headless_op("stash-push", plan.current.clone(), OpOutcome::Failed { error: err_msg }, &repo_path);
-                        } else if let Err(e) = kagi::git::execute_stash_push(&mut repo2, None) {
+                        } else if let Err(e) = kagi::git::execute_stash_push(&mut repo2, None, true) {
                             let err_msg = format!("stash-push failed: {}", e);
                             eprintln!("[kagi] {}", err_msg);
                             record_headless_op("stash-push", plan.current.clone(), OpOutcome::Failed { error: err_msg }, &repo_path);

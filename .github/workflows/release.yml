@@ -1,0 +1,95 @@
+name: release
+
+# ADR-0047 / W20-RELEASE: cross-platform distribution Phase 1 (unsigned/ad-hoc).
+# Triggered by `v*` tags. Builds macOS (.app + .dmg) and Linux (tar.gz) artifacts
+# via the `xtask` helper, generates SHA256SUMS, and uploads everything to a
+# DRAFT GitHub release for manual review before publishing.
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Allow a manual dry-run (builds artifacts, still uploads to a draft release).
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: macos-arm64
+            kind: macos
+            arch: arm64
+          - os: macos-15-intel
+            target: macos-x86_64
+            kind: macos
+            arch: x86_64
+          - os: ubuntu-latest
+            target: linux-x86_64
+            kind: linux
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Verify runner architecture
+        shell: bash
+        run: |
+          echo "uname -m: $(uname -m)"
+
+      # ── macOS: .app (ad-hoc signed) + .dmg ────────────────────────────────
+      - name: Bundle macOS app + dmg
+        if: matrix.kind == 'macos'
+        run: |
+          cargo run -p xtask -- bundle-macos
+          cargo run -p xtask -- dmg-macos
+
+      # ── Linux: release build + tar.gz ─────────────────────────────────────
+      - name: Build Linux release binary
+        if: matrix.kind == 'linux'
+        run: cargo build --release -p kagi
+
+      - name: Bundle Linux tar.gz
+        if: matrix.kind == 'linux'
+        run: cargo run -p xtask -- bundle-linux --bin target/release/kagi
+
+      # ── Checksums over this leg's artifacts ───────────────────────────────
+      - name: Generate SHA256SUMS
+        shell: bash
+        working-directory: target/dist
+        run: |
+          shopt -s nullglob
+          files=( *.dmg *.tar.gz )
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "no artifacts produced" >&2
+            exit 1
+          fi
+          if command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "${files[@]}" > "SHA256SUMS-${{ matrix.target }}.txt"
+          else
+            sha256sum "${files[@]}" > "SHA256SUMS-${{ matrix.target }}.txt"
+          fi
+          cat "SHA256SUMS-${{ matrix.target }}.txt"
+
+      - name: Upload artifacts to draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            target/dist/*.dmg
+            target/dist/*.tar.gz
+            target/dist/SHA256SUMS-${{ matrix.target }}.txt

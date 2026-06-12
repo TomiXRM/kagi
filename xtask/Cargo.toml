@@ -1,0 +1,9 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Build/bundle helper for kagi (ADR-0047, W20-RELEASE). Stdlib-only by design:
+# no external crates, no network — reproducible inside a worktree / offline.
+[dependencies]

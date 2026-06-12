@@ -240,12 +240,17 @@ pub fn render_sidebar(
                         })
                         .into_any()
                 } else {
+                    let branch_for_delete = branch_name.clone();
                     let click_handler = cx.listener(move |this: &mut KagiApp, event: &gpui::ClickEvent, _window, cx| {
                         if event.click_count() >= 2 {
                             this.open_plan_modal(branch_for_click.clone());
                         } else {
                             this.jump_to_branch(&branch_for_click);
                         }
+                        cx.notify();
+                    });
+                    let delete_handler = cx.listener(move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
+                        this.open_delete_branch_modal(branch_for_delete.clone());
                         cx.notify();
                     });
                     div()
@@ -272,6 +277,21 @@ pub fn render_sidebar(
                                     .child(ul),
                             )
                         })
+                        // ✕ delete button: always visible (small, muted) for non-HEAD branches.
+                        // Implementation note: gpui hover-group is not stable API in 0.2.x;
+                        // always-visible small ✕ in muted colour is the safe choice.
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("sidebar-delete-{}", branch_name)))
+                                .flex_shrink_0()
+                                .ml_1()
+                                .px_1()
+                                .text_xs()
+                                .text_color(rgb(TEXT_MUTED))
+                                .on_click(delete_handler)
+                                .hover(|s| s.text_color(rgb(0xf38ba8)))
+                                .child(SharedString::from("\u{00d7}")),
+                        )
                         .into_any()
                 };
 

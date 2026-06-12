@@ -219,6 +219,34 @@ fn main() {
         }
     }
 
+    // ── W2-DELETE: headless delete-branch plan / execute ─────
+    // KAGI_DELETE_BRANCH=<name>: generate a delete-branch plan and log it.
+    // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, execute immediately.
+    // For fixture/tempdir testing only.  Do not set in normal use.
+    if let Ok(del_branch) = std::env::var("KAGI_DELETE_BRANCH") {
+        app_state.open_delete_branch_modal(&del_branch);
+
+        let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
+        if auto_confirm {
+            if let Some(ref modal) = app_state.delete_branch_modal.clone() {
+                if modal.plan.blockers.is_empty() {
+                    app_state.confirm_delete_branch();
+                } else {
+                    eprintln!(
+                        "[kagi] KAGI_AUTO_CONFIRM=1 but delete-branch has {} blocker(s), skipping",
+                        modal.plan.blockers.len()
+                    );
+                    record_headless_op(
+                        "delete-branch",
+                        modal.plan.current.clone(),
+                        OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                        &repo_path,
+                    );
+                }
+            }
+        }
+    }
+
     // ── T013: headless checkout plan / execute ───────────────
     // KAGI_PLAN_CHECKOUT=<branch>: generate a plan for the branch and log it.
     // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, proceed to execute.

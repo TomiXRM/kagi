@@ -8670,31 +8670,49 @@ fn stash_push_blocking(
     plan: &OperationPlan,
     message: Option<String>,
 ) -> Result<(String, StateSummary), String> {
+    let t0 = Instant::now();
     let mut repo = git2::Repository::open(repo_path)
         .map_err(|e| format!("Repo open error: {}", e.message()))?;
     preflight_check_stash(&mut repo, plan, plan.stash_count_at_plan())
         .map_err(|e| format!("Preflight failed: {}", e))?;
     execute_stash_push(&mut repo, message.as_deref(), true)
         .map_err(|e| format!("Stash push failed: {}", e))?;
+    let t_stash = t0.elapsed();
     eprintln!("[kagi] executed: stash-push message={:?}", message.unwrap_or_default());
 
-    let mut repo2 = git2::Repository::open(repo_path)
-        .map_err(|e| format!("verify: repo open error: {}", e.message()))?;
-    let after = match kagi::git::snapshot(&mut repo2, 10_000) {
-        Ok(snap) => {
-            if !snap.status.is_dirty() {
+    // Light verify: the full reload that follows on the main thread already
+    // rebuilds the complete snapshot, so re-walking 10k commits here only
+    // doubled the wall-clock (user asked why stash took ~10s). Status + a
+    // stash-count check are enough to confirm the operation took effect.
+    let t1 = Instant::now();
+    let after = match kagi::git::working_tree_status(&repo) {
+        Ok(status) => {
+            if !status.is_dirty() {
                 eprintln!("[kagi] verified: working tree clean after stash-push");
             } else {
                 eprintln!("[kagi] verify: working tree NOT clean after stash-push");
             }
-            eprintln!("[kagi] verified: stash count={}", snap.stashes.len());
+            let mut count = 0usize;
+            let _ = repo.stash_foreach(|_, _, _| {
+                count += 1;
+                true
+            });
+            eprintln!("[kagi] verified: stash count={}", count);
+            // resolve_head is crate-private; the predicted head from the
+            // plan is accurate here (stash does not move HEAD).
+            let head = plan.predicted.head.clone();
             StateSummary {
-                head: snap.head.display(),
-                dirty: if snap.status.is_dirty() { "dirty".into() } else { "clean".into() },
+                head,
+                dirty: if status.is_dirty() { "dirty".into() } else { "clean".into() },
             }
         }
         Err(_) => plan.predicted.clone(),
     };
+    eprintln!(
+        "[kagi] async: stash-push timing stash={:.1}s verify={:.1}s",
+        t_stash.as_secs_f32(),
+        t1.elapsed().as_secs_f32()
+    );
     Ok(("stashed working tree".to_string(), after))
 }
 

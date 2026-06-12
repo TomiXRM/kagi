@@ -4063,6 +4063,19 @@ impl KagiApp {
                 .min_h(px(0.)),
             );
 
+        // Active file (for list highlight) derived from the open main diff.
+        let active_src = main_diff.as_ref().map(|d| d.source.clone());
+        let active_commit_file: Option<usize> = match &active_src {
+            Some(MainDiffSource::Commit { file_index, .. }) => Some(*file_index),
+            _ => None,
+        };
+        let active_wip: Option<(bool, PathBuf)> = match &active_src {
+            Some(MainDiffSource::Unstaged { path }) => Some((false, path.clone())),
+            Some(MainDiffSource::Staged { path }) => Some((true, path.clone())),
+            _ => None,
+        };
+        let main_diff_for_center = main_diff;
+
         let mut body_row = div()
             .flex()
             .flex_row()
@@ -4078,7 +4091,7 @@ impl KagiApp {
             // ── Center column: full-width diff (T-UI-003) or the commit
             //    list.  The right panel stays visible in BOTH modes so the
             //    user can click through files continuously (user request).
-            .child(if let Some(diff_view) = main_diff {
+            .child(if let Some(diff_view) = main_diff_for_center {
                 render_main_diff_view(diff_view, main_diff_scroll_handle, cx).into_any_element()
             } else {
                 commit_list_col.into_any_element()
@@ -4104,7 +4117,7 @@ impl KagiApp {
             if let Some(panel_state) = commit_panel.clone() {
                 body_row = body_row
                     .child(divider2)
-                    .child(render_commit_panel(panel_state, panel_width, commit_input.clone(), cx));
+                    .child(render_commit_panel(panel_state, panel_width, commit_input.clone(), active_wip.clone(), cx));
             }
         } else {
             // ── Normal commit detail panel (existing behaviour) ──
@@ -4114,7 +4127,7 @@ impl KagiApp {
                 let files = changed_files.clone();
                 let files_for_click = changed_files.clone();
                 el.child(divider2)
-                    .child(render_detail_panel(d, at, files.unwrap_or(None), files_for_click.unwrap_or(None), panel_width, cx))
+                    .child(render_detail_panel(d, at, files.unwrap_or(None), files_for_click.unwrap_or(None), active_commit_file, panel_width, cx))
             });
         }
 
@@ -4804,6 +4817,7 @@ fn render_detail_panel(
     at: CommitId,
     changed_files: Option<Vec<FileStatus>>,
     changed_files_for_click: Option<Vec<FileStatus>>,
+    active_file: Option<usize>,
     panel_width: f32,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
@@ -4905,6 +4919,8 @@ fn render_detail_panel(
                         .gap_1()
                         .pl(px(indent))
                         .mb_px()
+                        // Highlight the file currently shown in the main diff.
+                        .when(active_file == Some(fi), |el| el.bg(rgb(BG_SELECTED)).rounded_sm())
                         .on_click(click)
                         .child(
                             div()
@@ -7016,6 +7032,7 @@ fn render_commit_panel(
     panel: CommitPanelState,
     panel_width: f32,
     commit_input: Option<Entity<InputState>>,
+    active_wip: Option<(bool, PathBuf)>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     const COLOR_DIR: u32      = 0x6c7086;
@@ -7148,6 +7165,12 @@ fn render_commit_panel(
                     let row_bg = if is_conflicted_file { 0x3a1c1c } else if is_sel { BG_SELECTED } else { BG_PANEL };
                     let mut file_row = div()
                         .id(("cp-us-file", fi))
+                        .when(
+                            active_wip.as_ref().map_or(false, |(st, p)| {
+                                *st == false && panel.unstaged.get(fi).map_or(false, |f| &f.path == p)
+                            }),
+                            |el| el.bg(rgb(BG_SELECTED)),
+                        )
                         .flex()
                         .flex_row()
                         .items_center()
@@ -7228,6 +7251,12 @@ fn render_commit_panel(
             let row_bg = if is_conflicted_file { 0x3a1c1c } else if is_sel { BG_SELECTED } else { BG_PANEL };
             let mut file_row = div()
                 .id(("cp-us-flat-file", fi))
+                        .when(
+                            active_wip.as_ref().map_or(false, |(st, p)| {
+                                *st == false && panel.unstaged.get(fi).map_or(false, |f| &f.path == p)
+                            }),
+                            |el| el.bg(rgb(BG_SELECTED)),
+                        )
                 .flex()
                 .flex_row()
                 .items_center()
@@ -7361,6 +7390,12 @@ fn render_commit_panel(
                     staged_files = staged_files.child(
                         div()
                             .id(("cp-st-file", fi))
+                        .when(
+                            active_wip.as_ref().map_or(false, |(st, p)| {
+                                *st == true && panel.staged.get(fi).map_or(false, |f| &f.path == p)
+                            }),
+                            |el| el.bg(rgb(BG_SELECTED)),
+                        )
                             .flex()
                             .flex_row()
                             .items_center()
@@ -7423,6 +7458,12 @@ fn render_commit_panel(
             staged_files = staged_files.child(
                 div()
                     .id(("cp-st-flat-file", fi))
+                        .when(
+                            active_wip.as_ref().map_or(false, |(st, p)| {
+                                *st == true && panel.staged.get(fi).map_or(false, |f| &f.path == p)
+                            }),
+                            |el| el.bg(rgb(BG_SELECTED)),
+                        )
                     .flex()
                     .flex_row()
                     .items_center()

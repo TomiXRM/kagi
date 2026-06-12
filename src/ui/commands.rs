@@ -736,6 +736,11 @@ impl KagiApp {
         let t = theme::theme();
         eprintln!("[kagi] theme: {} dark={}", t.slug, t.dark);
 
+        // W12-GCADOPT: push the new kagi palette into gpui-component's global
+        // ThemeColor so adopted widgets (Input, Tooltip, Scrollbar, Checkbox)
+        // follow the switch.  One-way only (kagi → gpui-component).
+        theme::sync_gpui_component_theme(cx);
+
         // Live-apply to running terminal sessions.
         let new_config = super::terminal::build_terminal_config();
         for session in self.terminal_sessions.values() {

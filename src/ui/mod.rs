@@ -34,6 +34,8 @@ use gpui::{
 };
 use gpui_component::input::{Input, InputState};
 use gpui_component::tooltip::Tooltip;
+use gpui_component::checkbox::Checkbox;
+use gpui_component::scroll::Scrollbar;
 use gpui_component::Sizable as _;
 
 // ──────────────────────────────────────────────────────────────
@@ -6527,19 +6529,26 @@ impl KagiApp {
                 )
             })
             // ── Virtualized commit list ──────────────
-            .child(
-                uniform_list(
-                    "commit-list",
-                    row_count,
-                    cx.processor(move |this, range, _window, cx| {
-                        render_rows(&this.rows, &this.avatar_images, range, selected, this.badge_col_w, this.graph_col_w, this.graph_compact, this.graph_scroll_x, cx)
-                    }),
+            .child({
+                // W12-GCADOPT (§2.10): keep a handle clone for the Scrollbar
+                // overlay; the other is moved into `track_scroll`.
+                let scrollbar_handle = commit_scroll_handle.clone();
+                with_vertical_scrollbar(
+                    "commit-list-scroll",
+                    &scrollbar_handle,
+                    uniform_list(
+                        "commit-list",
+                        row_count,
+                        cx.processor(move |this, range, _window, cx| {
+                            render_rows(&this.rows, &this.avatar_images, range, selected, this.badge_col_w, this.graph_col_w, this.graph_compact, this.graph_scroll_x, cx)
+                        }),
+                    )
+                    // T028: wire scroll handle so jump_to_branch can scroll the list.
+                    .track_scroll(commit_scroll_handle)
+                    .flex_1()
+                    .min_h(px(0.)),
                 )
-                // T028: wire scroll handle so jump_to_branch can scroll the list.
-                .track_scroll(commit_scroll_handle)
-                .flex_1()
-                .min_h(px(0.)),
-            );
+            });
 
         // Active file (for list highlight) derived from the open main diff.
         let active_src = main_diff.as_ref().map(|d| d.source.clone());
@@ -6768,8 +6777,10 @@ impl KagiApp {
         }
 
         let scroll_handle = self.oplog_scroll_handle.clone();
+        // W12-GCADOPT (§2.10): Scrollbar overlay on the Operation Log list.
+        let scrollbar_handle = scroll_handle.clone();
 
-        uniform_list(
+        let oplog_list = uniform_list(
             "oplog-list",
             entry_count,
             cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
@@ -6898,8 +6909,10 @@ impl KagiApp {
         .track_scroll(scroll_handle)
         .flex_1()
         .min_h(px(0.))
-        .bg(rgb(theme().panel))
-        .into_any()
+        .bg(rgb(theme().panel));
+
+        with_vertical_scrollbar("oplog-list-scroll", &scrollbar_handle, oplog_list)
+            .into_any_element()
     }
 
     /// Render the Terminal tab body (T-BP-007).
@@ -7547,18 +7560,24 @@ fn render_main_diff_view(
                 ),
         )
         // ── Diff body: full remaining space ──────────────────────────────
-        .child(
-            uniform_list(
-                "main-diff-list",
-                row_count,
-                cx.processor(move |_this, range, _window, _cx| {
-                    render_main_diff_rows(&rows_for_list, range)
-                }),
+        .child({
+            // W12-GCADOPT (§2.10): Scrollbar overlay on the diff list.
+            let scrollbar_handle = scroll_handle.clone();
+            with_vertical_scrollbar(
+                "main-diff-list-scroll",
+                &scrollbar_handle,
+                uniform_list(
+                    "main-diff-list",
+                    row_count,
+                    cx.processor(move |_this, range, _window, _cx| {
+                        render_main_diff_rows(&rows_for_list, range)
+                    }),
+                )
+                .track_scroll(scroll_handle)
+                .flex_1()
+                .min_h(px(0.)),
             )
-            .track_scroll(scroll_handle)
-            .flex_1()
-            .min_h(px(0.)),
-        )
+        })
 }
 
 /// Render a range of diff rows for the `"main-diff-list"` uniform_list.
@@ -8359,6 +8378,29 @@ fn render_plan_modal_card(
 // Create-branch modal renderer (T014)
 // ──────────────────────────────────────────────────────────────
 
+/// W12-GCADOPT (§2.10): wrap a virtualized list in a relative flex column and
+/// overlay a `gpui_component::scroll::Scrollbar` driven by the list's existing
+/// `UniformListScrollHandle`.  The Scrollbar paints itself absolutely-positioned
+/// over the container (relative(1.) size), so this is layout-non-destructive —
+/// the inner `uniform_list` keeps its own `flex_1().min_h(0)` sizing.  Colours
+/// follow the gpui-component scrollbar theme fields, which
+/// `sync_gpui_component_theme` keeps in step with kagi's palette.
+fn with_vertical_scrollbar(
+    id: &'static str,
+    handle: &UniformListScrollHandle,
+    list: impl IntoElement,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .relative()
+        .flex_1()
+        .min_h(px(0.))
+        .flex()
+        .flex_col()
+        .child(list)
+        .child(Scrollbar::vertical(handle))
+}
+
 /// Render the create-branch confirmation overlay.
 ///
 /// Layout (absolute, full-screen):
@@ -8377,11 +8419,6 @@ fn render_create_branch_modal(
 ) -> impl IntoElement {
     let plan = modal.plan.clone();
     let has_blockers = plan.as_ref().map(|p| !p.blockers.is_empty()).unwrap_or(true);
-    let checkout_label = if modal.checkout_after {
-        "[x] Checkout after create"
-    } else {
-        "[ ] Checkout after create"
-    };
 
     // ── Cancel handler ──────────────────────────────────────
     // T-BP-003: return focus to root_focus so cmd-j keeps working.
@@ -8403,14 +8440,22 @@ fn render_create_branch_modal(
         cx.notify();
     });
 
-    let toggle_checkout = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
-        if let Some(ref mut modal) = this.create_branch_modal {
-            modal.checkout_after = !modal.checkout_after;
-            modal.error = None;
-        }
-        this.replan_create_branch();
-        cx.notify();
-    });
+    // W12-GCADOPT (§2.7): replace the old `[ ]`/`[x]` pseudo-checkbox text with a
+    // real `gpui_component::checkbox::Checkbox`.  Its `on_click` hands us the new
+    // checked state; we route it through the same toggle + replan logic via the
+    // KagiApp entity (Checkbox callbacks take `&mut App`, not `&mut Context`).
+    let app_entity = cx.entity();
+    let toggle_checkout = move |new_checked: &bool, _window: &mut Window, cx: &mut App| {
+        let new_checked = *new_checked;
+        app_entity.update(cx, |this, cx| {
+            if let Some(ref mut modal) = this.create_branch_modal {
+                modal.checkout_after = new_checked;
+                modal.error = None;
+            }
+            this.replan_create_branch();
+            cx.notify();
+        });
+    };
 
     // ── Build modal card ────────────────────────────────────
     let mut card = div()
@@ -8448,15 +8493,14 @@ fn render_create_branch_modal(
         )
         .child(
             div()
-                .id("create-branch-checkout-after")
                 .px_2()
                 .py_1()
-                .rounded_sm()
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .on_click(toggle_checkout)
-                .hover(|style| style.bg(rgb(theme().surface)))
-                .child(SharedString::from(checkout_label)),
+                .child(
+                    Checkbox::new("create-branch-checkout-after")
+                        .label("Checkout after create")
+                        .checked(modal.checkout_after)
+                        .on_click(toggle_checkout),
+                ),
         );
 
     // ── Plan state (current → predicted) ─────────────────
@@ -10527,6 +10571,13 @@ pub fn run_app(mut app_state: KagiApp) {
         .run(move |cx: &mut App| {
         // T025: initialize gpui-component (registers key bindings, themes, etc.)
         gpui_component::init(cx);
+
+        // W12-GCADOPT: gpui_component::init runs `sync_system_appearance`, which
+        // seeds the gpui-component palette from the OS light/dark setting.  Push
+        // kagi's active theme (already resolved by `theme::init_active` in main)
+        // on top so adopted components (Input, Tooltip, Scrollbar, Checkbox…)
+        // render in kagi's colours rather than the system default.
+        theme::sync_gpui_component_theme(cx);
 
         // T-BP-002: register cmd-j as the toggle key for the bottom panel.
         // context = None means the binding fires regardless of focus context.

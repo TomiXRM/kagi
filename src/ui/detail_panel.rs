@@ -32,6 +32,10 @@ pub struct CommitDetail {
     pub author_line: SharedString,
     /// Committer line (only set when committer differs from author) — raw.
     pub committer_line: Option<SharedString>,
+    /// Committed date — always set: `"YYYY-MM-DD HH:MM"` (UTC).
+    /// Used by the inspector to show the committed timestamp separately
+    /// from the committer identity line.
+    pub committed_date: SharedString,
     /// Short IDs of parent commits, e.g. `["a1b2c3d4", "e5f6a7b8"]`.
     pub parent_ids: Vec<SharedString>,
     /// Full commit message (may be multi-line) — raw, trimmed trailing whitespace.
@@ -94,10 +98,14 @@ fn commit_to_detail(c: &Commit) -> CommitDetail {
     };
     let full_message = SharedString::from(capped);
 
+    // committed_date is always set so the inspector can show it unconditionally.
+    let committed_date = SharedString::from(format_utc(c.committer.time));
+
     CommitDetail {
         full_sha,
         author_line,
         committer_line,
+        committed_date,
         parent_ids,
         full_message,
     }

@@ -11,6 +11,7 @@ pub mod commit_panel;
 pub mod detail_panel;
 pub mod file_tree;
 pub mod graph_view;
+pub mod inspector;
 pub mod terminal;
 pub mod watcher;
 
@@ -861,6 +862,10 @@ pub struct KagiApp {
     /// Lazy terminal session.  `None` until `repo_path` is known and the
     /// Terminal tab is first displayed (or KAGI_TERMINAL=1 at startup).
     pub terminal_session: Option<terminal::KagiTerminalSession>,
+    // ── W2-INSPECTOR: Changed-files display mode ─────────────────
+    /// When `true` the inspector shows files in tree view; `false` = flat path list.
+    /// Default: `true`.
+    pub inspector_tree_view: bool,
 }
 
 impl KagiApp {
@@ -999,6 +1004,7 @@ impl KagiApp {
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
             terminal_session: None,
+            inspector_tree_view: true,
         }
     }
 
@@ -1049,6 +1055,7 @@ impl KagiApp {
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
             terminal_session: None,
+            inspector_tree_view: true,
         }
     }
 
@@ -3391,6 +3398,10 @@ impl Render for KagiApp {
         // `None` outer = no selection; `Some(None)` = diff unavailable; `Some(Some(v))` = files.
         let changed_files: Option<Option<Vec<FileStatus>>> = selected
             .map(|i| self.diff_cache.get(&i).cloned().unwrap_or(None));
+        // W2-INSPECTOR: badges for the selected commit row and tree-view toggle state.
+        let selected_badges: Vec<commit_list::RefBadge> =
+            selected.and_then(|i| self.rows.get(i)).map(|r| r.badges.clone()).unwrap_or_default();
+        let inspector_tree_view = self.inspector_tree_view;
 
         // T-UI-003: Clone main diff state if present.
         let main_diff = self.main_diff.clone();
@@ -3545,7 +3556,8 @@ impl Render for KagiApp {
             .child(self.render_header_slot(toolbar_state, status_summary, cx))
             // ── Body slot: sidebar | list | optional panel ───
             .child(self.render_body(
-                row_count, selected, detail, changed_files, main_diff, main_diff_scroll_handle,
+                row_count, selected, detail, changed_files, selected_badges, inspector_tree_view,
+                main_diff, main_diff_scroll_handle,
                 branches, stashes, is_dirty, sidebar_width, panel_width,
                 badge_col_w, graph_col_w, commit_scroll_handle,
                 commit_panel_open, commit_panel.clone(), commit_input.clone(),
@@ -3870,6 +3882,8 @@ impl KagiApp {
         selected: Option<usize>,
         detail: Option<detail_panel::CommitDetail>,
         changed_files: Option<Option<Vec<FileStatus>>>,
+        selected_badges: Vec<commit_list::RefBadge>,
+        inspector_tree_view: bool,
         main_diff: Option<MainDiffView>,
         main_diff_scroll_handle: UniformListScrollHandle,
         branches: Vec<(String, bool)>,
@@ -4120,14 +4134,18 @@ impl KagiApp {
                     .child(render_commit_panel(panel_state, panel_width, commit_input.clone(), active_wip.clone(), cx));
             }
         } else {
-            // ── Normal commit detail panel (existing behaviour) ──
+            // ── Commit Inspector panel (W2-INSPECTOR) ────────────
             body_row = body_row.when_some(detail, |el, d| {
                 // ── Commit metadata + changed files ─
                 let at = CommitId(d.full_sha.as_ref().to_string());
                 let files = changed_files.clone();
                 let files_for_click = changed_files.clone();
                 el.child(divider2)
-                    .child(render_detail_panel(d, at, files.unwrap_or(None), files_for_click.unwrap_or(None), active_commit_file, panel_width, cx))
+                    .child(inspector::render_inspector(
+                        d, at, selected_badges.clone(),
+                        files.unwrap_or(None), files_for_click.unwrap_or(None),
+                        active_commit_file, inspector_tree_view, panel_width, cx,
+                    ))
             });
         }
 
@@ -4798,319 +4816,7 @@ fn render_rows(
         .collect()
 }
 
-// ──────────────────────────────────────────────────────────────
-// Detail panel renderer
-// ──────────────────────────────────────────────────────────────
-
-/// Render the right-side detail panel showing commit metadata + changed files.
-///
-/// T022: The metadata area is now vertically scrollable (`overflow_y_scroll()`
-/// via `.id("detail-scroll")`).  All text fields use `truncate()` (single-line
-/// + ellipsis) except the commit message, which is split on `'\n'` so that
-/// each original line is truncated independently (no artificial soft-wrap).
-/// Empty message lines are preserved as full-height spacer rows.
-///
-/// Each changed-file row is clickable: clicking opens the file diff view.
-/// A `+ Create branch here` button at the top opens the create-branch modal.
-fn render_detail_panel(
-    d: CommitDetail,
-    at: CommitId,
-    changed_files: Option<Vec<FileStatus>>,
-    changed_files_for_click: Option<Vec<FileStatus>>,
-    active_file: Option<usize>,
-    panel_width: f32,
-    cx: &mut Context<KagiApp>,
-) -> impl IntoElement {
-    // Helper: one labelled field row.  Value is single-line + truncate.
-    let field = |label: &'static str, value: SharedString| {
-        div()
-            .flex()
-            .flex_col()
-            .mb_2()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(TEXT_LABEL))
-                    .child(SharedString::from(label)),
-            )
-            .child(
-                div()
-                    .text_color(rgb(TEXT_MAIN))
-                    .truncate()
-                    .child(value),
-            )
-    };
-
-    // Parents section: "none" for root commits, short ids otherwise.
-    let parents_value = if d.parent_ids.is_empty() {
-        SharedString::from("(root commit)")
-    } else {
-        SharedString::from(d.parent_ids.iter().map(|s| s.as_ref()).collect::<Vec<_>>().join("  "))
-    };
-
-    // Colour constants for change-kind badges (A/M/D/R/T).
-    const COLOR_ADDED:   u32 = 0xa6e3a1; // green
-    const COLOR_MODIFIED: u32 = 0xf9e2af; // yellow
-    const COLOR_DELETED: u32 = 0xf38ba8; // red
-    const COLOR_RENAMED: u32 = 0x89b4fa; // blue
-    const COLOR_TYPECHANGE: u32 = 0x585b70; // gray (muted)
-    const COLOR_DIR: u32 = 0x6c7086; // overlay0 — muted directory label
-
-    const MAX_FILES: usize = 100;
-
-    // Suppress unused warning for changed_files_for_click (kept for symmetry / future use).
-    let _ = changed_files_for_click;
-
-    // ── Truncate input files before building the tree (T018 policy) ──────
-    let truncated_files: Option<Vec<FileStatus>> = changed_files.as_ref().map(|files| {
-        files.iter().take(MAX_FILES).cloned().collect()
-    });
-    let total_files = changed_files.as_ref().map(|f| f.len()).unwrap_or(0);
-    let truncated_count = if total_files > MAX_FILES { Some(total_files - MAX_FILES) } else { None };
-
-    // ── Build tree rows from (truncated) file list ────────────────────────
-    let tree_rows = truncated_files.as_ref().map(|files| {
-        file_tree::build_file_tree(files)
-    });
-
-    // ── Build GPUI element rows for the tree ─────────────────────────────
-    let tree_element_rows: Vec<_> = match &tree_rows {
-        None => vec![],
-        Some(rows) => rows.iter().map(|row| {
-            match row {
-                file_tree::TreeRow::Dir { depth, name } => {
-                    let indent = (*depth as f32) * 12.0;
-                    div()
-                        .id(SharedString::from(format!("tree-dir-{}", name.as_ref())))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .pl(px(indent))
-                        .mb_px()
-                        .overflow_hidden()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(rgb(COLOR_DIR))
-                                .truncate()
-                                .child(name.clone()),
-                        )
-                        .into_any()
-                }
-                file_tree::TreeRow::File { depth, name, file_index, change } => {
-                    let indent = (*depth as f32) * 12.0;
-                    let (badge_char, badge_color) = match change {
-                        ChangeKind::Added      => ("A", COLOR_ADDED),
-                        ChangeKind::Modified   => ("M", COLOR_MODIFIED),
-                        ChangeKind::Deleted    => ("D", COLOR_DELETED),
-                        ChangeKind::Renamed { .. } => ("R", COLOR_RENAMED),
-                        ChangeKind::TypeChange => ("T", COLOR_TYPECHANGE),
-                    };
-                    let fi = *file_index;
-                    let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                        this.open_main_diff_commit(fi);
-                        cx.notify();
-                    });
-                    div()
-                        .id(("file-row", fi))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_1()
-                        .pl(px(indent))
-                        .mb_px()
-                        // Highlight the file currently shown in the main diff.
-                        .when(active_file == Some(fi), |el| el.bg(rgb(BG_SELECTED)).rounded_sm())
-                        .on_click(click)
-                        .child(
-                            div()
-                                .w(px(14.))
-                                .flex_shrink_0()
-                                .text_sm()
-                                .text_color(rgb(badge_color))
-                                .child(SharedString::from(badge_char)),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_sm()
-                                .text_color(rgb(TEXT_MAIN))
-                                .truncate()
-                                .child(name.clone()),
-                        )
-                        .into_any()
-                }
-            }
-        }).collect(),
-    };
-
-    // ── "Create branch here" button ──────────────────────────
-    let at_for_cherry = at.clone();
-    let create_branch_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.open_create_branch_modal(at.clone(), cx);
-        cx.notify();
-    });
-
-    let create_branch_button = div()
-        .id("create-branch-btn")
-        .mb_1()
-        .px_2()
-        .py_1()
-        .rounded_sm()
-        .bg(rgb(BG_SURFACE))
-        .text_sm()
-        .text_color(rgb(COLOR_BRANCH))
-        .on_click(create_branch_click)
-        .hover(|style| style.bg(rgb(BG_SELECTED)))
-        .child(SharedString::from("+ Create branch here"));
-
-    // ── "Cherry-pick onto HEAD" button (T016) ────────────────
-    let cherry_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.open_cherry_pick_modal(at_for_cherry.clone());
-        cx.notify();
-    });
-
-    let cherry_pick_button = div()
-        .id("cherry-pick-btn")
-        .mb_2()
-        .px_2()
-        .py_1()
-        .rounded_sm()
-        .bg(rgb(BG_SURFACE))
-        .text_sm()
-        .text_color(rgb(0xcba6f7)) // Catppuccin mauve — cherry-pick distinct from branch color
-        .on_click(cherry_click)
-        .hover(|style| style.bg(rgb(BG_SELECTED)))
-        .child(SharedString::from("\u{1f352} Cherry-pick onto HEAD branch"));
-
-    // ── Message: split on '\n', each line truncated independently ────────
-    // Empty lines are rendered as a full-height spacer (non-breaking space).
-    let message_lines: Vec<_> = d.full_message
-        .as_ref()
-        .split('\n')
-        .map(|line| {
-            let text = if line.is_empty() {
-                // Preserve empty lines as visible spacers.
-                SharedString::from("\u{00A0}") // NBSP — gives the row its line height
-            } else {
-                SharedString::from(line.to_string())
-            };
-            div()
-                .flex()
-                .flex_row()
-                .w_full()
-                .text_color(rgb(TEXT_MAIN))
-                .text_sm()
-                .truncate()
-                .child(text)
-                .into_any()
-        })
-        .collect();
-
-    let files_section = {
-        let section_label = match &changed_files {
-            None => SharedString::from("Changed files"),
-            Some(files) => SharedString::from(format!("Changed files ({})", files.len())),
-        };
-
-        let mut section = div()
-            .flex()
-            .flex_col()
-            .mt_2()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(TEXT_LABEL))
-                    .mb_1()
-                    .child(section_label),
-            );
-
-        if changed_files.is_none() {
-            section = section.child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(TEXT_MUTED))
-                    .child(SharedString::from("(diff unavailable)")),
-            );
-        } else {
-            for row in tree_element_rows {
-                section = section.child(row);
-            }
-            if let Some(remaining) = truncated_count {
-                section = section.child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(TEXT_MUTED))
-                        .child(SharedString::from(format!("\u{2026} and {} more", remaining))),
-                );
-            }
-        }
-
-        section
-    };
-
-    // ── Build the scrollable content block ───────────────────────────────
-    // All metadata + file tree goes inside a single scrollable div with `.id()`.
-    // The outer panel is `flex_col` + `h_full`; the inner scroll area is `flex_1`
-    // with `min_h(px(0.))` so it can shrink below its natural height.
-    let mut scroll_content = div()
-        .flex()
-        .flex_col()
-        .px_3()
-        .py_2()
-        // ── Create branch here button ────────────────────────
-        .child(create_branch_button)
-        // ── Cherry-pick onto HEAD button (T016) ─────────────
-        .child(cherry_pick_button)
-        // ── Full SHA — single-line + truncate ────────────────
-        .child(field("SHA", d.full_sha))
-        // ── Author — single-line + truncate ──────────────────
-        .child(field("Author", d.author_line))
-        // ── Committer (only when different from author) ──────
-        .when_some(d.committer_line, |el, c| el.child(field("Committer", c)))
-        // ── Parents — single-line + truncate ─────────────────
-        .child(field("Parents", parents_value))
-        // ── Message — per-line truncate, no soft-wrap ────────
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .mb_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(TEXT_LABEL))
-                        .mb_1()
-                        .child(SharedString::from("Message")),
-                ),
-        );
-
-    for line_el in message_lines {
-        scroll_content = scroll_content.child(line_el);
-    }
-
-    scroll_content = scroll_content
-        // ── Changed files ─────────────────────────────────
-        .child(files_section);
-
-    // ── Outer panel: user-resizable width, full height, flex_col ─────────
-    div()
-        .w(px(panel_width))
-        .flex_shrink_0()
-        .h_full()
-        .flex()
-        .flex_col()
-        .bg(rgb(BG_PANEL))
-        // ── Scrollable area (flex_1 + min_h(0) so it can shrink) ─────────
-        .child(
-            div()
-                .id("detail-scroll")
-                .flex_1()
-                .min_h(px(0.))
-                .overflow_y_scroll()
-                .child(scroll_content),
-        )
-}
+// Note: render_detail_panel was extracted to src/ui/inspector.rs (W2-INSPECTOR).
 
 // ──────────────────────────────────────────────────────────────
 // T-UI-003: Main pane diff renderer (full-width)

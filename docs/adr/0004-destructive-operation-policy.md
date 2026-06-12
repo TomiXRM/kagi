@@ -1,6 +1,6 @@
 # ADR-0004: 破壊的操作ポリシー
 
-- Status: Accepted
+- Status: Accepted(ADR-0009 により拡張)
 - Date: 2026-06-12
 
 ## Context

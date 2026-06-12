@@ -40,3 +40,28 @@
 
 補助タスク(ticket 外、PM 管理):
 - fixture repo 生成スクリプト(`scripts/make_fixture.sh`)— 用意済み(merge / ahead 1 / behind 1 / tag / stash / dirty WT を含む)
+
+## Shell 拡張バックログ(requirements-shell.md / ADR-0007〜0011)
+
+実施順は「依存」列と上から順が基本。ADR は設計フェーズで作成済み(T-BP-006 / T-HT-008 は ADR で完了)。
+
+| ID | タイトル | 依存 | Status |
+|----|----------|------|--------|
+| T-BP-001 | AppShell layout slot 化(Header/Main/RightPanel/BottomPanel/StatusBar)※挙動不変リファクタ | - | todo |
+| T-BP-002 | BottomPanel open/close + 高さリサイズ | T-BP-001 | todo |
+| T-BP-003 | StatusBar(情報表示 + タブ toggle ボタン + cmd-j) | T-BP-001 | todo |
+| T-BP-004 | Operation Log タブ(メモリリングバッファ + 表示) | T-BP-002 | todo |
+| T-BP-005 | Git 操作結果を Operation Log に流す + 失敗時自動オープン | T-BP-004 | todo |
+| T-BP-006 | Terminal 実装方式の調査 ADR | - | done(ADR-0008) |
+| T-BP-007 | MVP Terminal(単一 session) | T-BP-002, ADR-0008 | todo |
+| T-BP-008 | Terminal 内 git 操作後の state refresh | T-BP-007 | done 相当(T029 watcher が充足。T-BP-007 で確認のみ) |
+| T-HT-001 | Header Toolbar UI skeleton(ボタン並び + disabled 理由表示) | T-BP-001 | todo |
+| T-HT-002 | branch / upstream / ahead-behind 表示(Toolbar + StatusBar) | T-HT-001 | todo |
+| T-HT-003 | Pull(fetch 含む)の plan + 実行(CLI wrapper) | T-HT-001, ADR-0009 | todo |
+| T-HT-004 | Push の plan + 実行(CLI wrapper、set-upstream flow) | T-HT-003 | todo |
+| T-HT-005 | Branch Create dialog 拡張(作成後 checkout 選択) | T-HT-001 | todo |
+| T-HT-006 | Stash plan 拡張(対象ファイル表示 / untracked 選択) | T-HT-001 | todo |
+| T-HT-007 | Stash pop plan(conflict 予測 blocker、apply との違い明示) | T-HT-006 | todo |
+| T-HT-008 | Undo Commit ADR | - | done(ADR-0011) |
+| T-HT-009 | Undo Commit 実装(ref 付け替えのみの soft 相当) | ADR-0011 | todo |
+| T-HT-010 | Header 操作後の refresh 統合確認 | T-HT-003〜009 | todo |

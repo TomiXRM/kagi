@@ -51,3 +51,14 @@
 
 - serde 禁止(手書き JSON)。エスケープは oplog writer を再利用(`"` / `\` / 制御文字 / 改行)
 - `KAGI_LOG_DIR` を使うテストは oplog テストと同じく直列化(env 競合回避)
+
+## 実装メモ(2026-06-13)
+
+- 新規 `src/git/drafts.rs`(backend のみ)。`src/git/mod.rs` に `pub mod drafts;` + `pub use drafts::{Draft, clear_draft, load_draft, save_draft};` を追加。`src/ui/*` / `src/main.rs` / `staging.rs` は不変(UI 配線は別 lane)。
+- 保存先: `$KAGI_LOG_DIR/drafts/` → なければ `$HOME/.kagi/drafts/`(oplog の path 解決を踏襲)。
+- ファイル名キー: `sha1(repo_path + "\0" + branch).json`。`Cargo.toml` 凍結のため sha1 crate は使わず、自前 SHA-1(RFC 3174、ファイル名用途のみ。known-answer test 3 本で検証: 空 / "abc" / 2-block)。
+- 形式: 手書き JSON `{"repo","branch","message","mode","updated"}`。エスケープは oplog と同方式(`"` `\` `\n` `\r` `\t` `\uXXXX`)。読みは寛容パーサ(壊れたら `None` = draft 無視、commit を妨げない)。`branch`/`message` のみ必須、`repo`/`mode`/`updated` は省略時デフォルト。
+- 挙動: 空(trim 後空)message の `save_draft` はファイル削除に委譲。`clear_draft` は不在でも no-op で成功。
+- テスト: lib unit(純関数 6 本: sha1 KAT×3 / JSON round-trip / 非 object 拒否 / lenient default、+ path-key 検証 1)+ integration `tests/drafts_test.rs`(7 本: round-trip / branch×repo 分離 / clear / 空削除 / 壊れ JSON / 不在 None / 不在 clear no-op)。
+- env 競合回避: `KAGI_LOG_DIR` を触る file-backed テストは lib 内に置かず integration binary に集約(別プロセスで oplog の env テストと直列化不要に)。`with_log_dir` で tempdir 隔離 + restore + ENV_LOCK。
+- 検証: `cargo test` 全パス(2 連続 green)、own-code warning 0。実物 draft ファイルを tempdir に materialize して schema / 40-hex 名 / save→load→clear を確認済み。

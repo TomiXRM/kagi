@@ -146,3 +146,4 @@
 | T-COMMIT-016 | Smart Commit Message — UI(Generate/日英/静かな fallback) | T-COMMIT-015 | blocked |
 | T-COMMIT-017 | Split Commit(file 単位)+ Commit to New Branch | 既存 stage/plan | todo |
 | T-COMMIT-018 | Fixup/Squash commit 作成(prefix のみ, autosquash later) | ADR-0045 | todo |
+| W15-ASYNCOPS | 同期 git 操作の background 化 + checkout dirty 予測修正(QA BUG-1/2) | qa-audit | in-progress |

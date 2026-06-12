@@ -128,15 +128,15 @@
 
 | ID | タイトル | 依存 | Status |
 |----|----------|------|--------|
-| T-COMMIT-001 | Commit Preview — staged 概要(count/summary/branch/author) | T025〜, ADR-0039 | in-progress |
-| T-COMMIT-002 | Commit Preview — staged diff preview | T-COMMIT-001, T012 | in-progress |
+| T-COMMIT-001 | Commit Preview — staged 概要(count/summary/branch/author) | T025〜, ADR-0039 | done |
+| T-COMMIT-002 | Commit Preview — staged diff preview | T-COMMIT-001, T012 | done |
 | T-COMMIT-003 | Checklist module(純関数)+ block/warn 統合 | ADR-0039/0043 | done |
 | T-COMMIT-004 | Checklist — conflict marker 検出(block) | T-COMMIT-003 | done |
 | T-COMMIT-005 | Checklist — secret/.env 検出(warn, override 可) | T-COMMIT-003 | done |
 | T-COMMIT-006 | Checklist — large binary 検出(warn, override 可) | T-COMMIT-003 | done |
 | T-COMMIT-007 | Draft Autosave — backend(branch ごと保存/復元/clear) | ADR-0042 | done |
 | T-COMMIT-008 | Draft Autosave — UI 配線(debounce/復元/clear) | T-COMMIT-007 | done |
-| T-COMMIT-009 | Message Template — type/scope/.../risk + plain⇄template | T025〜, T-COMMIT-007 | in-progress |
+| T-COMMIT-009 | Message Template — type/scope/.../risk + plain⇄template | T025〜, T-COMMIT-007 | done |
 | T-COMMIT-010 | Amend — backend(plan/execute, 3 モード, SHA 変化) | ADR-0040(Proposed) | done |
 | T-COMMIT-011 | Amend — UI(モード選択/SHA 表示/2段階確認) | T-COMMIT-010 | done |
 | T-COMMIT-012 | Undo Last Commit — UI 配線(+ oplog 元 sha 表示) | T-HT-009, ADR-0041 | done |
@@ -152,19 +152,19 @@
 
 | ID | 内容 | 依存 | status |
 |----|------|------|--------|
-| T-DIFFSTAT-001 | FileDiffStat model | - | in-progress |
-| T-DIFFSTAT-002 | commit/staged/unstaged diff の行数集計 | 001 | in-progress |
-| T-DIFFSTAT-003 | bar segment 計算(純関数) | 001 | in-progress |
-| T-DIFFSTAT-004 | DiffstatMiniBar component | 003 | in-progress |
-| T-DIFFSTAT-005 | Inspector / Commit Panel への表示 | 002,004 | in-progress |
-| T-DIFFSTAT-006 | selected/compact/tooltip 調整 | 005 | in-progress |
-| T-DIFFSTAT-007 | binary/renamed/deleted/conflicted fallback | 005 | in-progress |
+| T-DIFFSTAT-001 | FileDiffStat model | - | done |
+| T-DIFFSTAT-002 | commit/staged/unstaged diff の行数集計 | 001 | done |
+| T-DIFFSTAT-003 | bar segment 計算(純関数) | 001 | done |
+| T-DIFFSTAT-004 | DiffstatMiniBar component | 003 | done |
+| T-DIFFSTAT-005 | Inspector / Commit Panel への表示 | 002,004 | done |
+| T-DIFFSTAT-006 | selected/compact/tooltip 調整 | 005 | done |
+| T-DIFFSTAT-007 | binary/renamed/deleted/conflicted fallback | 005 | done |
 
 ## Discard Changes(ADR-0046 / lane W17-DISCARD)
 
 | ID | 内容 | 依存 | status |
 |----|------|------|--------|
-| T-DISCARD-001 | backend plan/backup/execute/verify + oplog | ADR-0046 | in-progress |
-| T-DISCARD-002 | per-file ボタン + danger modal + async | 001 | in-progress |
-| T-DISCARD-003 | Discard all(一覧 modal + skipped) | 002 | in-progress |
-| T-DISCARD-004 | headless KAGI_DISCARD / KAGI_DISCARD_ALL | 001 | in-progress |
+| T-DISCARD-001 | backend plan/backup/execute/verify + oplog | ADR-0046 | done |
+| T-DISCARD-002 | per-file ボタン + danger modal + async | 001 | done |
+| T-DISCARD-003 | Discard all(一覧 modal + skipped) | 002 | done |
+| T-DISCARD-004 | headless KAGI_DISCARD / KAGI_DISCARD_ALL | 001 | done |

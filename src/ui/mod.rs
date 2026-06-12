@@ -1359,6 +1359,9 @@ pub struct KagiApp {
     pub discard_modal: Option<DiscardModal>,
     /// Commit row context menu state (right-click anchor + target row).
     pub commit_menu: Option<CommitMenuState>,
+    /// Unstaged file-row context menu (right-click): (unstaged index, anchor).
+    /// Offers Discard for eligible (tracked, non-conflicted) rows.
+    pub file_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
     // ── W5-MENU: command registry / menu bar ─────────────────
     /// Whether the left sidebar (Repository Navigator) is shown (View → Toggle
     /// Sidebar).  Default `true`.
@@ -1666,6 +1669,7 @@ impl KagiApp {
             delete_branch_modal: None,
             discard_modal: None,
             commit_menu: None,
+            file_menu: None,
             // W5-MENU
             sidebar_visible: true,
             inspector_visible: true,
@@ -1766,6 +1770,7 @@ impl KagiApp {
             delete_branch_modal: None,
             discard_modal: None,
             commit_menu: None,
+            file_menu: None,
             // W5-MENU
             sidebar_visible: true,
             inspector_visible: true,
@@ -1838,6 +1843,7 @@ impl KagiApp {
         self.cherry_pick_modal = None;
         self.revert_modal = None;
         self.commit_menu = None;
+        self.file_menu = None;
         // T025/T026: reset commit panel and input so it reflects fresh status after reload.
         self.commit_panel_open = false;
         self.commit_panel = None;
@@ -6923,6 +6929,7 @@ impl Render for KagiApp {
         let create_worktree_modal = self.create_worktree_modal.clone();
         let delete_branch_modal = self.delete_branch_modal.clone();
         let discard_modal = self.discard_modal.clone();
+        let file_menu = self.file_menu;
         let modal_focus = self.modal_focus.clone();
         let stash_push_modal = self.stash_push_modal.clone();
         let stash_push_focus = self.stash_push_focus.clone();
@@ -7237,6 +7244,10 @@ impl Render for KagiApp {
             // ── Discard danger modal overlay (W17-DISCARD) ───
             .when_some(discard_modal, |el, modal| {
                 el.child(render_discard_modal(modal, cx))
+            })
+            // ── Unstaged file context menu (right-click → Discard) ──
+            .when_some(file_menu, |el, (fi, pos)| {
+                el.child(render_file_menu_overlay(fi, pos, cx))
             })
             // ── Commit plan modal overlay (T025) ─────────────
             .when(
@@ -10192,6 +10203,60 @@ fn render_delete_branch_modal(
     .into_any_element()
 }
 
+/// Unstaged file-row context menu (right-click). Single item: Discard.
+///
+/// Only attached to eligible rows (tracked, non-conflicted), so the item is
+/// always actionable. Backdrop click dismisses; backdrop AND card `.occlude()`
+/// (click-through bug).
+fn render_file_menu_overlay(
+    fi: usize,
+    pos: gpui::Point<gpui::Pixels>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let dismiss = cx.listener(|this, _e: &gpui::MouseDownEvent, _window, cx| {
+        this.file_menu = None;
+        cx.notify();
+    });
+    let discard_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
+        this.file_menu = None;
+        this.open_discard_modal_for_index(fi);
+        cx.notify();
+    });
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .occlude()
+        .on_mouse_down(MouseButton::Left, dismiss)
+        .child(
+            div()
+                .absolute()
+                .left(pos.x)
+                .top(pos.y)
+                .w(px(180.))
+                .occlude()
+                .bg(rgb(theme().panel))
+                .border_1()
+                .border_color(rgb(theme().surface))
+                .rounded_md()
+                .shadow_lg()
+                .py_1()
+                .child(
+                    div()
+                        .id(("file-menu-discard", fi))
+                        .px_3()
+                        .py_1()
+                        .text_sm()
+                        .text_color(rgb(theme().color_blocker))
+                        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+                        .on_click(discard_click)
+                        .child(SharedString::from("Discard changes…")),
+                ),
+        )
+        .into_any_element()
+}
+
 /// Discard confirmation overlay (W17-DISCARD, ADR-0046).
 ///
 /// Danger (red) card: target file list (scrollable), any skipped
@@ -12259,28 +12324,15 @@ fn render_commit_panel(
                                 .and_then(|f| kagi::git::find_stat(&panel.unstaged_stats, &f.path)),
                         ));
                     if !is_conflicted_file {
-                        // W17-DISCARD: Discard button — only for tracked changes
-                        // (untracked rows are surfaced as `Added`; not discardable).
+                        // W17-DISCARD: right-click on tracked rows opens the file
+                        // context menu (Discard lives there, not as a per-row button).
                         if !matches!(change, ChangeKind::Added) {
-                            let discard_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-                                this.open_discard_modal_for_index(fi);
+                            let menu_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
+                                this.file_menu = Some((fi, e.position));
+                                cx.stop_propagation();
                                 cx.notify();
                             });
-                            file_row = file_row.child(
-                                div()
-                                    .id(("cp-us-discard-btn", fi))
-                                    .mr_1()
-                                    .px_1()
-                                    .py_px()
-                                    .rounded_sm()
-                                    .flex_shrink_0()
-                                    .bg(rgb(theme().color_blocker))
-                                    .text_xs()
-                                    .text_color(rgb(theme().bg_base))
-                                    .on_click(discard_click)
-                                    .hover(|s| s.opacity(0.8).cursor_pointer())
-                                    .child(SharedString::from("Discard")),
-                            );
+                            file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
                         }
                         file_row = file_row.child(
                             div()
@@ -12375,27 +12427,15 @@ fn render_commit_panel(
                 ));
             // Stage button only for non-conflicted files
             if !is_conflicted_file {
-                // W17-DISCARD: Discard button — only for tracked changes.
+                // W17-DISCARD: right-click on tracked rows opens the file
+                // context menu (Discard lives there, not as a per-row button).
                 if !is_untracked_row {
-                    let discard_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-                        this.open_discard_modal_for_index(fi);
+                    let menu_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
+                        this.file_menu = Some((fi, e.position));
+                        cx.stop_propagation();
                         cx.notify();
                     });
-                    file_row = file_row.child(
-                        div()
-                            .id(("cp-us-flat-discard-btn", fi))
-                            .mr_1()
-                            .px_1()
-                            .py_px()
-                            .rounded_sm()
-                            .flex_shrink_0()
-                            .bg(rgb(theme().color_blocker))
-                            .text_xs()
-                            .text_color(rgb(theme().bg_base))
-                            .on_click(discard_click)
-                            .hover(|s| s.opacity(0.8).cursor_pointer())
-                            .child(SharedString::from("Discard")),
-                    );
+                    file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
                 }
                 file_row = file_row.child(
                     div()

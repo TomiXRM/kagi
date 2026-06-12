@@ -41,7 +41,7 @@ backup が 1 ファイルでも失敗したら **discard 自体を中止**(blob 
 
 ### UI フロー
 
-- per-file: unstaged 行の hover に Discard アイコン(trash / undo 系)。click → **danger 確認 modal**
+- per-file: unstaged 行を**右クリック → file context menu の「Discard changes…」**(2026-06-13 ユーザー指示で per-row ボタンから変更。untracked/conflicted 行にはメニューを出さない)。選択 → **danger 確認 modal**
   (赤系、ADR-0023 の destructive 表示): 対象 path、「This permanently discards your unstaged changes
   to this file. A backup blob is recorded in the oplog.」+ Cancel / Discard
 - Discard all: unstaged セクションヘッダにボタン。modal に**対象ファイル一覧(件数 + list)**を表示。

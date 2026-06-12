@@ -6,7 +6,7 @@
 
 ## スコープ
 
-- Commit Panel unstaged 行に hover Discard アイコン(untracked/conflicted 行は出さない or disabled+tooltip)
+- Commit Panel unstaged 行の**右クリック context menu に「Discard changes…」**(per-row ボタンは廃止、2026-06-13 ユーザー指示。untracked/conflicted 行にはメニューなし)
 - danger 確認 modal(赤系・destructive 表示、ADR-0046 の文言)+ ESC cancel + backdrop occlude
 - 実行は W15 パターン: `start_discard` + `discard_blocking` free fn、busy_op="discard"、toast、reload
 

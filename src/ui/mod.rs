@@ -193,6 +193,7 @@ use kagi::git::{
         plan_cherry_pick, execute_cherry_pick,
         plan_revert, execute_revert,
         plan_delete_branch, execute_delete_branch,
+        plan_discard, execute_discard,
     },
     oplog::{OpLogEntry, OpOutcome, append_oplog, read_oplog_tail},
     stage_file, unstage_file, plan_commit, execute_commit,
@@ -1106,6 +1107,25 @@ pub struct DeleteBranchModal {
     pub error: Option<SharedString>,
 }
 
+/// State for an in-progress discard confirmation (W17-DISCARD, ADR-0046).
+///
+/// Danger modal: shows the target file list, any skipped (untracked/conflicted)
+/// files, the recovery note, and a red Discard button. `paths` is the exact set
+/// passed to `execute_discard` (untracked/conflicted already excluded).
+#[derive(Clone)]
+pub struct DiscardModal {
+    /// The computed plan (`destructive: true`).
+    pub plan: std::sync::Arc<OperationPlan>,
+    /// Repo-relative paths that will be discarded (one operation).
+    pub paths: Vec<String>,
+    /// Repo-relative paths shown as "skipped" (untracked / conflicted).
+    pub skipped: Vec<String>,
+    /// Whether this was launched from the "Discard all" header button.
+    pub is_all: bool,
+    /// Error message to show if preflight or execute failed.
+    pub error: Option<SharedString>,
+}
+
 // ──────────────────────────────────────────────────────────────
 // KagiApp — root view
 // ──────────────────────────────────────────────────────────────
@@ -1319,6 +1339,9 @@ pub struct KagiApp {
     // ── W2-DELETE: Delete-branch modal ───────────────────────
     /// When `Some`, the delete-branch confirmation modal is visible.
     pub delete_branch_modal: Option<DeleteBranchModal>,
+    // ── W17-DISCARD: discard confirmation modal ──────────────
+    /// When `Some`, the discard (danger) confirmation modal is visible.
+    pub discard_modal: Option<DiscardModal>,
     /// Commit row context menu state (right-click anchor + target row).
     pub commit_menu: Option<CommitMenuState>,
     // ── W5-MENU: command registry / menu bar ─────────────────
@@ -1623,6 +1646,7 @@ impl KagiApp {
             refresh_spin_started: None,
             // W2-DELETE
             delete_branch_modal: None,
+            discard_modal: None,
             commit_menu: None,
             // W5-MENU
             sidebar_visible: true,
@@ -1719,6 +1743,7 @@ impl KagiApp {
             refresh_spin_started: None,
             // W2-DELETE
             delete_branch_modal: None,
+            discard_modal: None,
             commit_menu: None,
             // W5-MENU
             sidebar_visible: true,
@@ -1781,6 +1806,7 @@ impl KagiApp {
         self.undo_modal = None;
         self.amend_modal = None;
         self.pop_modal = None;
+        self.discard_modal = None;
         self.create_branch_modal = None;
         self.create_worktree_modal = None;
         self.modal_focus = None;
@@ -4825,6 +4851,182 @@ impl KagiApp {
         cx.notify();
     }
 
+    // ── W17-DISCARD: discard danger modal (ADR-0046) ─────────
+
+    /// Collect the eligible unstaged paths (excluding untracked / conflicted)
+    /// plus the skipped set, from the current commit-panel status.
+    /// Returns `(eligible, skipped)` as repo-relative forward-slash strings.
+    fn discard_partition(&self) -> (Vec<String>, Vec<String>) {
+        let mut eligible = Vec::new();
+        let mut skipped = Vec::new();
+        if let Some(panel) = self.commit_panel.as_ref() {
+            for f in &panel.unstaged {
+                let rel = f.path.to_string_lossy().replace('\\', "/");
+                // Conflicted rows, and untracked rows (surfaced in the panel as
+                // `Added` entries in the unstaged section), are not discardable.
+                if panel.is_conflicted(&f.path) || matches!(f.change, ChangeKind::Added) {
+                    skipped.push(rel);
+                } else {
+                    eligible.push(rel);
+                }
+            }
+        }
+        (eligible, skipped)
+    }
+
+    /// Open the discard modal for a single unstaged row (by its index in the
+    /// commit panel's `unstaged` vector). Untracked / conflicted rows are not
+    /// offered a Discard button, so this is only called for eligible rows.
+    pub fn open_discard_modal_for_index(&mut self, index: usize) {
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let path = match self.commit_panel.as_ref().and_then(|p| p.unstaged.get(index)) {
+            Some(f) => f.path.to_string_lossy().replace('\\', "/"),
+            None => return,
+        };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "discard: repo open error: {}", e.message()
+                )));
+                return;
+            }
+        };
+        let paths = vec![path];
+        match plan_discard(&repo, &paths) {
+            Ok(plan) => {
+                eprintln!("[kagi] plan: discard 1 target blockers={}", plan.blockers.len());
+                self.discard_modal = Some(DiscardModal {
+                    plan: std::sync::Arc::new(plan),
+                    paths,
+                    skipped: Vec::new(),
+                    is_all: false,
+                    error: None,
+                });
+            }
+            Err(e) => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("discard plan error: {}", e)));
+            }
+        }
+    }
+
+    /// Open the "Discard all" modal: every eligible unstaged file in one
+    /// operation; untracked / conflicted files are listed as skipped.
+    pub fn open_discard_all_modal(&mut self) {
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let (eligible, skipped) = self.discard_partition();
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "discard: repo open error: {}", e.message()
+                )));
+                return;
+            }
+        };
+        match plan_discard(&repo, &eligible) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: discard-all {} target(s) blockers={} skipped={}",
+                    eligible.len(), plan.blockers.len(), skipped.len()
+                );
+                self.discard_modal = Some(DiscardModal {
+                    plan: std::sync::Arc::new(plan),
+                    paths: eligible,
+                    skipped,
+                    is_all: true,
+                    error: None,
+                });
+            }
+            Err(e) => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("discard plan error: {}", e)));
+            }
+        }
+    }
+
+    /// Dismiss the discard modal without acting.
+    pub fn cancel_discard_modal(&mut self) { self.discard_modal = None; }
+
+    /// Confirm the discard: run `discard_blocking` on a background thread
+    /// (busy_op="discard"), then reload. Mirrors `start_pop`.
+    pub fn start_discard(&mut self, cx: &mut Context<Self>) {
+        let modal = match self.discard_modal.clone() { Some(m) => m, None => return };
+        if self.busy_op.is_some() {
+            self.status_footer =
+                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+            return;
+        }
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        if !modal.plan.blockers.is_empty() || modal.paths.is_empty() {
+            eprintln!("[kagi] refused: discard plan has blockers / no targets");
+            self.record_op(
+                "discard",
+                modal.plan.current.clone(),
+                OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                &repo_path,
+            );
+            self.discard_modal = None;
+            cx.notify();
+            return;
+        }
+
+        self.busy_op = Some("discard");
+        self.discard_modal = None;
+        self.status_footer = FooterStatus::Busy(SharedString::from("discard 実行中…"));
+        self.push_toast(ToastKind::Info, "discard: 開始しました");
+        eprintln!("[kagi] async: discard started");
+
+        let plan = modal.plan.clone();
+        let paths = modal.paths.clone();
+        let bg_path = repo_path.clone();
+        let bg_plan = plan.clone();
+        let bg_paths = paths.clone();
+        let task = cx.background_spawn(async move {
+            discard_blocking(&bg_path, &bg_plan, &bg_paths)
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok((summary, after)) => {
+                        eprintln!("[kagi] async: discard finished");
+                        app.record_op(
+                            "discard",
+                            plan.current.clone(),
+                            OpOutcome::Success { after },
+                            &repo_path,
+                        );
+                        app.status_footer =
+                            FooterStatus::Success(SharedString::from(format!("discard: {}", summary)));
+                        app.reload();
+                    }
+                    Err(err_msg) => {
+                        eprintln!("[kagi] async: discard failed — {}", err_msg);
+                        app.record_op(
+                            "discard",
+                            plan.current.clone(),
+                            OpOutcome::Failed { error: err_msg.clone() },
+                            &repo_path,
+                        );
+                        app.discard_modal = Some(DiscardModal {
+                            plan: plan.clone(),
+                            paths: paths.clone(),
+                            skipped: modal.skipped.clone(),
+                            is_all: modal.is_all,
+                            error: Some(SharedString::from(err_msg)),
+                        });
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     // ── T025: Commit Panel ────────────────────────────────────
 
     /// Open the commit panel (triggered by clicking the WIP row).
@@ -6297,6 +6499,7 @@ impl KagiApp {
             || self.stash_apply_modal.is_some()
             || self.cherry_pick_modal.is_some()
             || self.delete_branch_modal.is_some()
+            || self.discard_modal.is_some()
             || self.commit_menu.is_some()
             || self.commit_panel_open
         {
@@ -6507,6 +6710,7 @@ impl Render for KagiApp {
         let create_branch_modal = self.create_branch_modal.clone();
         let create_worktree_modal = self.create_worktree_modal.clone();
         let delete_branch_modal = self.delete_branch_modal.clone();
+        let discard_modal = self.discard_modal.clone();
         let modal_focus = self.modal_focus.clone();
         let stash_push_modal = self.stash_push_modal.clone();
         let stash_push_focus = self.stash_push_focus.clone();
@@ -6813,6 +7017,10 @@ impl Render for KagiApp {
             // ── Delete-branch modal overlay (W2-DELETE) ──────
             .when_some(delete_branch_modal, |el, modal| {
                 el.child(render_delete_branch_modal(modal, cx))
+            })
+            // ── Discard danger modal overlay (W17-DISCARD) ───
+            .when_some(discard_modal, |el, modal| {
+                el.child(render_discard_modal(modal, cx))
             })
             // ── Commit plan modal overlay (T025) ─────────────
             .when(
@@ -9166,6 +9374,58 @@ fn stash_pop_blocking(
     Ok(("applied and dropped".to_string(), after))
 }
 
+/// Blocking part of discard (W17-DISCARD, ADR-0046). Backup-then-discard scales
+/// with the working-tree content written, so it runs on the background path.
+/// The returned `after` carries the path→blob backup list (the recovery handle)
+/// into the oplog entry.
+fn discard_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    paths: &[String],
+) -> Result<(String, StateSummary), String> {
+    let repo = git2::Repository::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+
+    let outcome = execute_discard(&repo, plan, paths)
+        .map_err(|e| format!("Discard failed: {}", e))?;
+    let summary = outcome.oplog_summary();
+    eprintln!("[kagi] executed: {}", summary);
+
+    // Verify: re-read status; targets must have left the unstaged set.
+    let dirty = match kagi::git::working_tree_status(&repo) {
+        Ok(status) => {
+            let still: std::collections::HashSet<String> = status
+                .unstaged
+                .iter()
+                .map(|f| f.path.to_string_lossy().replace('\\', "/"))
+                .collect();
+            let leftover = paths.iter().filter(|p| still.contains(*p)).count();
+            if leftover == 0 {
+                eprintln!("[kagi] verified: {} target(s) left the unstaged set", paths.len());
+            } else {
+                eprintln!("[kagi] verify: {} target(s) still unstaged", leftover);
+            }
+            // Record the recovery handle (path→blob list) in the oplog after-state.
+            summary.clone()
+        }
+        Err(e) => {
+            eprintln!("[kagi] verify: status error: {}", e);
+            summary.clone()
+        }
+    };
+
+    let after = StateSummary {
+        head: plan.current.head.clone(),
+        dirty,
+    };
+    let human = if outcome.backups.len() == 1 {
+        format!("{} discarded", outcome.backups[0].path)
+    } else {
+        format!("{} files discarded", outcome.backups.len())
+    };
+    Ok((human, after))
+}
+
 /// Blocking part of amend (history rewrite: tree-build + commit-replace).
 /// Returns (summary-suffix, after, old, new) so the UI footer can render the
 /// 旧→新 SHA transition and the restore hint.
@@ -9696,6 +9956,227 @@ fn render_delete_branch_modal(
         cx,
     )
     .into_any_element()
+}
+
+/// Discard confirmation overlay (W17-DISCARD, ADR-0046).
+///
+/// Danger (red) card: target file list (scrollable), any skipped
+/// untracked/conflicted files, recovery note, Cancel + red Discard.
+/// ESC cancels. Both the backdrop AND the card call `.occlude()` to defeat the
+/// known click-through bug. The Discard button is hidden when there are blockers
+/// or zero targets.
+fn render_discard_modal(modal: DiscardModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let plan = modal.plan.clone();
+    let has_blockers = !plan.blockers.is_empty();
+    let target_count = modal.paths.len();
+    let can_discard = !has_blockers && target_count > 0;
+
+    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.cancel_discard_modal();
+        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.start_discard(cx);
+        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
+        cx.notify();
+    });
+    let esc_cancel = cx.listener(|this, e: &KeyDownEvent, window, cx| {
+        if e.keystroke.key == "escape" {
+            this.cancel_discard_modal();
+            if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
+            cx.stop_propagation();
+            cx.notify();
+        }
+    });
+
+    let title = if modal.is_all {
+        format!("Discard all changes ({})", target_count)
+    } else {
+        plan.title.clone()
+    };
+
+    // ── Target file list (scrollable) ───────────────────────
+    let mut file_list = div()
+        .id("discard-file-list")
+        .flex()
+        .flex_col()
+        .gap_px()
+        .max_h(px(180.))
+        .overflow_y_scroll();
+    for p in &modal.paths {
+        let line: String = p.chars().take(80).collect();
+        file_list = file_list.child(
+            div()
+                .text_xs()
+                .text_color(rgb(theme().text_main))
+                .overflow_hidden()
+                .child(SharedString::from(line)),
+        );
+    }
+
+    // ── Card ─────────────────────────────────────────────────
+    let mut card = div()
+        .w(px(480.))
+        .bg(rgb(theme().modal))
+        .border_1()
+        .border_color(rgb(theme().color_blocker))
+        .rounded_lg()
+        .p_4()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(
+            div()
+                .text_color(rgb(theme().color_blocker))
+                .text_xl()
+                .child(SharedString::from(title)),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(rgb(theme().text_label))
+                .child(SharedString::from(format!("{} file(s) to discard:", target_count))),
+        )
+        .child(file_list);
+
+    // ── Skipped (untracked / conflicted) ────────────────────
+    if !modal.skipped.is_empty() {
+        let mut skip_col = div().flex().flex_col().gap_px().child(
+            div()
+                .text_sm()
+                .text_color(rgb(theme().text_label))
+                .child(SharedString::from(format!("Skipped ({}):", modal.skipped.len()))),
+        );
+        for p in modal.skipped.iter().take(20) {
+            let line: String = p.chars().take(80).collect();
+            skip_col = skip_col.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .overflow_hidden()
+                    .child(SharedString::from(format!("\u{2014} {} (untracked/conflicted)", line))),
+            );
+        }
+        card = card.child(skip_col);
+    }
+
+    // ── Warnings / Blockers ─────────────────────────────────
+    if !plan.warnings.is_empty() {
+        let mut warn_col = div().flex().flex_col().gap_px();
+        for w in &plan.warnings {
+            warn_col = warn_col.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme().color_warning))
+                    .overflow_hidden()
+                    .child(SharedString::from(format!("\u{26a0} {}", w))),
+            );
+        }
+        card = card.child(warn_col);
+    }
+    if has_blockers {
+        let mut block_col = div().flex().flex_col().gap_px();
+        for b in &plan.blockers {
+            block_col = block_col.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(theme().color_blocker))
+                    .overflow_hidden()
+                    .child(SharedString::from(format!("\u{2717} {}", b))),
+            );
+        }
+        card = card.child(block_col);
+    }
+
+    // ── Recovery note ───────────────────────────────────────
+    card = card.child(
+        div()
+            .text_xs()
+            .text_color(rgb(theme().text_muted))
+            .overflow_hidden()
+            .child(SharedString::from(plan.recovery.clone())),
+    );
+
+    // ── Error (preflight / execute failure) ─────────────────
+    if let Some(err) = &modal.error {
+        card = card.child(
+            div()
+                .text_sm()
+                .text_color(rgb(theme().color_blocker))
+                .overflow_hidden()
+                .child(err.clone()),
+        );
+    }
+
+    // ── Buttons ─────────────────────────────────────────────
+    let mut button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(
+            div()
+                .id("discard-cancel")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(theme().surface))
+                .text_sm()
+                .text_color(rgb(theme().text_main))
+                .on_click(cancel_handler)
+                .hover(|style| style.bg(rgb(theme().selected)))
+                .child(SharedString::from("Cancel")),
+        );
+    if can_discard {
+        button_row = button_row.child(
+            div()
+                .id("discard-confirm")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(theme().color_blocker))
+                .text_sm()
+                .text_color(rgb(theme().bg_base))
+                .on_click(confirm_handler)
+                .hover(|style| style.opacity(0.85))
+                .child(SharedString::from("Discard")),
+        );
+    }
+    card = card.child(button_row);
+
+    // ── Full-screen overlay: backdrop + card, BOTH occluded ──
+    div()
+        .size_full()
+        .absolute()
+        .top_0()
+        .left_0()
+        .on_key_down(esc_cancel)
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .occlude()
+                .bg(rgb(theme().modal_overlay))
+                .opacity(0.65),
+        )
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .items_center()
+                // ADR-0046 / W17: the card itself must also occlude, else clicks
+                // fall through to the UI beneath (known click-through bug).
+                .child(card.occlude()),
+        )
+        .into_any_element()
 }
 
 /// Revert confirmation overlay (T-CM-034).
@@ -11325,6 +11806,13 @@ fn render_commit_panel(
     let tree_view = panel.tree_view;
     let unstaged_count = panel.unstaged.len();
     let staged_count = panel.staged.len();
+    // W17-DISCARD: count discard-eligible unstaged files (exclude untracked,
+    // which the panel surfaces as `Added` rows, and conflicted files).
+    let discard_eligible_count = panel
+        .unstaged
+        .iter()
+        .filter(|f| !panel.is_conflicted(&f.path) && !matches!(f.change, ChangeKind::Added))
+        .count();
     // T026: can_commit uses InputState value if available, else commit_msg (headless).
     let input_msg_nonempty = commit_input
         .as_ref()
@@ -11407,6 +11895,32 @@ fn render_commit_panel(
                     .child(SharedString::from("Stage all")),
             )
         })
+        // W17-DISCARD: "Discard all" — disabled (muted, no handler) at 0 targets.
+        .when(unstaged_count > 0, |el| {
+            let discard_all_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
+                this.open_discard_all_modal();
+                cx.notify();
+            });
+            let enabled = discard_eligible_count > 0;
+            let mut btn = div()
+                .id("cp-discard-all")
+                .mr_2()
+                .px_1p5()
+                .py_px()
+                .rounded_sm()
+                .bg(rgb(theme().surface))
+                .text_xs()
+                .child(SharedString::from("Discard all"));
+            if enabled {
+                btn = btn
+                    .text_color(rgb(theme().color_blocker))
+                    .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
+                    .on_click(discard_all_click);
+            } else {
+                btn = btn.text_color(rgb(theme().text_muted));
+            }
+            el.child(btn)
+        })
         .child(toggle_btn);
 
     // Unstaged ファイル行コンテナ (スクロールボックス内に入る)
@@ -11483,6 +11997,29 @@ fn render_commit_panel(
                                 .child(name.clone()),
                         );
                     if !is_conflicted_file {
+                        // W17-DISCARD: Discard button — only for tracked changes
+                        // (untracked rows are surfaced as `Added`; not discardable).
+                        if !matches!(change, ChangeKind::Added) {
+                            let discard_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
+                                this.open_discard_modal_for_index(fi);
+                                cx.notify();
+                            });
+                            file_row = file_row.child(
+                                div()
+                                    .id(("cp-us-discard-btn", fi))
+                                    .mr_1()
+                                    .px_1()
+                                    .py_px()
+                                    .rounded_sm()
+                                    .flex_shrink_0()
+                                    .bg(rgb(theme().color_blocker))
+                                    .text_xs()
+                                    .text_color(rgb(theme().bg_base))
+                                    .on_click(discard_click)
+                                    .hover(|s| s.opacity(0.8).cursor_pointer())
+                                    .child(SharedString::from("Discard")),
+                            );
+                        }
                         file_row = file_row.child(
                             div()
                                 .id(("cp-us-stage-btn", fi))
@@ -11522,6 +12059,8 @@ fn render_commit_panel(
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| f.path.to_string_lossy().into_owned());
             let is_conflicted_file = panel.is_conflicted(&f.path);
+            // W17-DISCARD: untracked rows are surfaced as `Added`; not discardable.
+            let is_untracked_row = matches!(f.change, ChangeKind::Added);
             let (badge, badge_color, _) = status_badge(&f.change, is_conflicted_file);
             let is_sel = selected_file == Some(CommitPanelFileRef::Unstaged { index: fi });
             let file_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
@@ -11569,6 +12108,28 @@ fn render_commit_panel(
                 );
             // Stage button only for non-conflicted files
             if !is_conflicted_file {
+                // W17-DISCARD: Discard button — only for tracked changes.
+                if !is_untracked_row {
+                    let discard_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
+                        this.open_discard_modal_for_index(fi);
+                        cx.notify();
+                    });
+                    file_row = file_row.child(
+                        div()
+                            .id(("cp-us-flat-discard-btn", fi))
+                            .mr_1()
+                            .px_1()
+                            .py_px()
+                            .rounded_sm()
+                            .flex_shrink_0()
+                            .bg(rgb(theme().color_blocker))
+                            .text_xs()
+                            .text_color(rgb(theme().bg_base))
+                            .on_click(discard_click)
+                            .hover(|s| s.opacity(0.8).cursor_pointer())
+                            .child(SharedString::from("Discard")),
+                    );
+                }
                 file_row = file_row.child(
                     div()
                         .id(("cp-us-flat-stage-btn", fi))

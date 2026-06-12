@@ -58,6 +58,7 @@ pub use ops::{
     plan_undo_commit, execute_undo_commit, UndoOutcome,
     plan_amend, execute_amend, AmendMode, AmendOutcome,
     plan_delete_branch, execute_delete_branch,
+    plan_discard, execute_discard, DiscardBackup, DiscardOutcome,
     fetch_remote, FetchOutcome,
 };
 #[allow(unused_imports)]

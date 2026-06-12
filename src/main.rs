@@ -28,6 +28,138 @@ fn record_headless_op(
     eprintln!("[kagi] footer: {}: {} ({})", op, desc, kind_str);
 }
 
+/// W17-DISCARD headless path (ADR-0046). Collects target paths, then runs
+/// plan → (optionally) execute → verify with `[kagi] planned/executed/verified:`
+/// logging in the same style as the other KAGI_* env paths.
+///
+/// `single` discards one path; `all` discards every eligible unstaged file
+/// (untracked / conflicted are skipped, as the UI does). Execution only happens
+/// when `KAGI_AUTO_CONFIRM=1` is set (test-only).
+fn run_headless_discard(repo_path: &PathBuf, single: Option<String>, all: bool) {
+    use kagi::git::{execute_discard, plan_discard, working_tree_status};
+
+    let repo = match git2::Repository::open(repo_path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[kagi] KAGI_DISCARD: repo open error: {}", e.message());
+            return;
+        }
+    };
+
+    // Build the target list.
+    let mut paths: Vec<String> = Vec::new();
+    if all {
+        match working_tree_status(&repo) {
+            Ok(status) => {
+                let untracked: std::collections::HashSet<String> = status
+                    .untracked
+                    .iter()
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+                    .collect();
+                let conflicted: std::collections::HashSet<String> = status
+                    .conflicted
+                    .iter()
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+                    .collect();
+                for f in &status.unstaged {
+                    let rel = f.path.to_string_lossy().replace('\\', "/");
+                    if !untracked.contains(&rel) && !conflicted.contains(&rel) {
+                        paths.push(rel);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("[kagi] KAGI_DISCARD_ALL: status error: {}", e);
+                return;
+            }
+        }
+    }
+    if let Some(p) = single {
+        if !paths.contains(&p) {
+            paths.push(p);
+        }
+    }
+
+    let plan = match plan_discard(&repo, &paths) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[kagi] KAGI_DISCARD: plan error: {}", e);
+            return;
+        }
+    };
+    eprintln!(
+        "[kagi] planned: discard {} target(s), blockers={} warnings={} destructive={}",
+        paths.len(),
+        plan.blockers.len(),
+        plan.warnings.len(),
+        plan.destructive
+    );
+
+    let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
+    if !auto_confirm {
+        return;
+    }
+    if !plan.blockers.is_empty() {
+        eprintln!(
+            "[kagi] KAGI_AUTO_CONFIRM=1 but discard has {} blocker(s), skipping",
+            plan.blockers.len()
+        );
+        record_headless_op(
+            "discard",
+            plan.current.clone(),
+            OpOutcome::Refused { blockers: plan.blockers.clone() },
+            repo_path,
+        );
+        return;
+    }
+
+    match execute_discard(&repo, &plan, &paths) {
+        Ok(outcome) => {
+            let summary = outcome.oplog_summary();
+            eprintln!("[kagi] executed: {}", summary);
+            // Verify: re-read status; none of the targets should be unstaged.
+            let after_dirty = match working_tree_status(&repo) {
+                Ok(status) => {
+                    let still: std::collections::HashSet<String> = status
+                        .unstaged
+                        .iter()
+                        .map(|f| f.path.to_string_lossy().replace('\\', "/"))
+                        .collect();
+                    let leftover = paths.iter().filter(|p| still.contains(*p)).count();
+                    if leftover == 0 {
+                        eprintln!("[kagi] verified: {} target(s) left the unstaged set", paths.len());
+                    } else {
+                        eprintln!("[kagi] verify: {} target(s) still unstaged", leftover);
+                    }
+                    summary.clone()
+                }
+                Err(e) => {
+                    eprintln!("[kagi] verify: status error: {}", e);
+                    summary.clone()
+                }
+            };
+            record_headless_op(
+                "discard",
+                plan.current.clone(),
+                OpOutcome::Success {
+                    after: StateSummary { head: plan.current.head.clone(), dirty: after_dirty },
+                },
+                repo_path,
+            );
+        }
+        Err(e) => {
+            let err_msg = format!("discard failed: {}", e);
+            eprintln!("[kagi] {}", err_msg);
+            record_headless_op(
+                "discard",
+                plan.current.clone(),
+                OpOutcome::Failed { error: err_msg },
+                repo_path,
+            );
+        }
+    }
+}
+
 /// W4-TABS: open `path` as a repository tab on `app` and make it active,
 /// rebuilding the heavyweight per-repo state from a fresh snapshot.
 ///
@@ -317,6 +449,19 @@ fn main() {
                     eprintln!("[kagi] KAGI_AUTO_CONFIRM=1 but pop has {} blocker(s), skipping", modal.plan.blockers.len());
                 }
             }
+        }
+    }
+
+    // ── W17-DISCARD / ADR-0046: headless discard ─────────────
+    // KAGI_DISCARD=<path>     discard one unstaged file's changes
+    // KAGI_DISCARD_ALL=1      discard ALL eligible unstaged files (one operation)
+    // KAGI_AUTO_CONFIRM=1     (TEST-ONLY) actually execute after planning
+    // Emits `[kagi] planned:/executed:/verified:` like the other KAGI_* paths.
+    {
+        let single = std::env::var("KAGI_DISCARD").ok().filter(|s| !s.is_empty());
+        let all = std::env::var("KAGI_DISCARD_ALL").as_deref() == Ok("1");
+        if single.is_some() || all {
+            run_headless_discard(&repo_path, single, all);
         }
     }
 

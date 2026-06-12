@@ -6,13 +6,14 @@
 //!   3. Contextual Actions  (Create branch · Cherry-pick · Copy SHA)
 //!   4. Changed Files  (tree or flat path list, Path⇄Tree toggle)
 
-use gpui::{ClipboardItem, Context, IntoElement, SharedString, div, prelude::*, px, rgb};
+use gpui::{Context, IntoElement, SharedString, div, prelude::*, px, rgb};
 
 use kagi::git::{ChangeKind, CommitId, FileStatus};
 
 use super::{
-    FooterStatus, KagiApp,
+    KagiApp,
     commit_list::{BadgeKind, RefBadge},
+    context_menu::CommitAction,
     detail_panel::CommitDetail,
     file_tree,
 };
@@ -84,27 +85,15 @@ pub fn render_inspector(
     );
 
     // ── Copy SHA handler (full raw SHA — no ZWSP) ─────────────────────────
-    let full_sha_copy1 = d.full_sha.clone();
-    let short_sha_log1 = short_sha.clone();
+    let copy_target1 = at.clone();
     let copy_sha_click1 = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        cx.write_to_clipboard(ClipboardItem::new_string(
-            full_sha_copy1.as_ref().to_string(),
-        ));
-        eprintln!("[kagi] copy-sha: {}", short_sha_log1.as_ref());
-        this.status_footer = FooterStatus::Idle(SharedString::from("SHA copied"));
-        cx.notify();
+        this.dispatch_commit_action(CommitAction::CopySha, copy_target1.clone(), _window, cx);
     });
 
     // ── Copy SHA handler for Actions section ─────────────────────────────
-    let full_sha_copy2 = d.full_sha.clone();
-    let short_sha_log2 = short_sha.clone();
+    let copy_target2 = at.clone();
     let copy_sha_click2 = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        cx.write_to_clipboard(ClipboardItem::new_string(
-            full_sha_copy2.as_ref().to_string(),
-        ));
-        eprintln!("[kagi] copy-sha: {}", short_sha_log2.as_ref());
-        this.status_footer = FooterStatus::Idle(SharedString::from("SHA copied"));
-        cx.notify();
+        this.dispatch_commit_action(CommitAction::CopySha, copy_target2.clone(), _window, cx);
     });
 
     // ── Parents value ─────────────────────────────────────────────────────
@@ -227,9 +216,10 @@ pub fn render_inspector(
     };
 
     // ── "Create branch here" button ──────────────────────────────────────
+    let at_for_create = at.clone();
     let at_for_cherry = at.clone();
     let create_branch_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.open_create_branch_modal(at.clone(), cx);
+        this.open_create_branch_modal(at_for_create.clone(), cx);
         cx.notify();
     });
     let create_branch_button = action_button(

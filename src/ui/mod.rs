@@ -8,6 +8,7 @@ pub mod avatar;
 pub mod assets;
 pub mod commit_list;
 pub mod commit_panel;
+pub mod context_menu;
 pub mod detail_panel;
 pub mod file_tree;
 pub mod graph_view;
@@ -21,7 +22,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, Context, Entity, FocusHandle, KeyDownEvent, KeyBinding, SharedString, Window,
+    App, Context, Entity, FocusHandle, KeyDownEvent, KeyBinding, MouseButton, SharedString, Window,
     UniformListScrollHandle, ScrollStrategy,
     actions, div, prelude::*, px, rgb, uniform_list,
 };
@@ -164,6 +165,7 @@ use kagi::git::{
 };
 use commit_panel::{CommitPanelState, CommitPanelFileRef, CommitPlanModal, status_badge};
 use commit_list::{BadgeKind, CommitRow, build_commit_rows};
+use context_menu::{CommitAction, CommitMenuState, MenuContext};
 use detail_panel::{CommitDetail, build_commit_details};
 use graph_view::graph_canvas;
 
@@ -1129,6 +1131,8 @@ pub struct KagiApp {
     // ── W2-DELETE: Delete-branch modal ───────────────────────
     /// When `Some`, the delete-branch confirmation modal is visible.
     pub delete_branch_modal: Option<DeleteBranchModal>,
+    /// Commit row context menu state (right-click anchor + target row).
+    pub commit_menu: Option<CommitMenuState>,
 }
 
 impl KagiApp {
@@ -1302,6 +1306,7 @@ impl KagiApp {
             busy_op: None,
             // W2-DELETE
             delete_branch_modal: None,
+            commit_menu: None,
         }
     }
 
@@ -1367,6 +1372,7 @@ impl KagiApp {
             busy_op: None,
             // W2-DELETE
             delete_branch_modal: None,
+            commit_menu: None,
         }
     }
 
@@ -1423,6 +1429,7 @@ impl KagiApp {
         self.stash_apply_modal = None;
         self.stash_push_focus = None;
         self.cherry_pick_modal = None;
+        self.commit_menu = None;
         // T025/T026: reset commit panel and input so it reflects fresh status after reload.
         self.commit_panel_open = false;
         self.commit_panel = None;
@@ -4051,6 +4058,183 @@ impl KagiApp {
         }
     }
 
+    /// Open the commit context menu for a row, selecting the row first without
+    /// toggling off an already-selected row.
+    pub fn open_commit_menu(&mut self, row_index: usize, position: gpui::Point<gpui::Pixels>) {
+        if self.rows.get(row_index).is_none() {
+            return;
+        }
+        if self.selected != Some(row_index) {
+            self.select(row_index);
+        }
+        self.commit_menu = Some(CommitMenuState { row_index, position });
+        eprintln!("[kagi] context-menu: open row={}", row_index);
+        self.log_commit_menu(row_index);
+    }
+
+    /// Headless path for KAGI_CONTEXT_MENU=<row>.
+    pub fn open_commit_menu_headless(&mut self, row_index: usize) {
+        if self.rows.get(row_index).is_none() {
+            eprintln!("[kagi] context-menu: row={} out of range", row_index);
+            return;
+        }
+        if self.selected != Some(row_index) {
+            self.select(row_index);
+        }
+        eprintln!("[kagi] context-menu: open row={}", row_index);
+        self.log_commit_menu(row_index);
+    }
+
+    fn commit_id_for_row(&self, row_index: usize) -> Option<CommitId> {
+        self.details
+            .get(row_index)
+            .map(|detail| CommitId(detail.full_sha.as_ref().to_string()))
+    }
+
+    fn row_for_commit_id(&self, target: &CommitId) -> Option<usize> {
+        self.commit_row_index.get(target).copied().or_else(|| {
+            self.details
+                .iter()
+                .position(|detail| detail.full_sha.as_ref() == target.0)
+        })
+    }
+
+    fn menu_context(&self, row_index: usize) -> Option<MenuContext> {
+        let row = self.rows.get(row_index)?;
+        let target = self.commit_id_for_row(row_index)?;
+        let is_ancestor_of_head = if row.is_head {
+            true
+        } else {
+            self.repo_path
+                .as_ref()
+                .and_then(|repo_path| git2::Repository::open(repo_path).ok())
+                .and_then(|repo| {
+                    let head_oid = repo.head().ok()?.target()?;
+                    let target_oid = git2::Oid::from_str(&target.0).ok()?;
+                    Some(
+                        head_oid == target_oid
+                            || repo
+                                .graph_descendant_of(head_oid, target_oid)
+                                .unwrap_or(false),
+                    )
+                })
+                .unwrap_or(false)
+        };
+
+        Some(MenuContext {
+            is_head: row.is_head,
+            is_ancestor_of_head,
+            is_merge: row.is_merge,
+            dirty: self.is_dirty,
+            detached: self.status_summary.is_detached,
+            has_local_changes: self.is_dirty,
+            refs_here: row.badges.clone(),
+        })
+    }
+
+    fn log_commit_menu(&self, row_index: usize) {
+        if let Some(ctx) = self.menu_context(row_index) {
+            let groups = context_menu::build_commit_menu(&ctx);
+            context_menu::log_commit_menu(row_index, &groups);
+        }
+    }
+
+    fn render_commit_menu_overlay(
+        &self,
+        state: CommitMenuState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        let detail = self.details.get(state.row_index)?;
+        let target = self.commit_id_for_row(state.row_index)?;
+        let ctx = self.menu_context(state.row_index)?;
+        let groups = context_menu::build_commit_menu(&ctx);
+        let title = detail.full_message.as_ref().lines().next().unwrap_or("");
+        let header = context_menu::short_title_header(detail.full_sha.as_ref(), title);
+        Some(context_menu::render_commit_menu_overlay(
+            state, target, header, groups, window, cx,
+        ))
+    }
+
+    pub fn dispatch_commit_action(
+        &mut self,
+        action: CommitAction,
+        target: CommitId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            CommitAction::ShowDetails => {
+                if let Some(row_index) = self.row_for_commit_id(&target) {
+                    if self.selected != Some(row_index) {
+                        self.select(row_index);
+                    }
+                }
+            }
+            CommitAction::CopySha => {
+                if let Some(row_index) = self.row_for_commit_id(&target) {
+                    if let Some(detail) = self.details.get(row_index) {
+                        context_menu::copy_full_sha(
+                            self,
+                            detail.full_sha.as_ref().to_string(),
+                            cx,
+                        );
+                    }
+                }
+            }
+            CommitAction::CopyShortSha => {
+                if let Some(row_index) = self.row_for_commit_id(&target) {
+                    if let Some(detail) = self.details.get(row_index) {
+                        let full_sha = detail.full_sha.as_ref().to_string();
+                        context_menu::copy_short_sha(self, &full_sha, cx);
+                    }
+                }
+            }
+            CommitAction::CopyMessage => {
+                if let Some(row_index) = self.row_for_commit_id(&target) {
+                    if let Some(detail) = self.details.get(row_index) {
+                        let full_sha = detail.full_sha.as_ref().to_string();
+                        context_menu::copy_message(
+                            self,
+                            &full_sha,
+                            detail.full_message.as_ref().to_string(),
+                            cx,
+                        );
+                    }
+                }
+            }
+            CommitAction::CreateBranchHere
+            | CommitAction::CreateWorktreeHere
+            | CommitAction::CherryPick
+            | CommitAction::Revert
+            | CommitAction::CheckoutCommit
+            | CommitAction::CheckoutRef(_)
+            | CommitAction::CompareWithHead
+            | CommitAction::CompareWithWorkingTree
+            | CommitAction::ShowChangedFiles
+            | CommitAction::ResetToCommit => {
+                let action_name = match action {
+                    CommitAction::CreateBranchHere => "Create branch here",
+                    CommitAction::CreateWorktreeHere => "Create worktree here",
+                    CommitAction::CherryPick => "Cherry-pick",
+                    CommitAction::Revert => "Revert",
+                    CommitAction::CheckoutCommit => "Checkout commit",
+                    CommitAction::CheckoutRef(_) => "Checkout ref",
+                    CommitAction::CompareWithHead => "Compare with HEAD",
+                    CommitAction::CompareWithWorkingTree => "Compare with working tree",
+                    CommitAction::ShowChangedFiles => "Show changed files",
+                    CommitAction::ResetToCommit => "Reset",
+                    _ => unreachable!(),
+                };
+                self.status_footer = FooterStatus::Idle(SharedString::from(format!(
+                    "{} 未実装: 次 lane",
+                    action_name
+                )));
+                eprintln!("[kagi] context-menu: stub {} {}", action_name, target.short());
+            }
+        }
+    }
+
     /// W2-SIDEBAR: Lazily create the sidebar filter InputState (requires &mut Window).
     ///
     /// Called from the on_click handler on the filter placeholder area.
@@ -4148,6 +4332,10 @@ impl Render for KagiApp {
         let stash_apply_modal = self.stash_apply_modal.clone();
         let cherry_pick_modal = self.cherry_pick_modal.clone();
         let status_footer = self.status_footer.clone();
+        let commit_menu_overlay = self
+            .commit_menu
+            .clone()
+            .and_then(|state| self.render_commit_menu_overlay(state, window, cx));
         // T-HT-001: clone toolbar/summary state for header render.
         // W3-NOTIFY: while a background git op runs, disable every git button
         // so operations never overlap.
@@ -4257,7 +4445,10 @@ impl Render for KagiApp {
 
         // T-UI-003: Esc closes the main diff view (no-op when main_diff is None).
         let close_main_diff = cx.listener(|this, _: &CloseMainDiff, _window, cx| {
-            if this.main_diff.is_some() {
+            if this.commit_menu.is_some() {
+                this.commit_menu = None;
+                cx.notify();
+            } else if this.main_diff.is_some() {
                 this.close_main_diff();
                 cx.notify();
             }
@@ -4302,6 +4493,8 @@ impl Render for KagiApp {
             ))
             // ── Bottom panel slot (T-BP-002) ─────────────────
             .children(self.render_bottom_panel_slot(bottom_panel_open, bottom_panel_height, bottom_tab, cx))
+            // ── Commit context menu overlay (below modals) ─────
+            .children(commit_menu_overlay)
             // ── Plan modal overlay (above everything) ──────
             .when_some(plan_modal, |el, modal| {
                 el.child(render_plan_modal(modal, cx))
@@ -5627,9 +5820,17 @@ fn render_rows(
 
             // on_click handler: update KagiApp.selected via cx.listener.
             let click_handler = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                this.commit_menu = None;
                 this.select(ix);
                 cx.notify();
             });
+            let context_click_handler = cx.listener(
+                move |this, event: &gpui::MouseDownEvent, _window, cx| {
+                    this.open_commit_menu(ix, event.position);
+                    cx.stop_propagation();
+                    cx.notify();
+                },
+            );
 
             // ── Avatar (T020) ─────────────────────────────────
             let avatar_color = avatar::avatar_color(&row.author_email);
@@ -5658,6 +5859,7 @@ fn render_rows(
                 .h(px(rh))
                 .bg(rgb(row_bg))
                 .on_click(click_handler)
+                .on_mouse_down(MouseButton::Right, context_click_handler)
                 // ── Badges column: user-resizable width (T030) ──
                 .child(render_badges_column(&row.badges, badge_col_w))
                 // ── Inner divider spacer (badge|graph handle width) ──

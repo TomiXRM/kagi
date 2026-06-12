@@ -1257,6 +1257,9 @@ pub struct KagiApp {
     pub next_toast_id: u64,
     /// True while the 500ms auto-dismiss ticker task is alive.
     pub toast_ticker_alive: bool,
+    /// When `Some`, the refresh icon spins (set on click; cleared after one
+    /// full rotation in render).
+    pub refresh_spin_started: Option<Instant>,
     /// Debounce generation for modal live re-planning. Each input change
     /// bumps it; a 250ms timer task re-plans only if no newer change arrived.
     /// Per-keystroke synchronous re-planning (Repository::open + plan build,
@@ -1563,6 +1566,7 @@ impl KagiApp {
             toast_ticker_alive: false,
             busy_op: None,
             modal_replan_gen: 0,
+            refresh_spin_started: None,
             // W2-DELETE
             delete_branch_modal: None,
             commit_menu: None,
@@ -1651,6 +1655,7 @@ impl KagiApp {
             toast_ticker_alive: false,
             busy_op: None,
             modal_replan_gen: 0,
+            refresh_spin_started: None,
             // W2-DELETE
             delete_branch_modal: None,
             commit_menu: None,
@@ -5508,6 +5513,27 @@ impl KagiApp {
         }
     }
 
+    /// Move the commit selection up/down by `delta` rows (arrow keys).
+    /// No selection yet → selects the first row. Idempotent at the ends.
+    pub fn step_commit_selection(&mut self, delta: i64) {
+        if self.rows.is_empty() {
+            return;
+        }
+        let next = match self.selected {
+            None => 0,
+            Some(cur) => {
+                let n = cur as i64 + delta;
+                n.clamp(0, self.rows.len() as i64 - 1) as usize
+            }
+        };
+        if self.selected != Some(next) {
+            self.commit_scroll_handle
+                .scroll_to_item(next, ScrollStrategy::Center);
+            // `select` toggles on a repeated index; guarded above.
+            self.select(next);
+        }
+    }
+
     /// W2-SIDEBAR: Lazily create the sidebar filter InputState (requires &mut Window).
     ///
     /// Called from the on_click handler on the filter placeholder area.
@@ -5808,12 +5834,22 @@ impl Render for KagiApp {
             .on_action(toggle_bottom_panel)
             // T-UI-003: Esc closes the main diff view.
             .on_action(close_main_diff)
+            // Arrows: step diff files while the main diff is open, otherwise
+            // move the commit selection (user request).
             .on_action(cx.listener(|this, _: &DiffPrevFile, _window, cx| {
-                this.main_diff_step(-1);
+                if this.main_diff.is_some() {
+                    this.main_diff_step(-1);
+                } else {
+                    this.step_commit_selection(-1);
+                }
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &DiffNextFile, _window, cx| {
-                this.main_diff_step(1);
+                if this.main_diff.is_some() {
+                    this.main_diff_step(1);
+                } else {
+                    this.step_commit_selection(1);
+                }
                 cx.notify();
             }))
             // ── W5-MENU / ADR-0029: conditional command handlers ──────────
@@ -6108,6 +6144,7 @@ impl KagiApp {
 
         // Refresh — always enabled.
         let refresh_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
+            this.refresh_spin_started = Some(Instant::now());
             this.reload();
             this.status_footer = FooterStatus::Idle(SharedString::from("Refreshed"));
             // W3-NOTIFY: explicit refresh gets a completion toast (the
@@ -6266,7 +6303,37 @@ impl KagiApp {
             .bg(rgb(theme().surface))
             .text_color(rgb(theme().text_sub))
             // ── LEFT: Refresh (user request: left of the repo title) ──
-            .child(
+            .child({
+                // Spin for one full turn after a click (user request).
+                const SPIN_MS: u64 = 700;
+                let spinning = match self.refresh_spin_started {
+                    Some(t) if t.elapsed() < Duration::from_millis(SPIN_MS) => true,
+                    Some(_) => {
+                        self.refresh_spin_started = None;
+                        false
+                    }
+                    None => false,
+                };
+                let icon = gpui::svg()
+                    .path("icons/refresh-cw.svg")
+                    .w(px(16.0))
+                    .h(px(16.0))
+                    .text_color(rgb(theme().text_main));
+                let icon: gpui::AnyElement = if spinning {
+                    use gpui::AnimationExt as _;
+                    icon.with_animation(
+                        "tb-refresh-spin",
+                        gpui::Animation::new(Duration::from_millis(SPIN_MS)),
+                        |svg, delta| {
+                            svg.with_transformation(gpui::Transformation::rotate(
+                                gpui::radians(delta * std::f32::consts::TAU),
+                            ))
+                        },
+                    )
+                    .into_any_element()
+                } else {
+                    icon.into_any_element()
+                };
                 div()
                     .id("tb-refresh")
                     .flex_shrink_0()
@@ -6275,14 +6342,8 @@ impl KagiApp {
                     .rounded_md()
                     .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
                     .on_click(refresh_click)
-                    .child(
-                        gpui::svg()
-                            .path("icons/refresh-cw.svg")
-                            .w(px(16.0))
-                            .h(px(16.0))
-                            .text_color(rgb(theme().text_main)),
-                    ),
-            )
+                    .child(icon)
+            })
             // ── repo name + branch/upstream/ahead-behind ──
             .child(
                 div()
@@ -8684,12 +8745,25 @@ fn render_create_branch_modal(
 
     card = card.child(button_row);
 
-    // Real text inputs handle their own focus/keys now; the wrapper stays
-    // only to keep the optional legacy focus handle alive.
-    let focusable_card = if let Some(ref fh) = focus_handle {
-        div().track_focus(fh).child(card)
-    } else {
-        div().child(card)
+    // Real text inputs handle their own focus/keys now. Escape bubbles up
+    // from the focused input to this wrapper and cancels (user request).
+    let esc_cancel = cx.listener(|this, e: &KeyDownEvent, window, cx| {
+        if e.keystroke.key == "escape" {
+            this.cancel_create_branch_modal();
+            if let Some(fh) = this.root_focus.clone() {
+                window.focus(&fh);
+            }
+            cx.stop_propagation();
+            cx.notify();
+        }
+    });
+    let focusable_card = {
+        let base = div().on_key_down(esc_cancel);
+        if let Some(ref fh) = focus_handle {
+            base.track_focus(fh).child(card)
+        } else {
+            base.child(card)
+        }
     };
 
     // ── Full-screen overlay wrapper ─────────────────────────
@@ -8884,10 +8958,23 @@ fn render_create_worktree_modal(
     }
     card = card.child(button_row);
 
-    let focusable_card = if let Some(ref fh) = focus_handle {
-        div().track_focus(fh).child(card)
-    } else {
-        div().child(card)
+    let esc_cancel = cx.listener(|this, e: &KeyDownEvent, window, cx| {
+        if e.keystroke.key == "escape" {
+            this.cancel_create_worktree_modal();
+            if let Some(fh) = this.root_focus.clone() {
+                window.focus(&fh);
+            }
+            cx.stop_propagation();
+            cx.notify();
+        }
+    });
+    let focusable_card = {
+        let base = div().on_key_down(esc_cancel);
+        if let Some(ref fh) = focus_handle {
+            base.track_focus(fh).child(card)
+        } else {
+            base.child(card)
+        }
     };
 
     div()
@@ -9136,10 +9223,23 @@ fn render_stash_push_modal(
 
     card = card.child(button_row);
 
-    let focusable_card = if let Some(ref fh) = focus_handle {
-        div().track_focus(fh).child(card)
-    } else {
-        div().child(card)
+    let esc_cancel = cx.listener(|this, e: &KeyDownEvent, window, cx| {
+        if e.keystroke.key == "escape" {
+            this.cancel_stash_push_modal();
+            if let Some(fh) = this.root_focus.clone() {
+                window.focus(&fh);
+            }
+            cx.stop_propagation();
+            cx.notify();
+        }
+    });
+    let focusable_card = {
+        let base = div().on_key_down(esc_cancel);
+        if let Some(ref fh) = focus_handle {
+            base.track_focus(fh).child(card)
+        } else {
+            base.child(card)
+        }
     };
 
     // ── Full-screen overlay wrapper ─────────────────────────

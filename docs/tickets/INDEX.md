@@ -36,7 +36,7 @@
 | T027 | Commit Panel の Unstaged/Staged を 1:1 独立スクロールボックスに | T025, T026 | done |
 | T028 | sidebar branch: クリック=ジャンプ / ダブルクリック=checkout | T013, T021 | done |
 | T030 | commit list の列(branch/graph/message)を個別リサイズ可能に | T021, T023 | done |
-| T029 | 外部変更の自動追従(.git 監視リフレッシュ) | T005 | in-progress |
+| T029 | 外部変更の自動追従(.git 監視リフレッシュ) | T005 | done |
 
 補助タスク(ticket 外、PM 管理):
 - fixture repo 生成スクリプト(`scripts/make_fixture.sh`)— 用意済み(merge / ahead 1 / behind 1 / tag / stash / dirty WT を含む)

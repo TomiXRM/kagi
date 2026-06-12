@@ -53,7 +53,7 @@
 | T-BP-004 | Operation Log タブ(メモリリングバッファ + 表示) | T-BP-002 | done |
 | T-BP-005 | Git 操作結果を Operation Log に流す + 失敗時自動オープン | T-BP-004 | done(T-BP-004 に統合) |
 | T-BP-006 | Terminal 実装方式の調査 ADR | - | done(ADR-0008) |
-| T-BP-007 | MVP Terminal(単一 session) | T-BP-002, ADR-0008 | in-progress |
+| T-BP-007 | MVP Terminal(単一 session) | T-BP-002, ADR-0008 | done |
 | T-BP-008 | Terminal 内 git 操作後の state refresh | T-BP-007 | done 相当(T029 watcher が充足。T-BP-007 で確認のみ) |
 | T-HT-001 | Header Toolbar UI skeleton(ボタン並び + disabled 理由表示) | T-BP-001 | todo |
 | T-HT-002 | branch / upstream / ahead-behind 表示(Toolbar + StatusBar) | T-HT-001 | todo |

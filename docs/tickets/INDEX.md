@@ -34,8 +34,8 @@
 | T025 | Commit Panel UI(GitKraken 風の作業台) | T024, T018, T022 | done |
 | T026 | commit message 入力の IME 対応(gpui-component Input) | T025 | done |
 | T027 | Commit Panel の Unstaged/Staged を 1:1 独立スクロールボックスに | T025, T026 | done |
-| T028 | sidebar branch: クリック=ジャンプ / ダブルクリック=checkout | T013, T021 | in-progress |
-| T030 | commit list の列(branch/graph/message)を個別リサイズ可能に | T021, T023 | todo |
+| T028 | sidebar branch: クリック=ジャンプ / ダブルクリック=checkout | T013, T021 | done |
+| T030 | commit list の列(branch/graph/message)を個別リサイズ可能に | T021, T023 | in-progress |
 | T029 | 外部変更の自動追従(.git 監視リフレッシュ) | T005 | todo |
 
 補助タスク(ticket 外、PM 管理):

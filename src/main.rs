@@ -132,10 +132,12 @@ fn main() {
     }
 
     // KAGI_OPEN_FIRST_FILE=1 (requires KAGI_SELECT_FIRST=1): after selecting
-    // the first commit, automatically open the diff for its first changed file.
-    // Emits `[kagi] diff: <path> hunks=N (+A -R)` for headless verification (T012).
+    // the first commit, automatically open the diff for its first changed file
+    // in the full-width main pane (T-UI-003).
+    // Emits `[kagi] diff: <path> hunks=N (+A -R)` (legacy compat) +
+    // `[kagi] main-diff: open <path> rows=N` for headless verification.
     if std::env::var("KAGI_OPEN_FIRST_FILE").as_deref() == Ok("1") {
-        app_state.open_file_diff(0);
+        app_state.open_main_diff_commit(0);
     }
 
     // ── T-HT-003: headless pull plan / execute ───────────────

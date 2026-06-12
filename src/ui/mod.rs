@@ -30,7 +30,8 @@ use gpui_component::Sizable as _;
 // ──────────────────────────────────────────────────────────────
 
 // cmd-j toggle action for the bottom panel.
-actions!(kagi, [ToggleBottomPanel]);
+// escape to close main diff view.
+actions!(kagi, [ToggleBottomPanel, CloseMainDiff]);
 
 /// Active tab in the bottom panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -385,6 +386,10 @@ pub enum DiffRow {
         kind: DiffLineKind,
         /// The line content as a displayable string (with leading sigil stripped).
         text: SharedString,
+        /// Old-side line number (None for Added lines).
+        old_lineno: Option<u32>,
+        /// New-side line number (None for Removed lines).
+        new_lineno: Option<u32>,
     },
     /// Placeholder shown for binary files.
     Binary,
@@ -442,6 +447,8 @@ impl FileDiffView {
                     rows.push(DiffRow::Line {
                         kind: line.kind.clone(),
                         text,
+                        old_lineno: line.old_lineno,
+                        new_lineno: line.new_lineno,
                     });
                 }
             }
@@ -453,6 +460,36 @@ impl FileDiffView {
             file_index,
         }
     }
+}
+
+// ──────────────────────────────────────────────────────────────
+// T-UI-003: MainDiffView — full-width main pane diff state
+// ──────────────────────────────────────────────────────────────
+
+/// Where the diff was opened from (used for re-load and navigation).
+#[derive(Clone)]
+#[allow(dead_code)]
+pub enum MainDiffSource {
+    /// Opened from the commit detail panel (changed-files list).
+    Commit { row_index: usize, file_index: usize },
+    /// Opened from the Commit Panel — unstaged file.
+    Unstaged { path: PathBuf },
+    /// Opened from the Commit Panel — staged file.
+    Staged { path: PathBuf },
+}
+
+/// State for the full-width main pane diff view (T-UI-003).
+#[derive(Clone)]
+pub struct MainDiffView {
+    /// Display title: file path.
+    pub title: SharedString,
+    /// Stats string: "+N −M".
+    pub stats: SharedString,
+    /// All displayable rows (hunk headers + content lines).
+    pub rows: Vec<DiffRow>,
+    /// Where this diff was opened from (for re-load / back navigation).
+    #[allow(dead_code)]
+    pub source: MainDiffSource,
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -600,10 +637,11 @@ pub struct KagiApp {
     /// Cache of changed-files results keyed by row index.
     /// `None` value means the diff was attempted but failed (show unavailable).
     pub diff_cache: HashMap<usize, Option<Vec<FileStatus>>>,
-    /// When `Some`, the detail panel shows the diff for this file instead of
-    /// the commit metadata + changed-files list.  Cleared whenever
-    /// `selected` changes.
-    pub file_diff_view: Option<FileDiffView>,
+    /// T-UI-003: When `Some`, the main pane shows this diff (full-width) instead
+    /// of the commit graph list.  Cleared when `selected` changes or on reload.
+    pub main_diff: Option<MainDiffView>,
+    /// T-UI-003: Scroll handle for the "main-diff-list" uniform_list.
+    pub main_diff_scroll_handle: UniformListScrollHandle,
     /// Local branch names from the snapshot, ordered by name.
     /// Used to render the sidebar.  The first element of the tuple is the
     /// branch name; the second is whether it is the current HEAD branch.
@@ -792,7 +830,8 @@ impl KagiApp {
             error: None,
             repo_path: None,
             diff_cache: HashMap::new(),
-            file_diff_view: None,
+            main_diff: None,
+            main_diff_scroll_handle: UniformListScrollHandle::new(),
             branches,
             plan_modal: None,
             pull_modal: None,
@@ -841,7 +880,8 @@ impl KagiApp {
             error: Some(SharedString::from(message.into())),
             repo_path: None,
             diff_cache: HashMap::new(),
-            file_diff_view: None,
+            main_diff: None,
+            main_diff_scroll_handle: UniformListScrollHandle::new(),
             branches: Vec::new(),
             plan_modal: None,
             pull_modal: None,
@@ -919,7 +959,7 @@ impl KagiApp {
         self.branches = fresh.branches;
         self.selected = None;
         self.diff_cache = HashMap::new();
-        self.file_diff_view = None;
+        self.main_diff = None;
         self.plan_modal = None;
         self.pull_modal = None;
         self.undo_modal = None;
@@ -2515,7 +2555,7 @@ impl KagiApp {
         self.commit_panel = Some(panel);
         self.commit_panel_open = true;
         self.selected = None;
-        self.file_diff_view = None;
+        self.main_diff = None;
 
         // T026: focus the InputState after opening the panel.
         if let Some(ref input_entity) = self.commit_input {
@@ -2649,15 +2689,9 @@ impl KagiApp {
         }
     }
 
-    /// Select a file in the commit panel and load its diff.
+    /// T-UI-003: Select a file in the commit panel and open it in the main diff pane.
     pub fn select_commit_panel_file(&mut self, file_ref: CommitPanelFileRef) {
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-        if let Some(ref mut panel) = self.commit_panel {
-            panel.load_diff(file_ref, &repo_path);
-        }
+        self.open_main_diff_wip(file_ref);
     }
 
 
@@ -2859,12 +2893,12 @@ impl KagiApp {
         // Toggle: clicking the same row again deselects it.
         if self.selected == Some(index) {
             self.selected = None;
-            self.file_diff_view = None;
+            self.main_diff = None;
             return;
         }
         self.selected = Some(index);
-        // Clear any open file diff when the commit selection changes.
-        self.file_diff_view = None;
+        // Clear any open main diff when the commit selection changes.
+        self.main_diff = None;
 
         if let Some(detail) = self.details.get(index) {
             let parent_count = detail.parent_ids.len();
@@ -2912,11 +2946,13 @@ impl KagiApp {
         }
     }
 
-    /// Open the diff for the file at `file_index` in the currently selected commit.
+    /// T-UI-003: Open the diff for the file at `file_index` in the currently
+    /// selected commit in the full-width main pane.
     ///
-    /// Fetches the diff via [`commit_file_diff`] and stores a pre-rendered
-    /// [`FileDiffView`] in `self.file_diff_view`.  No-op if no commit is selected.
-    pub fn open_file_diff(&mut self, file_index: usize) {
+    /// Emits the legacy `[kagi] diff:` log (headless compat) plus
+    /// `[kagi] main-diff: open <path> rows=N`.
+    /// No-op if no commit is selected.
+    pub fn open_main_diff_commit(&mut self, file_index: usize) {
         use kagi::git::{CommitId, commit_file_diff};
 
         let selected = match self.selected {
@@ -2965,6 +3001,7 @@ impl KagiApp {
                     .count();
                 let hunks = file_diff.hunks.len();
 
+                // Legacy headless compat log (검증スクリプトを壊さない).
                 eprintln!(
                     "[kagi] diff: {} hunks={} (+{} -{})",
                     path.display(),
@@ -2973,7 +3010,20 @@ impl KagiApp {
                     removed,
                 );
 
-                self.file_diff_view = Some(FileDiffView::from_file_diff(&file_diff, file_index));
+                let fdv = FileDiffView::from_file_diff(&file_diff, file_index);
+                let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
+                let title = fdv.file_name.clone();
+                let rows = fdv.rows;
+                let row_count = rows.len();
+
+                eprintln!("[kagi] main-diff: open {} rows={}", path.display(), row_count);
+
+                self.main_diff = Some(MainDiffView {
+                    title,
+                    stats,
+                    rows,
+                    source: MainDiffSource::Commit { row_index: selected, file_index },
+                });
             }
             Err(e) => {
                 eprintln!("[kagi] diff error: {}", e);
@@ -2981,9 +3031,80 @@ impl KagiApp {
         }
     }
 
-    /// Close the current file diff view and return to the changed-files list.
-    pub fn close_file_diff(&mut self) {
-        self.file_diff_view = None;
+    /// T-UI-003: Open the diff for a Commit Panel file in the full-width main pane.
+    pub fn open_main_diff_wip(&mut self, file_ref: commit_panel::CommitPanelFileRef) {
+        use kagi::git::{unstaged_file_diff, staged_file_diff};
+
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let panel = match self.commit_panel.as_ref() {
+            Some(p) => p,
+            None => return,
+        };
+
+        let (is_staged, path) = match &file_ref {
+            commit_panel::CommitPanelFileRef::Unstaged { index } => {
+                if let Some(f) = panel.unstaged.get(*index) {
+                    (false, f.path.clone())
+                } else {
+                    return;
+                }
+            }
+            commit_panel::CommitPanelFileRef::Staged { index } => {
+                if let Some(f) = panel.staged.get(*index) {
+                    (true, f.path.clone())
+                } else {
+                    return;
+                }
+            }
+        };
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+
+        let file_diff_result = if is_staged {
+            staged_file_diff(&repo, &path)
+        } else {
+            unstaged_file_diff(&repo, &path)
+        };
+
+        match file_diff_result {
+            Ok(fd) => {
+                let added: usize = fd.hunks.iter().flat_map(|h| h.lines.iter())
+                    .filter(|l| l.kind == DiffLineKind::Added).count();
+                let removed: usize = fd.hunks.iter().flat_map(|h| h.lines.iter())
+                    .filter(|l| l.kind == DiffLineKind::Removed).count();
+                eprintln!("[kagi] commit-panel diff: {} (+{} -{})", path.display(), added, removed);
+
+                let fdv = FileDiffView::from_file_diff(&fd, 0);
+                let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
+                let title = fdv.file_name.clone();
+                let rows = fdv.rows;
+                let row_count = rows.len();
+
+                eprintln!("[kagi] main-diff: open {} rows={}", path.display(), row_count);
+
+                let source = if is_staged {
+                    MainDiffSource::Staged { path }
+                } else {
+                    MainDiffSource::Unstaged { path }
+                };
+                self.main_diff = Some(MainDiffView { title, stats, rows, source });
+            }
+            Err(e) => {
+                eprintln!("[kagi] commit-panel diff error: {}", e);
+            }
+        }
+    }
+
+    /// T-UI-003: Close the main diff view and return to the commit graph.
+    /// No-op when main_diff is None.
+    pub fn close_main_diff(&mut self) {
+        self.main_diff = None;
     }
 
     /// Fetch changed files for the commit at `index`.  Returns `None` on
@@ -3078,8 +3199,9 @@ impl Render for KagiApp {
         let changed_files: Option<Option<Vec<FileStatus>>> = selected
             .map(|i| self.diff_cache.get(&i).cloned().unwrap_or(None));
 
-        // Clone the file diff view if present.
-        let file_diff_view = self.file_diff_view.clone();
+        // T-UI-003: Clone main diff state if present.
+        let main_diff = self.main_diff.clone();
+        let main_diff_scroll_handle = self.main_diff_scroll_handle.clone();
 
         // Clone branch list and modal state for render.
         let branches = self.branches.clone();
@@ -3195,6 +3317,14 @@ impl Render for KagiApp {
             cx.notify();
         });
 
+        // T-UI-003: Esc closes the main diff view (no-op when main_diff is None).
+        let close_main_diff = cx.listener(|this, _: &CloseMainDiff, _window, cx| {
+            if this.main_diff.is_some() {
+                this.close_main_diff();
+                cx.notify();
+            }
+        });
+
         // ── Normal state: header + body + bottom panel slot + status bar ─────
         div()
             .flex()
@@ -3208,11 +3338,13 @@ impl Render for KagiApp {
             .on_drag_move::<DividerDrag>(divider_drag_move)
             // T-BP-002: cmd-j toggle action (window-wide via on_action on root div).
             .on_action(toggle_bottom_panel)
+            // T-UI-003: Esc closes the main diff view.
+            .on_action(close_main_diff)
             // ── Header slot ──────────────────────────────────
             .child(self.render_header_slot(toolbar_state, status_summary, cx))
             // ── Body slot: sidebar | list | optional panel ───
             .child(self.render_body(
-                row_count, selected, detail, changed_files, file_diff_view,
+                row_count, selected, detail, changed_files, main_diff, main_diff_scroll_handle,
                 branches, stashes, is_dirty, sidebar_width, panel_width,
                 badge_col_w, graph_col_w, commit_scroll_handle,
                 commit_panel_open, commit_panel.clone(), commit_input.clone(),
@@ -3537,7 +3669,8 @@ impl KagiApp {
         selected: Option<usize>,
         detail: Option<detail_panel::CommitDetail>,
         changed_files: Option<Option<Vec<FileStatus>>>,
-        file_diff_view: Option<FileDiffView>,
+        main_diff: Option<MainDiffView>,
+        main_diff_scroll_handle: UniformListScrollHandle,
         branches: Vec<(String, bool)>,
         stashes: Vec<kagi::git::Stash>,
         is_dirty: bool,
@@ -3650,6 +3783,23 @@ impl KagiApp {
                     .text_color(rgb(TEXT_MUTED))
                     .child(SharedString::from("MESSAGE")),
             );
+
+        // T-UI-003: If main_diff is Some, show full-width diff in main pane.
+        if let Some(diff_view) = main_diff {
+            // ── Full-width main diff mode ────────────
+            let body_row = div()
+                .flex()
+                .flex_row()
+                .flex_1()
+                .min_h(px(0.))
+                // ── Left sidebar (unchanged) ──────────
+                .child(render_sidebar(&branches, &stashes, sidebar_width, cx))
+                // ── Sidebar divider ───────────────────
+                .child(divider1)
+                // ── Main diff area (full remaining width) ──
+                .child(render_main_diff_view(diff_view, main_diff_scroll_handle, cx));
+            return body_row;
+        }
 
         let commit_list_col = div()
             .flex_1()
@@ -3768,18 +3918,12 @@ impl KagiApp {
         } else {
             // ── Normal commit detail panel (existing behaviour) ──
             body_row = body_row.when_some(detail, |el, d| {
-                if let Some(diff_view) = file_diff_view {
-                    // ── Diff view mode ──────────────────
-                    el.child(divider2)
-                        .child(render_diff_panel(diff_view, panel_width, cx))
-                } else {
-                    // ── Commit metadata + changed files ─
-                    let at = CommitId(d.full_sha.as_ref().to_string());
-                    let files = changed_files.clone();
-                    let files_for_click = changed_files.clone();
-                    el.child(divider2)
-                        .child(render_detail_panel(d, at, files.unwrap_or(None), files_for_click.unwrap_or(None), panel_width, cx))
-                }
+                // ── Commit metadata + changed files ─
+                let at = CommitId(d.full_sha.as_ref().to_string());
+                let files = changed_files.clone();
+                let files_for_click = changed_files.clone();
+                el.child(divider2)
+                    .child(render_detail_panel(d, at, files.unwrap_or(None), files_for_click.unwrap_or(None), panel_width, cx))
             });
         }
 
@@ -4559,7 +4703,7 @@ fn render_detail_panel(
                     };
                     let fi = *file_index;
                     let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                        this.open_file_diff(fi);
+                        this.open_main_diff_commit(fi);
                         cx.notify();
                     });
                     div()
@@ -4762,84 +4906,99 @@ fn render_detail_panel(
 }
 
 // ──────────────────────────────────────────────────────────────
-// Diff panel renderer
+// T-UI-003: Main pane diff renderer (full-width)
 // ──────────────────────────────────────────────────────────────
 
-/// Render the diff view panel for a single file.
+/// Render the full-width main pane diff view.
 ///
-/// Layout:
-/// - `← back` row (click to return to the changed-files list)
-/// - File name
-/// - Virtualized diff line list (`uniform_list` with id `"diff-list"`)
-/// T023: `panel_width` replaces the hard-coded 560px diff-view special case.
-fn render_diff_panel(view: FileDiffView, panel_width: f32, cx: &mut Context<KagiApp>) -> impl IntoElement {
+/// Layout (fills remaining width after sidebar + divider):
+/// - Header row: `← Back` + file name + stats
+/// - Body: `uniform_list` id `"main-diff-list"` with line numbers
+fn render_main_diff_view(
+    view: MainDiffView,
+    scroll_handle: UniformListScrollHandle,
+    cx: &mut Context<KagiApp>,
+) -> impl IntoElement {
     let row_count = view.rows.len();
     let rows = std::sync::Arc::new(view.rows);
     let rows_for_list = rows.clone();
+    let title = view.title.clone();
+    let stats = view.stats.clone();
 
-    // "← back" click handler: close the diff view.
+    // "← Back" click handler: close the main diff view.
     let back_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
-        this.close_file_diff();
+        this.close_main_diff();
         cx.notify();
     });
 
-    // T022: `min_h(px(0.))` on the uniform_list wrapper is the fix for
-    // "file diff not visible" — without it, the flex child does not shrink
-    // below its natural height, so the uniform_list overflows the panel and
-    // the diff rows are pushed outside the visible area.
     div()
-        .w(px(panel_width))
-        .flex_shrink_0()
+        .flex_1()
         .h_full()
         .flex()
         .flex_col()
         .bg(rgb(BG_PANEL))
-        .px_0()
-        .py_0()
-        // ── Back row (fixed height — does NOT participate in flex shrinking) ──
+        // ── Header row (fixed height) ─────────────────────────────────────
         .child(
             div()
-                .id("diff-back")
+                .id("main-diff-header")
                 .flex()
                 .flex_row()
                 .items_center()
                 .flex_shrink_0()
                 .px_3()
                 .py_1()
+                .gap_2()
                 .bg(rgb(BG_SURFACE))
-                .on_click(back_click)
+                // ← Back button
                 .child(
                     div()
+                        .id("main-diff-back")
+                        .px_2()
+                        .py_px()
+                        .rounded_sm()
+                        .bg(rgb(BG_BASE))
                         .text_sm()
                         .text_color(rgb(TEXT_SUB))
-                        .child(SharedString::from("\u{2190} back")),
+                        .on_click(back_click)
+                        .hover(|s| s.bg(rgb(BG_SELECTED)).cursor_pointer())
+                        .child(SharedString::from("\u{2190} Back")),
                 )
+                // File name
                 .child(
                     div()
-                        .ml_2()
                         .flex_1()
                         .text_sm()
                         .text_color(rgb(TEXT_MAIN))
                         .truncate()
-                        .child(view.file_name),
+                        .child(title),
+                )
+                // Stats: +N −M
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_SUB))
+                        .flex_shrink_0()
+                        .child(stats),
                 ),
         )
-        // ── Diff body: flex_1 + min_h(0) ensures it fills remaining space ──
+        // ── Diff body: full remaining space ──────────────────────────────
         .child(
             uniform_list(
-                "diff-list",
+                "main-diff-list",
                 row_count,
                 cx.processor(move |_this, range, _window, _cx| {
-                    render_diff_rows(&rows_for_list, range)
+                    render_main_diff_rows(&rows_for_list, range)
                 }),
             )
+            .track_scroll(scroll_handle)
             .flex_1()
             .min_h(px(0.)),
         )
 }
 
-/// Render a range of diff rows for the `"diff-list"` uniform_list.
-fn render_diff_rows(
+/// Render a range of diff rows for the `"main-diff-list"` uniform_list.
+/// Includes line numbers: old/new each 5 chars wide, TEXT_MUTED colour.
+fn render_main_diff_rows(
     rows: &[DiffRow],
     range: std::ops::Range<usize>,
 ) -> Vec<impl IntoElement> {
@@ -4848,7 +5007,7 @@ fn render_diff_rows(
         .map(|(i, row)| match row {
             DiffRow::HunkHeader(header) => {
                 div()
-                    .id(("diff-hunk", i))
+                    .id(("main-diff-hunk", i))
                     .w_full()
                     .px_2()
                     .py_px()
@@ -4859,7 +5018,7 @@ fn render_diff_rows(
                     .child(header.clone())
                     .into_any()
             }
-            DiffRow::Line { kind, text } => {
+            DiffRow::Line { kind, text, old_lineno, new_lineno } => {
                 let bg = match kind {
                     DiffLineKind::Added   => BG_DIFF_ADDED,
                     DiffLineKind::Removed => BG_DIFF_REMOVED,
@@ -4870,21 +5029,54 @@ fn render_diff_rows(
                     DiffLineKind::Removed => 0xf38ba8u32, // red
                     DiffLineKind::Context => TEXT_MAIN,
                 };
+                // Format line numbers: 5 chars fixed width, muted colour.
+                let old_str = match old_lineno {
+                    Some(n) => format!("{:5}", n),
+                    None    => "     ".to_string(),
+                };
+                let new_str = match new_lineno {
+                    Some(n) => format!("{:5}", n),
+                    None    => "     ".to_string(),
+                };
                 div()
-                    .id(("diff-line", i))
+                    .id(("main-diff-line", i))
                     .w_full()
-                    .px_2()
+                    .flex()
+                    .flex_row()
+                    .items_center()
                     .py_px()
                     .bg(rgb(bg))
                     .text_sm()
-                    .text_color(rgb(text_color))
                     .overflow_hidden()
-                    .child(text.clone())
+                    // Old line number
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .w(px(44.))
+                            .text_color(rgb(TEXT_MUTED))
+                            .child(SharedString::from(old_str)),
+                    )
+                    // New line number
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .w(px(44.))
+                            .text_color(rgb(TEXT_MUTED))
+                            .child(SharedString::from(new_str)),
+                    )
+                    // Content (sigil + text)
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(rgb(text_color))
+                            .overflow_hidden()
+                            .child(text.clone()),
+                    )
                     .into_any()
             }
             DiffRow::Binary => {
                 div()
-                    .id(("diff-binary", i))
+                    .id(("main-diff-binary", i))
                     .w_full()
                     .px_2()
                     .py_1()
@@ -6615,7 +6807,7 @@ fn render_commit_panel(
         .unwrap_or(!panel.commit_msg.trim().is_empty());
     let can_commit = !panel.staged.is_empty() && input_msg_nonempty;
     let has_unstaged_warning = !panel.unstaged.is_empty() && staged_count > 0;
-    let diff_view = panel.diff_view.clone();
+    // T-UI-003: selected_file tracks which row is highlighted in the panel.
     let selected_file = panel.selected_file.clone();
 
     // ── View switch: segmented [List | Tree] (T-UI-002) ──────
@@ -7051,34 +7243,6 @@ fn render_commit_panel(
         }
     }
 
-    // ── Diff viewer ──────────────────────────────────────────
-    let diff_area: gpui::AnyElement = if let Some(dv) = diff_view {
-        let diff_row_count = dv.rows.len();
-        let rows_arc = std::sync::Arc::new(dv.rows);
-        let rows_for_list = rows_arc.clone();
-        uniform_list(
-            "cp-diff-list",
-            diff_row_count,
-            cx.processor(move |_this, range, _window, _cx| {
-                render_diff_rows(&rows_for_list, range)
-            }),
-        )
-        .flex_1()
-        .min_h(px(0.))
-        .into_any_element()
-    } else {
-        div()
-            .flex_1()
-            .min_h(px(0.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_xs()
-            .text_color(rgb(TEXT_MUTED))
-            .child(SharedString::from("Select a file to view diff"))
-            .into_any_element()
-    };
-
     // ── Commit message input (T026: gpui-component Input with IME support) ────────────
     let msg_input_wrapper: gpui::AnyElement = if let Some(ref input_entity) = commit_input {
         // Use gpui-component Input element — handles IME, clipboard, arrow keys, etc.
@@ -7146,10 +7310,7 @@ fn render_commit_panel(
     };
 
     // ── Assemble panel ───────────────────────────────────────
-    // T027: ファイル領域(Unstaged箱 + Staged箱)とdiff領域を flex_1 で 1:1 に分割する。
-    // 高さ配分: ファイル領域(flex_1) : diff領域(flex_1) = 1:1
-    // 各箱はさらに 1:1 に分割(各 flex_1 + min_h(px(0.)) + overflow_y_scroll)。
-    // ヘッダは各箱の外で flex_shrink_0 に固定し、スクロール対象はファイル行のみ。
+    // T-UI-003: diff ボックス廃止。Unstaged/Staged 箱が flex_1 で全体を占める(1:1)。
     div()
         .w(px(panel_width))
         .flex_shrink_0()
@@ -7168,7 +7329,7 @@ fn render_commit_panel(
                 .text_color(rgb(TEXT_MAIN))
                 .child(SharedString::from("Commit Panel")),
         )
-        // T027: ファイル領域コンテナ (flex_1 + min_h(0)) — Unstaged箱 + Staged箱を 1:1 で収める
+        // T-UI-003: ファイル領域コンテナ (flex_1 + min_h(0)) — diff 廃止でフル高さ
         .child(
             div()
                 .id("cp-files-container")
@@ -7178,7 +7339,7 @@ fn render_commit_panel(
                 .flex_col()
                 // Unstaged ヘッダ (固定)
                 .child(unstaged_header)
-                // T027: Unstaged スクロールボックス (flex_1 + min_h(0) + 薄枠)
+                // Unstaged スクロールボックス (flex_1 + min_h(0) + 薄枠)
                 .child(
                     div()
                         .id("cp-unstaged-scroll")
@@ -7194,7 +7355,7 @@ fn render_commit_panel(
                 )
                 // Staged ヘッダ (固定)
                 .child(staged_header)
-                // T027: Staged スクロールボックス (flex_1 + min_h(0) + 薄枠)
+                // Staged スクロールボックス (flex_1 + min_h(0) + 薄枠)
                 .child(
                     div()
                         .id("cp-staged-scroll")
@@ -7208,26 +7369,6 @@ fn render_commit_panel(
                         .rounded_sm()
                         .child(staged_files),
                 ),
-        )
-        // Diff area (flex_1 — takes remaining space equal to files container)
-        .child(
-            div()
-                .id("cp-diff-area")
-                .flex_1()
-                .min_h(px(0.))
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .px_2()
-                        .py_px()
-                        .bg(rgb(BG_SURFACE))
-                        .text_xs()
-                        .text_color(rgb(TEXT_MUTED))
-                        .child(SharedString::from("diff")),
-                )
-                .child(diff_area),
         )
         // Commit footer: message input + warning + button
         .child(
@@ -7551,6 +7692,8 @@ pub fn run_app(mut app_state: KagiApp) {
         // T-BP-002: register cmd-j as the toggle key for the bottom panel.
         // context = None means the binding fires regardless of focus context.
         cx.bind_keys([KeyBinding::new("cmd-j", ToggleBottomPanel, None)]);
+        // T-UI-003: Esc closes the main diff view (no-op when main_diff is None).
+        cx.bind_keys([KeyBinding::new("escape", CloseMainDiff, None)]);
 
         // KAGI_WINDOW=WxH (dev/testing only): override the initial window size
         // so layout behaviour at small sizes can be verified headlessly.

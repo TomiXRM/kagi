@@ -14,10 +14,8 @@ use std::path::PathBuf;
 use gpui::SharedString;
 
 use kagi::git::{
-    ChangeKind, DiffLineKind, FileStatus,
+    ChangeKind, FileStatus,
 };
-
-use super::FileDiffView;
 
 // ──────────────────────────────────────────────────────────────
 // CommitPanelFileRef — which file is selected in the panel
@@ -61,10 +59,8 @@ pub struct CommitPanelState {
     pub staged: Vec<FileStatus>,
     /// Paths of conflicted files (subset of unstaged — these cannot be staged).
     pub conflicted_paths: std::collections::HashSet<PathBuf>,
-    /// Currently selected file (for diff display).
+    /// Currently selected file (for row highlight in the panel).
     pub selected_file: Option<CommitPanelFileRef>,
-    /// Pre-rendered diff for the selected file (None = not yet loaded or failed).
-    pub diff_view: Option<FileDiffView>,
     /// Commit message text (simple String; IME fallback — T014 pattern).
     pub commit_msg: String,
     /// When Some, the commit plan confirmation modal is shown.
@@ -81,7 +77,6 @@ impl CommitPanelState {
             staged: Vec::new(),
             conflicted_paths: std::collections::HashSet::new(),
             selected_file: None,
-            diff_view: None,
             commit_msg: String::new(),
             plan_modal: None,
             tree_view: false,
@@ -128,8 +123,7 @@ impl CommitPanelState {
                 }
                 self.unstaged = unstaged;
                 self.staged = status.staged;
-                // Invalidate diff cache on status change
-                self.diff_view = None;
+                // Clear selection on status change.
                 self.selected_file = None;
             }
             Err(e) => {
@@ -146,55 +140,6 @@ impl CommitPanelState {
         !self.staged.is_empty() && !self.commit_msg.trim().is_empty()
     }
 
-    /// Load the diff for the given file reference and store in diff_view.
-    pub fn load_diff(&mut self, file_ref: CommitPanelFileRef, repo_path: &PathBuf) {
-        use kagi::git::{unstaged_file_diff, staged_file_diff};
-
-        let (is_staged, path) = match &file_ref {
-            CommitPanelFileRef::Unstaged { index } => {
-                if let Some(f) = self.unstaged.get(*index) {
-                    (false, f.path.clone())
-                } else {
-                    return;
-                }
-            }
-            CommitPanelFileRef::Staged { index } => {
-                if let Some(f) = self.staged.get(*index) {
-                    (true, f.path.clone())
-                } else {
-                    return;
-                }
-            }
-        };
-
-        let repo = match git2::Repository::open(repo_path) {
-            Ok(r) => r,
-            Err(_) => return,
-        };
-
-        let file_diff_result = if is_staged {
-            staged_file_diff(&repo, &path)
-        } else {
-            unstaged_file_diff(&repo, &path)
-        };
-
-        match file_diff_result {
-            Ok(fd) => {
-                let added: usize = fd.hunks.iter().flat_map(|h| h.lines.iter())
-                    .filter(|l| l.kind == DiffLineKind::Added).count();
-                let removed: usize = fd.hunks.iter().flat_map(|h| h.lines.iter())
-                    .filter(|l| l.kind == DiffLineKind::Removed).count();
-                eprintln!("[kagi] commit-panel diff: {} (+{} -{})", path.display(), added, removed);
-                let fv = FileDiffView::from_file_diff(&fd, 0);
-                self.diff_view = Some(fv);
-            }
-            Err(e) => {
-                eprintln!("[kagi] commit-panel diff error: {}", e);
-                self.diff_view = None;
-            }
-        }
-        self.selected_file = Some(file_ref);
-    }
 }
 
 // ──────────────────────────────────────────────────────────────

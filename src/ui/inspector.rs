@@ -11,7 +11,7 @@ use gpui::{Context, IntoElement, SharedString, div, prelude::*, px, rgb};
 use kagi::git::{ChangeKind, CommitId, FileStatus};
 
 use super::{
-    KagiApp,
+    CompareView, KagiApp,
     commit_list::{BadgeKind, RefBadge},
     context_menu::CommitAction,
     detail_panel::CommitDetail,
@@ -59,15 +59,12 @@ pub fn render_inspector(
     at: CommitId,
     badges: Vec<RefBadge>,
     changed_files: Option<Vec<FileStatus>>,
-    changed_files_for_click: Option<Vec<FileStatus>>,
+    compare_view: Option<CompareView>,
     active_file: Option<usize>,
     tree_view: bool,
     panel_width: f32,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
-    // Suppress unused warning (kept for symmetry / future diff-on-click).
-    let _ = changed_files_for_click;
-
     // ── Truncate input files before building the tree (T018 policy) ──────
     let truncated_files: Option<Vec<FileStatus>> = changed_files.as_ref().map(|files| {
         files.iter().take(MAX_FILES).cloned().collect()
@@ -155,7 +152,7 @@ pub fn render_inspector(
                         let (badge_char, badge_color) = change_badge(change);
                         let fi = *file_index;
                         let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                            this.open_main_diff_commit(fi);
+                            this.open_main_diff_inspector_file(fi);
                             cx.notify();
                         });
                         div()
@@ -190,7 +187,7 @@ pub fn render_inspector(
                     fs.path.to_string_lossy().into_owned()
                 );
                 let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                    this.open_main_diff_commit(fi);
+                    this.open_main_diff_inspector_file(fi);
                     cx.notify();
                 });
                 div()
@@ -297,9 +294,48 @@ pub fn render_inspector(
         Some(files) => SharedString::from(format!("Changed files ({})", files.len())),
     };
 
+    let compare_banner = compare_view.as_ref().map(|view| {
+        let close_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+            this.close_compare_view();
+            cx.notify();
+        });
+        div()
+            .id("compare-banner")
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .mb_2()
+            .px_2()
+            .py_1()
+            .rounded_sm()
+            .bg(rgb(BG_SURFACE))
+            .child(
+                div()
+                    .flex_1()
+                    .truncate()
+                    .text_sm()
+                    .text_color(rgb(TEXT_MAIN))
+                    .child(SharedString::from(format!("Comparing: {}", view.title.as_ref()))),
+            )
+            .child(
+                div()
+                    .id("compare-close")
+                    .px_1()
+                    .rounded_sm()
+                    .text_sm()
+                    .text_color(rgb(TEXT_SUB))
+                    .hover(|s| s.bg(rgb(BG_SELECTED)).cursor_pointer())
+                    .on_click(close_click)
+                    .child(SharedString::from("×")),
+            )
+    });
+
     let mut files_section = div()
         .flex().flex_col()
         .mt_2()
+        .children(compare_banner)
         .child(
             div().flex().flex_row().items_center().justify_between().mb_1()
                 .child(

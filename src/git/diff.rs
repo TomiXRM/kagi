@@ -387,3 +387,249 @@ pub fn commit_file_diff(
         is_binary: false,
     })
 }
+
+/// Return files changed between two commits (`a` → `b`) without touching the
+/// working tree, index, refs, or repository state.
+pub fn compare_commits(
+    repo: &Repository,
+    a: &CommitId,
+    b: &CommitId,
+) -> Result<Vec<FileStatus>, GitError> {
+    let a_commit = find_commit(repo, a)?;
+    let b_commit = find_commit(repo, b)?;
+    let a_tree = a_commit
+        .tree()
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    let b_tree = b_commit
+        .tree()
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+
+    let mut diff = repo
+        .diff_tree_to_tree(Some(&a_tree), Some(&b_tree), None)
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    diff_to_file_statuses(&mut diff)
+}
+
+/// Return the file diff for a single path between two commits (`a` → `b`).
+pub fn compare_file_diff(
+    repo: &Repository,
+    a: &CommitId,
+    b: &CommitId,
+    path: &Path,
+) -> Result<FileDiff, GitError> {
+    let a_commit = find_commit(repo, a)?;
+    let b_commit = find_commit(repo, b)?;
+    let a_tree = a_commit
+        .tree()
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    let b_tree = b_commit
+        .tree()
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+
+    let mut diff_opts = DiffOptions::new();
+    diff_opts.pathspec(path.to_string_lossy().as_ref());
+    let mut diff = repo
+        .diff_tree_to_tree(Some(&a_tree), Some(&b_tree), Some(&mut diff_opts))
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    diff_to_file_diff(&mut diff, path)
+}
+
+/// Return files changed between a commit and the current working tree,
+/// including staged, unstaged, and untracked changes. Read-only.
+pub fn compare_commit_to_workdir(
+    repo: &Repository,
+    a: &CommitId,
+) -> Result<Vec<FileStatus>, GitError> {
+    let a_commit = find_commit(repo, a)?;
+    let a_tree = a_commit
+        .tree()
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+
+    let mut diff_opts = workdir_compare_options();
+    let mut diff = repo
+        .diff_tree_to_workdir_with_index(Some(&a_tree), Some(&mut diff_opts))
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    diff_to_file_statuses(&mut diff)
+}
+
+/// Return a single-file diff between a commit and the current working tree,
+/// including staged, unstaged, and untracked changes. Read-only.
+pub fn compare_commit_to_workdir_file_diff(
+    repo: &Repository,
+    a: &CommitId,
+    path: &Path,
+) -> Result<FileDiff, GitError> {
+    let a_commit = find_commit(repo, a)?;
+    let a_tree = a_commit
+        .tree()
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+
+    let mut diff_opts = workdir_compare_options();
+    diff_opts.pathspec(path.to_string_lossy().as_ref());
+    let mut diff = repo
+        .diff_tree_to_workdir_with_index(Some(&a_tree), Some(&mut diff_opts))
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    diff_to_file_diff(&mut diff, path)
+}
+
+fn find_commit<'repo>(
+    repo: &'repo Repository,
+    id: &CommitId,
+) -> Result<git2::Commit<'repo>, GitError> {
+    let oid = git2::Oid::from_str(&id.0).map_err(|e| GitError::Other(e.message().to_string()))?;
+    repo.find_commit(oid)
+        .map_err(|e| GitError::Other(e.message().to_string()))
+}
+
+fn workdir_compare_options() -> DiffOptions {
+    let mut opts = DiffOptions::new();
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .show_untracked_content(true);
+    opts
+}
+
+fn diff_to_file_statuses(diff: &mut Diff<'_>) -> Result<Vec<FileStatus>, GitError> {
+    let mut find_opts = DiffFindOptions::new();
+    find_opts.renames(true);
+    diff.find_similar(Some(&mut find_opts))
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+
+    let mut result = Vec::new();
+    for delta in diff.deltas() {
+        result.push(file_status_from_delta(&delta));
+    }
+    Ok(result)
+}
+
+fn file_status_from_delta(delta: &git2::DiffDelta<'_>) -> FileStatus {
+    use git2::Delta;
+    let old_path = delta.old_file().path().map(PathBuf::from);
+    let change = match delta.status() {
+        Delta::Added | Delta::Untracked => ChangeKind::Added,
+        Delta::Deleted => ChangeKind::Deleted,
+        Delta::Modified => ChangeKind::Modified,
+        Delta::Renamed => ChangeKind::Renamed {
+            from: old_path.clone().unwrap_or_default(),
+        },
+        Delta::Typechange => ChangeKind::TypeChange,
+        _ => ChangeKind::Modified,
+    };
+
+    let path = delta
+        .new_file()
+        .path()
+        .map(PathBuf::from)
+        .or_else(|| delta.old_file().path().map(PathBuf::from))
+        .unwrap_or_default();
+
+    FileStatus { path, change }
+}
+
+fn diff_to_file_diff(diff: &mut Diff<'_>, path: &Path) -> Result<FileDiff, GitError> {
+    let mut find_opts = DiffFindOptions::new();
+    find_opts.renames(true);
+    diff.find_similar(Some(&mut find_opts))
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+
+    let num_deltas = diff.deltas().count();
+    if num_deltas == 0 {
+        return Ok(FileDiff {
+            old_path: None,
+            new_path: Some(path.to_path_buf()),
+            change: ChangeKind::Modified,
+            hunks: vec![],
+            is_binary: false,
+        });
+    }
+
+    let delta_idx = (0..num_deltas)
+        .find(|&i| {
+            let delta = diff.get_delta(i).unwrap();
+            let np = delta.new_file().path();
+            let op = delta.old_file().path();
+            np == Some(path) || op == Some(path)
+        })
+        .unwrap_or(0);
+
+    let delta = diff.get_delta(delta_idx).unwrap();
+    let old_path = delta.old_file().path().map(PathBuf::from);
+    let new_path = delta.new_file().path().map(PathBuf::from);
+    let change = file_status_from_delta(&delta).change;
+
+    let patch_opt = git2::Patch::from_diff(diff, delta_idx)
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    let is_binary_from_flag = delta.new_file().is_binary() || delta.old_file().is_binary();
+
+    let patch = match patch_opt {
+        None => {
+            return Ok(FileDiff {
+                old_path,
+                new_path,
+                change,
+                hunks: vec![],
+                is_binary: true,
+            });
+        }
+        Some(p) => {
+            if is_binary_from_flag {
+                return Ok(FileDiff {
+                    old_path,
+                    new_path,
+                    change,
+                    hunks: vec![],
+                    is_binary: true,
+                });
+            }
+            p
+        }
+    };
+
+    let num_hunks = patch.num_hunks();
+    let mut hunks = Vec::with_capacity(num_hunks);
+
+    for h_idx in 0..num_hunks {
+        let (diff_hunk, line_count) = patch
+            .hunk(h_idx)
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+
+        let old_range = (diff_hunk.old_start(), diff_hunk.old_lines());
+        let new_range = (diff_hunk.new_start(), diff_hunk.new_lines());
+
+        let mut lines = Vec::with_capacity(line_count);
+
+        for l_idx in 0..line_count {
+            let diff_line = patch
+                .line_in_hunk(h_idx, l_idx)
+                .map_err(|e| GitError::Other(e.message().to_string()))?;
+
+            let kind = match diff_line.origin() {
+                '+' | '>' => DiffLineKind::Added,
+                '-' | '<' => DiffLineKind::Removed,
+                _ => DiffLineKind::Context,
+            };
+            let content = String::from_utf8_lossy(diff_line.content()).into_owned();
+
+            lines.push(DiffLine {
+                kind,
+                content,
+                old_lineno: diff_line.old_lineno(),
+                new_lineno: diff_line.new_lineno(),
+            });
+        }
+
+        hunks.push(Hunk {
+            old_range,
+            new_range,
+            lines,
+        });
+    }
+
+    Ok(FileDiff {
+        old_path,
+        new_path,
+        change,
+        hunks,
+        is_binary: false,
+    })
+}

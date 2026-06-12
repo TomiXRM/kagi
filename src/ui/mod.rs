@@ -695,10 +695,30 @@ impl FileDiffView {
 pub enum MainDiffSource {
     /// Opened from the commit detail panel (changed-files list).
     Commit { row_index: usize, file_index: usize },
+    /// Opened from the compare changed-files list.
+    Compare {
+        base: CommitId,
+        target: CompareTarget,
+        file_index: usize,
+    },
     /// Opened from the Commit Panel — unstaged file.
     Unstaged { path: PathBuf },
     /// Opened from the Commit Panel — staged file.
     Staged { path: PathBuf },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CompareTarget {
+    Head,
+    WorkingTree,
+}
+
+#[derive(Clone, Debug)]
+pub struct CompareView {
+    pub base: CommitId,
+    pub target: CompareTarget,
+    pub files: Vec<FileStatus>,
+    pub title: SharedString,
 }
 
 /// State for the full-width main pane diff view (T-UI-003).
@@ -1011,6 +1031,9 @@ pub struct KagiApp {
     /// T-UI-003: When `Some`, the main pane shows this diff (full-width) instead
     /// of the commit graph list.  Cleared when `selected` changes or on reload.
     pub main_diff: Option<MainDiffView>,
+    /// ADR-0026: read-only compare mode shown in the inspector changed-files area.
+    /// Cleared on selection change or reload to avoid stale path/diff state.
+    pub compare_view: Option<CompareView>,
     /// T-UI-003: Scroll handle for the "main-diff-list" uniform_list.
     pub main_diff_scroll_handle: UniformListScrollHandle,
     /// Local branch names from the snapshot, ordered by name.
@@ -1277,6 +1300,7 @@ impl KagiApp {
             repo_path: None,
             diff_cache: HashMap::new(),
             main_diff: None,
+            compare_view: None,
             main_diff_scroll_handle: UniformListScrollHandle::new(),
             branches,
             plan_modal: None,
@@ -1350,6 +1374,7 @@ impl KagiApp {
             repo_path: None,
             diff_cache: HashMap::new(),
             main_diff: None,
+            compare_view: None,
             main_diff_scroll_handle: UniformListScrollHandle::new(),
             branches: Vec::new(),
             plan_modal: None,
@@ -1452,6 +1477,7 @@ impl KagiApp {
         self.selected = None;
         self.diff_cache = HashMap::new();
         self.main_diff = None;
+        self.compare_view = None;
         self.plan_modal = None;
         self.pull_modal = None;
         self.undo_modal = None;
@@ -3729,11 +3755,13 @@ impl KagiApp {
         if self.selected == Some(index) {
             self.selected = None;
             self.main_diff = None;
+            self.compare_view = None;
             return;
         }
         self.selected = Some(index);
         // Clear any open main diff when the commit selection changes.
         self.main_diff = None;
+        self.compare_view = None;
 
         if let Some(detail) = self.details.get(index) {
             let parent_count = detail.parent_ids.len();
@@ -3810,6 +3838,19 @@ impl KagiApp {
                     self.open_main_diff_commit(next);
                 }
             }
+            MainDiffSource::Compare { base, target, file_index } => {
+                let len = match self.compare_view.as_ref() {
+                    Some(view) if view.base == base && view.target == target => view.files.len(),
+                    _ => 0,
+                };
+                if len == 0 {
+                    return;
+                }
+                let next = (file_index as i64 + delta).clamp(0, len as i64 - 1) as usize;
+                if next != file_index {
+                    self.open_main_diff_compare(next);
+                }
+            }
             MainDiffSource::Unstaged { path } => {
                 let (cur, len) = match self.commit_panel.as_ref() {
                     Some(p) => (
@@ -3840,6 +3881,14 @@ impl KagiApp {
                     self.open_main_diff_wip(commit_panel::CommitPanelFileRef::Staged { index: next });
                 }
             }
+        }
+    }
+
+    pub fn open_main_diff_inspector_file(&mut self, file_index: usize) {
+        if self.compare_view.is_some() {
+            self.open_main_diff_compare(file_index);
+        } else {
+            self.open_main_diff_commit(file_index);
         }
     }
 
@@ -3920,6 +3969,89 @@ impl KagiApp {
             }
             Err(e) => {
                 eprintln!("[kagi] diff error: {}", e);
+            }
+        }
+    }
+
+    pub fn open_main_diff_compare(&mut self, file_index: usize) {
+        use kagi::git::{compare_commit_to_workdir_file_diff, compare_file_diff};
+
+        let repo_path = match self.repo_path.as_ref() {
+            Some(p) => p.clone(),
+            None => return,
+        };
+        let view = match self.compare_view.as_ref() {
+            Some(v) => v.clone(),
+            None => return,
+        };
+        let file_status = match view.files.get(file_index) {
+            Some(f) => f,
+            None => return,
+        };
+        let path = file_status.path.clone();
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+
+        let file_diff_result = match view.target {
+            CompareTarget::Head => {
+                let head = match repo.head().ok().and_then(|h| h.target()) {
+                    Some(oid) => CommitId(oid.to_string()),
+                    None => return,
+                };
+                compare_file_diff(&repo, &view.base, &head, &path)
+            }
+            CompareTarget::WorkingTree => compare_commit_to_workdir_file_diff(&repo, &view.base, &path),
+        };
+
+        match file_diff_result {
+            Ok(file_diff) => {
+                let added: usize = file_diff
+                    .hunks
+                    .iter()
+                    .flat_map(|h| h.lines.iter())
+                    .filter(|l| l.kind == DiffLineKind::Added)
+                    .count();
+                let removed: usize = file_diff
+                    .hunks
+                    .iter()
+                    .flat_map(|h| h.lines.iter())
+                    .filter(|l| l.kind == DiffLineKind::Removed)
+                    .count();
+                let hunks = file_diff.hunks.len();
+
+                eprintln!(
+                    "[kagi] diff: {} hunks={} (+{} -{})",
+                    path.display(),
+                    hunks,
+                    added,
+                    removed,
+                );
+
+                let fdv = FileDiffView::from_file_diff(&file_diff, file_index);
+                let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
+                let title = fdv.file_name.clone();
+                let mut rows = fdv.rows;
+                let row_count = rows.len();
+
+                let hl_lang = highlight_diff_rows(&mut rows, &path);
+                eprintln!("[kagi] main-diff: open {} rows={} highlight={}", path.display(), row_count, hl_lang);
+
+                self.main_diff = Some(MainDiffView {
+                    title,
+                    stats,
+                    rows,
+                    source: MainDiffSource::Compare {
+                        base: view.base,
+                        target: view.target,
+                        file_index,
+                    },
+                });
+            }
+            Err(e) => {
+                eprintln!("[kagi] compare diff error: {}", e);
             }
         }
     }
@@ -4013,6 +4145,166 @@ impl KagiApp {
 
         let repo = git2::Repository::open(repo_path).ok()?;
         commit_changed_files(&repo, &id).ok()
+    }
+
+    pub fn close_compare_view(&mut self) {
+        self.compare_view = None;
+        self.main_diff = None;
+    }
+
+    pub fn show_changed_files_for_commit(&mut self, target: CommitId) {
+        let row_index = match self.row_for_commit_id(&target) {
+            Some(ix) => ix,
+            None => return,
+        };
+        self.close_compare_view();
+        if self.selected != Some(row_index) {
+            self.select(row_index);
+        } else if !self.diff_cache.contains_key(&row_index) {
+            let files_opt = self.fetch_changed_files(row_index);
+            let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
+            eprintln!("[kagi] changed files: {}", n);
+            self.diff_cache.insert(row_index, files_opt);
+        }
+    }
+
+    pub fn open_compare_with_head(&mut self, target: CommitId) {
+        use kagi::git::compare_commits;
+
+        let row_index = match self.row_for_commit_id(&target) {
+            Some(ix) => ix,
+            None => return,
+        };
+        if self.selected != Some(row_index) {
+            self.select(row_index);
+        }
+
+        let repo_path = match self.repo_path.as_ref() {
+            Some(p) => p.clone(),
+            None => return,
+        };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] compare: repo open error: {}", e.message());
+                return;
+            }
+        };
+        let head = match repo.head().ok().and_then(|h| h.target()) {
+            Some(oid) => CommitId(oid.to_string()),
+            None => {
+                eprintln!("[kagi] compare: HEAD unavailable");
+                return;
+            }
+        };
+
+        match compare_commits(&repo, &target, &head) {
+            Ok(files) => {
+                let title = SharedString::from(format!("{} \u{2194} HEAD", target.short()));
+                eprintln!(
+                    "[kagi] compare: {} <-> HEAD files={}",
+                    target.short(),
+                    files.len()
+                );
+                self.main_diff = None;
+                self.compare_view = Some(CompareView {
+                    base: target,
+                    target: CompareTarget::Head,
+                    files,
+                    title,
+                });
+            }
+            Err(e) => {
+                eprintln!("[kagi] compare: error: {}", e);
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "Compare failed: {}",
+                    e
+                )));
+            }
+        }
+    }
+
+    pub fn open_compare_with_working_tree(&mut self, target: CommitId) {
+        use kagi::git::{compare_commit_to_workdir, working_tree_status};
+
+        let row_index = match self.row_for_commit_id(&target) {
+            Some(ix) => ix,
+            None => return,
+        };
+        if self.selected != Some(row_index) {
+            self.select(row_index);
+        }
+
+        let repo_path = match self.repo_path.as_ref() {
+            Some(p) => p.clone(),
+            None => return,
+        };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] compare: repo open error: {}", e.message());
+                return;
+            }
+        };
+        match working_tree_status(&repo) {
+            Ok(status) if !status.is_dirty() => {
+                eprintln!(
+                    "[kagi] compare: {} <-> working tree disabled(local changes がありません)",
+                    target.short()
+                );
+                self.status_footer = FooterStatus::Idle(SharedString::from(
+                    "local changes がありません",
+                ));
+                return;
+            }
+            Err(e) => {
+                eprintln!("[kagi] compare: status error: {}", e);
+                return;
+            }
+            _ => {}
+        }
+
+        match compare_commit_to_workdir(&repo, &target) {
+            Ok(files) => {
+                let title = SharedString::from(format!(
+                    "{} \u{2194} working tree (staged+unstaged)",
+                    target.short()
+                ));
+                eprintln!(
+                    "[kagi] compare: {} <-> working tree files={}",
+                    target.short(),
+                    files.len()
+                );
+                self.main_diff = None;
+                self.compare_view = Some(CompareView {
+                    base: target,
+                    target: CompareTarget::WorkingTree,
+                    files,
+                    title,
+                });
+            }
+            Err(e) => {
+                eprintln!("[kagi] compare: error: {}", e);
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "Compare failed: {}",
+                    e
+                )));
+            }
+        }
+    }
+
+    pub fn open_compare_with_head_row(&mut self, row_index: usize) {
+        match self.commit_id_for_row(row_index) {
+            Some(target) => self.open_compare_with_head(target),
+            None => eprintln!("[kagi] compare: row={} out of range", row_index),
+        }
+    }
+
+    pub fn open_compare_with_working_tree_row(&mut self, row_index: usize) {
+        match self.commit_id_for_row(row_index) {
+            Some(target) => self.open_compare_with_working_tree(target),
+            None => eprintln!("[kagi] compare: row={} out of range", row_index),
+        }
     }
 
     // ── T028: branch jump ────────────────────────────────────
@@ -4244,9 +4536,6 @@ impl KagiApp {
             | CommitAction::Revert
             | CommitAction::CheckoutCommit
             | CommitAction::CheckoutRef(_)
-            | CommitAction::CompareWithHead
-            | CommitAction::CompareWithWorkingTree
-            | CommitAction::ShowChangedFiles
             | CommitAction::ResetToCommit => {
                 let action_name = match action {
                     CommitAction::CreateBranchHere => "Create branch here",
@@ -4255,9 +4544,6 @@ impl KagiApp {
                     CommitAction::Revert => "Revert",
                     CommitAction::CheckoutCommit => "Checkout commit",
                     CommitAction::CheckoutRef(_) => "Checkout ref",
-                    CommitAction::CompareWithHead => "Compare with HEAD",
-                    CommitAction::CompareWithWorkingTree => "Compare with working tree",
-                    CommitAction::ShowChangedFiles => "Show changed files",
                     CommitAction::ResetToCommit => "Reset",
                     _ => unreachable!(),
                 };
@@ -4266,6 +4552,15 @@ impl KagiApp {
                     action_name
                 )));
                 eprintln!("[kagi] context-menu: stub {} {}", action_name, target.short());
+            }
+            CommitAction::CompareWithHead => {
+                self.open_compare_with_head(target);
+            }
+            CommitAction::CompareWithWorkingTree => {
+                self.open_compare_with_working_tree(target);
+            }
+            CommitAction::ShowChangedFiles => {
+                self.show_changed_files_for_commit(target);
             }
         }
     }
@@ -4348,6 +4643,7 @@ impl Render for KagiApp {
 
         // T-UI-003: Clone main diff state if present.
         let main_diff = self.main_diff.clone();
+        let compare_view = self.compare_view.clone();
         let main_diff_scroll_handle = self.main_diff_scroll_handle.clone();
 
         // Clone branch list and modal state for render.
@@ -4532,7 +4828,7 @@ impl Render for KagiApp {
             // ── Body slot: sidebar | list | optional panel ───
             .child(self.render_body(
                 row_count, selected, detail, changed_files, selected_badges, inspector_tree_view,
-                main_diff, main_diff_scroll_handle,
+                main_diff, compare_view, main_diff_scroll_handle,
                 branches, remote_branches, tags, stashes, branch_upstream_info,
                 sidebar_collapsed, sidebar_filter,
                 is_dirty, sidebar_width, panel_width,
@@ -5004,6 +5300,7 @@ impl KagiApp {
         selected_badges: Vec<commit_list::RefBadge>,
         inspector_tree_view: bool,
         main_diff: Option<MainDiffView>,
+        compare_view: Option<CompareView>,
         main_diff_scroll_handle: UniformListScrollHandle,
         branches: Vec<(String, bool)>,
         remote_branches: Vec<RemoteBranch>,
@@ -5224,6 +5521,7 @@ impl KagiApp {
         let active_src = main_diff.as_ref().map(|d| d.source.clone());
         let active_commit_file: Option<usize> = match &active_src {
             Some(MainDiffSource::Commit { file_index, .. }) => Some(*file_index),
+            Some(MainDiffSource::Compare { file_index, .. }) => Some(*file_index),
             _ => None,
         };
         let active_wip: Option<(bool, PathBuf)> = match &active_src {
@@ -5290,12 +5588,15 @@ impl KagiApp {
             body_row = body_row.when_some(detail, |el, d| {
                 // ── Commit metadata + changed files ─
                 let at = CommitId(d.full_sha.as_ref().to_string());
-                let files = changed_files.clone();
-                let files_for_click = changed_files.clone();
+                let compare_for_panel = compare_view.clone();
+                let files = compare_for_panel
+                    .as_ref()
+                    .map(|view| Some(view.files.clone()))
+                    .unwrap_or_else(|| changed_files.clone().unwrap_or(None));
                 el.child(divider2)
                     .child(inspector::render_inspector(
                         d, at, selected_badges.clone(),
-                        files.unwrap_or(None), files_for_click.unwrap_or(None),
+                        files, compare_for_panel,
                         active_commit_file, inspector_tree_view, panel_width, cx,
                     ))
             });

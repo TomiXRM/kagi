@@ -18,7 +18,11 @@ mod staging;
 mod status;
 
 #[allow(unused_imports)]
-pub use diff::{DiffLine, DiffLineKind, FileDiff, Hunk, commit_changed_files, commit_file_diff};
+pub use diff::{
+    DiffLine, DiffLineKind, FileDiff, Hunk, commit_changed_files, commit_file_diff,
+    compare_commit_to_workdir, compare_commit_to_workdir_file_diff, compare_commits,
+    compare_file_diff,
+};
 #[allow(unused_imports)]
 pub use oplog::{OpLogEntry, OpOutcome, append_oplog, read_oplog_tail};
 #[allow(unused_imports)]

@@ -1,6 +1,6 @@
 # W4-TABS: リポジトリ tab 切り替え + ディレクトリ選択(ユーザー要望)
 
-- Status: in-progress
+- Status: done
 - 担当: worktree agent(Opus)
 - 関連 ADR: 0027(tabs)/ 0028(picker・welcome)
 
@@ -62,3 +62,48 @@
 - switch 時の状態リセット漏れ(stale diff/modal)— リセット対象をチケットの列挙どおりに
 - watcher の旧 loop が残ると二重 reload になる。generation 検査を update 毎に行う
 - 文字列切り詰めは chars() ベース / force 系コード追加禁止(全体規約)
+
+## 実装メモ(W4-TABS 完了)
+
+### 構成
+- 新規 `src/ui/tabs.rs` に全ロジックを集約: `RepoTab{path,name}`、`KagiApp` の
+  tab/picker/watcher メソッド、tab strip / Welcome の render を実装。
+- `KagiApp` 追加フィールド: `tabs: Vec<RepoTab>`、`active_tab: usize`、
+  `watcher_generation: u64`、`terminal_sessions: HashMap<PathBuf, KagiTerminalSession>`
+  (旧 `terminal_session: Option<...>` を置換)。
+
+### tab モデル
+- `open_repository(path,cx)`: canonicalize → 既存 tab なら switch、新規なら検証
+  (失敗時は tab を作らず error toast + footer)→ push → `switch_repo`。
+- `switch_repo(index,cx)`: `repo_path` 差し替え → `reload()`(snapshot 再構築)→
+  per-repo UI 状態を明示リセット(selection/diff_cache/main_diff/全 modal/commit_panel)
+  → `log_tabs()` → `arm_watcher(cx)`。
+- `close_tab(index,cx)`: tab 削除 + その repo の terminal session 破棄。最後の tab を
+  閉じると Welcome(`show_welcome()`)へ。active index は close 位置に応じて再計算。
+- `log_tabs()`: `[kagi] tabs: n=<N> active=<i> <name>` を出力。
+
+### picker / Welcome
+- `pick_repository(window,cx)`: `cx.prompt_for_paths(files:false,directories:true,
+  multiple:false,prompt:Some("Open Repository"))` の oneshot を `cx.spawn` で await →
+  `open_repository`。
+- Welcome: `tabs` が空のとき中央に「Open Repository…」ボタン(→ picker)。
+  既存の error 画面は **error 文字列が非空のときのみ**表示(headless 互換維持)。
+
+### watcher(generation 方式)
+- `arm_watcher(cx)`: `watcher_generation` を bump → spawn loop。loop は毎ループ先頭と
+  debounce 後に `app.watcher_generation == generation` を検査し、不一致なら break。
+  → switch/open/close 後の旧 loop は自然終了(二重 reload なし、headless で実証)。
+
+### terminal
+- session は repo path キーの HashMap。`build_terminal_view` に repo path を渡し、
+  exit_callback が正しい entry を `view=None` にするよう修正。
+
+### headless 検証(fixture 2つ)
+- 引数1つ起動: 既存ログ全て回帰なし + `tabs: n=1 active=0` + watcher 1本。
+- `KAGI_OPEN_REPO`: 2つ目を tab 追加 + switch、sidebar/statusbar/commit rows が
+  2つ目の repo の値に切替(local 3→4, rows 9→10, ahead 1→2)、`tabs: n=2 active=1`。
+- watcher: active repo のみ watch、active repo の commit で refresh 1回のみ、
+  inactive repo の commit では refresh なし。
+- 非 repo dir の `KAGI_OPEN_REPO`: tab 追加されず(n=0)、crash なし。
+- 引数なし: Welcome(`tabs: n=0`)、watcher なし、crash なし。
+- `cargo test` 全 16 binary pass(exit 0)、own-code warning 0。

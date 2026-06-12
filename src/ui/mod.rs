@@ -13,6 +13,7 @@ pub mod file_tree;
 pub mod graph_view;
 pub mod inspector;
 pub mod sidebar;
+pub mod tabs;
 pub mod terminal;
 pub mod watcher;
 
@@ -1091,10 +1092,19 @@ pub struct KagiApp {
     pub oplog_scroll_handle: UniformListScrollHandle,
     /// Which row index (0 = newest) is currently expanded; None = none.
     pub oplog_expanded: Option<usize>,
-    // ── T-BP-007: Terminal session ───────────────────────────────
-    /// Lazy terminal session.  `None` until `repo_path` is known and the
-    /// Terminal tab is first displayed (or KAGI_TERMINAL=1 at startup).
-    pub terminal_session: Option<terminal::KagiTerminalSession>,
+    // ── T-BP-007 / W4-TABS: Terminal sessions ────────────────────
+    /// Terminal sessions keyed by repository path so each tab keeps its own
+    /// live PTY across tab switches (W4-TABS / ADR-0027).  A session is created
+    /// lazily when the Terminal tab is first displayed for a given repo.
+    pub terminal_sessions: HashMap<PathBuf, terminal::KagiTerminalSession>,
+    // ── W4-TABS: Repository tabs (ADR-0027) ──────────────────────
+    /// Open repository tabs.  Empty → Welcome screen is shown.
+    pub tabs: Vec<tabs::RepoTab>,
+    /// Index of the active tab in `tabs` (meaningless when `tabs` is empty).
+    pub active_tab: usize,
+    /// Monotonic watcher generation.  Bumped on every switch/open/close so the
+    /// previously-armed watcher loop detects a mismatch and terminates itself.
+    pub watcher_generation: u64,
     // ── W2-GRAPH: Compact graph mode ────────────────────────────
     /// When `true` row height is 18px (compact); `false` (default) = 24px.
     pub graph_compact: bool,
@@ -1286,7 +1296,10 @@ impl KagiApp {
             op_entries,
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
-            terminal_session: None,
+            terminal_sessions: HashMap::new(),
+            tabs: Vec::new(),
+            active_tab: 0,
+            watcher_generation: 0,
             inspector_tree_view: true,
             graph_compact: false,
             // W2-SIDEBAR
@@ -1351,7 +1364,10 @@ impl KagiApp {
             op_entries: VecDeque::new(),
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
-            terminal_session: None,
+            terminal_sessions: HashMap::new(),
+            tabs: Vec::new(),
+            active_tab: 0,
+            watcher_generation: 0,
             inspector_tree_view: true,
             graph_compact: false,
             // W2-SIDEBAR
@@ -2495,25 +2511,25 @@ impl KagiApp {
     /// * On startup failure, calls `record_op` with `op="terminal-start"` and
     ///   `OpOutcome::Failed`.
     pub fn ensure_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Initialise the session container if we haven't yet.
-        if self.terminal_session.is_none() {
-            if let Some(ref rp) = self.repo_path.clone() {
-                self.terminal_session =
-                    Some(terminal::KagiTerminalSession::new(rp.clone()));
-            } else {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => {
                 eprintln!("[kagi] terminal: no repo_path — cannot start terminal");
                 return;
             }
-        }
-
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
         };
 
-        // Mutably borrow session; we need to split the borrow to call record_op.
-        // Collect the failure message first (if any) then record it after.
-        let session = self.terminal_session.as_mut().expect("just set above");
+        // W4-TABS: sessions are keyed by repo path so each tab keeps its PTY.
+        // Initialise the session container for this repo if we haven't yet.
+        self.terminal_sessions
+            .entry(repo_path.clone())
+            .or_insert_with(|| terminal::KagiTerminalSession::new(repo_path.clone()));
+
+        // Mutably borrow the session; split the borrow so record_op can run after.
+        let session = self
+            .terminal_sessions
+            .get_mut(&repo_path)
+            .expect("just inserted above");
 
         let mut failure_msg: Option<String> = None;
         terminal::ensure_terminal(session, window, cx, |msg| {
@@ -4091,9 +4107,10 @@ impl Render for KagiApp {
         let row_count = self.rows.len();
         let selected = self.selected;
 
-        if let Some(err) = &self.error {
+        // W4-TABS / ADR-0028: a non-empty error string still shows the error
+        // screen (genuine repo-open failure at startup; headless log compat).
+        if let Some(err) = self.error.clone().filter(|e| !e.is_empty()) {
             // ── Error / usage state ──────────────────────────
-            let err = err.clone();
             return div()
                 .flex()
                 .flex_col()
@@ -4108,6 +4125,11 @@ impl Render for KagiApp {
                         .child(err),
                 )
                 .into_any();
+        }
+
+        // W4-TABS / ADR-0028: no open tabs → Welcome screen.
+        if self.tabs.is_empty() {
+            return self.render_welcome(cx).into_any();
         }
 
         // ── Pre-fetch detail for panel (if any row is selected) ─
@@ -4286,6 +4308,8 @@ impl Render for KagiApp {
                 this.main_diff_step(1);
                 cx.notify();
             }))
+            // ── W4-TABS: repository tab strip (above the header toolbar) ──
+            .children(self.render_tab_strip(cx))
             // ── Header slot ──────────────────────────────────
             // ADR-0013: pass HEAD commit summary for Undo label (first row = HEAD).
             .child(self.render_header_slot(toolbar_state, status_summary, self.rows.first().map(|r| r.summary.to_string()), cx))
@@ -5271,8 +5295,13 @@ impl KagiApp {
     ///    show a "starting…" placeholder.  The Terminal tab click listener has
     ///    already called `ensure_terminal`; the view will appear on next repaint.
     fn render_terminal_body(&mut self, _cx: &mut Context<Self>) -> gpui::AnyElement {
+        // W4-TABS: look up the active repo's session in the HashMap.
+        let active_session = self
+            .repo_path
+            .as_ref()
+            .and_then(|rp| self.terminal_sessions.get(rp));
         // Case 1: running terminal view.
-        if let Some(ref session) = self.terminal_session {
+        if let Some(session) = active_session {
             if let Some(ref view_entity) = session.view {
                 return div()
                     .flex_1()
@@ -8510,14 +8539,11 @@ fn render_commit_plan_modal(
 
 /// Open the GPUI window and start the event loop.
 pub fn run_app(mut app_state: KagiApp) {
-    use gpui::{Application, Bounds, Timer, WindowBounds, WindowOptions, size};
-    use std::sync::mpsc;
-    use std::time::Duration;
+    use gpui::{Application, Bounds, WindowBounds, WindowOptions, size};
 
-    // T029: start the .git watcher before entering the gpui event loop.
-    // Extract repo_path first; if absent (error-state app) skip the watcher.
-    let maybe_watcher: Option<(mpsc::Receiver<()>, notify::RecommendedWatcher)> =
-        app_state.repo_path.as_ref().and_then(|p| watcher::start_git_watcher(p));
+    // W4-TABS / ADR-0027: the watcher is armed from inside the window context
+    // via `arm_watcher` (generation scheme), replacing the fixed spawn that
+    // used to live here.  No pre-window watcher is created.
 
     Application::new()
         .with_assets(assets::KagiAssets)
@@ -8582,50 +8608,14 @@ pub fn run_app(mut app_state: KagiApp) {
                     kagi.update(cx, |app, cx| app.ensure_terminal(window, cx));
                 }
 
-                // T029: if the watcher started successfully, spawn a background
-                // loop that waits for events and triggers reload_external().
-                if let Some((rx, _watcher_handle)) = maybe_watcher {
-                    // Keep the watcher alive by moving it into a long-lived task.
-                    // We move `_watcher_handle` into the async block so it is
-                    // dropped only when the task finishes (i.e. the app quits).
-                    let weak = kagi.downgrade();
-                    cx.spawn(async move |async_cx| {
-                        // Suppress unused-variable warning: watcher lifetime is
-                        // the point — we hold it so notify doesn't stop.
-                        let _watcher = _watcher_handle;
-
-                        loop {
-                            // Sleep briefly before checking the channel to avoid
-                            // a busy loop.  100 ms granularity is fine here;
-                            // debounce happens AFTER the first signal arrives.
-                            Timer::after(Duration::from_millis(100)).await;
-
-                            // Check if a signal arrived.
-                            let got_signal = rx.try_recv().is_ok();
-                            if !got_signal {
-                                continue;
-                            }
-
-                            // Signal received — wait the debounce window then
-                            // drain any additional signals that arrived during it.
-                            Timer::after(watcher::DEBOUNCE).await;
-                            while rx.try_recv().is_ok() {}
-
-                            // Upgrade WeakEntity and call reload_external.
-                            // If the entity has been dropped (window closed), exit.
-                            let result = async_cx.update(|cx| {
-                                weak.update(cx, |app, cx| {
-                                    app.reload_external(cx);
-                                })
-                            });
-                            if result.is_err() {
-                                // App is gone; stop the loop.
-                                break;
-                            }
-                        }
-                    })
-                    .detach();
-                }
+                // W4-TABS / ADR-0027: arm the .git watcher for the initial tab
+                // (if any) using the generation scheme.  Subsequent switch/open/
+                // close re-arm it from within the entity context.
+                kagi.update(cx, |app, cx| {
+                    if app.repo_path.is_some() {
+                        app.arm_watcher(cx);
+                    }
+                });
 
                 cx.new(|cx| gpui_component::Root::new(kagi, window, cx))
             },

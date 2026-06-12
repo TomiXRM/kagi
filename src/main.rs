@@ -28,15 +28,64 @@ fn record_headless_op(
     eprintln!("[kagi] footer: {}: {} ({})", op, desc, kind_str);
 }
 
+/// W4-TABS: open `path` as a repository tab on `app` and make it active,
+/// rebuilding the heavyweight per-repo state from a fresh snapshot.
+///
+/// Used by the headless `KAGI_OPEN_REPO` path (main.rs has no gpui context, so
+/// it cannot call `KagiApp::switch_repo`, which needs a `Context`).  The GUI
+/// picker path uses `KagiApp::open_repository` instead.
+///
+/// On failure the tab is not added and an error is logged (no panic).
+fn init_tab(app: &mut KagiApp, path: &PathBuf) {
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+
+    // Skip if already open → just switch active index + rebuild.
+    if let Some(idx) = app.tabs.iter().position(|t| t.path == path) {
+        app.active_tab = idx;
+        app.repo_path = Some(path.clone());
+        app.reload();
+        app.log_tabs();
+        return;
+    }
+
+    let info = match open_repository(&path) {
+        Ok(info) => info,
+        Err(e) => {
+            eprintln!("[kagi] KAGI_OPEN_REPO: open error: {}", e);
+            return;
+        }
+    };
+
+    app.tabs.push(ui::tabs::RepoTab {
+        path: path.clone(),
+        name: info.name.clone(),
+    });
+    app.active_tab = app.tabs.len() - 1;
+    app.repo_path = Some(path.clone());
+    // Rebuild the heavyweight per-repo display state from a fresh snapshot.
+    app.reload();
+    app.log_tabs();
+}
+
 fn main() {
     // Collect CLI arguments (skip argv[0]).
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    // W4-TABS: KAGI_OPEN_REPO=<path> opens a repo as a tab even when no CLI
+    // arg is given (headless picker substitute, ADR-0027/0028).
+    let env_open_repo = std::env::var("KAGI_OPEN_REPO").ok().map(PathBuf::from);
+
     if args.is_empty() {
+        // W4-TABS / ADR-0028: no argument → Welcome screen (tabs empty).
+        // The usage error string is still emitted to stderr for headless compat.
         eprintln!("[kagi] usage: kagi <repo-path>");
-        run_app(KagiApp::with_error(
-            "Usage: kagi <repo-path>\n\nProvide the path to a git repository as the first argument.",
-        ));
+        let mut welcome = KagiApp::with_error("");
+        welcome.log_tabs();
+        // KAGI_OPEN_REPO: open the named repo as the first tab before launching.
+        if let Some(ref env_path) = env_open_repo {
+            init_tab(&mut welcome, env_path);
+        }
+        run_app(welcome);
         return;
     }
 
@@ -114,6 +163,21 @@ fn main() {
     let mut app_state = KagiApp::from_snapshot(&info.name, &snap);
     // T011: store repo path so the UI can fetch changed files on-demand.
     app_state.repo_path = Some(repo_path.clone());
+
+    // W4-TABS / ADR-0027: the CLI argument becomes the initial tab.
+    app_state.tabs.push(ui::tabs::RepoTab {
+        path: repo_path.clone(),
+        name: info.name.clone(),
+    });
+    app_state.active_tab = 0;
+    app_state.log_tabs();
+
+    // W4-TABS / ADR-0027: KAGI_OPEN_REPO opens a second tab and switches to it
+    // (headless picker substitute).  The sidebar / status-bar logs that follow
+    // will reflect the newly-active repo.
+    if let Some(ref env_path) = env_open_repo {
+        init_tab(&mut app_state, env_path);
+    }
 
     // KAGI_SELECT_FIRST=1: auto-select row 0 at startup for headless
     // verification of the detail panel render path (T010).
@@ -849,9 +913,11 @@ fn main() {
         if std::env::var("KAGI_TERMINAL").as_deref() == Ok("1") {
             app_state.bottom_tab = ui::BottomTab::Terminal;
             // Pre-create the session container so it exists when run_app starts.
+            // W4-TABS: sessions are keyed by repo path.
             if let Some(ref rp) = app_state.repo_path.clone() {
-                app_state.terminal_session =
-                    Some(ui::terminal::KagiTerminalSession::new(rp.clone()));
+                app_state
+                    .terminal_sessions
+                    .insert(rp.clone(), ui::terminal::KagiTerminalSession::new(rp.clone()));
             }
         }
 

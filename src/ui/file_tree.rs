@@ -209,6 +209,7 @@ mod tests {
         mk(path, ChangeKind::Added)
     }
 
+    #[allow(dead_code)]
     fn modified(path: &str) -> FileStatus {
         mk(path, ChangeKind::Modified)
     }

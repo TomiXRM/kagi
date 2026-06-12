@@ -165,6 +165,104 @@ const BG_MODAL_OVERLAY: u32 = 0x000000; // semi-transparent overlay (set opacity
 const BG_MODAL: u32 = 0x313244;         // surface0 — modal background
 
 // ──────────────────────────────────────────────────────────────
+// T-BP-003: StatusBarSummary — data snapshot for the status bar
+// ──────────────────────────────────────────────────────────────
+
+/// Summary of repository state shown in the status bar (T-BP-003).
+///
+/// Derived from [`RepoSnapshot`] on each reload; the UI renders these
+/// pre-computed values so no snapshot re-reading happens in render.
+#[derive(Clone, Debug, Default)]
+pub struct StatusBarSummary {
+    /// Short branch name, `"detached HEAD"`, or `"no commits yet"`.
+    pub branch: String,
+    /// Whether the working tree is dirty (shows ● bullet).
+    pub is_dirty: bool,
+    /// Number of staged files (shown only when > 0).
+    pub staged: usize,
+    /// Number of unstaged files (shown only when > 0).
+    pub unstaged: usize,
+    /// Commits ahead of upstream (None = no upstream / detached).
+    pub ahead: Option<usize>,
+    /// Commits behind upstream (None = no upstream / detached).
+    pub behind: Option<usize>,
+    /// Whether there is no upstream configured (and not detached).
+    pub no_upstream: bool,
+    /// Wall-clock time (seconds since Unix epoch) of the last reload.
+    pub last_refresh_secs: i64,
+}
+
+impl StatusBarSummary {
+    /// Build from a [`RepoSnapshot`] at the current wall clock time.
+    pub fn from_snapshot(snap: &kagi::git::RepoSnapshot) -> Self {
+        use kagi::git::Head;
+        use commit_list::now_unix_secs;
+
+        let (branch, ahead, behind, no_upstream) = match &snap.head {
+            Head::Attached { branch, .. } => {
+                // Look up upstream info for this branch.
+                let upstream = snap
+                    .branches
+                    .iter()
+                    .find(|b| &b.name == branch)
+                    .and_then(|b| b.upstream.as_ref());
+                match upstream {
+                    Some(u) => (branch.clone(), Some(u.ahead), Some(u.behind), false),
+                    None => (branch.clone(), None, None, true),
+                }
+            }
+            Head::Detached { target } => {
+                let short = target.get(..8).unwrap_or(target).to_string();
+                (format!("detached HEAD ({})", short), None, None, false)
+            }
+            Head::Unborn { branch } => {
+                (format!("no commits yet ({})", branch), None, None, false)
+            }
+        };
+
+        StatusBarSummary {
+            branch,
+            is_dirty: snap.status.is_dirty(),
+            staged: snap.status.staged.len(),
+            unstaged: snap.status.unstaged.len(),
+            ahead,
+            behind,
+            no_upstream,
+            last_refresh_secs: now_unix_secs(),
+        }
+    }
+
+    /// Emit the headless verification log line required by T-BP-003.
+    ///
+    /// Format: `[kagi] statusbar: <branch> ↑A ↓B staged=N unstaged=M`
+    pub fn log_headless(&self) {
+        let ahead = self.ahead.unwrap_or(0);
+        let behind = self.behind.unwrap_or(0);
+        eprintln!(
+            "[kagi] statusbar: {} \u{2191}{} \u{2193}{} staged={} unstaged={}",
+            self.branch, ahead, behind, self.staged, self.unstaged
+        );
+    }
+}
+
+/// Format a Unix-epoch timestamp as `"HH:MM:SS"` (local wall-clock, UTC).
+///
+/// Reuses the same constant-time civil arithmetic as `detail_panel::format_utc`.
+pub fn format_hms(epoch_secs: i64) -> String {
+    const SECS_PER_DAY: i64 = 86_400;
+    let time_of_day = if epoch_secs >= 0 {
+        epoch_secs % SECS_PER_DAY
+    } else {
+        let d = (epoch_secs - (SECS_PER_DAY - 1)) / SECS_PER_DAY;
+        epoch_secs - d * SECS_PER_DAY
+    };
+    let hour = (time_of_day / 3_600) as u32;
+    let minute = ((time_of_day % 3_600) / 60) as u32;
+    let second = (time_of_day % 60) as u32;
+    format!("{:02}:{:02}:{:02}", hour, minute, second)
+}
+
+// ──────────────────────────────────────────────────────────────
 // StatusFooter — last operation result display (T017)
 // ──────────────────────────────────────────────────────────────
 
@@ -435,6 +533,10 @@ pub struct KagiApp {
     /// Maps CommitId → row index in `self.rows`.
     /// Built at snapshot time; used by jump_to_branch.
     pub commit_row_index: HashMap<CommitId, usize>,
+    // ── T-BP-003: StatusBar summary ──────────────────────────────
+    /// Pre-computed status bar data (branch, ahead/behind, staged, unstaged).
+    /// Updated on every reload; rendered by `render_status_bar`.
+    pub status_summary: StatusBarSummary,
 }
 
 impl KagiApp {
@@ -515,6 +617,10 @@ impl KagiApp {
             .map(|(i, c)| (c.id.clone(), i))
             .collect();
 
+        // T-BP-003: build StatusBarSummary and emit the headless log.
+        let status_summary = StatusBarSummary::from_snapshot(snap);
+        status_summary.log_headless();
+
         KagiApp {
             root_focus: None,
             header,
@@ -549,6 +655,7 @@ impl KagiApp {
             commit_scroll_handle: UniformListScrollHandle::new(),
             branch_targets,
             commit_row_index,
+            status_summary,
         }
     }
 
@@ -588,6 +695,7 @@ impl KagiApp {
             commit_scroll_handle: UniformListScrollHandle::new(),
             branch_targets: HashMap::new(),
             commit_row_index: HashMap::new(),
+            status_summary: StatusBarSummary::default(),
         }
     }
 
@@ -648,6 +756,8 @@ impl KagiApp {
         // T028: refresh branch/commit lookup maps so jump works after checkout.
         self.branch_targets = fresh.branch_targets;
         self.commit_row_index = fresh.commit_row_index;
+        // T-BP-003: update StatusBarSummary (already logged by from_snapshot above).
+        self.status_summary = fresh.status_summary;
         // commit_scroll_handle is preserved so the existing Rc<RefCell<...>> reference
         // wired into the uniform_list continues to work after reload.
         // status_footer is intentionally preserved across reloads so the last
@@ -2827,30 +2937,158 @@ impl KagiApp {
         )
     }
 
-    /// Status bar slot — the 22 px footer showing the last operation result.
+    /// Status bar slot — the 22 px footer (T-BP-003 full implementation).
     ///
-    /// T-BP-002: adds a panel toggle button (▲/▼) at the right end.
-    /// T-SB-001 will extend this slot further with icons / extra indicators.
+    /// Left → Right layout:
+    ///   branch [● dirty] [↑A ↓B | no upstream] [staged N] [unstaged M]
+    ///   HH:MM:SS  ·  <last operation message (flex_1, overflow_hidden)>
+    ///   right end: >_ (Terminal icon) ≡ (Operation Log icon) — VSCode style
+    ///
+    /// The old ▲/▼ toggle is replaced by the icon buttons.
     fn render_status_bar(
         &mut self,
         status_footer: FooterStatus,
         bottom_panel_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let (text_color, text) = match &status_footer {
+        let summary = self.status_summary.clone();
+        let bottom_tab = self.bottom_tab;
+
+        // ── Footer message colour ──────────────────────────────
+        let (footer_color, footer_text) = match &status_footer {
             FooterStatus::Success(msg) => (COLOR_SUCCESS, msg.clone()),
             FooterStatus::Failed(msg) => (COLOR_BLOCKER, msg.clone()),
             FooterStatus::Idle(msg) => (TEXT_MUTED, msg.clone()),
         };
 
-        let toggle_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
-            this.bottom_panel_open = !this.bottom_panel_open;
+        // ── Branch label ───────────────────────────────────────
+        let branch_text = SharedString::from(summary.branch.clone());
+
+        // ── Dirty bullet ──────────────────────────────────────
+        let dirty_chip = if summary.is_dirty {
+            Some(
+                div()
+                    .ml(px(4.))
+                    .text_color(rgb(COLOR_WARNING))
+                    .flex_shrink_0()
+                    .child(SharedString::from("\u{25cf}")), // ●
+            )
+        } else {
+            None
+        };
+
+        // ── Staged / unstaged counts ───────────────────────────
+        let staged_chip = if summary.staged > 0 {
+            Some(
+                div()
+                    .ml(px(4.))
+                    .text_color(rgb(COLOR_SUCCESS))
+                    .flex_shrink_0()
+                    .child(SharedString::from(format!("+{}", summary.staged))),
+            )
+        } else {
+            None
+        };
+        let unstaged_chip = if summary.unstaged > 0 {
+            Some(
+                div()
+                    .ml(px(4.))
+                    .text_color(rgb(COLOR_WARNING))
+                    .flex_shrink_0()
+                    .child(SharedString::from(format!("~{}", summary.unstaged))),
+            )
+        } else {
+            None
+        };
+
+        // ── Ahead / behind / no upstream ──────────────────────
+        let upstream_chip = match (summary.ahead, summary.behind) {
+            (Some(a), Some(b)) => {
+                let label = format!("\u{2191}{} \u{2193}{}", a, b); // ↑A ↓B
+                Some(
+                    div()
+                        .ml(px(6.))
+                        .text_color(rgb(TEXT_SUB))
+                        .flex_shrink_0()
+                        .child(SharedString::from(label)),
+                )
+            }
+            _ if summary.no_upstream => Some(
+                div()
+                    .ml(px(6.))
+                    .text_color(rgb(TEXT_MUTED))
+                    .flex_shrink_0()
+                    .child(SharedString::from("no upstream")),
+            ),
+            _ => None, // detached HEAD or unborn: nothing shown
+        };
+
+        // ── Last refresh time ──────────────────────────────────
+        let refresh_label = if summary.last_refresh_secs > 0 {
+            Some(
+                div()
+                    .ml(px(6.))
+                    .text_color(rgb(TEXT_MUTED))
+                    .flex_shrink_0()
+                    .child(SharedString::from(format_hms(summary.last_refresh_secs))),
+            )
+        } else {
+            None
+        };
+
+        // ── VSCode-style icon buttons (Terminal + Operation Log) ──────────
+        // Clicking an inactive icon opens the panel on that tab.
+        // Clicking the active icon closes the panel (toggle).
+        let oplog_active = bottom_panel_open && bottom_tab == BottomTab::OperationLog;
+        let terminal_active = bottom_panel_open && bottom_tab == BottomTab::Terminal;
+
+        let icon_terminal_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+            if terminal_active {
+                // Same tab visible → close panel.
+                this.bottom_panel_open = false;
+            } else {
+                this.bottom_panel_open = true;
+                this.bottom_tab = BottomTab::Terminal;
+            }
             cx.notify();
         });
 
-        let toggle_label = if bottom_panel_open { "▼" } else { "▲" };
+        let icon_oplog_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+            if oplog_active {
+                // Same tab visible → close panel.
+                this.bottom_panel_open = false;
+            } else {
+                this.bottom_panel_open = true;
+                this.bottom_tab = BottomTab::OperationLog;
+            }
+            cx.notify();
+        });
 
-        div()
+        let icon_terminal_color = if terminal_active { TEXT_MAIN } else { TEXT_MUTED };
+        let icon_oplog_color = if oplog_active { TEXT_MAIN } else { TEXT_MUTED };
+
+        let icon_terminal = div()
+            .id("status-icon-terminal")
+            .ml(px(4.))
+            .px_1()
+            .flex_shrink_0()
+            .text_color(rgb(icon_terminal_color))
+            .hover(|s| s.text_color(rgb(TEXT_MAIN)).cursor_pointer())
+            .on_click(icon_terminal_click)
+            .child(SharedString::from(">_"));
+
+        let icon_oplog = div()
+            .id("status-icon-oplog")
+            .ml(px(2.))
+            .px_1()
+            .flex_shrink_0()
+            .text_color(rgb(icon_oplog_color))
+            .hover(|s| s.text_color(rgb(TEXT_MAIN)).cursor_pointer())
+            .on_click(icon_oplog_click)
+            .child(SharedString::from("\u{2261}")); // ≡
+
+        // ── Assemble status bar ────────────────────────────────
+        let mut bar = div()
             .id("status-footer")
             .flex()
             .flex_row()
@@ -2858,24 +3096,52 @@ impl KagiApp {
             .w_full()
             .h(px(22.))
             .flex_shrink_0()
-            .px_3()
+            .px_2()
             .bg(rgb(BG_PANEL))
             .text_xs()
-            .text_color(rgb(text_color))
+            .text_color(rgb(TEXT_MUTED))
             .overflow_hidden()
-            .child(div().flex_1().overflow_hidden().text_color(rgb(text_color)).child(text))
+            // Branch label
             .child(
                 div()
-                    .id("bottom-panel-toggle-btn")
-                    .ml_2()
-                    .px_2()
                     .flex_shrink_0()
-                    .text_xs()
-                    .text_color(rgb(TEXT_MUTED))
-                    .hover(|s| s.text_color(rgb(TEXT_MAIN)).cursor_pointer())
-                    .on_click(toggle_click)
-                    .child(SharedString::from(toggle_label)),
-            )
+                    .text_color(rgb(TEXT_MAIN))
+                    .child(branch_text),
+            );
+
+        // Dirty bullet
+        if let Some(chip) = dirty_chip {
+            bar = bar.child(chip);
+        }
+        // Staged/unstaged counts
+        if let Some(chip) = staged_chip {
+            bar = bar.child(chip);
+        }
+        if let Some(chip) = unstaged_chip {
+            bar = bar.child(chip);
+        }
+        // Upstream ahead/behind
+        if let Some(chip) = upstream_chip {
+            bar = bar.child(chip);
+        }
+        // Refresh time
+        if let Some(chip) = refresh_label {
+            bar = bar.child(chip);
+        }
+
+        // Last operation message: flex_1, overflow_hidden, only if space allows.
+        bar = bar.child(
+            div()
+                .flex_1()
+                .ml(px(6.))
+                .overflow_hidden()
+                .text_color(rgb(footer_color))
+                .child(footer_text),
+        );
+
+        // Icon buttons at the right end.
+        bar.child(icon_terminal)
+           .child(icon_oplog)
     }
 }
 
@@ -3772,14 +4038,22 @@ fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> imp
     let has_blockers = !plan.blockers.is_empty();
 
     // ── Cancel handler ──────────────────────────────────────
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+    // T-BP-003: return focus to root_focus so cmd-j keeps working.
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.cancel_modal();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
         cx.notify();
     });
 
     // ── Confirm handler (only created when no blockers) ─────
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+    // T-BP-003: return focus to root_focus after confirm.
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.confirm_checkout();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
         cx.notify();
     });
 
@@ -4001,14 +4275,22 @@ fn render_create_branch_modal(
     let input_display = SharedString::from(format!("{}_", modal.input)); // cursor indicator
 
     // ── Cancel handler ──────────────────────────────────────
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+    // T-BP-003: return focus to root_focus so cmd-j keeps working.
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.cancel_create_branch_modal();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
         cx.notify();
     });
 
     // ── Confirm handler (only created when no blockers) ─────
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+    // T-BP-003: return focus to root_focus after confirm.
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.confirm_create_branch();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
         cx.notify();
     });
 
@@ -4244,13 +4526,20 @@ fn render_stash_push_modal(
     let has_blockers = plan.as_ref().map(|p| !p.blockers.is_empty()).unwrap_or(true);
     let input_display = SharedString::from(format!("{}_", modal.input));
 
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+    // T-BP-003: return focus to root_focus on cancel/confirm.
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.cancel_stash_push_modal();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
         cx.notify();
     });
 
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.confirm_stash_push();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
         cx.notify();
     });
 
@@ -4501,13 +4790,20 @@ fn render_stash_apply_modal(
     let plan = modal.plan.clone();
     let has_blockers = !plan.blockers.is_empty();
 
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+    // T-BP-003: return focus to root_focus on cancel/confirm.
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.cancel_stash_apply_modal();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
         cx.notify();
     });
 
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.confirm_stash_apply();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
         cx.notify();
     });
 
@@ -4704,13 +5000,20 @@ fn render_cherry_pick_modal(
     let plan = modal.plan.clone();
     let has_blockers = !plan.blockers.is_empty();
 
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+    // T-BP-003: return focus to root_focus on cancel/confirm.
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.cancel_cherry_pick_modal();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
         cx.notify();
     });
 
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.confirm_cherry_pick();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
         cx.notify();
     });
 
@@ -5637,13 +5940,20 @@ fn render_commit_plan_modal(
     let plan = modal.plan.clone();
     let has_blockers = !plan.blockers.is_empty();
 
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+    // T-BP-003: return focus to root_focus on cancel/confirm.
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.cancel_commit_plan_modal();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
         cx.notify();
     });
 
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.confirm_commit(cx);
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
         cx.notify();
     });
 

@@ -25,6 +25,56 @@ use gpui::{AppContext, Context, Entity, Window, px};
 use gpui_terminal::{ColorPalette, TerminalConfig, TerminalView};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 
+use crate::ui::theme::theme;
+
+/// Build the terminal [`ColorPalette`] from the active theme (W9-THEME).
+pub fn build_color_palette() -> ColorPalette {
+    let t = theme();
+    ColorPalette::builder()
+        .background(t.term_bg.0, t.term_bg.1, t.term_bg.2)
+        .foreground(t.term_fg.0, t.term_fg.1, t.term_fg.2)
+        .cursor(t.term_cursor.0, t.term_cursor.1, t.term_cursor.2)
+        .black(t.term_black.0, t.term_black.1, t.term_black.2)
+        .red(t.term_red.0, t.term_red.1, t.term_red.2)
+        .green(t.term_green.0, t.term_green.1, t.term_green.2)
+        .yellow(t.term_yellow.0, t.term_yellow.1, t.term_yellow.2)
+        .blue(t.term_blue.0, t.term_blue.1, t.term_blue.2)
+        .magenta(t.term_magenta.0, t.term_magenta.1, t.term_magenta.2)
+        .cyan(t.term_cyan.0, t.term_cyan.1, t.term_cyan.2)
+        .white(t.term_white.0, t.term_white.1, t.term_white.2)
+        .bright_black(t.term_bright_black.0, t.term_bright_black.1, t.term_bright_black.2)
+        .bright_red(t.term_bright_red.0, t.term_bright_red.1, t.term_bright_red.2)
+        .bright_green(t.term_bright_green.0, t.term_bright_green.1, t.term_bright_green.2)
+        .bright_yellow(t.term_bright_yellow.0, t.term_bright_yellow.1, t.term_bright_yellow.2)
+        .bright_blue(t.term_bright_blue.0, t.term_bright_blue.1, t.term_bright_blue.2)
+        .bright_magenta(t.term_bright_magenta.0, t.term_bright_magenta.1, t.term_bright_magenta.2)
+        .bright_cyan(t.term_bright_cyan.0, t.term_bright_cyan.1, t.term_bright_cyan.2)
+        .bright_white(t.term_bright_white.0, t.term_bright_white.1, t.term_bright_white.2)
+        // W8-TERMSEL: selection highlight (translucent so glyphs stay readable).
+        .selection(
+            t.term_selection.0,
+            t.term_selection.1,
+            t.term_selection.2,
+            t.term_selection.3,
+        )
+        .build()
+}
+
+/// Build the full terminal config (font + the active-theme palette).  Used both
+/// to start a session and to live-apply a theme switch via `update_config`.
+pub fn build_terminal_config() -> TerminalConfig {
+    TerminalConfig {
+        font_family: pick_font_family(),
+        font_size: px(13.0),
+        cols: 80,
+        rows: 24,
+        scrollback: 10_000,
+        line_height_multiplier: 1.0,
+        padding: gpui::Edges::all(px(4.0)),
+        colors: build_color_palette(),
+    }
+}
+
 /// Session state for the embedded terminal.
 pub struct KagiTerminalSession {
     /// Live `TerminalView` entity, or `None` if the shell has not yet started
@@ -162,45 +212,8 @@ pub fn build_terminal_view(
     // is correct (the child holds its copy via fork/exec).
     drop(pair.slave);
 
-    // Build the Catppuccin Mocha colour palette to match the rest of the UI.
-    let colors = ColorPalette::builder()
-        .background(0x1e, 0x1e, 0x2e)
-        .foreground(0xcd, 0xd6, 0xf4)
-        .cursor(0xf5, 0xc2, 0xe7)
-        .black(0x45, 0x47, 0x5a)
-        .red(0xf3, 0x8b, 0xa8)
-        .green(0xa6, 0xe3, 0xa1)
-        .yellow(0xf9, 0xe2, 0xaf)
-        .blue(0x89, 0xb4, 0xfa)
-        .magenta(0xcb, 0xa6, 0xf7)
-        .cyan(0x89, 0xdc, 0xeb)
-        .white(0xba, 0xc2, 0xde)
-        .bright_black(0x58, 0x5b, 0x70)
-        .bright_red(0xf3, 0x8b, 0xa8)
-        .bright_green(0xa6, 0xe3, 0xa1)
-        .bright_yellow(0xf9, 0xe2, 0xaf)
-        .bright_blue(0x89, 0xb4, 0xfa)
-        .bright_magenta(0xcb, 0xa6, 0xf7)
-        .bright_cyan(0x89, 0xdc, 0xeb)
-        .bright_white(0xcd, 0xd6, 0xf4)
-        // W8-TERMSEL: selection highlight — Catppuccin Mocha "surface2" with a
-        // translucent alpha so selected glyphs stay readable.
-        .selection(0x58, 0x5b, 0x70, 0x99)
-        .build();
-
-    let config = TerminalConfig {
-        // Nerd Font (user request).  JetBrainsMono Nerd Font is installed on
-        // the dev machine; fall back to plain JetBrains Mono, then Menlo.
-        // TODO(later): make this a user setting.
-        font_family: pick_font_family(),
-        font_size: px(13.0),
-        cols: 80,
-        rows: 24,
-        scrollback: 10_000,
-        line_height_multiplier: 1.0,
-        padding: gpui::Edges::all(px(4.0)),
-        colors,
-    };
+    // Config (font + active-theme palette, W9-THEME / ADR-0036).
+    let config = build_terminal_config();
 
     let resize_master = master_arc.clone();
 

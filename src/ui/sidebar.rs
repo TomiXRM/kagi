@@ -19,20 +19,9 @@ use gpui_component::Sizable as _;
 use kagi::git::{CommitId, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
 
 use super::KagiApp;
+use super::theme::theme;
 
-// ──────────────────────────────────────────────────────────────
-// Colour palette (re-exported from mod.rs; keep in sync)
-// ──────────────────────────────────────────────────────────────
-
-const BG_SIDEBAR: u32 = 0x11111b;
-const BG_SURFACE: u32 = 0x313244;
-const TEXT_MAIN: u32 = 0xcdd6f4;
-const TEXT_MUTED: u32 = 0x585b70;
-const TEXT_SUB: u32 = 0xa6adc8;
-const COLOR_SUCCESS: u32 = 0xa6e3a1;
-const COLOR_WARNING: u32 = 0xf9e2af;
-const COLOR_REMOTE: u32 = 0xa6e3a1;
-const COLOR_TAG: u32 = 0xfab387;
+// W9-THEME: all colours come from `theme()` (see theme.rs).
 
 // ──────────────────────────────────────────────────────────────
 // Section keys (static strings used in sidebar_collapsed)
@@ -158,7 +147,7 @@ pub fn render_sidebar(
                 .py_1()
                 .flex_shrink_0()
                 .on_click(create_handler)
-                .hover(|s| s.bg(rgb(BG_SURFACE)))
+                .hover(|s| s.bg(rgb(theme().surface)))
                 .child(
                     div()
                         .h(px(22.))
@@ -166,8 +155,8 @@ pub fn render_sidebar(
                         .items_center()
                         .px_2()
                         .text_xs()
-                        .text_color(rgb(TEXT_MUTED))
-                        .bg(rgb(0x1e1e2e))
+                        .text_color(rgb(theme().text_muted))
+                        .bg(rgb(theme().bg_base))
                         .rounded(px(4.))
                         .child(SharedString::from("filter…")),
                 )
@@ -204,9 +193,9 @@ pub fn render_sidebar(
                 .items_center()
                 .text_xs()
                 .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(TEXT_MUTED))
+                .text_color(rgb(theme().text_muted))
                 .on_click(toggle_local)
-                .hover(|s| s.bg(rgb(BG_SURFACE)))
+                .hover(|s| s.bg(rgb(theme().surface)))
                 .child(header_label),
         );
 
@@ -229,7 +218,7 @@ pub fn render_sidebar(
                 } else {
                     SharedString::from(branch_name.clone())
                 };
-                let text_color = if is_head { COLOR_SUCCESS } else { TEXT_MAIN };
+                let text_color = if is_head { theme().color_success } else { theme().text_main };
                 let branch_for_click = branch_name.clone();
 
                 let full_name = SharedString::from(branch_name.to_string());
@@ -253,7 +242,7 @@ pub fn render_sidebar(
                                     .flex_shrink_0()
                                     .ml_2()
                                     .text_xs()
-                                    .text_color(rgb(TEXT_SUB))
+                                    .text_color(rgb(theme().text_sub))
                                     .child(ul),
                             )
                         })
@@ -284,7 +273,7 @@ pub fn render_sidebar(
                         .text_color(rgb(text_color))
                         .overflow_hidden()
                         .on_click(click_handler)
-                        .hover(|style| style.bg(rgb(BG_SURFACE)))
+                        .hover(|style| style.bg(rgb(theme().surface)))
                         .tooltip(name_tooltip(full_name))
                         .child(div().flex_1().truncate().child(label))
                         .when_some(upstream_label, |el, ul| {
@@ -293,7 +282,7 @@ pub fn render_sidebar(
                                     .flex_shrink_0()
                                     .ml_2()
                                     .text_xs()
-                                    .text_color(rgb(TEXT_SUB))
+                                    .text_color(rgb(theme().text_sub))
                                     .child(ul),
                             )
                         })
@@ -307,9 +296,9 @@ pub fn render_sidebar(
                                 .ml_1()
                                 .px_1()
                                 .text_xs()
-                                .text_color(rgb(TEXT_MUTED))
+                                .text_color(rgb(theme().text_muted))
                                 .on_click(delete_handler)
-                                .hover(|s| s.text_color(rgb(0xf38ba8)))
+                                .hover(|s| s.text_color(rgb(theme().color_blocker)))
                                 .child(SharedString::from("\u{00d7}")),
                         )
                         .into_any()
@@ -349,9 +338,9 @@ pub fn render_sidebar(
                 .items_center()
                 .text_xs()
                 .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(TEXT_MUTED))
+                .text_color(rgb(theme().text_muted))
                 .on_click(toggle_remote)
-                .hover(|s| s.bg(rgb(BG_SURFACE)))
+                .hover(|s| s.bg(rgb(theme().surface)))
                 .child(header_label),
         );
 
@@ -379,10 +368,10 @@ pub fn render_sidebar(
                         .px_3()
                         .py_1()
                         .text_sm()
-                        .text_color(rgb(COLOR_REMOTE))
+                        .text_color(rgb(theme().color_remote))
                         .overflow_hidden()
                         .on_click(click_handler)
-                        .hover(|style| style.bg(rgb(BG_SURFACE)))
+                        .hover(|style| style.bg(rgb(theme().surface)))
                         .tooltip(name_tooltip(full_name))
                         .child(div().flex_1().truncate().child(display_label))
                         .into_any()
@@ -396,7 +385,7 @@ pub fn render_sidebar(
                         .px_3()
                         .py_1()
                         .text_sm()
-                        .text_color(rgb(COLOR_REMOTE))
+                        .text_color(rgb(theme().color_remote))
                         .overflow_hidden()
                         .tooltip(name_tooltip(full_name))
                         .child(div().flex_1().truncate().child(display_label))
@@ -437,9 +426,9 @@ pub fn render_sidebar(
                 .items_center()
                 .text_xs()
                 .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(TEXT_MUTED))
+                .text_color(rgb(theme().text_muted))
                 .on_click(toggle_tags)
-                .hover(|s| s.bg(rgb(BG_SURFACE)))
+                .hover(|s| s.bg(rgb(theme().surface)))
                 .child(header_label),
         );
 
@@ -464,10 +453,10 @@ pub fn render_sidebar(
                         .px_3()
                         .py_1()
                         .text_sm()
-                        .text_color(rgb(COLOR_TAG))
+                        .text_color(rgb(theme().color_tag))
                         .overflow_hidden()
                         .on_click(click_handler)
-                        .hover(|style| style.bg(rgb(BG_SURFACE)))
+                        .hover(|style| style.bg(rgb(theme().surface)))
                         .tooltip(name_tooltip(full_name))
                         .child(div().flex_1().truncate().child(tag_label))
                         .into_any()
@@ -481,7 +470,7 @@ pub fn render_sidebar(
                         .px_3()
                         .py_1()
                         .text_sm()
-                        .text_color(rgb(COLOR_TAG))
+                        .text_color(rgb(theme().color_tag))
                         .overflow_hidden()
                         .tooltip(name_tooltip(full_name))
                         .child(div().flex_1().truncate().child(tag_label))
@@ -522,9 +511,9 @@ pub fn render_sidebar(
                 .items_center()
                 .text_xs()
                 .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(TEXT_MUTED))
+                .text_color(rgb(theme().text_muted))
                 .on_click(toggle_worktrees)
-                .hover(|s| s.bg(rgb(BG_SURFACE)))
+                .hover(|s| s.bg(rgb(theme().surface)))
                 .child(header_label),
         );
 
@@ -537,7 +526,7 @@ pub fn render_sidebar(
                     SharedString::from(format!("{}  {}", wt.name, path_label))
                 };
                 let full_name = label.clone();
-                let text_color = if wt.is_current { COLOR_SUCCESS } else { TEXT_SUB };
+                let text_color = if wt.is_current { theme().color_success } else { theme().text_sub };
                 col = col.child(
                     div()
                         .id(SharedString::from(format!("sidebar-worktree-{}", wt.name)))
@@ -586,9 +575,9 @@ pub fn render_sidebar(
                 .items_center()
                 .text_xs()
                 .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(TEXT_MUTED))
+                .text_color(rgb(theme().text_muted))
                 .on_click(toggle_stashes)
-                .hover(|s| s.bg(rgb(BG_SURFACE)))
+                .hover(|s| s.bg(rgb(theme().surface)))
                 .child(header_label),
         );
 
@@ -613,10 +602,10 @@ pub fn render_sidebar(
                         .px_3()
                         .py_1()
                         .text_sm()
-                        .text_color(rgb(COLOR_WARNING))
+                        .text_color(rgb(theme().color_warning))
                         .overflow_hidden()
                         .on_click(click_handler)
-                        .hover(|style| style.bg(rgb(BG_SURFACE)))
+                        .hover(|style| style.bg(rgb(theme().surface)))
                         .tooltip(name_tooltip(full_name))
                         .child(div().flex_1().truncate().child(SharedString::from(raw_label))),
                 );
@@ -631,6 +620,6 @@ pub fn render_sidebar(
         .h_full()
         .flex()
         .flex_col()
-        .bg(rgb(BG_SIDEBAR))
+        .bg(rgb(theme().sidebar))
         .child(col)
 }

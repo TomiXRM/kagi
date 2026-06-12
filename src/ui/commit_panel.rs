@@ -149,14 +149,15 @@ impl CommitPanelState {
 /// Map a `ChangeKind` to a 1-char status badge and its colour.
 /// Returns `(char, color_u32, is_conflicted)`.
 pub fn status_badge(change: &ChangeKind, is_conflicted: bool) -> (&'static str, u32, bool) {
+    let t = crate::ui::theme::theme();
     if is_conflicted {
-        return ("C", 0xf38ba8, true); // red background for conflicted
+        return ("C", t.color_blocker, true); // red background for conflicted
     }
     match change {
-        ChangeKind::Added      => ("A", 0xa6e3a1, false), // green
-        ChangeKind::Modified   => ("M", 0xf9e2af, false), // yellow
-        ChangeKind::Deleted    => ("D", 0xf38ba8, false), // red
-        ChangeKind::Renamed{..} => ("R", 0x89b4fa, false), // blue
-        ChangeKind::TypeChange => ("T", 0x585b70, false), // gray
+        ChangeKind::Added      => ("A", t.change_added, false),
+        ChangeKind::Modified   => ("M", t.change_modified, false),
+        ChangeKind::Deleted    => ("D", t.change_deleted, false),
+        ChangeKind::Renamed{..} => ("R", t.change_renamed, false),
+        ChangeKind::TypeChange => ("T", t.change_typechange, false),
     }
 }

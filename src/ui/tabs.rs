@@ -27,9 +27,8 @@ use gpui_component::tooltip::Tooltip;
 
 use super::{
     KagiApp, ToastKind, FooterStatus,
-    BG_BASE, BG_SURFACE, BG_SELECTED, BG_PANEL,
-    TEXT_MAIN, TEXT_SUB, TEXT_MUTED, COLOR_BRANCH,
 };
+use super::theme::theme;
 
 /// Lightweight descriptor for one open repository tab (ADR-0027).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -436,14 +435,14 @@ impl KagiApp {
             .items_center()
             .w_full()
             .h(px(TAB_STRIP_H))
-            .bg(rgb(BG_PANEL))
+            .bg(rgb(theme().panel))
             .border_b_1()
-            .border_color(rgb(BG_SURFACE));
+            .border_color(rgb(theme().surface));
 
         for (i, tab) in tabs.into_iter().enumerate() {
             let is_active = i == active;
-            let bg = if is_active { BG_SELECTED } else { BG_SURFACE };
-            let fg = if is_active { TEXT_MAIN } else { TEXT_SUB };
+            let bg = if is_active { theme().selected } else { theme().surface };
+            let fg = if is_active { theme().text_main } else { theme().text_sub };
             let full_path = tab.path.display().to_string();
 
             // chars()-based truncation is handled by `.truncate()` on the label
@@ -462,8 +461,8 @@ impl KagiApp {
                 .ml(px(4.))
                 .px(px(3.))
                 .rounded_sm()
-                .text_color(rgb(TEXT_MUTED))
-                .hover(|s| s.bg(rgb(BG_SURFACE)).text_color(rgb(TEXT_MAIN)))
+                .text_color(rgb(theme().text_muted))
+                .hover(|s| s.bg(rgb(theme().surface)).text_color(rgb(theme().text_main)))
                 .cursor(gpui::CursorStyle::PointingHand)
                 .child(SharedString::from("\u{00d7}")) // ×
                 .on_click(close);
@@ -482,8 +481,8 @@ impl KagiApp {
                 .text_sm()
                 .text_color(rgb(fg))
                 .border_r_1()
-                .border_color(rgb(BG_PANEL))
-                .when(is_active, |el| el.border_t_2().border_color(rgb(COLOR_BRANCH)))
+                .border_color(rgb(theme().panel))
+                .when(is_active, |el| el.border_t_2().border_color(rgb(theme().color_branch)))
                 .cursor(gpui::CursorStyle::PointingHand)
                 .tooltip({
                     let full = full_path.clone();
@@ -507,8 +506,8 @@ impl KagiApp {
             .justify_center()
             .h_full()
             .px_3()
-            .text_color(rgb(TEXT_SUB))
-            .hover(|s| s.bg(rgb(BG_SELECTED)).text_color(rgb(TEXT_MAIN)))
+            .text_color(rgb(theme().text_sub))
+            .hover(|s| s.bg(rgb(theme().selected)).text_color(rgb(theme().text_main)))
             .cursor(gpui::CursorStyle::PointingHand)
             .tooltip(|window, cx| Tooltip::new("Open Repository…").build(window, cx))
             .child(SharedString::from("+"))
@@ -531,10 +530,10 @@ impl KagiApp {
             .px_4()
             .py_2()
             .rounded_md()
-            .bg(rgb(BG_SELECTED))
-            .text_color(rgb(TEXT_MAIN))
+            .bg(rgb(theme().selected))
+            .text_color(rgb(theme().text_main))
             .text_lg()
-            .hover(|s| s.bg(rgb(COLOR_BRANCH)).text_color(rgb(BG_BASE)))
+            .hover(|s| s.bg(rgb(theme().color_branch)).text_color(rgb(theme().bg_base)))
             .cursor(gpui::CursorStyle::PointingHand)
             .child(SharedString::from("Open Repository\u{2026}"))
             .on_click(open_click);
@@ -546,17 +545,17 @@ impl KagiApp {
             .justify_center()
             .gap_4()
             .size_full()
-            .bg(rgb(BG_BASE))
+            .bg(rgb(theme().bg_base))
             .child(
                 div()
                     .text_2xl()
-                    .text_color(rgb(TEXT_MAIN))
+                    .text_color(rgb(theme().text_main))
                     .child(SharedString::from("kagi")),
             )
             .child(
                 div()
                     .text_sm()
-                    .text_color(rgb(TEXT_MUTED))
+                    .text_color(rgb(theme().text_muted))
                     .child(SharedString::from(
                         "No repository open. Choose a directory to get started.",
                     )),

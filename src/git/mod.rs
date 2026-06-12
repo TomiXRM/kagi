@@ -39,6 +39,7 @@ pub use ops::{
     plan_push, execute_push, PushOutcome,
     plan_undo_commit, execute_undo_commit, UndoOutcome,
     plan_delete_branch, execute_delete_branch,
+    fetch_remote, FetchOutcome,
 };
 #[allow(unused_imports)]
 pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo};

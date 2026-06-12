@@ -6,6 +6,7 @@
 
 pub mod avatar;
 pub mod assets;
+pub mod commands;
 pub mod commit_list;
 pub mod commit_panel;
 pub mod context_menu;
@@ -1143,6 +1144,16 @@ pub struct KagiApp {
     pub delete_branch_modal: Option<DeleteBranchModal>,
     /// Commit row context menu state (right-click anchor + target row).
     pub commit_menu: Option<CommitMenuState>,
+    // ── W5-MENU: command registry / menu bar ─────────────────
+    /// Whether the left sidebar (Repository Navigator) is shown (View → Toggle
+    /// Sidebar).  Default `true`.
+    pub sidebar_visible: bool,
+    /// Whether the right commit-details inspector is shown (View → Toggle Commit
+    /// Details).  Default `true`.
+    pub inspector_visible: bool,
+    /// Transient overlay opened from the menu bar (branch picker / About /
+    /// Keyboard Shortcuts).  `None` when no menu overlay is visible.
+    pub menu_overlay: Option<commands::MenuOverlay>,
 }
 
 impl KagiApp {
@@ -1320,6 +1331,10 @@ impl KagiApp {
             // W2-DELETE
             delete_branch_modal: None,
             commit_menu: None,
+            // W5-MENU
+            sidebar_visible: true,
+            inspector_visible: true,
+            menu_overlay: None,
         }
     }
 
@@ -1389,6 +1404,10 @@ impl KagiApp {
             // W2-DELETE
             delete_branch_modal: None,
             commit_menu: None,
+            // W5-MENU
+            sidebar_visible: true,
+            inspector_visible: true,
+            menu_overlay: None,
         }
     }
 
@@ -2318,7 +2337,7 @@ impl KagiApp {
 
     /// Queue a snackbar toast (bottom-right). Callable without a Window:
     /// the auto-dismiss ticker is (re)started from `render`.
-    fn push_toast(&mut self, kind: ToastKind, message: impl Into<SharedString>) {
+    pub(crate) fn push_toast(&mut self, kind: ToastKind, message: impl Into<SharedString>) {
         let id = self.next_toast_id;
         self.next_toast_id += 1;
         self.toasts.push(Toast {
@@ -4499,6 +4518,12 @@ impl Render for KagiApp {
                 this.main_diff_step(1);
                 cx.notify();
             }))
+            // ── W5-MENU / ADR-0029: conditional command handlers ──────────
+            // Each menu action's handler is registered on the focused root ONLY
+            // when `command_state == Enabled`.  gpui's macOS menu validation
+            // (`is_action_available`, walks the dispatch tree) then greys out
+            // any command whose handler is absent — the ADR-0029 disabled model.
+            .map(|el| self.register_menu_actions(el, cx))
             // ── W4-TABS: repository tab strip (above the header toolbar) ──
             .children(self.render_tab_strip(cx))
             // ── Header slot ──────────────────────────────────
@@ -4519,6 +4544,8 @@ impl Render for KagiApp {
             .children(self.render_bottom_panel_slot(bottom_panel_open, bottom_panel_height, bottom_tab, cx))
             // ── Commit context menu overlay (below modals) ─────
             .children(commit_menu_overlay)
+            // ── W5-MENU: menu-driven overlay (branch picker / About / shortcuts) ──
+            .children(self.render_menu_overlay(cx))
             // ── Plan modal overlay (above everything) ──────
             .when_some(plan_modal, |el, modal| {
                 el.child(render_plan_modal(modal, cx))
@@ -4584,6 +4611,68 @@ impl Render for KagiApp {
 // (T-BP-002, T-HT-001, …) can extend their signatures without
 // touching the caller site.
 impl KagiApp {
+    /// W5-MENU / ADR-0029: register an `on_action` handler for every menu
+    /// command, **but only when that command is currently enabled**.  Leaving a
+    /// handler unregistered is exactly how macOS greys the matching menu item
+    /// out (gpui validates each item via `is_action_available`, which checks the
+    /// dispatch tree).  All handlers funnel into `handle_menu_command`, so the
+    /// behaviour stays in `commands.rs` (no menu-specific logic lives here).
+    fn register_menu_actions(&self, el: gpui::Div, cx: &mut Context<Self>) -> gpui::Div {
+        use commands as cmds;
+
+        // Helper: conditionally attach one action handler bound to its registry
+        // id.  `$ty` is the gpui Action type; `$id` is the registry id string.
+        macro_rules! menu_act {
+            ($el:expr, $ty:ty, $id:literal) => {{
+                let enabled = cmds::is_enabled(self, $id);
+                $el.when(enabled, |el| {
+                    el.on_action(cx.listener(|this, _: &$ty, window, cx| {
+                        this.handle_menu_command($id, window, cx);
+                    }))
+                })
+            }};
+        }
+
+        let el = menu_act!(el, cmds::About, "app.about");
+        let el = menu_act!(el, cmds::Quit, "app.quit");
+        let el = menu_act!(el, cmds::NewTab, "file.newTab");
+        let el = menu_act!(el, cmds::CloseTab, "file.closeTab");
+        let el = menu_act!(el, cmds::CloneRepository, "file.cloneRepository");
+        let el = menu_act!(el, cmds::OpenRepository, "file.openRepository");
+        let el = menu_act!(el, cmds::OpenInTerminal, "file.openInTerminal");
+        let el = menu_act!(el, cmds::RefreshRepository, "file.refresh");
+        let el = menu_act!(el, cmds::ZoomIn, "view.zoomIn");
+        let el = menu_act!(el, cmds::ZoomOut, "view.zoomOut");
+        let el = menu_act!(el, cmds::ZoomReset, "view.zoomReset");
+        let el = menu_act!(el, cmds::EnterFullScreen, "view.fullScreen");
+        let el = menu_act!(el, cmds::ToggleSidebar, "view.toggleSidebar");
+        let el = menu_act!(el, cmds::ToggleCommitDetails, "view.toggleCommitDetails");
+        let el = menu_act!(el, cmds::ToggleDiffView, "view.toggleDiffView");
+        let el = menu_act!(el, cmds::Fetch, "repo.fetch");
+        let el = menu_act!(el, cmds::Pull, "repo.pull");
+        let el = menu_act!(el, cmds::Push, "repo.push");
+        let el = menu_act!(el, cmds::OpenInFinder, "repo.openInFinder");
+        let el = menu_act!(el, cmds::NewBranch, "branch.new");
+        let el = menu_act!(el, cmds::CheckoutBranch, "branch.checkout");
+        let el = menu_act!(el, cmds::RenameBranch, "branch.rename");
+        let el = menu_act!(el, cmds::DeleteBranch, "branch.delete");
+        let el = menu_act!(el, cmds::CopyCommitHash, "commit.copyHash");
+        let el = menu_act!(el, cmds::CheckoutCommit, "commit.checkout");
+        let el = menu_act!(el, cmds::CreateBranchFromCommit, "commit.createBranch");
+        let el = menu_act!(el, cmds::CherryPickCommit, "commit.cherryPick");
+        let el = menu_act!(el, cmds::RevertCommit, "commit.revert");
+        let el = menu_act!(el, cmds::ResetToCommit, "commit.reset");
+        let el = menu_act!(el, cmds::CompareWithWorkingTree, "commit.compareWorkingTree");
+        let el = menu_act!(el, cmds::MinimizeWindow, "window.minimize");
+        let el = menu_act!(el, cmds::ZoomWindow, "window.zoom");
+        let el = menu_act!(el, cmds::NewWindow, "window.new");
+        let el = menu_act!(el, cmds::CloseWindow, "window.close");
+        let el = menu_act!(el, cmds::KeyboardShortcuts, "help.shortcuts");
+        let el = menu_act!(el, cmds::Documentation, "help.documentation");
+        let el = menu_act!(el, cmds::ReportIssue, "help.reportIssue");
+        el
+    }
+
     /// Header slot — the Toolbar bar (T-HT-001 / ADR-0013).
     ///
     /// Layout (34 px):
@@ -5144,6 +5233,8 @@ impl KagiApp {
         };
         let main_diff_for_center = main_diff;
 
+        // W5-MENU: View → Toggle Sidebar hides the navigator + its divider.
+        let sidebar_visible = self.sidebar_visible;
         let mut body_row = div()
             .flex()
             .flex_row()
@@ -5152,15 +5243,17 @@ impl KagiApp {
             // natural content height, otherwise it pushes the bottom panel and
             // status bar out of the window on small window sizes (user report).
             .min_h(px(0.))
-            // ── Left sidebar ──────────────────────────
-            .child(sidebar::render_sidebar(
-                &branches, &remote_branches, &tags, &stashes,
-                &branch_upstream_info, &self.commit_row_index,
-                &sidebar_collapsed, sidebar_filter,
-                sidebar_width, cx,
-            ))
-            // ── Sidebar divider ───────────────────────
-            .child(divider1)
+            // ── Left sidebar (W5-MENU: hidden when toggled off) ──
+            .when(sidebar_visible, |el| {
+                el.child(sidebar::render_sidebar(
+                    &branches, &remote_branches, &tags, &stashes,
+                    &branch_upstream_info, &self.commit_row_index,
+                    &sidebar_collapsed, sidebar_filter,
+                    sidebar_width, cx,
+                ))
+                // ── Sidebar divider ───────────────────────
+                .child(divider1)
+            })
             // ── Center column: full-width diff (T-UI-003) or the commit
             //    list.  The right panel stays visible in BOTH modes so the
             //    user can click through files continuously (user request).
@@ -5192,8 +5285,8 @@ impl KagiApp {
                     .child(divider2)
                     .child(render_commit_panel(panel_state, panel_width, commit_input.clone(), active_wip.clone(), cx));
             }
-        } else {
-            // ── Commit Inspector panel (W2-INSPECTOR) ────────────
+        } else if self.inspector_visible {
+            // ── Commit Inspector panel (W2-INSPECTOR; W5-MENU toggle) ──
             body_row = body_row.when_some(detail, |el, d| {
                 // ── Commit metadata + changed files ─
                 let at = CommitId(d.full_sha.as_ref().to_string());
@@ -8764,6 +8857,12 @@ pub fn run_app(mut app_state: KagiApp) {
             KeyBinding::new("up", DiffPrevFile, None),
             KeyBinding::new("down", DiffNextFile, None),
         ]);
+
+        // W5-MENU / ADR-0029: register the command-registry keystrokes and the
+        // native menu bar.  Keystrokes are passed into `set_menus` via the live
+        // keymap, so they render next to each menu item automatically.
+        commands::register_keybindings(cx);
+        cx.set_menus(commands::build_menus());
 
         // KAGI_WINDOW=WxH (dev/testing only): override the initial window size
         // so layout behaviour at small sizes can be verified headlessly.

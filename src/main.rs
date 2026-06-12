@@ -85,6 +85,10 @@ fn main() {
         if let Some(ref env_path) = env_open_repo {
             init_tab(&mut welcome, env_path);
         }
+        // W5-MENU: dump command-registry states for headless verification.
+        if std::env::var("KAGI_MENU_DUMP").as_deref() == Ok("1") {
+            ui::commands::dump_menu_states(&welcome);
+        }
         run_app(welcome);
         return;
     }
@@ -946,6 +950,13 @@ fn main() {
         };
         eprintln!("[kagi] bottom-panel: open height={} tab={}", h_label, tab_label);
         eprintln!("[kagi] oplog-tab: {} entries", app_state.op_entries.len());
+    }
+
+    // ── W5-MENU: headless command-registry state dump ─────────
+    // KAGI_MENU_DUMP=1: log every command's id/label/keystroke/state.  Reflects
+    // the current app state (repo open, selection via KAGI_SELECT_FIRST, etc.).
+    if std::env::var("KAGI_MENU_DUMP").as_deref() == Ok("1") {
+        ui::commands::dump_menu_states(&app_state);
     }
 
     run_app(app_state);

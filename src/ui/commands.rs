@@ -1,0 +1,912 @@
+//! W5-MENU / ADR-0029: Command Registry + native macOS menu bar.
+//!
+//! This module is the **single source of truth** for kagi's command surface.
+//! The menu bar (`cx.set_menus`), keyboard shortcuts (`KeyBinding`), and the
+//! conditional action handlers on the root element all derive from the same
+//! [`Command`] table and the same [`command_state`] function — there is no
+//! menu-specific behaviour anywhere else (grep for `menu_handlers` /
+//! `register_menu_actions` to find the only wiring site, in `mod.rs::render`).
+//!
+//! ## Disabled = handler-not-registered (verified against gpui 0.2.2)
+//!
+//! macOS validates each menu item by calling
+//! `validate_menu_command(action)` which gpui implements as
+//! `cx.is_action_available(action)` — it walks the focused window's dispatch
+//! tree and returns `true` only when an `on_action` handler for that action
+//! type is registered (see `gpui-0.2.2/src/platform/app_menu.rs::init_app_menus`
+//! and `platform/mac/platform.rs::validate_menu_item`).  Therefore, to grey a
+//! menu item out we simply **do not register its handler** when
+//! [`command_state`] is not [`CommandState::Enabled`].  No `set_menus` rebuild
+//! is required — the dispatch tree is rebuilt every frame, so the menu state
+//! tracks app state automatically.  This is exactly the ADR-0029 design and it
+//! was confirmed to be the real gpui mac behaviour; the fallback "set_menus
+//! rebuild" path was therefore **not** needed.
+//!
+//! ## Keystrokes
+//!
+//! `cx.set_menus` is passed the live keymap, so keystrokes registered via
+//! [`register_keybindings`] are rendered automatically next to each menu item.
+//! Edit-menu items use `MenuItem::os_action` (no global `KeyBinding`) so the
+//! standard text-input behaviour of cmd-z/x/c/v/a is never overridden.
+
+use gpui::{
+    actions, div, prelude::*, px, rgb, App, Context, KeyBinding, Menu, MenuItem,
+    MouseButton, OsAction, SharedString, Window,
+};
+
+use kagi::git::CommitId;
+
+use super::{
+    BottomTab, FooterStatus, KagiApp, ToastKind, ToggleBottomPanel,
+    BG_BASE, BG_PANEL, BG_SELECTED, COLOR_BRANCH, TEXT_MAIN, TEXT_MUTED, TEXT_SUB,
+};
+use super::context_menu::CommitAction;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Actions — one gpui Action per command (1:1, ADR-0029).
+// ──────────────────────────────────────────────────────────────────────────
+//
+// `ToggleTerminal` is intentionally absent: the Terminal toggle reuses the
+// existing `ToggleBottomPanel` action (cmd-j) so there is a single handler.
+actions!(
+    kagi_menu,
+    [
+        // kagi (app menu)
+        About,
+        Quit,
+        // File
+        NewTab,
+        CloseTab,
+        CloneRepository,
+        OpenRepository,
+        OpenInTerminal,
+        RefreshRepository,
+        // View
+        ZoomIn,
+        ZoomOut,
+        ZoomReset,
+        EnterFullScreen,
+        ToggleSidebar,
+        ToggleCommitDetails,
+        ToggleDiffView,
+        // Repository
+        Fetch,
+        Pull,
+        Push,
+        OpenInFinder,
+        // Branch
+        NewBranch,
+        CheckoutBranch,
+        RenameBranch,
+        DeleteBranch,
+        // Commit (operate on the selected commit; route via dispatch_commit_action)
+        CopyCommitHash,
+        CheckoutCommit,
+        CreateBranchFromCommit,
+        CherryPickCommit,
+        RevertCommit,
+        ResetToCommit,
+        CompareWithWorkingTree,
+        // Window
+        MinimizeWindow,
+        ZoomWindow,
+        NewWindow,
+        CloseWindow,
+        // Help
+        KeyboardShortcuts,
+        Documentation,
+        ReportIssue,
+    ]
+);
+
+// ──────────────────────────────────────────────────────────────────────────
+// Command registry types (ADR-0029).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// A single command in the registry.  Pure data — the behaviour lives in the
+/// `on_action` handler wired in `register_menu_actions`, and the enabled/
+/// disabled/hidden decision lives in [`command_state`].
+#[derive(Clone, Copy, Debug)]
+pub struct Command {
+    /// Stable dotted id, e.g. `"file.openRepository"`.
+    pub id: &'static str,
+    /// Human-readable menu label.
+    pub label: &'static str,
+    /// gpui keystroke notation (macOS `cmd`), or `None` when unbound.
+    pub keystroke: Option<&'static str>,
+    /// Future red-text / two-step-confirm attribute (ADR-0029).
+    pub dangerous: bool,
+}
+
+/// Tri-state availability of a command (ADR-0029).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CommandState {
+    /// Available — handler is registered, menu item is active.
+    Enabled,
+    /// Visible but greyed out, with a reason (handler not registered).
+    Disabled(&'static str),
+    /// Not shown at all (reserved; currently unused — kagi prefers Disabled).
+    #[allow(dead_code)]
+    Hidden,
+}
+
+/// The full command table.  Order is irrelevant (menus are built explicitly in
+/// [`build_menus`]); this slice is the canonical id → metadata map used by the
+/// `KAGI_MENU_DUMP` verifier and by keystroke lookup.
+pub const COMMANDS: &[Command] = &[
+    Command { id: "app.about", label: "About kagi", keystroke: None, dangerous: false },
+    Command { id: "app.quit", label: "Quit kagi", keystroke: Some("cmd-q"), dangerous: false },
+
+    Command { id: "file.newTab", label: "New Tab", keystroke: Some("cmd-t"), dangerous: false },
+    Command { id: "file.closeTab", label: "Close Tab", keystroke: Some("cmd-w"), dangerous: false },
+    Command { id: "file.cloneRepository", label: "Clone Repository…", keystroke: Some("cmd-shift-o"), dangerous: false },
+    Command { id: "file.openRepository", label: "Open Repository…", keystroke: Some("cmd-o"), dangerous: false },
+    Command { id: "file.openInTerminal", label: "Open Repository in Terminal", keystroke: None, dangerous: false },
+    Command { id: "file.refresh", label: "Refresh Repository", keystroke: Some("cmd-r"), dangerous: false },
+
+    Command { id: "view.zoomIn", label: "Zoom In", keystroke: None, dangerous: false },
+    Command { id: "view.zoomOut", label: "Zoom Out", keystroke: None, dangerous: false },
+    Command { id: "view.zoomReset", label: "Actual Size", keystroke: None, dangerous: false },
+    Command { id: "view.fullScreen", label: "Enter Full Screen", keystroke: Some("ctrl-cmd-f"), dangerous: false },
+    Command { id: "view.toggleSidebar", label: "Toggle Sidebar", keystroke: None, dangerous: false },
+    Command { id: "view.toggleTerminal", label: "Toggle Terminal", keystroke: Some("cmd-j"), dangerous: false },
+    Command { id: "view.toggleCommitDetails", label: "Toggle Commit Details", keystroke: None, dangerous: false },
+    Command { id: "view.toggleDiffView", label: "Toggle Diff View", keystroke: None, dangerous: false },
+
+    Command { id: "repo.fetch", label: "Fetch", keystroke: None, dangerous: false },
+    Command { id: "repo.pull", label: "Pull", keystroke: None, dangerous: false },
+    Command { id: "repo.push", label: "Push", keystroke: None, dangerous: false },
+    Command { id: "repo.openInFinder", label: "Open in Finder", keystroke: None, dangerous: false },
+
+    Command { id: "branch.new", label: "New Branch…", keystroke: None, dangerous: false },
+    Command { id: "branch.checkout", label: "Checkout Branch…", keystroke: None, dangerous: false },
+    Command { id: "branch.rename", label: "Rename Branch…", keystroke: None, dangerous: false },
+    Command { id: "branch.delete", label: "Delete Branch…", keystroke: None, dangerous: true },
+
+    Command { id: "commit.copyHash", label: "Copy Commit Hash", keystroke: None, dangerous: false },
+    Command { id: "commit.checkout", label: "Checkout Commit", keystroke: None, dangerous: false },
+    Command { id: "commit.createBranch", label: "Create Branch from Commit…", keystroke: None, dangerous: false },
+    Command { id: "commit.cherryPick", label: "Cherry-pick", keystroke: None, dangerous: false },
+    Command { id: "commit.revert", label: "Revert", keystroke: None, dangerous: false },
+    Command { id: "commit.reset", label: "Reset HEAD to Commit…", keystroke: None, dangerous: true },
+    Command { id: "commit.compareWorkingTree", label: "Compare with Working Tree", keystroke: None, dangerous: false },
+
+    Command { id: "window.minimize", label: "Minimize", keystroke: Some("cmd-m"), dangerous: false },
+    Command { id: "window.zoom", label: "Zoom", keystroke: None, dangerous: false },
+    Command { id: "window.new", label: "New Window", keystroke: None, dangerous: false },
+    Command { id: "window.close", label: "Close Window", keystroke: None, dangerous: false },
+
+    Command { id: "help.shortcuts", label: "Keyboard Shortcuts", keystroke: None, dangerous: false },
+    Command { id: "help.documentation", label: "Documentation", keystroke: None, dangerous: false },
+    Command { id: "help.reportIssue", label: "Report Issue", keystroke: None, dangerous: false },
+];
+
+/// Look up a command's metadata by id.
+pub fn command(id: &str) -> Option<&'static Command> {
+    COMMANDS.iter().find(|c| c.id == id)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// State machine — the one place enabled/disabled/hidden is decided (ADR-0029).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Decide whether a command is enabled / disabled / hidden for the current
+/// app state.  This is the **only** place command availability is computed;
+/// the menu, the keystrokes, and the `on_action` registration all consult it.
+pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
+    use CommandState::{Disabled, Enabled};
+
+    // Whether a repository is open (a tab is active).  Welcome = no repo.
+    let has_repo = !app.tabs.is_empty() && app.repo_path.is_some();
+    // A background git op is running → block state-changing git commands.
+    let busy = app.busy_op.is_some();
+    // A commit row is currently selected.
+    let has_selection = app.selected.is_some();
+    // The main (full-width) diff is currently open.
+    let diff_open = app.main_diff.is_some();
+
+    match id {
+        // ── Always available ────────────────────────────────────────────
+        "app.about"
+        | "app.quit"
+        | "file.newTab"
+        | "file.openRepository"
+        | "view.fullScreen"
+        | "view.toggleSidebar"
+        | "view.toggleTerminal"
+        | "window.minimize"
+        | "window.zoom"
+        | "window.close"
+        | "help.shortcuts"
+        | "help.documentation"
+        | "help.reportIssue" => Enabled,
+
+        // ── Placeholders (feature not implemented; greyed with a reason) ──
+        "file.cloneRepository" => Disabled("clone は未実装です"),
+        "view.zoomIn" | "view.zoomOut" | "view.zoomReset" => {
+            Disabled("zoom は未実装です")
+        }
+        "branch.rename" => Disabled("rename branch は未実装です"),
+        "window.new" => Disabled("複数ウィンドウは未対応です"),
+        // Reset stays disabled per ADR-0024 (no reset in MVP).
+        "commit.reset" => Disabled("reset は未実装です (ADR-0024)"),
+
+        // ── Repo required ────────────────────────────────────────────────
+        "file.closeTab" => {
+            if has_repo {
+                Enabled
+            } else {
+                Disabled("開いているタブがありません")
+            }
+        }
+        "file.openInTerminal" | "file.refresh" | "repo.openInFinder" => {
+            if has_repo {
+                Enabled
+            } else {
+                Disabled("リポジトリが開かれていません")
+            }
+        }
+
+        // ── Repo required + not busy (state-changing git) ────────────────
+        "repo.fetch" | "repo.pull" | "repo.push" | "branch.new"
+        | "branch.checkout" | "branch.delete" => {
+            if !has_repo {
+                Disabled("リポジトリが開かれていません")
+            } else if busy {
+                Disabled("別の操作が実行中です")
+            } else {
+                Enabled
+            }
+        }
+
+        // ── Commit-scoped (selection required; reset handled above) ───────
+        "commit.copyHash"
+        | "commit.checkout"
+        | "commit.createBranch"
+        | "commit.cherryPick"
+        | "commit.revert"
+        | "commit.compareWorkingTree" => {
+            if !has_repo {
+                Disabled("リポジトリが開かれていません")
+            } else if !has_selection {
+                Disabled("commit が選択されていません")
+            } else if busy {
+                Disabled("別の操作が実行中です")
+            } else {
+                Enabled
+            }
+        }
+
+        // ── View toggles tied to view state ──────────────────────────────
+        "view.toggleCommitDetails" => {
+            if has_repo {
+                Enabled
+            } else {
+                Disabled("リポジトリが開かれていません")
+            }
+        }
+        "view.toggleDiffView" => {
+            if diff_open {
+                Enabled
+            } else {
+                Disabled("diff が開かれていません")
+            }
+        }
+
+        // Unknown id → disabled defensively.
+        _ => Disabled("unknown command"),
+    }
+}
+
+/// Convenience: is this command currently enabled?
+pub(crate) fn is_enabled(app: &KagiApp, id: &str) -> bool {
+    matches!(command_state(app, id), CommandState::Enabled)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Menu construction (gpui native).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Build a single `MenuItem::action` from a registry id.  The label and
+/// keystroke (rendered by gpui from the keymap) are pulled from the registry,
+/// guaranteeing the menu can never drift from [`COMMANDS`].
+fn mi(id: &str, action: impl gpui::Action) -> MenuItem {
+    let label: SharedString = command(id)
+        .map(|c| SharedString::from(c.label))
+        .unwrap_or_else(|| SharedString::from(id.to_string()));
+    MenuItem::action(label, action)
+}
+
+/// Build the full menu bar.  Pure function of [`COMMANDS`] — no app state is
+/// read here; availability is applied later by gpui's per-item validation
+/// against the dispatch tree (see module docs).
+pub fn build_menus() -> Vec<Menu> {
+    vec![
+        // ── kagi (app menu) ──────────────────────────────────────────
+        Menu {
+            name: "kagi".into(),
+            items: vec![
+                mi("app.about", About),
+                MenuItem::separator(),
+                mi("app.quit", Quit),
+            ],
+        },
+        // ── File ─────────────────────────────────────────────────────
+        Menu {
+            name: "File".into(),
+            items: vec![
+                mi("file.newTab", NewTab),
+                mi("file.closeTab", CloseTab),
+                MenuItem::separator(),
+                mi("file.cloneRepository", CloneRepository),
+                mi("file.openRepository", OpenRepository),
+                mi("file.openInTerminal", OpenInTerminal),
+                MenuItem::separator(),
+                mi("file.refresh", RefreshRepository),
+            ],
+        },
+        // ── Edit (OS-standard; os_action only, no global KeyBinding) ──
+        Menu {
+            name: "Edit".into(),
+            items: vec![
+                MenuItem::os_action("Undo", EditUndo, OsAction::Undo),
+                MenuItem::os_action("Redo", EditRedo, OsAction::Redo),
+                MenuItem::separator(),
+                MenuItem::os_action("Cut", EditCut, OsAction::Cut),
+                MenuItem::os_action("Copy", EditCopy, OsAction::Copy),
+                MenuItem::os_action("Paste", EditPaste, OsAction::Paste),
+                MenuItem::os_action("Select All", EditSelectAll, OsAction::SelectAll),
+            ],
+        },
+        // ── View ─────────────────────────────────────────────────────
+        Menu {
+            name: "View".into(),
+            items: vec![
+                mi("view.zoomIn", ZoomIn),
+                mi("view.zoomOut", ZoomOut),
+                mi("view.zoomReset", ZoomReset),
+                MenuItem::separator(),
+                mi("view.fullScreen", EnterFullScreen),
+                MenuItem::separator(),
+                mi("view.toggleSidebar", ToggleSidebar),
+                MenuItem::action("Toggle Terminal", ToggleBottomPanel),
+                mi("view.toggleCommitDetails", ToggleCommitDetails),
+                mi("view.toggleDiffView", ToggleDiffView),
+            ],
+        },
+        // ── Repository ───────────────────────────────────────────────
+        Menu {
+            name: "Repository".into(),
+            items: vec![
+                mi("repo.fetch", Fetch),
+                mi("repo.pull", Pull),
+                mi("repo.push", Push),
+                MenuItem::separator(),
+                mi("repo.openInFinder", OpenInFinder),
+                mi("file.openInTerminal", OpenInTerminal),
+            ],
+        },
+        // ── Branch ───────────────────────────────────────────────────
+        Menu {
+            name: "Branch".into(),
+            items: vec![
+                mi("branch.new", NewBranch),
+                mi("branch.checkout", CheckoutBranch),
+                mi("branch.rename", RenameBranch),
+                mi("branch.delete", DeleteBranch),
+            ],
+        },
+        // ── Commit ───────────────────────────────────────────────────
+        Menu {
+            name: "Commit".into(),
+            items: vec![
+                mi("commit.copyHash", CopyCommitHash),
+                mi("commit.checkout", CheckoutCommit),
+                mi("commit.createBranch", CreateBranchFromCommit),
+                MenuItem::separator(),
+                mi("commit.cherryPick", CherryPickCommit),
+                mi("commit.revert", RevertCommit),
+                mi("commit.reset", ResetToCommit),
+                MenuItem::separator(),
+                mi("commit.compareWorkingTree", CompareWithWorkingTree),
+            ],
+        },
+        // ── Window ───────────────────────────────────────────────────
+        Menu {
+            name: "Window".into(),
+            items: vec![
+                mi("window.minimize", MinimizeWindow),
+                mi("window.zoom", ZoomWindow),
+                MenuItem::separator(),
+                mi("window.new", NewWindow),
+                mi("window.close", CloseWindow),
+            ],
+        },
+        // ── Help ─────────────────────────────────────────────────────
+        Menu {
+            name: "Help".into(),
+            items: vec![
+                mi("help.shortcuts", KeyboardShortcuts),
+                mi("help.documentation", Documentation),
+                mi("help.reportIssue", ReportIssue),
+                MenuItem::separator(),
+                mi("app.about", About),
+            ],
+        },
+    ]
+}
+
+// Edit-menu action stubs: gpui's `os_action` still needs an `Action` value for
+// the dispatch tag, but the OS performs the actual edit via the responder
+// chain — these are never dispatched to kagi.  No global KeyBinding is bound to
+// them, so they never interfere with text-input cmd-z/x/c/v/a.
+actions!(kagi_edit, [EditCut, EditCopy, EditPaste, EditSelectAll, EditUndo, EditRedo]);
+
+// ──────────────────────────────────────────────────────────────────────────
+// Keybinding registration.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Register all menu keystrokes as gpui `KeyBinding`s so they (a) actually fire
+/// when the root has focus and (b) are rendered next to their menu items.
+///
+/// Deliberately **excludes**:
+/// - `cmd-j` (already bound by the bottom-panel ticket; reused for
+///   Toggle Terminal — re-binding would double it),
+/// - all Edit actions (os_action only — must not shadow text-input).
+pub fn register_keybindings(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-t", NewTab, None),
+        KeyBinding::new("cmd-w", CloseTab, None),
+        KeyBinding::new("cmd-shift-o", CloneRepository, None),
+        KeyBinding::new("cmd-o", OpenRepository, None),
+        KeyBinding::new("cmd-r", RefreshRepository, None),
+        KeyBinding::new("ctrl-cmd-f", EnterFullScreen, None),
+        KeyBinding::new("cmd-m", MinimizeWindow, None),
+    ]);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Headless verification — KAGI_MENU_DUMP=1.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Emit one log line per command with its resolved state.  This is the canonical
+/// headless verification surface for the menu (the native menu UI cannot be
+/// inspected headlessly).  Format (ADR/ticket §5):
+/// `[kagi] menu: <id> label="…" key=<ks|-> state=enabled|disabled(<reason>)`
+pub fn dump_menu_states(app: &KagiApp) {
+    eprintln!("[kagi] menu: dump begin n={}", COMMANDS.len());
+    for cmd in COMMANDS {
+        let ks = cmd.keystroke.unwrap_or("-");
+        let state = match command_state(app, cmd.id) {
+            CommandState::Enabled => "enabled".to_string(),
+            CommandState::Disabled(reason) => format!("disabled({reason})"),
+            CommandState::Hidden => "hidden".to_string(),
+        };
+        eprintln!(
+            "[kagi] menu: {} label=\"{}\" key={} dangerous={} state={}",
+            cmd.id, cmd.label, ks, cmd.dangerous, state
+        );
+    }
+    eprintln!("[kagi] menu: dump end");
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Keyboard-shortcuts listing (for the Help → Keyboard Shortcuts modal).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Produce `(label, keystroke)` pairs for every command that has a keystroke,
+/// used by the Keyboard Shortcuts modal (auto-generated from the registry).
+pub fn shortcut_listing() -> Vec<(SharedString, SharedString)> {
+    COMMANDS
+        .iter()
+        .filter_map(|c| {
+            c.keystroke
+                .map(|k| (SharedString::from(c.label), SharedString::from(k)))
+        })
+        .collect()
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Menu-driven overlays (branch picker + info panel).  Collected here so the
+// menu's own modal surfaces do not bloat `mod.rs` (ADR-0029 集約).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Which list-picker the menu is currently showing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BranchPickerMode {
+    /// Pick a branch to checkout → routes to the existing `open_plan_modal`.
+    Checkout,
+    /// Pick a branch to delete → routes to the existing delete-branch plan modal.
+    Delete,
+}
+
+/// Transient overlay opened from the menu bar.
+#[derive(Clone, Debug)]
+pub enum MenuOverlay {
+    /// Branch picker list (checkout / delete).
+    BranchPicker {
+        mode: BranchPickerMode,
+        branches: Vec<String>,
+    },
+    /// Read-only info panel (About / Keyboard Shortcuts), titled with body lines.
+    Info {
+        title: SharedString,
+        lines: Vec<SharedString>,
+    },
+}
+
+const GITHUB_URL: &str = "https://github.com/TomiXRM/kagi";
+const ISSUES_URL: &str = "https://github.com/TomiXRM/kagi/issues";
+
+impl KagiApp {
+    /// Route a menu command (by registry id) to its handler.  This is the only
+    /// place menu actions do work; the behaviour reuses existing safe paths
+    /// (plan → confirm modals, `dispatch_commit_action`, tabs, etc.).
+    ///
+    /// Handlers assume the command was enabled (gpui only dispatches when the
+    /// handler is registered, which `render` does conditionally on
+    /// [`command_state`]); each still falls through harmlessly if state changed.
+    pub fn handle_menu_command(
+        &mut self,
+        id: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        eprintln!("[kagi] menu: invoke {}", id);
+        match id {
+            // ── kagi ────────────────────────────────────────────────
+            "app.about" => self.open_about_overlay(),
+            "app.quit" => cx.quit(),
+
+            // ── File ────────────────────────────────────────────────
+            "file.newTab" | "file.openRepository" => self.pick_repository(window, cx),
+            "file.closeTab" => {
+                if !self.tabs.is_empty() {
+                    self.close_tab(self.active_tab, cx);
+                }
+            }
+            "file.cloneRepository" => { /* placeholder — disabled, never dispatched */ }
+            "file.openInTerminal" => self.menu_open_terminal(window, cx),
+            "file.refresh" => {
+                self.reload();
+                self.status_footer = FooterStatus::Idle(SharedString::from("Refreshed"));
+                self.push_toast(ToastKind::Success, "Refreshed");
+            }
+
+            // ── View ────────────────────────────────────────────────
+            "view.fullScreen" => window.toggle_fullscreen(),
+            "view.toggleSidebar" => {
+                self.sidebar_visible = !self.sidebar_visible;
+                eprintln!("[kagi] menu: sidebar_visible={}", self.sidebar_visible);
+            }
+            "view.toggleCommitDetails" => {
+                self.inspector_visible = !self.inspector_visible;
+                eprintln!("[kagi] menu: inspector_visible={}", self.inspector_visible);
+            }
+            "view.toggleDiffView" => {
+                if self.main_diff.is_some() {
+                    self.close_main_diff();
+                }
+            }
+
+            // ── Repository ──────────────────────────────────────────
+            "repo.fetch" => self.menu_fetch(cx),
+            "repo.pull" => self.open_pull_modal(),
+            "repo.push" => self.open_push_modal(),
+            "repo.openInFinder" => self.menu_open_in_finder(),
+
+            // ── Branch ──────────────────────────────────────────────
+            "branch.new" => {
+                let at = self
+                    .selected
+                    .and_then(|i| self.details.get(i))
+                    .or_else(|| self.details.first())
+                    .map(|d| CommitId(d.full_sha.to_string()));
+                if let Some(id) = at {
+                    self.open_create_branch_modal(id, cx);
+                }
+            }
+            "branch.checkout" => self.open_branch_picker(BranchPickerMode::Checkout),
+            "branch.delete" => self.open_branch_picker(BranchPickerMode::Delete),
+
+            // ── Commit (selected commit → dispatch_commit_action) ────
+            "commit.copyHash"
+            | "commit.checkout"
+            | "commit.createBranch"
+            | "commit.cherryPick"
+            | "commit.revert"
+            | "commit.compareWorkingTree" => {
+                self.dispatch_selected_commit(id, window, cx);
+            }
+
+            // ── Window ──────────────────────────────────────────────
+            "window.minimize" => window.minimize_window(),
+            "window.zoom" => window.zoom_window(),
+            "window.close" => window.remove_window(),
+
+            // ── Help ────────────────────────────────────────────────
+            "help.shortcuts" => self.open_shortcuts_overlay(),
+            "help.documentation" => cx.open_url(GITHUB_URL),
+            "help.reportIssue" => cx.open_url(ISSUES_URL),
+
+            _ => {}
+        }
+        cx.notify();
+    }
+
+    /// Map a `commit.*` menu id to the existing [`CommitAction`] and dispatch it
+    /// against the currently-selected commit via `dispatch_commit_action`.
+    fn dispatch_selected_commit(
+        &mut self,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let row = match self.selected {
+            Some(r) => r,
+            None => return,
+        };
+        let target = match self.details.get(row).map(|d| CommitId(d.full_sha.to_string())) {
+            Some(t) => t,
+            None => return,
+        };
+        let action = match id {
+            "commit.copyHash" => CommitAction::CopySha,
+            "commit.checkout" => CommitAction::CheckoutCommit,
+            "commit.createBranch" => CommitAction::CreateBranchHere,
+            "commit.cherryPick" => CommitAction::CherryPick,
+            "commit.revert" => CommitAction::Revert,
+            "commit.compareWorkingTree" => CommitAction::CompareWithWorkingTree,
+            _ => return,
+        };
+        self.dispatch_commit_action(action, target, window, cx);
+    }
+
+    /// Open the bottom Terminal panel for the current repo (Repository / File →
+    /// Open in Terminal).  Reuses the existing terminal-session plumbing.
+    fn menu_open_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.bottom_panel_open = true;
+        self.bottom_tab = BottomTab::Terminal;
+        self.ensure_terminal(window, cx);
+    }
+
+    /// Open the repository working tree in Finder via `open <path>` (no shell).
+    fn menu_open_in_finder(&mut self) {
+        let path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        match std::process::Command::new("open").arg(&path).spawn() {
+            Ok(_) => {
+                eprintln!("[kagi] menu: open-in-finder {}", path.display());
+                self.status_footer = FooterStatus::Idle(SharedString::from("Opened in Finder"));
+            }
+            Err(e) => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("open failed: {e}")));
+            }
+        }
+    }
+
+    /// Fetch the current repo's remote (fetch-only; never merges — W5-MENU).
+    /// Runs synchronously via the CLI wrapper, then reloads + toasts.
+    fn menu_fetch(&mut self, _cx: &mut Context<Self>) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "fetch: repo open error: {}",
+                    e.message()
+                )));
+                return;
+            }
+        };
+        eprintln!("[kagi] menu: fetch start");
+        match kagi::git::fetch_remote(&repo, &repo_path) {
+            Ok(outcome) => {
+                eprintln!("[kagi] menu: fetch ok remote={}", outcome.remote);
+                self.reload();
+                self.status_footer =
+                    FooterStatus::Success(SharedString::from(format!("Fetched {}", outcome.remote)));
+                self.push_toast(ToastKind::Success, format!("Fetched {}", outcome.remote));
+            }
+            Err(e) => {
+                eprintln!("[kagi] menu: fetch failed: {}", e);
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("Fetch failed: {e}")));
+                self.push_toast(ToastKind::Error, format!("Fetch failed: {e}"));
+            }
+        }
+    }
+
+    /// Open the branch picker overlay listing local branches.
+    fn open_branch_picker(&mut self, mode: BranchPickerMode) {
+        let branches: Vec<String> = self.branches.iter().map(|(n, _)| n.clone()).collect();
+        eprintln!(
+            "[kagi] menu: branch-picker mode={:?} n={}",
+            mode,
+            branches.len()
+        );
+        self.menu_overlay = Some(MenuOverlay::BranchPicker { mode, branches });
+    }
+
+    /// Build the About info overlay.
+    fn open_about_overlay(&mut self) {
+        self.menu_overlay = Some(MenuOverlay::Info {
+            title: SharedString::from("About kagi"),
+            lines: vec![
+                SharedString::from("kagi — a safe Git GUI client"),
+                SharedString::from(format!("version {}", env!("CARGO_PKG_VERSION"))),
+                SharedString::from(GITHUB_URL),
+            ],
+        });
+    }
+
+    /// Build the Keyboard Shortcuts overlay from the registry (auto-generated).
+    fn open_shortcuts_overlay(&mut self) {
+        let lines: Vec<SharedString> = shortcut_listing()
+            .into_iter()
+            .map(|(label, key)| SharedString::from(format!("{key}    {label}")))
+            .collect();
+        self.menu_overlay = Some(MenuOverlay::Info {
+            title: SharedString::from("Keyboard Shortcuts"),
+            lines,
+        });
+    }
+
+    /// Render the active menu overlay, if any (returns `None` when closed).
+    pub fn render_menu_overlay(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        match self.menu_overlay.clone()? {
+            MenuOverlay::BranchPicker { mode, branches } => {
+                Some(self.render_branch_picker(mode, branches, cx))
+            }
+            MenuOverlay::Info { title, lines } => Some(self.render_info_overlay(title, lines, cx)),
+        }
+    }
+
+    fn render_branch_picker(
+        &self,
+        mode: BranchPickerMode,
+        branches: Vec<String>,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let title = match mode {
+            BranchPickerMode::Checkout => "Checkout Branch",
+            BranchPickerMode::Delete => "Delete Branch",
+        };
+
+        let mut panel = div()
+            .w(px(360.0))
+            .max_h(px(420.0))
+            .overflow_hidden()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(rgb(BG_SELECTED))
+            .bg(rgb(BG_PANEL))
+            .shadow_lg()
+            .child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(rgb(BG_SELECTED))
+                    .text_color(rgb(TEXT_MAIN))
+                    .child(SharedString::from(title)),
+            );
+
+        if branches.is_empty() {
+            panel = panel.child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .text_color(rgb(TEXT_MUTED))
+                    .child(SharedString::from("No local branches")),
+            );
+        }
+
+        for (i, name) in branches.into_iter().enumerate() {
+            let name_for_click = name.clone();
+            let click = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
+                this.menu_overlay = None;
+                match mode {
+                    BranchPickerMode::Checkout => this.open_plan_modal(name_for_click.clone()),
+                    BranchPickerMode::Delete => {
+                        this.open_delete_branch_modal(name_for_click.clone())
+                    }
+                }
+                cx.notify();
+            });
+            panel = panel.child(
+                div()
+                    .id(("branch-pick", i))
+                    .px_3()
+                    .py(px(6.0))
+                    .text_sm()
+                    .text_color(rgb(TEXT_SUB))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(BG_SELECTED)).text_color(rgb(TEXT_MAIN)))
+                    .on_click(click)
+                    .child(SharedString::from(name)),
+            );
+        }
+
+        self.wrap_overlay(panel.into_any_element(), cx)
+    }
+
+    fn render_info_overlay(
+        &self,
+        title: SharedString,
+        lines: Vec<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let mut panel = div()
+            .w(px(420.0))
+            .max_h(px(480.0))
+            .overflow_hidden()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(rgb(BG_SELECTED))
+            .bg(rgb(BG_PANEL))
+            .shadow_lg()
+            .child(
+                div()
+                    .px_4()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(rgb(BG_SELECTED))
+                    .text_color(rgb(COLOR_BRANCH))
+                    .child(title),
+            );
+
+        for line in lines {
+            panel = panel.child(
+                div()
+                    .px_4()
+                    .py(px(3.0))
+                    .text_sm()
+                    .text_color(rgb(TEXT_SUB))
+                    .child(line),
+            );
+        }
+
+        self.wrap_overlay(panel.into_any_element(), cx)
+    }
+
+    /// Centre an overlay panel over a dim, click-to-dismiss backdrop.
+    fn wrap_overlay(
+        &self,
+        panel: gpui::AnyElement,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let dismiss = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
+            this.menu_overlay = None;
+            cx.stop_propagation();
+            cx.notify();
+        });
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .bg(rgb(BG_BASE))
+                    .opacity(0.55)
+                    .on_mouse_down(MouseButton::Left, dismiss),
+            )
+            .child(panel)
+            .into_any_element()
+    }
+}

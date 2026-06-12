@@ -10,6 +10,7 @@ pub mod commit_panel;
 pub mod detail_panel;
 pub mod file_tree;
 pub mod graph_view;
+pub mod watcher;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -599,6 +600,42 @@ impl KagiApp {
         // operation result remains visible after the commit list refreshes.
         // sidebar_width / panel_width are also preserved so the user's resize
         // is not lost on checkout/reload (T023).
+    }
+
+    /// Reload triggered by an external git change (T029: FS watcher).
+    ///
+    /// Behaves identically to `reload()` but additionally:
+    /// - Emits the required `[kagi] refreshed (external change)` log line.
+    /// - Updates the status footer to show the refresh message.
+    /// - Attempts to re-select the previously selected commit by CommitId;
+    ///   if the commit no longer exists the selection is cleared.
+    pub fn reload_external(&mut self, cx: &mut Context<Self>) {
+        // Capture the CommitId of the currently selected row (if any) so we
+        // can attempt to re-select it after the snapshot is refreshed.
+        // `details[idx].full_sha` is the canonical commit hash string.
+        let prev_commit_id: Option<CommitId> = self.selected
+            .and_then(|idx| self.details.get(idx))
+            .map(|detail| CommitId(detail.full_sha.to_string()));
+
+        // Delegate to the core reload logic (resets self.selected to None).
+        self.reload();
+
+        // Attempt to restore selection by CommitId.
+        if let Some(ref cid) = prev_commit_id {
+            if let Some(&new_idx) = self.commit_row_index.get(cid) {
+                self.selected = Some(new_idx);
+            }
+            // If the commit is no longer present, selected stays None.
+        }
+
+        // Emit the required log line and update the footer.
+        eprintln!("[kagi] refreshed (external change)");
+        self.status_footer = FooterStatus::Idle(
+            SharedString::from("[kagi] refreshed (external change)")
+        );
+
+        // Notify gpui that state has changed so the window repaints.
+        cx.notify();
     }
 
     /// Open the checkout plan modal for `branch`.
@@ -5521,7 +5558,14 @@ fn render_commit_plan_modal(
 
 /// Open the GPUI window and start the event loop.
 pub fn run_app(app_state: KagiApp) {
-    use gpui::{Application, Bounds, WindowBounds, WindowOptions, size};
+    use gpui::{Application, Bounds, Timer, WindowBounds, WindowOptions, size};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    // T029: start the .git watcher before entering the gpui event loop.
+    // Extract repo_path first; if absent (error-state app) skip the watcher.
+    let maybe_watcher: Option<(mpsc::Receiver<()>, notify::RecommendedWatcher)> =
+        app_state.repo_path.as_ref().and_then(|p| watcher::start_git_watcher(p));
 
     Application::new().run(move |cx: &mut App| {
         // T025: initialize gpui-component (registers key bindings, themes, etc.)
@@ -5547,6 +5591,52 @@ pub fn run_app(app_state: KagiApp) {
                 if std::env::var("KAGI_COMMIT_PANEL").as_deref() == Ok("1") {
                     kagi.update(cx, |app, cx| app.open_commit_panel(window, cx));
                 }
+
+                // T029: if the watcher started successfully, spawn a background
+                // loop that waits for events and triggers reload_external().
+                if let Some((rx, _watcher_handle)) = maybe_watcher {
+                    // Keep the watcher alive by moving it into a long-lived task.
+                    // We move `_watcher_handle` into the async block so it is
+                    // dropped only when the task finishes (i.e. the app quits).
+                    let weak = kagi.downgrade();
+                    cx.spawn(async move |async_cx| {
+                        // Suppress unused-variable warning: watcher lifetime is
+                        // the point — we hold it so notify doesn't stop.
+                        let _watcher = _watcher_handle;
+
+                        loop {
+                            // Sleep briefly before checking the channel to avoid
+                            // a busy loop.  100 ms granularity is fine here;
+                            // debounce happens AFTER the first signal arrives.
+                            Timer::after(Duration::from_millis(100)).await;
+
+                            // Check if a signal arrived.
+                            let got_signal = rx.try_recv().is_ok();
+                            if !got_signal {
+                                continue;
+                            }
+
+                            // Signal received — wait the debounce window then
+                            // drain any additional signals that arrived during it.
+                            Timer::after(watcher::DEBOUNCE).await;
+                            while rx.try_recv().is_ok() {}
+
+                            // Upgrade WeakEntity and call reload_external.
+                            // If the entity has been dropped (window closed), exit.
+                            let result = async_cx.update(|cx| {
+                                weak.update(cx, |app, cx| {
+                                    app.reload_external(cx);
+                                })
+                            });
+                            if result.is_err() {
+                                // App is gone; stop the loop.
+                                break;
+                            }
+                        }
+                    })
+                    .detach();
+                }
+
                 cx.new(|cx| gpui_component::Root::new(kagi, window, cx))
             },
         )

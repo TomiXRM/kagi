@@ -3003,6 +3003,7 @@ dependencies = [
  "git2",
  "gpui",
  "gpui-component",
+ "notify",
  "tempfile",
 ]
 

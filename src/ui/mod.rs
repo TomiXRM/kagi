@@ -1154,118 +1154,204 @@ pub struct KagiApp {
     /// Transient overlay opened from the menu bar (branch picker / About /
     /// Keyboard Shortcuts).  `None` when no menu overlay is visible.
     pub menu_overlay: Option<commands::MenuOverlay>,
+    // ── W6-TABSPEED: async tab loading + stale-while-revalidate cache ──
+    /// Cache of snapshot-derived display data keyed by repository path
+    /// (ADR-0030).  A cached tab is applied instantly on switch (zero-frame
+    /// swap) and then revalidated in the background.  Evicted in `close_tab`.
+    pub tab_cache: HashMap<PathBuf, TabViewState>,
+    /// Monotonic switch generation.  Bumped on every async tab switch so a
+    /// stale background load (an earlier switch that lost a rapid-fire race)
+    /// can detect a mismatch and discard its result before applying.
+    pub switch_generation: u64,
+    /// When `Some(name)`, the main pane shows a `Loading <name>…` placeholder
+    /// (uncached first open) until the background load completes.
+    pub loading_tab: Option<SharedString>,
+}
+
+/// W6-TABSPEED: snapshot-derived **pure data** for one repository tab.
+///
+/// This is the entire set of per-repo display fields that
+/// [`KagiApp::from_snapshot`] computes from a [`RepoSnapshot`].  It contains
+/// only owned, `Send` data (`SharedString`, `Vec`, `HashMap`, plain values) —
+/// no `Entity`, `FocusHandle`, or `UniformListScrollHandle` — so it can be
+/// built on a background thread (`cx.background_spawn`) and cached across tabs
+/// (`tab_cache`).  [`build_tab_view`] is the pure, `Send` builder;
+/// [`KagiApp::apply_tab_view`] does the main-thread assignment only.
+#[derive(Clone)]
+pub struct TabViewState {
+    pub header: SharedString,
+    pub rows: Vec<CommitRow>,
+    pub details: Vec<CommitDetail>,
+    pub branches: Vec<(String, bool)>,
+    pub stashes: Vec<Stash>,
+    pub is_dirty: bool,
+    pub branch_targets: HashMap<String, CommitId>,
+    pub commit_row_index: HashMap<CommitId, usize>,
+    pub status_summary: StatusBarSummary,
+    pub toolbar_state: ToolbarState,
+    pub remote_branches: Vec<RemoteBranch>,
+    pub tags: Vec<Tag>,
+    pub branch_upstream_info: HashMap<String, UpstreamInfo>,
+}
+
+/// W6-TABSPEED: build the pure [`TabViewState`] from a snapshot.
+///
+/// This is the exact computation (and the exact `eprintln!` log lines) that
+/// used to live inline in `from_snapshot`.  It is a free function so it can be
+/// called from a background thread — `RepoSnapshot` is `Send`, the result is
+/// `Send`, and nothing here touches gpui state.
+pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
+    let head_label = match &snap.head {
+        Head::Attached { branch, .. } => format!("branch: {branch}"),
+        Head::Detached { target } => format!(
+            "detached: {}",
+            target.get(..8).unwrap_or(target)
+        ),
+        Head::Unborn { branch } => format!("unborn ({branch})"),
+    };
+
+    let status = &snap.status;
+    let status_label = if status.is_dirty() {
+        let parts: Vec<String> = [
+            (!status.staged.is_empty())
+                .then(|| format!("{}S", status.staged.len())),
+            (!status.unstaged.is_empty())
+                .then(|| format!("{}M", status.unstaged.len())),
+            (!status.untracked.is_empty())
+                .then(|| format!("{}?", status.untracked.len())),
+            (!status.conflicted.is_empty())
+                .then(|| format!("{}!", status.conflicted.len())),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        format!(" [{}]", parts.join(" "))
+    } else {
+        " [clean]".to_string()
+    };
+
+    let header = SharedString::from(format!(
+        "{repo_name}  ·  {head_label}{status_label}  ·  {} commits",
+        snap.commits.len()
+    ));
+
+    let rows = build_commit_rows(snap);
+    let details = build_commit_details(snap);
+
+    // T009: log lane count derived from the first row (all rows share the same value).
+    let lane_count = rows.first().map(|r| r.lane_count).unwrap_or(0);
+    eprintln!("[kagi] graph: lane_count={}", lane_count);
+    eprintln!("[kagi] commit list rows: {}", rows.len());
+
+    // Build branch list: (name, is_head).
+    let head_branch = match &snap.head {
+        Head::Attached { branch, .. } => Some(branch.clone()),
+        _ => None,
+    };
+    let branches: Vec<(String, bool)> = snap
+        .branches
+        .iter()
+        .map(|b| {
+            let is_head = head_branch.as_deref() == Some(&b.name);
+            (b.name.clone(), is_head)
+        })
+        .collect();
+
+    let is_dirty = snap.status.is_dirty();
+    let stashes = snap.stashes.clone();
+
+    // T028: build branch_targets (branch name → CommitId) from the snapshot.
+    let branch_targets: HashMap<String, CommitId> = snap
+        .branches
+        .iter()
+        .map(|b| (b.name.clone(), b.target.clone()))
+        .collect();
+
+    // T028: build commit_row_index (CommitId → row index in rows/commits).
+    // snap.commits is the authoritative ordering; rows is built from it 1-to-1.
+    let commit_row_index: HashMap<CommitId, usize> = snap
+        .commits
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.id.clone(), i))
+        .collect();
+
+    // W2-SIDEBAR: collect remote branches and tags.
+    let remote_branches = snap.remote_branches.clone();
+    let tags = snap.tags.clone();
+
+    // W2-SIDEBAR: build upstream info map (branch name → UpstreamInfo).
+    let branch_upstream_info: HashMap<String, UpstreamInfo> = snap
+        .branches
+        .iter()
+        .filter_map(|b| b.upstream.as_ref().map(|u| (b.name.clone(), u.clone())))
+        .collect();
+
+    // W2-SIDEBAR: emit sidebar log line.
+    eprintln!(
+        "[kagi] sidebar: local={} remote={} tags={} stashes={} filter=\"\"",
+        snap.branches.len(),
+        snap.remote_branches.len(),
+        snap.tags.len(),
+        snap.stashes.len()
+    );
+
+    // T-BP-003: build StatusBarSummary and emit the headless log.
+    let mut status_summary = StatusBarSummary::from_snapshot(snap);
+    // T-HT-001: fill repo_name for toolbar display.
+    status_summary.repo_name = repo_name.to_string();
+    status_summary.log_headless();
+
+    // T-HT-001: derive toolbar state and emit headless log.
+    let toolbar_state = status_summary.toolbar_state();
+    toolbar_state.log_headless();
+
+    TabViewState {
+        header,
+        rows,
+        details,
+        branches,
+        stashes,
+        is_dirty,
+        branch_targets,
+        commit_row_index,
+        status_summary,
+        toolbar_state,
+        remote_branches,
+        tags,
+        branch_upstream_info,
+    }
 }
 
 impl KagiApp {
     /// Construct from a successful [`RepoSnapshot`].
+    ///
+    /// W6-TABSPEED: the snapshot-derived display data is now produced by the
+    /// pure [`build_tab_view`] free function; this constructor just folds that
+    /// `TabViewState` into a fresh `KagiApp` together with the non-snapshot
+    /// (handle / modal / preference) defaults.  Behaviour and log output are
+    /// identical to the previous inline version.
     pub fn from_snapshot(repo_name: &str, snap: &RepoSnapshot) -> Self {
-        let head_label = match &snap.head {
-            Head::Attached { branch, .. } => format!("branch: {branch}"),
-            Head::Detached { target } => format!(
-                "detached: {}",
-                target.get(..8).unwrap_or(target)
-            ),
-            Head::Unborn { branch } => format!("unborn ({branch})"),
-        };
-
-        let status = &snap.status;
-        let status_label = if status.is_dirty() {
-            let parts: Vec<String> = [
-                (!status.staged.is_empty())
-                    .then(|| format!("{}S", status.staged.len())),
-                (!status.unstaged.is_empty())
-                    .then(|| format!("{}M", status.unstaged.len())),
-                (!status.untracked.is_empty())
-                    .then(|| format!("{}?", status.untracked.len())),
-                (!status.conflicted.is_empty())
-                    .then(|| format!("{}!", status.conflicted.len())),
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
-            format!(" [{}]", parts.join(" "))
-        } else {
-            " [clean]".to_string()
-        };
-
-        let header = SharedString::from(format!(
-            "{repo_name}  ·  {head_label}{status_label}  ·  {} commits",
-            snap.commits.len()
-        ));
-
-        let rows = build_commit_rows(snap);
-        let details = build_commit_details(snap);
-
-        // T009: log lane count derived from the first row (all rows share the same value).
-        let lane_count = rows.first().map(|r| r.lane_count).unwrap_or(0);
-        eprintln!("[kagi] graph: lane_count={}", lane_count);
-        eprintln!("[kagi] commit list rows: {}", rows.len());
-
-        // Build branch list: (name, is_head).
-        let head_branch = match &snap.head {
-            Head::Attached { branch, .. } => Some(branch.clone()),
-            _ => None,
-        };
-        let branches: Vec<(String, bool)> = snap
-            .branches
-            .iter()
-            .map(|b| {
-                let is_head = head_branch.as_deref() == Some(&b.name);
-                (b.name.clone(), is_head)
-            })
-            .collect();
-
-        let is_dirty = snap.status.is_dirty();
-        let stashes = snap.stashes.clone();
-
-        // T028: build branch_targets (branch name → CommitId) from the snapshot.
-        let branch_targets: HashMap<String, CommitId> = snap
-            .branches
-            .iter()
-            .map(|b| (b.name.clone(), b.target.clone()))
-            .collect();
-
-        // T028: build commit_row_index (CommitId → row index in rows/commits).
-        // snap.commits is the authoritative ordering; rows is built from it 1-to-1.
-        let commit_row_index: HashMap<CommitId, usize> = snap
-            .commits
-            .iter()
-            .enumerate()
-            .map(|(i, c)| (c.id.clone(), i))
-            .collect();
-
-        // W2-SIDEBAR: collect remote branches and tags.
-        let remote_branches = snap.remote_branches.clone();
-        let tags = snap.tags.clone();
-
-        // W2-SIDEBAR: build upstream info map (branch name → UpstreamInfo).
-        let branch_upstream_info: HashMap<String, UpstreamInfo> = snap
-            .branches
-            .iter()
-            .filter_map(|b| b.upstream.as_ref().map(|u| (b.name.clone(), u.clone())))
-            .collect();
-
-        // W2-SIDEBAR: emit sidebar log line.
-        eprintln!(
-            "[kagi] sidebar: local={} remote={} tags={} stashes={} filter=\"\"",
-            snap.branches.len(),
-            snap.remote_branches.len(),
-            snap.tags.len(),
-            snap.stashes.len()
-        );
-
-        // T-BP-003: build StatusBarSummary and emit the headless log.
-        let mut status_summary = StatusBarSummary::from_snapshot(snap);
-        // T-HT-001: fill repo_name for toolbar display.
-        status_summary.repo_name = repo_name.to_string();
-        status_summary.log_headless();
-
-        // T-HT-001: derive toolbar state and emit headless log.
-        let toolbar_state = status_summary.toolbar_state();
-        toolbar_state.log_headless();
+        let view = build_tab_view(snap, repo_name);
 
         // T-BP-004: load up to 100 entries from the oplog file at startup.
         let op_entries: VecDeque<OpLogEntry> = read_oplog_tail(OP_ENTRIES_LOAD).into();
+
+        let TabViewState {
+            header,
+            rows,
+            details,
+            branches,
+            stashes,
+            is_dirty,
+            branch_targets,
+            commit_row_index,
+            status_summary,
+            toolbar_state,
+            remote_branches,
+            tags,
+            branch_upstream_info,
+        } = view;
 
         KagiApp {
             root_focus: None,
@@ -1335,6 +1421,10 @@ impl KagiApp {
             sidebar_visible: true,
             inspector_visible: true,
             menu_overlay: None,
+            // W6-TABSPEED
+            tab_cache: HashMap::new(),
+            switch_generation: 0,
+            loading_tab: None,
         }
     }
 
@@ -1408,6 +1498,10 @@ impl KagiApp {
             sidebar_visible: true,
             inspector_visible: true,
             menu_overlay: None,
+            // W6-TABSPEED
+            tab_cache: HashMap::new(),
+            switch_generation: 0,
+            loading_tab: None,
         }
     }
 
@@ -1443,12 +1537,12 @@ impl KagiApp {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| repo_path.display().to_string());
 
-        // Rebuild display data in-place.
-        let fresh = KagiApp::from_snapshot(&repo_name, &snap);
-        self.header = fresh.header;
-        self.rows = fresh.rows;
-        self.details = fresh.details;
-        self.branches = fresh.branches;
+        // W6-TABSPEED: rebuild the pure display data (same log output as before),
+        // reset per-repo transient UI state, then fold the view in via
+        // `apply_tab_view`.  ADR-0030 §5: reload() also refreshes the cache.
+        let view = build_tab_view(&snap, &repo_name);
+
+        // Per-repo transient state reset (unchanged behaviour).
         self.selected = None;
         self.diff_cache = HashMap::new();
         self.main_diff = None;
@@ -1458,8 +1552,6 @@ impl KagiApp {
         self.pop_modal = None;
         self.create_branch_modal = None;
         self.modal_focus = None;
-        self.stashes = fresh.stashes;
-        self.is_dirty = fresh.is_dirty;
         self.stash_push_modal = None;
         self.stash_apply_modal = None;
         self.stash_push_focus = None;
@@ -1469,13 +1561,6 @@ impl KagiApp {
         self.commit_panel_open = false;
         self.commit_panel = None;
         self.commit_input = None;
-        // T028: refresh branch/commit lookup maps so jump works after checkout.
-        self.branch_targets = fresh.branch_targets;
-        self.commit_row_index = fresh.commit_row_index;
-        // T-BP-003: update StatusBarSummary (already logged by from_snapshot above).
-        self.status_summary = fresh.status_summary;
-        // T-HT-001: update ToolbarState (already logged by from_snapshot above).
-        self.toolbar_state = fresh.toolbar_state;
         // commit_scroll_handle is preserved so the existing Rc<RefCell<...>> reference
         // wired into the uniform_list continues to work after reload.
         // status_footer is intentionally preserved across reloads so the last
@@ -1484,12 +1569,40 @@ impl KagiApp {
         // is not lost on checkout/reload (T023).
         // T-BP-004: op_entries, oplog_scroll_handle, oplog_expanded are preserved
         // so the Operation Log keeps its contents across repository reloads.
+        // sidebar_collapsed / sidebar_filter are preserved so the user's
+        // collapse + filter state survives reload.
+
+        // ADR-0030 §5: keep the stale-while-revalidate cache fresh.
+        self.tab_cache.insert(repo_path.clone(), view.clone());
+
+        // Fold the snapshot-derived data in (assignment only).
+        self.apply_tab_view(view);
+    }
+
+    /// W6-TABSPEED: assign a [`TabViewState`] into `self` (main thread, no I/O).
+    ///
+    /// This is pure field assignment — the snapshot read + `build_tab_view`
+    /// happens elsewhere (inline in `reload`, or on a background thread for
+    /// async tab switches).  It deliberately does *not* touch transient UI
+    /// state (selection / modals / panels); callers reset those as needed.
+    pub fn apply_tab_view(&mut self, view: TabViewState) {
+        self.header = view.header;
+        self.rows = view.rows;
+        self.details = view.details;
+        self.branches = view.branches;
+        self.stashes = view.stashes;
+        self.is_dirty = view.is_dirty;
+        // T028: refresh branch/commit lookup maps so jump works after checkout.
+        self.branch_targets = view.branch_targets;
+        self.commit_row_index = view.commit_row_index;
+        // T-BP-003 / T-HT-001: update StatusBarSummary + ToolbarState
+        // (already logged by build_tab_view).
+        self.status_summary = view.status_summary;
+        self.toolbar_state = view.toolbar_state;
         // W2-SIDEBAR: refresh remote_branches, tags, and upstream info.
-        // sidebar_collapsed is preserved so the user's collapse state survives reload.
-        // sidebar_filter is preserved so the user's filter text survives reload.
-        self.remote_branches = fresh.remote_branches;
-        self.tags = fresh.tags;
-        self.branch_upstream_info = fresh.branch_upstream_info;
+        self.remote_branches = view.remote_branches;
+        self.tags = view.tags;
+        self.branch_upstream_info = view.branch_upstream_info;
     }
 
     /// Reload triggered by an external git change (T029: FS watcher).
@@ -5254,10 +5367,13 @@ impl KagiApp {
                 // ── Sidebar divider ───────────────────────
                 .child(divider1)
             })
-            // ── Center column: full-width diff (T-UI-003) or the commit
-            //    list.  The right panel stays visible in BOTH modes so the
-            //    user can click through files continuously (user request).
-            .child(if let Some(diff_view) = main_diff_for_center {
+            // ── Center column: W6-TABSPEED loading placeholder, full-width
+            //    diff (T-UI-003), or the commit list.  The right panel stays
+            //    visible in BOTH non-loading modes so the user can click
+            //    through files continuously (user request).
+            .child(if let Some(loading_label) = self.loading_tab.clone() {
+                render_loading_placeholder(loading_label).into_any_element()
+            } else if let Some(diff_view) = main_diff_for_center {
                 render_main_diff_view(diff_view, main_diff_scroll_handle, cx).into_any_element()
             } else {
                 commit_list_col.into_any_element()
@@ -6069,6 +6185,32 @@ fn render_rows(
 /// Layout (fills remaining width after sidebar + divider):
 /// - Header row: `← Back` + file name + stats
 /// - Body: `uniform_list` id `"main-diff-list"` with line numbers
+/// W6-TABSPEED / ADR-0030: center-pane placeholder shown while an uncached tab
+/// is loading on a background thread.  The tab strip stays operable above it.
+fn render_loading_placeholder(label: SharedString) -> impl IntoElement {
+    div()
+        .flex_1()
+        .h_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .bg(rgb(BG_BASE))
+        .child(
+            div()
+                .text_lg()
+                .text_color(rgb(TEXT_SUB))
+                .child(label),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(rgb(TEXT_MUTED))
+                .child(SharedString::from("\u{27f3}")), // ⟳
+        )
+}
+
 fn render_main_diff_view(
     view: MainDiffView,
     scroll_handle: UniformListScrollHandle,

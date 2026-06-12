@@ -92,11 +92,15 @@ impl KagiApp {
         true
     }
 
-    /// Switch the active tab to `index`, rebuilding the heavyweight per-repo
-    /// state from a fresh snapshot and resetting per-repo UI state
-    /// (selection / diff_cache / main_diff / modals / commit_panel).
+    /// Switch the active tab to `index` (W6-TABSPEED / ADR-0030).
     ///
-    /// Re-arms the FS watcher for the new repo (ADR-0027 generation scheme).
+    /// Stale-while-revalidate: if the target repo's [`TabViewState`] is cached
+    /// it is applied **instantly** (zero-frame swap) and a background revalidate
+    /// refreshes it; otherwise a `Loading <name>…` placeholder + `Busy` footer
+    /// is shown while the snapshot is built on a background thread.  Per-repo UI
+    /// state (selection / diff_cache / main_diff / modals / commit_panel) is
+    /// reset either way, and the FS watcher is re-armed (ADR-0027 generation
+    /// scheme).
     pub fn switch_repo(&mut self, index: usize, cx: &mut Context<Self>) {
         let tab = match self.tabs.get(index) {
             Some(t) => t.clone(),
@@ -105,16 +109,50 @@ impl KagiApp {
         self.active_tab = index;
         self.error = None;
 
-        // Point repo_path at the new repo, then rebuild display state.
+        // Point repo_path at the new repo before any apply.
         self.repo_path = Some(tab.path.clone());
 
-        // Build a fresh snapshot and swap the heavyweight state in.  `reload`
-        // already rebuilds rows/details/branches/etc. from `repo_path` and
-        // resets selection / diff_cache / main_diff / modals / commit_panel.
-        self.reload();
+        // Reset every per-repo UI surface up-front so a cached instant-apply
+        // never shows the previous tab's selection / modals (ADR-0027).
+        self.reset_per_repo_ui();
 
-        // Defensive: ensure every per-repo UI surface is cleared even if a
-        // future reload() change stops clearing one of them (ADR-0027).
+        // W6-TABSPEED: bump the switch generation so an in-flight background
+        // load from an earlier (superseded) switch discards its result.
+        self.switch_generation = self.switch_generation.wrapping_add(1);
+        let generation = self.switch_generation;
+
+        let cached = self.tab_cache.get(&tab.path).cloned();
+        eprintln!(
+            "[kagi] tab-switch: {} cached={}",
+            tab.name,
+            if cached.is_some() { "yes" } else { "no" }
+        );
+
+        if let Some(view) = cached {
+            // Instant swap — no perceptible latency.
+            self.loading_tab = None;
+            self.apply_tab_view(view);
+        } else {
+            // First open: show a loading placeholder while we snapshot.
+            self.loading_tab = Some(SharedString::from(format!("Loading {}\u{2026}", tab.name)));
+            self.status_footer =
+                FooterStatus::Busy(SharedString::from(format!("Loading {}\u{2026}", tab.name)));
+        }
+
+        // Re-arm the watcher for the new repo and repaint immediately so the
+        // instant-apply / loading placeholder is visible this frame.
+        self.log_tabs();
+        self.arm_watcher(cx);
+        cx.notify();
+
+        // Background (re)load to refresh / fill the cache.
+        self.load_repo_async(tab.path.clone(), tab.name.clone(), generation, cx);
+    }
+
+    /// Reset all per-repo transient UI state (selection / diffs / modals /
+    /// commit panel).  Shared by `switch_repo` (W6-TABSPEED instant-apply path)
+    /// so a cached swap never leaks the previous tab's UI.
+    fn reset_per_repo_ui(&mut self) {
         self.selected = None;
         self.diff_cache.clear();
         self.main_diff = None;
@@ -131,10 +169,66 @@ impl KagiApp {
         self.commit_panel_open = false;
         self.commit_panel = None;
         self.commit_input = None;
+    }
 
-        self.log_tabs();
-        self.arm_watcher(cx);
-        cx.notify();
+    /// W6-TABSPEED / ADR-0030: snapshot + build the [`TabViewState`] on a
+    /// background thread (`RepoSnapshot` is `Send`), then apply it on the main
+    /// thread iff this load is still the most-recent switch (`generation`
+    /// guard).  Updates `tab_cache`, clears any loading placeholder, and emits
+    /// `[kagi] tab-load: <name> rows=N`.
+    fn load_repo_async(
+        &mut self,
+        path: PathBuf,
+        name: String,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let bg_path = path.clone();
+        let bg_name = name.clone();
+        let task = cx.background_spawn(async move {
+            let mut repo = git2::Repository::open(&bg_path)
+                .map_err(|e| format!("repo open error: {}", e.message()))?;
+            let snap = kagi::git::snapshot(&mut repo, 10_000)
+                .map_err(|e| format!("snapshot error: {e}"))?;
+            let repo_name = bg_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| bg_name.clone());
+            Ok::<super::TabViewState, String>(super::build_tab_view(&snap, &repo_name))
+        });
+
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                // Generation guard: a later switch supersedes this load.
+                if app.switch_generation != generation {
+                    return;
+                }
+                match result {
+                    Ok(view) => {
+                        let rows = view.rows.len();
+                        app.tab_cache.insert(path.clone(), view.clone());
+                        app.apply_tab_view(view);
+                        app.loading_tab = None;
+                        if matches!(app.status_footer, FooterStatus::Busy(_)) {
+                            app.status_footer =
+                                FooterStatus::Idle(SharedString::from("Ready"));
+                        }
+                        eprintln!("[kagi] tab-load: {} rows={}", name, rows);
+                        cx.notify();
+                    }
+                    Err(err) => {
+                        app.loading_tab = None;
+                        let msg = format!("Error: {err}");
+                        eprintln!("[kagi] tab-load: {} error: {}", name, err);
+                        app.status_footer =
+                            FooterStatus::Failed(SharedString::from(msg));
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
     }
 
     /// Close the tab at `index`.  Discards that tab's per-repo state only
@@ -147,6 +241,8 @@ impl KagiApp {
         let closed = self.tabs.remove(index);
         // Drop the closed repo's terminal session (PTY closes on drop).
         self.terminal_sessions.remove(&closed.path);
+        // W6-TABSPEED / ADR-0030: evict the closed repo's cached view state.
+        self.tab_cache.remove(&closed.path);
 
         if self.tabs.is_empty() {
             // Last tab closed → Welcome screen.

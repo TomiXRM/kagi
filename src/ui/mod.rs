@@ -5217,9 +5217,21 @@ pub fn run_app(app_state: KagiApp) {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| {
-                let entity: Entity<KagiApp> = cx.new(|_| app_state);
-                entity
+            |window, cx| {
+                // gpui-component widgets (Input etc.) require the window's
+                // first layer to be a `gpui_component::Root`; rendering
+                // KagiApp directly panics inside Root::read (user-reported
+                // crash when opening the commit panel).
+                let kagi: Entity<KagiApp> = cx.new(|_| app_state);
+                // Regression coverage for the Root::read crash: with
+                // KAGI_COMMIT_PANEL=1, open the panel through the real
+                // window-context path so the InputState + Input element
+                // actually render during headless verification (the
+                // pre-window env path in main.rs cannot create them).
+                if std::env::var("KAGI_COMMIT_PANEL").as_deref() == Ok("1") {
+                    kagi.update(cx, |app, cx| app.open_commit_panel(window, cx));
+                }
+                cx.new(|cx| gpui_component::Root::new(kagi, window, cx))
             },
         )
         .unwrap();

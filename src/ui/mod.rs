@@ -156,6 +156,7 @@ use kagi::git::{
         plan_push, execute_push,
         preflight_check_stash,
         plan_cherry_pick, execute_cherry_pick,
+        plan_delete_branch, execute_delete_branch,
     },
     oplog::{OpLogEntry, OpOutcome, append_oplog, read_oplog_tail},
     stage_file, unstage_file, plan_commit, execute_commit,
@@ -913,6 +914,24 @@ pub struct CherryPickModal {
 }
 
 // ──────────────────────────────────────────────────────────────
+// DeleteBranchModal — state for the delete-branch confirmation overlay (W2-DELETE)
+// ──────────────────────────────────────────────────────────────
+
+/// State for an in-progress delete-branch confirmation (W2-DELETE).
+///
+/// The modal shows blockers (unmerged / current branch) and the recovery
+/// `git branch <name> <sha>` string before the user confirms.
+#[derive(Clone)]
+pub struct DeleteBranchModal {
+    /// The local branch name to delete.
+    pub branch_name: String,
+    /// The computed plan.
+    pub plan: std::sync::Arc<OperationPlan>,
+    /// Error message to show if preflight or execute failed.
+    pub error: Option<SharedString>,
+}
+
+// ──────────────────────────────────────────────────────────────
 // KagiApp — root view
 // ──────────────────────────────────────────────────────────────
 
@@ -1049,6 +1068,9 @@ pub struct KagiApp {
     /// Lazy InputState for the sidebar filter input (gpui-component IME対応).
     /// Created on first click of the filter area (requires &mut Window).
     pub sidebar_filter: Option<Entity<InputState>>,
+    // ── W2-DELETE: Delete-branch modal ───────────────────────
+    /// When `Some`, the delete-branch confirmation modal is visible.
+    pub delete_branch_modal: Option<DeleteBranchModal>,
 }
 
 impl KagiApp {
@@ -1215,6 +1237,8 @@ impl KagiApp {
             branch_upstream_info,
             sidebar_collapsed: HashSet::new(),
             sidebar_filter: None,
+            // W2-DELETE
+            delete_branch_modal: None,
         }
     }
 
@@ -1273,6 +1297,8 @@ impl KagiApp {
             branch_upstream_info: HashMap::new(),
             sidebar_collapsed: HashSet::new(),
             sidebar_filter: None,
+            // W2-DELETE
+            delete_branch_modal: None,
         }
     }
 
@@ -2891,6 +2917,152 @@ impl KagiApp {
         }
     }
 
+    // ── W2-DELETE: Delete-branch modal ───────────────────────
+
+    /// Build a delete-branch plan for `branch_name` and open the confirmation modal.
+    pub fn open_delete_branch_modal(&mut self, branch_name: impl Into<String>) {
+        let branch_name = branch_name.into();
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => {
+                eprintln!("[kagi] open_delete_branch_modal: no repo_path set");
+                return;
+            }
+        };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    format!("delete-branch: repo open error: {}", e.message()),
+                ));
+                return;
+            }
+        };
+        match plan_delete_branch(&repo, &branch_name) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: delete-branch {} blockers={}",
+                    branch_name,
+                    plan.blockers.len()
+                );
+                self.delete_branch_modal = Some(DeleteBranchModal {
+                    branch_name,
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    format!("delete-branch plan error: {}", e),
+                ));
+            }
+        }
+    }
+
+    pub fn cancel_delete_branch_modal(&mut self) {
+        self.delete_branch_modal = None;
+    }
+
+    /// Confirm delete-branch: preflight → execute → oplog → reload.
+    pub fn confirm_delete_branch(&mut self) {
+        let modal = match self.delete_branch_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+
+        if !modal.plan.blockers.is_empty() {
+            eprintln!(
+                "[kagi] refused: delete-branch plan has {} blocker(s), not executing",
+                modal.plan.blockers.len()
+            );
+            self.record_op(
+                "delete-branch",
+                modal.plan.current.clone(),
+                kagi::git::oplog::OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
+                &repo_path,
+            );
+            return;
+        }
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                let err_msg = format!("Repo open error: {}", e.message());
+                self.record_op(
+                    "delete-branch",
+                    modal.plan.current.clone(),
+                    kagi::git::oplog::OpOutcome::Failed { error: err_msg.clone() },
+                    &repo_path,
+                );
+                self.delete_branch_modal = Some(DeleteBranchModal {
+                    branch_name: modal.branch_name.clone(),
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
+                return;
+            }
+        };
+
+        if let Err(e) = kagi::git::ops::preflight_check(&repo, &modal.plan) {
+            let err_msg = format!("Preflight failed: {}", e);
+            self.record_op(
+                "delete-branch",
+                modal.plan.current.clone(),
+                kagi::git::oplog::OpOutcome::Failed { error: err_msg.clone() },
+                &repo_path,
+            );
+            self.delete_branch_modal = Some(DeleteBranchModal {
+                branch_name: modal.branch_name.clone(),
+                plan: modal.plan.clone(),
+                error: Some(SharedString::from(err_msg)),
+            });
+            return;
+        }
+
+        match execute_delete_branch(&repo, &modal.plan, &modal.branch_name) {
+            Ok(()) => {
+                eprintln!("[kagi] executed: delete-branch {}", modal.branch_name);
+                self.delete_branch_modal = None;
+                let after = kagi::git::ops::StateSummary {
+                    head: modal.plan.current.head.clone(),
+                    dirty: format!("branch '{}' deleted", modal.branch_name),
+                };
+                self.record_op(
+                    "delete-branch",
+                    modal.plan.current.clone(),
+                    kagi::git::oplog::OpOutcome::Success { after },
+                    &repo_path,
+                );
+                self.status_footer = FooterStatus::Success(SharedString::from(format!(
+                    "delete-branch: '{}' deleted (restore: {})",
+                    modal.branch_name,
+                    modal.plan.recovery.lines().nth(1).unwrap_or("git branch …")
+                )));
+                self.reload();
+            }
+            Err(e) => {
+                let err_msg = format!("Delete failed: {}", e);
+                self.record_op(
+                    "delete-branch",
+                    modal.plan.current.clone(),
+                    kagi::git::oplog::OpOutcome::Failed { error: err_msg.clone() },
+                    &repo_path,
+                );
+                self.delete_branch_modal = Some(DeleteBranchModal {
+                    branch_name: modal.branch_name.clone(),
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
+            }
+        }
+    }
+
     // ── T025: Commit Panel ────────────────────────────────────
 
     /// Open the commit panel (triggered by clicking the WIP row).
@@ -3706,6 +3878,7 @@ impl Render for KagiApp {
         let pop_modal = self.pop_modal.clone();
         let push_modal = self.push_modal.clone();
         let create_branch_modal = self.create_branch_modal.clone();
+        let delete_branch_modal = self.delete_branch_modal.clone();
         let modal_focus = self.modal_focus.clone();
         let stash_push_modal = self.stash_push_modal.clone();
         let stash_push_focus = self.stash_push_focus.clone();
@@ -3891,6 +4064,10 @@ impl Render for KagiApp {
             // ── Cherry-pick modal overlay (T016) ────────────
             .when_some(cherry_pick_modal, |el, modal| {
                 el.child(render_cherry_pick_modal(modal, cx))
+            })
+            // ── Delete-branch modal overlay (W2-DELETE) ──────
+            .when_some(delete_branch_modal, |el, modal| {
+                el.child(render_delete_branch_modal(modal, cx))
             })
             // ── Commit plan modal overlay (T025) ─────────────
             .when(
@@ -5740,6 +5917,35 @@ fn render_push_modal(modal: PushPlanModal, cx: &mut Context<KagiApp>) -> gpui::A
     });
     render_plan_modal_card(modal.plan, modal.error, "Push", cancel_handler, confirm_handler)
         .into_any_element()
+}
+
+/// Delete-branch confirmation overlay (W2-DELETE).
+fn render_delete_branch_modal(
+    modal: DeleteBranchModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.cancel_delete_branch_modal();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.confirm_delete_branch();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    render_plan_modal_card(
+        modal.plan,
+        modal.error,
+        "Delete",
+        cancel_handler,
+        confirm_handler,
+    )
+    .into_any_element()
 }
 
 /// Shared plan-confirmation card: title / current→predicted / warnings /

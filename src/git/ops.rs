@@ -1,4 +1,4 @@
-//! Checkout, create-branch, stash-push, stash-apply, stash-pop, cherry-pick, pull, push, and undo-commit operation pipelines — T013〜T016, T-HT-003/004/007/009
+//! Checkout, create-branch, stash-push, stash-apply, stash-pop, cherry-pick, pull, push, undo-commit, and delete-branch operation pipelines — T013〜T016, T-HT-003/004/007/009, W2-DELETE
 //!
 //! Implements the **plan → preflight → execute** pipeline for:
 //! - `checkout` (ADR-0004, Guarded class): `plan_checkout` / `preflight_check` / `execute_checkout`
@@ -8,6 +8,7 @@
 //! - `stash-pop` (ADR-0009, Destructive-緩和): `plan_stash_pop` / `execute_stash_pop`
 //! - `cherry-pick` (ADR-0004/0005, Guarded class): `plan_cherry_pick` / `execute_cherry_pick`
 //! - `pull` (ADR-0004/0005/0009, Guarded class): `plan_pull` / `execute_pull`
+//! - `delete-branch` (ADR-0014, Safe-class + merged-only guard): `plan_delete_branch` / `execute_delete_branch`
 //!
 //! The checkout operation is **always safe-mode only**: `CheckoutBuilder::safe()` is the only
 //! strategy used.  Force-checkout and any reset/clean APIs are intentionally absent.
@@ -23,6 +24,10 @@
 //! The cherry-pick operation uses `repo.cherrypick_commit(&commit, &head_commit, 0, None)`
 //! **exclusively** for both plan and execute — the working-tree variant `repo.cherrypick()` is
 //! **never used**.  This keeps the repo state clean (no CHERRYPICK state, no abort needed).
+//!
+//! The delete-branch operation uses `Branch::delete()` — a ref-only deletion that does NOT
+//! touch the working tree.  **Force delete is intentionally absent.**  Only branches whose
+//! tip commit is reachable from HEAD (merged) may be deleted; unmerged branches are a blocker.
 //!
 //! # Public API
 //!
@@ -42,6 +47,8 @@
 //! - [`execute_cherry_pick`]    — apply a cherry-pick commit (in-memory → commit → checkout_head safe)
 //! - [`plan_pull`]              — generate an [`OperationPlan`] for pull (fetch + merge/fast-forward)
 //! - [`execute_pull`]           — run fetch(CLI) then merge/FF (in-memory, no MERGING state)
+//! - [`plan_delete_branch`]     — generate an [`OperationPlan`] for branch deletion (merged only)
+//! - [`execute_delete_branch`]  — delete the branch ref (no working-tree changes, no force)
 //!
 //! # Environment variables (test / headless use only)
 //!
@@ -53,6 +60,7 @@
 //! | `KAGI_STASH_APPLY=<index>`     | generate a stash-apply plan for `<index>` and emit a plan log |
 //! | `KAGI_CHERRY_PICK=<sha>`       | generate a cherry-pick plan for `<sha>` and emit a plan log |
 //! | `KAGI_PULL=1`                  | generate a pull plan and emit a plan log |
+//! | `KAGI_DELETE_BRANCH=<name>`    | generate a delete-branch plan for `<name>` and emit a plan log |
 //! | `KAGI_AUTO_CONFIRM=1`          | **(TEST-ONLY)** if there are no blockers, proceed directly to execute after planning. **Never set this in normal use.** |
 
 use std::path::Path;
@@ -3086,4 +3094,273 @@ pub fn execute_undo_commit(repo: &Repository) -> Result<UndoOutcome, GitError> {
         undone: CommitId(head_oid.to_string()),
         now_at: CommitId(parent_oid.to_string()),
     })
+}
+
+// ────────────────────────────────────────────────────────────
+// plan_delete_branch  (W2-DELETE, ADR-0014)
+// ────────────────────────────────────────────────────────────
+
+/// Analyse whether deleting local branch `name` is safe and return an
+/// [`OperationPlan`].
+///
+/// # Design (ADR-0014)
+///
+/// Delete-branch is a **ref-only** operation: `Branch::delete()` removes the
+/// local ref and does NOT touch the working tree or index.  **Force delete is
+/// intentionally absent.**
+///
+/// The merged-or-not check uses `repo.graph_descendant_of(head_oid, tip_oid)`:
+/// this returns `true` when `head_oid` is a descendant of `tip_oid`, meaning
+/// `tip_oid` is reachable from HEAD (i.e. already merged into HEAD).
+///
+/// # Blocker conditions
+///
+/// - The named branch does not exist.
+/// - The named branch is the currently checked-out branch (HEAD is attached to it).
+/// - HEAD is detached and the branch tip is HEAD (prevents deleting the only
+///   ref pointing at the current commit).
+/// - The branch tip commit is **not** reachable from HEAD — the branch is
+///   unmerged; force delete is not provided.
+///
+/// # Warning conditions
+///
+/// - The branch has an upstream configured: the remote branch is NOT deleted
+///   by this operation.
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] if the repository cannot be queried.
+pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan, GitError> {
+    // ── 1. Current HEAD ──────────────────────────────────────
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+
+    // ── 2. Build current StateSummary ────────────────────────
+    let head_display = head.display();
+
+    let dirty_parts: Vec<String> = [
+        (!status.staged.is_empty())
+            .then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty())
+            .then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty())
+            .then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty())
+            .then(|| format!("{} conflicted", status.conflicted.len())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let dirty_display = if dirty_parts.is_empty() {
+        "clean".to_string()
+    } else {
+        dirty_parts.join(", ")
+    };
+
+    let current = StateSummary {
+        head: head_display.clone(),
+        dirty: dirty_display,
+    };
+
+    // ── 3. Check blockers ────────────────────────────────────
+    let mut blockers: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Branch existence check.
+    let branch_result = repo.find_branch(name, BranchType::Local);
+    let branch = match branch_result {
+        Ok(b) => b,
+        Err(_) => {
+            blockers.push(format!(
+                "Branch '{}' does not exist in this repository.",
+                name
+            ));
+            // Build minimal plan with blocker and return early.
+            let predicted = StateSummary {
+                head: head_display.clone(),
+                dirty: current.dirty.clone(),
+            };
+            let recovery = format!(
+                "Branch '{}' could not be found. Use `git branch` to list local branches.",
+                name
+            );
+            return Ok(OperationPlan {
+                title: format!("Delete branch '{}'", name),
+                current,
+                predicted,
+                warnings,
+                blockers,
+                recovery,
+                head_at_plan: head,
+                stash_count_at_plan: 0,
+                preview_files: Vec::new(),
+                preview_commits: Vec::new(),
+            });
+        }
+    };
+
+    // Resolve the branch tip OID (needed for merged check and recovery string).
+    let tip_oid = branch
+        .get()
+        .target()
+        .ok_or_else(|| GitError::Other(format!("branch '{}' has no target OID", name)))?;
+
+    let tip_short = {
+        let s = tip_oid.to_string();
+        s.get(..8).unwrap_or(&s).to_string()
+    };
+
+    // Current-branch check (HEAD attached to this branch).
+    if let Head::Attached { branch: ref head_branch, .. } = head {
+        if head_branch == name {
+            blockers.push(format!(
+                "Branch '{}' is the currently checked-out branch. \
+                 Checkout a different branch before deleting this one.",
+                name
+            ));
+        }
+    }
+
+    // Detached HEAD + tip == HEAD check.
+    if let Head::Detached { ref target } = head {
+        let head_oid_res = git2::Oid::from_str(target);
+        if let Ok(head_oid) = head_oid_res {
+            if head_oid == tip_oid {
+                blockers.push(format!(
+                    "HEAD is detached and points to the same commit as '{}'. \
+                     This branch cannot be deleted while HEAD is at its tip.",
+                    name
+                ));
+            }
+        }
+    }
+
+    // Merged check: branch tip must be reachable from HEAD.
+    // graph_descendant_of(a, b) returns true when a is a descendant of b,
+    // i.e. b is reachable FROM a.  We want: HEAD can reach tip.
+    // So: graph_descendant_of(head_oid, tip_oid) OR head_oid == tip_oid.
+    //
+    // This check is only meaningful when HEAD has a commit (Attached or Detached).
+    let is_merged = match &head {
+        Head::Attached { target, .. } | Head::Detached { target } => {
+            match git2::Oid::from_str(target) {
+                Ok(head_oid) => {
+                    head_oid == tip_oid
+                        || repo
+                            .graph_descendant_of(head_oid, tip_oid)
+                            .unwrap_or(false)
+                }
+                Err(_) => false,
+            }
+        }
+        Head::Unborn { .. } => {
+            // No commits at all: the branch cannot have been merged.
+            false
+        }
+    };
+
+    if !is_merged {
+        blockers.push(format!(
+            "Branch '{}' has unmerged commits (tip {} is not reachable from HEAD). \
+             Merge or discard the branch manually before deleting. \
+             Force delete is not provided.",
+            name, tip_short
+        ));
+    }
+
+    // Upstream warning: remote branch is NOT deleted.
+    let has_upstream = branch.upstream().is_ok();
+    if has_upstream {
+        warnings.push(format!(
+            "Branch '{}' has an upstream tracking branch. \
+             Only the local branch will be deleted; the remote branch is NOT removed.",
+            name
+        ));
+    }
+
+    // ── 4. Predicted StateSummary ─────────────────────────────
+    // HEAD is unchanged; the deleted branch disappears from the ref list.
+    let predicted = StateSummary {
+        head: head_display.clone(),
+        dirty: current.dirty.clone(),
+    };
+
+    // ── 5. Recovery guidance ──────────────────────────────────
+    let recovery = format!(
+        "To restore the deleted branch:\n  git branch {} {}\n\
+         The branch tip commit '{}' remains in the object store until GC.",
+        name, tip_short, tip_short
+    );
+
+    Ok(OperationPlan {
+        title: format!(
+            "Delete branch '{}' (tip {})",
+            name, tip_short
+        ),
+        current,
+        predicted,
+        warnings,
+        blockers,
+        recovery,
+        head_at_plan: head,
+        stash_count_at_plan: 0,
+        preview_files: Vec::new(),
+        preview_commits: Vec::new(),
+    })
+}
+
+// ────────────────────────────────────────────────────────────
+// execute_delete_branch  (W2-DELETE, ADR-0014)
+// ────────────────────────────────────────────────────────────
+
+/// Delete the local branch named `name`.
+///
+/// # Design (ADR-0014)
+///
+/// Uses `Branch::delete()` — a **ref-only** deletion that does NOT modify the
+/// working tree, index, HEAD, or any remote.  **Force delete is never used.**
+///
+/// Steps:
+/// 1. [`preflight_check`] — verify HEAD has not moved since planning.
+/// 2. Locate the branch via `repo.find_branch(name, BranchType::Local)`.
+/// 3. Call `branch.delete()` to remove the local ref.
+/// 4. Verify the branch is gone (`find_branch` now returns `Err`).
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] on any failure, including:
+/// - HEAD has moved since planning (preflight mismatch).
+/// - Branch no longer exists at execute time (already deleted externally).
+/// - `branch.delete()` fails for any reason.
+/// - Post-delete verify finds the branch still present.
+pub fn execute_delete_branch(
+    repo: &Repository,
+    plan: &OperationPlan,
+    name: &str,
+) -> Result<(), GitError> {
+    // ── 1. Preflight: HEAD must not have moved since planning ─
+    preflight_check(repo, plan)?;
+
+    // ── 2. Locate the branch ──────────────────────────────────
+    let mut branch = repo
+        .find_branch(name, BranchType::Local)
+        .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", name, e.message())))?;
+
+    // ── 3. Delete the branch ref (ref-only, no WT change) ─────
+    // Branch::delete() removes refs/heads/<name>. force=false would be the
+    // --delete flag; here we rely on plan-time merged check instead.
+    branch
+        .delete()
+        .map_err(|e| GitError::Other(format!("branch delete failed: {}", e.message())))?;
+
+    // ── 4. Verify the branch is gone ─────────────────────────
+    if repo.find_branch(name, BranchType::Local).is_ok() {
+        return Err(GitError::Other(format!(
+            "branch '{}' still exists after delete — unexpected state",
+            name
+        )));
+    }
+
+    Ok(())
 }

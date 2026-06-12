@@ -110,3 +110,4 @@
 | T-CM-062 | Inspector Actions と Context Menu の handler 統合 | T-CM-010, T-CM-021, T-CM-031 | todo |
 | T-CM-063 | 状況別 availability の unit test | T-CM-004 | todo |
 | T-CM-064 | fixture での E2E 検証(cherry-pick/revert/checkout/compare) | T-CM-031, T-CM-034, T-CM-041, T-CM-043 | todo |
+| W4-TABS | リポジトリ tab 切り替え + ディレクトリ選択(ADR-0027/0028) | - | in-progress |

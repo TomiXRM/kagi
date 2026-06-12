@@ -95,8 +95,6 @@ pub struct Theme {
     // ── Accent buttons ───────────────────────────────────────────
     /// Cherry-pick action button (Catppuccin mauve).
     pub accent: u32,
-    /// Copy-SHA action button (Catppuccin sky).
-    pub accent_alt: u32,
 
     // ── Graph lane palette (6 cycling colours, HSLA components) ───
     /// `(hue, saturation, lightness)` for each lane; alpha is always 1.0.
@@ -479,7 +477,6 @@ const CATPPUCCIN_MOCHA: Theme = Theme {
     change_dir: 0x6c7086,
 
     accent: 0xcba6f7,     // mauve
-    accent_alt: 0x89dceb, // sky
 
     lane_hsl: [
         (0.583, 0.75, 0.65), // blue
@@ -561,7 +558,6 @@ const XCODE_DARK: Theme = Theme {
     change_dir: 0x6c7080,
 
     accent: 0xdabaff,     // purple (keyword-ish)
-    accent_alt: 0x6bdfff, // teal/type
 
     lane_hsl: [
         (0.585, 0.70, 0.66),
@@ -643,7 +639,6 @@ const XCODE_LIGHT: Theme = Theme {
     change_dir: 0x6f747e,
 
     accent: 0x9b2393,     // keyword magenta
-    accent_alt: 0x0b4f79, // type blue
 
     lane_hsl: [
         (0.585, 0.70, 0.45),
@@ -724,7 +719,6 @@ const ONE_DARK: Theme = Theme {
     change_dir: 0x6b7280,
 
     accent: 0xc678dd,     // purple
-    accent_alt: 0x56b6c2, // cyan
 
     lane_hsl: [
         (0.585, 0.80, 0.66),
@@ -806,7 +800,6 @@ const ONE_LIGHT: Theme = Theme {
     change_dir: 0x7a7c85,
 
     accent: 0xa626a4,     // purple
-    accent_alt: 0x0184bc, // cyan
 
     lane_hsl: [
         (0.605, 0.86, 0.60),
@@ -915,7 +908,6 @@ const MONOKAI: Theme = Theme {
     change_dir: 0xa09ca3,
 
     accent: 0xb08fff,     // vivid purple (ref #af9cf4, boosted)
-    accent_alt: 0x7be8f5, // vivid cyan (ref type #7bdae7)
 
     lane_hsl: [
         (0.585, 1.00, 0.70), // blue   (sat +0.05, l -0.01)

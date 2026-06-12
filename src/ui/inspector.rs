@@ -3,7 +3,7 @@
 //! W7-INSPECTOR2 layout (top → bottom):
 //!   1. Title          (commit summary, wraps to 2 lines max + truncate)
 //!   2. Meta row       (avatar · author name · committed date · short-hash chip)
-//!   3. Actions row    (Create branch · Cherry-pick · Copy SHA — compact)
+//!   3. Actions row    (Create branch · Cherry-pick — compact; Copy SHA = hash chip click)
 //!   4. Message box    (independent vertical scroll, resizable)
 //!   ── InspectorSplit divider (drag to change message:files ratio) ──
 //!   5. Counts row     (N modified · N added · N deleted · N renamed)
@@ -92,12 +92,6 @@ pub fn render_inspector(
     let copy_target1 = at.clone();
     let copy_sha_click1 = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
         this.dispatch_commit_action(CommitAction::CopySha, copy_target1.clone(), _window, cx);
-    });
-
-    // ── Copy SHA handler for Actions section ─────────────────────────────
-    let copy_target2 = at.clone();
-    let copy_sha_click2 = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.dispatch_commit_action(CommitAction::CopySha, copy_target2.clone(), _window, cx);
     });
 
     // ── Author name + email (parsed from `author_line`) ───────────────────
@@ -249,14 +243,6 @@ pub fn render_inspector(
         "\u{1f352} Cherry-pick",
         theme::theme().accent, // accent (cherry-pick)
         cherry_click,
-    );
-
-    // ── "Copy SHA" button in Actions section ─────────────────────────────
-    let copy_sha_button = action_button(
-        "copy-sha-actions-btn",
-        "Copy SHA",
-        theme::theme().accent_alt, // accent (copy-sha)
-        copy_sha_click2,
     );
 
     // ── Path⇄Tree toggle ─────────────────────────────────────────────────
@@ -624,8 +610,7 @@ pub fn render_inspector(
     let actions_row = div()
         .flex().flex_row().items_center().gap_1().flex_wrap().mb_2()
         .child(create_branch_button)
-        .child(cherry_pick_button)
-        .child(copy_sha_button);
+        .child(cherry_pick_button);
 
     // ── Message box (independent scroll, top of the split) ────────────────
     let mut message_inner = div().flex().flex_col();

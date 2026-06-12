@@ -1302,6 +1302,11 @@ pub struct KagiApp {
     /// When `Some`, the refresh icon spins (set on click; cleared after one
     /// full rotation in render).
     pub refresh_spin_started: Option<Instant>,
+    /// Last commit-message value mirrored to the per-branch draft file
+    /// (T-COMMIT-007). Compared each frame to detect edits cheaply.
+    pub last_draft_value: String,
+    /// Debounce generation for the draft autosave writer.
+    pub draft_save_gen: u64,
     /// Debounce generation for modal live re-planning. Each input change
     /// bumps it; a 250ms timer task re-plans only if no newer change arrived.
     /// Per-keystroke synchronous re-planning (Repository::open + plan build,
@@ -1613,6 +1618,8 @@ impl KagiApp {
             toast_ticker_alive: false,
             busy_op: None,
             modal_replan_gen: 0,
+            last_draft_value: String::new(),
+            draft_save_gen: 0,
             refresh_spin_started: None,
             // W2-DELETE
             delete_branch_modal: None,
@@ -1707,6 +1714,8 @@ impl KagiApp {
             toast_ticker_alive: false,
             busy_op: None,
             modal_replan_gen: 0,
+            last_draft_value: String::new(),
+            draft_save_gen: 0,
             refresh_spin_started: None,
             // W2-DELETE
             delete_branch_modal: None,
@@ -3322,6 +3331,36 @@ impl KagiApp {
             self.schedule_modal_replan(cx);
         }
 
+        // ── Commit-message draft autosave (T-COMMIT-007) ────
+        if self.commit_panel_open {
+            if let Some(ref input_entity) = self.commit_input {
+                let v = input_entity.read(cx).value().to_string();
+                if v != self.last_draft_value {
+                    self.last_draft_value = v;
+                    self.draft_save_gen = self.draft_save_gen.wrapping_add(1);
+                    let gen = self.draft_save_gen;
+                    cx.spawn(async move |this, acx| {
+                        gpui::Timer::after(Duration::from_millis(250)).await;
+                        let _ = this.update(acx, |app, _cx| {
+                            if app.draft_save_gen != gen {
+                                return;
+                            }
+                            let Some(rp) = app.repo_path.clone() else { return };
+                            let branch = app.status_summary.branch.clone();
+                            let msg = app.last_draft_value.clone();
+                            if msg.trim().is_empty() {
+                                let _ = kagi::git::clear_draft(&rp, &branch);
+                            } else {
+                                let _ = kagi::git::save_draft(&rp, &branch, &msg, "plain");
+                                eprintln!("[kagi] draft: saved {}", branch);
+                            }
+                        });
+                    })
+                    .detach();
+                }
+            }
+        }
+
         // ── Stash push (message) ────────────────────────────
         if let Some(m) = self.stash_push_modal.as_mut() {
             if m.input_state.is_none() {
@@ -4263,7 +4302,6 @@ impl KagiApp {
     /// Entry point for the Commit Panel "Amend" control — wired by the PM when
     /// the W14-PREVIEW/TEMPLATE commit-panel lanes merge (this lane owns the
     /// backend + modal/confirm plumbing, not `commit_panel.rs`).
-    #[allow(dead_code)]
     pub fn open_amend_modal(&mut self, mode: AmendMode, cx: &mut Context<Self>) {
         let message: String = if let Some(ref input_entity) = self.commit_input {
             input_entity.read(cx).value().to_string()
@@ -4621,6 +4659,21 @@ impl KagiApp {
         self.commit_panel_open = true;
         self.selected = None;
         self.main_diff = None;
+
+        // T-COMMIT-007: restore the per-branch draft into an empty input.
+        if let Some(ref input_entity) = self.commit_input {
+            let current = input_entity.read(cx).value().to_string();
+            if current.trim().is_empty() {
+                let branch = self.status_summary.branch.clone();
+                if let Some(d) = kagi::git::load_draft(&repo_path, &branch) {
+                    eprintln!("[kagi] draft: loaded {}", branch);
+                    input_entity.update(cx, |state, cx| {
+                        state.set_value(d.message, window, cx);
+                    });
+                    self.last_draft_value = input_entity.read(cx).value().to_string();
+                }
+            }
+        }
 
         // T026: focus the InputState after opening the panel.
         if let Some(ref input_entity) = self.commit_input {
@@ -5148,6 +5201,14 @@ impl KagiApp {
         match execute_commit(&repo, &msg) {
             Ok(new_id) => {
                 eprintln!("[kagi] executed: commit {}", new_id.short());
+
+                // T-COMMIT-007: a successful commit clears the branch draft.
+                {
+                    let branch = self.status_summary.branch.clone();
+                    let _ = kagi::git::clear_draft(&repo_path, &branch);
+                    eprintln!("[kagi] draft: cleared {}", branch);
+                    self.last_draft_value = String::new();
+                }
 
                 // Verify: re-snapshot, check HEAD is the new commit.
                 let mut repo2 = match git2::Repository::open(&repo_path) {
@@ -11447,7 +11508,51 @@ fn render_commit_panel(
                     )
                 })
                 // Commit button
-                .child(commit_btn),
+                .child(commit_btn)
+                // T-COMMIT-011: Amend the previous commit (unpushed only —
+                // the plan blocks pushed/merge/etc.). Mode follows what the
+                // user has provided: staged changes, a new message, or both.
+                .child({
+                    let amend_click = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+                        let staged = this
+                            .commit_panel
+                            .as_ref()
+                            .map(|p| !p.staged.is_empty())
+                            .unwrap_or(false);
+                        let msg = this
+                            .commit_input
+                            .as_ref()
+                            .map(|i| !i.read(cx).value().trim().is_empty())
+                            .unwrap_or(false);
+                        let mode = match (msg, staged) {
+                            (true, true) => AmendMode::Both,
+                            (false, true) => AmendMode::Staged,
+                            (true, false) => AmendMode::MessageOnly,
+                            (false, false) => {
+                                this.status_footer = FooterStatus::Idle(SharedString::from(
+                                    "Amend: メッセージを入力するか変更を stage してください",
+                                ));
+                                cx.notify();
+                                return;
+                            }
+                        };
+                        this.open_amend_modal(mode, cx);
+                        cx.notify();
+                    });
+                    div()
+                        .id("cp-amend-btn")
+                        .mt_1()
+                        .w_full()
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .bg(rgb(theme().surface))
+                        .text_sm()
+                        .text_color(rgb(theme().color_warning))
+                        .on_click(amend_click)
+                        .hover(|st| st.bg(rgb(theme().selected)))
+                        .child(SharedString::from("Amend last commit…"))
+                }),
         )
 }
 

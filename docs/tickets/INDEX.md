@@ -47,7 +47,7 @@
 
 | ID | タイトル | 依存 | Status |
 |----|----------|------|--------|
-| T-BP-001 | AppShell layout slot 化(Header/Main/RightPanel/BottomPanel/StatusBar)※挙動不変リファクタ | - | todo |
+| T-BP-001 | AppShell layout slot 化(Header/Main/RightPanel/BottomPanel/StatusBar)※挙動不変リファクタ | - | in-progress |
 | T-BP-002 | BottomPanel open/close + 高さリサイズ | T-BP-001 | todo |
 | T-BP-003 | StatusBar(情報表示 + タブ toggle ボタン + cmd-j) | T-BP-001 | todo |
 | T-BP-004 | Operation Log タブ(メモリリングバッファ + 表示) | T-BP-002 | todo |

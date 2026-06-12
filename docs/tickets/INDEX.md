@@ -116,3 +116,4 @@
 | W7-INSPECTOR2 | Inspector レイアウト再設計(message スクロール枠 + 1:1 リサイズ) | ADR-0015 | in-progress |
 | W8-TERMSEL | ターミナル選択 + Cmd+C(vendored gpui-terminal、ADR-0035) | ADR-0035 | in-progress |
 | W9-THEME | カラーテーマ6種 + メニュー切替(ADR-0036) | ADR-0029 | in-progress |
+| W10-TOOLBAR | ツールバー Finder/Keynote 風(アイコン主体+下ラベル) | W9-THEME | queued |

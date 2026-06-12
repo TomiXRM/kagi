@@ -1,6 +1,6 @@
 # T-COMMIT-011: Amend — UI(3 モード選択 / SHA 変化表示 / 2段階確認)
 
-- Status: blocked(T-COMMIT-010 backend 待ち / ADR-0040 Proposed)
+- Status: todo(ADR-0040 決定済み: MVP=未push のみ、pushed は blocker。案C は v0.2 設計)
 - 依存: T-COMMIT-010 / ADR-0040 / 0023
 - 関連: lane W14-AMEND(UI は PM 主体)
 

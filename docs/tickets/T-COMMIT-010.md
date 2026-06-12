@@ -1,6 +1,6 @@
 # T-COMMIT-010: Amend — backend(plan_amend / execute_amend、3 モード、SHA 変化)
 
-- Status: blocked(ADR-0040 の pushed 扱いが **Proposed** — ユーザー決定後に着手)
+- Status: todo(ADR-0040 決定済み: MVP=未push のみ、pushed は blocker。案C は v0.2 設計)
 - 依存: ADR-0040 / 0023(2段階確認)/ 0039・0043(checklist)/ 既存 `execute_commit`
 - 関連: lane W14-AMEND
 

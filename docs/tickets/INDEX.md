@@ -49,8 +49,8 @@
 |----|----------|------|--------|
 | T-BP-001 | AppShell layout slot 化(Header/Main/RightPanel/BottomPanel/StatusBar)※挙動不変リファクタ | - | done |
 | T-BP-002 | BottomPanel open/close + 高さリサイズ | T-BP-001 | done |
-| T-BP-003 | StatusBar(情報表示 + タブ toggle ボタン + cmd-j) | T-BP-001 | in-progress |
-| T-BP-004 | Operation Log タブ(メモリリングバッファ + 表示) | T-BP-002 | todo |
+| T-BP-003 | StatusBar(情報表示 + タブ toggle ボタン + cmd-j) | T-BP-001 | done |
+| T-BP-004 | Operation Log タブ(メモリリングバッファ + 表示) | T-BP-002 | in-progress |
 | T-BP-005 | Git 操作結果を Operation Log に流す + 失敗時自動オープン | T-BP-004 | todo |
 | T-BP-006 | Terminal 実装方式の調査 ADR | - | done(ADR-0008) |
 | T-BP-007 | MVP Terminal(単一 session) | T-BP-002, ADR-0008 | todo |

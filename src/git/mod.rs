@@ -9,6 +9,7 @@
 
 pub mod cli;
 mod diff;
+pub mod drafts;
 mod log;
 pub mod oplog;
 pub mod ops;
@@ -25,6 +26,8 @@ pub use diff::{
 };
 #[allow(unused_imports)]
 pub use oplog::{OpLogEntry, OpOutcome, append_oplog, read_oplog_tail};
+#[allow(unused_imports)]
+pub use drafts::{Draft, clear_draft, load_draft, save_draft};
 #[allow(unused_imports)]
 pub use log::{Commit, CommitId, Signature, commit_log};
 #[allow(unused_imports)]

@@ -1,17 +1,26 @@
-//! Commit Inspector panel — W2-INSPECTOR / ADR-0015
+//! Commit Inspector panel — W2-INSPECTOR / ADR-0015 / W7-INSPECTOR2
 //!
-//! Extracted from `mod.rs` `render_detail_panel` and restructured as:
-//!   1. Summary  (title · short SHA · Copy button · ref badges)
-//!   2. Metadata (author/authored · committer/committed · parents · full SHA · message)
-//!   3. Contextual Actions  (Create branch · Cherry-pick · Copy SHA)
-//!   4. Changed Files  (tree or flat path list, Path⇄Tree toggle)
+//! W7-INSPECTOR2 layout (top → bottom):
+//!   1. Title          (commit summary, wraps to 2 lines max + truncate)
+//!   2. Meta row       (avatar · author name · committed date · short-hash chip)
+//!   3. Actions row    (Create branch · Cherry-pick · Copy SHA — compact)
+//!   4. Message box    (independent vertical scroll, resizable)
+//!   ── InspectorSplit divider (drag to change message:files ratio) ──
+//!   5. Counts row     (N modified · N added · N deleted · N renamed)
+//!   6. Changed files  (tree or flat path list, Path⇄Tree toggle, scroll)
+//!
+//! The message box and files box default to a 1:1 height ratio
+//! (`KagiApp.inspector_split = 0.5`); the divider clamps it to 0.2..=0.8.
+//! The hash chip shows the full SHA in a tooltip and copies it on click
+//! (replacing the old always-on Metadata column of Parents / full SHA).
 
-use gpui::{Context, IntoElement, SharedString, div, prelude::*, px, rgb};
+use gpui::{Context, IntoElement, SharedString, div, prelude::*, px, relative, rgb};
 
 use kagi::git::{ChangeKind, CommitId, FileStatus};
 
 use super::{
-    CompareView, KagiApp,
+    CompareView, DividerDrag, DividerGhost, DividerKind, KagiApp,
+    avatar::{avatar_color, avatar_initial},
     commit_list::{BadgeKind, RefBadge},
     context_menu::CommitAction,
     detail_panel::CommitDetail,
@@ -26,7 +35,6 @@ const BG_PANEL:     u32 = 0x181825;
 const TEXT_MAIN:    u32 = 0xcdd6f4;
 const TEXT_SUB:     u32 = 0xa6adc8;
 const TEXT_MUTED:   u32 = 0x585b70;
-const TEXT_LABEL:   u32 = 0x6c7086;
 const COLOR_HEAD:   u32 = 0xf38ba8;
 const COLOR_BRANCH: u32 = 0x89b4fa;
 const COLOR_REMOTE: u32 = 0xa6e3a1;
@@ -43,16 +51,23 @@ const COLOR_DIR:        u32 = 0x6c7086;
 const MAX_FILES: usize = 100;
 const MAX_BADGE_CHARS: usize = 20;
 
+// W7-INSPECTOR2: message/files split clamp bounds (mirrors mod.rs; the drag
+// handler in mod.rs is the source of truth — these guard the flex_basis only).
+const INSPECTOR_SPLIT_MIN: f32 = 0.2;
+const INSPECTOR_SPLIT_MAX: f32 = 0.8;
+const INSPECTOR_SPLIT_DIVIDER_H: f32 = 4.0;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Public entry-point
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Render the Commit Inspector right panel.
 ///
-/// Section order (ADR-0015):
-///   Summary → Metadata → Contextual Actions → Changed Files
+/// Section order (W7-INSPECTOR2):
+///   Title → Meta row → Actions → Message box │ divider │ Counts → Changed Files
 ///
 /// `tree_view` — when `true` render the tree; when `false` render flat paths.
+/// `inspector_split` — message:files height ratio (0.5 = 1:1).
 #[allow(clippy::too_many_arguments)]
 pub fn render_inspector(
     d: CommitDetail,
@@ -62,6 +77,7 @@ pub fn render_inspector(
     compare_view: Option<CompareView>,
     active_file: Option<usize>,
     tree_view: bool,
+    inspector_split: f32,
     panel_width: f32,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
@@ -93,14 +109,10 @@ pub fn render_inspector(
         this.dispatch_commit_action(CommitAction::CopySha, copy_target2.clone(), _window, cx);
     });
 
-    // ── Parents value ─────────────────────────────────────────────────────
-    let parents_value = if d.parent_ids.is_empty() {
-        SharedString::from("(root commit)")
-    } else {
-        SharedString::from(
-            d.parent_ids.iter().map(|s| s.as_ref()).collect::<Vec<_>>().join("  ")
-        )
-    };
+    // ── Author name + email (parsed from `author_line`) ───────────────────
+    // `author_line` format: "name  <email>  YYYY-MM-DD HH:MM" (detail_panel).
+    // We only need the display name (meta row) and email (avatar colour).
+    let (author_name, author_email) = parse_author(d.author_line.as_ref());
 
     // ── Message lines (split on '\n') ─────────────────────────────────────
     let message_lines: Vec<_> = d.full_message
@@ -288,11 +300,41 @@ pub fn render_inspector(
                 .child(SharedString::from("Tree")),
         );
 
-    // ── Files section ─────────────────────────────────────────────────────
-    let section_label = match &changed_files {
-        None => SharedString::from("Changed files"),
-        Some(files) => SharedString::from(format!("Changed files ({})", files.len())),
-    };
+    // ── Counts row (ChangeKind tally; 0-count kinds omitted) ──────────────
+    // Renamed is matched with `{ .. }` because it carries a `from` path.
+    let counts_row = changed_files.as_ref().map(|files| {
+        let mut modified = 0usize;
+        let mut added = 0usize;
+        let mut deleted = 0usize;
+        let mut renamed = 0usize;
+        let mut typechange = 0usize;
+        for fs in files {
+            match fs.change {
+                ChangeKind::Modified       => modified += 1,
+                ChangeKind::Added          => added += 1,
+                ChangeKind::Deleted        => deleted += 1,
+                ChangeKind::Renamed { .. } => renamed += 1,
+                ChangeKind::TypeChange     => typechange += 1,
+            }
+        }
+        let mut parts: Vec<String> = Vec::new();
+        if modified > 0   { parts.push(format!("{} modified", modified)); }
+        if added > 0      { parts.push(format!("{} added", added)); }
+        if deleted > 0    { parts.push(format!("{} deleted", deleted)); }
+        if renamed > 0    { parts.push(format!("{} renamed", renamed)); }
+        if typechange > 0 { parts.push(format!("{} type-change", typechange)); }
+        let text = if parts.is_empty() {
+            SharedString::from("No file changes")
+        } else {
+            SharedString::from(parts.join("  \u{00B7}  "))
+        };
+        div()
+            .flex().flex_row().items_center()
+            .mb_1()
+            .text_xs().text_color(rgb(TEXT_SUB))
+            .truncate()
+            .child(text)
+    });
 
     let compare_banner = compare_view.as_ref().map(|view| {
         let close_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
@@ -332,58 +374,119 @@ pub fn render_inspector(
             )
     });
 
-    let mut files_section = div()
-        .flex().flex_col()
-        .mt_2()
-        .children(compare_banner)
-        .child(
-            div().flex().flex_row().items_center().justify_between().mb_1()
-                .child(
-                    div()
-                        .text_sm().text_color(rgb(TEXT_LABEL))
-                        .child(section_label),
-                )
-                .child(toggle_row),
-        );
+    // ── Files header: Path⇄Tree toggle (compare banner above when comparing) ─
+    let files_header = div()
+        .flex().flex_row().items_center().justify_end().mb_1()
+        .child(toggle_row);
+
+    // ── Scrolling file list (own scroll, independent of message box) ──────
+    let mut files_list = div()
+        .id("inspector-files-scroll")
+        .flex_1()
+        .min_h(px(0.))
+        .overflow_y_scroll()
+        .flex().flex_col();
 
     if changed_files.is_none() {
-        files_section = files_section.child(
+        files_list = files_list.child(
             div().text_sm().text_color(rgb(TEXT_MUTED))
                 .child(SharedString::from("(diff unavailable)")),
         );
     } else {
         for row in tree_element_rows {
-            files_section = files_section.child(row);
+            files_list = files_list.child(row);
         }
         if let Some(remaining) = truncated_count {
-            files_section = files_section.child(
+            files_list = files_list.child(
                 div().text_sm().text_color(rgb(TEXT_MUTED))
                     .child(SharedString::from(format!("\u{2026} and {} more", remaining))),
             );
         }
     }
 
-    // ── Summary section ───────────────────────────────────────────────────
-    // Title = first line of the commit message.
+    // ── Bottom box: compare banner / counts / toggle / files list ─────────
+    let files_box = div()
+        .flex().flex_col().min_h(px(0.))
+        .flex_basis(relative((1.0 - inspector_split).clamp(INSPECTOR_SPLIT_MIN, INSPECTOR_SPLIT_MAX)))
+        .flex_shrink()
+        .px_3()
+        .children(compare_banner)
+        .children(counts_row)
+        .child(files_header)
+        .child(files_list);
+
+    // ── Title (commit summary, up to 2 wrapped lines + truncate) ──────────
     let title_text: SharedString = SharedString::from(
         d.full_message.as_ref().lines().next().unwrap_or("").to_string()
     );
+    let title_el = div()
+        .text_color(rgb(TEXT_MAIN))
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .mb_1()
+        .line_clamp(2)
+        .child(title_text);
 
-    // Copy button (Summary)
-    let copy_summary_button = div()
-        .id("copy-sha-summary-btn")
-        .px_1()
-        .rounded_sm()
+    // ── Meta row: avatar · author name · committed date · short-hash chip ──
+    let avatar_hsla = avatar_color(&author_email);
+    let initial = SharedString::from(avatar_initial(&author_name));
+    let avatar_el = div()
+        .w(px(18.)).h(px(18.)).flex_shrink_0()
+        .flex().items_center().justify_center()
+        .rounded_full()
+        .bg(avatar_hsla)
+        .text_xs().text_color(rgb(BG_BASE))
+        .child(initial);
+
+    let author_name_short: SharedString = if author_name.chars().count() > 24 {
+        let s: String = author_name.chars().take(23).collect();
+        SharedString::from(format!("{}\u{2026}", s))
+    } else {
+        SharedString::from(author_name.clone())
+    };
+
+    // Short-hash chip: tooltip = full SHA (+ committer when it differs from the
+    // author), click = Copy SHA (dispatch).  This replaces the old always-on
+    // Parents / full-SHA / Committer metadata column.
+    let tooltip_text: SharedString = match &d.committer_line {
+        Some(c) => SharedString::from(format!("{}\nCommitter: {}", d.full_sha.as_ref(), c.as_ref())),
+        None => d.full_sha.clone(),
+    };
+    let hash_chip = div()
+        .id("inspector-hash-chip")
+        .flex_shrink_0()
+        .px_1().rounded_sm()
         .bg(rgb(BG_SURFACE))
-        .text_xs()
-        .text_color(rgb(TEXT_MUTED))
-        .hover(|style| style.bg(rgb(BG_SELECTED)).text_color(rgb(TEXT_MAIN)))
+        .text_xs().text_color(rgb(TEXT_SUB))
+        .hover(|s| s.bg(rgb(BG_SELECTED)).text_color(rgb(TEXT_MAIN)).cursor_pointer())
         .on_click(copy_sha_click1)
-        .child(SharedString::from("copy"));
+        .tooltip(move |_window, cx| {
+            cx.new(|_| HashTooltip { sha: tooltip_text.clone() }).into()
+        })
+        .child(short_sha);
 
-    // Ref badges row
+    let meta_row = div()
+        .flex().flex_row().items_center().gap_2().mb_2()
+        .child(avatar_el)
+        .child(
+            div().flex_1().min_w(px(0.))
+                .flex().flex_row().items_center().gap_2()
+                .child(
+                    div().flex_shrink().min_w(px(0.))
+                        .text_sm().text_color(rgb(TEXT_MAIN))
+                        .truncate()
+                        .child(author_name_short),
+                )
+                .child(
+                    div().flex_shrink_0()
+                        .text_xs().text_color(rgb(TEXT_MUTED))
+                        .child(d.committed_date),
+                ),
+        )
+        .child(hash_chip);
+
+    // ── Ref badges row ────────────────────────────────────────────────────
     let badges_row = {
-        let mut row = div().flex().flex_row().items_center().flex_wrap().gap_1();
+        let mut row = div().flex().flex_row().items_center().flex_wrap().gap_1().mb_1();
         let mut by_prio = badges;
         by_prio.sort_by_key(|b| badge_priority(&b.kind));
         for badge in &by_prio {
@@ -411,115 +514,105 @@ pub fn render_inspector(
         row
     };
 
-    let summary_section = div()
-        .flex().flex_col()
-        .mb_2()
-        .child(
-            // Title
-            div()
-                .text_color(rgb(TEXT_MAIN))
-                .mb_1()
-                .truncate()
-                .child(title_text),
-        )
-        .child(
-            // short SHA + Copy button
-            div().flex().flex_row().items_center().gap_1().mb_1()
-                .child(
-                    div().text_sm().text_color(rgb(TEXT_SUB))
-                        .child(short_sha),
-                )
-                .child(copy_summary_button),
-        )
-        .child(badges_row);
+    // ── Compact Actions row (single row) ──────────────────────────────────
+    let actions_row = div()
+        .flex().flex_row().items_center().gap_1().flex_wrap().mb_2()
+        .child(create_branch_button)
+        .child(cherry_pick_button)
+        .child(copy_sha_button);
 
-    // ── Assemble scroll content ───────────────────────────────────────────
-    // Layout: Summary → Metadata → Actions → Files
-    let mut scroll_content = div()
-        .flex().flex_col()
-        .px_3().py_2()
-        // ── 1. SUMMARY ───────────────────────────────────────────────────
-        .child(summary_section)
-        // ── 2. METADATA ──────────────────────────────────────────────────
-        .child(field("Author", d.author_line))
-        .when_some(d.committer_line, |el, c| el.child(field("Committer", c)))
-        .child(field("Committed", d.committed_date))
-        .child(field("Parents", parents_value))
-        .child(field("SHA", d.full_sha))
-        // Message block
-        .child(
-            div()
-                .flex().flex_col()
-                .mb_2()
-                .child(
-                    div()
-                        .text_sm().text_color(rgb(TEXT_LABEL))
-                        .mb_1()
-                        .child(SharedString::from("Message")),
-                ),
+    // ── Message box (independent scroll, top of the split) ────────────────
+    let mut message_inner = div().flex().flex_col();
+    for line_el in message_lines {
+        message_inner = message_inner.child(line_el);
+    }
+    let message_box = div()
+        .id("inspector-message-scroll")
+        .flex().flex_col().min_h(px(0.))
+        .flex_basis(relative(inspector_split.clamp(INSPECTOR_SPLIT_MIN, INSPECTOR_SPLIT_MAX)))
+        .flex_shrink()
+        .overflow_y_scroll()
+        .px_3()
+        .child(message_inner);
+
+    // ── InspectorSplit divider (absolute-coordinate ratio; see mod.rs) ────
+    let split_divider = div()
+        .id("inspector-split-divider")
+        .h(px(INSPECTOR_SPLIT_DIVIDER_H))
+        .flex_shrink_0()
+        .w_full()
+        .bg(rgb(BG_SURFACE))
+        .hover(|s| s.bg(rgb(COLOR_BRANCH)).cursor_row_resize())
+        .cursor_row_resize()
+        .on_drag(
+            DividerDrag { kind: DividerKind::InspectorSplit },
+            |_drag, _pos, _window, cx| cx.new(|_| DividerGhost),
         );
 
-    for line_el in message_lines {
-        scroll_content = scroll_content.child(line_el);
-    }
+    // ── Fixed header region (title, meta, badges, actions) — not scrolled ──
+    let header_region = div()
+        .flex().flex_col().flex_shrink_0()
+        .px_3().pt_2().pb_1()
+        .child(title_el)
+        .child(meta_row)
+        .child(badges_row)
+        .child(actions_row);
 
-    scroll_content = scroll_content
-        // ── 3. CONTEXTUAL ACTIONS ────────────────────────────────────────
-        .child(
-            div()
-                .flex().flex_col()
-                .mt_3().mb_1()
-                .child(
-                    div()
-                        .text_sm().text_color(rgb(TEXT_LABEL))
-                        .mb_1()
-                        .child(SharedString::from("Actions")),
-                )
-                .child(create_branch_button)
-                .child(cherry_pick_button)
-                .child(copy_sha_button),
-        )
-        // ── 4. CHANGED FILES ─────────────────────────────────────────────
-        .child(files_section);
-
-    // ── Outer panel ───────────────────────────────────────────────────────
+    // ── Outer panel: header │ message box │ divider │ files box ───────────
     div()
         .w(px(panel_width))
         .flex_shrink_0()
         .h_full()
         .flex().flex_col()
         .bg(rgb(BG_PANEL))
-        .child(
-            div()
-                .id("detail-scroll")
-                .flex_1()
-                .min_h(px(0.))
-                .overflow_y_scroll()
-                .child(scroll_content),
-        )
+        .child(header_region)
+        .child(message_box)
+        .child(split_divider)
+        .child(files_box)
+}
+
+/// Parse `name  <email>  date` (detail_panel format) into `(name, email)`.
+///
+/// `chars()`-safe: only splits on ASCII markers (`  <`, `>`), never byte-slices
+/// into multi-byte sequences, so Japanese / CJK names are preserved.  Falls back
+/// to the whole string as the name (and empty email) if the markers are absent.
+fn parse_author(line: &str) -> (String, String) {
+    if let Some(lt) = line.find("  <") {
+        let name = line[..lt].trim().to_string();
+        let rest = &line[lt + 3..];
+        let email = match rest.find('>') {
+            Some(gt) => rest[..gt].to_string(),
+            None => String::new(),
+        };
+        (name, email)
+    } else {
+        (line.trim().to_string(), String::new())
+    }
+}
+
+/// Tooltip entity for the short-hash chip — shows the full 40-hex SHA.
+struct HashTooltip {
+    sha: SharedString,
+}
+
+impl gpui::Render for HashTooltip {
+    fn render(&mut self, _window: &mut gpui::Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let mut col = div()
+            .flex().flex_col()
+            .px_2().py_1()
+            .rounded_sm()
+            .bg(rgb(BG_SURFACE))
+            .text_xs().text_color(rgb(TEXT_MAIN));
+        for line in self.sha.as_ref().split('\n') {
+            col = col.child(div().child(SharedString::from(line.to_string())));
+        }
+        col
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// Render one labelled field row (label above, single-line value with truncate).
-fn field(label: &'static str, value: SharedString) -> impl IntoElement {
-    div()
-        .flex().flex_col()
-        .mb_2()
-        .child(
-            div()
-                .text_sm().text_color(rgb(TEXT_LABEL))
-                .child(SharedString::from(label)),
-        )
-        .child(
-            div()
-                .text_color(rgb(TEXT_MAIN))
-                .truncate()
-                .child(value),
-        )
-}
 
 /// Render a clickable action button.
 fn action_button(

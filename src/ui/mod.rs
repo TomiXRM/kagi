@@ -72,6 +72,9 @@ pub enum DividerKind {
     GraphCol,
     /// T-BP-002: The divider at the top edge of the bottom panel.
     BottomPanel,
+    /// W7-INSPECTOR2: The horizontal divider inside the inspector between the
+    /// message scroll box (top) and the changed-files list (bottom).
+    InspectorSplit,
 }
 
 /// Drag payload for a divider drag.  Only the divider kind is needed: widths
@@ -131,6 +134,18 @@ const GRAPH_COL_DEFAULT: f32 = 8.0 * graph_view::LANE_W;
 
 // Height of the column header row above the commit list.
 const COL_HEADER_H: f32 = 20.0;
+
+// W7-INSPECTOR2: inspector message/files vertical split.
+/// Default split ratio (message:files = 1:1).
+const INSPECTOR_SPLIT_DEFAULT: f32 = 0.5;
+/// Clamp bounds for the split ratio when dragging the divider.
+const INSPECTOR_SPLIT_MIN: f32 = 0.2;
+const INSPECTOR_SPLIT_MAX: f32 = 0.8;
+/// Vertical offset of the inspector content area from the top of the window:
+/// tab strip (30) + its 1px bottom border + header toolbar (34).
+const INSPECTOR_TOP_OFFSET: f32 = 30.0 + 1.0 + 34.0;
+/// Height of the status bar at the very bottom of the window.
+const STATUS_BAR_H: f32 = 22.0;
 
 // Width of the inner divider handles (badge|graph and graph|message).
 const INNER_DIV_W: f32 = 4.0;
@@ -1200,6 +1215,10 @@ pub struct KagiApp {
     /// When `true` the inspector shows files in tree view; `false` = flat path list.
     /// Default: `true`.
     pub inspector_tree_view: bool,
+    /// W7-INSPECTOR2: vertical split ratio between the message scroll box (top)
+    /// and the changed-files list (bottom) inside the inspector.  `0.5` = 1:1.
+    /// Clamped to `0.2..=0.8` when dragged via the `InspectorSplit` divider.
+    pub inspector_split: f32,
     // ── W2-SIDEBAR: Repository Navigator ────────────────────────
     /// Remote-tracking branches from the snapshot (for REMOTE BRANCHES section).
     pub remote_branches: Vec<RemoteBranch>,
@@ -1496,6 +1515,7 @@ impl KagiApp {
             active_tab: 0,
             watcher_generation: 0,
             inspector_tree_view: true,
+            inspector_split: INSPECTOR_SPLIT_DEFAULT,
             graph_compact: false,
             // W2-SIDEBAR
             remote_branches,
@@ -1577,6 +1597,7 @@ impl KagiApp {
             active_tab: 0,
             watcher_generation: 0,
             inspector_tree_view: true,
+            inspector_split: INSPECTOR_SPLIT_DEFAULT,
             graph_compact: false,
             // W2-SIDEBAR
             remote_branches: Vec::new(),
@@ -5537,6 +5558,31 @@ impl Render for KagiApp {
                         cx.notify();
                     }
                 }
+                DividerKind::InspectorSplit => {
+                    // W7-INSPECTOR2: absolute-coordinate ratio.  The inspector
+                    // content area spans [top, bottom]:
+                    //   top    = tab strip + header toolbar (INSPECTOR_TOP_OFFSET)
+                    //   bottom = viewport_h - status bar - bottom panel (if open)
+                    // ratio = (cursor_y - top) / (bottom - top), clamped 0.2..=0.8.
+                    let viewport_h = f32::from(window.viewport_size().height);
+                    let cursor_y = f32::from(event.event.position.y);
+                    let bottom_taken = if this.bottom_panel_open {
+                        STATUS_BAR_H + this.bottom_panel_height + BOTTOM_PANEL_DIVIDER_H
+                    } else {
+                        STATUS_BAR_H
+                    };
+                    let top = INSPECTOR_TOP_OFFSET;
+                    let bottom = viewport_h - bottom_taken;
+                    let span = bottom - top;
+                    if span > 1.0 {
+                        let ratio = ((cursor_y - top) / span)
+                            .clamp(INSPECTOR_SPLIT_MIN, INSPECTOR_SPLIT_MAX);
+                        if (ratio - this.inspector_split).abs() > 0.001 {
+                            this.inspector_split = ratio;
+                            cx.notify();
+                        }
+                    }
+                }
             }
         });
 
@@ -6385,7 +6431,8 @@ impl KagiApp {
                     .child(inspector::render_inspector(
                         d, at, selected_badges.clone(),
                         files, compare_for_panel,
-                        active_commit_file, inspector_tree_view, panel_width, cx,
+                        active_commit_file, inspector_tree_view,
+                        self.inspector_split, panel_width, cx,
                     ))
             });
         }

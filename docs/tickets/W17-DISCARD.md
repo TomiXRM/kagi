@@ -1,8 +1,24 @@
 # W17-DISCARD: Discard unstaged changes(backup-then-discard)
 
-- Status: in-progress
+- Status: done
 - 担当: worktree agent(Opus)
-- チケット: T-DISCARD-001〜004(ADR-0046 が意味論の正。**必読**)
+- チケット: T-DISCARD-001〜004(ADR-0046 が意味論の正。**必読**)— 全 done
+
+## 完了サマリ
+
+- backend(ops.rs): `plan_discard` / `execute_discard`(`DiscardBackup`/`DiscardOutcome`)。
+  実行順は ADR 厳守 backup(`repo.blob`、失敗=全体中止)→ `checkout_index`(path+force,
+  `update_index(false)` で index 不変・refs 不変)→ verify。oplog op="discard" に path→blob SHA を
+  after.dirty で記録(復元ハンドル、`git cat-file -p` で取り出せる)。
+- UI(mod.rs / commit_panel): per-file 赤 Discard ボタン(unstaged 行のみ、untracked/conflicted 除外)、
+  danger 確認 modal(赤・ESC cancel・**backdrop と card 両方 occlude**・対象一覧スクロール・skipped 明示・
+  0 件で Discard 非表示)、Discard all ヘッダボタン(0 件 disabled)。実行は W15 async パターン
+  (`start_discard` + `discard_blocking` free fn、busy_op="discard"、toast、reload)。複数=1 オペ=1 oplog。
+- headless(main.rs): `KAGI_DISCARD=<path>` / `KAGI_DISCARD_ALL=1`(+ KAGI_AUTO_CONFIRM)。
+  `[kagi] planned/executed/verified/footer:` ログ。
+- tests/discard_test.rs(新規 7 tests)+ 既存全 suite green(計 24 suite)。own-code warning 0。
+- 触ったファイル: src/git/ops.rs, src/git/mod.rs(re-export), src/ui/mod.rs, src/main.rs,
+  tests/discard_test.rs, docs/tickets/T-DISCARD-001..004 + W17-DISCARD.md。oplog.rs はスキーマ変更不要のため未改変。
 
 ## 絶対条件
 

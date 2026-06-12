@@ -31,7 +31,7 @@ use gpui_component::Sizable as _;
 
 // cmd-j toggle action for the bottom panel.
 // escape to close main diff view.
-actions!(kagi, [ToggleBottomPanel, CloseMainDiff]);
+actions!(kagi, [ToggleBottomPanel, CloseMainDiff, DiffPrevFile, DiffNextFile]);
 
 /// Active tab in the bottom panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -472,7 +472,6 @@ impl FileDiffView {
 
 /// Where the diff was opened from (used for re-load and navigation).
 #[derive(Clone)]
-#[allow(dead_code)]
 pub enum MainDiffSource {
     /// Opened from the commit detail panel (changed-files list).
     Commit { row_index: usize, file_index: usize },
@@ -3086,6 +3085,62 @@ impl KagiApp {
     /// Emits the legacy `[kagi] diff:` log (headless compat) plus
     /// `[kagi] main-diff: open <path> rows=N`.
     /// No-op if no commit is selected.
+    /// Step the open main diff to the previous/next file (arrow keys).
+    /// No-op when no diff is open or already at the list edge.
+    pub fn main_diff_step(&mut self, delta: i64) {
+        let source = match self.main_diff.as_ref() {
+            Some(d) => d.source.clone(),
+            None => return,
+        };
+        match source {
+            MainDiffSource::Commit { row_index, file_index } => {
+                let len = self
+                    .diff_cache
+                    .get(&row_index)
+                    .and_then(|o| o.as_ref())
+                    .map(|v| v.len())
+                    .unwrap_or(0);
+                if len == 0 {
+                    return;
+                }
+                let next = (file_index as i64 + delta).clamp(0, len as i64 - 1) as usize;
+                if next != file_index {
+                    self.open_main_diff_commit(next);
+                }
+            }
+            MainDiffSource::Unstaged { path } => {
+                let (cur, len) = match self.commit_panel.as_ref() {
+                    Some(p) => (
+                        p.unstaged.iter().position(|f| f.path == path),
+                        p.unstaged.len(),
+                    ),
+                    None => return,
+                };
+                let cur = match cur { Some(c) => c, None => return };
+                if len == 0 { return; }
+                let next = (cur as i64 + delta).clamp(0, len as i64 - 1) as usize;
+                if next != cur {
+                    self.open_main_diff_wip(commit_panel::CommitPanelFileRef::Unstaged { index: next });
+                }
+            }
+            MainDiffSource::Staged { path } => {
+                let (cur, len) = match self.commit_panel.as_ref() {
+                    Some(p) => (
+                        p.staged.iter().position(|f| f.path == path),
+                        p.staged.len(),
+                    ),
+                    None => return,
+                };
+                let cur = match cur { Some(c) => c, None => return };
+                if len == 0 { return; }
+                let next = (cur as i64 + delta).clamp(0, len as i64 - 1) as usize;
+                if next != cur {
+                    self.open_main_diff_wip(commit_panel::CommitPanelFileRef::Staged { index: next });
+                }
+            }
+        }
+    }
+
     pub fn open_main_diff_commit(&mut self, file_index: usize) {
         use kagi::git::{CommitId, commit_file_diff};
 
@@ -3478,6 +3533,14 @@ impl Render for KagiApp {
             .on_action(toggle_bottom_panel)
             // T-UI-003: Esc closes the main diff view.
             .on_action(close_main_diff)
+            .on_action(cx.listener(|this, _: &DiffPrevFile, _window, cx| {
+                this.main_diff_step(-1);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &DiffNextFile, _window, cx| {
+                this.main_diff_step(1);
+                cx.notify();
+            }))
             // ── Header slot ──────────────────────────────────
             .child(self.render_header_slot(toolbar_state, status_summary, cx))
             // ── Body slot: sidebar | list | optional panel ───
@@ -3922,22 +3985,6 @@ impl KagiApp {
                     .child(SharedString::from("MESSAGE")),
             );
 
-        // T-UI-003: If main_diff is Some, show full-width diff in main pane.
-        if let Some(diff_view) = main_diff {
-            // ── Full-width main diff mode ────────────
-            let body_row = div()
-                .flex()
-                .flex_row()
-                .flex_1()
-                .min_h(px(0.))
-                // ── Left sidebar (unchanged) ──────────
-                .child(render_sidebar(&branches, &stashes, sidebar_width, cx))
-                // ── Sidebar divider ───────────────────
-                .child(divider1)
-                // ── Main diff area (full remaining width) ──
-                .child(render_main_diff_view(diff_view, main_diff_scroll_handle, cx));
-            return body_row;
-        }
 
         let commit_list_col = div()
             .flex_1()
@@ -4028,8 +4075,14 @@ impl KagiApp {
             .child(render_sidebar(&branches, &stashes, sidebar_width, cx))
             // ── Sidebar divider ───────────────────────
             .child(divider1)
-            // ── Commit list column (WIP row + virtualized list) ──
-            .child(commit_list_col);
+            // ── Center column: full-width diff (T-UI-003) or the commit
+            //    list.  The right panel stays visible in BOTH modes so the
+            //    user can click through files continuously (user request).
+            .child(if let Some(diff_view) = main_diff {
+                render_main_diff_view(diff_view, main_diff_scroll_handle, cx).into_any_element()
+            } else {
+                commit_list_col.into_any_element()
+            });
 
         // ── Right panel: commit panel OR detail panel ───────────
         // Build divider 2 (shared between both panel modes).
@@ -7864,6 +7917,12 @@ pub fn run_app(mut app_state: KagiApp) {
         cx.bind_keys([KeyBinding::new("cmd-j", ToggleBottomPanel, None)]);
         // T-UI-003: Esc closes the main diff view (no-op when main_diff is None).
         cx.bind_keys([KeyBinding::new("escape", CloseMainDiff, None)]);
+        // Arrow keys step through files while the main diff is open
+        // (no-ops otherwise; see main_diff_step).
+        cx.bind_keys([
+            KeyBinding::new("up", DiffPrevFile, None),
+            KeyBinding::new("down", DiffNextFile, None),
+        ]);
 
         // KAGI_WINDOW=WxH (dev/testing only): override the initial window size
         // so layout behaviour at small sizes can be verified headlessly.

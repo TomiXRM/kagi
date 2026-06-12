@@ -7197,7 +7197,10 @@ impl KagiApp {
             this.open_commit_panel(window, cx);
             cx.notify();
         });
-        let wip_bg = if commit_panel_open { theme().selected } else { theme().surface };
+        // Row-like background (NOT the header surface colour) so the WIP row
+        // reads as the next commit stacking onto the graph, not as part of
+        // the column-legend chrome (user feedback).
+        let wip_bg = if commit_panel_open { theme().selected } else { theme().bg_row_alt };
 
         // T030: column header row (fixed, above WIP and commit list).
         let col_header = div()
@@ -7332,8 +7335,10 @@ impl KagiApp {
                         .bg(rgb(wip_bg))
                         .on_click(wip_click)
                         .hover(|s| s.bg(rgb(theme().selected)))
-                        // Badges column: user-resizable width (T030)
-                        .child(
+                        // Badges column: tinted WIP chip, left-aligned like
+                        // the commit-row badges.
+                        .child({
+                            let (wb, wbd, wt) = theme::badge_style(theme().color_warning);
                             div()
                                 .w(px(badge_col_w))
                                 .flex_shrink_0()
@@ -7341,38 +7346,58 @@ impl KagiApp {
                                 .flex()
                                 .flex_row()
                                 .items_center()
-                                .justify_end()
+                                .justify_start()
                                 .child(
                                     div()
                                         .px_1()
                                         .rounded_sm()
-                                        .bg(rgb(theme().color_warning))
-                                        .text_color(rgb(theme().bg_base))
+                                        .bg(gpui::rgba(wb))
+                                        .border_1()
+                                        .border_color(gpui::rgba(wbd))
+                                        .text_color(rgb(wt))
                                         .text_sm()
                                         .flex_shrink_0()
                                         .child(SharedString::from("WIP")),
-                                ),
-                        )
+                                )
+                        })
                         // Inner divider spacer (badge|graph handle width)
                         .child(div().w(px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
                             .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))))
-                        // Graph column placeholder (empty for WIP row)
+                        // Graph column: hollow "not yet committed" node on
+                        // lane 0 — visually continues the graph upward.
                         .child(
                             div()
                                 .w(px(graph_col_w))
-                                .flex_shrink_0(),
+                                .flex_shrink_0()
+                                .flex()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .ml(px(graph_view::LANE_W / 2.0 - 4.5))
+                                        .w(px(9.))
+                                        .h(px(9.))
+                                        .rounded_full()
+                                        .border_1()
+                                        .border_color(rgb(theme().color_warning)),
+                                ),
                         )
                         // Inner divider spacer (graph|message handle width)
                         .child(div().w(px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
                             .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))))
-                        // Summary area: "// WIP — N changes"
-                        .child(
+                        // Summary area: change counts, styled like a row message.
+                        .child({
+                            let total = self.status_summary.staged + self.status_summary.unstaged;
                             div()
                                 .flex_1()
                                 .text_color(rgb(theme().text_muted))
                                 .overflow_hidden()
-                                .child(SharedString::from("// WIP")),
-                        ),
+                                .truncate()
+                                .child(SharedString::from(format!(
+                                    "// WIP — {} change{}(クリックで commit panel)",
+                                    total,
+                                    if total == 1 { "" } else { "s" }
+                                )))
+                        }),
                 )
             })
             // ── Virtualized commit list ──────────────

@@ -117,3 +117,4 @@
 | W8-TERMSEL | ターミナル選択 + Cmd+C(vendored gpui-terminal、ADR-0035) | ADR-0035 | in-progress |
 | W9-THEME | カラーテーマ6種 + メニュー切替(ADR-0036) | ADR-0029 | in-progress |
 | W10-TOOLBAR | ツールバー Finder/Keynote 風(アイコン主体+下ラベル) | W9-THEME | queued |
+| W11-AVATAR | GitHub アバター取得(ADR-0037) | W9-THEME | queued |

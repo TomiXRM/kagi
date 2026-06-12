@@ -61,7 +61,7 @@
 | T-HT-004 | Push の plan + 実行(set-upstream flow) | T-HT-003 | done |
 | T-UI-001 | Toolbar/StatusBar ボタンにアイコン(ユーザー要望) | T-HT-001 | done |
 | T-UI-002 | Stage all / Unstage all + List|Tree 切替(ユーザー要望) | T025 | done |
-| T-UI-003 | diff を main pane に全幅表示(ユーザー要望) | T012, T025 | in-progress |
+| T-UI-003 | diff を main pane に全幅表示(ユーザー要望) | T012, T025 | done |
 | T-UI-004 | diff シンタックスハイライト(gpui-component tree-sitter、外部バイナリなし) | T-UI-003 | todo |
 | T-HT-005 | Branch Create dialog 拡張(作成後 checkout 選択) | T-HT-001 | todo |
 | T-HT-006 | Stash plan 拡張(対象ファイル表示 / untracked 選択) | T-HT-001 | done(T-HT-007 に統合) |

@@ -1,6 +1,6 @@
 # W2-DELETE: branch delete(plan 経由、merged のみ)+ sidebar からの起動
 
-- Status: in-progress
+- Status: done (2026-06-12)
 - 担当: worktree agent
 - 関連 ADR: 0014
 

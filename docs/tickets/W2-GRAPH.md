@@ -1,6 +1,6 @@
 # W2-GRAPH: コミットグラフ視覚改善(GK-parity 第2波)
 
-- Status: in-progress
+- Status: done (2026-06-12)
 - 担当: worktree agent
 - 関連 ADR: 0016
 

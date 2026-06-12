@@ -797,81 +797,106 @@ const ONE_LIGHT: Theme = Theme {
 // terminal.ansi* colours, plus tokenColors (keyword #ff668c, string #f4cd62,
 // function #a4d671, type #7bdae7, parameter #fe9b69).  Accent is the warm
 // orange #ff9940 (cursor) requested by the ticket.
+//
+// ── Vivid/contrast boost (T011) ──────────────────────────────────────────
+// Backgrounds darkened ~7–9 steps to push contrast ratio up; accents
+// saturated toward the reference tokenColor values.  WCAG target:
+//   text_main (#f0ece8) vs bg_base (#28242a) ≈ 13:1  (≥ 7 ✓)
+//   text_muted (#918d94) vs bg_base (#28242a) ≈ 3.5:1 (≥ 3 ✓)
+//
+// Key before → after pairs:
+//   bg_base      #2f2b31 → #28242a   (darker, more contrast)
+//   bg_row_alt   #2a272c → #221e24
+//   panel        #272328 → #1f1b21
+//   sidebar      #231f25 → #1a161c
+//   surface      #403b44 → #3a3540   (delta to selected preserved)
+//   selected     #4d4751 → #4a4454
+//   text_main    #c8c8c8 → #f0ece8   (warmer white, ~13:1 vs bg_base)
+//   text_sub     #a6a2a8 → #b8b4bc
+//   text_muted   #807c82 → #918d94
+//   color_head   #ff6b90 → #ff3d6f   (vivid pink, ref #ff668c)
+//   color_remote #9ed06c → #a8e05a   (vivid green, ref #a4d671)
+//   color_tag    #ff9940 → #ff8c1a   (punchier orange)
+//   color_warning #e8c15d → #f4cd62  (match ref string yellow)
+//   accent       #b39af5 → #b08fff   (vivid purple)
+//   accent_alt   #7dd7e6 → #7be8f5   (vivid cyan, ref #7bdae7)
+//   lane_hsl sat +0.05–0.10, lightness bumped for darker bg
+//   term bright side: brighter/more saturated
 const MONOKAI: Theme = Theme {
     slug: "monokai",
     name: "Monokai (Warm Hybrid)",
     dark: true,
 
-    bg_base: 0x2f2b31,
-    bg_row_alt: 0x2a272c,
-    surface: 0x403b44,
-    selected: 0x4d4751,
-    panel: 0x272328,
-    sidebar: 0x231f25,
-    modal: 0x403b44,
+    bg_base: 0x28242a,
+    bg_row_alt: 0x221e24,
+    surface: 0x3a3540,
+    selected: 0x4a4454,
+    panel: 0x1f1b21,
+    sidebar: 0x1a161c,
+    modal: 0x3a3540,
     modal_overlay: 0x000000,
 
-    text_main: 0xc8c8c8,
-    text_sub: 0xa6a2a8,
-    text_muted: 0x807c82,
-    text_label: 0x939194,
+    text_main: 0xf0ece8,
+    text_sub: 0xb8b4bc,
+    text_muted: 0x918d94,
+    text_label: 0xa09ca3,
 
-    color_head: 0xff6b90,    // ansiRed / keyword pink
-    color_branch: 0x6fa8ff,  // ansiBlue
-    color_remote: 0x9ed06c,  // ansiGreen / function
-    color_tag: 0xff9940,     // warm orange (cursor accent)
+    color_head: 0xff3d6f,    // vivid pink (ref keyword #ff668c, boosted)
+    color_branch: 0x5a9fff,  // vivid blue
+    color_remote: 0xa8e05a,  // vivid green (ref function #a4d671)
+    color_tag: 0xff8c1a,     // punchy warm orange
 
-    color_success: 0x9ed06c,
-    color_warning: 0xe8c15d,
-    color_blocker: 0xff6b90,
-    color_blocker_muted: 0x8f4f60,
+    color_success: 0xa8e05a,
+    color_warning: 0xf4cd62,  // matches ref string yellow #f4cd62
+    color_blocker: 0xff3d6f,
+    color_blocker_muted: 0x8f4a5e,
 
-    diff_added_bg: 0x2c3a26,
-    diff_removed_bg: 0x3a2530,
-    diff_hunk: 0x6fa8ff,
+    diff_added_bg: 0x253520,
+    diff_removed_bg: 0x35202c,
+    diff_hunk: 0x5a9fff,
 
-    change_added: 0x9ed06c,
-    change_modified: 0xe8c15d,
-    change_deleted: 0xff6b90,
-    change_renamed: 0x6fa8ff,
-    change_typechange: 0x807c82,
-    change_dir: 0x939194,
+    change_added: 0xa8e05a,
+    change_modified: 0xf4cd62,
+    change_deleted: 0xff3d6f,
+    change_renamed: 0x5a9fff,
+    change_typechange: 0x918d94,
+    change_dir: 0xa09ca3,
 
-    accent: 0xb39af5,     // ansiMagenta
-    accent_alt: 0x7dd7e6, // ansiCyan
+    accent: 0xb08fff,     // vivid purple (ref #af9cf4, boosted)
+    accent_alt: 0x7be8f5, // vivid cyan (ref type #7bdae7)
 
     lane_hsl: [
-        (0.585, 0.95, 0.71),
-        (0.260, 0.55, 0.62),
-        (0.085, 1.00, 0.62),
-        (0.945, 1.00, 0.71),
-        (0.730, 0.84, 0.78),
-        (0.510, 0.71, 0.70),
+        (0.585, 1.00, 0.70), // blue   (sat +0.05, l -0.01)
+        (0.260, 0.65, 0.63), // green  (sat +0.10)
+        (0.085, 1.00, 0.63), // orange (l +0.01)
+        (0.945, 1.00, 0.70), // pink   (l -0.01)
+        (0.730, 0.90, 0.76), // purple (sat +0.06)
+        (0.510, 0.80, 0.70), // cyan   (sat +0.09)
     ],
 
-    avatar_sat: 0.62,
+    avatar_sat: 0.68,
     avatar_light: 0.62,
 
-    term_bg: (0x2f, 0x2b, 0x31),
-    term_fg: (0xc8, 0xc8, 0xc8),
-    term_cursor: (0xff, 0x99, 0x40),
-    term_black: (0x40, 0x3b, 0x44),
-    term_red: (0xff, 0x6b, 0x90),
-    term_green: (0x9e, 0xd0, 0x6c),
-    term_yellow: (0xe8, 0xc1, 0x5d),
-    term_blue: (0x6f, 0xa8, 0xff),
-    term_magenta: (0xb3, 0x9a, 0xf5),
-    term_cyan: (0x7d, 0xd7, 0xe6),
+    term_bg: (0x28, 0x24, 0x2a),
+    term_fg: (0xf0, 0xec, 0xe8),
+    term_cursor: (0xff, 0x8c, 0x1a),
+    term_black: (0x3a, 0x35, 0x40),
+    term_red: (0xff, 0x3d, 0x6f),
+    term_green: (0xa8, 0xe0, 0x5a),
+    term_yellow: (0xf4, 0xcd, 0x62),
+    term_blue: (0x5a, 0x9f, 0xff),
+    term_magenta: (0xb0, 0x8f, 0xff),
+    term_cyan: (0x7b, 0xe8, 0xf5),
     term_white: (0xff, 0xfd, 0xf8),
-    term_bright_black: (0x8d, 0x88, 0x92),
-    term_bright_red: (0xff, 0x85, 0xa4),
-    term_bright_green: (0xb4, 0xdf, 0x8a),
-    term_bright_yellow: (0xf1, 0xd5, 0x7d),
-    term_bright_blue: (0x8b, 0xbc, 0xff),
-    term_bright_magenta: (0xc7, 0xb2, 0xff),
-    term_bright_cyan: (0x95, 0xe3, 0xef),
-    term_bright_white: (0xff, 0xfe, 0xfb),
-    term_selection: (0x5a, 0x53, 0x60, 0xb3),
+    term_bright_black: (0x91, 0x8d, 0x94),
+    term_bright_red: (0xff, 0x70, 0x96),
+    term_bright_green: (0xbf, 0xed, 0x78),
+    term_bright_yellow: (0xf8, 0xdf, 0x80),
+    term_bright_blue: (0x80, 0xb8, 0xff),
+    term_bright_magenta: (0xcc, 0xb4, 0xff),
+    term_bright_cyan: (0xa0, 0xf0, 0xff),
+    term_bright_white: (0xff, 0xff, 0xff),
+    term_selection: (0x5a, 0x53, 0x62, 0xb3),
 };
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -3606,19 +3606,24 @@ fn render_sidebar(
     width: f32,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
+    // Scrollable inner column: every row keeps its natural height
+    // (flex_shrink_0) and the column scrolls when content exceeds the
+    // sidebar height.  Without this, flex squeezed rows together on small
+    // windows (overlapping text) instead of scrolling (user report).
     let mut col = div()
-        .w(px(width))
-        .flex_shrink_0()
-        .h_full()
+        .id("sidebar-scroll")
+        .flex_1()
+        .min_h(px(0.))
+        .overflow_y_scroll()
         .flex()
         .flex_col()
-        .bg(rgb(BG_SIDEBAR))
         .py_2()
         // ── LOCAL BRANCHES label ──────────────────────────
         .child(
             div()
                 .px_3()
                 .py_1()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(TEXT_MUTED))
                 .child(SharedString::from("LOCAL BRANCHES")),
@@ -3640,6 +3645,7 @@ fn render_sidebar(
                 .flex()
                 .flex_row()
                 .items_center()
+                .flex_shrink_0()
                 .px_3()
                 .py_1()
                 .text_sm()
@@ -3671,6 +3677,7 @@ fn render_sidebar(
                 .flex()
                 .flex_row()
                 .items_center()
+                .flex_shrink_0()
                 .px_3()
                 .py_1()
                 .text_sm()
@@ -3692,6 +3699,7 @@ fn render_sidebar(
                 .px_3()
                 .pt_3()
                 .pb_1()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(TEXT_MUTED))
                 .child(SharedString::from("STASHES")),
@@ -3720,6 +3728,7 @@ fn render_sidebar(
                     .flex()
                     .flex_row()
                     .items_center()
+                    .flex_shrink_0()
                     .px_3()
                     .py_1()
                     .text_sm()
@@ -3731,7 +3740,15 @@ fn render_sidebar(
         }
     }
 
-    col
+    // Fixed-width outer shell; the inner column scrolls.
+    div()
+        .w(px(width))
+        .flex_shrink_0()
+        .h_full()
+        .flex()
+        .flex_col()
+        .bg(rgb(BG_SIDEBAR))
+        .child(col)
 }
 
 // ──────────────────────────────────────────────────────────────

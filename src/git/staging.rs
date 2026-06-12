@@ -414,6 +414,7 @@ pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, Gi
         stash_count_at_plan: 0,
         preview_files,
         preview_commits: Vec::new(),
+        destructive: false,
     })
 }
 

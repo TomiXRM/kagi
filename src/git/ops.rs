@@ -130,6 +130,10 @@ pub struct OperationPlan {
     /// Non-empty only for push plans (T-HT-004).  Shown in the plan modal
     /// (newest first, capped at 100 entries at plan time).
     pub preview_commits: Vec<String>,
+    /// History-rewriting flag (ADR-0023).  `true` for plans that rewrite
+    /// history (e.g. amend), which the UI must gate behind a **two-stage
+    /// confirmation**.  Defaults to `false` for every other plan.
+    pub destructive: bool,
 }
 
 impl OperationPlan {
@@ -310,6 +314,7 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
+        destructive: false,
     })
 }
 
@@ -474,6 +479,7 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
+        destructive: false,
     })
 }
 
@@ -637,6 +643,7 @@ pub fn plan_create_branch(
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
+        destructive: false,
     })
 }
 
@@ -1050,6 +1057,7 @@ pub fn plan_stash_push(
         stash_count_at_plan: stash_count,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
+        destructive: false,
     })
 }
 
@@ -1230,6 +1238,7 @@ pub fn plan_stash_apply(
         stash_count_at_plan: stash_count,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
+        destructive: false,
     })
 }
 
@@ -1425,6 +1434,7 @@ pub fn plan_stash_pop(
         stash_count_at_plan: stash_count,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
+        destructive: false,
     })
 }
 
@@ -1830,6 +1840,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
+            destructive: false,
         });
     }
 
@@ -1897,6 +1908,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
+            destructive: false,
         });
     }
 
@@ -1981,6 +1993,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
+            destructive: false,
         });
     }
 
@@ -2030,6 +2043,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
         stash_count_at_plan: 0,
         preview_files,
         preview_commits: Vec::new(),
+        destructive: false,
     })
 }
 
@@ -2300,6 +2314,7 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
+        destructive: false,
     };
 
     if !blockers.is_empty() {
@@ -2418,6 +2433,7 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
         stash_count_at_plan: 0,
         preview_files,
         preview_commits: Vec::new(),
+        destructive: false,
     })
 }
 
@@ -2716,6 +2732,7 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
+        destructive: false,
     })
 }
 
@@ -3260,6 +3277,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
                 stash_count_at_plan: 0,
                 preview_files: Vec::new(),
                 preview_commits: Vec::new(),
+                destructive: false,
             });
         }
     };
@@ -3380,6 +3398,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
         preview_commits,
+        destructive: false,
     })
 }
 
@@ -3818,6 +3837,7 @@ pub fn plan_undo_commit(repo: &Repository) -> Result<OperationPlan, GitError> {
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
+        destructive: false,
     })
 }
 
@@ -3909,6 +3929,433 @@ pub fn execute_undo_commit(repo: &Repository) -> Result<UndoOutcome, GitError> {
     Ok(UndoOutcome {
         undone: CommitId(head_oid.to_string()),
         now_at: CommitId(parent_oid.to_string()),
+    })
+}
+
+// ────────────────────────────────────────────────────────────
+// Amend  (T-COMMIT-010, ADR-0040 — MVP: unpushed only)
+// ────────────────────────────────────────────────────────────
+
+/// Which parts of the HEAD commit an amend should rewrite (ADR-0040).
+///
+/// All three modes produce a **new commit** with a **new SHA** and move the
+/// branch ref to it; the original commit becomes unreachable but is still
+/// recoverable via the reflog / oplog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AmendMode {
+    /// Replace only the commit message; the tree is the old HEAD tree.
+    MessageOnly,
+    /// Fold the current staged changes into the old HEAD tree; message kept.
+    Staged,
+    /// Fold staged changes **and** replace the message.
+    Both,
+}
+
+impl AmendMode {
+    /// Parse the `KAGI_AMEND=<mode>` headless value (`message` / `staged` / `both`).
+    pub fn from_env_str(s: &str) -> Option<AmendMode> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "message" | "message-only" | "messageonly" | "msg" => Some(AmendMode::MessageOnly),
+            "staged" => Some(AmendMode::Staged),
+            "both" => Some(AmendMode::Both),
+            _ => None,
+        }
+    }
+
+    /// Whether this mode folds the staged index into the new tree.
+    fn includes_staged(self) -> bool {
+        matches!(self, AmendMode::Staged | AmendMode::Both)
+    }
+
+    /// Whether this mode replaces the commit message.
+    fn replaces_message(self) -> bool {
+        matches!(self, AmendMode::MessageOnly | AmendMode::Both)
+    }
+}
+
+/// The outcome of a successful [`execute_amend`] call.
+///
+/// Carries both the SHA of the commit that was amended (now unreachable) and
+/// the SHA of the new commit the branch now points at.  The old SHA is recorded
+/// in the oplog before execution so the user can recover via the reflog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AmendOutcome {
+    /// The commit that was amended (the old HEAD — now unreachable from the branch).
+    pub old: CommitId,
+    /// The new branch tip created by the amend.
+    pub new: CommitId,
+}
+
+/// Analyse whether amending the current HEAD commit is safe and return an
+/// [`OperationPlan`] (ADR-0040, MVP = **unpushed only**).
+///
+/// # Design (ADR-0040)
+///
+/// Amend never uses `commit.amend(...)`.  Instead [`execute_amend`] builds a new
+/// commit object whose **parent is the old HEAD's parent** (HEAD is replaced, so
+/// the parent is left in place) and then moves the branch ref last (ref-order
+/// rule).  The working tree and index are not written to.  The new SHA always
+/// differs from the old one; this is surfaced as `predicted` with an explicit
+/// `旧 <short> → 新 <short>` line and `destructive: true` (ADR-0023 two-stage
+/// confirm).
+///
+/// # Blocker conditions
+///
+/// - HEAD is detached or unborn.
+/// - Repository is in a conflict state.
+/// - HEAD is a **merge commit** (parent count > 1) — not supported.
+/// - HEAD is a **root commit** (no parent) when folding staged changes is not
+///   possible — root-commit amend keeps the single-parent invariant simple, so
+///   it is refused in MVP.
+/// - HEAD commit has been **pushed** to its upstream (ADR-0040 案B) — amending
+///   published history is refused; commit a new fixup instead.
+/// - `Staged` / `Both`: nothing is staged (nothing to fold in).
+/// - `MessageOnly` / `Both`: the new message is empty.
+/// - Checklist (ADR-0043) blockers, run over the staged contents.
+///
+/// `message` is required for `MessageOnly` / `Both` and ignored for `Staged`.
+pub fn plan_amend(
+    repo: &Repository,
+    mode: AmendMode,
+    message: Option<&str>,
+) -> Result<OperationPlan, GitError> {
+    // ── 1. Resolve HEAD + status ─────────────────────────────
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+    let dirty_display = status_summary_display(&status);
+
+    let current = StateSummary {
+        head: head.display(),
+        dirty: dirty_display.clone(),
+    };
+
+    let mut blockers: Vec<String> = Vec::new();
+    // `warnings` stays empty in MVP; the checklist lane (ADR-0043) will push into
+    // it once `run_checklist` is wired in step 5 below.
+    let warnings: Vec<String> = Vec::new();
+
+    // ── 2. Structural blockers (HEAD shape) ──────────────────
+    if let Head::Detached { .. } = &head {
+        blockers.push(
+            "HEAD is detached. Amend requires HEAD to be on a branch.".to_string(),
+        );
+    }
+    if let Head::Unborn { .. } = &head {
+        blockers.push(
+            "HEAD is unborn (no commits exist). There is nothing to amend.".to_string(),
+        );
+    }
+    if !status.conflicted.is_empty() {
+        blockers.push(format!(
+            "Repository has {} conflicted file(s). Resolve conflicts before amending.",
+            status.conflicted.len()
+        ));
+    }
+
+    // ── 3. Resolve HEAD commit (only when attached) ──────────
+    let (head_commit_opt, branch_name_opt) = match &head {
+        Head::Attached { target, branch } => {
+            let oid = git2::Oid::from_str(target)
+                .map_err(|e| GitError::Other(format!("HEAD OID parse failed: {}", e.message())))?;
+            let commit = repo
+                .find_commit(oid)
+                .map_err(|e| GitError::Other(format!("HEAD commit lookup failed: {}", e.message())))?;
+            (Some(commit), Some(branch.clone()))
+        }
+        _ => (None, None),
+    };
+
+    let mut old_short = String::new();
+    let mut old_summary = String::new();
+
+    if let Some(ref commit) = head_commit_opt {
+        let old_oid_str = commit.id().to_string();
+        old_short = old_oid_str.get(..8).unwrap_or(&old_oid_str).to_string();
+        old_summary = commit
+            .summary()
+            .ok()
+            .flatten()
+            .unwrap_or("(no message)")
+            .chars()
+            .take(72)
+            .collect();
+
+        // Merge commit: refuse.
+        if commit.parent_count() > 1 {
+            blockers.push(format!(
+                "Commit {} is a merge commit ({} parents). Amending merge commits is not supported.",
+                old_short,
+                commit.parent_count()
+            ));
+        }
+
+        // Root commit: refuse (keeps the single-parent invariant of MVP amend).
+        if commit.parent_count() == 0 {
+            blockers.push(format!(
+                "Commit {} is the root commit (no parent). Amending the root commit is not supported in MVP.",
+                old_short
+            ));
+        }
+
+        // Pushed check (ADR-0040 案B): refuse if HEAD is reachable from upstream.
+        // Mirrors plan_undo_commit's graph_descendant_of(upstream, head) test.
+        if let Some(branch_name) = &branch_name_opt {
+            if let Ok(branch) = repo.find_branch(branch_name, BranchType::Local) {
+                if let Ok(upstream) = branch.upstream() {
+                    if let Some(upstream_oid) = upstream.get().target() {
+                        let head_oid = commit.id();
+                        let pushed = upstream_oid == head_oid
+                            || repo
+                                .graph_descendant_of(upstream_oid, head_oid)
+                                .unwrap_or(false);
+                        if pushed {
+                            blockers.push(format!(
+                                "Commit {} has been pushed to its upstream tracking branch. \
+                                 Amending published history is not allowed (ADR-0040). \
+                                 Create a new commit to make the correction instead.",
+                                old_short
+                            ));
+                        }
+                    }
+                }
+                // No upstream → local-only branch → always allowed.
+            }
+        }
+    }
+
+    // ── 4. Mode-specific input blockers ──────────────────────
+    let new_message = message.unwrap_or("");
+    if mode.replaces_message() && new_message.trim().is_empty() {
+        blockers.push("Commit message must not be empty.".to_string());
+    }
+    if mode.includes_staged() && status.staged.is_empty() {
+        blockers.push(
+            "Nothing staged to fold into the commit. Stage changes first, or use \
+             message-only amend."
+                .to_string(),
+        );
+    }
+
+    // ── 5. Checklist (ADR-0043 / 0043) ───────────────────────
+    // The shared checklist module (`src/git/checklist.rs::run_checklist`) is being
+    // implemented by the W14-CHECK lane.  Once merged, call it here over the staged
+    // contents and append its blockers/warnings — same call `plan_commit` will use:
+    //
+    //   let (cl_blockers, cl_warnings) = checklist::run_checklist(repo, &status.staged)?;
+    //   blockers.extend(cl_blockers);
+    //   warnings.extend(cl_warnings);
+    //
+    // TODO(PM, merge): wire run_checklist once W14-CHECK lands (ADR-0043 §override).
+
+    // ── 6. Predicted state (SHA change is the headline) ──────
+    let predicted_head = if old_short.is_empty() {
+        current.head.clone()
+    } else {
+        // SHA is only known after execute; we predict "new" as a placeholder
+        // because the new OID depends on tree+committer.  The旧→新 transition is
+        // spelled out in the dirty line and recovery text.
+        match &branch_name_opt {
+            Some(b) => format!("branch: {} (amended commit, new SHA)", b),
+            None => current.head.clone(),
+        }
+    };
+
+    let predicted_dirty = if old_short.is_empty() {
+        dirty_display.clone()
+    } else {
+        let mode_label = match mode {
+            AmendMode::MessageOnly => "message rewritten",
+            AmendMode::Staged => "staged changes folded in",
+            AmendMode::Both => "staged changes folded in + message rewritten",
+        };
+        // ADR-0040: explicit旧 <short> → 新 <short> (new short is unknown pre-execute).
+        format!("旧 {} → 新 <new> ({})", old_short, mode_label)
+    };
+
+    let predicted = StateSummary {
+        head: predicted_head,
+        dirty: predicted_dirty,
+    };
+
+    // ── 7. Recovery + title ──────────────────────────────────
+    let recovery = if old_short.is_empty() {
+        "Amend cannot proceed (see blockers above).".to_string()
+    } else {
+        format!(
+            "Amend rewrites history: the new commit gets a NEW SHA and the old commit \
+             {} becomes unreachable from the branch (but stays in the reflog).\n\
+             To restore the original commit:\n  git reset --hard {}\n\
+             The reflog records every HEAD movement:\n  git reflog",
+            old_short, old_short
+        )
+    };
+
+    let title = if old_short.is_empty() {
+        "Amend last commit (cannot proceed — see blockers)".to_string()
+    } else {
+        let mode_label = match mode {
+            AmendMode::MessageOnly => "message only",
+            AmendMode::Staged => "fold staged",
+            AmendMode::Both => "fold staged + message",
+        };
+        format!(
+            "Amend commit {} '{}' ({}) — SHA will change",
+            old_short, old_summary, mode_label
+        )
+    };
+
+    // Preview the staged files that will be folded in (Staged / Both only).
+    let preview_files: Vec<FileStatus> = if mode.includes_staged() {
+        status.staged.clone()
+    } else {
+        Vec::new()
+    };
+
+    Ok(OperationPlan {
+        title,
+        current,
+        predicted,
+        warnings,
+        blockers,
+        recovery,
+        head_at_plan: head,
+        stash_count_at_plan: 0,
+        preview_files,
+        preview_commits: Vec::new(),
+        destructive: true,
+    })
+}
+
+/// Execute an amend (ADR-0040): build a new commit and move the branch ref.
+///
+/// # Design (ADR-0040, in-memory + ref-order rule)
+///
+/// 1. parent = the old HEAD commit's **parent** (HEAD is replaced).
+/// 2. tree:
+///    - `MessageOnly` → the old HEAD's tree (unchanged).
+///    - `Staged` / `Both` → `index.write_tree_to(repo)` — an **in-memory** tree
+///      from the current index, without touching the working tree.
+/// 3. `repo.commit(None, ...)` creates the commit object **without** moving any
+///    ref.
+/// 4. Only after the object exists, `repo.reference(...)` moves the branch ref
+///    last (ref-order rule).  The working tree / index are never written.
+///
+/// The **author is preserved** from the old commit; the **committer is updated**
+/// to the current signature/time (matching git's amend default).
+///
+/// The caller is responsible for recording the old HEAD SHA in the oplog
+/// **before** calling this (ADR-0040).
+pub fn execute_amend(
+    repo: &Repository,
+    mode: AmendMode,
+    message: Option<&str>,
+) -> Result<AmendOutcome, GitError> {
+    // ── 1. Resolve HEAD branch ref + commit ──────────────────
+    let head_ref = repo
+        .head()
+        .map_err(|e| GitError::Other(format!("HEAD lookup failed: {}", e.message())))?;
+    if !head_ref.is_branch() {
+        return Err(GitError::Other(
+            "HEAD is not on a branch. Amend requires an attached HEAD.".to_string(),
+        ));
+    }
+    let branch_refname = head_ref
+        .name()
+        .map_err(|e| GitError::Other(format!("HEAD ref name failed: {}", e.message())))?
+        .to_string();
+    let head_oid = head_ref
+        .target()
+        .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
+    let head_commit = repo
+        .find_commit(head_oid)
+        .map_err(|e| GitError::Other(format!("HEAD commit lookup failed: {}", e.message())))?;
+
+    // ── 2. Guards (defence — plan already checks these) ──────
+    if head_commit.parent_count() > 1 {
+        return Err(GitError::Other(format!(
+            "HEAD is a merge commit ({} parents). Amending merge commits is not supported.",
+            head_commit.parent_count()
+        )));
+    }
+    if head_commit.parent_count() == 0 {
+        return Err(GitError::Other(
+            "HEAD is the root commit (no parent). Amending the root commit is not supported.".to_string(),
+        ));
+    }
+
+    // ── 3. Parent stays put (amend replaces HEAD, not its parent) ──
+    let parent_oid = head_commit
+        .parent_id(0)
+        .map_err(|e| GitError::Other(format!("parent_id failed: {}", e.message())))?;
+    let parent_commit = repo
+        .find_commit(parent_oid)
+        .map_err(|e| GitError::Other(format!("parent commit lookup failed: {}", e.message())))?;
+
+    // ── 4. Resolve the tree ──────────────────────────────────
+    let tree = if mode.includes_staged() {
+        // In-memory tree from the current index — no working-tree write.
+        let mut index = repo
+            .index()
+            .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+        if index.has_conflicts() {
+            return Err(GitError::Other(
+                "Index has conflicts; resolve them before amending.".to_string(),
+            ));
+        }
+        let tree_oid = index
+            .write_tree_to(repo)
+            .map_err(|e| GitError::Other(format!("index.write_tree_to failed: {}", e.message())))?;
+        repo.find_tree(tree_oid)
+            .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?
+    } else {
+        // Message-only amend keeps the old HEAD's tree verbatim.
+        head_commit
+            .tree()
+            .map_err(|e| GitError::Other(format!("HEAD tree lookup failed: {}", e.message())))?
+    };
+
+    // ── 5. Author preserved / committer updated ──────────────
+    let author = head_commit.author();
+    let committer = build_signature(repo)?;
+
+    // ── 6. Message ───────────────────────────────────────────
+    let new_message: String = if mode.replaces_message() {
+        match message {
+            Some(m) if !m.trim().is_empty() => m.to_string(),
+            _ => return Err(GitError::Other("Commit message must not be empty.".to_string())),
+        }
+    } else {
+        head_commit
+            .message()
+            .unwrap_or("(no message)")
+            .to_string()
+    };
+
+    // ── 7. Create the commit object WITHOUT moving any ref ───
+    let new_oid = repo
+        .commit(
+            None,
+            &author,
+            &committer,
+            &new_message,
+            &tree,
+            &[&parent_commit],
+        )
+        .map_err(|e| GitError::Other(format!("amend commit creation failed: {}", e.message())))?;
+
+    // ── 8. Move the branch ref LAST (ref-order rule) ─────────
+    let log_msg = format!(
+        "amend: {} {} -> {}",
+        branch_refname,
+        &head_oid.to_string()[..8],
+        &new_oid.to_string()[..8],
+    );
+    repo.reference(&branch_refname, new_oid, true, &log_msg)
+        .map_err(|e| GitError::Other(format!("branch ref update (amend) failed: {}", e.message())))?;
+
+    Ok(AmendOutcome {
+        old: CommitId(head_oid.to_string()),
+        new: CommitId(new_oid.to_string()),
     })
 }
 
@@ -4012,6 +4459,7 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
                 stash_count_at_plan: 0,
                 preview_files: Vec::new(),
                 preview_commits: Vec::new(),
+                destructive: false,
             });
         }
     };
@@ -4123,6 +4571,7 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
+        destructive: false,
     })
 }
 

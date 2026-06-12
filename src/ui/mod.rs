@@ -129,6 +129,7 @@ use kagi::git::{
         execute_checkout, execute_create_branch, plan_checkout, plan_create_branch, preflight_check,
         plan_stash_push, execute_stash_push,
         plan_stash_apply, execute_stash_apply,
+        plan_pull, execute_pull, PullOutcome,
         preflight_check_stash,
         plan_cherry_pick, execute_cherry_pick,
     },
@@ -453,6 +454,16 @@ pub struct CheckoutPlanModal {
     pub error: Option<SharedString>,
 }
 
+/// State for an in-progress pull confirmation (T-HT-003).  Same shape as
+/// [`CheckoutPlanModal`] but kept separate so the confirm path can't be mixed up.
+#[derive(Clone)]
+pub struct PullPlanModal {
+    /// The computed pull plan.
+    pub plan: std::sync::Arc<OperationPlan>,
+    /// Error message to show if execute or preflight failed.
+    pub error: Option<SharedString>,
+}
+
 // ──────────────────────────────────────────────────────────────
 // CreateBranchModal — state for the create-branch overlay (T014)
 // ──────────────────────────────────────────────────────────────
@@ -559,6 +570,8 @@ pub struct KagiApp {
     pub branches: Vec<(String, bool)>,
     /// When `Some`, the plan confirmation modal is visible.
     pub plan_modal: Option<CheckoutPlanModal>,
+    /// When `Some`, the pull plan confirmation modal is visible (T-HT-003).
+    pub pull_modal: Option<PullPlanModal>,
     /// When `Some`, the create-branch modal is visible.
     pub create_branch_modal: Option<CreateBranchModal>,
     /// Focus handle used to receive keyboard events for the create-branch modal.
@@ -736,6 +749,7 @@ impl KagiApp {
             file_diff_view: None,
             branches,
             plan_modal: None,
+            pull_modal: None,
             create_branch_modal: None,
             modal_focus: None,
             stashes,
@@ -781,6 +795,7 @@ impl KagiApp {
             file_diff_view: None,
             branches: Vec::new(),
             plan_modal: None,
+            pull_modal: None,
             create_branch_modal: None,
             modal_focus: None,
             stashes: Vec::new(),
@@ -854,6 +869,7 @@ impl KagiApp {
         self.diff_cache = HashMap::new();
         self.file_diff_view = None;
         self.plan_modal = None;
+        self.pull_modal = None;
         self.create_branch_modal = None;
         self.modal_focus = None;
         self.stashes = fresh.stashes;
@@ -1975,6 +1991,155 @@ impl KagiApp {
         self.reload();
     }
 
+    // ── T-HT-003: Pull ────────────────────────────────────────
+
+    /// Build a pull plan and open the confirmation modal.
+    pub fn open_pull_modal(&mut self) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("pull: repo open error: {}", e.message())));
+                return;
+            }
+        };
+        match plan_pull(&repo) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: pull blockers={} warnings={}",
+                    plan.blockers.len(),
+                    plan.warnings.len()
+                );
+                self.pull_modal = Some(PullPlanModal {
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("pull plan error: {}", e)));
+            }
+        }
+    }
+
+    /// Close the pull modal without executing.
+    pub fn cancel_pull_modal(&mut self) {
+        self.pull_modal = None;
+    }
+
+    /// Confirm the pull plan: preflight, fetch via CLI, then FF / in-memory
+    /// merge (see `execute_pull`).  Mirrors `confirm_checkout`'s pipeline.
+    pub fn confirm_pull(&mut self) {
+        let modal = match self.pull_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        // Defence in depth: refuse blocked plans even if a code path slips through.
+        if !modal.plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: pull plan has blockers, not executing");
+            self.record_op(
+                "pull",
+                modal.plan.current.clone(),
+                OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                &repo_path,
+            );
+            return;
+        }
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                let err_msg = format!("Repo open error: {}", e.message());
+                self.record_op(
+                    "pull",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() },
+                    &repo_path,
+                );
+                self.pull_modal = Some(PullPlanModal {
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
+                return;
+            }
+        };
+
+        if let Err(e) = preflight_check(&repo, &modal.plan) {
+            let err_msg = format!("Preflight failed: {}", e);
+            self.record_op(
+                "pull",
+                modal.plan.current.clone(),
+                OpOutcome::Failed { error: err_msg.clone() },
+                &repo_path,
+            );
+            self.pull_modal = Some(PullPlanModal {
+                plan: modal.plan.clone(),
+                error: Some(SharedString::from(err_msg)),
+            });
+            return;
+        }
+
+        match execute_pull(&repo, &repo_path) {
+            Ok(outcome) => {
+                let summary = match &outcome {
+                    PullOutcome::UpToDate => "already up to date".to_string(),
+                    PullOutcome::FastForward { to } => format!("fast-forward to {}", to.short()),
+                    PullOutcome::Merged { commit } => format!("merge commit {}", commit.short()),
+                };
+                eprintln!("[kagi] executed: pull — {}", summary);
+                self.pull_modal = None;
+
+                // Verify: re-snapshot for the after-state.
+                let after_summary = match git2::Repository::open(&repo_path) {
+                    Ok(mut repo2) => match kagi::git::snapshot(&mut repo2, 10_000) {
+                        Ok(snap) => StateSummary {
+                            head: snap.head.display(),
+                            dirty: if snap.status.is_dirty() {
+                                "dirty".to_string()
+                            } else {
+                                "clean".to_string()
+                            },
+                        },
+                        Err(_) => modal.plan.predicted.clone(),
+                    },
+                    Err(_) => modal.plan.predicted.clone(),
+                };
+                eprintln!("[kagi] verified: pull after = {}", after_summary.head);
+
+                self.record_op(
+                    "pull",
+                    modal.plan.current.clone(),
+                    OpOutcome::Success { after: after_summary },
+                    &repo_path,
+                );
+                self.status_footer =
+                    FooterStatus::Success(SharedString::from(format!("pull: {}", summary)));
+                self.reload();
+            }
+            Err(e) => {
+                let err_msg = format!("Pull failed: {}", e);
+                self.record_op(
+                    "pull",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() },
+                    &repo_path,
+                );
+                self.pull_modal = Some(PullPlanModal {
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
+            }
+        }
+    }
+
     // ── T025: Commit Panel ────────────────────────────────────
 
     /// Open the commit panel (triggered by clicking the WIP row).
@@ -2532,6 +2697,7 @@ impl Render for KagiApp {
         let stashes = self.stashes.clone();
         let is_dirty = self.is_dirty;
         let plan_modal = self.plan_modal.clone();
+        let pull_modal = self.pull_modal.clone();
         let create_branch_modal = self.create_branch_modal.clone();
         let modal_focus = self.modal_focus.clone();
         let stash_push_modal = self.stash_push_modal.clone();
@@ -2666,6 +2832,10 @@ impl Render for KagiApp {
             .when_some(plan_modal, |el, modal| {
                 el.child(render_plan_modal(modal, cx))
             })
+            // ── Pull plan modal overlay (T-HT-003) ──────────
+            .when_some(pull_modal, |el, modal| {
+                el.child(render_pull_modal(modal, cx))
+            })
             // ── Create-branch modal overlay (above everything) ──
             .when_some(create_branch_modal, |el, modal| {
                 el.child(render_create_branch_modal(modal, modal_focus, cx))
@@ -2720,9 +2890,7 @@ impl KagiApp {
         let pull_on = toolbar.pull_on;
         let pull_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
             if pull_on {
-                this.status_footer = FooterStatus::Idle(SharedString::from(
-                    "Pull: T-HT-003 で実装予定",
-                ));
+                this.open_pull_modal();
             } else {
                 let reason = if this.status_summary.is_detached {
                     "Pull: detached HEAD — branch に切り替えてください"
@@ -4622,12 +4790,7 @@ fn render_sidebar(
 ///   - Recovery text
 ///   - Error message (if preflight/execute failed)
 ///   - `[Cancel]` always present; `[Checkout]` only when no blockers
-fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> impl IntoElement {
-    let plan = modal.plan.clone();
-    let has_blockers = !plan.blockers.is_empty();
-
-    // ── Cancel handler ──────────────────────────────────────
-    // T-BP-003: return focus to root_focus so cmd-j keeps working.
+fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.cancel_modal();
         if let Some(fh) = this.root_focus.clone() {
@@ -4635,9 +4798,6 @@ fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> imp
         }
         cx.notify();
     });
-
-    // ── Confirm handler (only created when no blockers) ─────
-    // T-BP-003: return focus to root_focus after confirm.
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.confirm_checkout();
         if let Some(fh) = this.root_focus.clone() {
@@ -4645,6 +4805,42 @@ fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> imp
         }
         cx.notify();
     });
+    render_plan_modal_card(modal.plan, modal.error, "Checkout", cancel_handler, confirm_handler)
+        .into_any_element()
+}
+
+/// Pull plan confirmation overlay (T-HT-003) — same card as the checkout
+/// plan modal, wired to `confirm_pull`.
+fn render_pull_modal(modal: PullPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+        this.cancel_pull_modal();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+        this.confirm_pull();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    render_plan_modal_card(modal.plan, modal.error, "Pull", cancel_handler, confirm_handler)
+        .into_any_element()
+}
+
+/// Shared plan-confirmation card: title / current→predicted / warnings /
+/// blockers / recovery / error / Cancel + confirm buttons.  The confirm
+/// button is hidden whenever the plan has blockers.
+fn render_plan_modal_card(
+    plan: std::sync::Arc<OperationPlan>,
+    error: Option<SharedString>,
+    confirm_label: &'static str,
+    cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> impl IntoElement {
+    let has_blockers = !plan.blockers.is_empty();
 
     // ── Build modal card ────────────────────────────────────
     let mut card = div()
@@ -4756,7 +4952,7 @@ fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> imp
     );
 
     // ── Error message (preflight / execute failure) ───────
-    if let Some(err) = &modal.error {
+    if let Some(err) = &error {
         card = card.child(
             div()
                 .text_sm()
@@ -4800,7 +4996,7 @@ fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> imp
                 .text_color(rgb(BG_BASE))
                 .on_click(confirm_handler)
                 .hover(|style| style.opacity(0.85))
-                .child(SharedString::from("Checkout")),
+                .child(SharedString::from(confirm_label)),
         );
     }
 

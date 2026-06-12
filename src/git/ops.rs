@@ -1,4 +1,4 @@
-//! Checkout, create-branch, stash-push, stash-apply, and cherry-pick operation pipelines — T013, T014, T015, T016
+//! Checkout, create-branch, stash-push, stash-apply, cherry-pick, and pull operation pipelines — T013, T014, T015, T016, T-HT-003
 //!
 //! Implements the **plan → preflight → execute** pipeline for:
 //! - `checkout` (ADR-0004, Guarded class): `plan_checkout` / `preflight_check` / `execute_checkout`
@@ -6,6 +6,7 @@
 //! - `stash-push` (ADR-0004, Guarded class): `plan_stash_push` / `execute_stash_push`
 //! - `stash-apply` (ADR-0004, Guarded class): `plan_stash_apply` / `execute_stash_apply`
 //! - `cherry-pick` (ADR-0004/0005, Guarded class): `plan_cherry_pick` / `execute_cherry_pick`
+//! - `pull` (ADR-0004/0005/0009, Guarded class): `plan_pull` / `execute_pull`
 //!
 //! The checkout operation is **always safe-mode only**: `CheckoutBuilder::safe()` is the only
 //! strategy used.  Force-checkout and any reset/clean APIs are intentionally absent.
@@ -35,6 +36,8 @@
 //! - [`preflight_check_stash`]  — verify HEAD + stash count unchanged since planning
 //! - [`plan_cherry_pick`]       — generate an [`OperationPlan`] for cherry-pick (in-memory, no WT touch)
 //! - [`execute_cherry_pick`]    — apply a cherry-pick commit (in-memory → commit → checkout_head safe)
+//! - [`plan_pull`]              — generate an [`OperationPlan`] for pull (fetch + merge/fast-forward)
+//! - [`execute_pull`]           — run fetch(CLI) then merge/FF (in-memory, no MERGING state)
 //!
 //! # Environment variables (test / headless use only)
 //!
@@ -45,12 +48,16 @@
 //! | `KAGI_STASH_PUSH=1`            | generate a stash-push plan and emit a plan log |
 //! | `KAGI_STASH_APPLY=<index>`     | generate a stash-apply plan for `<index>` and emit a plan log |
 //! | `KAGI_CHERRY_PICK=<sha>`       | generate a cherry-pick plan for `<sha>` and emit a plan log |
+//! | `KAGI_PULL=1`                  | generate a pull plan and emit a plan log |
 //! | `KAGI_AUTO_CONFIRM=1`          | **(TEST-ONLY)** if there are no blockers, proceed directly to execute after planning. **Never set this in normal use.** |
+
+use std::path::Path;
 
 use git2::{BranchType, Repository, StashFlags};
 
 use super::{GitError, Head, resolve_head, status::{working_tree_status, ChangeKind, FileStatus}};
 use super::log::CommitId;
+use super::cli::run_git;
 
 // ────────────────────────────────────────────────────────────
 // Public types
@@ -1380,10 +1387,15 @@ pub fn execute_cherry_pick(repo: &Repository, id: &CommitId) -> Result<CommitId,
         .unwrap_or("(cherry-picked commit)")
         .to_string();
 
-    // ── 8. Create the new commit on HEAD ─────────────────────
+    // ── 8. Create the new commit WITHOUT moving any ref ──────
+    // ORDER MATTERS (same pitfall as the pull FF/merge paths): the WT/index
+    // must be checked out while HEAD still points at the OLD tree so that
+    // safe checkout sees old→new as the change set and updates modified
+    // files.  Moving HEAD first turns the checkout into a no-op and leaves
+    // stale WT content for files the picked commit modified.
     let new_oid = repo
         .commit(
-            Some("HEAD"),
+            None,
             &original_author,
             &committer,
             &original_message,
@@ -1392,34 +1404,562 @@ pub fn execute_cherry_pick(repo: &Repository, id: &CommitId) -> Result<CommitId,
         )
         .map_err(|e| GitError::Other(format!("commit creation failed: {}", e.message())))?;
 
-    // ── 9. Update the git index to match the new HEAD tree ───
-    // repo.commit() creates the commit object but does NOT update the git
-    // index on disk.  We must synchronise it so that the index matches the
-    // new HEAD tree before updating the working tree.  Without this, the
-    // working tree appears dirty (staged/unstaged mismatches).
-    {
-        let mut git_index = repo
-            .index()
-            .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
-        git_index
-            .read_tree(&new_tree)
-            .map_err(|e| GitError::Other(format!("index.read_tree failed: {}", e.message())))?;
-        git_index
-            .write()
-            .map_err(|e| GitError::Other(format!("index.write failed: {}", e.message())))?;
-    }
-
-    // ── 10. Sync working tree to new HEAD (safe mode) ─────────
-    // checkout_head(safe) + recreate_missing: the WT was clean before
-    // execution, so safe mode will not refuse.  recreate_missing ensures that
-    // new files introduced by the cherry-pick are written to disk (safe mode
-    // alone does not guarantee that files absent from both baseline and workdir
-    // are created).
+    // ── 9. Sync WT + index to the new tree (old baseline) ────
     let mut cb = git2::build::CheckoutBuilder::new();
     cb.safe();
-    cb.recreate_missing(true);
-    repo.checkout_head(Some(&mut cb))
-        .map_err(|e| GitError::Other(format!("checkout_head after cherry-pick failed: {}", e.message())))?;
+    repo.checkout_tree(new_tree.as_object(), Some(&mut cb))
+        .map_err(|e| GitError::Other(format!("checkout_tree after cherry-pick failed: {}", e.message())))?;
+
+    // ── 10. Advance the branch ref to the new commit ─────────
+    let head_ref = repo
+        .head()
+        .map_err(|e| GitError::Other(format!("HEAD lookup failed: {}", e.message())))?;
+    let refname = head_ref
+        .name()
+        .map_err(|e| GitError::Other(format!("HEAD name failed: {}", e.message())))?
+        .to_string();
+    repo.reference(
+        &refname,
+        new_oid,
+        true,
+        &format!("cherry-pick: {}", &new_oid.to_string()[..8]),
+    )
+    .map_err(|e| GitError::Other(format!("branch ref update (cherry-pick) failed: {}", e.message())))?;
 
     Ok(CommitId(new_oid.to_string()))
+}
+
+// ────────────────────────────────────────────────────────────
+// PullOutcome  (T-HT-003)
+// ────────────────────────────────────────────────────────────
+
+/// The outcome of a successful [`execute_pull`] call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PullOutcome {
+    /// The local branch was already at or ahead of the upstream tip.
+    UpToDate,
+    /// The upstream was a direct ancestor of HEAD — branch ref advanced via
+    /// fast-forward; no merge commit created.
+    FastForward {
+        /// The new HEAD commit SHA (the upstream tip).
+        to: CommitId,
+    },
+    /// A true merge was performed (in-memory index, no MERGING state).
+    /// A merge commit with two parents was created.
+    Merged {
+        /// The new merge-commit SHA.
+        commit: CommitId,
+    },
+}
+
+// ────────────────────────────────────────────────────────────
+// plan_pull  (T-HT-003)
+// ────────────────────────────────────────────────────────────
+
+/// Analyse whether a pull is safe and return an [`OperationPlan`].
+///
+/// # Blocker conditions (ADR-0009 Guarded policy)
+///
+/// - HEAD is detached or unborn.
+/// - No upstream is configured for the current branch.
+/// - Repository is in a conflict state.
+/// - Working tree has staged or unstaged changes (dirty).
+/// - (Plan-time) in-memory merge with the current upstream tip predicts a
+///   conflict — shown as a **warning** at plan time (fetch may change things)
+///   but still allows execution (the execute phase re-checks after fetch).
+///
+/// # Warnings
+///
+/// - The behind count shown is local knowledge; fetch may reveal more commits.
+/// - Untracked files exist (they are not touched by merge/FF).
+/// - Plan-time in-memory merge predicts a conflict (warning, not blocker —
+///   re-evaluated after fetch).
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] if the repository cannot be queried.
+pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
+    // ── 1. Resolve HEAD ──────────────────────────────────────
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+
+    // ── 2. Build current StateSummary ────────────────────────
+    let head_display = head.display();
+
+    let dirty_parts: Vec<String> = [
+        (!status.staged.is_empty())
+            .then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty())
+            .then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty())
+            .then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty())
+            .then(|| format!("{} conflicted", status.conflicted.len())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let dirty_display = if dirty_parts.is_empty() {
+        "clean".to_string()
+    } else {
+        dirty_parts.join(", ")
+    };
+
+    let current = StateSummary {
+        head: head_display.clone(),
+        dirty: dirty_display,
+    };
+
+    // ── 3. Early blockers (before touching git objects) ──────
+    let mut blockers: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Detached HEAD: no branch to advance.
+    if let Head::Detached { .. } = &head {
+        blockers.push(
+            "HEAD is detached. Pull is only supported when HEAD is on a branch.".to_string(),
+        );
+    }
+
+    // Unborn HEAD: no commits exist yet.
+    if let Head::Unborn { .. } = &head {
+        blockers.push(
+            "HEAD is unborn (no commits exist). Cannot pull onto an empty branch.".to_string(),
+        );
+    }
+
+    // Conflict state.
+    if !status.conflicted.is_empty() {
+        blockers.push(format!(
+            "Repository has {} conflicted file(s). Resolve conflicts before pulling.",
+            status.conflicted.len()
+        ));
+    }
+
+    // Dirty working tree (staged / unstaged) — Guarded policy.
+    if !status.staged.is_empty() || !status.unstaged.is_empty() {
+        let mut parts = Vec::new();
+        if !status.staged.is_empty() {
+            parts.push(format!("{} staged", status.staged.len()));
+        }
+        if !status.unstaged.is_empty() {
+            parts.push(format!("{} modified", status.unstaged.len()));
+        }
+        blockers.push(format!(
+            "Working tree has {} — stash your changes before pulling.",
+            parts.join(", ")
+        ));
+    }
+
+    // Untracked files — warning only.
+    if !status.untracked.is_empty() {
+        warnings.push(format!(
+            "{} untracked file(s) will remain untouched after pull.",
+            status.untracked.len()
+        ));
+    }
+
+    // ── 4. Resolve upstream (only when HEAD is attached) ─────
+    let (branch_name, remote_name, behind_count) = if let Head::Attached { branch, .. } = &head {
+        match resolve_upstream_info(repo, branch) {
+            Ok(info) => info,
+            Err(e) => {
+                blockers.push(format!(
+                    "No upstream configured for branch '{}': {}. \
+                     Set one with `git branch --set-upstream-to=<remote>/<branch>`.",
+                    branch, e
+                ));
+                (branch.clone(), String::new(), 0usize)
+            }
+        }
+    } else {
+        // Blockers already added above; use dummy values.
+        (String::new(), String::new(), 0usize)
+    };
+
+    // ── 5. Plan-time in-memory conflict prediction ───────────
+    // Only if we have no blockers yet and upstream is resolvable.
+    if blockers.is_empty() && !branch_name.is_empty() {
+        if let Ok(conflict_warning) = predict_merge_conflict(repo, &branch_name, &remote_name) {
+            if let Some(w) = conflict_warning {
+                warnings.push(w);
+            }
+        }
+    }
+
+    // ── 6. Predicted StateSummary ─────────────────────────────
+    let behind_label = if behind_count == 0 {
+        "up to date (local knowledge; fetch may reveal more)".to_string()
+    } else {
+        format!("{} behind upstream (local knowledge; fetch may reveal more)", behind_count)
+    };
+
+    let predicted = StateSummary {
+        head: format!("branch: {}", branch_name),
+        dirty: "clean".to_string(),
+    };
+
+    // ── 7. Recovery guidance ──────────────────────────────────
+    let recovery = format!(
+        "Pull is non-destructive: fast-forward and clean merges do not lose work.\n\
+         If the merge would conflict, execute is blocked and the repo remains untouched.\n\
+         To undo a merge commit after execution:\n  git reset --hard HEAD~1\n\
+         The reflog records every HEAD movement:\n  git reflog"
+    );
+
+    Ok(OperationPlan {
+        title: format!("Pull '{}' from '{}'  ({})", branch_name, remote_name, behind_label),
+        current,
+        predicted,
+        warnings,
+        blockers,
+        recovery,
+        head_at_plan: head,
+        stash_count_at_plan: 0,
+        preview_files: Vec::new(),
+    })
+}
+
+// ────────────────────────────────────────────────────────────
+// execute_pull  (T-HT-003)
+// ────────────────────────────────────────────────────────────
+
+/// Execute a pull: `git fetch <remote>` (CLI) then merge or fast-forward
+/// (in-memory, never sets MERGING state).
+///
+/// # Steps
+///
+/// 1. Resolve the upstream remote name from the current branch config.
+/// 2. Run `git fetch <remote>` via the CLI wrapper (60 s timeout).
+///    Failure → `GitError::Other` with the full stderr.
+/// 3. Re-resolve the upstream tip after fetch.
+///    If HEAD OID == upstream tip or HEAD is a descendant → `UpToDate`.
+/// 4. If HEAD is an ancestor of upstream tip (fast-forward possible):
+///    - Advance the branch ref to the upstream tip.
+///    - `checkout_tree` (safe) + `set_head` to sync the WT.
+///    → `FastForward { to }`.
+/// 5. Otherwise (diverged):
+///    - `repo.merge_commits(&head_commit, &upstream_commit, None)` — in-memory.
+///    - If the index has conflicts → `GitError::Other("merge would conflict: …")`.
+///      **No MERGING state is set.  The repo is left completely untouched.**
+///    - Clean: `index.write_tree_to` → `repo.commit(…, parents=[head, upstream])`
+///      → `index.read_tree` + `index.write` → `checkout_head(safe, recreate_missing)`.
+///    → `Merged { commit }`.
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] on any failure.  The repo is **never** left in a
+/// partial state: conflicts are detected before any write occurs.
+pub fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOutcome, GitError> {
+    // ── 1. Resolve current branch + upstream ─────────────────
+    let head_ref = repo
+        .head()
+        .map_err(|e| GitError::Other(format!("HEAD lookup failed: {}", e.message())))?;
+
+    let branch_name = head_ref
+        .shorthand()
+        .map_err(|e| GitError::Other(format!("HEAD shorthand failed: {}", e.message())))?
+        .to_string();
+
+    let (_, remote_name, _) = resolve_upstream_info(repo, &branch_name)?;
+
+    // ── 2. git fetch <remote> via CLI ─────────────────────────
+    let fetch_out = run_git(repo_path, &["fetch", &remote_name])
+        .map_err(|e| GitError::Other(format!("fetch failed: {}", e)))?;
+
+    if fetch_out.status != 0 {
+        return Err(GitError::Other(format!(
+            "fetch failed (exit {}): {}",
+            fetch_out.status,
+            fetch_out.stderr.trim()
+        )));
+    }
+
+    // ── 3. Re-resolve upstream tip after fetch ────────────────
+    let upstream_oid = resolve_upstream_oid(repo, &branch_name, &remote_name)?;
+
+    let head_oid = head_ref
+        .target()
+        .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
+
+    // HEAD == upstream → UpToDate.
+    if head_oid == upstream_oid {
+        return Ok(PullOutcome::UpToDate);
+    }
+
+    // HEAD is a descendant of upstream (already ahead) → UpToDate.
+    // graph_descendant_of(a, b) returns true if a is a descendant of b.
+    if repo.graph_descendant_of(head_oid, upstream_oid)
+        .unwrap_or(false)
+    {
+        return Ok(PullOutcome::UpToDate);
+    }
+
+    // ── 4. Fast-forward check ─────────────────────────────────
+    // HEAD is an ancestor of upstream if upstream is a descendant of HEAD.
+    let can_ff = repo
+        .graph_descendant_of(upstream_oid, head_oid)
+        .unwrap_or(false);
+
+    if can_ff {
+        let upstream_commit = repo
+            .find_commit(upstream_oid)
+            .map_err(|e| GitError::Other(format!("upstream commit lookup failed: {}", e.message())))?;
+
+        // ORDER MATTERS: check out the upstream tree while HEAD/index still
+        // point at the OLD tree.  Safe checkout then sees old→new as the
+        // change set (updates modified files, creates new ones, writes the
+        // index).  Moving the branch ref first makes the baseline equal the
+        // target — checkout becomes a no-op and the WT silently goes stale
+        // (caught by pull tests).
+        let obj = upstream_commit.into_object();
+        let mut cb = git2::build::CheckoutBuilder::new();
+        cb.safe();
+        repo.checkout_tree(&obj, Some(&mut cb))
+            .map_err(|e| GitError::Other(format!("checkout_tree (FF) failed: {}", e.message())))?;
+
+        // Now advance the branch ref to the upstream tip (force=true only
+        // overwrites the ref we just validated as an ancestor — a safe FF).
+        let refname = format!("refs/heads/{}", branch_name);
+        repo.reference(
+            &refname,
+            upstream_oid,
+            true,
+            &format!("pull: fast-forward {} to {}", branch_name, &upstream_oid.to_string()[..8]),
+        )
+        .map_err(|e| GitError::Other(format!("branch ref update failed: {}", e.message())))?;
+
+        repo.set_head(&refname)
+            .map_err(|e| GitError::Other(format!("set_head (FF) failed: {}", e.message())))?;
+
+        return Ok(PullOutcome::FastForward {
+            to: CommitId(upstream_oid.to_string()),
+        });
+    }
+
+    // ── 5. True merge (diverged) ──────────────────────────────
+    let head_commit = repo
+        .find_commit(head_oid)
+        .map_err(|e| GitError::Other(format!("HEAD commit lookup failed: {}", e.message())))?;
+    let upstream_commit = repo
+        .find_commit(upstream_oid)
+        .map_err(|e| GitError::Other(format!("upstream commit lookup failed: {}", e.message())))?;
+
+    // In-memory merge — does NOT set MERGING state, does NOT touch WT.
+    let mut index = repo
+        .merge_commits(&head_commit, &upstream_commit, None)
+        .map_err(|e| GitError::Other(format!("merge_commits in-memory failed: {}", e.message())))?;
+
+    // Conflict detection — if any conflict, return error with file list.
+    // **Nothing has been written to the repo at this point.**
+    if index.has_conflicts() {
+        let mut conflict_files: Vec<String> = Vec::new();
+        if let Ok(conflicts) = index.conflicts() {
+            for conflict_result in conflicts {
+                if let Ok(conflict) = conflict_result {
+                    let path_bytes: Option<Vec<u8>> = conflict
+                        .our
+                        .as_ref()
+                        .map(|e| e.path.clone())
+                        .or_else(|| conflict.their.as_ref().map(|e| e.path.clone()))
+                        .or_else(|| conflict.ancestor.as_ref().map(|e| e.path.clone()));
+                    if let Some(p) = path_bytes {
+                        conflict_files.push(String::from_utf8_lossy(&p).into_owned());
+                    }
+                }
+            }
+        }
+        return Err(GitError::Other(format!(
+            "merge would conflict: {}",
+            if conflict_files.is_empty() {
+                "(unknown files)".to_string()
+            } else {
+                conflict_files.join(", ")
+            }
+        )));
+    }
+
+    // ── 6. Write in-memory tree to ODB ───────────────────────
+    let new_tree_oid = index
+        .write_tree_to(repo)
+        .map_err(|e| GitError::Other(format!("index.write_tree_to failed: {}", e.message())))?;
+    let new_tree = repo
+        .find_tree(new_tree_oid)
+        .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?;
+
+    // ── 7. Build merge commit ─────────────────────────────────
+    let committer = build_signature(repo)?;
+    let author = committer.clone();
+
+    // Upstream tracking branch name for the commit message.
+    let upstream_ref_name = format!("refs/remotes/{}/{}", remote_name, branch_name);
+    let merge_message = format!("Merge remote-tracking branch '{}'", upstream_ref_name);
+
+    // Create the merge commit WITHOUT moving any ref yet (update_ref=None):
+    // the WT/index must be synced while HEAD still points at the old tree so
+    // safe checkout sees old→new as the change set (see FF path note).
+    let new_oid = repo
+        .commit(
+            None,
+            &author,
+            &committer,
+            &merge_message,
+            &new_tree,
+            &[&head_commit, &upstream_commit],
+        )
+        .map_err(|e| GitError::Other(format!("merge commit creation failed: {}", e.message())))?;
+
+    // ── 8. Sync WT + index to the merge tree (old baseline) ──
+    let mut cb = git2::build::CheckoutBuilder::new();
+    cb.safe();
+    repo.checkout_tree(repo.find_tree(new_tree_oid).unwrap().as_object(), Some(&mut cb))
+        .map_err(|e| GitError::Other(format!("checkout_tree after merge failed: {}", e.message())))?;
+
+    // ── 9. Move the branch ref to the merge commit ────────────
+    let refname = format!("refs/heads/{}", branch_name);
+    repo.reference(
+        &refname,
+        new_oid,
+        true,
+        &format!("pull: merge {} into {}", remote_name, branch_name),
+    )
+    .map_err(|e| GitError::Other(format!("branch ref update (merge) failed: {}", e.message())))?;
+    repo.set_head(&refname)
+        .map_err(|e| GitError::Other(format!("set_head (merge) failed: {}", e.message())))?;
+
+    Ok(PullOutcome::Merged {
+        commit: CommitId(new_oid.to_string()),
+    })
+}
+
+// ────────────────────────────────────────────────────────────
+// Internal helpers (pull)
+// ────────────────────────────────────────────────────────────
+
+/// Resolve upstream info for a local branch.
+///
+/// Returns `(branch_name, remote_name, behind_count)`.
+fn resolve_upstream_info(
+    repo: &Repository,
+    branch_name: &str,
+) -> Result<(String, String, usize), GitError> {
+    // Open the branch config to find the remote name.
+    let branch = repo
+        .find_branch(branch_name, BranchType::Local)
+        .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", branch_name, e.message())))?;
+
+    let upstream = branch
+        .upstream()
+        .map_err(|e| GitError::Other(format!("no upstream for '{}': {}", branch_name, e.message())))?;
+
+    // upstream.name() returns Result<Option<&str>>.
+    let upstream_name = upstream
+        .name()
+        .map_err(|e| GitError::Other(format!("upstream name error: {}", e.message())))?
+        .ok_or_else(|| GitError::Other("upstream has no name".to_string()))?
+        .to_string();
+
+    // Parse "origin/branchname" → remote name is everything before the first '/'.
+    let remote_name = upstream_name
+        .split('/')
+        .next()
+        .unwrap_or("origin")
+        .to_string();
+
+    // Compute behind count (local info only).
+    let head_oid = branch
+        .get()
+        .target()
+        .ok_or_else(|| GitError::Other("branch has no target".to_string()))?;
+
+    let upstream_oid = upstream
+        .get()
+        .target()
+        .ok_or_else(|| GitError::Other("upstream has no target".to_string()))?;
+
+    let (_, behind) = repo
+        .graph_ahead_behind(head_oid, upstream_oid)
+        .unwrap_or((0, 0));
+
+    Ok((branch_name.to_string(), remote_name, behind))
+}
+
+/// Resolve the OID of the upstream tracking branch tip.
+fn resolve_upstream_oid(
+    repo: &Repository,
+    branch_name: &str,
+    remote_name: &str,
+) -> Result<git2::Oid, GitError> {
+    // Try "refs/remotes/<remote>/<branch>" first.
+    let refname = format!("refs/remotes/{}/{}", remote_name, branch_name);
+    if let Ok(r) = repo.find_reference(&refname) {
+        if let Some(oid) = r.target() {
+            return Ok(oid);
+        }
+    }
+
+    // Fall back to following the upstream ref from the branch config.
+    let branch = repo
+        .find_branch(branch_name, BranchType::Local)
+        .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", branch_name, e.message())))?;
+    let upstream = branch
+        .upstream()
+        .map_err(|e| GitError::Other(format!("no upstream for '{}': {}", branch_name, e.message())))?;
+    upstream
+        .get()
+        .target()
+        .ok_or_else(|| GitError::Other("upstream ref has no target OID".to_string()))
+}
+
+/// Attempt an in-memory merge with the current upstream tip to predict conflicts.
+///
+/// Returns `Ok(Some(warning_string))` if a conflict is predicted,
+/// `Ok(None)` if the merge would be clean (or fast-forward), or
+/// `Err(...)` if the prediction itself failed (non-fatal — caller ignores).
+fn predict_merge_conflict(
+    repo: &Repository,
+    branch_name: &str,
+    remote_name: &str,
+) -> Result<Option<String>, GitError> {
+    let head_oid = repo
+        .head()
+        .ok()
+        .and_then(|r| r.target());
+    let upstream_oid = resolve_upstream_oid(repo, branch_name, remote_name).ok();
+
+    let (head_oid, upstream_oid) = match (head_oid, upstream_oid) {
+        (Some(h), Some(u)) => (h, u),
+        _ => return Ok(None),
+    };
+
+    // If already fast-forward or up-to-date, no conflict possible.
+    if head_oid == upstream_oid {
+        return Ok(None);
+    }
+    if repo.graph_descendant_of(head_oid, upstream_oid).unwrap_or(false)
+        || repo.graph_descendant_of(upstream_oid, head_oid).unwrap_or(false)
+    {
+        return Ok(None);
+    }
+
+    let head_commit = repo.find_commit(head_oid)
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    let upstream_commit = repo.find_commit(upstream_oid)
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+
+    let index = repo
+        .merge_commits(&head_commit, &upstream_commit, None)
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+
+    if index.has_conflicts() {
+        Ok(Some(
+            "Plan-time merge prediction: the current upstream tip would conflict with HEAD. \
+             Execute is NOT blocked (fetch may change things), but be aware that if the \
+             upstream has not changed, execute will fail safely leaving the repo untouched."
+                .to_string(),
+        ))
+    } else {
+        Ok(None)
+    }
 }

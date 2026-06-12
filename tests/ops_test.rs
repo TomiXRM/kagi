@@ -1355,3 +1355,49 @@ fn test_cherry_pick_plan_does_not_change_repo() {
         ".git/CHERRY_PICK_HEAD must not exist after plan (in-memory only)"
     );
 }
+
+// ── PM regression (found via T-HT-003): cherry-pick must update files that
+// EXIST in the WT and are modified by the picked commit — not only create
+// new files.  Same ref-ordering pitfall as the pull FF/merge paths.
+#[test]
+fn test_cherry_pick_updates_modified_existing_file() {
+    use kagi::git::{execute_cherry_pick, CommitId};
+    let tmp = tempfile::TempDir::new().unwrap();
+    let dir = tmp.path();
+    git(dir, &["init", "-q", "-b", "main", "."]);
+    git(dir, &["config", "user.name", "Test"]);
+    git(dir, &["config", "user.email", "test@example.com"]);
+    git(dir, &["config", "commit.gpgsign", "false"]);
+
+    std::fs::write(dir.join("shared.txt"), "v1\n").unwrap();
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    // Feature branch modifies the EXISTING file.
+    git(dir, &["checkout", "-q", "-b", "feat"]);
+    std::fs::write(dir.join("shared.txt"), "v2 from feat\n").unwrap();
+    git(dir, &["commit", "-qam", "feat edit"]);
+    let feat_sha = {
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"]).current_dir(dir).output().unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+
+    // Back to main with an unrelated extra commit (so cherry-pick isn't a no-op FF shape).
+    git(dir, &["checkout", "-q", "main"]);
+    std::fs::write(dir.join("other.txt"), "x\n").unwrap();
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-qm", "main work"]);
+
+    let repo = git2::Repository::open(dir).unwrap();
+    execute_cherry_pick(&repo, &CommitId(feat_sha)).expect("cherry-pick should succeed");
+
+    // WT must contain the picked modification and be clean.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("shared.txt")).unwrap(),
+        "v2 from feat\n",
+        "cherry-pick must materialise modifications to existing files"
+    );
+    let st = kagi::git::working_tree_status(&git2::Repository::open(dir).unwrap()).unwrap();
+    assert!(!st.is_dirty(), "WT must be clean after cherry-pick");
+}

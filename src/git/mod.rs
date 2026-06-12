@@ -7,6 +7,7 @@
 //! computing the file-level diff for a single commit.
 //! Network transports (https/ssh) are not used in the MVP.
 
+pub mod cli;
 mod diff;
 mod log;
 pub mod oplog;
@@ -23,6 +24,8 @@ pub use oplog::{OpLogEntry, OpOutcome, append_oplog, read_oplog_tail};
 #[allow(unused_imports)]
 pub use log::{Commit, CommitId, Signature, commit_log};
 #[allow(unused_imports)]
+pub use cli::{GitCliOutput, run_git};
+#[allow(unused_imports)]
 pub use ops::{
     OperationPlan, StateSummary,
     execute_checkout, plan_checkout, preflight_check,
@@ -31,6 +34,7 @@ pub use ops::{
     plan_stash_apply, execute_stash_apply,
     preflight_check_stash,
     plan_cherry_pick, execute_cherry_pick,
+    plan_pull, execute_pull, PullOutcome,
 };
 #[allow(unused_imports)]
 pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo};

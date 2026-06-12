@@ -138,6 +138,32 @@ fn main() {
         app_state.open_file_diff(0);
     }
 
+    // ── T-HT-003: headless pull plan / execute ───────────────
+    // KAGI_PULL=1: generate a pull plan and log it.
+    // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, fetch + FF/merge.
+    // For fixture/tempdir testing only.  Do not set in normal use.
+    if std::env::var("KAGI_PULL").as_deref() == Ok("1") {
+        // open_pull_modal logs the plan via [kagi] plan: pull ...
+        app_state.open_pull_modal();
+
+        let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
+        if auto_confirm {
+            if let Some(ref modal) = app_state.pull_modal.clone() {
+                if modal.plan.blockers.is_empty() {
+                    // confirm_pull runs preflight → fetch → FF/merge and logs
+                    // [kagi] executed: pull / [kagi] verified: entries.
+                    app_state.confirm_pull();
+                } else {
+                    eprintln!(
+                        "[kagi] KAGI_AUTO_CONFIRM=1 but pull has {} blocker(s), skipping",
+                        modal.plan.blockers.len()
+                    );
+                    record_headless_op("pull", modal.plan.current.clone(), OpOutcome::Refused { blockers: modal.plan.blockers.clone() }, &repo_path);
+                }
+            }
+        }
+    }
+
     // ── T013: headless checkout plan / execute ───────────────
     // KAGI_PLAN_CHECKOUT=<branch>: generate a plan for the branch and log it.
     // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, proceed to execute.

@@ -1,8 +1,9 @@
-//! Checkout, create-branch, stash-push, stash-apply, stash-pop, cherry-pick, pull, push, undo-commit, and delete-branch operation pipelines — T013〜T016, T-HT-003/004/007/009, W2-DELETE
+//! Checkout, create-branch, create-worktree, stash-push, stash-apply, stash-pop, cherry-pick, pull, push, undo-commit, and delete-branch operation pipelines — T013〜T016, T-HT-003/004/007/009, W2-DELETE
 //!
 //! Implements the **plan → preflight → execute** pipeline for:
 //! - `checkout` (ADR-0004, Guarded class): `plan_checkout` / `preflight_check` / `execute_checkout`
 //! - `create-branch` (ADR-0004, Safe class): `plan_create_branch` / `execute_create_branch`
+//! - `create-worktree` (ADR-0025, Safe-create class): `plan_create_worktree` / `execute_create_worktree`
 //! - `stash-push` (ADR-0004, Guarded class): `plan_stash_push` / `execute_stash_push`
 //! - `stash-apply` (ADR-0004, Guarded class): `plan_stash_apply` / `execute_stash_apply`
 //! - `stash-pop` (ADR-0009, Destructive-緩和): `plan_stash_pop` / `execute_stash_pop`
@@ -36,6 +37,8 @@
 //! - [`execute_checkout`]       — perform the checkout (safe-mode only)
 //! - [`plan_create_branch`]     — generate an [`OperationPlan`] for branch creation
 //! - [`execute_create_branch`]  — create the branch (force=false, no checkout)
+//! - [`plan_create_worktree`]   — generate an [`OperationPlan`] for worktree + branch creation
+//! - [`execute_create_worktree`] — create the branch and linked worktree
 //! - [`plan_stash_push`]        — generate an [`OperationPlan`] for stash push
 //! - [`execute_stash_push`]     — stash local modifications
 //! - [`plan_stash_apply`]       — generate an [`OperationPlan`] for stash apply
@@ -56,6 +59,7 @@
 //! |---------------------|--------|
 //! | `KAGI_PLAN_CHECKOUT=<branch>`  | generate a plan for `<branch>` and emit a plan log |
 //! | `KAGI_CREATE_BRANCH=<name>`    | generate a create-branch plan for HEAD and emit a plan log |
+//! | `KAGI_PLAN_WORKTREE=<name>:<path>` | generate a create-worktree plan for HEAD and emit a plan log |
 //! | `KAGI_STASH_PUSH=1`            | generate a stash-push plan and emit a plan log |
 //! | `KAGI_STASH_APPLY=<index>`     | generate a stash-apply plan for `<index>` and emit a plan log |
 //! | `KAGI_CHERRY_PICK=<sha>`       | generate a cherry-pick plan for `<sha>` and emit a plan log |
@@ -63,9 +67,9 @@
 //! | `KAGI_DELETE_BRANCH=<name>`    | generate a delete-branch plan for `<name>` and emit a plan log |
 //! | `KAGI_AUTO_CONFIRM=1`          | **(TEST-ONLY)** if there are no blockers, proceed directly to execute after planning. **Never set this in normal use.** |
 
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
-use git2::{BranchType, Repository, StashFlags};
+use git2::{BranchType, Repository, StashFlags, WorktreeAddOptions};
 
 use super::{GitError, Head, resolve_head, status::{working_tree_status, ChangeKind, FileStatus}};
 use super::log::CommitId;
@@ -528,6 +532,234 @@ pub fn execute_create_branch(
     // Create the branch.  force=false is a literal constant — never change this.
     repo.branch(name, &commit, false)
         .map_err(|e| GitError::Other(format!("branch creation failed: {}", e.message())))?;
+
+    Ok(())
+}
+
+// ────────────────────────────────────────────────────────────
+// create-worktree helpers
+// ────────────────────────────────────────────────────────────
+
+/// Lexically normalize a path without requiring the final path to exist.
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::Prefix(prefix) => out.push(prefix.as_os_str()),
+            Component::RootDir => out.push(component.as_os_str()),
+            Component::Normal(part) => out.push(part),
+        }
+    }
+    out
+}
+
+/// Validate and normalize a worktree path entered by the user.
+///
+/// Relative paths are interpreted relative to `repo_root`.  The target path
+/// itself must not already exist, but its parent must exist so validation works
+/// for the normal `../repo-worktrees/new-branch` case.
+pub fn validate_worktree_path(
+    repo_root: &Path,
+    input: impl AsRef<Path>,
+) -> Result<PathBuf, String> {
+    let input = input.as_ref();
+    if input.as_os_str().is_empty() {
+        return Err("Worktree path must not be empty.".to_string());
+    }
+
+    let repo_root = std::fs::canonicalize(repo_root)
+        .map_err(|e| format!("Repository root is not accessible: {}", e))?;
+    let candidate = if input.is_absolute() {
+        input.to_path_buf()
+    } else {
+        repo_root.join(input)
+    };
+    let candidate = normalize_path(&candidate);
+
+    if candidate.exists() {
+        return Err(format!(
+            "Worktree path '{}' already exists.",
+            candidate.display()
+        ));
+    }
+
+    let parent = candidate
+        .parent()
+        .ok_or_else(|| "Worktree path must have a parent directory.".to_string())?;
+    if !parent.exists() {
+        return Err(format!(
+            "Parent directory '{}' does not exist.",
+            parent.display()
+        ));
+    }
+
+    let parent = std::fs::canonicalize(parent)
+        .map_err(|e| format!("Parent directory is not accessible: {}", e))?;
+    let filename = candidate
+        .file_name()
+        .ok_or_else(|| "Worktree path must name a directory.".to_string())?;
+    let candidate_real_parent = normalize_path(&parent.join(filename));
+
+    if candidate_real_parent == repo_root || candidate_real_parent.starts_with(&repo_root) {
+        return Err(format!(
+            "Worktree path '{}' must be outside the repository.",
+            candidate_real_parent.display()
+        ));
+    }
+
+    Ok(candidate_real_parent)
+}
+
+fn worktree_name_from_path(path: &Path, branch: &str) -> String {
+    let base = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(branch);
+    base.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+/// Build a create-branch plan whose predicted HEAD reflects the optional
+/// checkout-after-create UI checkbox.
+pub fn plan_create_branch_with_checkout(
+    repo: &Repository,
+    name: &str,
+    at: &CommitId,
+    checkout_after: bool,
+) -> Result<OperationPlan, GitError> {
+    let mut plan = plan_create_branch(repo, name, at)?;
+    if !checkout_after {
+        return Ok(plan);
+    }
+
+    let status = working_tree_status(repo)?;
+    if !status.conflicted.is_empty() {
+        plan.blockers.push(format!(
+            "Repository has {} conflicted file(s). Resolve conflicts before checking out the new branch.",
+            status.conflicted.len()
+        ));
+    }
+    if !status.staged.is_empty() || !status.unstaged.is_empty() {
+        let mut parts = Vec::new();
+        if !status.staged.is_empty() {
+            parts.push(format!("{} staged", status.staged.len()));
+        }
+        if !status.unstaged.is_empty() {
+            parts.push(format!("{} modified", status.unstaged.len()));
+        }
+        plan.blockers.push(format!(
+            "Working tree has {} — checkout after branch creation could lose work. Stash changes before continuing.",
+            parts.join(", ")
+        ));
+    }
+    if !status.untracked.is_empty() {
+        plan.warnings.push(format!(
+            "{} untracked file(s) will remain after switching branches.",
+            status.untracked.len()
+        ));
+    }
+
+    plan.title = format!("Create branch '{}' @ {} and checkout", name, at.short());
+    plan.predicted.head = format!("branch: {}", name);
+    plan.recovery = format!(
+        "This creates branch '{}' and then checks it out. If checkout fails, the branch may still exist and can be removed with:\n  git branch -d {}\nTo return after checkout:\n  git checkout {}",
+        name,
+        name,
+        plan.current.head.strip_prefix("branch: ").unwrap_or("<previous-branch>")
+    );
+    Ok(plan)
+}
+
+// ────────────────────────────────────────────────────────────
+// plan_create_worktree
+// ────────────────────────────────────────────────────────────
+
+/// Analyse whether creating a linked worktree with a new branch is safe.
+pub fn plan_create_worktree(
+    repo: &Repository,
+    branch: &str,
+    path: impl AsRef<Path>,
+    start: &CommitId,
+) -> Result<OperationPlan, GitError> {
+    let repo_root = repo
+        .workdir()
+        .ok_or_else(|| GitError::Other("bare repositories are not supported".to_string()))?;
+    let mut plan = plan_create_branch(repo, branch, start)?;
+    let target_path = match validate_worktree_path(repo_root, path.as_ref()) {
+        Ok(path) => path,
+        Err(msg) => {
+            plan.blockers.push(msg);
+            if path.as_ref().is_absolute() {
+                normalize_path(path.as_ref())
+            } else {
+                normalize_path(&repo_root.join(path.as_ref()))
+            }
+        }
+    };
+    plan.title = format!(
+        "Create worktree '{}' @ {}",
+        branch,
+        start.short()
+    );
+    plan.predicted = StateSummary {
+        head: plan.current.head.clone(),
+        dirty: plan.current.dirty.clone(),
+    };
+    plan.recovery = format!(
+        "Remove the linked worktree if needed:\n  git worktree remove {}\nThe branch can then be removed with:\n  git branch -d {}",
+        target_path.display(),
+        branch
+    );
+    plan.warnings.push(format!(
+        "Creates a linked worktree at '{}' with branch '{}' (start point {}).",
+        target_path.display(),
+        branch,
+        start.short()
+    ));
+
+    Ok(plan)
+}
+
+// ────────────────────────────────────────────────────────────
+// execute_create_worktree
+// ────────────────────────────────────────────────────────────
+
+/// Create a new branch at `start` and attach it to a new linked worktree.
+pub fn execute_create_worktree(
+    repo: &Repository,
+    branch: &str,
+    path: impl AsRef<Path>,
+    start: &CommitId,
+) -> Result<(), GitError> {
+    let repo_root = repo
+        .workdir()
+        .ok_or_else(|| GitError::Other("bare repositories are not supported".to_string()))?;
+    let target_path = validate_worktree_path(repo_root, path.as_ref()).map_err(GitError::Other)?;
+
+    execute_create_branch(repo, branch, start)?;
+
+    let refname = format!("refs/heads/{}", branch);
+    let branch_ref = repo
+        .find_reference(&refname)
+        .map_err(|e| GitError::Other(format!("branch ref lookup failed: {}", e.message())))?;
+    let mut opts = WorktreeAddOptions::new();
+    opts.reference(Some(&branch_ref));
+
+    let worktree_name = worktree_name_from_path(&target_path, branch);
+    repo.worktree(&worktree_name, &target_path, Some(&opts))
+        .map_err(|e| GitError::Other(format!("worktree creation failed: {}", e.message())))?;
 
     Ok(())
 }

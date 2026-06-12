@@ -94,3 +94,20 @@ pub struct Stash {
     /// Commit OID of the stash entry.
     pub target: CommitId,
 }
+
+// ────────────────────────────────────────────────────────────
+// Worktree
+// ────────────────────────────────────────────────────────────
+
+/// A registered Git worktree shown in the Repository Navigator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Worktree {
+    /// Worktree registry name. The main worktree is reported as `"main"`.
+    pub name: String,
+    /// Top-level working tree path.
+    pub path: std::path::PathBuf,
+    /// True for the repository currently opened by kagi.
+    pub is_current: bool,
+    /// True for the primary worktree rather than a linked worktree.
+    pub is_main: bool,
+}

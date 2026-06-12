@@ -16,7 +16,7 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::Sizable as _;
 
-use kagi::git::{CommitId, RemoteBranch, Stash, Tag, UpstreamInfo};
+use kagi::git::{CommitId, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
 
 use super::KagiApp;
 
@@ -41,6 +41,7 @@ const COLOR_TAG: u32 = 0xfab387;
 pub const SECTION_LOCAL: &str = "local";
 pub const SECTION_REMOTE: &str = "remote";
 pub const SECTION_TAGS: &str = "tags";
+pub const SECTION_WORKTREES: &str = "worktrees";
 pub const SECTION_STASHES: &str = "stashes";
 
 /// Build a `.tooltip(...)` closure showing the full (untruncated) name.
@@ -75,6 +76,7 @@ pub fn render_sidebar(
     remote_branches: &[RemoteBranch],
     tags: &[Tag],
     stashes: &[Stash],
+    worktrees: &[Worktree],
     branch_upstream_info: &std::collections::HashMap<String, UpstreamInfo>,
     commit_row_index: &std::collections::HashMap<CommitId, usize>,
     collapsed: &HashSet<&'static str>,
@@ -115,6 +117,10 @@ pub fn render_sidebar(
     let stashes_filtered: Vec<&Stash> = stashes
         .iter()
         .filter(|s| matches(&s.message))
+        .collect();
+    let worktrees_filtered: Vec<&Worktree> = worktrees
+        .iter()
+        .filter(|w| matches(&w.name) || matches(w.path.to_string_lossy().as_ref()))
         .collect();
 
     // ── Scrollable inner column ───────────────────────────────────
@@ -483,6 +489,70 @@ pub fn render_sidebar(
                 };
 
                 col = col.child(row);
+            }
+        }
+    }
+
+    // ── WORKTREES section ───────────────────────────────────────
+    {
+        let worktrees_collapsed = collapsed.contains(SECTION_WORKTREES);
+        let worktrees_count = worktrees.len();
+        let header_label = SharedString::from(format!(
+            "{} WORKTREES ({})",
+            if worktrees_collapsed { "▸" } else { "▾" },
+            worktrees_count
+        ));
+        let toggle_worktrees = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
+            if this.sidebar_collapsed.contains(SECTION_WORKTREES) {
+                this.sidebar_collapsed.remove(SECTION_WORKTREES);
+            } else {
+                this.sidebar_collapsed.insert(SECTION_WORKTREES);
+            }
+            cx.notify();
+        });
+        col = col.child(
+            div()
+                .id("sidebar-section-worktrees")
+                .px_3()
+                .pt_2()
+                .pb_1()
+                .flex_shrink_0()
+                .flex()
+                .flex_row()
+                .items_center()
+                .text_xs()
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(rgb(TEXT_MUTED))
+                .on_click(toggle_worktrees)
+                .hover(|s| s.bg(rgb(BG_SURFACE)))
+                .child(header_label),
+        );
+
+        if !worktrees_collapsed {
+            for wt in &worktrees_filtered {
+                let path_label = wt.path.display().to_string();
+                let label = if wt.is_current {
+                    SharedString::from(format!("\u{2713} {}  {}", wt.name, path_label))
+                } else {
+                    SharedString::from(format!("{}  {}", wt.name, path_label))
+                };
+                let full_name = label.clone();
+                let text_color = if wt.is_current { COLOR_SUCCESS } else { TEXT_SUB };
+                col = col.child(
+                    div()
+                        .id(SharedString::from(format!("sidebar-worktree-{}", wt.name)))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .flex_shrink_0()
+                        .px_3()
+                        .py_1()
+                        .text_sm()
+                        .text_color(rgb(text_color))
+                        .overflow_hidden()
+                        .tooltip(name_tooltip(full_name))
+                        .child(div().flex_1().truncate().child(label)),
+                );
             }
         }
     }

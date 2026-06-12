@@ -12,7 +12,7 @@ use git2::{BranchType, Repository};
 use super::{
     GitError, Head,
     log::{CommitId, Commit, commit_log},
-    refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo},
+    refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree},
     resolve_head,
     status::{WorkingTreeStatus, working_tree_status},
 };
@@ -45,6 +45,8 @@ pub struct RepoSnapshot {
     pub status: WorkingTreeStatus,
     /// Stash entries, ordered by index (newest first, i.e. `stash@{0}` first).
     pub stashes: Vec<Stash>,
+    /// Main + linked worktrees registered for this repository.
+    pub worktrees: Vec<Worktree>,
 }
 
 // ────────────────────────────────────────────────────────────
@@ -77,6 +79,7 @@ pub fn snapshot(repo: &mut Repository, commit_limit: usize) -> Result<RepoSnapsh
     let remote_branches = collect_remote_branches(repo)?;
     let tags = collect_tags(repo)?;
     let stashes = collect_stashes(repo)?;
+    let worktrees = collect_worktrees(repo)?;
 
     Ok(RepoSnapshot {
         head,
@@ -86,6 +89,7 @@ pub fn snapshot(repo: &mut Repository, commit_limit: usize) -> Result<RepoSnapsh
         remote_branches,
         tags,
         stashes,
+        worktrees,
     })
 }
 
@@ -262,4 +266,56 @@ fn collect_stashes(repo: &mut Repository) -> Result<Vec<Stash>, GitError> {
     .map_err(|e| GitError::Other(e.message().to_string()))?;
 
     Ok(stashes)
+}
+
+/// Collect the primary worktree plus registered linked worktrees.
+fn collect_worktrees(repo: &Repository) -> Result<Vec<Worktree>, GitError> {
+    let current_path = repo
+        .workdir()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default();
+    let main_path = if repo.is_worktree() {
+        repo.commondir()
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| current_path.clone())
+    } else {
+        current_path.clone()
+    };
+
+    let mut worktrees = Vec::new();
+    worktrees.push(Worktree {
+        name: "main".to_string(),
+        path: main_path.clone(),
+        is_current: current_path == main_path,
+        is_main: true,
+    });
+
+    let names = repo
+        .worktrees()
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    for name in names.iter() {
+        let Ok(Some(name)) = name else {
+            continue;
+        };
+        let wt = match repo.find_worktree(name) {
+            Ok(wt) => wt,
+            Err(_) => continue,
+        };
+        let path = wt.path().to_path_buf();
+        worktrees.push(Worktree {
+            name: name.to_string(),
+            is_current: path == current_path,
+            path,
+            is_main: false,
+        });
+    }
+
+    worktrees.sort_by(|a, b| {
+        a.is_main
+            .cmp(&b.is_main)
+            .reverse()
+            .then(a.name.cmp(&b.name))
+    });
+    Ok(worktrees)
 }

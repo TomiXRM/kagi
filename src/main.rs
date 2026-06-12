@@ -162,6 +162,7 @@ fn main() {
     eprintln!("[kagi] remote branches: {}", snap.remote_branches.len());
     eprintln!("[kagi] tags: {}", snap.tags.len());
     eprintln!("[kagi] stashes: {}", snap.stashes.len());
+    eprintln!("[kagi] worktrees: {}", snap.worktrees.len());
 
     // ── Build app state and launch window ────────────────────
     let mut app_state = KagiApp::from_snapshot(&info.name, &snap);
@@ -388,7 +389,9 @@ fn main() {
                             // the create-branch UI can be inspected headlessly.
                             app_state.create_branch_modal = Some(ui::CreateBranchModal {
                                 at: at.clone(),
+                                start_title: String::new(),
                                 input: branch_name.clone(),
+                                checkout_after: false,
                                 plan: Some(std::sync::Arc::new(plan.clone())),
                                 error: None,
                             });
@@ -442,6 +445,94 @@ fn main() {
             }
         } else {
             eprintln!("[kagi] KAGI_CREATE_BRANCH: could not resolve HEAD commit");
+        }
+    }
+
+    // ── T-CM-023: headless create-worktree plan / execute ─────
+    // KAGI_PLAN_WORKTREE=<branch>:<path>: generate a create-worktree plan
+    // using HEAD commit as the start point and log it.
+    // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, execute immediately.
+    if let Ok(spec) = std::env::var("KAGI_PLAN_WORKTREE") {
+        let (branch_name, worktree_path) = match spec.split_once(':') {
+            Some((branch, path)) => (branch.to_string(), path.to_string()),
+            None => {
+                eprintln!("[kagi] KAGI_PLAN_WORKTREE: expected <branch>:<path>");
+                run_app(app_state);
+                return;
+            }
+        };
+        let head_commit_id = git2::Repository::open(&repo_path)
+            .ok()
+            .and_then(|r| r.head().ok().and_then(|h| h.target()).map(|oid| kagi::git::CommitId(oid.to_string())));
+
+        if let Some(at) = head_commit_id {
+            let repo_for_plan = git2::Repository::open(&repo_path).ok();
+            if let Some(repo) = repo_for_plan {
+                match kagi::git::plan_create_worktree(&repo, &branch_name, &worktree_path, &at) {
+                    Ok(plan) => {
+                        eprintln!(
+                            "[kagi] plan: create-worktree '{}' path='{}' blockers={} warnings={}",
+                            branch_name,
+                            worktree_path,
+                            plan.blockers.len(),
+                            plan.warnings.len()
+                        );
+                        let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
+                        if auto_confirm {
+                            if plan.blockers.is_empty() {
+                                let repo2 = git2::Repository::open(&repo_path).ok();
+                                if let Some(r2) = repo2 {
+                                    if let Err(e) = kagi::git::preflight_check(&r2, &plan) {
+                                        let err_msg = format!("preflight failed: {}", e);
+                                        eprintln!("[kagi] {}", err_msg);
+                                        record_headless_op("create-worktree", plan.current.clone(), OpOutcome::Failed { error: err_msg }, &repo_path);
+                                    } else if let Err(e) = kagi::git::execute_create_worktree(&r2, &branch_name, &worktree_path, &at) {
+                                        let err_msg = format!("create-worktree failed: {}", e);
+                                        eprintln!("[kagi] {}", err_msg);
+                                        record_headless_op("create-worktree", plan.current.clone(), OpOutcome::Failed { error: err_msg }, &repo_path);
+                                    } else {
+                                        eprintln!(
+                                            "[kagi] executed: create-worktree '{}' path='{}' @ {}",
+                                            branch_name,
+                                            worktree_path,
+                                            at.short()
+                                        );
+                                        let verify_path = {
+                                            let path = PathBuf::from(&worktree_path);
+                                            if path.is_absolute() { path } else { repo_path.join(path) }
+                                        };
+                                        match git2::Repository::open(&verify_path) {
+                                            Ok(linked) => {
+                                                let head = linked
+                                                    .head()
+                                                    .ok()
+                                                    .and_then(|h| h.shorthand().ok().map(|s| s.to_string()));
+                                                eprintln!(
+                                                    "[kagi] verified: worktree '{}' HEAD={}",
+                                                    verify_path.display(),
+                                                    head.unwrap_or_else(|| "?".to_string())
+                                                );
+                                            }
+                                            Err(e) => eprintln!("[kagi] verify: worktree open error: {}", e.message()),
+                                        }
+                                        record_headless_op("create-worktree", plan.current.clone(), OpOutcome::Success { after: plan.predicted.clone() }, &repo_path);
+                                        app_state.reload();
+                                    }
+                                }
+                            } else {
+                                eprintln!(
+                                    "[kagi] KAGI_AUTO_CONFIRM=1 but create-worktree has {} blocker(s), skipping",
+                                    plan.blockers.len()
+                                );
+                                record_headless_op("create-worktree", plan.current.clone(), OpOutcome::Refused { blockers: plan.blockers.clone() }, &repo_path);
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("[kagi] plan: create-worktree error: {}", e),
+                }
+            }
+        } else {
+            eprintln!("[kagi] KAGI_PLAN_WORKTREE: could not resolve HEAD commit");
         }
     }
 

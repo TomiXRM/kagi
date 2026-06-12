@@ -15,7 +15,8 @@ use tempfile::TempDir;
 use kagi::git::{
     CommitId, Head,
     ops::{
-        execute_checkout, execute_create_branch, plan_checkout, plan_create_branch, preflight_check,
+        execute_checkout, execute_create_branch, plan_checkout, plan_create_branch,
+        plan_create_branch_with_checkout, preflight_check,
         plan_stash_push, execute_stash_push,
         plan_stash_apply, execute_stash_apply,
         preflight_check_stash,
@@ -548,6 +549,20 @@ fn test_create_branch_empty_name_blocker() {
         !plan.blockers.is_empty(),
         "empty branch name should produce a blocker"
     );
+}
+
+#[test]
+fn test_create_branch_with_checkout_predicts_new_head() {
+    let tmp = TempDir::new().unwrap();
+    let (_repo_dir, repo) = build_two_branch_repo(&tmp);
+
+    let at = head_commit_id(&repo);
+    let plan = plan_create_branch_with_checkout(&repo, "checkout-me", &at, true)
+        .expect("plan_create_branch_with_checkout failed");
+
+    assert!(plan.blockers.is_empty(), "unexpected blockers: {:?}", plan.blockers);
+    assert_eq!(plan.predicted.head, "branch: checkout-me");
+    assert!(plan.title.contains("and checkout"));
 }
 
 // ── T014-5: force=false prevents overwriting existing branch ─

@@ -219,7 +219,7 @@ pub fn render_inspector(
     let at_for_create = at.clone();
     let at_for_cherry = at.clone();
     let create_branch_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.open_create_branch_modal(at_for_create.clone(), cx);
+        this.dispatch_commit_action(CommitAction::CreateBranchHere, at_for_create.clone(), _window, cx);
         cx.notify();
     });
     let create_branch_button = action_button(

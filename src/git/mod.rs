@@ -7,6 +7,7 @@
 //! computing the file-level diff for a single commit.
 //! Network transports (https/ssh) are not used in the MVP.
 
+mod checklist;
 pub mod cli;
 mod diff;
 mod log;
@@ -48,6 +49,8 @@ pub use ops::{
     plan_delete_branch, execute_delete_branch,
     fetch_remote, FetchOutcome,
 };
+#[allow(unused_imports)]
+pub use checklist::checklist;
 #[allow(unused_imports)]
 pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
 #[allow(unused_imports)]

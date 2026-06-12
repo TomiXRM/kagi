@@ -6249,7 +6249,7 @@ impl KagiApp {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .justify_end()
+                    .justify_start()
                     .text_xs()
                     .text_color(rgb(TEXT_MUTED))
                     .child(SharedString::from("BRANCH / TAG")),

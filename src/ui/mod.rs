@@ -212,6 +212,9 @@ pub struct StatusBarSummary {
     pub repo_name: String,
     /// Whether at least one remote is configured (T-HT-004: push set-upstream flow).
     pub has_remote: bool,
+    /// Upstream tracking ref name, e.g. `"origin/main"` (empty when no upstream / detached).
+    /// ADR-0013: displayed in the left toolbar region as `→ upstream_name`.
+    pub upstream_name: String,
 }
 
 impl StatusBarSummary {
@@ -220,7 +223,7 @@ impl StatusBarSummary {
         use kagi::git::Head;
         use commit_list::now_unix_secs;
 
-        let (branch, ahead, behind, no_upstream, is_detached, is_unborn) = match &snap.head {
+        let (branch, ahead, behind, no_upstream, is_detached, is_unborn, upstream_name) = match &snap.head {
             Head::Attached { branch, .. } => {
                 // Look up upstream info for this branch.
                 let upstream = snap
@@ -229,16 +232,16 @@ impl StatusBarSummary {
                     .find(|b| &b.name == branch)
                     .and_then(|b| b.upstream.as_ref());
                 match upstream {
-                    Some(u) => (branch.clone(), Some(u.ahead), Some(u.behind), false, false, false),
-                    None => (branch.clone(), None, None, true, false, false),
+                    Some(u) => (branch.clone(), Some(u.ahead), Some(u.behind), false, false, false, u.remote_branch.clone()),
+                    None => (branch.clone(), None, None, true, false, false, String::new()),
                 }
             }
             Head::Detached { target } => {
                 let short = target.get(..8).unwrap_or(target).to_string();
-                (format!("detached HEAD ({})", short), None, None, false, true, false)
+                (format!("detached HEAD ({})", short), None, None, false, true, false, String::new())
             }
             Head::Unborn { branch } => {
-                (format!("no commits yet ({})", branch), None, None, false, false, true)
+                (format!("no commits yet ({})", branch), None, None, false, false, true, String::new())
             }
         };
 
@@ -259,6 +262,7 @@ impl StatusBarSummary {
             stash_count: snap.stashes.len(),
             repo_name: String::new(), // filled in by caller after from_snapshot
             has_remote,
+            upstream_name,
         }
     }
 
@@ -283,14 +287,18 @@ impl StatusBarSummary {
         // no_upstream covers Attached branch with no upstream configured.
         let no_upstream = self.no_upstream || not_attached;
 
-        let pull_on = !no_upstream; // Pull: disabled if no upstream (incl. detached/unborn)
+        let behind = self.behind.unwrap_or(0);
+        let ahead = self.ahead.unwrap_or(0);
+
+        // ADR-0013: Pull disabled if no upstream OR behind=0 (nothing to pull).
+        let pull_on = !no_upstream && behind > 0;
         // Push: enabled when (upstream && ahead>0) OR (no-upstream && attached && remote exists).
         // Dirty WT is irrelevant — push never changes local state.
-        let push_on = (!no_upstream && self.ahead.unwrap_or(0) > 0)
+        let push_on = (!no_upstream && ahead > 0)
             || (self.no_upstream && !not_attached && self.has_remote);
         let stash_on = self.is_dirty; // Stash: disabled if working tree is clean
         let pop_on = self.stash_count > 0; // Pop: disabled if no stashes
-        let undo_on = !not_attached && self.ahead.unwrap_or(0) > 0; // disabled if detached/unborn or ahead=0
+        let undo_on = !not_attached && ahead > 0; // disabled if detached/unborn or ahead=0
 
         ToolbarState {
             pull_on,
@@ -298,6 +306,8 @@ impl StatusBarSummary {
             stash_on,
             pop_on,
             undo_on,
+            behind,
+            ahead,
         }
     }
 }
@@ -322,21 +332,147 @@ pub struct ToolbarState {
     pub pop_on: bool,
     /// Whether the Undo button is enabled.
     pub undo_on: bool,
+    /// Commits behind upstream (used for Pull button label ↓N). ADR-0013.
+    pub behind: usize,
+    /// Commits ahead of upstream (used for Push button label ↑N). ADR-0013.
+    pub ahead: usize,
 }
 
 impl ToolbarState {
-    /// Emit the headless toolbar log line required by T-HT-001.
+    /// Emit the headless toolbar log line required by T-HT-001 / ADR-0013.
     ///
-    /// Format: `[kagi] toolbar: pull=on/off push=on/off stash=on/off pop=on/off undo=on/off`
+    /// Format: `[kagi] toolbar: pull=on/off (behind=N) push=on/off (ahead=N) stash=on/off pop=on/off undo=on/off`
     pub fn log_headless(&self) {
         eprintln!(
-            "[kagi] toolbar: pull={} push={} stash={} pop={} undo={}",
+            "[kagi] toolbar: pull={} (behind={}) push={} (ahead={}) stash={} pop={} undo={}",
             if self.pull_on { "on" } else { "off" },
+            self.behind,
             if self.push_on { "on" } else { "off" },
+            self.ahead,
             if self.stash_on { "on" } else { "off" },
             if self.pop_on { "on" } else { "off" },
             if self.undo_on { "on" } else { "off" },
         );
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
+// W2-HEADER: unit tests for ToolbarState / ADR-0013
+// ──────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod toolbar_tests {
+    use super::*;
+
+    /// Build a minimal `StatusBarSummary` with upstream set.
+    fn make_summary(ahead: usize, behind: usize, is_dirty: bool, stash_count: usize) -> StatusBarSummary {
+        StatusBarSummary {
+            branch: "main".to_string(),
+            is_dirty,
+            staged: 0,
+            unstaged: if is_dirty { 1 } else { 0 },
+            ahead: Some(ahead),
+            behind: Some(behind),
+            no_upstream: false,
+            last_refresh_secs: 0,
+            is_detached: false,
+            is_unborn: false,
+            stash_count,
+            repo_name: "repo".to_string(),
+            has_remote: true,
+            upstream_name: "origin/main".to_string(),
+        }
+    }
+
+    /// State 1: clean branch, behind=0, ahead=0 (e.g. fixture main when in sync).
+    #[test]
+    fn toolbar_clean_behind0() {
+        let s = make_summary(0, 0, false, 0);
+        let t = s.toolbar_state();
+        // ADR-0013: Pull disabled when behind=0.
+        assert!(!t.pull_on, "pull must be off when behind=0");
+        assert!(!t.push_on, "push must be off when ahead=0");
+        assert!(!t.stash_on, "stash must be off when clean");
+        assert!(!t.pop_on, "pop must be off when no stash");
+        assert!(!t.undo_on, "undo must be off when ahead=0");
+        assert_eq!(t.behind, 0);
+        assert_eq!(t.ahead, 0);
+    }
+
+    /// State 2: dirty branch, behind=1 (fixture main: behind0 but ahead=1 / dirty).
+    /// Use behind=1 to verify pull=on; dirty=true to verify stash=on.
+    #[test]
+    fn toolbar_dirty_behind1() {
+        let s = make_summary(1, 1, true, 0);
+        let t = s.toolbar_state();
+        assert!(t.pull_on, "pull must be on when behind=1");
+        assert!(t.push_on, "push must be on when ahead=1");
+        assert!(t.stash_on, "stash must be on when dirty");
+        assert!(!t.pop_on, "pop must be off when no stash");
+        assert!(t.undo_on, "undo must be on when ahead=1");
+        assert_eq!(t.behind, 1);
+        assert_eq!(t.ahead, 1);
+    }
+
+    /// State 3: detached HEAD — all git ops disabled.
+    #[test]
+    fn toolbar_detached() {
+        let s = StatusBarSummary {
+            branch: "detached HEAD (abc12345)".to_string(),
+            is_dirty: false,
+            staged: 0,
+            unstaged: 0,
+            ahead: None,
+            behind: None,
+            no_upstream: false,
+            last_refresh_secs: 0,
+            is_detached: true,
+            is_unborn: false,
+            stash_count: 0,
+            repo_name: "repo".to_string(),
+            has_remote: true,
+            upstream_name: String::new(),
+        };
+        let t = s.toolbar_state();
+        assert!(!t.pull_on, "pull must be off on detached HEAD");
+        assert!(!t.push_on, "push must be off on detached HEAD");
+        assert!(!t.undo_on, "undo must be off on detached HEAD");
+    }
+
+    /// ADR-0013: fixture main (ahead=1, behind=0) → pull must be off.
+    #[test]
+    fn toolbar_fixture_main_behind0_pull_off() {
+        // This mirrors the fixture repo: main is 1 ahead, 0 behind.
+        let s = make_summary(1, 0, false, 0);
+        let t = s.toolbar_state();
+        assert!(!t.pull_on, "fixture main (behind=0) must have pull=off");
+        assert!(t.push_on, "fixture main (ahead=1) must have push=on");
+        assert!(t.undo_on, "fixture main (ahead=1) must have undo=on");
+    }
+
+    /// ADR-0013: feature/two (ahead=0, behind=1) → pull must be on, push must be off.
+    #[test]
+    fn toolbar_feature_two_behind1_pull_on() {
+        // Mirrors fixture feature/two: 0 ahead, 1 behind.
+        let s = make_summary(0, 1, false, 0);
+        let t = s.toolbar_state();
+        assert!(t.pull_on, "feature/two (behind=1) must have pull=on");
+        assert!(!t.push_on, "feature/two (ahead=0) must have push=off (no upstream-new branch)");
+        assert!(!t.undo_on, "feature/two (ahead=0) must have undo=off");
+    }
+
+    /// log_headless format includes (behind=N) and (ahead=N).
+    #[test]
+    fn toolbar_log_format_behind_ahead() {
+        let s = make_summary(2, 3, true, 1);
+        let t = s.toolbar_state();
+        // Verify fields are correct (can't easily capture stderr; just verify struct values).
+        assert_eq!(t.behind, 3);
+        assert_eq!(t.ahead, 2);
+        assert!(t.pull_on);
+        assert!(t.push_on);
+        assert!(t.stash_on);
+        assert!(t.pop_on);
+        assert!(t.undo_on);
     }
 }
 
@@ -3542,7 +3678,8 @@ impl Render for KagiApp {
                 cx.notify();
             }))
             // ── Header slot ──────────────────────────────────
-            .child(self.render_header_slot(toolbar_state, status_summary, cx))
+            // ADR-0013: pass HEAD commit summary for Undo label (first row = HEAD).
+            .child(self.render_header_slot(toolbar_state, status_summary, self.rows.first().map(|r| r.summary.to_string()), cx))
             // ── Body slot: sidebar | list | optional panel ───
             .child(self.render_body(
                 row_count, selected, detail, changed_files, main_diff, main_diff_scroll_handle,
@@ -3612,17 +3749,22 @@ impl Render for KagiApp {
 // (T-BP-002, T-HT-001, …) can extend their signatures without
 // touching the caller site.
 impl KagiApp {
-    /// Header slot — the Toolbar bar (T-HT-001).
+    /// Header slot — the Toolbar bar (T-HT-001 / ADR-0013).
     ///
-    /// Layout (34 px):  repo-name | Pull Push | Branch Stash Pop | Undo | Refresh  [right→] branch ↑A ↓B
+    /// Layout (34 px):
+    ///   LEFT:   repo-name | branch → upstream ↑A ↓B
+    ///   CENTRE: Pull(↓N) Push(↑N) | Branch Stash Pop | Undo("<summary>") Terminal
+    ///   RIGHT:  Refresh
     fn render_header_slot(
         &mut self,
         toolbar: ToolbarState,
         summary: StatusBarSummary,
+        // HEAD commit summary for Undo label (first row in commit list). ADR-0013.
+        undo_summary: Option<String>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // ── Click handlers ──────────────────────────────────────────────────
-        // Pull (not implemented yet — footer notice only).
+        // Pull — disabled when behind=0 or no upstream (ADR-0013).
         let pull_on = toolbar.pull_on;
         let pull_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
             if pull_on {
@@ -3632,8 +3774,10 @@ impl KagiApp {
                     "Pull: detached HEAD — branch に切り替えてください"
                 } else if this.status_summary.is_unborn {
                     "Pull: no commits yet — upstream がありません"
-                } else {
+                } else if this.status_summary.no_upstream {
                     "Pull: upstream が設定されていません (no upstream)"
+                } else {
+                    "Pull: nothing to pull (behind=0)"
                 };
                 this.status_footer = FooterStatus::Idle(SharedString::from(reason));
             }
@@ -3728,11 +3872,26 @@ impl KagiApp {
             cx.notify();
         });
 
+        // Terminal — toggles bottom panel to Terminal tab (ADR-0013).
+        let terminal_on = self.bottom_panel_open && self.bottom_tab == BottomTab::Terminal;
+        let terminal_click = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+            if this.bottom_panel_open && this.bottom_tab == BottomTab::Terminal {
+                // Same tab visible → close panel (toggle off).
+                this.bottom_panel_open = false;
+            } else {
+                this.bottom_panel_open = true;
+                this.bottom_tab = BottomTab::Terminal;
+                // T-BP-007: lazy-start terminal session when first opened.
+                this.ensure_terminal(window, cx);
+            }
+            cx.notify();
+        });
+
         // ── Helper: build a single toolbar button ───────────────────────────
         // `id` must be a unique string for GPUI element tracking.
-        // `enabled` controls opacity; `label` is the button text.
+        // `enabled` controls opacity; `label` is a dynamic String (ADR-0013: labels include counts).
         let make_btn = |id: &'static str,
-                        label: &'static str,
+                        label: String,
                         icon: gpui_component::IconName,
                         enabled: bool| {
             let text_color = if enabled { TEXT_MAIN } else { TEXT_MUTED };
@@ -3759,17 +3918,51 @@ impl KagiApp {
                 .child(SharedString::from(label))
         };
 
-        // ── Ahead/behind display (right side) ──────────────────────────────
-        let ab_label = if summary.is_detached {
+        // ── ADR-0013: button labels with counts ─────────────────────────────
+        // Pull: show ↓N when behind>0; Push: show ↑N when ahead>0.
+        let pull_label = if toolbar.behind > 0 {
+            format!("Pull \u{2193}{}", toolbar.behind)
+        } else {
+            "Pull".to_string()
+        };
+        let push_label = if toolbar.ahead > 0 {
+            format!("Push \u{2191}{}", toolbar.ahead)
+        } else {
+            "Push".to_string()
+        };
+        // Undo: show `Undo "<summary 16chars>"` when undo_on; plain "Undo" otherwise.
+        let undo_label = if toolbar.undo_on {
+            if let Some(ref s) = undo_summary {
+                // Truncate to 16 Unicode scalar values.
+                let truncated: String = s.chars().take(16).collect();
+                let ellipsis = if s.chars().count() > 16 { "\u{2026}" } else { "" };
+                format!("Undo \u{201c}{}{}\u{201d}", truncated, ellipsis)
+            } else {
+                "Undo".to_string()
+            }
+        } else {
+            "Undo".to_string()
+        };
+
+        // ── Left label: branch info (ADR-0013) ─────────────────────────────
+        // Format: `branch → upstream ↑A ↓B`  or state labels when detached/unborn.
+        let branch_label = if summary.is_detached {
             "detached HEAD".to_string()
         } else if summary.is_unborn {
             "no commits yet".to_string()
         } else if summary.no_upstream {
-            "no upstream".to_string()
+            format!("{} (no upstream)", summary.branch)
         } else {
             let ahead = summary.ahead.unwrap_or(0);
             let behind = summary.behind.unwrap_or(0);
-            format!("{} \u{2191}{} \u{2193}{}", summary.branch, ahead, behind)
+            if summary.upstream_name.is_empty() {
+                format!("{} \u{2191}{} \u{2193}{}", summary.branch, ahead, behind)
+            } else {
+                format!(
+                    "{} \u{2192} {} \u{2191}{} \u{2193}{}",
+                    summary.branch, summary.upstream_name, ahead, behind
+                )
+            }
         };
 
         // ── Vertical separator ──────────────────────────────────────────────
@@ -3794,68 +3987,75 @@ impl KagiApp {
             .flex_shrink_0()
             .bg(rgb(BG_SURFACE))
             .text_color(rgb(TEXT_SUB))
-            // Repo name (left anchor)
+            // ── LEFT: repo name + branch/upstream/ahead-behind ──
             .child(
                 div()
                     .text_sm()
                     .text_color(rgb(TEXT_MAIN))
                     .font_weight(gpui::FontWeight::BOLD)
-                    .mr_2()
+                    .mr_1()
                     .flex_shrink_0()
                     .overflow_hidden()
                     .child(SharedString::from(summary.repo_name.clone())),
             )
-            .child(sep())
-            // Pull
             .child(
-                make_btn("tb-pull", "Pull", gpui_component::IconName::ArrowDown, toolbar.pull_on)
+                div()
+                    .text_sm()
+                    .text_color(rgb(TEXT_SUB))
+                    .mr_2()
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .child(SharedString::from(branch_label)),
+            )
+            .child(sep())
+            // ── CENTRE: Pull Push | Branch Stash Pop | Undo Terminal ──
+            // Pull (↓N when behind>0)
+            .child(
+                make_btn("tb-pull", pull_label, gpui_component::IconName::ArrowDown, toolbar.pull_on)
                     .on_click(pull_click),
             )
             .child(div().w(px(4.0)))
-            // Push
+            // Push (↑N when ahead>0)
             .child(
-                make_btn("tb-push", "Push", gpui_component::IconName::ArrowUp, toolbar.push_on)
+                make_btn("tb-push", push_label, gpui_component::IconName::ArrowUp, toolbar.push_on)
                     .on_click(push_click),
             )
             .child(sep())
             // Branch
             .child(
-                make_btn("tb-branch", "Branch", gpui_component::IconName::Plus, true)
+                make_btn("tb-branch", "Branch".to_string(), gpui_component::IconName::Plus, true)
                     .on_click(branch_click),
             )
             .child(div().w(px(4.0)))
             // Stash
             .child(
-                make_btn("tb-stash", "Stash", gpui_component::IconName::Inbox, toolbar.stash_on)
+                make_btn("tb-stash", "Stash".to_string(), gpui_component::IconName::Inbox, toolbar.stash_on)
                     .on_click(stash_click),
             )
             .child(div().w(px(4.0)))
             // Pop
             .child(
-                make_btn("tb-pop", "Pop", gpui_component::IconName::FolderOpen, toolbar.pop_on)
+                make_btn("tb-pop", "Pop".to_string(), gpui_component::IconName::FolderOpen, toolbar.pop_on)
                     .on_click(pop_click),
             )
             .child(sep())
-            // Undo
+            // Undo (with HEAD commit summary when enabled)
             .child(
-                make_btn("tb-undo", "Undo", gpui_component::IconName::Undo2, toolbar.undo_on)
+                make_btn("tb-undo", undo_label, gpui_component::IconName::Undo2, toolbar.undo_on)
                     .on_click(undo_click),
             )
-            .child(sep())
-            // Refresh
+            .child(div().w(px(4.0)))
+            // Terminal (toggles bottom panel Terminal tab)
             .child(
-                make_btn("tb-refresh", "Refresh", gpui_component::IconName::LoaderCircle, true)
-                    .on_click(refresh_click),
+                make_btn("tb-terminal", "Terminal".to_string(), gpui_component::IconName::SquareTerminal, terminal_on)
+                    .on_click(terminal_click),
             )
-            // Spacer — pushes ahead/behind to the right
+            // Spacer — pushes Refresh to the right
             .child(div().flex_1())
-            // Branch + ahead/behind (right anchor)
+            // ── RIGHT: Refresh ──
             .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(TEXT_SUB))
-                    .flex_shrink_0()
-                    .child(SharedString::from(ab_label)),
+                make_btn("tb-refresh", "Refresh".to_string(), gpui_component::IconName::LoaderCircle, true)
+                    .on_click(refresh_click),
             )
     }
 

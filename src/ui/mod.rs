@@ -390,6 +390,9 @@ pub enum DiffRow {
         old_lineno: Option<u32>,
         /// New-side line number (None for Removed lines).
         new_lineno: Option<u32>,
+        /// T-UI-004: Pre-computed syntax highlight spans (byte ranges + styles).
+        /// Empty when the file type is unknown or highlighting failed.
+        highlights: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>,
     },
     /// Placeholder shown for binary files.
     Binary,
@@ -449,6 +452,7 @@ impl FileDiffView {
                         text,
                         old_lineno: line.old_lineno,
                         new_lineno: line.new_lineno,
+                        highlights: vec![],
                     });
                 }
             }
@@ -490,6 +494,136 @@ pub struct MainDiffView {
     /// Where this diff was opened from (for re-load / back navigation).
     #[allow(dead_code)]
     pub source: MainDiffSource,
+}
+
+// ──────────────────────────────────────────────────────────────
+// T-UI-004: Syntax highlighting for diff rows
+// ──────────────────────────────────────────────────────────────
+
+/// Map a file extension to a language name understood by `gpui_component`'s
+/// `LanguageRegistry`.  Returns `None` for unknown extensions.
+fn lang_for_ext(ext: &str) -> Option<&'static str> {
+    match ext.to_ascii_lowercase().as_str() {
+        "rs"                   => Some("rust"),
+        "py"                   => Some("python"),
+        "js" | "jsx"           => Some("javascript"),
+        "ts"                   => Some("typescript"),
+        "tsx"                  => Some("tsx"),
+        "json" | "jsonc"       => Some("json"),
+        "toml"                 => Some("toml"),
+        "yaml" | "yml"         => Some("yaml"),
+        "md" | "mdx"           => Some("markdown"),
+        "sh" | "bash"          => Some("bash"),
+        "c"                    => Some("c"),
+        "cpp" | "cc" | "cxx"  => Some("cpp"),
+        "h" | "hpp"            => Some("cpp"),
+        "css" | "scss"         => Some("css"),
+        "html" | "htm"         => Some("html"),
+        "go"                   => Some("go"),
+        "java"                 => Some("java"),
+        "rb"                   => Some("ruby"),
+        "zig"                  => Some("zig"),
+        "sql"                  => Some("sql"),
+        "swift"                => Some("swift"),
+        _                      => None,
+    }
+}
+
+/// T-UI-004: Apply syntax highlighting to a slice of `DiffRow`s in-place.
+///
+/// The file path's extension is used to select the language. If the language
+/// is unknown or highlighting fails, rows are left with empty highlight spans
+/// (plain-colour fallback).  Never panics.
+///
+/// Returns the language name that was used (or "none").
+fn highlight_diff_rows(rows: &mut Vec<DiffRow>, file_path: &std::path::Path) -> &'static str {
+    use gpui_component::highlighter::{SyntaxHighlighter, HighlightTheme};
+    use gpui_component::Rope;
+
+    // Determine language from extension.
+    let lang = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .and_then(lang_for_ext);
+
+    let lang = match lang {
+        Some(l) => l,
+        None => return "none",
+    };
+
+    // Build the full source text for the "new" side of the diff by concatenating
+    // all Line rows.  We use a one-pass approach:
+    //   1. Collect (text_without_sigil, byte_start_in_rope) for each Line row.
+    //   2. Feed the combined text to the highlighter.
+    //   3. Distribute the resulting (byte_range, style) spans back to each row,
+    //      offsetting by byte_start_in_rope.
+    //
+    // The sigil (+/-/ ) at position 0 of each `text` is kept in the display string
+    // but excluded from the highlighted region — highlights start at byte 1.
+
+    let mut line_offsets: Vec<(usize, usize)> = Vec::new(); // (row_index, rope_byte_start)
+    let mut combined = String::new();
+
+    for (i, row) in rows.iter().enumerate() {
+        if let DiffRow::Line { text, .. } = row {
+            let t = text.as_ref();
+            let start = combined.len();
+            // Skip the leading sigil ('+', '-', ' ') for parsing purposes.
+            // The highlight byte ranges will be relative to `combined`, which
+            // starts after the sigil.
+            let content = if t.len() > 0 { &t[1..] } else { "" };
+            combined.push_str(content);
+            combined.push('\n');
+            line_offsets.push((i, start));
+        }
+    }
+
+    if combined.is_empty() {
+        return lang;
+    }
+
+    // Build highlighter and parse the combined source.
+    let mut highlighter = SyntaxHighlighter::new(lang);
+    let rope = Rope::from_str(&combined);
+    highlighter.update(None, &rope);
+
+    // Get dark-theme styles for the full text.
+    let theme = HighlightTheme::default_dark();
+    let all_styles = highlighter.styles(&(0..combined.len()), &theme);
+
+    // Distribute styles back to rows.
+    // For each row we know: rope_byte_start (start of content inside `combined`,
+    // i.e. after the sigil) and rope_byte_end = start_of_next_row - 1 (the \n).
+    for k in 0..line_offsets.len() {
+        let (row_i, rope_start) = line_offsets[k];
+        let rope_end = if k + 1 < line_offsets.len() {
+            line_offsets[k + 1].1
+        } else {
+            combined.len()
+        };
+        // The content slice is rope_start..rope_end (excludes the trailing \n).
+        let content_end = rope_end.saturating_sub(1); // strip the \n
+
+        // Collect highlight spans that overlap [rope_start, content_end).
+        let mut row_highlights: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> = Vec::new();
+        for (range, style) in &all_styles {
+            let clipped_start = range.start.max(rope_start);
+            let clipped_end   = range.end.min(content_end);
+            if clipped_start >= clipped_end {
+                continue;
+            }
+            // Translate back to row-local byte offsets (offset by 1 for the sigil).
+            let local_start = 1 + (clipped_start - rope_start);
+            let local_end   = 1 + (clipped_end   - rope_start);
+            row_highlights.push((local_start..local_end, *style));
+        }
+
+        if let DiffRow::Line { highlights, .. } = &mut rows[row_i] {
+            *highlights = row_highlights;
+        }
+    }
+
+    lang
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -3013,10 +3147,12 @@ impl KagiApp {
                 let fdv = FileDiffView::from_file_diff(&file_diff, file_index);
                 let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
                 let title = fdv.file_name.clone();
-                let rows = fdv.rows;
+                let mut rows = fdv.rows;
                 let row_count = rows.len();
 
-                eprintln!("[kagi] main-diff: open {} rows={}", path.display(), row_count);
+                // T-UI-004: apply syntax highlighting once at open time.
+                let hl_lang = highlight_diff_rows(&mut rows, &path);
+                eprintln!("[kagi] main-diff: open {} rows={} highlight={}", path.display(), row_count, hl_lang);
 
                 self.main_diff = Some(MainDiffView {
                     title,
@@ -3083,10 +3219,12 @@ impl KagiApp {
                 let fdv = FileDiffView::from_file_diff(&fd, 0);
                 let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
                 let title = fdv.file_name.clone();
-                let rows = fdv.rows;
+                let mut rows = fdv.rows;
                 let row_count = rows.len();
 
-                eprintln!("[kagi] main-diff: open {} rows={}", path.display(), row_count);
+                // T-UI-004: apply syntax highlighting once at open time.
+                let hl_lang = highlight_diff_rows(&mut rows, &path);
+                eprintln!("[kagi] main-diff: open {} rows={} highlight={}", path.display(), row_count, hl_lang);
 
                 let source = if is_staged {
                     MainDiffSource::Staged { path }
@@ -5018,7 +5156,7 @@ fn render_main_diff_rows(
                     .child(header.clone())
                     .into_any()
             }
-            DiffRow::Line { kind, text, old_lineno, new_lineno } => {
+            DiffRow::Line { kind, text, old_lineno, new_lineno, highlights } => {
                 let bg = match kind {
                     DiffLineKind::Added   => BG_DIFF_ADDED,
                     DiffLineKind::Removed => BG_DIFF_REMOVED,
@@ -5038,6 +5176,44 @@ fn render_main_diff_rows(
                     Some(n) => format!("{:5}", n),
                     None    => "     ".to_string(),
                 };
+
+                // T-UI-004: build highlighted content element.
+                // If we have pre-computed highlight spans, use StyledText; otherwise
+                // fall back to a plain text element (keeps the existing colour).
+                let content_el: gpui::AnyElement = if highlights.is_empty() {
+                    div()
+                        .flex_1()
+                        .text_color(rgb(text_color))
+                        .overflow_hidden()
+                        .child(text.clone())
+                        .into_any()
+                } else {
+                    // Validate that all highlight byte ranges lie within the text.
+                    // Silently drop spans that fall outside to prevent panics.
+                    let text_str: &str = text.as_ref();
+                    let text_len = text_str.len();
+                    let valid_highlights: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> =
+                        highlights
+                            .iter()
+                            .filter(|(r, _)| {
+                                r.start <= r.end
+                                    && r.end <= text_len
+                                    && text_str.is_char_boundary(r.start)
+                                    && text_str.is_char_boundary(r.end)
+                            })
+                            .cloned()
+                            .collect();
+                    div()
+                        .flex_1()
+                        .text_color(rgb(text_color))
+                        .overflow_hidden()
+                        .child(
+                            gpui::StyledText::new(text.clone())
+                                .with_highlights(valid_highlights),
+                        )
+                        .into_any()
+                };
+
                 div()
                     .id(("main-diff-line", i))
                     .w_full()
@@ -5064,14 +5240,8 @@ fn render_main_diff_rows(
                             .text_color(rgb(TEXT_MUTED))
                             .child(SharedString::from(new_str)),
                     )
-                    // Content (sigil + text)
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_color(rgb(text_color))
-                            .overflow_hidden()
-                            .child(text.clone()),
-                    )
+                    // Content (sigil + highlighted text)
+                    .child(content_el)
                     .into_any()
             }
             DiffRow::Binary => {

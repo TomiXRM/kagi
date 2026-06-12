@@ -151,7 +151,8 @@ use kagi::git::{
     ChangeKind, CommitId, FileDiff, DiffLineKind, FileStatus, Head, RemoteBranch, RepoSnapshot, Stash, Tag, UpstreamInfo,
     ops::{
         OperationPlan, StateSummary,
-        execute_checkout, execute_create_branch, plan_checkout, plan_create_branch, preflight_check,
+        execute_checkout, execute_checkout_commit, execute_create_branch,
+        plan_checkout, plan_checkout_commit, plan_create_branch, preflight_check,
         plan_stash_push, execute_stash_push,
         plan_stash_apply, execute_stash_apply,
         plan_pull, execute_pull, PullOutcome,
@@ -852,10 +853,19 @@ fn highlight_diff_rows(rows: &mut Vec<DiffRow>, file_path: &std::path::Path) -> 
 /// State for an in-progress checkout plan confirmation.
 #[derive(Clone)]
 pub struct CheckoutPlanModal {
+    /// Branch or commit target captured when the plan was opened.
+    pub target: CheckoutPlanTarget,
     /// The computed plan (title, current, predicted, warnings, blockers, recovery).
     pub plan: std::sync::Arc<OperationPlan>,
     /// Error message to show if execute or preflight failed (replaces normal buttons).
     pub error: Option<SharedString>,
+}
+
+/// Execution target for the shared checkout plan modal.
+#[derive(Clone, Debug)]
+pub enum CheckoutPlanTarget {
+    Branch(String),
+    Commit(CommitId),
 }
 
 /// State for an in-progress pull confirmation (T-HT-003).  Same shape as
@@ -1559,12 +1569,51 @@ impl KagiApp {
                     plan.warnings.len()
                 );
                 self.plan_modal = Some(CheckoutPlanModal {
+                    target: CheckoutPlanTarget::Branch(branch.clone()),
                     plan: std::sync::Arc::new(plan),
                     error: None,
                 });
             }
             Err(e) => {
                 eprintln!("[kagi] plan: error: {}", e);
+            }
+        }
+    }
+
+    /// Open the detached checkout plan modal for commit `commit_id`.
+    pub fn open_checkout_commit_modal(&mut self, commit_id: CommitId) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => {
+                eprintln!("[kagi] open_checkout_commit_modal: no repo_path set");
+                return;
+            }
+        };
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] checkout-commit plan: repo open error: {}", e.message());
+                return;
+            }
+        };
+
+        match plan_checkout_commit(&repo, &commit_id) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: checkout-commit {} blockers={} warnings={}",
+                    commit_id.short(),
+                    plan.blockers.len(),
+                    plan.warnings.len()
+                );
+                self.plan_modal = Some(CheckoutPlanModal {
+                    target: CheckoutPlanTarget::Commit(commit_id),
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                eprintln!("[kagi] checkout-commit plan: error: {}", e);
             }
         }
     }
@@ -2605,15 +2654,9 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let branch = match modal.plan.predicted.head.strip_prefix("branch: ") {
-            Some(b) => b.to_string(),
-            None => {
-                self.plan_modal = Some(CheckoutPlanModal {
-                    plan: modal.plan.clone(),
-                    error: Some(SharedString::from("Internal error: could not determine target branch.")),
-                });
-                return;
-            }
+        let op_name = match &modal.target {
+            CheckoutPlanTarget::Branch(_) => "checkout",
+            CheckoutPlanTarget::Commit(_) => "checkout-commit",
         };
 
         let repo = match git2::Repository::open(&repo_path) {
@@ -2621,12 +2664,13 @@ impl KagiApp {
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e.message());
                 self.record_op(
-                    "checkout",
+                    op_name,
                     modal.plan.current.clone(),
                     OpOutcome::Failed { error: err_msg.clone() },
                     &repo_path,
                 );
                 self.plan_modal = Some(CheckoutPlanModal {
+                    target: modal.target.clone(),
                     plan: modal.plan.clone(),
                     error: Some(SharedString::from(err_msg)),
                 });
@@ -2638,12 +2682,13 @@ impl KagiApp {
         if let Err(e) = preflight_check(&repo, &modal.plan) {
             let err_msg = format!("Preflight failed: {}", e);
             self.record_op(
-                "checkout",
+                op_name,
                 modal.plan.current.clone(),
                 OpOutcome::Failed { error: err_msg.clone() },
                 &repo_path,
             );
             self.plan_modal = Some(CheckoutPlanModal {
+                target: modal.target.clone(),
                 plan: modal.plan.clone(),
                 error: Some(SharedString::from(err_msg)),
             });
@@ -2651,22 +2696,32 @@ impl KagiApp {
         }
 
         // Execute checkout (safe mode only).
-        if let Err(e) = execute_checkout(&repo, &branch) {
+        let execute_result = match &modal.target {
+            CheckoutPlanTarget::Branch(branch) => execute_checkout(&repo, branch),
+            CheckoutPlanTarget::Commit(commit_id) => execute_checkout_commit(&repo, commit_id),
+        };
+        if let Err(e) = execute_result {
             let err_msg = format!("Checkout failed: {}", e);
             self.record_op(
-                "checkout",
+                op_name,
                 modal.plan.current.clone(),
                 OpOutcome::Failed { error: err_msg.clone() },
                 &repo_path,
             );
             self.plan_modal = Some(CheckoutPlanModal {
+                target: modal.target.clone(),
                 plan: modal.plan.clone(),
                 error: Some(SharedString::from(err_msg)),
             });
             return;
         }
 
-        eprintln!("[kagi] executed: checkout {}", branch);
+        match &modal.target {
+            CheckoutPlanTarget::Branch(branch) => eprintln!("[kagi] executed: checkout {}", branch),
+            CheckoutPlanTarget::Commit(commit_id) => {
+                eprintln!("[kagi] executed: checkout-commit {}", commit_id.short())
+            }
+        }
 
         // Verify: re-snapshot and confirm HEAD.
         let mut repo2 = match git2::Repository::open(&repo_path) {
@@ -2679,9 +2734,18 @@ impl KagiApp {
         };
         let after_summary = match kagi::git::snapshot(&mut repo2, 10_000) {
             Ok(snap) => {
-                match &snap.head {
-                    Head::Attached { branch: actual_branch, .. } if actual_branch == &branch => {
+                match (&modal.target, &snap.head) {
+                    (
+                        CheckoutPlanTarget::Branch(branch),
+                        Head::Attached { branch: actual_branch, .. },
+                    ) if actual_branch == branch => {
                         eprintln!("[kagi] verified: HEAD={}", actual_branch);
+                    }
+                    (
+                        CheckoutPlanTarget::Commit(commit_id),
+                        Head::Detached { target },
+                    ) if target == &commit_id.0 => {
+                        eprintln!("[kagi] verified: detached HEAD={}", commit_id.short());
                     }
                     other => {
                         eprintln!("[kagi] verify: unexpected HEAD state after checkout: {:?}", other);
@@ -2700,7 +2764,7 @@ impl KagiApp {
 
         // Record success to oplog + update footer.
         self.record_op(
-            "checkout",
+            op_name,
             modal.plan.current.clone(),
             OpOutcome::Success { after: after_summary },
             &repo_path,
@@ -4238,12 +4302,22 @@ impl KagiApp {
                     }
                 }
             }
+            CommitAction::CheckoutCommit => {
+                self.open_checkout_commit_modal(target);
+            }
+            CommitAction::CheckoutRef(ref_name) => {
+                if ref_name.is_empty() {
+                    self.status_footer =
+                        FooterStatus::Idle(SharedString::from("Checkout ref unavailable"));
+                    eprintln!("[kagi] context-menu: checkout-ref unavailable {}", target.short());
+                } else {
+                    self.open_plan_modal(ref_name);
+                }
+            }
             CommitAction::CreateBranchHere
             | CommitAction::CreateWorktreeHere
             | CommitAction::CherryPick
             | CommitAction::Revert
-            | CommitAction::CheckoutCommit
-            | CommitAction::CheckoutRef(_)
             | CommitAction::CompareWithHead
             | CommitAction::CompareWithWorkingTree
             | CommitAction::ShowChangedFiles
@@ -4253,8 +4327,6 @@ impl KagiApp {
                     CommitAction::CreateWorktreeHere => "Create worktree here",
                     CommitAction::CherryPick => "Cherry-pick",
                     CommitAction::Revert => "Revert",
-                    CommitAction::CheckoutCommit => "Checkout commit",
-                    CommitAction::CheckoutRef(_) => "Checkout ref",
                     CommitAction::CompareWithHead => "Compare with HEAD",
                     CommitAction::CompareWithWorkingTree => "Compare with working tree",
                     CommitAction::ShowChangedFiles => "Show changed files",
@@ -6506,6 +6578,10 @@ fn render_status_footer(status: FooterStatus) -> impl IntoElement {
 ///   - Error message (if preflight/execute failed)
 ///   - `[Cancel]` always present; `[Checkout]` only when no blockers
 fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let create_branch_target = match &modal.target {
+        CheckoutPlanTarget::Commit(commit_id) => Some(commit_id.clone()),
+        CheckoutPlanTarget::Branch(_) => None,
+    };
     let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.cancel_modal();
         if let Some(fh) = this.root_focus.clone() {
@@ -6520,7 +6596,15 @@ fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> gpu
         }
         cx.notify();
     });
-    render_plan_modal_card(modal.plan, modal.error, "Checkout", cancel_handler, confirm_handler)
+    render_plan_modal_card(
+        modal.plan,
+        modal.error,
+        "Checkout",
+        cancel_handler,
+        confirm_handler,
+        create_branch_target,
+        cx,
+    )
         .into_any_element()
 }
 
@@ -6542,7 +6626,7 @@ fn render_pull_modal(modal: PullPlanModal, cx: &mut Context<KagiApp>) -> gpui::A
         }
         cx.notify();
     });
-    render_plan_modal_card(modal.plan, modal.error, "Pull", cancel_handler, confirm_handler)
+    render_plan_modal_card(modal.plan, modal.error, "Pull", cancel_handler, confirm_handler, None, cx)
         .into_any_element()
 }
 
@@ -6558,7 +6642,7 @@ fn render_undo_modal(modal: UndoPlanModal, cx: &mut Context<KagiApp>) -> gpui::A
         if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
         cx.notify();
     });
-    render_plan_modal_card(modal.plan, modal.error, "Undo", cancel_handler, confirm_handler)
+    render_plan_modal_card(modal.plan, modal.error, "Undo", cancel_handler, confirm_handler, None, cx)
         .into_any_element()
 }
 
@@ -6574,7 +6658,7 @@ fn render_pop_modal(modal: PopPlanModal, cx: &mut Context<KagiApp>) -> gpui::Any
         if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
         cx.notify();
     });
-    render_plan_modal_card(modal.plan, modal.error, "Pop", cancel_handler, confirm_handler)
+    render_plan_modal_card(modal.plan, modal.error, "Pop", cancel_handler, confirm_handler, None, cx)
         .into_any_element()
 }
 
@@ -6596,7 +6680,7 @@ fn render_push_modal(modal: PushPlanModal, cx: &mut Context<KagiApp>) -> gpui::A
         }
         cx.notify();
     });
-    render_plan_modal_card(modal.plan, modal.error, "Push", cancel_handler, confirm_handler)
+    render_plan_modal_card(modal.plan, modal.error, "Push", cancel_handler, confirm_handler, None, cx)
         .into_any_element()
 }
 
@@ -6625,6 +6709,8 @@ fn render_delete_branch_modal(
         "Delete",
         cancel_handler,
         confirm_handler,
+        None,
+        cx,
     )
     .into_any_element()
 }
@@ -6638,6 +6724,8 @@ fn render_plan_modal_card(
     confirm_label: &'static str,
     cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    create_branch_target: Option<CommitId>,
+    cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let has_blockers = !plan.blockers.is_empty();
 
@@ -6818,6 +6906,30 @@ fn render_plan_modal_card(
                 .hover(|style| style.bg(rgb(BG_SELECTED)))
                 .child(SharedString::from("Cancel")),
         );
+
+    if let Some(commit_id) = create_branch_target {
+        let create_handler = cx.listener(move |this, _event: &gpui::ClickEvent, window, cx| {
+            this.cancel_modal();
+            this.open_create_branch_modal(commit_id.clone(), cx);
+            if let Some(fh) = this.root_focus.clone() {
+                window.focus(&fh);
+            }
+            cx.notify();
+        });
+        button_row = button_row.child(
+            div()
+                .id("plan-create-branch")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(BG_SURFACE))
+                .text_sm()
+                .text_color(rgb(TEXT_MAIN))
+                .on_click(create_handler)
+                .hover(|style| style.bg(rgb(BG_SELECTED)))
+                .child(SharedString::from("Create branch here...")),
+        );
+    }
 
     // Checkout button: only shown when there are no blockers.
     if !has_blockers {

@@ -28,7 +28,7 @@ pub use cli::{GitCliOutput, run_git};
 #[allow(unused_imports)]
 pub use ops::{
     OperationPlan, StateSummary,
-    execute_checkout, plan_checkout, preflight_check,
+    execute_checkout, execute_checkout_commit, plan_checkout, plan_checkout_commit, preflight_check,
     plan_create_branch, execute_create_branch,
     plan_stash_push, execute_stash_push,
     plan_stash_apply, execute_stash_apply,

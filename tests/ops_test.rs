@@ -9,13 +9,14 @@
 use std::path::Path;
 use std::process::Command;
 
-use git2::Repository;
+use git2::{BranchType, Repository};
 use tempfile::TempDir;
 
 use kagi::git::{
     CommitId, Head,
     ops::{
-        execute_checkout, execute_create_branch, plan_checkout, plan_create_branch, preflight_check,
+        execute_checkout, execute_checkout_commit, execute_create_branch,
+        plan_checkout, plan_checkout_commit, plan_create_branch, preflight_check,
         plan_stash_push, execute_stash_push,
         plan_stash_apply, execute_stash_apply,
         preflight_check_stash,
@@ -360,6 +361,132 @@ fn head_commit_id(repo: &Repository) -> CommitId {
         .target()
         .expect("head target oid");
     CommitId(oid.to_string())
+}
+
+fn branch_commit_id(repo: &Repository, branch: &str) -> CommitId {
+    let branch = repo
+        .find_branch(branch, BranchType::Local)
+        .expect("find branch");
+    CommitId(branch.get().target().expect("branch target").to_string())
+}
+
+fn read_file(dir: &Path, name: &str) -> String {
+    std::fs::read_to_string(dir.join(name)).expect("read file")
+}
+
+fn build_readme_conflict_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository, CommitId) {
+    let d = tmp.path();
+
+    git(d, &["init", "-q", "-b", "main", "."]);
+    git(d, &["config", "user.name", "Test"]);
+    git(d, &["config", "user.email", "test@example.com"]);
+    git(d, &["config", "commit.gpgsign", "false"]);
+
+    write_file(d, "README.md", "base\n");
+    git(d, &["add", "README.md"]);
+    git(d, &["commit", "-qm", "base"]);
+
+    git(d, &["checkout", "-qb", "target"]);
+    write_file(d, "README.md", "target\n");
+    git(d, &["add", "README.md"]);
+    git(d, &["commit", "-qm", "target readme"]);
+    let repo = Repository::open(d).expect("open repo");
+    let target = head_commit_id(&repo);
+
+    git(d, &["checkout", "-q", "main"]);
+    let repo = Repository::open(d).expect("reopen repo");
+    (d.to_path_buf(), repo, target)
+}
+
+// ────────────────────────────────────────────────────────────
+// T-CM-041: detached checkout commit tests
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn test_checkout_commit_plan_warns_and_execute_detaches_head() {
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, repo) = build_two_branch_repo(&tmp);
+    let target = branch_commit_id(&repo, "feature/one");
+
+    let plan = plan_checkout_commit(&repo, &target).expect("plan_checkout_commit failed");
+    assert!(
+        plan.blockers.is_empty(),
+        "checkout commit should have no blockers, got: {:?}",
+        plan.blockers
+    );
+    assert!(
+        plan.predicted.head.starts_with("detached: "),
+        "predicted head should show detached state, got: {}",
+        plan.predicted.head
+    );
+    assert!(
+        plan.warnings.iter().any(|w| w.contains("detached HEAD"))
+            && plan.warnings.iter().any(|w| w.contains("Create branch")),
+        "plan should warn about detached HEAD and branch creation, got: {:?}",
+        plan.warnings
+    );
+
+    preflight_check(&repo, &plan).expect("preflight failed");
+    execute_checkout_commit(&repo, &target).expect("execute_checkout_commit failed");
+
+    let mut repo2 = Repository::open(&repo_dir).expect("re-open repo");
+    let snap = snapshot(&mut repo2, 100).expect("snapshot after checkout commit");
+    assert!(
+        matches!(&snap.head, Head::Detached { target: actual } if actual == &target.0),
+        "HEAD should be detached at target after checkout commit, got: {:?}",
+        snap.head
+    );
+    assert!(repo_dir.join("feat.txt").exists(), "target tree should be checked out");
+}
+
+#[test]
+fn test_checkout_commit_dirty_safe_checkout_fails_without_moving_head() {
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, repo, target) = build_readme_conflict_repo(&tmp);
+
+    write_file(&repo_dir, "README.md", "local dirty\n");
+    let plan = plan_checkout_commit(&repo, &target).expect("plan_checkout_commit failed");
+    assert!(
+        plan.blockers.is_empty(),
+        "dirty worktree should warn, not block, got blockers: {:?}",
+        plan.blockers
+    );
+    assert!(
+        plan.warnings.iter().any(|w| w.contains("dirty")),
+        "dirty plan should include warning, got: {:?}",
+        plan.warnings
+    );
+
+    preflight_check(&repo, &plan).expect("preflight failed");
+    let result = execute_checkout_commit(&repo, &target);
+    assert!(result.is_err(), "safe checkout should refuse dirty overwrite");
+
+    let mut repo2 = Repository::open(&repo_dir).expect("re-open repo");
+    let snap = snapshot(&mut repo2, 100).expect("snapshot after failed checkout commit");
+    assert!(
+        matches!(&snap.head, Head::Attached { branch, .. } if branch == "main"),
+        "HEAD should remain on main after failed checkout, got: {:?}",
+        snap.head
+    );
+    assert_eq!(read_file(&repo_dir, "README.md"), "local dirty\n");
+}
+
+#[test]
+fn test_checkout_commit_preflight_aborts_when_head_changed() {
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, repo) = build_two_branch_repo(&tmp);
+    let target = branch_commit_id(&repo, "feature/one");
+    let plan = plan_checkout_commit(&repo, &target).expect("plan_checkout_commit failed");
+
+    write_file(&repo_dir, "extra.txt", "extra\n");
+    git(&repo_dir, &["add", "extra.txt"]);
+    git(&repo_dir, &["commit", "-qm", "extra commit"]);
+
+    let result = preflight_check(&repo, &plan);
+    assert!(
+        result.is_err(),
+        "preflight_check should return Err when HEAD changed before checkout commit"
+    );
 }
 
 // ── T014-1: normal case — branch created, HEAD unchanged, WT unchanged ──

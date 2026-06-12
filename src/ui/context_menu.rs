@@ -555,12 +555,10 @@ fn reset_state(ctx: &MenuContext) -> ItemState {
 }
 
 fn primary_checkout_ref(refs: &[RefBadge]) -> Option<String> {
-    refs.iter().find_map(|badge| match badge.kind {
-        BadgeKind::Branch | BadgeKind::Tag => {
-            Some(badge.label.as_ref().trim_end_matches(" ✓").to_string())
-        }
-        BadgeKind::HeadBranch | BadgeKind::Remote => None,
-    })
+    refs.iter()
+        .find(|badge| badge.kind == BadgeKind::Branch)
+        .or_else(|| refs.iter().find(|badge| badge.kind == BadgeKind::Tag))
+        .map(|badge| badge.label.as_ref().trim_end_matches(" ✓").to_string())
 }
 
 fn truncate_chars(input: &str, max_chars: usize) -> String {
@@ -714,6 +712,34 @@ mod tests {
     fn hidden_checkout_ref_is_not_drawn_without_refs_here() {
         let groups = build_commit_menu(&ctx());
         assert_eq!(checkout_ref_state(&groups), ItemState::Hidden);
+    }
+
+    #[test]
+    fn checkout_ref_prefers_local_branch_here() {
+        let mut c = ctx();
+        c.refs_here = vec![
+            RefBadge {
+                kind: BadgeKind::Tag,
+                label: SharedString::from("v1.0.0"),
+            },
+            RefBadge {
+                kind: BadgeKind::Branch,
+                label: SharedString::from("feature/checkout ✓"),
+            },
+        ];
+        let groups = build_commit_menu(&c);
+        let item = groups
+            .iter()
+            .flat_map(|group| group.items.iter())
+            .find(|item| matches!(item.action, CommitAction::CheckoutRef(_)))
+            .expect("checkout ref item");
+
+        assert_eq!(item.state, ItemState::Enabled);
+        assert_eq!(item.label.as_ref(), "Checkout 'feature/checkout'...");
+        assert_eq!(
+            item.action,
+            CommitAction::CheckoutRef("feature/checkout".to_string())
+        );
     }
 
     #[test]

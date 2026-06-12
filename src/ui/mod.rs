@@ -954,8 +954,11 @@ pub struct CreateBranchModal {
     pub at: CommitId,
     /// First line of the start commit message, used to identify menu origin.
     pub start_title: String,
-    /// Current text in the branch-name input field.
+    /// Current text in the branch-name input field (synced from `input_state`).
     pub input: String,
+    /// Real text-input entity (gpui-component). Created lazily on first
+    /// render (needs a Window); `None` in headless paths.
+    pub input_state: Option<Entity<InputState>>,
     /// Whether to check out the new branch after creating it.
     pub checkout_after: bool,
     /// Live plan (re-generated each keystroke from `input` and `at`).
@@ -965,6 +968,7 @@ pub struct CreateBranchModal {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // legacy hand-rolled input era; kept for struct compat
 pub enum WorktreeModalField {
     Branch,
     Path,
@@ -977,13 +981,19 @@ pub struct CreateWorktreeModal {
     pub at: CommitId,
     /// First line of the start commit message.
     pub start_title: String,
-    /// New branch name.
+    /// New branch name (synced from `branch_state`).
     pub branch_input: String,
-    /// Target worktree path.
+    /// Real branch-name input entity (lazy; None headless).
+    pub branch_state: Option<Entity<InputState>>,
+    /// Target worktree path (synced from `path_state`).
     pub path_input: String,
+    /// Real path input entity (lazy; None headless).
+    pub path_state: Option<Entity<InputState>>,
     /// True once the user has manually edited the path.
     pub path_touched: bool,
-    /// Which field receives key input.
+    /// Which field receives key input (legacy hand-rolled input era; the
+    /// real `InputState`s manage their own focus now).
+    #[allow(dead_code)]
     pub active_field: WorktreeModalField,
     /// Live plan regenerated from branch/path/start.
     pub plan: Option<std::sync::Arc<OperationPlan>>,
@@ -1002,7 +1012,10 @@ pub struct CreateWorktreeModal {
 #[derive(Clone)]
 pub struct StashPushModal {
     /// Optional stash message (empty string → None passed to stash_save2).
+    /// Synced from `input_state`.
     pub input: String,
+    /// Real text-input entity (lazy; None headless).
+    pub input_state: Option<Entity<InputState>>,
     /// Live plan (re-generated each keystroke from `input`).
     pub plan: Option<std::sync::Arc<OperationPlan>>,
     /// Error message to show if execute or preflight failed.
@@ -1880,6 +1893,7 @@ impl KagiApp {
             at,
             start_title,
             input: String::new(),
+            input_state: None, // created lazily on first render (needs Window)
             checkout_after: false,
             plan: None,
             error: None,
@@ -1906,42 +1920,6 @@ impl KagiApp {
     /// Close the create-branch modal without making any changes.
     pub fn cancel_create_branch_modal(&mut self) {
         self.create_branch_modal = None;
-    }
-
-    /// Handle a key-down event for the create-branch name input.
-    ///
-    /// Accepted characters: ASCII alphanumeric, `-`, `_`, `/`, `.`.
-    /// `backspace` removes the last character.
-    /// All other keys (including modifier combos) are ignored.
-    pub fn handle_create_branch_key(&mut self, event: &KeyDownEvent) {
-        let modal = match self.create_branch_modal.as_mut() {
-            Some(m) => m,
-            None => return,
-        };
-        let key = &event.keystroke.key;
-        let modifiers = &event.keystroke.modifiers;
-
-        // Ignore any modifier combos (cmd/ctrl/alt).
-        if modifiers.platform || modifiers.control || modifiers.alt {
-            return;
-        }
-
-        if key == "backspace" {
-            modal.input.pop();
-        } else if key == "space" {
-            // Spaces are invalid branch-name characters; keep them out of the
-            // input so validation feedback stays focused.
-        } else if key == "tab" {
-            modal.checkout_after = !modal.checkout_after;
-        } else if key.len() == 1 {
-            let ch = key.chars().next().unwrap();
-            // Allow: a-z A-Z 0-9 - _ / .
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '/' || ch == '.' {
-                modal.input.push(ch);
-            }
-        }
-        modal.error = None;
-        self.replan_create_branch();
     }
 
     /// Re-generate the live plan from the current modal input.
@@ -2173,7 +2151,9 @@ impl KagiApp {
             at,
             start_title,
             branch_input,
+            branch_state: None, // lazy (render)
             path_input,
+            path_state: None, // lazy (render)
             path_touched: false,
             active_field: WorktreeModalField::Branch,
             plan: None,
@@ -2211,74 +2191,6 @@ impl KagiApp {
             safe_branch
         };
         format!("../{}-worktrees/{}", repo_name, safe_branch)
-    }
-
-    pub fn set_worktree_modal_field(&mut self, field: WorktreeModalField) {
-        if let Some(ref mut modal) = self.create_worktree_modal {
-            modal.active_field = field;
-        }
-    }
-
-    pub fn handle_create_worktree_key(&mut self, event: &KeyDownEvent) {
-        let mut branch_for_default: Option<String> = None;
-        {
-            let modal = match self.create_worktree_modal.as_mut() {
-                Some(m) => m,
-                None => return,
-            };
-            let key = &event.keystroke.key;
-            let modifiers = &event.keystroke.modifiers;
-
-            if modifiers.platform || modifiers.control || modifiers.alt {
-                return;
-            }
-
-            if key == "tab" {
-                modal.active_field = match modal.active_field {
-                    WorktreeModalField::Branch => WorktreeModalField::Path,
-                    WorktreeModalField::Path => WorktreeModalField::Branch,
-                };
-                return;
-            }
-
-            match modal.active_field {
-                WorktreeModalField::Branch => {
-                    if key == "backspace" {
-                        modal.branch_input.pop();
-                    } else if key.len() == 1 {
-                        let ch = key.chars().next().unwrap();
-                        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '/' || ch == '.' {
-                            modal.branch_input.push(ch);
-                        }
-                    }
-                    if !modal.path_touched {
-                        branch_for_default = Some(modal.branch_input.clone());
-                    }
-                }
-                WorktreeModalField::Path => {
-                    modal.path_touched = true;
-                    if key == "backspace" {
-                        modal.path_input.pop();
-                    } else if key == "space" {
-                        modal.path_input.push(' ');
-                    } else if key.len() == 1 {
-                        let ch = key.chars().next().unwrap();
-                        if !ch.is_control() {
-                            modal.path_input.push(ch);
-                        }
-                    }
-                }
-            }
-            modal.error = None;
-        }
-
-        if let Some(branch) = branch_for_default {
-            let next_path = self.default_worktree_path(&branch);
-            if let Some(ref mut modal) = self.create_worktree_modal {
-                modal.path_input = next_path;
-            }
-        }
-        self.replan_create_worktree();
     }
 
     fn replan_create_worktree(&mut self) {
@@ -2435,6 +2347,7 @@ impl KagiApp {
         }
         self.stash_push_modal = Some(StashPushModal {
             input: String::new(),
+            input_state: None, // lazy (render)
             plan: None,
             error: None,
         });
@@ -2444,33 +2357,6 @@ impl KagiApp {
     /// Close the stash push modal without making any changes.
     pub fn cancel_stash_push_modal(&mut self) {
         self.stash_push_modal = None;
-    }
-
-    /// Handle a key-down event for the stash push message input.
-    pub fn handle_stash_push_key(&mut self, event: &KeyDownEvent) {
-        let modal = match self.stash_push_modal.as_mut() {
-            Some(m) => m,
-            None => return,
-        };
-        let key = &event.keystroke.key;
-        let modifiers = &event.keystroke.modifiers;
-
-        if modifiers.platform || modifiers.control || modifiers.alt {
-            return;
-        }
-
-        if key == "backspace" {
-            modal.input.pop();
-        } else if key == "space" {
-            modal.input.push(' ');
-        } else if key.len() == 1 {
-            let ch = key.chars().next().unwrap();
-            if !ch.is_control() {
-                modal.input.push(ch);
-            }
-        }
-        modal.error = None;
-        self.replan_stash_push();
     }
 
     /// Re-generate the live stash push plan from the current input.
@@ -3162,6 +3048,117 @@ impl KagiApp {
     /// Remove a toast by id (× button).
     pub fn dismiss_toast(&mut self, id: u64) {
         self.toasts.retain(|t| t.id != id);
+    }
+
+    /// Lazily create + sync the real text inputs of the create-branch /
+    /// create-worktree / stash-push modals (gpui-component `InputState`).
+    ///
+    /// The old hand-rolled inputs (KeyDown capture + a fake `_` caret) had no
+    /// caret, no IME, no click focus and re-planned on every frame
+    /// (user-reported). `InputState` needs a `Window`, which open_* callers
+    /// (incl. headless) don't all have — so creation happens here, on the
+    /// first render after the modal opens, and the modal's plain-`String`
+    /// field is kept in sync for the plan/confirm/headless paths.
+    fn sync_modal_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // ── Create-branch ───────────────────────────────────
+        if let Some(m) = self.create_branch_modal.as_mut() {
+            if m.input_state.is_none() {
+                let st = cx.new(|cx| InputState::new(window, cx).placeholder("branch-name"));
+                st.update(cx, |s, cx| s.focus(window, cx));
+                m.input_state = Some(st);
+            }
+            let v = m
+                .input_state
+                .as_ref()
+                .map(|st| st.read(cx).value().to_string())
+                .unwrap_or_default();
+            if v != m.input {
+                m.input = v;
+                m.error = None;
+                self.replan_create_branch();
+            }
+        }
+
+        // ── Create-worktree (branch + path fields) ──────────
+        // Auto-path: while the user has not touched the path field, it
+        // follows the branch name (same behaviour as before).
+        let mut set_path: Option<String> = None;
+        if let Some(m) = self.create_worktree_modal.as_mut() {
+            if m.branch_state.is_none() {
+                let st = cx.new(|cx| InputState::new(window, cx).placeholder("branch-name"));
+                st.update(cx, |s, cx| s.focus(window, cx));
+                m.branch_state = Some(st);
+            }
+            if m.path_state.is_none() {
+                let initial = m.path_input.clone();
+                let st = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .placeholder("worktree path")
+                        .default_value(initial)
+                });
+                m.path_state = Some(st);
+            }
+            let branch_v = m
+                .branch_state
+                .as_ref()
+                .map(|st| st.read(cx).value().to_string())
+                .unwrap_or_default();
+            let path_v = m
+                .path_state
+                .as_ref()
+                .map(|st| st.read(cx).value().to_string())
+                .unwrap_or_default();
+            let mut dirty = false;
+            if path_v != m.path_input {
+                // Path text differs from what we last wrote → user edit.
+                m.path_input = path_v;
+                m.path_touched = true;
+                dirty = true;
+            }
+            if branch_v != m.branch_input {
+                m.branch_input = branch_v.clone();
+                if !m.path_touched {
+                    set_path = Some(branch_v);
+                }
+                dirty = true;
+            }
+            if dirty {
+                m.error = None;
+            }
+            if dirty && set_path.is_none() {
+                self.replan_create_worktree();
+            }
+        }
+        if let Some(branch) = set_path {
+            // Recompute the suggested path outside the &mut borrow.
+            let auto = self.default_worktree_path(if branch.is_empty() { "new-branch" } else { &branch });
+            if let Some(m) = self.create_worktree_modal.as_mut() {
+                m.path_input = auto.clone();
+                if let Some(st) = m.path_state.clone() {
+                    st.update(cx, |s, cx| s.set_value(auto, window, cx));
+                }
+            }
+            self.replan_create_worktree();
+        }
+
+        // ── Stash push (message) ────────────────────────────
+        if let Some(m) = self.stash_push_modal.as_mut() {
+            if m.input_state.is_none() {
+                let st = cx.new(|cx| InputState::new(window, cx).placeholder("stash message (optional)"));
+                st.update(cx, |s, cx| s.focus(window, cx));
+                m.input_state = Some(st);
+            }
+            let v = m
+                .input_state
+                .as_ref()
+                .map(|st| st.read(cx).value().to_string())
+                .unwrap_or_default();
+            if v != m.input {
+                m.input = v;
+                m.error = None;
+                self.replan_stash_push();
+            }
+        }
     }
 
     /// Apply a horizontal wheel delta to the graph column scroll offset.
@@ -5428,6 +5425,9 @@ impl Render for KagiApp {
         // alive while any remain.
         self.toasts.retain(|t| !t.expired());
         self.ensure_toast_ticker(cx);
+
+        // Modal text inputs: lazy-create + sync (needs Window).
+        self.sync_modal_inputs(window, cx);
 
         // Graph horizontal scroll: clamp against the current repo's lane
         // count so the offset self-heals after tab switches and column
@@ -8197,6 +8197,9 @@ fn render_plan_modal_card(
                 .absolute()
                 .top_0()
                 .left_0()
+                // Block mouse events from reaching the UI beneath the modal
+                // (user-reported click-through on the create-branch dialog).
+                .occlude()
                 .bg(rgb(BG_MODAL_OVERLAY))
                 .opacity(0.65),
         )
@@ -8238,7 +8241,6 @@ fn render_create_branch_modal(
 ) -> impl IntoElement {
     let plan = modal.plan.clone();
     let has_blockers = plan.as_ref().map(|p| !p.blockers.is_empty()).unwrap_or(true);
-    let input_display = SharedString::from(format!("{}_", modal.input)); // cursor indicator
     let checkout_label = if modal.checkout_after {
         "[x] Checkout after create"
     } else {
@@ -8262,12 +8264,6 @@ fn render_create_branch_modal(
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh);
         }
-        cx.notify();
-    });
-
-    // ── Key handler for the input ─────────────────────────────
-    let key_handler = cx.listener(|this, event: &KeyDownEvent, _window, cx| {
-        this.handle_create_branch_key(event);
         cx.notify();
     });
 
@@ -8312,15 +8308,7 @@ fn render_create_branch_modal(
                         .text_color(rgb(TEXT_LABEL))
                         .child(SharedString::from("Branch name")),
                 )
-                .child(
-                    div()
-                        .px_2()
-                        .py_1()
-                        .bg(rgb(BG_BASE))
-                        .rounded_sm()
-                        .text_color(rgb(TEXT_MAIN))
-                        .child(input_display),
-                ),
+                .children(modal.input_state.as_ref().map(|st| Input::new(st).small())),
         )
         .child(
             div()
@@ -8454,13 +8442,10 @@ fn render_create_branch_modal(
 
     card = card.child(button_row);
 
-    // ── Key-capture wrapper ─────────────────────────────────
-    // We wrap the card in a focusable container that captures key-down events.
+    // Real text inputs handle their own focus/keys now; the wrapper stays
+    // only to keep the optional legacy focus handle alive.
     let focusable_card = if let Some(ref fh) = focus_handle {
-        div()
-            .track_focus(fh)
-            .on_key_down(key_handler)
-            .child(card)
+        div().track_focus(fh).child(card)
     } else {
         div().child(card)
     };
@@ -8477,6 +8462,9 @@ fn render_create_branch_modal(
                 .absolute()
                 .top_0()
                 .left_0()
+                // Block mouse events from reaching the UI beneath the modal
+                // (user-reported click-through on the create-branch dialog).
+                .occlude()
                 .bg(rgb(BG_MODAL_OVERLAY))
                 .opacity(0.65),
         )
@@ -8501,16 +8489,6 @@ fn render_create_worktree_modal(
 ) -> impl IntoElement {
     let plan = modal.plan.clone();
     let has_blockers = plan.as_ref().map(|p| !p.blockers.is_empty()).unwrap_or(true);
-    let branch_display = SharedString::from(format!(
-        "{}{}",
-        modal.branch_input,
-        if modal.active_field == WorktreeModalField::Branch { "_" } else { "" }
-    ));
-    let path_display = SharedString::from(format!(
-        "{}{}",
-        modal.path_input,
-        if modal.active_field == WorktreeModalField::Path { "_" } else { "" }
-    ));
 
     let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.cancel_create_worktree_modal();
@@ -8524,18 +8502,6 @@ fn render_create_worktree_modal(
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh);
         }
-        cx.notify();
-    });
-    let key_handler = cx.listener(|this, event: &KeyDownEvent, _window, cx| {
-        this.handle_create_worktree_key(event);
-        cx.notify();
-    });
-    let branch_focus = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
-        this.set_worktree_modal_field(WorktreeModalField::Branch);
-        cx.notify();
-    });
-    let path_focus = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
-        this.set_worktree_modal_field(WorktreeModalField::Path);
         cx.notify();
     });
 
@@ -8563,17 +8529,7 @@ fn render_create_worktree_modal(
                 .flex_col()
                 .gap_1()
                 .child(div().text_sm().text_color(rgb(TEXT_LABEL)).child(SharedString::from("Branch name")))
-                .child(
-                    div()
-                        .id("create-worktree-branch-input")
-                        .px_2()
-                        .py_1()
-                        .bg(rgb(BG_BASE))
-                        .rounded_sm()
-                        .text_color(rgb(TEXT_MAIN))
-                        .on_click(branch_focus)
-                        .child(branch_display),
-                ),
+                .children(modal.branch_state.as_ref().map(|st| Input::new(st).small())),
         )
         .child(
             div()
@@ -8581,17 +8537,7 @@ fn render_create_worktree_modal(
                 .flex_col()
                 .gap_1()
                 .child(div().text_sm().text_color(rgb(TEXT_LABEL)).child(SharedString::from("Path")))
-                .child(
-                    div()
-                        .id("create-worktree-path-input")
-                        .px_2()
-                        .py_1()
-                        .bg(rgb(BG_BASE))
-                        .rounded_sm()
-                        .text_color(rgb(TEXT_MAIN))
-                        .on_click(path_focus)
-                        .child(path_display),
-                ),
+                .children(modal.path_state.as_ref().map(|st| Input::new(st).small())),
         );
 
     if let Some(ref p) = plan {
@@ -8697,7 +8643,7 @@ fn render_create_worktree_modal(
     card = card.child(button_row);
 
     let focusable_card = if let Some(ref fh) = focus_handle {
-        div().track_focus(fh).on_key_down(key_handler).child(card)
+        div().track_focus(fh).child(card)
     } else {
         div().child(card)
     };
@@ -8713,6 +8659,9 @@ fn render_create_worktree_modal(
                 .absolute()
                 .top_0()
                 .left_0()
+                // Block mouse events from reaching the UI beneath the modal
+                // (user-reported click-through on the create-branch dialog).
+                .occlude()
                 .bg(rgb(BG_MODAL_OVERLAY))
                 .opacity(0.65),
         )
@@ -8753,7 +8702,6 @@ fn render_stash_push_modal(
 ) -> impl IntoElement {
     let plan = modal.plan.clone();
     let has_blockers = plan.as_ref().map(|p| !p.blockers.is_empty()).unwrap_or(true);
-    let input_display = SharedString::from(format!("{}_", modal.input));
 
     // T-BP-003: return focus to root_focus on cancel/confirm.
     let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
@@ -8772,10 +8720,6 @@ fn render_stash_push_modal(
         cx.notify();
     });
 
-    let key_handler = cx.listener(|this, event: &KeyDownEvent, _window, cx| {
-        this.handle_stash_push_key(event);
-        cx.notify();
-    });
 
     let mut card = div()
         .w(px(480.))
@@ -8803,15 +8747,7 @@ fn render_stash_push_modal(
                         .text_color(rgb(TEXT_LABEL))
                         .child(SharedString::from("Message (optional)")),
                 )
-                .child(
-                    div()
-                        .px_2()
-                        .py_1()
-                        .bg(rgb(BG_BASE))
-                        .rounded_sm()
-                        .text_color(rgb(TEXT_MAIN))
-                        .child(input_display),
-                ),
+                .children(modal.input_state.as_ref().map(|st| Input::new(st).small())),
         );
 
     // ── Plan state (current → predicted) ─────────────────
@@ -8958,12 +8894,8 @@ fn render_stash_push_modal(
 
     card = card.child(button_row);
 
-    // ── Key-capture wrapper ─────────────────────────────────
     let focusable_card = if let Some(ref fh) = focus_handle {
-        div()
-            .track_focus(fh)
-            .on_key_down(key_handler)
-            .child(card)
+        div().track_focus(fh).child(card)
     } else {
         div().child(card)
     };
@@ -8980,6 +8912,9 @@ fn render_stash_push_modal(
                 .absolute()
                 .top_0()
                 .left_0()
+                // Block mouse events from reaching the UI beneath the modal
+                // (user-reported click-through on the create-branch dialog).
+                .occlude()
                 .bg(rgb(BG_MODAL_OVERLAY))
                 .opacity(0.65),
         )
@@ -9189,6 +9124,9 @@ fn render_stash_apply_modal(
                 .absolute()
                 .top_0()
                 .left_0()
+                // Block mouse events from reaching the UI beneath the modal
+                // (user-reported click-through on the create-branch dialog).
+                .occlude()
                 .bg(rgb(BG_MODAL_OVERLAY))
                 .opacity(0.65),
         )
@@ -9502,6 +9440,9 @@ fn render_cherry_pick_modal(
                 .absolute()
                 .top_0()
                 .left_0()
+                // Block mouse events from reaching the UI beneath the modal
+                // (user-reported click-through on the create-branch dialog).
+                .occlude()
                 .bg(rgb(BG_MODAL_OVERLAY))
                 .opacity(0.65),
         )
@@ -10419,6 +10360,9 @@ fn render_commit_plan_modal(
                 .absolute()
                 .top_0()
                 .left_0()
+                // Block mouse events from reaching the UI beneath the modal
+                // (user-reported click-through on the create-branch dialog).
+                .occlude()
                 .bg(rgb(BG_MODAL_OVERLAY))
                 .opacity(0.65),
         )

@@ -447,6 +447,7 @@ fn main() {
                             // Without auto-confirm, surface the modal itself so
                             // the create-branch UI can be inspected headlessly.
                             app_state.create_branch_modal = Some(ui::CreateBranchModal {
+                        input_state: None,
                                 at: at.clone(),
                                 start_title: String::new(),
                                 input: branch_name.clone(),
@@ -678,6 +679,7 @@ fn main() {
                 } else {
                     // Without auto-confirm, surface the modal so it can be inspected headlessly.
                     app_state.stash_push_modal = Some(StashPushModal {
+                        input_state: None,
                         input: String::new(),
                         plan: Some(std::sync::Arc::new(plan)),
                         error: None,

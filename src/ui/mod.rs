@@ -32,6 +32,7 @@ use gpui::{
     actions, div, prelude::*, px, rgb, uniform_list,
 };
 use gpui_component::input::{Input, InputState};
+use gpui_component::tooltip::Tooltip;
 use gpui_component::Sizable as _;
 
 // ──────────────────────────────────────────────────────────────
@@ -145,8 +146,11 @@ const INSPECTOR_SPLIT_DEFAULT: f32 = 0.5;
 const INSPECTOR_SPLIT_MIN: f32 = 0.2;
 const INSPECTOR_SPLIT_MAX: f32 = 0.8;
 /// Vertical offset of the inspector content area from the top of the window:
-/// tab strip (30) + its 1px bottom border + header toolbar (34).
-const INSPECTOR_TOP_OFFSET: f32 = 30.0 + 1.0 + 34.0;
+/// tab strip (30) + its 1px bottom border + header toolbar (52).
+/// W10-TOOLBAR: header grew to 52px for the Finder-style icon-over-label
+/// vertical buttons (was 34px). Measured `bounds` is the primary path; this
+/// constant is only the startup fallback.
+const INSPECTOR_TOP_OFFSET: f32 = 30.0 + 1.0 + 52.0;
 /// Height of the status bar at the very bottom of the window.
 const STATUS_BAR_H: f32 = 22.0;
 
@@ -5994,61 +5998,95 @@ impl KagiApp {
             cx.notify();
         });
 
-        // ── Helper: build a single toolbar button ───────────────────────────
+        // ── Helper: build a single Finder/Keynote-style toolbar button ──────
+        // W10-TOOLBAR: icon on top (20px ≈ Size::Medium), text_xs label below,
+        // vertically stacked. Whole button gets a hover bg + rounded; width is
+        // content-fit with a shared min-width so the row reads as a grid.
+        //
         // `id` must be a unique string for GPUI element tracking.
-        // `enabled` controls opacity; `label` is a dynamic String (ADR-0013: labels include counts).
+        // `count` (>0) renders a small chip overlay at the icon's top-right;
+        // 0 hides it (ADR-0013: Pull ↓N / Push ↑N).
+        // `enabled` drives muted colour; disabled buttons keep their click
+        // handler (which sets the reason footer) but render in muted colour.
         let make_btn = |id: &'static str,
-                        label: String,
+                        label: &'static str,
                         icon: gpui_component::IconName,
-                        enabled: bool| {
+                        enabled: bool,
+                        count: usize| {
             let text_color = if enabled { theme().text_main } else { theme().text_muted };
-            let bg_color = if enabled { theme().selected } else { theme().surface };
-            div()
-                .id(id)
-                .px_2()
-                .py_px()
-                .rounded_sm()
-                .bg(rgb(bg_color))
+            let chip_bg = theme().color_branch;
+            let chip_fg = theme().bg_base;
+
+            // Icon cell — `.relative()` so the count chip can be `.absolute()`
+            // anchored to the icon's top-right corner (gpui has no negative
+            // clip, so the chip is placed inside the icon bounds).
+            let mut icon_cell = div()
+                .relative()
                 .flex()
-                .flex_row()
                 .items_center()
-                .gap_1()
-                .text_sm()
-                .text_color(rgb(text_color))
-                .hover(|style| style.opacity(if enabled { 0.85 } else { 0.6 }))
-                .cursor(if enabled { gpui::CursorStyle::PointingHand } else { gpui::CursorStyle::Arrow })
+                .justify_center()
+                .w(px(22.0))
+                .h(px(22.0))
                 .child(
                     gpui_component::Icon::new(icon)
-                        .with_size(gpui_component::Size::XSmall)
+                        .with_size(gpui_component::Size::Size(px(20.0)))
                         .text_color(rgb(text_color)),
+                );
+            if count > 0 {
+                let chip_text = if count > 99 { "99+".to_string() } else { count.to_string() };
+                icon_cell = icon_cell.child(
+                    div()
+                        .absolute()
+                        .top(px(-2.0))
+                        .right(px(-2.0))
+                        .min_w(px(14.0))
+                        .h(px(14.0))
+                        .px(px(3.0))
+                        .rounded_full()
+                        .bg(rgb(chip_bg))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(rgb(chip_fg))
+                        .text_size(px(9.0))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .line_height(px(14.0))
+                        .child(SharedString::from(chip_text)),
+                );
+            }
+
+            div()
+                .id(id)
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(px(1.0))
+                .min_w(px(52.0))
+                .px_1()
+                .py(px(2.0))
+                .rounded_md()
+                .hover(|style| style.bg(rgb(theme().selected)))
+                .cursor(if enabled { gpui::CursorStyle::PointingHand } else { gpui::CursorStyle::Arrow })
+                .child(icon_cell)
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(text_color))
+                        .child(SharedString::from(label)),
                 )
-                .child(SharedString::from(label))
         };
 
-        // ── ADR-0013: button labels with counts ─────────────────────────────
-        // Pull: show ↓N when behind>0; Push: show ↑N when ahead>0.
-        let pull_label = if toolbar.behind > 0 {
-            format!("Pull \u{2193}{}", toolbar.behind)
+        // ── Undo tooltip: target HEAD commit summary (ADR-0013) ─────────────
+        // Label stays the fixed "Undo"; the (possibly long) commit summary is
+        // surfaced on hover instead of being truncated into the label.
+        let undo_tooltip_text: Option<SharedString> = if toolbar.undo_on {
+            undo_summary
+                .as_ref()
+                .filter(|s| !s.is_empty())
+                .map(|s| SharedString::from(format!("Undo: \u{201c}{}\u{201d}", s)))
         } else {
-            "Pull".to_string()
-        };
-        let push_label = if toolbar.ahead > 0 {
-            format!("Push \u{2191}{}", toolbar.ahead)
-        } else {
-            "Push".to_string()
-        };
-        // Undo: show `Undo "<summary 16chars>"` when undo_on; plain "Undo" otherwise.
-        let undo_label = if toolbar.undo_on {
-            if let Some(ref s) = undo_summary {
-                // Truncate to 16 Unicode scalar values.
-                let truncated: String = s.chars().take(16).collect();
-                let ellipsis = if s.chars().count() > 16 { "\u{2026}" } else { "" };
-                format!("Undo \u{201c}{}{}\u{201d}", truncated, ellipsis)
-            } else {
-                "Undo".to_string()
-            }
-        } else {
-            "Undo".to_string()
+            None
         };
 
         // ── Left label: branch info (ADR-0013) ─────────────────────────────
@@ -6082,7 +6120,7 @@ impl KagiApp {
                 .flex_shrink_0()
         };
 
-        // ── Toolbar bar (34 px) ─────────────────────────────────────────────
+        // ── Toolbar bar (52 px — W10-TOOLBAR vertical buttons) ──────────────
         div()
             .id("toolbar-bar")
             .flex()
@@ -6090,7 +6128,7 @@ impl KagiApp {
             .items_center()
             .w_full()
             .px_3()
-            .h(px(34.0))
+            .h(px(52.0))
             .flex_shrink_0()
             .bg(rgb(theme().surface))
             .text_color(rgb(theme().text_sub))
@@ -6116,52 +6154,55 @@ impl KagiApp {
             )
             .child(sep())
             // ── CENTRE: Pull Push | Branch Stash Pop | Undo Terminal ──
-            // Pull (↓N when behind>0)
+            // Pull (↓N chip when behind>0)
             .child(
-                make_btn("tb-pull", pull_label, gpui_component::IconName::ArrowDown, toolbar.pull_on)
+                make_btn("tb-pull", "Pull", gpui_component::IconName::ArrowDown, toolbar.pull_on, toolbar.behind)
                     .on_click(pull_click),
             )
-            .child(div().w(px(4.0)))
-            // Push (↑N when ahead>0)
+            .child(div().w(px(2.0)))
+            // Push (↑N chip when ahead>0)
             .child(
-                make_btn("tb-push", push_label, gpui_component::IconName::ArrowUp, toolbar.push_on)
+                make_btn("tb-push", "Push", gpui_component::IconName::ArrowUp, toolbar.push_on, toolbar.ahead)
                     .on_click(push_click),
             )
             .child(sep())
             // Branch
             .child(
-                make_btn("tb-branch", "Branch".to_string(), gpui_component::IconName::Plus, true)
+                make_btn("tb-branch", "Branch", gpui_component::IconName::Plus, true, 0)
                     .on_click(branch_click),
             )
-            .child(div().w(px(4.0)))
+            .child(div().w(px(2.0)))
             // Stash
             .child(
-                make_btn("tb-stash", "Stash".to_string(), gpui_component::IconName::Inbox, toolbar.stash_on)
+                make_btn("tb-stash", "Stash", gpui_component::IconName::Inbox, toolbar.stash_on, 0)
                     .on_click(stash_click),
             )
-            .child(div().w(px(4.0)))
+            .child(div().w(px(2.0)))
             // Pop
             .child(
-                make_btn("tb-pop", "Pop".to_string(), gpui_component::IconName::FolderOpen, toolbar.pop_on)
+                make_btn("tb-pop", "Pop", gpui_component::IconName::FolderOpen, toolbar.pop_on, 0)
                     .on_click(pop_click),
             )
             .child(sep())
-            // Undo (with HEAD commit summary when enabled)
+            // Undo — fixed "Undo" label; target commit summary in tooltip.
             .child(
-                make_btn("tb-undo", undo_label, gpui_component::IconName::Undo2, toolbar.undo_on)
+                make_btn("tb-undo", "Undo", gpui_component::IconName::Undo2, toolbar.undo_on, 0)
+                    .when_some(undo_tooltip_text, |btn, text| {
+                        btn.tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
+                    })
                     .on_click(undo_click),
             )
-            .child(div().w(px(4.0)))
+            .child(div().w(px(2.0)))
             // Terminal (toggles bottom panel Terminal tab)
             .child(
-                make_btn("tb-terminal", "Terminal".to_string(), gpui_component::IconName::SquareTerminal, terminal_on)
+                make_btn("tb-terminal", "Terminal", gpui_component::IconName::SquareTerminal, terminal_on, 0)
                     .on_click(terminal_click),
             )
             // Spacer — pushes Refresh to the right
             .child(div().flex_1())
             // ── RIGHT: Refresh ──
             .child(
-                make_btn("tb-refresh", "Refresh".to_string(), gpui_component::IconName::LoaderCircle, true)
+                make_btn("tb-refresh", "Refresh", gpui_component::IconName::LoaderCircle, true, 0)
                     .on_click(refresh_click),
             )
     }

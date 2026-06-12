@@ -721,5 +721,18 @@ fn main() {
         app_state.commit_panel_open = true;
     }
 
+    // ── T-BP-002: KAGI_BOTTOM_PANEL=1 — open bottom panel at startup ──
+    // Emits `[kagi] bottom-panel: open height=H tab=T` for headless verification.
+    if std::env::var("KAGI_BOTTOM_PANEL").as_deref() == Ok("1") {
+        app_state.bottom_panel_open = true;
+        let h = app_state.bottom_panel_height;
+        let t = app_state.bottom_tab;
+        let tab_label = match t {
+            ui::BottomTab::OperationLog => "OperationLog",
+            ui::BottomTab::Terminal => "Terminal",
+        };
+        eprintln!("[kagi] bottom-panel: open height={} tab={}", h, tab_label);
+    }
+
     run_app(app_state);
 }

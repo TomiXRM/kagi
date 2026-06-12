@@ -1,4 +1,4 @@
-//! UI module — T008: GPUI commit list / T009: commit graph lane / T010: commit selection + detail panel / T011: changed files list / T012: file diff viewer / T013: checkout plan modal + sidebar / T023: pane resize
+//! UI module — T008: GPUI commit list / T009: commit graph lane / T010: commit selection + detail panel / T011: changed files list / T012: file diff viewer / T013: checkout plan modal + sidebar / T023: pane resize / T-BP-002: bottom panel open/close + resize
 //!
 //! This module lives in the binary crate (`main.rs` does `mod ui;`).
 //! It must not be added to `src/lib.rs` so that domain tests stay
@@ -16,11 +16,34 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use gpui::{
-    App, Context, Entity, FocusHandle, KeyDownEvent, SharedString, Window,
+    App, Context, Entity, FocusHandle, KeyDownEvent, KeyBinding, SharedString, Window,
     UniformListScrollHandle, ScrollStrategy,
-    div, prelude::*, px, rgb, uniform_list,
+    actions, div, prelude::*, px, rgb, uniform_list,
 };
 use gpui_component::input::{Input, InputState};
+
+// ──────────────────────────────────────────────────────────────
+// T-BP-002: Bottom Panel — action + tab enum
+// ──────────────────────────────────────────────────────────────
+
+// cmd-j toggle action for the bottom panel.
+actions!(kagi, [ToggleBottomPanel]);
+
+/// Active tab in the bottom panel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BottomTab {
+    OperationLog,
+    Terminal,
+}
+
+impl BottomTab {
+    fn label(self) -> &'static str {
+        match self {
+            BottomTab::OperationLog => "Operation Log",
+            BottomTab::Terminal => "Terminal",
+        }
+    }
+}
 
 // ──────────────────────────────────────────────────────────────
 // T023: Pane resize — divider drag state
@@ -37,6 +60,8 @@ pub enum DividerKind {
     BadgeCol,
     /// T030: The divider between the graph column and the message column.
     GraphCol,
+    /// T-BP-002: The divider at the top edge of the bottom panel.
+    BottomPanel,
 }
 
 /// Drag payload for a divider drag.  Only the divider kind is needed: widths
@@ -65,6 +90,16 @@ const PANEL_MAX: f32 = 800.0;
 // Default widths (matching the pre-T023 hard-coded values).
 const SIDEBAR_DEFAULT: f32 = 200.0;
 const PANEL_DEFAULT: f32 = 360.0;
+
+// T-BP-002: Bottom panel height limits and default.
+const BOTTOM_PANEL_MIN_H: f32 = 80.0;
+const BOTTOM_PANEL_DEFAULT_H: f32 = 220.0;
+// Maximum fraction of the viewport height the bottom panel may occupy.
+const BOTTOM_PANEL_MAX_FRAC: f32 = 0.6;
+// Height of the horizontal divider handle at the top of the bottom panel.
+const BOTTOM_PANEL_DIVIDER_H: f32 = 4.0;
+// Height of the tab bar inside the bottom panel.
+const BOTTOM_PANEL_TAB_H: f32 = 28.0;
 
 // T030: Commit-list inner column width limits and defaults.
 const BADGE_COL_MIN: f32 = 60.0;
@@ -370,6 +405,13 @@ pub struct KagiApp {
     pub badge_col_w: f32,
     /// T030: Width of the graph column in pixels.
     pub graph_col_w: f32,
+    // ── T-BP-002: Bottom Panel ───────────────────────────────────
+    /// Whether the bottom panel is currently open.
+    pub bottom_panel_open: bool,
+    /// Current height of the bottom panel in pixels (clamped 80 .. viewport*0.6).
+    pub bottom_panel_height: f32,
+    /// Active tab in the bottom panel.
+    pub bottom_tab: BottomTab,
     // ── T025: Commit Panel ───────────────────────────────────────
     /// Whether the commit panel is currently open (WIP row selected).
     pub commit_panel_open: bool,
@@ -493,6 +535,9 @@ impl KagiApp {
             panel_width: PANEL_DEFAULT,
             badge_col_w: BADGE_COL_DEFAULT,
             graph_col_w: GRAPH_COL_DEFAULT,
+            bottom_panel_open: false,
+            bottom_panel_height: BOTTOM_PANEL_DEFAULT_H,
+            bottom_tab: BottomTab::OperationLog,
             commit_panel_open: false,
             commit_panel: None,
             commit_input: None,
@@ -528,6 +573,9 @@ impl KagiApp {
             panel_width: PANEL_DEFAULT,
             badge_col_w: BADGE_COL_DEFAULT,
             graph_col_w: GRAPH_COL_DEFAULT,
+            bottom_panel_open: false,
+            bottom_panel_height: BOTTOM_PANEL_DEFAULT_H,
+            bottom_tab: BottomTab::OperationLog,
             commit_panel_open: false,
             commit_panel: None,
             commit_input: None,
@@ -2254,6 +2302,19 @@ impl Render for KagiApp {
                         cx.notify();
                     }
                 }
+                DividerKind::BottomPanel => {
+                    // T-BP-002: absolute-coordinate formula from ADR-0007:
+                    //   height = viewport_h - cursor_y - status_bar_h(22) - 2
+                    let viewport_h = f32::from(window.viewport_size().height);
+                    let cursor_y = f32::from(event.event.position.y);
+                    let max_h = viewport_h * BOTTOM_PANEL_MAX_FRAC;
+                    let new_h = (viewport_h - cursor_y - 22.0 - 2.0)
+                        .clamp(BOTTOM_PANEL_MIN_H, max_h);
+                    if (new_h - this.bottom_panel_height).abs() > 0.5 {
+                        this.bottom_panel_height = new_h;
+                        cx.notify();
+                    }
+                }
             }
         });
 
@@ -2261,6 +2322,17 @@ impl Render for KagiApp {
         let commit_panel_open = self.commit_panel_open;
         let commit_panel = self.commit_panel.clone();
         let commit_input = self.commit_input.clone();
+
+        // T-BP-002: bottom panel state.
+        let bottom_panel_open = self.bottom_panel_open;
+        let bottom_panel_height = self.bottom_panel_height;
+        let bottom_tab = self.bottom_tab;
+
+        // T-BP-002: cmd-j toggle action handler.
+        let toggle_bottom_panel = cx.listener(|this, _: &ToggleBottomPanel, _window, cx| {
+            this.bottom_panel_open = !this.bottom_panel_open;
+            cx.notify();
+        });
 
         // ── Normal state: header + body + bottom panel slot + status bar ─────
         div()
@@ -2270,6 +2342,8 @@ impl Render for KagiApp {
             .bg(rgb(BG_BASE))
             // T023: capture drag-move for both dividers on the root element.
             .on_drag_move::<DividerDrag>(divider_drag_move)
+            // T-BP-002: cmd-j toggle action (window-wide via on_action on root div).
+            .on_action(toggle_bottom_panel)
             // ── Header slot ──────────────────────────────────
             .child(self.render_header_slot(header, is_dirty, cx))
             // ── Body slot: sidebar | list | optional panel ───
@@ -2280,8 +2354,8 @@ impl Render for KagiApp {
                 commit_panel_open, commit_panel.clone(), commit_input.clone(),
                 cx,
             ))
-            // ── Bottom panel slot (T-BP-002+: empty for now) ─
-            .children(self.render_bottom_panel_slot())
+            // ── Bottom panel slot (T-BP-002) ─────────────────
+            .children(self.render_bottom_panel_slot(bottom_panel_open, bottom_panel_height, bottom_tab, cx))
             // ── Plan modal overlay (above everything) ──────
             .when_some(plan_modal, |el, modal| {
                 el.child(render_plan_modal(modal, cx))
@@ -2314,7 +2388,7 @@ impl Render for KagiApp {
                 },
             )
             // ── Status bar slot (T017) — last operation result ─
-            .child(self.render_status_bar(status_footer))
+            .child(self.render_status_bar(status_footer, bottom_panel_open, cx))
             .into_any()
     }
 
@@ -2627,23 +2701,169 @@ impl KagiApp {
         body_row
     }
 
-    /// Bottom panel slot — currently empty (placeholder for T-BP-002+).
+    /// Bottom panel slot — T-BP-002: open/close + height resize.
     ///
-    /// Returns `None` so that `div().children(…)` adds no child element.
-    /// T-BP-002 will change the return type / add the resizable panel here.
-    fn render_bottom_panel_slot(&mut self) -> Option<impl IntoElement> {
-        None::<gpui::Empty>
+    /// Returns `None` when the panel is closed (so `div().children(…)` adds no
+    /// child element).  When open, returns the panel div with:
+    /// - a 4px horizontal divider at the top (drag to resize)
+    /// - a tab bar (OperationLog / Terminal)
+    /// - a placeholder body area
+    fn render_bottom_panel_slot(
+        &mut self,
+        open: bool,
+        height: f32,
+        active_tab: BottomTab,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        if !open {
+            return None;
+        }
+
+        // ── Horizontal resize divider at top of panel ──
+        let h_divider = div()
+            .id("divider-bottom-panel")
+            .w_full()
+            .h(px(BOTTOM_PANEL_DIVIDER_H))
+            .flex_shrink_0()
+            .bg(rgb(BG_SURFACE))
+            .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_row_resize())
+            .cursor_row_resize()
+            .on_drag(
+                DividerDrag { kind: DividerKind::BottomPanel },
+                |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
+            );
+
+        // ── Tab bar ──
+        let tab_bar = {
+            let tab_operationlog_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
+                this.bottom_tab = BottomTab::OperationLog;
+                cx.notify();
+            });
+            let tab_terminal_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
+                this.bottom_tab = BottomTab::Terminal;
+                cx.notify();
+            });
+
+            let make_tab = |label: &'static str, is_active: bool| {
+                let text_color = if is_active { TEXT_MAIN } else { TEXT_MUTED };
+                let bg_color = if is_active { BG_SELECTED } else { BG_PANEL };
+                div()
+                    .px_3()
+                    .h(px(BOTTOM_PANEL_TAB_H))
+                    .flex()
+                    .items_center()
+                    .flex_shrink_0()
+                    .bg(rgb(bg_color))
+                    .text_sm()
+                    .text_color(rgb(text_color))
+                    .hover(|s| s.bg(rgb(BG_SURFACE)))
+                    .child(SharedString::from(label))
+            };
+
+            div()
+                .id("bottom-panel-tab-bar")
+                .flex()
+                .flex_row()
+                .items_center()
+                .w_full()
+                .flex_shrink_0()
+                .bg(rgb(BG_PANEL))
+                .child(
+                    div()
+                        .id("tab-oplog")
+                        .flex()
+                        .flex_shrink_0()
+                        .on_click(tab_operationlog_click)
+                        .hover(|s| s.cursor_pointer())
+                        .child(make_tab(BottomTab::OperationLog.label(), active_tab == BottomTab::OperationLog)),
+                )
+                .child(
+                    div()
+                        .id("tab-terminal")
+                        .flex()
+                        .flex_shrink_0()
+                        .on_click(tab_terminal_click)
+                        .hover(|s| s.cursor_pointer())
+                        .child(make_tab(BottomTab::Terminal.label(), active_tab == BottomTab::Terminal)),
+                )
+        };
+
+        // ── Body placeholder ──
+        let body = div()
+            .flex_1()
+            .min_h(px(0.))
+            .bg(rgb(BG_PANEL))
+            .px_3()
+            .py_2()
+            .text_sm()
+            .text_color(rgb(TEXT_MUTED))
+            .child(SharedString::from("(empty — T-BP-004/007)"));
+
+        // ── Panel container (height = fixed, flex_shrink_0) ──
+        let panel_h = height + BOTTOM_PANEL_DIVIDER_H + BOTTOM_PANEL_TAB_H;
+        Some(
+            div()
+                .id("bottom-panel")
+                .flex()
+                .flex_col()
+                .w_full()
+                .h(px(panel_h))
+                .flex_shrink_0()
+                .child(h_divider)
+                .child(tab_bar)
+                .child(body),
+        )
     }
 
     /// Status bar slot — the 22 px footer showing the last operation result.
     ///
-    /// Delegates to the standalone `render_status_footer` function unchanged.
-    /// T-SB-001 will extend this slot with icons / extra indicators.
+    /// T-BP-002: adds a panel toggle button (▲/▼) at the right end.
+    /// T-SB-001 will extend this slot further with icons / extra indicators.
     fn render_status_bar(
         &mut self,
         status_footer: FooterStatus,
+        bottom_panel_open: bool,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        render_status_footer(status_footer)
+        let (text_color, text) = match &status_footer {
+            FooterStatus::Success(msg) => (COLOR_SUCCESS, msg.clone()),
+            FooterStatus::Failed(msg) => (COLOR_BLOCKER, msg.clone()),
+            FooterStatus::Idle(msg) => (TEXT_MUTED, msg.clone()),
+        };
+
+        let toggle_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
+            this.bottom_panel_open = !this.bottom_panel_open;
+            cx.notify();
+        });
+
+        let toggle_label = if bottom_panel_open { "▼" } else { "▲" };
+
+        div()
+            .id("status-footer")
+            .flex()
+            .flex_row()
+            .items_center()
+            .w_full()
+            .h(px(22.))
+            .flex_shrink_0()
+            .px_3()
+            .bg(rgb(BG_PANEL))
+            .text_xs()
+            .text_color(rgb(text_color))
+            .overflow_hidden()
+            .child(div().flex_1().overflow_hidden().text_color(rgb(text_color)).child(text))
+            .child(
+                div()
+                    .id("bottom-panel-toggle-btn")
+                    .ml_2()
+                    .px_2()
+                    .flex_shrink_0()
+                    .text_xs()
+                    .text_color(rgb(TEXT_MUTED))
+                    .hover(|s| s.text_color(rgb(TEXT_MAIN)).cursor_pointer())
+                    .on_click(toggle_click)
+                    .child(SharedString::from(toggle_label)),
+            )
     }
 }
 
@@ -3336,6 +3556,7 @@ fn render_badges_column(badges: &[commit_list::RefBadge], badge_col_w: f32) -> i
 /// - [`FooterStatus::Success`] — green text on dark background.
 /// - [`FooterStatus::Failed`] — red text on dark background.
 /// - [`FooterStatus::Idle`] — muted text (default: "Ready").
+#[allow(dead_code)]
 fn render_status_footer(status: FooterStatus) -> impl IntoElement {
     let (text_color, text) = match &status {
         FooterStatus::Success(msg) => (COLOR_SUCCESS, msg.clone()),
@@ -5642,6 +5863,10 @@ pub fn run_app(app_state: KagiApp) {
     Application::new().run(move |cx: &mut App| {
         // T025: initialize gpui-component (registers key bindings, themes, etc.)
         gpui_component::init(cx);
+
+        // T-BP-002: register cmd-j as the toggle key for the bottom panel.
+        // context = None means the binding fires regardless of focus context.
+        cx.bind_keys([KeyBinding::new("cmd-j", ToggleBottomPanel, None)]);
 
         let bounds = Bounds::centered(None, size(px(1024.), px(768.)), cx);
         cx.open_window(

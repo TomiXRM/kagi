@@ -2393,3 +2393,359 @@ fn build_push_preview(
 
     Ok(result)
 }
+
+
+// ────────────────────────────────────────────────────────────
+// UndoOutcome  (T-HT-009)
+// ────────────────────────────────────────────────────────────
+
+/// The outcome of a successful [`execute_undo_commit`] call.
+///
+/// Carries both the commit that was undone and the new HEAD (the parent).
+/// The undone commit's SHA is stored so the user can recover it via
+/// `git reset --soft <undone>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UndoOutcome {
+    /// The commit that was taken off the branch tip (the one that was undone).
+    pub undone: CommitId,
+    /// The new branch tip — the parent commit HEAD now points to.
+    pub now_at: CommitId,
+}
+
+// ────────────────────────────────────────────────────────────
+// plan_undo_commit  (T-HT-009)
+// ────────────────────────────────────────────────────────────
+
+/// Analyse whether undoing the current HEAD commit is safe and return an
+/// [`OperationPlan`].
+///
+/// # Design (ADR-0011)
+///
+/// Undo commit is a **ref-only** operation: the branch tip is moved to
+/// `HEAD~1`.  The index and working tree are **never touched**.  This means
+/// the changes that were in the undone commit end up **staged** (identical
+/// to `git reset --soft HEAD~1`), and nothing is lost.
+///
+/// # Blocker conditions
+///
+/// - HEAD is detached or unborn.
+/// - Repository is in a conflict state.
+/// - HEAD is a merge commit (parent count > 1) — MVP limitation.
+/// - HEAD is a root commit (no parent) — nothing to go back to.
+/// - HEAD commit is reachable from its upstream tracking branch
+///   (`graph_descendant_of(upstream, head)`) — the commit has been pushed,
+///   so rewriting would diverge history.  If there is no upstream configured,
+///   this check is skipped (local-only branch is always safe to undo).
+///
+/// # Warnings
+///
+/// *(none)*
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] if the repository cannot be queried.
+pub fn plan_undo_commit(repo: &Repository) -> Result<OperationPlan, GitError> {
+    // ── 1. Resolve HEAD ──────────────────────────────────────
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+
+    // ── 2. Build current StateSummary ────────────────────────
+    let head_display = head.display();
+
+    let dirty_parts: Vec<String> = [
+        (!status.staged.is_empty())
+            .then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty())
+            .then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty())
+            .then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty())
+            .then(|| format!("{} conflicted", status.conflicted.len())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let dirty_display = if dirty_parts.is_empty() {
+        "clean".to_string()
+    } else {
+        dirty_parts.join(", ")
+    };
+
+    let current = StateSummary {
+        head: head_display.clone(),
+        dirty: dirty_display.clone(),
+    };
+
+    // ── 3. Early structural blockers ─────────────────────────
+    let mut blockers: Vec<String> = Vec::new();
+
+    // Detached HEAD: no branch ref to move.
+    if let Head::Detached { .. } = &head {
+        blockers.push(
+            "HEAD is detached. Undo commit requires HEAD to be on a branch.".to_string(),
+        );
+    }
+
+    // Unborn HEAD: no commits to undo.
+    if let Head::Unborn { .. } = &head {
+        blockers.push(
+            "HEAD is unborn (no commits exist). There is nothing to undo.".to_string(),
+        );
+    }
+
+    // Conflict state: refuse to operate on a repo mid-conflict.
+    if !status.conflicted.is_empty() {
+        blockers.push(format!(
+            "Repository has {} conflicted file(s). Resolve conflicts before undoing a commit.",
+            status.conflicted.len()
+        ));
+    }
+
+    // ── 4. Resolve HEAD commit (only when attached) ──────────
+    // We need the commit to check parent count, merge status, and push status.
+    let (head_commit_opt, branch_name_opt) = match &head {
+        Head::Attached { target, branch } => {
+            let oid = git2::Oid::from_str(target)
+                .map_err(|e| GitError::Other(format!("HEAD OID parse failed: {}", e.message())))?;
+            let commit = repo
+                .find_commit(oid)
+                .map_err(|e| GitError::Other(format!("HEAD commit lookup failed: {}", e.message())))?;
+            (Some(commit), Some(branch.clone()))
+        }
+        _ => (None, None),
+    };
+
+    // Commit-level blockers (only when we have a commit to examine).
+    let mut head_short = String::new();
+    let mut head_summary = String::new();
+    let mut parent_oid_opt: Option<git2::Oid> = None;
+
+    if let Some(ref commit) = head_commit_opt {
+        let head_oid_str = commit.id().to_string();
+        head_short = head_oid_str.get(..8).unwrap_or(&head_oid_str).to_string();
+        // summary() returns Result<Option<&str>, Error> in git2 0.21.
+        head_summary = commit
+            .summary()
+            .ok()
+            .flatten()
+            .unwrap_or("(no message)")
+            .chars()
+            .take(72)
+            .collect();
+
+        // Merge commit check.
+        if commit.parent_count() > 1 {
+            blockers.push(format!(
+                "Commit {} is a merge commit ({} parents). \
+                 Undoing merge commits is not supported in MVP.",
+                head_short,
+                commit.parent_count()
+            ));
+        }
+
+        // Root commit check.
+        if commit.parent_count() == 0 {
+            blockers.push(format!(
+                "Commit {} is the root commit (no parent). There is nothing to go back to.",
+                head_short
+            ));
+        }
+
+        // Collect the parent OID for use in the plan and execute.
+        if commit.parent_count() == 1 {
+            parent_oid_opt = Some(
+                commit
+                    .parent_id(0)
+                    .map_err(|e| GitError::Other(format!("parent_id failed: {}", e.message())))?,
+            );
+        }
+
+        // Push-status check: is HEAD reachable from the upstream?
+        // graph_descendant_of(a, b) returns true when a is a descendant of b
+        // (i.e., b is reachable FROM a).  We want to know whether the upstream
+        // tip can reach HEAD — meaning HEAD is an ancestor of upstream (or equal).
+        // Equivalently: upstream is a descendant-or-equal of HEAD.
+        // We test: graph_descendant_of(upstream_oid, head_oid) OR upstream==head.
+        if let Some(branch_name) = &branch_name_opt {
+            if let Ok(branch) = repo.find_branch(branch_name, BranchType::Local) {
+                if let Ok(upstream) = branch.upstream() {
+                    if let Some(upstream_oid) = upstream.get().target() {
+                        let head_oid = commit.id();
+                        // upstream == head: HEAD has been pushed.
+                        let pushed = if upstream_oid == head_oid {
+                            true
+                        } else {
+                            // upstream is a descendant of HEAD → HEAD is reachable from upstream.
+                            repo.graph_descendant_of(upstream_oid, head_oid)
+                                .unwrap_or(false)
+                        };
+                        if pushed {
+                            blockers.push(format!(
+                                "Commit {} has been pushed to the upstream tracking branch. \
+                                 Undoing a pushed commit would rewrite published history, which is \
+                                 not allowed. Use `git revert` to create an inverse commit instead.",
+                                head_short
+                            ));
+                        }
+                    }
+                }
+                // No upstream configured → local-only branch → always allowed.
+            }
+        }
+    }
+
+    // ── 5. Predicted StateSummary ─────────────────────────────
+    // After undo: HEAD moves to parent; the previously-committed changes are
+    // staged (index unchanged by this operation, WT unchanged too).
+    let parent_short = parent_oid_opt
+        .map(|oid| {
+            let s = oid.to_string();
+            s.get(..8).unwrap_or(&s).to_string()
+        })
+        .unwrap_or_else(|| "(parent)".to_string());
+
+    let predicted_head = match &branch_name_opt {
+        Some(b) => format!("branch: {} (at {})", b, parent_short),
+        None => head_display.clone(),
+    };
+
+    // After the ref move the previously-committed changes become staged.
+    let predicted_dirty = if dirty_parts.is_empty() {
+        "staged (undone commit changes restored to index)".to_string()
+    } else {
+        format!("{}, staged (undone commit changes restored to index)", dirty_parts.join(", "))
+    };
+
+    let predicted = StateSummary {
+        head: predicted_head,
+        dirty: predicted_dirty,
+    };
+
+    // ── 6. Recovery guidance ──────────────────────────────────
+    let recovery = if head_short.is_empty() {
+        "Undo commit cannot proceed (see blockers above).".to_string()
+    } else {
+        format!(
+            "The undone commit is NOT deleted — it remains in the object store and reflog.\n\
+             To fully restore (re-commit with the same SHA):\n  git reset --soft {}\n\
+             Changes from the undone commit will be staged immediately after undo.\n\
+             The reflog records every HEAD movement:\n  git reflog",
+            head_short
+        )
+    };
+
+    // ── 7. Title ───────────────────────────────────────────────
+    let title = if head_short.is_empty() {
+        "Undo last commit (cannot proceed — see blockers)".to_string()
+    } else {
+        format!(
+            "Undo commit {} '{}' — changes will be staged",
+            head_short, head_summary
+        )
+    };
+
+    Ok(OperationPlan {
+        title,
+        current,
+        predicted,
+        warnings: Vec::new(),
+        blockers,
+        recovery,
+        head_at_plan: head,
+        stash_count_at_plan: 0,
+        preview_files: Vec::new(),
+        preview_commits: Vec::new(),
+    })
+}
+
+// ────────────────────────────────────────────────────────────
+// execute_undo_commit  (T-HT-009)
+// ────────────────────────────────────────────────────────────
+
+/// Execute the undo-commit operation: move the current branch ref to `HEAD~1`.
+///
+/// # Design (ADR-0011)
+///
+/// **Ref-only operation.**  This function performs a single ref update:
+///
+/// ```text
+/// repo.reference("refs/heads/<branch>", parent_oid, true, msg)
+/// ```
+///
+/// No index operations, no working-tree operations, no `checkout` calls of
+/// any kind are performed.  HEAD (the symbolic ref) is left pointing at the
+/// same branch — which now resolves to the parent commit.  The changes from
+/// the undone commit remain in the index in staged form, identical to the
+/// result of `git reset --soft HEAD~1`.
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] if:
+/// - HEAD is not attached to a branch.
+/// - HEAD commit has no parent (root commit — guard in plan phase).
+/// - HEAD commit is a merge commit (guard in plan phase).
+/// - Any libgit2 ref-update failure.
+pub fn execute_undo_commit(repo: &Repository) -> Result<UndoOutcome, GitError> {
+    // ── 1. Resolve HEAD branch + commit ───────────────────────
+    let head_ref = repo
+        .head()
+        .map_err(|e| GitError::Other(format!("HEAD lookup failed: {}", e.message())))?;
+
+    if !head_ref.is_branch() {
+        return Err(GitError::Other(
+            "HEAD is not on a branch. Undo commit requires an attached HEAD.".to_string(),
+        ));
+    }
+
+    let branch_refname = head_ref
+        .name()
+        .map_err(|e| GitError::Other(format!("HEAD ref name failed: {}", e.message())))?
+        .to_string();
+
+    let head_oid = head_ref
+        .target()
+        .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
+
+    let head_commit = repo
+        .find_commit(head_oid)
+        .map_err(|e| GitError::Other(format!("HEAD commit lookup failed: {}", e.message())))?;
+
+    // ── 2. Guard: root commit ─────────────────────────────────
+    if head_commit.parent_count() == 0 {
+        return Err(GitError::Other(
+            "HEAD is the root commit (no parent). Cannot undo.".to_string(),
+        ));
+    }
+
+    // ── 3. Guard: merge commit ────────────────────────────────
+    if head_commit.parent_count() > 1 {
+        return Err(GitError::Other(format!(
+            "HEAD is a merge commit ({} parents). Undoing merge commits is not supported.",
+            head_commit.parent_count()
+        )));
+    }
+
+    // ── 4. Resolve the single parent ─────────────────────────
+    let parent_oid = head_commit
+        .parent_id(0)
+        .map_err(|e| GitError::Other(format!("parent_id failed: {}", e.message())))?;
+
+    // ── 5. Move the branch ref — ref-only, no index/WT touch ──
+    // force=true overwrites the existing ref (safe: we just validated the
+    // ancestry above).  HEAD (symbolic) is not touched — it still points to
+    // the same branch name; the branch now resolves to the parent.
+    let log_msg = format!(
+        "undo-commit: move {} from {} to {}",
+        branch_refname,
+        &head_oid.to_string()[..8],
+        &parent_oid.to_string()[..8],
+    );
+    repo.reference(&branch_refname, parent_oid, true, &log_msg)
+        .map_err(|e| GitError::Other(format!("branch ref update (undo-commit) failed: {}", e.message())))?;
+
+    Ok(UndoOutcome {
+        undone: CommitId(head_oid.to_string()),
+        now_at: CommitId(parent_oid.to_string()),
+    })
+}

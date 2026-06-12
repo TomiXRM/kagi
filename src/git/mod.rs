@@ -36,6 +36,7 @@ pub use ops::{
     plan_cherry_pick, execute_cherry_pick,
     plan_pull, execute_pull, PullOutcome,
     plan_push, execute_push, PushOutcome,
+    plan_undo_commit, execute_undo_commit, UndoOutcome,
 };
 #[allow(unused_imports)]
 pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo};

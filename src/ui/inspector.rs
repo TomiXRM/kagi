@@ -240,7 +240,7 @@ pub fn render_inspector(
     });
     let create_branch_button = action_button(
         "create-branch-btn",
-        "+ Create branch here",
+        "+ Branch here",
         COLOR_BRANCH,
         create_branch_click,
     );
@@ -252,7 +252,7 @@ pub fn render_inspector(
     });
     let cherry_pick_button = action_button(
         "cherry-pick-btn",
-        "\u{1f352} Cherry-pick onto HEAD branch",
+        "\u{1f352} Cherry-pick",
         0xcba6f7, // Catppuccin mauve
         cherry_click,
     );
@@ -660,11 +660,11 @@ fn action_button(
 ) -> impl IntoElement {
     div()
         .id(id)
-        .mb_1()
-        .px_2().py_1()
+        .px(px(6.))
+        .py(px(2.))
         .rounded_sm()
         .bg(rgb(BG_SURFACE))
-        .text_sm()
+        .text_xs()
         .text_color(rgb(color))
         .on_click(click)
         .hover(|style| style.bg(rgb(BG_SELECTED)))

@@ -60,6 +60,9 @@
 | T-HT-002 | branch / upstream / ahead-behind 表示 | T-HT-001 | done 相当(T-HT-001 に統合) |
 | T-HT-004 | Push の plan + 実行(set-upstream flow) | T-HT-003 | done |
 | T-UI-001 | Toolbar/StatusBar ボタンにアイコン(ユーザー要望) | T-HT-001 | done |
+| T-UI-002 | Stage all / Unstage all + List|Tree 切替(ユーザー要望) | T025 | done |
+| T-UI-003 | diff を main pane に全幅表示(ユーザー要望) | T012, T025 | in-progress |
+| T-UI-004 | git-delta 統合(ANSI パース、フォールバック付き) | T-UI-003 | todo |
 | T-HT-005 | Branch Create dialog 拡張(作成後 checkout 選択) | T-HT-001 | todo |
 | T-HT-006 | Stash plan 拡張(対象ファイル表示 / untracked 選択) | T-HT-001 | done(T-HT-007 に統合) |
 | T-HT-007 | Stash pop(conflict 予測 blocker、apply 提案) | T015 | done |

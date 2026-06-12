@@ -58,11 +58,11 @@
 | T-HT-001 | Header Toolbar UI skeleton + branch/ahead-behind 表示(T-HT-002 統合) | T-BP-001 | done |
 | T-HT-003 | Pull(fetch 含む)の plan + 実行 | T-HT-001, ADR-0009 | done |
 | T-HT-002 | branch / upstream / ahead-behind 表示 | T-HT-001 | done 相当(T-HT-001 に統合) |
-| T-HT-004 | Push の plan + 実行(set-upstream flow) | T-HT-003 | in-progress |
-| T-UI-001 | Toolbar/StatusBar ボタンにアイコン(gpui-component Icon)(ユーザー要望) | T-HT-001 | todo |
+| T-HT-004 | Push の plan + 実行(set-upstream flow) | T-HT-003 | done |
+| T-UI-001 | Toolbar/StatusBar ボタンにアイコン(ユーザー要望) | T-HT-001 | done |
 | T-HT-005 | Branch Create dialog 拡張(作成後 checkout 選択) | T-HT-001 | todo |
-| T-HT-006 | Stash plan 拡張(対象ファイル表示 / untracked 選択) | T-HT-001 | todo |
-| T-HT-007 | Stash pop plan(conflict 予測 blocker、apply との違い明示) | T-HT-006 | todo |
+| T-HT-006 | Stash plan 拡張(対象ファイル表示 / untracked 選択) | T-HT-001 | done(T-HT-007 に統合) |
+| T-HT-007 | Stash pop(conflict 予測 blocker、apply 提案) | T015 | done |
 | T-HT-008 | Undo Commit ADR | - | done(ADR-0011) |
-| T-HT-009 | Undo Commit 実装(ref 付け替えのみの soft 相当) | ADR-0011 | todo |
-| T-HT-010 | Header 操作後の refresh 統合確認 | T-HT-003〜009 | todo |
+| T-HT-009 | Undo Commit(ref 付け替えのみの soft 相当) | ADR-0011 | done |
+| T-HT-010 | Header 操作後の refresh 統合確認 | T-HT-003〜009 | done(各 confirm_* が reload + watcher が補完) |

@@ -22,6 +22,7 @@ use gpui::{
     actions, div, prelude::*, px, rgb, uniform_list,
 };
 use gpui_component::input::{Input, InputState};
+use gpui_component::Sizable as _;
 
 // ──────────────────────────────────────────────────────────────
 // T-BP-002: Bottom Panel — action + tab enum
@@ -130,6 +131,8 @@ use kagi::git::{
         plan_stash_push, execute_stash_push,
         plan_stash_apply, execute_stash_apply,
         plan_pull, execute_pull, PullOutcome,
+        plan_undo_commit, execute_undo_commit,
+        plan_stash_pop, execute_stash_pop,
         plan_push, execute_push,
         preflight_check_stash,
         plan_cherry_pick, execute_cherry_pick,
@@ -474,6 +477,22 @@ pub struct PullPlanModal {
     pub error: Option<SharedString>,
 }
 
+/// State for an in-progress undo-commit confirmation (T-HT-009).
+#[derive(Clone)]
+pub struct UndoPlanModal {
+    pub plan: std::sync::Arc<OperationPlan>,
+    pub error: Option<SharedString>,
+}
+
+/// State for an in-progress stash-pop confirmation (T-HT-007).
+#[derive(Clone)]
+pub struct PopPlanModal {
+    pub plan: std::sync::Arc<OperationPlan>,
+    pub error: Option<SharedString>,
+    /// Stash index the plan was built for.
+    pub stash_index: usize,
+}
+
 /// State for an in-progress push confirmation (T-HT-004).  Same shape as
 /// [`PullPlanModal`] but kept separate so the confirm path can't be mixed up.
 #[derive(Clone)]
@@ -592,6 +611,10 @@ pub struct KagiApp {
     pub plan_modal: Option<CheckoutPlanModal>,
     /// When `Some`, the pull plan confirmation modal is visible (T-HT-003).
     pub pull_modal: Option<PullPlanModal>,
+    /// When `Some`, the undo-commit confirmation modal is visible (T-HT-009).
+    pub undo_modal: Option<UndoPlanModal>,
+    /// When `Some`, the stash-pop confirmation modal is visible (T-HT-007).
+    pub pop_modal: Option<PopPlanModal>,
     /// When `Some`, the push plan confirmation modal is visible (T-HT-004).
     pub push_modal: Option<PushPlanModal>,
     /// When `Some`, the create-branch modal is visible.
@@ -772,6 +795,8 @@ impl KagiApp {
             branches,
             plan_modal: None,
             pull_modal: None,
+            undo_modal: None,
+            pop_modal: None,
             push_modal: None,
             create_branch_modal: None,
             modal_focus: None,
@@ -819,6 +844,8 @@ impl KagiApp {
             branches: Vec::new(),
             plan_modal: None,
             pull_modal: None,
+            undo_modal: None,
+            pop_modal: None,
             push_modal: None,
             create_branch_modal: None,
             modal_focus: None,
@@ -894,6 +921,8 @@ impl KagiApp {
         self.file_diff_view = None;
         self.plan_modal = None;
         self.pull_modal = None;
+        self.undo_modal = None;
+        self.pop_modal = None;
         self.create_branch_modal = None;
         self.modal_focus = None;
         self.stashes = fresh.stashes;
@@ -2314,6 +2343,150 @@ impl KagiApp {
         }
     }
 
+    // ── T-HT-009: Undo Commit / T-HT-007: Stash Pop ──────────
+
+    /// Build an undo-commit plan and open the confirmation modal.
+    pub fn open_undo_modal(&mut self) {
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!("undo: repo open error: {}", e.message())));
+                return;
+            }
+        };
+        match plan_undo_commit(&repo) {
+            Ok(plan) => {
+                eprintln!("[kagi] plan: undo blockers={} warnings={}", plan.blockers.len(), plan.warnings.len());
+                self.undo_modal = Some(UndoPlanModal { plan: std::sync::Arc::new(plan), error: None });
+            }
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!("undo plan error: {}", e)));
+            }
+        }
+    }
+
+    pub fn cancel_undo_modal(&mut self) { self.undo_modal = None; }
+
+    /// Confirm undo: preflight → execute (ref-only) → oplog → reload.
+    pub fn confirm_undo(&mut self) {
+        let modal = match self.undo_modal.clone() { Some(m) => m, None => return };
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        if !modal.plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: undo plan has blockers, not executing");
+            self.record_op("undo-commit", modal.plan.current.clone(),
+                OpOutcome::Refused { blockers: modal.plan.blockers.clone() }, &repo_path);
+            return;
+        }
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                let err_msg = format!("Repo open error: {}", e.message());
+                self.record_op("undo-commit", modal.plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
+                self.undo_modal = Some(UndoPlanModal { plan: modal.plan.clone(), error: Some(SharedString::from(err_msg)) });
+                return;
+            }
+        };
+        if let Err(e) = preflight_check(&repo, &modal.plan) {
+            let err_msg = format!("Preflight failed: {}", e);
+            self.record_op("undo-commit", modal.plan.current.clone(),
+                OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
+            self.undo_modal = Some(UndoPlanModal { plan: modal.plan.clone(), error: Some(SharedString::from(err_msg)) });
+            return;
+        }
+        match execute_undo_commit(&repo) {
+            Ok(outcome) => {
+                eprintln!("[kagi] executed: undo {} -> now at {}", outcome.undone.short(), outcome.now_at.short());
+                self.undo_modal = None;
+                let after = StateSummary {
+                    head: format!("branch @ {}", outcome.now_at.short()),
+                    dirty: "changes staged".to_string(),
+                };
+                self.record_op("undo-commit", modal.plan.current.clone(),
+                    OpOutcome::Success { after }, &repo_path);
+                self.status_footer = FooterStatus::Success(SharedString::from(
+                    format!("undo: {} (restore: git reset --soft {})", outcome.undone.short(), outcome.undone.short())));
+                self.reload();
+            }
+            Err(e) => {
+                let err_msg = format!("Undo failed: {}", e);
+                self.record_op("undo-commit", modal.plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
+                self.undo_modal = Some(UndoPlanModal { plan: modal.plan.clone(), error: Some(SharedString::from(err_msg)) });
+            }
+        }
+    }
+
+    /// Build a stash-pop plan and open the confirmation modal.
+    pub fn open_pop_modal(&mut self, index: usize) {
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let mut repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!("pop: repo open error: {}", e.message())));
+                return;
+            }
+        };
+        match plan_stash_pop(&mut repo, index) {
+            Ok(plan) => {
+                eprintln!("[kagi] plan: stash-pop index={} blockers={} warnings={}", index, plan.blockers.len(), plan.warnings.len());
+                self.pop_modal = Some(PopPlanModal { plan: std::sync::Arc::new(plan), error: None, stash_index: index });
+            }
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!("pop plan error: {}", e)));
+            }
+        }
+    }
+
+    pub fn cancel_pop_modal(&mut self) { self.pop_modal = None; }
+
+    /// Confirm stash pop: preflight → apply-then-drop → oplog → reload.
+    pub fn confirm_pop(&mut self) {
+        let modal = match self.pop_modal.clone() { Some(m) => m, None => return };
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        if !modal.plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: pop plan has blockers, not executing");
+            self.record_op("stash-pop", modal.plan.current.clone(),
+                OpOutcome::Refused { blockers: modal.plan.blockers.clone() }, &repo_path);
+            return;
+        }
+        let mut repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                let err_msg = format!("Repo open error: {}", e.message());
+                self.record_op("stash-pop", modal.plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
+                self.pop_modal = Some(PopPlanModal { plan: modal.plan.clone(), error: Some(SharedString::from(err_msg)), stash_index: modal.stash_index });
+                return;
+            }
+        };
+        if let Err(e) = preflight_check(&repo, &modal.plan) {
+            let err_msg = format!("Preflight failed: {}", e);
+            self.record_op("stash-pop", modal.plan.current.clone(),
+                OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
+            self.pop_modal = Some(PopPlanModal { plan: modal.plan.clone(), error: Some(SharedString::from(err_msg)), stash_index: modal.stash_index });
+            return;
+        }
+        match execute_stash_pop(&mut repo, modal.stash_index) {
+            Ok(()) => {
+                eprintln!("[kagi] executed: stash-pop index={}", modal.stash_index);
+                self.pop_modal = None;
+                let after = StateSummary { head: modal.plan.current.head.clone(), dirty: "changes restored (stash removed)".to_string() };
+                self.record_op("stash-pop", modal.plan.current.clone(),
+                    OpOutcome::Success { after }, &repo_path);
+                self.status_footer = FooterStatus::Success(SharedString::from("stash pop: applied and dropped"));
+                self.reload();
+            }
+            Err(e) => {
+                let err_msg = format!("Pop failed: {}", e);
+                self.record_op("stash-pop", modal.plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
+                self.pop_modal = Some(PopPlanModal { plan: modal.plan.clone(), error: Some(SharedString::from(err_msg)), stash_index: modal.stash_index });
+            }
+        }
+    }
+
     // ── T025: Commit Panel ────────────────────────────────────
 
     /// Open the commit panel (triggered by clicking the WIP row).
@@ -2872,6 +3045,8 @@ impl Render for KagiApp {
         let is_dirty = self.is_dirty;
         let plan_modal = self.plan_modal.clone();
         let pull_modal = self.pull_modal.clone();
+        let undo_modal = self.undo_modal.clone();
+        let pop_modal = self.pop_modal.clone();
         let push_modal = self.push_modal.clone();
         let create_branch_modal = self.create_branch_modal.clone();
         let modal_focus = self.modal_focus.clone();
@@ -3011,6 +3186,13 @@ impl Render for KagiApp {
             .when_some(pull_modal, |el, modal| {
                 el.child(render_pull_modal(modal, cx))
             })
+            // ── Undo / Pop plan modal overlays ───────────────
+            .when_some(undo_modal, |el, modal| {
+                el.child(render_undo_modal(modal, cx))
+            })
+            .when_some(pop_modal, |el, modal| {
+                el.child(render_pop_modal(modal, cx))
+            })
             // ── Push plan modal overlay (T-HT-004) ──────────
             .when_some(push_modal, |el, modal| {
                 el.child(render_push_modal(modal, cx))
@@ -3136,8 +3318,8 @@ impl KagiApp {
         let pop_on = toolbar.pop_on;
         let pop_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
             if pop_on {
-                // Apply the newest stash (index 0).
-                this.open_stash_apply_modal(0);
+                // Pop the newest stash (index 0) — plan with conflict prediction.
+                this.open_pop_modal(0);
             } else {
                 this.status_footer = FooterStatus::Idle(SharedString::from(
                     "Pop: stash が空です",
@@ -3150,9 +3332,7 @@ impl KagiApp {
         let undo_on = toolbar.undo_on;
         let undo_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
             if undo_on {
-                this.status_footer = FooterStatus::Idle(SharedString::from(
-                    "Undo: T-HT-009 で実装予定",
-                ));
+                this.open_undo_modal();
             } else {
                 let reason = if this.status_summary.is_detached {
                     "Undo: detached HEAD — undo できません"
@@ -3176,7 +3356,10 @@ impl KagiApp {
         // ── Helper: build a single toolbar button ───────────────────────────
         // `id` must be a unique string for GPUI element tracking.
         // `enabled` controls opacity; `label` is the button text.
-        let make_btn = |id: &'static str, label: &'static str, enabled: bool| {
+        let make_btn = |id: &'static str,
+                        label: &'static str,
+                        icon: gpui_component::IconName,
+                        enabled: bool| {
             let text_color = if enabled { TEXT_MAIN } else { TEXT_MUTED };
             let bg_color = if enabled { BG_SELECTED } else { BG_SURFACE };
             div()
@@ -3185,10 +3368,19 @@ impl KagiApp {
                 .py_px()
                 .rounded_sm()
                 .bg(rgb(bg_color))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
                 .text_sm()
                 .text_color(rgb(text_color))
                 .hover(|style| style.opacity(if enabled { 0.85 } else { 0.6 }))
                 .cursor(if enabled { gpui::CursorStyle::PointingHand } else { gpui::CursorStyle::Arrow })
+                .child(
+                    gpui_component::Icon::new(icon)
+                        .with_size(gpui_component::Size::XSmall)
+                        .text_color(rgb(text_color)),
+                )
                 .child(SharedString::from(label))
         };
 
@@ -3241,43 +3433,43 @@ impl KagiApp {
             .child(sep())
             // Pull
             .child(
-                make_btn("tb-pull", "Pull", toolbar.pull_on)
+                make_btn("tb-pull", "Pull", gpui_component::IconName::ArrowDown, toolbar.pull_on)
                     .on_click(pull_click),
             )
             .child(div().w(px(4.0)))
             // Push
             .child(
-                make_btn("tb-push", "Push", toolbar.push_on)
+                make_btn("tb-push", "Push", gpui_component::IconName::ArrowUp, toolbar.push_on)
                     .on_click(push_click),
             )
             .child(sep())
             // Branch
             .child(
-                make_btn("tb-branch", "Branch", true)
+                make_btn("tb-branch", "Branch", gpui_component::IconName::Plus, true)
                     .on_click(branch_click),
             )
             .child(div().w(px(4.0)))
             // Stash
             .child(
-                make_btn("tb-stash", "Stash", toolbar.stash_on)
+                make_btn("tb-stash", "Stash", gpui_component::IconName::Inbox, toolbar.stash_on)
                     .on_click(stash_click),
             )
             .child(div().w(px(4.0)))
             // Pop
             .child(
-                make_btn("tb-pop", "Pop", toolbar.pop_on)
+                make_btn("tb-pop", "Pop", gpui_component::IconName::FolderOpen, toolbar.pop_on)
                     .on_click(pop_click),
             )
             .child(sep())
             // Undo
             .child(
-                make_btn("tb-undo", "Undo", toolbar.undo_on)
+                make_btn("tb-undo", "Undo", gpui_component::IconName::Undo2, toolbar.undo_on)
                     .on_click(undo_click),
             )
             .child(sep())
             // Refresh
             .child(
-                make_btn("tb-refresh", "Refresh", true)
+                make_btn("tb-refresh", "Refresh", gpui_component::IconName::LoaderCircle, true)
                     .on_click(refresh_click),
             )
             // Spacer — pushes ahead/behind to the right
@@ -4009,7 +4201,11 @@ impl KagiApp {
             .text_color(rgb(icon_terminal_color))
             .hover(|s| s.text_color(rgb(TEXT_MAIN)).cursor_pointer())
             .on_click(icon_terminal_click)
-            .child(SharedString::from(">_"));
+            .child(
+                gpui_component::Icon::new(gpui_component::IconName::SquareTerminal)
+                    .with_size(gpui_component::Size::XSmall)
+                    .text_color(rgb(icon_terminal_color)),
+            );
 
         let icon_oplog = div()
             .id("status-icon-oplog")
@@ -4019,7 +4215,11 @@ impl KagiApp {
             .text_color(rgb(icon_oplog_color))
             .hover(|s| s.text_color(rgb(TEXT_MAIN)).cursor_pointer())
             .on_click(icon_oplog_click)
-            .child(SharedString::from("\u{2261}")); // ≡
+            .child(
+                gpui_component::Icon::new(gpui_component::IconName::Menu)
+                    .with_size(gpui_component::Size::XSmall)
+                    .text_color(rgb(icon_oplog_color)),
+            );
 
         // ── Assemble status bar ────────────────────────────────
         let mut bar = div()
@@ -5004,6 +5204,38 @@ fn render_pull_modal(modal: PullPlanModal, cx: &mut Context<KagiApp>) -> gpui::A
         cx.notify();
     });
     render_plan_modal_card(modal.plan, modal.error, "Pull", cancel_handler, confirm_handler)
+        .into_any_element()
+}
+
+/// Undo-commit confirmation overlay (T-HT-009).
+fn render_undo_modal(modal: UndoPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.cancel_undo_modal();
+        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.confirm_undo();
+        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
+        cx.notify();
+    });
+    render_plan_modal_card(modal.plan, modal.error, "Undo", cancel_handler, confirm_handler)
+        .into_any_element()
+}
+
+/// Stash-pop confirmation overlay (T-HT-007).
+fn render_pop_modal(modal: PopPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.cancel_pop_modal();
+        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.confirm_pop();
+        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
+        cx.notify();
+    });
+    render_plan_modal_card(modal.plan, modal.error, "Pop", cancel_handler, confirm_handler)
         .into_any_element()
 }
 

@@ -190,6 +190,33 @@ fn main() {
         }
     }
 
+    // ── T-HT-009/007: headless undo / pop ────────────────────
+    if std::env::var("KAGI_UNDO").as_deref() == Ok("1") {
+        app_state.open_undo_modal();
+        if std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1") {
+            if let Some(ref modal) = app_state.undo_modal.clone() {
+                if modal.plan.blockers.is_empty() {
+                    app_state.confirm_undo();
+                } else {
+                    eprintln!("[kagi] KAGI_AUTO_CONFIRM=1 but undo has {} blocker(s), skipping", modal.plan.blockers.len());
+                }
+            }
+        }
+    }
+    if let Ok(idx) = std::env::var("KAGI_POP") {
+        let index: usize = idx.parse().unwrap_or(0);
+        app_state.open_pop_modal(index);
+        if std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1") {
+            if let Some(ref modal) = app_state.pop_modal.clone() {
+                if modal.plan.blockers.is_empty() {
+                    app_state.confirm_pop();
+                } else {
+                    eprintln!("[kagi] KAGI_AUTO_CONFIRM=1 but pop has {} blocker(s), skipping", modal.plan.blockers.len());
+                }
+            }
+        }
+    }
+
     // ── T013: headless checkout plan / execute ───────────────
     // KAGI_PLAN_CHECKOUT=<branch>: generate a plan for the branch and log it.
     // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, proceed to execute.

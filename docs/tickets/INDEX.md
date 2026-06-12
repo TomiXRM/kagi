@@ -119,3 +119,4 @@
 | W10-TOOLBAR | ツールバー Finder/Keynote 風(アイコン主体+下ラベル) | W9-THEME | queued |
 | W11-AVATAR | GitHub アバター取得(ADR-0037) | W9-THEME | queued |
 | W12-GCADOPT | gpui-component 採用第1弾(theme sync / Scrollbar / Checkbox) | 監査doc | queued |
+| W13-BRANCHTREE | branch list の / 区切りツリー表示 + toggle | - | in-progress |

@@ -3461,20 +3461,19 @@ fn badge_priority(kind: &BadgeKind) -> u8 {
     }
 }
 
-/// Render the badges column: user-resizable width (T030), right-aligned
-/// (`justify_end`), `overflow_hidden`.  An empty badges list still occupies
+/// Render the badges column: user-resizable width (T030), **left-aligned**
+/// (user request), `overflow_hidden`.  An empty badges list still occupies
 /// the full width so that all rows share the same graph start position
 /// (GitKraken layout, T021).  `badge_col_w` is the current column width.
 fn render_badges_column(badges: &[commit_list::RefBadge], badge_col_w: f32) -> impl IntoElement {
-    // The column is a fixed 150px box.  Right-justified content that exceeds
-    // the box overflows to the LEFT, which gpui does not clip — long branch
-    // names bled underneath the sidebar (user report).  So instead of relying
-    // on clipping, make the content fit by construction:
-    //   - show at most MAX_BADGES chips (highest priority kept, and rendered
-    //     rightmost = nearest the graph),
-    //   - the highest-priority chip keeps its label (char-truncated),
-    //   - any additional chip may flex-shrink with an ellipsis,
-    //   - remaining refs collapse into a small "+N" chip.
+    // Content is built to fit rather than relying on clipping:
+    //   - left-aligned, so the highest-priority chip (leftmost) is always
+    //     fully visible and overflow happens rightward — the direction
+    //     gpui's overflow_hidden actually clips,
+    //   - the "+N" chip sits right after the primary chip so it can't be
+    //     clipped,
+    //   - the secondary chip flex-shrinks with an ellipsis; only its already
+    //     ellipsized tail can ever be cut off.
     const MAX_BADGES: usize = 2;
     const MAX_BADGE_CHARS: usize = 20;
 
@@ -3487,27 +3486,12 @@ fn render_badges_column(badges: &[commit_list::RefBadge], badge_col_w: f32) -> i
         .flex()
         .flex_row()
         .items_center()
-        .justify_end()
+        .justify_start()
         .gap_1()
         .overflow_hidden();
 
-    // "+N" chip first (leftmost) when there are hidden refs.
-    if extra > 0 {
-        inner = inner.child(
-            div()
-                .px_1()
-                .rounded_sm()
-                .bg(rgb(BG_SURFACE))
-                .text_color(rgb(TEXT_SUB))
-                .text_sm()
-                .flex_shrink_0()
-                .child(SharedString::from(format!("+{extra}"))),
-        );
-    }
-
-    // Render shown badges in reverse priority order so the highest-priority
-    // one ends up rightmost (next to the graph).
-    for (i, badge) in shown.iter().enumerate().rev() {
+    // Badges in priority order: primary (HEAD/branch) leftmost.
+    for (i, badge) in shown.iter().enumerate() {
         let color = match badge.kind {
             BadgeKind::HeadBranch => COLOR_HEAD,
             BadgeKind::Branch => COLOR_BRANCH,
@@ -3533,6 +3517,20 @@ fn render_badges_column(badges: &[commit_list::RefBadge], badge_col_w: f32) -> i
             .when(!is_primary, |c| c.min_w(px(20.)).truncate())
             .child(label);
         inner = inner.child(chip);
+
+        // "+N" chip directly after the primary chip (never clipped).
+        if is_primary && extra > 0 {
+            inner = inner.child(
+                div()
+                    .px_1()
+                    .rounded_sm()
+                    .bg(rgb(BG_SURFACE))
+                    .text_color(rgb(TEXT_SUB))
+                    .text_sm()
+                    .flex_shrink_0()
+                    .child(SharedString::from(format!("+{extra}"))),
+            );
+        }
     }
 
     // User-resizable container (T030), overflow clipped so long badge lists don't push graph.
@@ -3543,7 +3541,7 @@ fn render_badges_column(badges: &[commit_list::RefBadge], badge_col_w: f32) -> i
         .flex()
         .flex_row()
         .items_center()
-        .justify_end()
+        .justify_start()
         .child(inner)
 }
 

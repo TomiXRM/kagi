@@ -1,3 +1,7 @@
+[workspace]
+# ADR-0047 authorizes adding the xtask build/bundle helper as a workspace member.
+members = ["xtask"]
+
 [package]
 name = "kagi"
 version = "0.1.0"

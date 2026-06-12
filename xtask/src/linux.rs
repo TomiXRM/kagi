@@ -1,0 +1,107 @@
+//! Linux `tar.gz` packaging (ADR-0047).
+//!
+//! Layout (relative to the tarball root `kagi-<version>-x86_64/`):
+//!   bin/kagi
+//!   share/applications/kagi.desktop
+//!   share/icons/hicolor/512x512/apps/kagi.png
+//!
+//! On the CI ubuntu runner the binary is a real Linux build. On macOS (local
+//! verification) there is no Linux binary, so we substitute the macOS release
+//! binary purely to exercise the layout-generation logic — the resulting
+//! tarball is for layout verification only, not for distribution.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use crate::util;
+
+const BIN_NAME: &str = "kagi";
+
+fn desktop_entry() -> String {
+    "\
+[Desktop Entry]
+Type=Application
+Name=Kagi
+GenericName=Git Client
+Comment=A Git GUI built with gpui
+Exec=kagi
+Icon=kagi
+Terminal=false
+Categories=Development;RevisionControl;
+"
+    .to_string()
+}
+
+/// Resolve the binary to package. Prefer an explicit `--bin <path>` override
+/// (CI passes the Linux build); otherwise fall back to `target/release/kagi`.
+fn resolve_bin(root: &Path, override_path: Option<&str>) -> Result<PathBuf, String> {
+    if let Some(p) = override_path {
+        let pb = PathBuf::from(p);
+        if !pb.exists() {
+            return Err(format!("--bin path does not exist: {p}"));
+        }
+        return Ok(pb);
+    }
+    let p = root.join("target/release").join(BIN_NAME);
+    if !p.exists() {
+        return Err(format!(
+            "{} not found — build first (`cargo build --release`) or pass --bin <path>",
+            p.display()
+        ));
+    }
+    Ok(p)
+}
+
+/// `bundle-linux [--bin <path>]`: assemble the tar.gz layout and create the tarball.
+pub fn bundle(root: &Path, override_bin: Option<&str>) -> Result<(), String> {
+    let version = util::kagi_version(root)?;
+    let bin = resolve_bin(root, override_bin)?;
+    let icon = root.join("assets/icon/icon_512x512.png");
+    if !icon.exists() {
+        return Err(format!(
+            "{} not found — run `xtask icon` first",
+            icon.display()
+        ));
+    }
+
+    let dist = root.join("target").join("dist");
+    let stem = format!("{BIN_NAME}-{version}-x86_64");
+    let stage = dist.join(&stem);
+    util::clean_dir(&stage)?;
+
+    let bin_dir = stage.join("bin");
+    let apps_dir = stage.join("share/applications");
+    let icon_dir = stage.join("share/icons/hicolor/512x512/apps");
+    for d in [&bin_dir, &apps_dir, &icon_dir] {
+        std::fs::create_dir_all(d).map_err(|e| format!("mkdir {}: {e}", d.display()))?;
+    }
+
+    std::fs::copy(&bin, bin_dir.join(BIN_NAME)).map_err(|e| format!("copy bin: {e}"))?;
+    std::fs::write(apps_dir.join("kagi.desktop"), desktop_entry())
+        .map_err(|e| format!("write desktop: {e}"))?;
+    std::fs::copy(&icon, icon_dir.join("kagi.png")).map_err(|e| format!("copy icon: {e}"))?;
+
+    let tarball = dist.join(format!("{stem}.tar.gz"));
+    if tarball.exists() {
+        std::fs::remove_file(&tarball).map_err(|e| format!("rm old tarball: {e}"))?;
+    }
+
+    println!("bundle-linux: tar czf {}", tarball.display());
+    util::run(Command::new("tar").args([
+        "-czf",
+        tarball.to_str().unwrap(),
+        "-C",
+        dist.to_str().unwrap(),
+        &stem,
+    ]))?;
+
+    util::clean_dir(&stage)?;
+    println!("bundle-linux: wrote {}", tarball.display());
+    if override_bin.is_none() && cfg!(target_os = "macos") {
+        println!(
+            "bundle-linux: NOTE — packaged the macOS binary for layout verification only; \
+             the CI ubuntu runner produces the real Linux artifact."
+        );
+    }
+    Ok(())
+}

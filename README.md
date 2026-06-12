@@ -37,6 +37,42 @@ cargo run -- "$REPO"
 
 fixture には分岐・merge・remote(ahead/behind)・tag・stash・dirty working tree が一通り含まれています。
 
+## 配布とインストール
+
+リリースは GitHub Releases から配布します(ADR-0047 / Phase 1)。
+
+| OS | 形態 | 備考 |
+|----|------|------|
+| macOS(Apple Silicon / Intel)| `Kagi-<version>-<arch>.dmg` | **未署名(ad-hoc 署名)**。初回起動に Gatekeeper 回避が必要(下記)|
+| Linux(x86_64)| `kagi-<version>-x86_64.tar.gz`(bin + `.desktop` + icon)| 展開して `bin/kagi` を実行 |
+
+各リリースには `SHA256SUMS-*.txt` を同梱しています。ダウンロード後に整合性を確認してください。
+
+### macOS:未署名アプリの起動(Gatekeeper 回避)
+
+Kagi はまだ Apple Developer ID による署名・notarization を行っていません(ad-hoc 署名のみ)。
+そのため初回起動時に Gatekeeper が「開発元を確認できません」と警告します。以下のいずれかで回避できます:
+
+- **Finder で右クリック → 開く**(初回のみ。2回目以降は通常どおりダブルクリックで起動)
+- もしくは quarantine 属性を外す:
+
+  ```sh
+  xattr -dr com.apple.quarantine /Applications/Kagi.app
+  ```
+
+Apple Developer Program の取得後に署名 + notarization(ADR-0038 Phase 2)へ移行する予定です。
+
+### ソースからバンドルを作る(開発者向け)
+
+`xtask` で `.app` / `.dmg` / Linux tar.gz をローカル生成できます(macOS 標準ツールのみ・外部依存なし):
+
+```sh
+bash scripts/make_icon.sh                 # assets/icon/(AppIcon.icns + Linux PNG)を生成
+cargo run -p xtask -- bundle-macos        # target/dist/Kagi.app(ad-hoc 署名済)
+cargo run -p xtask -- dmg-macos           # target/dist/Kagi-<version>-<arch>.dmg
+cargo run -p xtask -- bundle-linux        # target/dist/kagi-<version>-x86_64.tar.gz(レイアウト検証)
+```
+
 ## 画面と操作
 
 ```

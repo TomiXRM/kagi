@@ -7164,7 +7164,7 @@ fn render_rows(
             } else if ix % 2 == 0 {
                 theme().bg_base
             } else {
-                0x1a1a2a
+                theme().bg_row_alt
             };
 
             // ── Graph lane area (T030) ────────────────────────

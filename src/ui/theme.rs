@@ -44,6 +44,8 @@ pub struct Theme {
     // ── Backgrounds ──────────────────────────────────────────────
     /// Window / commit-list base background.
     pub bg_base: u32,
+    /// Alternate (zebra) commit-row background.
+    pub bg_row_alt: u32,
     /// Surface (chips, hover, modal body).
     pub surface: u32,
     /// Selected-row highlight.
@@ -282,6 +284,7 @@ const CATPPUCCIN_MOCHA: Theme = Theme {
     dark: true,
 
     bg_base: 0x1e1e2e,
+    bg_row_alt: 0x1a1a2a,
     surface: 0x313244,
     selected: 0x45475a,
     panel: 0x181825,
@@ -363,6 +366,7 @@ const XCODE_DARK: Theme = Theme {
     dark: true,
 
     bg_base: 0x292a30,
+    bg_row_alt: 0x25262b,
     surface: 0x3a3c44,
     selected: 0x4b4e58,
     panel: 0x1f2024,
@@ -444,6 +448,7 @@ const XCODE_LIGHT: Theme = Theme {
     dark: false,
 
     bg_base: 0xffffff,
+    bg_row_alt: 0xf4f5f7,
     surface: 0xeceded,
     selected: 0xd5e3f7,
     panel: 0xf6f6f6,
@@ -524,6 +529,7 @@ const ONE_DARK: Theme = Theme {
     dark: true,
 
     bg_base: 0x282c34,
+    bg_row_alt: 0x24272e,
     surface: 0x3a3f4b,
     selected: 0x4b5263,
     panel: 0x21252b,
@@ -605,6 +611,7 @@ const ONE_LIGHT: Theme = Theme {
     dark: false,
 
     bg_base: 0xfafafa,
+    bg_row_alt: 0xf0f0f1,
     surface: 0xeaeaeb,
     selected: 0xd4e2fb,
     panel: 0xf0f0f0,
@@ -688,6 +695,7 @@ const MONOKAI: Theme = Theme {
     dark: true,
 
     bg_base: 0x2f2b31,
+    bg_row_alt: 0x2a272c,
     surface: 0x403b44,
     selected: 0x4d4751,
     panel: 0x272328,

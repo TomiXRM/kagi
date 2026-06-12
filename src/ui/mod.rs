@@ -11,10 +11,11 @@ pub mod commit_panel;
 pub mod detail_panel;
 pub mod file_tree;
 pub mod graph_view;
+pub mod sidebar;
 pub mod terminal;
 pub mod watcher;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
 use gpui::{
@@ -126,7 +127,7 @@ const COL_HEADER_H: f32 = 20.0;
 const INNER_DIV_W: f32 = 4.0;
 
 use kagi::git::{
-    ChangeKind, CommitId, FileDiff, DiffLineKind, FileStatus, Head, RepoSnapshot, Stash,
+    ChangeKind, CommitId, FileDiff, DiffLineKind, FileStatus, Head, RemoteBranch, RepoSnapshot, Stash, Tag, UpstreamInfo,
     ops::{
         OperationPlan, StateSummary,
         execute_checkout, execute_create_branch, plan_checkout, plan_create_branch, preflight_check,
@@ -169,7 +170,7 @@ const BG_DIFF_REMOVED: u32 = 0x3a1c1c; // dark red background for removed lines
 const COLOR_DIFF_HUNK: u32 = 0x89b4fa; // blue — hunk header
 
 // Sidebar / modal colours (T013)
-const BG_SIDEBAR: u32 = 0x11111b;       // crust — sidebar background
+// BG_SIDEBAR moved to sidebar.rs (W2-SIDEBAR)
 const COLOR_WARNING: u32 = 0xf9e2af;    // yellow — warning text
 const COLOR_BLOCKER: u32 = 0xf38ba8;    // red — blocker text
 const COLOR_SUCCESS: u32 = 0xa6e3a1;    // green — success / checked-out mark
@@ -861,6 +862,19 @@ pub struct KagiApp {
     /// Lazy terminal session.  `None` until `repo_path` is known and the
     /// Terminal tab is first displayed (or KAGI_TERMINAL=1 at startup).
     pub terminal_session: Option<terminal::KagiTerminalSession>,
+    // ── W2-SIDEBAR: Repository Navigator ────────────────────────
+    /// Remote-tracking branches from the snapshot (for REMOTE BRANCHES section).
+    pub remote_branches: Vec<RemoteBranch>,
+    /// Tags from the snapshot (for TAGS section).
+    pub tags: Vec<Tag>,
+    /// Upstream info per local branch name (for ↑A ↓B display).
+    pub branch_upstream_info: HashMap<String, UpstreamInfo>,
+    /// Collapsed sections in the sidebar (HashSet of section keys).
+    /// Preserved across reloads so the user's collapse state survives checkout.
+    pub sidebar_collapsed: HashSet<&'static str>,
+    /// Lazy InputState for the sidebar filter input (gpui-component IME対応).
+    /// Created on first click of the filter area (requires &mut Window).
+    pub sidebar_filter: Option<Entity<InputState>>,
 }
 
 impl KagiApp {
@@ -941,6 +955,26 @@ impl KagiApp {
             .map(|(i, c)| (c.id.clone(), i))
             .collect();
 
+        // W2-SIDEBAR: collect remote branches and tags.
+        let remote_branches = snap.remote_branches.clone();
+        let tags = snap.tags.clone();
+
+        // W2-SIDEBAR: build upstream info map (branch name → UpstreamInfo).
+        let branch_upstream_info: HashMap<String, UpstreamInfo> = snap
+            .branches
+            .iter()
+            .filter_map(|b| b.upstream.as_ref().map(|u| (b.name.clone(), u.clone())))
+            .collect();
+
+        // W2-SIDEBAR: emit sidebar log line.
+        eprintln!(
+            "[kagi] sidebar: local={} remote={} tags={} stashes={} filter=\"\"",
+            snap.branches.len(),
+            snap.remote_branches.len(),
+            snap.tags.len(),
+            snap.stashes.len()
+        );
+
         // T-BP-003: build StatusBarSummary and emit the headless log.
         let mut status_summary = StatusBarSummary::from_snapshot(snap);
         // T-HT-001: fill repo_name for toolbar display.
@@ -999,6 +1033,12 @@ impl KagiApp {
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
             terminal_session: None,
+            // W2-SIDEBAR
+            remote_branches,
+            tags,
+            branch_upstream_info,
+            sidebar_collapsed: HashSet::new(),
+            sidebar_filter: None,
         }
     }
 
@@ -1049,6 +1089,12 @@ impl KagiApp {
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
             terminal_session: None,
+            // W2-SIDEBAR
+            remote_branches: Vec::new(),
+            tags: Vec::new(),
+            branch_upstream_info: HashMap::new(),
+            sidebar_collapsed: HashSet::new(),
+            sidebar_filter: None,
         }
     }
 
@@ -1124,6 +1170,12 @@ impl KagiApp {
         // is not lost on checkout/reload (T023).
         // T-BP-004: op_entries, oplog_scroll_handle, oplog_expanded are preserved
         // so the Operation Log keeps its contents across repository reloads.
+        // W2-SIDEBAR: refresh remote_branches, tags, and upstream info.
+        // sidebar_collapsed is preserved so the user's collapse state survives reload.
+        // sidebar_filter is preserved so the user's filter text survives reload.
+        self.remote_branches = fresh.remote_branches;
+        self.tags = fresh.tags;
+        self.branch_upstream_info = fresh.branch_upstream_info;
     }
 
     /// Reload triggered by an external git change (T029: FS watcher).
@@ -3359,6 +3411,48 @@ impl KagiApp {
         // Select the row (opens detail panel, emits selected log).
         self.select(row_ix);
     }
+
+    /// W2-SIDEBAR: Jump directly to a commit by its CommitId.
+    ///
+    /// Used for remote branch and tag clicks where there is no branch name.
+    /// Scrolls the commit list to the row and selects it.
+    pub fn jump_to_commit(&mut self, target: &CommitId) {
+        let row_ix = match self.commit_row_index.get(target) {
+            Some(&ix) => ix,
+            None => {
+                eprintln!(
+                    "[kagi] jump: commit {} is outside the 10k window — cannot jump",
+                    target.short()
+                );
+                self.status_footer = FooterStatus::Idle(SharedString::from(format!(
+                    "Cannot jump: commit {} is outside the loaded window",
+                    target.short()
+                )));
+                return;
+            }
+        };
+        eprintln!("[kagi] jump: commit {} -> row {}", target.short(), row_ix);
+        self.commit_scroll_handle
+            .scroll_to_item(row_ix, ScrollStrategy::Center);
+        self.select(row_ix);
+    }
+
+    /// W2-SIDEBAR: Lazily create the sidebar filter InputState (requires &mut Window).
+    ///
+    /// Called from the on_click handler on the filter placeholder area.
+    /// No-op if already created.
+    pub fn ensure_sidebar_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sidebar_filter.is_none() {
+            let input_entity = cx.new(|cx| InputState::new(window, cx).placeholder("filter…"));
+            self.sidebar_filter = Some(input_entity);
+        }
+        // Focus the input after creation (or if already exists).
+        if let Some(ref ent) = self.sidebar_filter {
+            ent.update(cx, |state, cx| {
+                state.focus(window, cx);
+            });
+        }
+    }
 }
 
 impl Render for KagiApp {
@@ -3400,6 +3494,12 @@ impl Render for KagiApp {
         let branches = self.branches.clone();
         let stashes = self.stashes.clone();
         let is_dirty = self.is_dirty;
+        // W2-SIDEBAR: clone navigator data for sidebar render.
+        let remote_branches = self.remote_branches.clone();
+        let tags = self.tags.clone();
+        let branch_upstream_info = self.branch_upstream_info.clone();
+        let sidebar_collapsed = self.sidebar_collapsed.clone();
+        let sidebar_filter = self.sidebar_filter.clone();
         let plan_modal = self.plan_modal.clone();
         let pull_modal = self.pull_modal.clone();
         let undo_modal = self.undo_modal.clone();
@@ -3546,7 +3646,9 @@ impl Render for KagiApp {
             // ── Body slot: sidebar | list | optional panel ───
             .child(self.render_body(
                 row_count, selected, detail, changed_files, main_diff, main_diff_scroll_handle,
-                branches, stashes, is_dirty, sidebar_width, panel_width,
+                branches, remote_branches, tags, stashes, branch_upstream_info,
+                sidebar_collapsed, sidebar_filter,
+                is_dirty, sidebar_width, panel_width,
                 badge_col_w, graph_col_w, commit_scroll_handle,
                 commit_panel_open, commit_panel.clone(), commit_input.clone(),
                 cx,
@@ -3873,7 +3975,12 @@ impl KagiApp {
         main_diff: Option<MainDiffView>,
         main_diff_scroll_handle: UniformListScrollHandle,
         branches: Vec<(String, bool)>,
+        remote_branches: Vec<RemoteBranch>,
+        tags: Vec<Tag>,
         stashes: Vec<kagi::git::Stash>,
+        branch_upstream_info: HashMap<String, UpstreamInfo>,
+        sidebar_collapsed: HashSet<&'static str>,
+        sidebar_filter: Option<Entity<InputState>>,
         is_dirty: bool,
         sidebar_width: f32,
         panel_width: f32,
@@ -4085,7 +4192,12 @@ impl KagiApp {
             // status bar out of the window on small window sizes (user report).
             .min_h(px(0.))
             // ── Left sidebar ──────────────────────────
-            .child(render_sidebar(&branches, &stashes, sidebar_width, cx))
+            .child(sidebar::render_sidebar(
+                &branches, &remote_branches, &tags, &stashes,
+                &branch_upstream_info, &self.commit_row_index,
+                &sidebar_collapsed, sidebar_filter,
+                sidebar_width, cx,
+            ))
             // ── Sidebar divider ───────────────────────
             .child(divider1)
             // ── Center column: full-width diff (T-UI-003) or the commit
@@ -5461,167 +5573,6 @@ fn render_status_footer(status: FooterStatus) -> impl IntoElement {
         .text_color(rgb(text_color))
         .overflow_hidden()
         .child(text)
-}
-
-// ──────────────────────────────────────────────────────────────
-// Sidebar renderer (T013)
-// ──────────────────────────────────────────────────────────────
-
-/// Render the left sidebar showing local branches and stash entries.
-///
-/// - Local branches: clicking the HEAD branch does nothing (already checked out).
-///   Clicking any other branch opens the checkout plan modal.
-/// - Stash entries: clicking any stash entry opens the stash apply modal.
-/// - `width` — the current sidebar width in pixels (T023: user-resizable).
-fn render_sidebar(
-    branches: &[(String, bool)],
-    stashes: &[Stash],
-    width: f32,
-    cx: &mut Context<KagiApp>,
-) -> impl IntoElement {
-    // Scrollable inner column: every row keeps its natural height
-    // (flex_shrink_0) and the column scrolls when content exceeds the
-    // sidebar height.  Without this, flex squeezed rows together on small
-    // windows (overlapping text) instead of scrolling (user report).
-    let mut col = div()
-        .id("sidebar-scroll")
-        .flex_1()
-        .min_h(px(0.))
-        .overflow_y_scroll()
-        .flex()
-        .flex_col()
-        .py_2()
-        // ── LOCAL BRANCHES label ──────────────────────────
-        .child(
-            div()
-                .px_3()
-                .py_1()
-                .flex_shrink_0()
-                .text_sm()
-                .text_color(rgb(TEXT_MUTED))
-                .child(SharedString::from("LOCAL BRANCHES")),
-        );
-
-    for (branch_name, is_head) in branches {
-        let label = if *is_head {
-            SharedString::from(format!("\u{2713} {}", branch_name))
-        } else {
-            SharedString::from(branch_name.clone())
-        };
-        let text_color = if *is_head { COLOR_SUCCESS } else { TEXT_MAIN };
-        let branch_for_click = branch_name.clone();
-        let is_head = *is_head;
-
-        let row = if is_head {
-            // HEAD branch: not clickable.
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .flex_shrink_0()
-                .px_3()
-                .py_1()
-                .text_sm()
-                .text_color(rgb(text_color))
-                .overflow_hidden()
-                .child(label)
-                .into_any()
-        } else {
-            // T028: single-click = jump to branch tip commit in graph;
-            //        double-click = open checkout plan modal.
-            // ClickEvent::click_count() returns the OS-level click count:
-            //   1 = single click, 2 = double-click.
-            // Note: for a double-click, gpui fires the on_click handler TWICE:
-            // once with click_count=1 and once with click_count=2.  This means
-            // the first click always performs the jump first — which is the
-            // natural / intended behaviour (same as GitKraken).
-            let click_handler = cx.listener(move |this, event: &gpui::ClickEvent, _window, cx| {
-                if event.click_count() >= 2 {
-                    // Double-click: open the checkout plan modal.
-                    this.open_plan_modal(branch_for_click.clone());
-                } else {
-                    // Single-click: jump (scroll + select) to the branch tip.
-                    this.jump_to_branch(&branch_for_click);
-                }
-                cx.notify();
-            });
-            div()
-                .id(SharedString::from(format!("sidebar-branch-{}", branch_name)))
-                .flex()
-                .flex_row()
-                .items_center()
-                .flex_shrink_0()
-                .px_3()
-                .py_1()
-                .text_sm()
-                .text_color(rgb(text_color))
-                .overflow_hidden()
-                .on_click(click_handler)
-                .hover(|style| style.bg(rgb(BG_SURFACE)))
-                .child(label)
-                .into_any()
-        };
-
-        col = col.child(row);
-    }
-
-    // ── STASHES section ──────────────────────────────────
-    if !stashes.is_empty() {
-        col = col.child(
-            div()
-                .px_3()
-                .pt_3()
-                .pb_1()
-                .flex_shrink_0()
-                .text_sm()
-                .text_color(rgb(TEXT_MUTED))
-                .child(SharedString::from("STASHES")),
-        );
-
-        for stash in stashes {
-            let idx = stash.index;
-            // Display as "stash@{N}: <message>", truncated.
-            let raw_label = format!("stash@{{{}}}: {}", idx, stash.message);
-            const MAX_STASH_CHARS: usize = 28;
-            let display_label = if raw_label.chars().count() > MAX_STASH_CHARS {
-                let tail: String = raw_label.chars().take(MAX_STASH_CHARS - 1).collect();
-                format!("{}\u{2026}", tail)
-            } else {
-                raw_label
-            };
-
-            let click_handler = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                this.open_stash_apply_modal(idx);
-                cx.notify();
-            });
-
-            col = col.child(
-                div()
-                    .id(("sidebar-stash", idx))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .flex_shrink_0()
-                    .px_3()
-                    .py_1()
-                    .text_sm()
-                    .text_color(rgb(COLOR_WARNING))
-                    .on_click(click_handler)
-                    .hover(|style| style.bg(rgb(BG_SURFACE)))
-                    .child(SharedString::from(display_label)),
-            );
-        }
-    }
-
-    // Fixed-width outer shell; the inner column scrolls.
-    div()
-        .w(px(width))
-        .flex_shrink_0()
-        .h_full()
-        .flex()
-        .flex_col()
-        .bg(rgb(BG_SIDEBAR))
-        .child(col)
 }
 
 // ──────────────────────────────────────────────────────────────

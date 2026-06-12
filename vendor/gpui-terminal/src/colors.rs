@@ -108,6 +108,9 @@ pub struct ColorPalette {
 
     /// Default cursor color
     cursor: Hsla,
+
+    // kagi: background colour used to highlight selected text.
+    selection: Hsla,
 }
 
 impl Default for ColorPalette {
@@ -246,6 +249,14 @@ impl Default for ColorPalette {
             g: 0xff,
             b: 0xff,
         }); // White
+        // kagi: default selection highlight — a translucent slate blue that
+        // reads well over both light and dark cells.
+        let selection = Hsla {
+            h: 210.0 / 360.0,
+            s: 0.5,
+            l: 0.5,
+            a: 0.4,
+        };
 
         Self {
             ansi_colors,
@@ -253,6 +264,7 @@ impl Default for ColorPalette {
             foreground,
             background,
             cursor,
+            selection,
         }
     }
 }
@@ -390,6 +402,11 @@ impl ColorPalette {
     pub fn cursor(&self) -> Hsla {
         self.cursor
     }
+
+    // kagi: gets the selection highlight color.
+    pub fn selection(&self) -> Hsla {
+        self.selection
+    }
 }
 
 /// Converts an RGB color to GPUI's Hsla color format.
@@ -480,6 +497,15 @@ impl ColorPaletteBuilder {
     /// Sets the cursor color.
     pub fn cursor(mut self, r: u8, g: u8, b: u8) -> Self {
         self.palette.cursor = rgb_to_hsla(Rgb { r, g, b });
+        self
+    }
+
+    // kagi: sets the selection highlight color, including its alpha (0-255).
+    // A translucent alpha lets the underlying text remain visible.
+    pub fn selection(mut self, r: u8, g: u8, b: u8, a: u8) -> Self {
+        let mut hsla = rgb_to_hsla(Rgb { r, g, b });
+        hsla.a = a as f32 / 255.0;
+        self.palette.selection = hsla;
         self
     }
 

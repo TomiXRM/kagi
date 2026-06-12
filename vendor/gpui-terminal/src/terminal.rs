@@ -456,6 +456,72 @@ mod tests {
         });
     }
 
+    // kagi: prove that the selection copy path (Term::bounds_to_string over a
+    // viewport-relative range) extracts the expected text from the grid. This
+    // mirrors what TerminalView::selection_text does for Cmd/Ctrl+C.
+    #[test]
+    fn test_bounds_to_string_extracts_selection() {
+        use alacritty_terminal::index::{Column, Line, Point};
+
+        let (tx, _rx) = channel();
+        let event_proxy = GpuiEventProxy::new(tx);
+        let mut terminal = TerminalState::new(80, 24, event_proxy);
+
+        terminal.process_bytes(b"hello world");
+
+        // Select columns 0..=4 on line 0 -> "hello".
+        let text = terminal.with_term(|term| {
+            term.bounds_to_string(
+                Point::new(Line(0), Column(0)),
+                Point::new(Line(0), Column(4)),
+            )
+        });
+        assert_eq!(text, "hello");
+
+        // Select the whole written span -> "hello world".
+        let text = terminal.with_term(|term| {
+            term.bounds_to_string(
+                Point::new(Line(0), Column(0)),
+                Point::new(Line(0), Column(10)),
+            )
+        });
+        assert_eq!(text, "hello world");
+    }
+
+    // kagi: word/line expansion used by double/triple click selection. Verify
+    // the semantic and line search helpers we rely on return sensible bounds.
+    #[test]
+    fn test_semantic_and_line_search_expansion() {
+        use alacritty_terminal::index::{Column, Line, Point};
+
+        let (tx, _rx) = channel();
+        let event_proxy = GpuiEventProxy::new(tx);
+        let mut terminal = TerminalState::new(80, 24, event_proxy);
+
+        terminal.process_bytes(b"foo bar");
+
+        // Double-click in "bar" (col 5) should expand to the whole word.
+        let origin = Point::new(Line(0), Column(5));
+        let (start, end) = terminal.with_term(|term| {
+            (
+                term.semantic_search_left(origin),
+                term.semantic_search_right(origin),
+            )
+        });
+        let word = terminal.with_term(|term| term.bounds_to_string(start, end));
+        assert_eq!(word, "bar");
+
+        // Triple-click anywhere on the line expands to the full line.
+        let (lstart, lend) = terminal.with_term(|term| {
+            (
+                term.line_search_left(origin),
+                term.line_search_right(origin),
+            )
+        });
+        let line = terminal.with_term(|term| term.bounds_to_string(lstart, lend));
+        assert!(line.starts_with("foo bar"));
+    }
+
     #[test]
     fn test_term_arc() {
         let (tx, _rx) = channel();

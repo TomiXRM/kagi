@@ -50,13 +50,38 @@
 use crate::colors::ColorPalette;
 use crate::event::{GpuiEventProxy, TerminalEvent};
 use crate::input::keystroke_to_bytes;
+// kagi: mouse selection support (text selection + Cmd/Ctrl+C copy).
+use crate::mouse::{
+    Selection, SelectionType, clamp_point_to_grid, pixel_to_cell, selection_type_from_clicks,
+};
+use alacritty_terminal::index::Point as AlacPoint;
 use crate::render::TerminalRenderer;
 use crate::terminal::TerminalState;
 use gpui::{Edges, *};
+use std::cell::Cell;
 use std::io::{Read, Write};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
+
+// kagi: geometry of the most recently painted terminal content, shared from the
+// paint closure to the mouse handlers so pixel coordinates can be converted to
+// grid cells. The paint closure measures the true cell dimensions from the font,
+// so this is the authoritative source for the coordinate transform.
+#[derive(Clone, Copy, Debug)]
+struct PaintGeometry {
+    /// Top-left of the content area (bounds origin + top/left padding).
+    origin: Point<Pixels>,
+    /// Measured cell width in pixels.
+    cell_width: Pixels,
+    /// Measured cell height in pixels.
+    cell_height: Pixels,
+    /// Number of visible columns.
+    cols: usize,
+    /// Number of visible rows.
+    rows: usize,
+}
 
 /// Configuration for terminal creation and runtime updates.
 ///
@@ -411,6 +436,18 @@ pub struct TerminalView {
 
     /// Callback for terminal exit events
     exit_callback: Option<ExitCallback>,
+
+    // kagi: current text selection, if any. Highlighted on paint and copied on
+    // Cmd/Ctrl+C. `None` when there is no active selection.
+    selection: Option<Selection>,
+
+    // kagi: true while a drag is in progress (between mouse-down and mouse-up).
+    selecting: bool,
+
+    // kagi: geometry of the last painted frame, written by the paint closure and
+    // read by the mouse handlers to map pixels -> grid cells. Single-threaded
+    // (entity main thread), so a plain Rc<Cell<_>> is sufficient.
+    geometry: Rc<Cell<Option<PaintGeometry>>>,
 }
 
 impl TerminalView {
@@ -532,6 +569,10 @@ impl TerminalView {
             title_callback: None,
             clipboard_store_callback: None,
             exit_callback: None,
+            // kagi: selection state starts empty.
+            selection: None,
+            selecting: false,
+            geometry: Rc::new(Cell::new(None)),
         }
     }
 
@@ -715,7 +756,30 @@ impl TerminalView {
     /// Converts GPUI keystrokes to terminal escape sequences and writes them
     /// to the stdin writer. If a key handler is set and returns true, the event
     /// is consumed and not sent to the terminal.
-    fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, _cx: &mut Context<Self>) {
+    fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        // kagi: handle the copy shortcut before anything else. The platform
+        // modifier (Cmd on macOS, Super on Linux/Windows) + "c" copies the
+        // current selection to the system clipboard. This deliberately does not
+        // use the Control modifier, so the conventional Ctrl+C SIGINT continues
+        // to flow through keystroke_to_bytes (0x03) untouched. No-op when there
+        // is no selection.
+        let ks = &event.keystroke;
+        if ks.modifiers.platform
+            && !ks.modifiers.control
+            && !ks.modifiers.alt
+            && ks.key == "c"
+        {
+            if let Some(text) = self.selection_text() {
+                if !text.is_empty() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                }
+            }
+            // Consume the event regardless of whether there was a selection, so
+            // the literal "c" is never written to the PTY for this chord.
+            cx.stop_propagation();
+            return;
+        }
+
         // Check if key handler wants to consume this event
         if let Some(ref handler) = self.key_handler
             && handler(event)
@@ -724,6 +788,12 @@ impl TerminalView {
         }
 
         if let Some(bytes) = keystroke_to_bytes(&event.keystroke, self.state.mode()) {
+            // kagi: clearing the selection on real input matches common terminal
+            // behaviour (the selection is no longer meaningful once the buffer
+            // changes). Only notify when something was actually cleared.
+            if self.selection.take().is_some() {
+                cx.notify();
+            }
             let mut writer = self.stdin_writer.lock();
             let _ = writer.write_all(&bytes);
             let _ = writer.flush();
@@ -732,49 +802,136 @@ impl TerminalView {
 
     /// Handle mouse down events.
     ///
-    /// Currently a placeholder for future mouse selection and interaction support.
+    /// kagi: starts a text selection at the clicked cell. The click count
+    /// selects by character (single), word (double) or line (triple).
     fn on_mouse_down(
         &mut self,
-        _event: &MouseDownEvent,
+        event: &MouseDownEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         // Request focus when clicking the terminal
         window.focus(&self.focus_handle);
-        cx.notify();
 
-        // TODO: Implement mouse selection
-        // - Convert pixel coordinates to cell coordinates
-        // - Start selection at clicked cell
-        // - Send mouse reports if mouse tracking is enabled
+        // kagi: map the click position to a grid cell using the geometry
+        // captured during the last paint. If we have not painted yet there is
+        // nothing meaningful to select.
+        let Some(point) = self.position_to_point(event.position) else {
+            // Clear any stale selection and repaint.
+            if self.selection.take().is_some() {
+                cx.notify();
+            }
+            return;
+        };
+
+        let sel_type = selection_type_from_clicks(event.click_count);
+
+        // kagi: expand the anchor point according to the selection type. Word
+        // and line expansion use alacritty's semantic/line search so the
+        // behaviour matches the rest of the ecosystem.
+        let (start, end) = self.expand_selection(point, sel_type);
+
+        self.selection = Some(Selection::new(start, end, sel_type));
+        self.selecting = true;
+        cx.notify();
     }
 
     /// Handle mouse up events.
     ///
-    /// Currently a placeholder for future mouse selection support.
-    fn on_mouse_up(
-        &mut self,
-        _event: &MouseUpEvent,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
-        // TODO: Implement mouse selection
-        // - End selection at released cell
-        // - Copy selection to clipboard if configured
+    /// kagi: finalizes the in-progress selection. The selection is kept so it
+    /// can be copied with Cmd/Ctrl+C; a plain click (start == end, simple type)
+    /// is treated as a deselect.
+    fn on_mouse_up(&mut self, _event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.selecting {
+            return;
+        }
+        self.selecting = false;
+
+        // kagi: a single click that did not drag clears the selection (matches
+        // common terminal behaviour where clicking deselects).
+        if let Some(sel) = &self.selection {
+            if sel.selection_type == SelectionType::Simple && sel.start == sel.end {
+                self.selection = None;
+                cx.notify();
+            }
+        }
     }
 
     /// Handle mouse move events.
     ///
-    /// Currently a placeholder for future mouse selection support.
-    fn on_mouse_move(
-        &mut self,
-        _event: &MouseMoveEvent,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
-        // TODO: Implement mouse selection
-        // - Update selection range while dragging
-        // - Send mouse motion reports if mouse tracking is enabled
+    /// kagi: while a drag is in progress, extends the active selection to the
+    /// cell under the cursor. Only notifies when the endpoint actually changes,
+    /// to avoid repainting every frame.
+    fn on_mouse_move(&mut self, event: &MouseMoveEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.selecting {
+            return;
+        }
+
+        let Some(point) = self.position_to_point(event.position) else {
+            return;
+        };
+
+        if let Some(sel) = &self.selection {
+            // kagi: re-expand from the original anchor so word/line drags keep
+            // selecting whole words/lines. The anchor is the un-expanded start,
+            // which for Simple selections is just `sel.start`.
+            let anchor = sel.start;
+            let sel_type = sel.selection_type;
+            let (_, new_end) = self.expand_selection(point, sel_type);
+            if new_end != sel.end {
+                self.selection = Some(Selection::new(anchor, new_end, sel_type));
+                cx.notify();
+            }
+        }
+    }
+
+    // kagi: convert an absolute window pixel position into a grid Point, clamped
+    // to the visible viewport. Returns `None` when no frame has been painted yet.
+    fn position_to_point(&self, position: Point<Pixels>) -> Option<AlacPoint> {
+        let geo = self.geometry.get()?;
+        if geo.cols == 0 || geo.rows == 0 {
+            return None;
+        }
+        let raw = pixel_to_cell(position, geo.origin, geo.cell_width, geo.cell_height);
+        // Clamp into the visible grid (v0: dragging outside the viewport clamps
+        // to the nearest edge cell rather than scrolling the scrollback).
+        Some(clamp_point_to_grid(raw, geo.cols, geo.rows))
+    }
+
+    // kagi: expand an anchor point for word/line selections, returning the
+    // (start, end) endpoints. Simple selections return the point unchanged.
+    fn expand_selection(
+        &self,
+        point: AlacPoint,
+        sel_type: SelectionType,
+    ) -> (AlacPoint, AlacPoint) {
+        match sel_type {
+            SelectionType::Simple => (point, point),
+            SelectionType::Word => self.state.with_term(|term| {
+                (
+                    term.semantic_search_left(point),
+                    term.semantic_search_right(point),
+                )
+            }),
+            SelectionType::Line => self.state.with_term(|term| {
+                (term.line_search_left(point), term.line_search_right(point))
+            }),
+        }
+    }
+
+    // kagi: extract the currently selected text from the grid as a String,
+    // using alacritty's `bounds_to_string` (handles wrapped lines, wide chars
+    // and trailing whitespace). Returns `None` when there is no selection.
+    fn selection_text(&self) -> Option<String> {
+        let sel = self.selection.as_ref()?;
+        // bounds_to_string requires start <= end; normalise the endpoints.
+        let (start, end) = if sel.start <= sel.end {
+            (sel.start, sel.end)
+        } else {
+            (sel.end, sel.start)
+        };
+        let text = self.state.with_term(|term| term.bounds_to_string(start, end));
+        Some(text)
     }
 
     /// Handle scroll events.
@@ -920,6 +1077,10 @@ impl Render for TerminalView {
         let renderer = self.renderer.clone();
         let resize_callback = self.resize_callback.clone();
         let padding = self.config.padding;
+        // kagi: capture the current selection and a handle to publish the paint
+        // geometry, so mouse handlers can map pixels to cells next frame.
+        let selection = self.selection.clone();
+        let geometry = self.geometry.clone();
 
         div()
             .size_full()
@@ -989,8 +1150,30 @@ impl Render for TerminalView {
                             term.resize(TermSize { cols, rows });
                         }
 
-                        // Paint the terminal with measured dimensions
-                        measured_renderer.paint(bounds, padding, &term, window, cx);
+                        // kagi: publish the geometry used for this frame so the
+                        // mouse handlers can convert pixel coords to grid cells.
+                        let origin = Point {
+                            x: bounds.origin.x + padding.left,
+                            y: bounds.origin.y + padding.top,
+                        };
+                        geometry.set(Some(PaintGeometry {
+                            origin,
+                            cell_width: measured_renderer.cell_width,
+                            cell_height: measured_renderer.cell_height,
+                            cols: term.columns(),
+                            rows: term.screen_lines(),
+                        }));
+
+                        // Paint the terminal with measured dimensions. kagi: pass
+                        // the active selection so the renderer can highlight it.
+                        measured_renderer.paint(
+                            bounds,
+                            padding,
+                            &term,
+                            selection.as_ref(),
+                            window,
+                            cx,
+                        );
                     },
                 )
                 .size_full(),

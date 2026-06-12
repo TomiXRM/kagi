@@ -436,10 +436,20 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
     }
 
     if status.is_dirty() {
-        warnings.push(format!(
-            "Working tree is dirty ({}). Safe checkout may fail; stash or commit first.",
-            dirty_display
-        ));
+        // BUG-2: in-memory dry-run. A safe-mode `checkout_tree` only fails when a
+        // locally-modified tracked path overlaps a path the checkout would
+        // rewrite (HEAD-tree → target-tree diff). If the dirty paths overlap that
+        // set, the green "proceed" plan would error in the footer — promote the
+        // warning to a blocker so the plan matches what execute actually does.
+        match predict_checkout_commit_conflict(repo, &head, target_oid, &status) {
+            Some(blocker) => blockers.push(blocker),
+            None => {
+                warnings.push(format!(
+                    "Working tree is dirty ({}). Safe checkout may fail; stash or commit first.",
+                    dirty_display
+                ));
+            }
+        }
     }
 
     let target_short = id.short().to_string();
@@ -481,6 +491,72 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
         preview_commits: Vec::new(),
         destructive: false,
     })
+}
+
+/// BUG-2 dry-run: predict whether a safe-mode checkout of `target_oid` would be
+/// refused because a locally-modified tracked path overlaps a path the checkout
+/// must rewrite.
+///
+/// Mirrors [`predict_stash_pop_conflict`] in spirit: pure in-memory analysis,
+/// **never** touches the working tree or HEAD. Returns `Some(blocker)` when the
+/// dirty (staged or unstaged) tracked paths intersect the HEAD-tree → target-tree
+/// diff. Untracked files cannot conflict with a safe checkout, so they are
+/// ignored here (libgit2 leaves them in place). On any analysis failure we return
+/// `None` (fall back to the existing warning) — never invent a blocker we cannot
+/// substantiate.
+fn predict_checkout_commit_conflict(
+    repo: &Repository,
+    head: &super::Head,
+    target_oid: git2::Oid,
+    status: &super::status::WorkingTreeStatus,
+) -> Option<String> {
+    // Resolve the current HEAD tree (the baseline the checkout diffs against).
+    let head_oid = match head {
+        super::Head::Attached { target, .. } | super::Head::Detached { target } => {
+            git2::Oid::from_str(target).ok()?
+        }
+        super::Head::Unborn { .. } => return None,
+    };
+    let head_tree = repo.find_commit(head_oid).ok()?.tree().ok()?;
+    let target_tree = repo.find_commit(target_oid).ok()?.tree().ok()?;
+
+    // Paths the checkout would write (anything that differs between the two trees).
+    let mut touched: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let diff = repo
+        .diff_tree_to_tree(Some(&head_tree), Some(&target_tree), None)
+        .ok()?;
+    for delta in diff.deltas() {
+        if let Some(p) = delta.old_file().path() {
+            touched.insert(p.to_string_lossy().into_owned());
+        }
+        if let Some(p) = delta.new_file().path() {
+            touched.insert(p.to_string_lossy().into_owned());
+        }
+    }
+    if touched.is_empty() {
+        return None;
+    }
+
+    // Locally-modified tracked paths (staged + unstaged). Untracked excluded.
+    let mut overlap: Vec<String> = Vec::new();
+    for f in status.staged.iter().chain(status.unstaged.iter()) {
+        let p = f.path.to_string_lossy().into_owned();
+        if touched.contains(&p) && !overlap.contains(&p) {
+            overlap.push(p);
+        }
+    }
+    if overlap.is_empty() {
+        return None;
+    }
+    overlap.sort();
+
+    Some(format!(
+        "Working tree has local changes to {} file(s) that the target commit also \
+         modifies: {}. Safe checkout would be refused (1 conflict prevents checkout). \
+         Stash or commit these changes first.",
+        overlap.len(),
+        overlap.join(", ")
+    ))
 }
 
 /// Execute a detached commit checkout using **safe mode only**.

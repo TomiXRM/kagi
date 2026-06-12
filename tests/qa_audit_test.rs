@@ -269,12 +269,50 @@ fn checkout_commit_dirty_plan_warns_but_does_not_block() {
         .unwrap();
     let plan = plan_checkout_commit(&repo, &CommitId(parent.to_string())).unwrap();
 
-    // KNOWN GAP: dirty tree is a warning, never a blocker — even though execute
-    // may fail on overlapping files. (docs/research/qa-audit-matrix.md BUG-2.)
-    assert!(plan.blockers.is_empty(), "current behaviour: no blocker");
+    // W15-ASYNCOPS / BUG-2: a *non-overlapping* dirty file (README.md is staged
+    // but identical between HEAD and the parent — the parent→HEAD diff only
+    // touches f2.txt) stays a warning. Safe checkout succeeds; no blocker.
+    assert!(
+        plan.blockers.is_empty(),
+        "non-overlapping dirty tree must not block"
+    );
     assert!(
         plan.warnings.iter().any(|w| w.to_lowercase().contains("dirty")),
         "must at least warn about the dirty tree"
+    );
+}
+
+#[test]
+fn checkout_commit_overlapping_dirty_plan_blocks() {
+    // W15-ASYNCOPS / BUG-2: the 'mixed' repro — an uncommitted edit to a file
+    // that the target commit also modifies. The in-memory dry-run must promote
+    // the dirty warning to a *blocker* so the plan matches what `execute` does
+    // (safe checkout would otherwise refuse in the footer after a green plan).
+    let tmp = TempDir::new().unwrap();
+    let (d, repo) = build_repo(&tmp);
+
+    // f2.txt now differs between HEAD and HEAD~1 (committed) …
+    write_file(&d, "f2.txt", "second\nthird-commit\n");
+    git(&d, &["commit", "-qam", "third"]);
+    // … and has an uncommitted edit overlapping that diff.
+    write_file(&d, "f2.txt", "second\nlocal-uncommitted\n");
+
+    let parent = repo
+        .head()
+        .unwrap()
+        .peel_to_commit()
+        .unwrap()
+        .parent_id(0)
+        .unwrap();
+    let plan = plan_checkout_commit(&repo, &CommitId(parent.to_string())).unwrap();
+
+    assert!(
+        !plan.blockers.is_empty(),
+        "overlapping dirty file must be a blocker (plan/execute agreement)"
+    );
+    assert!(
+        plan.blockers.iter().any(|b| b.contains("f2.txt")),
+        "blocker should name the conflicting file"
     );
 }
 

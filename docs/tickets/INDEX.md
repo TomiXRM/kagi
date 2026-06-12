@@ -115,3 +115,4 @@
 | W6-TABSPEED | tab 切替高速化(キャッシュ + 非同期読込、ADR-0030) | W4-TABS | in-progress |
 | W7-INSPECTOR2 | Inspector レイアウト再設計(message スクロール枠 + 1:1 リサイズ) | ADR-0015 | in-progress |
 | W8-TERMSEL | ターミナル選択 + Cmd+C(vendored gpui-terminal、ADR-0035) | ADR-0035 | in-progress |
+| W9-THEME | カラーテーマ6種 + メニュー切替(ADR-0036) | ADR-0029 | in-progress |

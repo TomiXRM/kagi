@@ -1250,6 +1250,13 @@ pub struct KagiApp {
     /// Collapsed sections in the sidebar (HashSet of section keys).
     /// Preserved across reloads so the user's collapse state survives checkout.
     pub sidebar_collapsed: HashSet<&'static str>,
+    /// W13-BRANCHTREE: collapsed branch *groups* (the `/`-prefix sub-trees
+    /// inside LOCAL / REMOTE BRANCHES). Keys are dynamic strings of the form
+    /// `local:feat` / `remote:origin` — hence a separate `HashSet<String>`
+    /// rather than the `&'static str` `sidebar_collapsed` above.
+    /// Default-expanded (a key present ⇒ that group is collapsed), mirroring
+    /// `sidebar_collapsed` semantics. Preserved across reloads.
+    pub branch_groups_collapsed: HashSet<String>,
     /// Lazy InputState for the sidebar filter input (gpui-component IME対応).
     /// Created on first click of the filter area (requires &mut Window).
     pub sidebar_filter: Option<Entity<InputState>>,
@@ -1562,6 +1569,7 @@ impl KagiApp {
             worktrees,
             branch_upstream_info,
             sidebar_collapsed: HashSet::new(),
+            branch_groups_collapsed: HashSet::new(),
             sidebar_filter: None,
             // W3-NOTIFY
             toasts: Vec::new(),
@@ -1651,6 +1659,7 @@ impl KagiApp {
             worktrees: Vec::new(),
             branch_upstream_info: HashMap::new(),
             sidebar_collapsed: HashSet::new(),
+            branch_groups_collapsed: HashSet::new(),
             sidebar_filter: None,
             // W3-NOTIFY
             toasts: Vec::new(),
@@ -1745,6 +1754,8 @@ impl KagiApp {
         // so the Operation Log keeps its contents across repository reloads.
         // sidebar_collapsed / sidebar_filter are preserved so the user's
         // collapse + filter state survives reload.
+        // W13-BRANCHTREE: branch_groups_collapsed is likewise preserved so the
+        // user's per-group ▸/▾ state survives checkout/reload.
 
         // ADR-0030 §5: keep the stale-while-revalidate cache fresh.
         self.tab_cache.insert(repo_path.clone(), view.clone());
@@ -5803,6 +5814,7 @@ impl Render for KagiApp {
         let worktrees = self.worktrees.clone();
         let branch_upstream_info = self.branch_upstream_info.clone();
         let sidebar_collapsed = self.sidebar_collapsed.clone();
+        let branch_groups_collapsed = self.branch_groups_collapsed.clone();
         let sidebar_filter = self.sidebar_filter.clone();
         let plan_modal = self.plan_modal.clone();
         let pull_modal = self.pull_modal.clone();
@@ -6051,7 +6063,7 @@ impl Render for KagiApp {
                 row_count, selected, detail, changed_files, selected_badges, inspector_tree_view,
                 main_diff, compare_view, main_diff_scroll_handle,
                 branches, remote_branches, tags, stashes, worktrees, branch_upstream_info,
-                sidebar_collapsed, sidebar_filter,
+                sidebar_collapsed, branch_groups_collapsed, sidebar_filter,
                 is_dirty, sidebar_width, panel_width,
                 badge_col_w, graph_col_w, commit_scroll_handle,
                 commit_panel_open, commit_panel.clone(), commit_input.clone(),
@@ -6622,6 +6634,7 @@ impl KagiApp {
         worktrees: Vec<Worktree>,
         branch_upstream_info: HashMap<String, UpstreamInfo>,
         sidebar_collapsed: HashSet<&'static str>,
+        branch_groups_collapsed: HashSet<String>,
         sidebar_filter: Option<Entity<InputState>>,
         is_dirty: bool,
         sidebar_width: f32,
@@ -6885,7 +6898,7 @@ impl KagiApp {
                 el.child(sidebar::render_sidebar(
                     &branches, &remote_branches, &tags, &stashes, &worktrees,
                     &branch_upstream_info, &self.commit_row_index,
-                    &sidebar_collapsed, sidebar_filter,
+                    &sidebar_collapsed, &branch_groups_collapsed, sidebar_filter,
                     sidebar_width, cx,
                 ))
                 // ── Sidebar divider ───────────────────────

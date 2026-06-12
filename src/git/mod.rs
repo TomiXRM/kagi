@@ -34,6 +34,8 @@ pub use ops::{
     OperationPlan, StateSummary,
     execute_checkout, execute_checkout_commit, plan_checkout, plan_checkout_commit, preflight_check,
     plan_create_branch, execute_create_branch,
+    plan_create_branch_with_checkout,
+    plan_create_worktree, execute_create_worktree, validate_worktree_path,
     plan_stash_push, execute_stash_push,
     plan_stash_apply, execute_stash_apply,
     plan_stash_pop, execute_stash_pop,
@@ -46,7 +48,7 @@ pub use ops::{
     fetch_remote, FetchOutcome,
 };
 #[allow(unused_imports)]
-pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo};
+pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
 #[allow(unused_imports)]
 pub use snapshot::{RepoSnapshot, snapshot};
 #[allow(unused_imports)]

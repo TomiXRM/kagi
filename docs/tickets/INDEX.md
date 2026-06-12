@@ -85,11 +85,11 @@
 | T-CM-011 | Copy short SHA | T-CM-010 | todo |
 | T-CM-012 | Copy commit message | T-CM-010 | todo |
 | T-CM-013 | Show commit details(selection 統合) | T-CM-002, T-CM-003 | todo |
-| T-CM-020 | Create branch here の plan 統合(checkout オプション込み) | T-CM-003, ADR-0022(既存 plan_create_branch) | todo |
-| T-CM-021 | Create branch dialog の menu 起点対応 | T-CM-020 | todo |
+| T-CM-020 | Create branch here の plan 統合(checkout オプション込み) | T-CM-003, ADR-0022(既存 plan_create_branch) | done |
+| T-CM-021 | Create branch dialog の menu 起点対応 | T-CM-020 | done |
 | T-CM-022 | Create worktree here の ADR | - | done(ADR-0025) |
-| T-CM-023 | Create worktree here の plan + 実行 | ADR-0025, T-CM-024 | todo |
-| T-CM-024 | Worktree path validation | ADR-0025 | todo |
+| T-CM-023 | Create worktree here の plan + 実行 | ADR-0025, T-CM-024 | done |
+| T-CM-024 | Worktree path validation | ADR-0025 | done |
 | T-CM-030 | Cherry-pick availability 判定 | T-CM-004 | todo |
 | T-CM-031 | Cherry-pick の menu 統合(既存 plan 流用) | T-CM-030, ADR-0022 | todo |
 | T-CM-032 | Cherry-pick conflict handling の確認・補強 | T-CM-031 | todo |

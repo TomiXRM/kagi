@@ -148,11 +148,12 @@ fn row_height(compact: bool) -> f32 {
 }
 
 use kagi::git::{
-    ChangeKind, CommitId, FileDiff, DiffLineKind, FileStatus, Head, RemoteBranch, RepoSnapshot, Stash, Tag, UpstreamInfo,
+    ChangeKind, CommitId, FileDiff, DiffLineKind, FileStatus, Head, RemoteBranch, RepoSnapshot, Stash, Tag, UpstreamInfo, Worktree,
     ops::{
         OperationPlan, StateSummary,
         execute_checkout, execute_checkout_commit, execute_create_branch,
-        plan_checkout, plan_checkout_commit, plan_create_branch, preflight_check,
+        plan_checkout, plan_checkout_commit, plan_create_branch_with_checkout, preflight_check,
+        execute_create_worktree, plan_create_worktree,
         plan_stash_push, execute_stash_push,
         plan_stash_apply, execute_stash_apply,
         plan_pull, execute_pull, PullOutcome,
@@ -935,9 +936,40 @@ pub struct PushPlanModal {
 pub struct CreateBranchModal {
     /// The commit at which the branch will be created.
     pub at: CommitId,
+    /// First line of the start commit message, used to identify menu origin.
+    pub start_title: String,
     /// Current text in the branch-name input field.
     pub input: String,
+    /// Whether to check out the new branch after creating it.
+    pub checkout_after: bool,
     /// Live plan (re-generated each keystroke from `input` and `at`).
+    pub plan: Option<std::sync::Arc<OperationPlan>>,
+    /// Error message to show if execute or preflight failed.
+    pub error: Option<SharedString>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorktreeModalField {
+    Branch,
+    Path,
+}
+
+/// State for an in-progress create-worktree confirmation.
+#[derive(Clone)]
+pub struct CreateWorktreeModal {
+    /// The commit used as the start point for the new branch.
+    pub at: CommitId,
+    /// First line of the start commit message.
+    pub start_title: String,
+    /// New branch name.
+    pub branch_input: String,
+    /// Target worktree path.
+    pub path_input: String,
+    /// True once the user has manually edited the path.
+    pub path_touched: bool,
+    /// Which field receives key input.
+    pub active_field: WorktreeModalField,
+    /// Live plan regenerated from branch/path/start.
     pub plan: Option<std::sync::Arc<OperationPlan>>,
     /// Error message to show if execute or preflight failed.
     pub error: Option<SharedString>,
@@ -1062,6 +1094,8 @@ pub struct KagiApp {
     pub push_modal: Option<PushPlanModal>,
     /// When `Some`, the create-branch modal is visible.
     pub create_branch_modal: Option<CreateBranchModal>,
+    /// When `Some`, the create-worktree modal is visible.
+    pub create_worktree_modal: Option<CreateWorktreeModal>,
     /// Focus handle used to receive keyboard events for the create-branch modal.
     /// Allocated on demand when the modal is first opened.
     pub modal_focus: Option<FocusHandle>,
@@ -1153,6 +1187,8 @@ pub struct KagiApp {
     pub remote_branches: Vec<RemoteBranch>,
     /// Tags from the snapshot (for TAGS section).
     pub tags: Vec<Tag>,
+    /// Worktrees from the snapshot (for WORKTREES section).
+    pub worktrees: Vec<Worktree>,
     /// Upstream info per local branch name (for ↑A ↓B display).
     pub branch_upstream_info: HashMap<String, UpstreamInfo>,
     /// Collapsed sections in the sidebar (HashSet of section keys).
@@ -1225,6 +1261,7 @@ pub struct TabViewState {
     pub remote_branches: Vec<RemoteBranch>,
     pub tags: Vec<Tag>,
     pub branch_upstream_info: HashMap<String, UpstreamInfo>,
+    pub worktrees: Vec<Worktree>,
 }
 
 /// W6-TABSPEED: build the pure [`TabViewState`] from a snapshot.
@@ -1322,11 +1359,12 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
 
     // W2-SIDEBAR: emit sidebar log line.
     eprintln!(
-        "[kagi] sidebar: local={} remote={} tags={} stashes={} filter=\"\"",
+        "[kagi] sidebar: local={} remote={} tags={} stashes={} worktrees={} filter=\"\"",
         snap.branches.len(),
         snap.remote_branches.len(),
         snap.tags.len(),
-        snap.stashes.len()
+        snap.stashes.len(),
+        snap.worktrees.len()
     );
 
     // T-BP-003: build StatusBarSummary and emit the headless log.
@@ -1353,6 +1391,7 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
         remote_branches,
         tags,
         branch_upstream_info,
+        worktrees: snap.worktrees.clone(),
     }
 }
 
@@ -1384,6 +1423,7 @@ impl KagiApp {
             remote_branches,
             tags,
             branch_upstream_info,
+            worktrees,
         } = view;
 
         KagiApp {
@@ -1405,6 +1445,7 @@ impl KagiApp {
             pop_modal: None,
             push_modal: None,
             create_branch_modal: None,
+            create_worktree_modal: None,
             modal_focus: None,
             stashes,
             is_dirty,
@@ -1440,6 +1481,7 @@ impl KagiApp {
             // W2-SIDEBAR
             remote_branches,
             tags,
+            worktrees,
             branch_upstream_info,
             sidebar_collapsed: HashSet::new(),
             sidebar_filter: None,
@@ -1483,6 +1525,7 @@ impl KagiApp {
             pop_modal: None,
             push_modal: None,
             create_branch_modal: None,
+            create_worktree_modal: None,
             modal_focus: None,
             stashes: Vec::new(),
             is_dirty: false,
@@ -1518,6 +1561,7 @@ impl KagiApp {
             // W2-SIDEBAR
             remote_branches: Vec::new(),
             tags: Vec::new(),
+            worktrees: Vec::new(),
             branch_upstream_info: HashMap::new(),
             sidebar_collapsed: HashSet::new(),
             sidebar_filter: None,
@@ -1587,6 +1631,7 @@ impl KagiApp {
         self.undo_modal = None;
         self.pop_modal = None;
         self.create_branch_modal = None;
+        self.create_worktree_modal = None;
         self.modal_focus = None;
         self.stash_push_modal = None;
         self.stash_apply_modal = None;
@@ -1638,6 +1683,7 @@ impl KagiApp {
         // W2-SIDEBAR: refresh remote_branches, tags, and upstream info.
         self.remote_branches = view.remote_branches;
         self.tags = view.tags;
+        self.worktrees = view.worktrees;
         self.branch_upstream_info = view.branch_upstream_info;
     }
 
@@ -1773,14 +1819,32 @@ impl KagiApp {
         if self.modal_focus.is_none() {
             self.modal_focus = Some(cx.focus_handle());
         }
+        let start_title = self.commit_title_for(&at);
         self.create_branch_modal = Some(CreateBranchModal {
             at,
+            start_title,
             input: String::new(),
+            checkout_after: false,
             plan: None,
             error: None,
         });
         // Re-plan immediately (empty name → blocker).
         self.replan_create_branch();
+    }
+
+    fn commit_title_for(&self, at: &CommitId) -> String {
+        self.row_for_commit_id(at)
+            .and_then(|idx| self.details.get(idx))
+            .map(|detail| {
+                detail
+                    .full_message
+                    .as_ref()
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .unwrap_or_default()
     }
 
     /// Close the create-branch modal without making any changes.
@@ -1808,6 +1872,11 @@ impl KagiApp {
 
         if key == "backspace" {
             modal.input.pop();
+        } else if key == "space" {
+            // Spaces are invalid branch-name characters; keep them out of the
+            // input so validation feedback stays focused.
+        } else if key == "tab" {
+            modal.checkout_after = !modal.checkout_after;
         } else if key.len() == 1 {
             let ch = key.chars().next().unwrap();
             // Allow: a-z A-Z 0-9 - _ / .
@@ -1821,8 +1890,8 @@ impl KagiApp {
 
     /// Re-generate the live plan from the current modal input.
     fn replan_create_branch(&mut self) {
-        let (at, name) = match self.create_branch_modal.as_ref() {
-            Some(m) => (m.at.clone(), m.input.clone()),
+        let (at, name, checkout_after) = match self.create_branch_modal.as_ref() {
+            Some(m) => (m.at.clone(), m.input.clone(), m.checkout_after),
             None => return,
         };
         let repo_path = match self.repo_path.clone() {
@@ -1836,11 +1905,12 @@ impl KagiApp {
                 return;
             }
         };
-        match plan_create_branch(&repo, &name, &at) {
+        match plan_create_branch_with_checkout(&repo, &name, &at, checkout_after) {
             Ok(plan) => {
                 eprintln!(
-                    "[kagi] plan: create-branch '{}' blockers={} warnings={}",
+                    "[kagi] plan: create-branch '{}' checkout_after={} blockers={} warnings={}",
                     name,
+                    checkout_after,
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
@@ -1951,15 +2021,349 @@ impl KagiApp {
             eprintln!("[kagi] verify: branch '{}' NOT found after create", modal.input);
         }
 
-        // Record success to oplog + update footer.
+        // Record branch creation success first. If checkout_after is on, the
+        // checkout below records its own second operation entry.
+        let create_after = StateSummary {
+            head: plan.current.head.clone(),
+            dirty: plan.current.dirty.clone(),
+        };
         self.record_op(
             "create-branch",
+            plan.current.clone(),
+            OpOutcome::Success { after: create_after.clone() },
+            &repo_path,
+        );
+
+        if modal.checkout_after {
+            let checkout_plan = match plan_checkout(&repo2, &modal.input) {
+                Ok(plan) => plan,
+                Err(e) => {
+                    let err_msg = format!("Checkout plan failed after branch creation: {}", e);
+                    self.record_op(
+                        "checkout",
+                        create_after,
+                        OpOutcome::Failed { error: err_msg.clone() },
+                        &repo_path,
+                    );
+                    if let Some(ref mut m) = self.create_branch_modal {
+                        m.error = Some(SharedString::from(err_msg));
+                    }
+                    return;
+                }
+            };
+            if !checkout_plan.blockers.is_empty() {
+                self.record_op(
+                    "checkout",
+                    checkout_plan.current.clone(),
+                    OpOutcome::Refused { blockers: checkout_plan.blockers.clone() },
+                    &repo_path,
+                );
+                if let Some(ref mut m) = self.create_branch_modal {
+                    m.error = Some(SharedString::from(
+                        "Branch created, but checkout was refused by the checkout plan.",
+                    ));
+                }
+                return;
+            }
+            if let Err(e) = preflight_check(&repo2, &checkout_plan) {
+                let err_msg = format!("Checkout preflight failed: {}", e);
+                self.record_op(
+                    "checkout",
+                    checkout_plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() },
+                    &repo_path,
+                );
+                if let Some(ref mut m) = self.create_branch_modal {
+                    m.error = Some(SharedString::from(err_msg));
+                }
+                return;
+            }
+            if let Err(e) = execute_checkout(&repo2, &modal.input) {
+                let err_msg = format!("Checkout failed: {}", e);
+                self.record_op(
+                    "checkout",
+                    checkout_plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() },
+                    &repo_path,
+                );
+                if let Some(ref mut m) = self.create_branch_modal {
+                    m.error = Some(SharedString::from(err_msg));
+                }
+                return;
+            }
+            eprintln!("[kagi] executed: checkout {}", modal.input);
+            self.record_op(
+                "checkout",
+                checkout_plan.current.clone(),
+                OpOutcome::Success { after: checkout_plan.predicted.clone() },
+                &repo_path,
+            );
+        }
+
+        // Reload display data (new branch badge should appear).
+        self.reload();
+    }
+
+    // ── Create-worktree modal (T-CM-023) ─────────────────────
+
+    pub fn open_create_worktree_modal(&mut self, at: CommitId, cx: &mut Context<Self>) {
+        if self.modal_focus.is_none() {
+            self.modal_focus = Some(cx.focus_handle());
+        }
+        let start_title = self.commit_title_for(&at);
+        let branch_input = String::new();
+        let path_input = self.default_worktree_path("new-branch");
+        self.create_worktree_modal = Some(CreateWorktreeModal {
+            at,
+            start_title,
+            branch_input,
+            path_input,
+            path_touched: false,
+            active_field: WorktreeModalField::Branch,
+            plan: None,
+            error: None,
+        });
+        self.replan_create_worktree();
+    }
+
+    pub fn cancel_create_worktree_modal(&mut self) {
+        self.create_worktree_modal = None;
+    }
+
+    fn default_worktree_path(&self, branch: &str) -> String {
+        let repo_path = match self.repo_path.as_ref() {
+            Some(path) => path,
+            None => return String::new(),
+        };
+        let repo_name = repo_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("repo");
+        let safe_branch: String = branch
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+                    ch
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        let safe_branch = if safe_branch.is_empty() {
+            "new-branch".to_string()
+        } else {
+            safe_branch
+        };
+        format!("../{}-worktrees/{}", repo_name, safe_branch)
+    }
+
+    pub fn set_worktree_modal_field(&mut self, field: WorktreeModalField) {
+        if let Some(ref mut modal) = self.create_worktree_modal {
+            modal.active_field = field;
+        }
+    }
+
+    pub fn handle_create_worktree_key(&mut self, event: &KeyDownEvent) {
+        let mut branch_for_default: Option<String> = None;
+        {
+            let modal = match self.create_worktree_modal.as_mut() {
+                Some(m) => m,
+                None => return,
+            };
+            let key = &event.keystroke.key;
+            let modifiers = &event.keystroke.modifiers;
+
+            if modifiers.platform || modifiers.control || modifiers.alt {
+                return;
+            }
+
+            if key == "tab" {
+                modal.active_field = match modal.active_field {
+                    WorktreeModalField::Branch => WorktreeModalField::Path,
+                    WorktreeModalField::Path => WorktreeModalField::Branch,
+                };
+                return;
+            }
+
+            match modal.active_field {
+                WorktreeModalField::Branch => {
+                    if key == "backspace" {
+                        modal.branch_input.pop();
+                    } else if key.len() == 1 {
+                        let ch = key.chars().next().unwrap();
+                        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '/' || ch == '.' {
+                            modal.branch_input.push(ch);
+                        }
+                    }
+                    if !modal.path_touched {
+                        branch_for_default = Some(modal.branch_input.clone());
+                    }
+                }
+                WorktreeModalField::Path => {
+                    modal.path_touched = true;
+                    if key == "backspace" {
+                        modal.path_input.pop();
+                    } else if key == "space" {
+                        modal.path_input.push(' ');
+                    } else if key.len() == 1 {
+                        let ch = key.chars().next().unwrap();
+                        if !ch.is_control() {
+                            modal.path_input.push(ch);
+                        }
+                    }
+                }
+            }
+            modal.error = None;
+        }
+
+        if let Some(branch) = branch_for_default {
+            let next_path = self.default_worktree_path(&branch);
+            if let Some(ref mut modal) = self.create_worktree_modal {
+                modal.path_input = next_path;
+            }
+        }
+        self.replan_create_worktree();
+    }
+
+    fn replan_create_worktree(&mut self) {
+        let (at, branch, path) = match self.create_worktree_modal.as_ref() {
+            Some(m) => (m.at.clone(), m.branch_input.clone(), m.path_input.clone()),
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] replan_create_worktree: repo open error: {}", e.message());
+                return;
+            }
+        };
+        match plan_create_worktree(&repo, &branch, &path, &at) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: create-worktree '{}' path='{}' blockers={} warnings={}",
+                    branch,
+                    path,
+                    plan.blockers.len(),
+                    plan.warnings.len()
+                );
+                if let Some(ref mut modal) = self.create_worktree_modal {
+                    modal.plan = Some(std::sync::Arc::new(plan));
+                }
+            }
+            Err(e) => {
+                eprintln!("[kagi] plan: create-worktree error: {}", e);
+            }
+        }
+    }
+
+    pub fn confirm_create_worktree(&mut self) {
+        let modal = match self.create_worktree_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let plan = match modal.plan.as_ref() {
+            Some(p) => p.clone(),
+            None => return,
+        };
+        if !plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: create-worktree plan has blockers, not executing");
+            if let Some(ref rp) = self.repo_path.clone() {
+                self.record_op(
+                    "create-worktree",
+                    plan.current.clone(),
+                    OpOutcome::Refused { blockers: plan.blockers.clone() },
+                    rp,
+                );
+            }
+            return;
+        }
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                let err_msg = format!("Repo open error: {}", e.message());
+                self.record_op(
+                    "create-worktree",
+                    plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() },
+                    &repo_path,
+                );
+                if let Some(ref mut m) = self.create_worktree_modal {
+                    m.error = Some(SharedString::from(err_msg));
+                }
+                return;
+            }
+        };
+        if let Err(e) = preflight_check(&repo, &plan) {
+            let err_msg = format!("Preflight failed: {}", e);
+            self.record_op(
+                "create-worktree",
+                plan.current.clone(),
+                OpOutcome::Failed { error: err_msg.clone() },
+                &repo_path,
+            );
+            if let Some(ref mut m) = self.create_worktree_modal {
+                m.error = Some(SharedString::from(err_msg));
+            }
+            return;
+        }
+        if let Err(e) = execute_create_worktree(&repo, &modal.branch_input, &modal.path_input, &modal.at) {
+            let err_msg = format!("Create worktree failed: {}", e);
+            self.record_op(
+                "create-worktree",
+                plan.current.clone(),
+                OpOutcome::Failed { error: err_msg.clone() },
+                &repo_path,
+            );
+            if let Some(ref mut m) = self.create_worktree_modal {
+                m.error = Some(SharedString::from(err_msg));
+            }
+            return;
+        }
+
+        eprintln!(
+            "[kagi] executed: create-worktree '{}' path='{}' @ {}",
+            modal.branch_input,
+            modal.path_input,
+            modal.at.short()
+        );
+        let verify_path = {
+            let path = std::path::PathBuf::from(&modal.path_input);
+            if path.is_absolute() {
+                path
+            } else {
+                repo_path.join(path)
+            }
+        };
+        match git2::Repository::open(&verify_path) {
+            Ok(linked) => {
+                let head = linked
+                    .head()
+                    .ok()
+                    .and_then(|h| h.shorthand().ok().map(|s| s.to_string()));
+                eprintln!(
+                    "[kagi] verified: worktree '{}' HEAD={}",
+                    verify_path.display(),
+                    head.unwrap_or_else(|| "?".to_string())
+                );
+            }
+            Err(e) => {
+                eprintln!("[kagi] verify: worktree open error: {}", e.message());
+            }
+        }
+        self.record_op(
+            "create-worktree",
             plan.current.clone(),
             OpOutcome::Success { after: plan.predicted.clone() },
             &repo_path,
         );
-
-        // Reload display data (new branch badge should appear).
         self.reload();
     }
 
@@ -4719,14 +5123,18 @@ impl KagiApp {
                     self.open_plan_modal(ref_name);
                 }
             }
-            CommitAction::CreateBranchHere
-            | CommitAction::CreateWorktreeHere
-            | CommitAction::CherryPick
+            CommitAction::CreateBranchHere => {
+                self.open_create_branch_modal(target, cx);
+                eprintln!("[kagi] context-menu: create-branch {}", self.create_branch_modal.as_ref().map(|m| m.at.short()).unwrap_or_default());
+            }
+            CommitAction::CreateWorktreeHere => {
+                self.open_create_worktree_modal(target, cx);
+                eprintln!("[kagi] context-menu: create-worktree {}", self.create_worktree_modal.as_ref().map(|m| m.at.short()).unwrap_or_default());
+            }
+            CommitAction::CherryPick
             | CommitAction::Revert
             | CommitAction::ResetToCommit => {
                 let action_name = match action {
-                    CommitAction::CreateBranchHere => "Create branch here",
-                    CommitAction::CreateWorktreeHere => "Create worktree here",
                     CommitAction::CherryPick => "Cherry-pick",
                     CommitAction::Revert => "Revert",
                     CommitAction::ResetToCommit => "Reset",
@@ -4838,6 +5246,7 @@ impl Render for KagiApp {
         // W2-SIDEBAR: clone navigator data for sidebar render.
         let remote_branches = self.remote_branches.clone();
         let tags = self.tags.clone();
+        let worktrees = self.worktrees.clone();
         let branch_upstream_info = self.branch_upstream_info.clone();
         let sidebar_collapsed = self.sidebar_collapsed.clone();
         let sidebar_filter = self.sidebar_filter.clone();
@@ -4847,6 +5256,7 @@ impl Render for KagiApp {
         let pop_modal = self.pop_modal.clone();
         let push_modal = self.push_modal.clone();
         let create_branch_modal = self.create_branch_modal.clone();
+        let create_worktree_modal = self.create_worktree_modal.clone();
         let delete_branch_modal = self.delete_branch_modal.clone();
         let modal_focus = self.modal_focus.clone();
         let stash_push_modal = self.stash_push_modal.clone();
@@ -5014,7 +5424,7 @@ impl Render for KagiApp {
             .child(self.render_body(
                 row_count, selected, detail, changed_files, selected_badges, inspector_tree_view,
                 main_diff, compare_view, main_diff_scroll_handle,
-                branches, remote_branches, tags, stashes, branch_upstream_info,
+                branches, remote_branches, tags, stashes, worktrees, branch_upstream_info,
                 sidebar_collapsed, sidebar_filter,
                 is_dirty, sidebar_width, panel_width,
                 badge_col_w, graph_col_w, commit_scroll_handle,
@@ -5048,7 +5458,11 @@ impl Render for KagiApp {
             })
             // ── Create-branch modal overlay (above everything) ──
             .when_some(create_branch_modal, |el, modal| {
-                el.child(render_create_branch_modal(modal, modal_focus, cx))
+                el.child(render_create_branch_modal(modal, modal_focus.clone(), cx))
+            })
+            // ── Create-worktree modal overlay ───────────────
+            .when_some(create_worktree_modal, |el, modal| {
+                el.child(render_create_worktree_modal(modal, modal_focus.clone(), cx))
             })
             // ── Stash push modal overlay ─────────────────────
             .when_some(stash_push_modal, |el, modal| {
@@ -5491,6 +5905,7 @@ impl KagiApp {
         remote_branches: Vec<RemoteBranch>,
         tags: Vec<Tag>,
         stashes: Vec<kagi::git::Stash>,
+        worktrees: Vec<Worktree>,
         branch_upstream_info: HashMap<String, UpstreamInfo>,
         sidebar_collapsed: HashSet<&'static str>,
         sidebar_filter: Option<Entity<InputState>>,
@@ -5729,7 +6144,7 @@ impl KagiApp {
             // ── Left sidebar (W5-MENU: hidden when toggled off) ──
             .when(sidebar_visible, |el| {
                 el.child(sidebar::render_sidebar(
-                    &branches, &remote_branches, &tags, &stashes,
+                    &branches, &remote_branches, &tags, &stashes, &worktrees,
                     &branch_upstream_info, &self.commit_row_index,
                     &sidebar_collapsed, sidebar_filter,
                     sidebar_width, cx,
@@ -7449,6 +7864,11 @@ fn render_create_branch_modal(
     let plan = modal.plan.clone();
     let has_blockers = plan.as_ref().map(|p| !p.blockers.is_empty()).unwrap_or(true);
     let input_display = SharedString::from(format!("{}_", modal.input)); // cursor indicator
+    let checkout_label = if modal.checkout_after {
+        "[x] Checkout after create"
+    } else {
+        "[ ] Checkout after create"
+    };
 
     // ── Cancel handler ──────────────────────────────────────
     // T-BP-003: return focus to root_focus so cmd-j keeps working.
@@ -7476,6 +7896,15 @@ fn render_create_branch_modal(
         cx.notify();
     });
 
+    let toggle_checkout = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+        if let Some(ref mut modal) = this.create_branch_modal {
+            modal.checkout_after = !modal.checkout_after;
+            modal.error = None;
+        }
+        this.replan_create_branch();
+        cx.notify();
+    });
+
     // ── Build modal card ────────────────────────────────────
     let mut card = div()
         .w(px(480.))
@@ -7491,8 +7920,9 @@ fn render_create_branch_modal(
                 .text_color(rgb(TEXT_MAIN))
                 .text_xl()
                 .child(SharedString::from(format!(
-                    "Create branch @ {}",
-                    modal.at.short()
+                    "Create branch @ {}  {}",
+                    modal.at.short(),
+                    modal.start_title
                 ))),
         )
         // ── Name input ────────────────────────────────────
@@ -7516,6 +7946,18 @@ fn render_create_branch_modal(
                         .text_color(rgb(TEXT_MAIN))
                         .child(input_display),
                 ),
+        )
+        .child(
+            div()
+                .id("create-branch-checkout-after")
+                .px_2()
+                .py_1()
+                .rounded_sm()
+                .text_sm()
+                .text_color(rgb(TEXT_MAIN))
+                .on_click(toggle_checkout)
+                .hover(|style| style.bg(rgb(BG_SURFACE)))
+                .child(SharedString::from(checkout_label)),
         );
 
     // ── Plan state (current → predicted) ─────────────────
@@ -7649,6 +8091,242 @@ fn render_create_branch_modal(
     };
 
     // ── Full-screen overlay wrapper ─────────────────────────
+    div()
+        .size_full()
+        .absolute()
+        .top_0()
+        .left_0()
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .bg(rgb(BG_MODAL_OVERLAY))
+                .opacity(0.65),
+        )
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .items_center()
+                .child(focusable_card),
+        )
+}
+
+fn render_create_worktree_modal(
+    modal: CreateWorktreeModal,
+    focus_handle: Option<FocusHandle>,
+    cx: &mut Context<KagiApp>,
+) -> impl IntoElement {
+    let plan = modal.plan.clone();
+    let has_blockers = plan.as_ref().map(|p| !p.blockers.is_empty()).unwrap_or(true);
+    let branch_display = SharedString::from(format!(
+        "{}{}",
+        modal.branch_input,
+        if modal.active_field == WorktreeModalField::Branch { "_" } else { "" }
+    ));
+    let path_display = SharedString::from(format!(
+        "{}{}",
+        modal.path_input,
+        if modal.active_field == WorktreeModalField::Path { "_" } else { "" }
+    ));
+
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+        this.cancel_create_worktree_modal();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+        this.confirm_create_worktree();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    let key_handler = cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+        this.handle_create_worktree_key(event);
+        cx.notify();
+    });
+    let branch_focus = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+        this.set_worktree_modal_field(WorktreeModalField::Branch);
+        cx.notify();
+    });
+    let path_focus = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+        this.set_worktree_modal_field(WorktreeModalField::Path);
+        cx.notify();
+    });
+
+    let mut card = div()
+        .w(px(540.))
+        .bg(rgb(BG_MODAL))
+        .rounded_lg()
+        .p_4()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(
+            div()
+                .text_color(rgb(TEXT_MAIN))
+                .text_xl()
+                .child(SharedString::from(format!(
+                    "Create worktree @ {}  {}",
+                    modal.at.short(),
+                    modal.start_title
+                ))),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_sm().text_color(rgb(TEXT_LABEL)).child(SharedString::from("Branch name")))
+                .child(
+                    div()
+                        .id("create-worktree-branch-input")
+                        .px_2()
+                        .py_1()
+                        .bg(rgb(BG_BASE))
+                        .rounded_sm()
+                        .text_color(rgb(TEXT_MAIN))
+                        .on_click(branch_focus)
+                        .child(branch_display),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_sm().text_color(rgb(TEXT_LABEL)).child(SharedString::from("Path")))
+                .child(
+                    div()
+                        .id("create-worktree-path-input")
+                        .px_2()
+                        .py_1()
+                        .bg(rgb(BG_BASE))
+                        .rounded_sm()
+                        .text_color(rgb(TEXT_MAIN))
+                        .on_click(path_focus)
+                        .child(path_display),
+                ),
+        );
+
+    if let Some(ref p) = plan {
+        card = card.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_sm().text_color(rgb(TEXT_LABEL)).child(SharedString::from("Current")))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .text_sm()
+                        .child(div().text_color(rgb(TEXT_MAIN)).child(SharedString::from(p.current.head.clone())))
+                        .child(div().text_color(rgb(TEXT_SUB)).child(SharedString::from(format!("[{}]", p.current.dirty)))),
+                )
+                .child(div().text_sm().text_color(rgb(TEXT_LABEL)).child(SharedString::from("\u{2192} Predicted")))
+                .child(div().text_sm().text_color(rgb(TEXT_MUTED)).child(SharedString::from(p.title.clone()))),
+        );
+
+        if !p.warnings.is_empty() {
+            let mut warn_col = div().flex().flex_col().gap_1();
+            for w in &p.warnings {
+                warn_col = warn_col.child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(COLOR_WARNING))
+                        .overflow_hidden()
+                        .child(SharedString::from(format!("! {}", w))),
+                );
+            }
+            card = card.child(warn_col);
+        }
+
+        if !p.blockers.is_empty() {
+            let mut block_col = div().flex().flex_col().gap_1();
+            for b in &p.blockers {
+                block_col = block_col.child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(COLOR_BLOCKER))
+                        .overflow_hidden()
+                        .child(SharedString::from(format!("\u{2717} {}", b))),
+                );
+            }
+            card = card.child(block_col);
+        }
+
+        card = card.child(
+            div()
+                .text_xs()
+                .text_color(rgb(TEXT_MUTED))
+                .overflow_hidden()
+                .child(SharedString::from(p.recovery.clone())),
+        );
+    }
+
+    if let Some(ref err) = modal.error {
+        card = card.child(
+            div()
+                .text_sm()
+                .text_color(rgb(COLOR_BLOCKER))
+                .overflow_hidden()
+                .child(err.clone()),
+        );
+    }
+
+    let mut button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(
+            div()
+                .id("create-worktree-cancel")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(BG_SURFACE))
+                .text_sm()
+                .text_color(rgb(TEXT_MAIN))
+                .on_click(cancel_handler)
+                .hover(|style| style.bg(rgb(BG_SELECTED)))
+                .child(SharedString::from("Cancel")),
+        );
+    if !has_blockers {
+        button_row = button_row.child(
+            div()
+                .id("create-worktree-confirm")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(COLOR_SUCCESS))
+                .text_sm()
+                .text_color(rgb(BG_BASE))
+                .on_click(confirm_handler)
+                .hover(|style| style.opacity(0.85))
+                .child(SharedString::from("Create")),
+        );
+    }
+    card = card.child(button_row);
+
+    let focusable_card = if let Some(ref fh) = focus_handle {
+        div().track_focus(fh).on_key_down(key_handler).child(card)
+    } else {
+        div().child(card)
+    };
+
     div()
         .size_full()
         .absolute()

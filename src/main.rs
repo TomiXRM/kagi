@@ -802,6 +802,13 @@ fn main() {
         app_state.commit_panel_open = true;
     }
 
+    // ── W2-GRAPH: KAGI_COMPACT=1 — enable compact row mode ─────
+    if std::env::var("KAGI_COMPACT").as_deref() == Ok("1") {
+        app_state.graph_compact = true;
+        let rh = 18u32; // compact row height
+        eprintln!("[kagi] graph: compact=on row_h={}", rh);
+    }
+
     // ── T-BP-002: KAGI_BOTTOM_PANEL=1 — open bottom panel at startup ──
     // Emits `[kagi] bottom-panel: open height=H tab=T` for headless verification.
     // T-BP-004: also emits `[kagi] oplog-tab: N entries` (loaded from JSONL at startup).

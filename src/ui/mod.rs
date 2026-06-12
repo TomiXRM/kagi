@@ -131,6 +131,18 @@ const COL_HEADER_H: f32 = 20.0;
 // Width of the inner divider handles (badge|graph and graph|message).
 const INNER_DIV_W: f32 = 4.0;
 
+// ── W2-GRAPH: compact mode ────────────────────────────────────
+/// Row height for normal (full) mode.
+const ROW_H_FULL: f32 = graph_view::ROW_H;  // 24.0
+/// Row height for compact mode.
+const ROW_H_COMPACT: f32 = 18.0;
+
+/// Return the row height for the current compact mode setting.
+#[inline]
+fn row_height(compact: bool) -> f32 {
+    if compact { ROW_H_COMPACT } else { ROW_H_FULL }
+}
+
 use kagi::git::{
     ChangeKind, CommitId, FileDiff, DiffLineKind, FileStatus, Head, RemoteBranch, RepoSnapshot, Stash, Tag, UpstreamInfo,
     ops::{
@@ -1017,6 +1029,9 @@ pub struct KagiApp {
     /// Lazy terminal session.  `None` until `repo_path` is known and the
     /// Terminal tab is first displayed (or KAGI_TERMINAL=1 at startup).
     pub terminal_session: Option<terminal::KagiTerminalSession>,
+    // ── W2-GRAPH: Compact graph mode ────────────────────────────
+    /// When `true` row height is 18px (compact); `false` (default) = 24px.
+    pub graph_compact: bool,
     // ── W2-INSPECTOR: Changed-files display mode ─────────────────
     /// When `true` the inspector shows files in tree view; `false` = flat path list.
     /// Default: `true`.
@@ -1193,6 +1208,7 @@ impl KagiApp {
             oplog_expanded: None,
             terminal_session: None,
             inspector_tree_view: true,
+            graph_compact: false,
             // W2-SIDEBAR
             remote_branches,
             tags,
@@ -1250,6 +1266,7 @@ impl KagiApp {
             oplog_expanded: None,
             terminal_session: None,
             inspector_tree_view: true,
+            graph_compact: false,
             // W2-SIDEBAR
             remote_branches: Vec::new(),
             tags: Vec::new(),
@@ -4303,8 +4320,13 @@ impl KagiApp {
                         |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
                     ),
             )
-            // Graph column label
-            .child(
+            // Graph column label + compact toggle button (W2-GRAPH).
+            .child({
+                let is_compact = self.graph_compact;
+                let compact_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+                    this.graph_compact = !this.graph_compact;
+                    cx.notify();
+                });
                 div()
                     .w(px(graph_col_w))
                     .flex_shrink_0()
@@ -4312,11 +4334,25 @@ impl KagiApp {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .justify_center()
-                    .text_xs()
-                    .text_color(rgb(TEXT_MUTED))
-                    .child(SharedString::from("GRAPH")),
-            )
+                    .justify_between()
+                    .px_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(TEXT_MUTED))
+                            .child(SharedString::from("GRAPH")),
+                    )
+                    .child(
+                        div()
+                            .id("compact-toggle")
+                            .text_xs()
+                            .cursor_pointer()
+                            .text_color(rgb(if is_compact { COLOR_BRANCH } else { TEXT_MUTED }))
+                            .hover(|s| s.text_color(rgb(COLOR_BRANCH)))
+                            .on_click(compact_click)
+                            .child(SharedString::from(if is_compact { "▥" } else { "▤" }))
+                    )
+            })
             // Handle between graph and message columns
             .child(
                 div()
@@ -4360,7 +4396,7 @@ impl KagiApp {
                         .items_center()
                         .w_full()
                         .px_3()
-                        .h(px(graph_view::ROW_H))
+                        .h(px(row_height(self.graph_compact)))
                         .bg(rgb(wip_bg))
                         .on_click(wip_click)
                         .hover(|s| s.bg(rgb(BG_SELECTED)))
@@ -4411,7 +4447,7 @@ impl KagiApp {
                     "commit-list",
                     row_count,
                     cx.processor(move |this, range, _window, cx| {
-                        render_rows(&this.rows, range, selected, this.badge_col_w, this.graph_col_w, cx)
+                        render_rows(&this.rows, range, selected, this.badge_col_w, this.graph_col_w, this.graph_compact, cx)
                     }),
                 )
                 // T028: wire scroll handle so jump_to_branch can scroll the list.
@@ -5096,6 +5132,7 @@ impl KagiApp {
 /// with only the visible subset, so this must be cheap.
 ///
 /// `selected` — the currently selected row index (None = no selection).
+/// `graph_compact` — when true use compact row height (18px) instead of 24px.
 /// `cx` — the `Context<KagiApp>` from the `cx.processor` closure;
 ///         used to build `cx.listener(...)` for the on_click handler.
 fn render_rows(
@@ -5104,16 +5141,20 @@ fn render_rows(
     selected: Option<usize>,
     badge_col_w: f32,
     graph_col_w: f32,
+    graph_compact: bool,
     cx: &mut Context<KagiApp>,
 ) -> Vec<impl IntoElement> {
+    let rh = row_height(graph_compact);
+
     range
         .filter_map(|i| rows.get(i).map(|row| (i, row)))
         .map(|(ix, row)| {
             let row = row.clone();
+            let is_selected = selected == Some(ix);
 
             // Selected row gets a prominent surface highlight;
             // even/odd stripes apply otherwise.
-            let row_bg = if selected == Some(ix) {
+            let row_bg = if is_selected {
                 BG_SELECTED
             } else if ix % 2 == 0 {
                 BG_BASE
@@ -5138,14 +5179,25 @@ fn render_rows(
             // Convert Hsla to the rgb u32 that gpui's `bg()` accepts via hsla().
             let av_bg = avatar_color;
 
+            // W2-GRAPH: badge presence flag for label→node connector line.
+            let has_badges = !row.badges.is_empty();
+
             div()
                 .id(ix)
                 .flex()
                 .flex_row()
                 .items_center()
                 .w_full()
-                .px_3()
-                .h(px(graph_view::ROW_H))
+                // W2-GRAPH item 3: 2px accent bar on the left edge of selected rows.
+                // We use pl_3() normally and reduce the inner padding by 2px when
+                // selected to make room for the bar without changing total row width.
+                .when(is_selected, |el| {
+                    el.pl(px(10.))  // 12 - 2 = 10px to account for 2px bar
+                        .border_l_2()
+                        .border_color(rgb(COLOR_BRANCH))
+                })
+                .when(!is_selected, |el| el.px_3())
+                .h(px(rh))
                 .bg(rgb(row_bg))
                 .on_click(click_handler)
                 // ── Badges column: user-resizable width (T030) ──
@@ -5163,8 +5215,15 @@ fn render_rows(
                         .overflow_hidden()
                         .when(visible_lanes > 0, |el| {
                             el.child(
-                                graph_canvas(row.lane, row.edges.clone(), visible_lanes)
-                                    .size_full(),
+                                graph_canvas(
+                                    row.lane,
+                                    row.edges.clone(),
+                                    visible_lanes,
+                                    row.is_head,
+                                    row.is_merge,
+                                    has_badges,
+                                )
+                                .size_full(),
                             )
                         }),
                 )

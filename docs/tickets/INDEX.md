@@ -58,7 +58,7 @@
 | T-HT-001 | Header Toolbar UI skeleton + branch/ahead-behind 表示(T-HT-002 統合) | T-BP-001 | done |
 | T-HT-003 | Pull(fetch 含む)の plan + 実行 | T-HT-001, ADR-0009 | done |
 | T-HT-002 | branch / upstream / ahead-behind 表示 | T-HT-001 | done 相当(T-HT-001 に統合) |
-| T-HT-004 | Push の plan + 実行(CLI wrapper、set-upstream flow) | T-HT-003 | todo |
+| T-HT-004 | Push の plan + 実行(set-upstream flow) | T-HT-003 | in-progress |
 | T-HT-005 | Branch Create dialog 拡張(作成後 checkout 選択) | T-HT-001 | todo |
 | T-HT-006 | Stash plan 拡張(対象ファイル表示 / untracked 選択) | T-HT-001 | todo |
 | T-HT-007 | Stash pop plan(conflict 予測 blocker、apply との違い明示) | T-HT-006 | todo |

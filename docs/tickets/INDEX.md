@@ -120,3 +120,29 @@
 | W11-AVATAR | GitHub アバター取得(ADR-0037) | W9-THEME | queued |
 | W12-GCADOPT | gpui-component 採用第1弾(theme sync / Scrollbar / Checkbox) | 監査doc | queued |
 | W13-BRANCHTREE | branch list の / 区切りツリー表示 + toggle | - | in-progress |
+
+## Commit 便利機能スイート(requirements-commit-suite.md / ADR-0039〜0045)
+
+設計フェーズ完了(requirements + ADR 0039〜0045)。lane 分割は requirements §実装 lane 分割案(W14-x)。
+0040(amend の pushed 扱い)/ 0044(Smart Commit 既定 backend)は **Proposed** = ユーザー決定待ち。
+
+| ID | タイトル | 依存 | Status |
+|----|----------|------|--------|
+| T-COMMIT-001 | Commit Preview — staged 概要(count/summary/branch/author) | T025〜, ADR-0039 | todo |
+| T-COMMIT-002 | Commit Preview — staged diff preview | T-COMMIT-001, T012 | todo |
+| T-COMMIT-003 | Checklist module(純関数)+ block/warn 統合 | ADR-0039/0043 | todo |
+| T-COMMIT-004 | Checklist — conflict marker 検出(block) | T-COMMIT-003 | todo |
+| T-COMMIT-005 | Checklist — secret/.env 検出(warn, override 可) | T-COMMIT-003 | todo |
+| T-COMMIT-006 | Checklist — large binary 検出(warn, override 可) | T-COMMIT-003 | todo |
+| T-COMMIT-007 | Draft Autosave — backend(branch ごと保存/復元/clear) | ADR-0042 | todo |
+| T-COMMIT-008 | Draft Autosave — UI 配線(debounce/復元/clear) | T-COMMIT-007 | todo |
+| T-COMMIT-009 | Message Template — type/scope/.../risk + plain⇄template | T025〜, T-COMMIT-007 | todo |
+| T-COMMIT-010 | Amend — backend(plan/execute, 3 モード, SHA 変化) | ADR-0040(Proposed) | blocked |
+| T-COMMIT-011 | Amend — UI(モード選択/SHA 表示/2段階確認) | T-COMMIT-010 | blocked |
+| T-COMMIT-012 | Undo Last Commit — UI 配線(+ oplog 元 sha 表示) | T-HT-009, ADR-0041 | todo |
+| T-COMMIT-013 | Undo Last Commit — soft 相当 backend(既存で充足) | ADR-0011/0041 | done 相当 |
+| T-COMMIT-014 | Undo Last Commit — oplog before/after(既存で充足) | ADR-0011/0041 | done 相当 |
+| T-COMMIT-015 | Smart Commit Message — backend(enum dispatch/ollama/fallback) | ADR-0044(Proposed) | blocked |
+| T-COMMIT-016 | Smart Commit Message — UI(Generate/日英/静かな fallback) | T-COMMIT-015 | blocked |
+| T-COMMIT-017 | Split Commit(file 単位)+ Commit to New Branch | 既存 stage/plan | todo |
+| T-COMMIT-018 | Fixup/Squash commit 作成(prefix のみ, autosquash later) | ADR-0045 | todo |

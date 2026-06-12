@@ -2262,7 +2262,7 @@ impl Render for KagiApp {
         let commit_panel = self.commit_panel.clone();
         let commit_input = self.commit_input.clone();
 
-        // ── Normal state: header + body (sidebar + list + optional panel) ─────
+        // ── Normal state: header + body + bottom panel slot + status bar ─────
         div()
             .flex()
             .flex_col()
@@ -2270,274 +2270,18 @@ impl Render for KagiApp {
             .bg(rgb(BG_BASE))
             // T023: capture drag-move for both dividers on the root element.
             .on_drag_move::<DividerDrag>(divider_drag_move)
-            // ── Header bar ──────────────────────────────────
-            .child({
-                let stash_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
-                    this.open_stash_push_modal(cx);
-                    cx.notify();
-                });
-                let mut header_bar = div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .w_full()
-                    .px_3()
-                    .py_1()
-                    .bg(rgb(BG_SURFACE))
-                    .text_color(rgb(TEXT_SUB))
-                    .child(div().flex_1().overflow_hidden().child(header));
-                // Show Stash button only when working tree is dirty.
-                if is_dirty {
-                    header_bar = header_bar.child(
-                        div()
-                            .id("stash-push-btn")
-                            .ml_2()
-                            .px_2()
-                            .py_px()
-                            .rounded_sm()
-                            .bg(rgb(COLOR_WARNING))
-                            .text_sm()
-                            .text_color(rgb(BG_BASE))
-                            .on_click(stash_click)
-                            .hover(|style| style.opacity(0.85))
-                            .child(SharedString::from("Stash")),
-                    );
-                }
-                header_bar
-            })
-            // ── Body row: sidebar | divider1 | list (flex_1) | divider2 | optional panel ─
-            .child({
-                // Build divider 1: sidebar | main.
-                let divider1 = div()
-                    .id("divider-sidebar")
-                    .w(px(4.))
-                    .flex_shrink_0()
-                    .h_full()
-                    .bg(rgb(BG_SURFACE))
-                    .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
-                    .cursor_col_resize()
-                    .on_drag(
-                        DividerDrag { kind: DividerKind::Sidebar },
-                        |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
-                    );
-
-                // ── WIP row (shown above the list when working tree is dirty) ──
-                let wip_click = cx.listener(move |this, _event: &gpui::ClickEvent, window, cx| {
-                    this.open_commit_panel(window, cx);
-                    cx.notify();
-                });
-                let wip_bg = if commit_panel_open { BG_SELECTED } else { 0x2a2a3a };
-
-                // T030: column header row (fixed, above WIP and commit list).
-                let col_header = div()
-                    .id("col-header")
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .w_full()
-                    .px_3()
-                    .h(px(COL_HEADER_H))
-                    .flex_shrink_0()
-                    .bg(rgb(BG_SURFACE))
-                    // Badge column label
-                    .child(
-                        div()
-                            .w(px(badge_col_w))
-                            .flex_shrink_0()
-                            .overflow_hidden()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .justify_end()
-                            .text_xs()
-                            .text_color(rgb(TEXT_MUTED))
-                            .child(SharedString::from("BRANCH / TAG")),
-                    )
-                    // Handle between badge and graph columns
-                    .child(
-                        div()
-                            .id("divider-badge-col")
-                            .w(px(INNER_DIV_W))
-                            .flex_shrink_0()
-                            .h_full()
-                            .bg(rgb(BG_SURFACE))
-                            .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
-                            .cursor_col_resize()
-                            .on_drag(
-                                DividerDrag { kind: DividerKind::BadgeCol },
-                                |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
-                            ),
-                    )
-                    // Graph column label
-                    .child(
-                        div()
-                            .w(px(graph_col_w))
-                            .flex_shrink_0()
-                            .overflow_hidden()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .justify_center()
-                            .text_xs()
-                            .text_color(rgb(TEXT_MUTED))
-                            .child(SharedString::from("GRAPH")),
-                    )
-                    // Handle between graph and message columns
-                    .child(
-                        div()
-                            .id("divider-graph-col")
-                            .w(px(INNER_DIV_W))
-                            .flex_shrink_0()
-                            .h_full()
-                            .bg(rgb(BG_SURFACE))
-                            .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
-                            .cursor_col_resize()
-                            .on_drag(
-                                DividerDrag { kind: DividerKind::GraphCol },
-                                |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
-                            ),
-                    )
-                    // Message column label
-                    .child(
-                        div()
-                            .flex_1()
-                            .overflow_hidden()
-                            .text_xs()
-                            .text_color(rgb(TEXT_MUTED))
-                            .child(SharedString::from("MESSAGE")),
-                    );
-
-                let commit_list_col = div()
-                    .flex_1()
-                    .h_full()
-                    .flex()
-                    .flex_col()
-                    // ── Column header row (T030) ──────────────
-                    .child(col_header)
-                    // ── WIP row (only when dirty) ────────────
-                    .when(is_dirty, |el| {
-                        el.child(
-                            div()
-                                .id("wip-row")
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .w_full()
-                                .px_3()
-                                .h(px(graph_view::ROW_H))
-                                .bg(rgb(wip_bg))
-                                .on_click(wip_click)
-                                .hover(|s| s.bg(rgb(BG_SELECTED)))
-                                // Badges column: user-resizable width (T030)
-                                .child(
-                                    div()
-                                        .w(px(badge_col_w))
-                                        .flex_shrink_0()
-                                        .overflow_hidden()
-                                        .flex()
-                                        .flex_row()
-                                        .items_center()
-                                        .justify_end()
-                                        .child(
-                                            div()
-                                                .px_1()
-                                                .rounded_sm()
-                                                .bg(rgb(COLOR_WARNING))
-                                                .text_color(rgb(BG_BASE))
-                                                .text_sm()
-                                                .flex_shrink_0()
-                                                .child(SharedString::from("WIP")),
-                                        ),
-                                )
-                                // Inner divider spacer (badge|graph handle width)
-                                .child(div().w(px(INNER_DIV_W)).flex_shrink_0())
-                                // Graph column placeholder (empty for WIP row)
-                                .child(
-                                    div()
-                                        .w(px(graph_col_w))
-                                        .flex_shrink_0(),
-                                )
-                                // Inner divider spacer (graph|message handle width)
-                                .child(div().w(px(INNER_DIV_W)).flex_shrink_0())
-                                // Summary area: "// WIP — N changes"
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .text_color(rgb(TEXT_MUTED))
-                                        .overflow_hidden()
-                                        .child(SharedString::from("// WIP")),
-                                ),
-                        )
-                    })
-                    // ── Virtualized commit list ──────────────
-                    .child(
-                        uniform_list(
-                            "commit-list",
-                            row_count,
-                            cx.processor(move |this, range, _window, cx| {
-                                render_rows(&this.rows, range, selected, this.badge_col_w, this.graph_col_w, cx)
-                            }),
-                        )
-                        // T028: wire scroll handle so jump_to_branch can scroll the list.
-                        .track_scroll(commit_scroll_handle)
-                        .flex_1()
-                        .min_h(px(0.)),
-                    );
-
-                let mut body_row = div()
-                    .flex()
-                    .flex_row()
-                    .flex_1()
-                    .h_full()
-                    // ── Left sidebar ──────────────────────────
-                    .child(render_sidebar(&branches, &stashes, sidebar_width, cx))
-                    // ── Sidebar divider ───────────────────────
-                    .child(divider1)
-                    // ── Commit list column (WIP row + virtualized list) ──
-                    .child(commit_list_col);
-
-                // ── Right panel: commit panel OR detail panel ───────────
-                // Build divider 2 (shared between both panel modes).
-                let divider2 = div()
-                    .id("divider-panel")
-                    .w(px(4.))
-                    .flex_shrink_0()
-                    .h_full()
-                    .bg(rgb(BG_SURFACE))
-                    .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
-                    .cursor_col_resize()
-                    .on_drag(
-                        DividerDrag { kind: DividerKind::Panel },
-                        |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
-                    );
-
-                if commit_panel_open {
-                    // ── Commit Panel mode (T025) ──────────────
-                    if let Some(panel_state) = commit_panel.clone() {
-                        body_row = body_row
-                            .child(divider2)
-                            .child(render_commit_panel(panel_state, panel_width, commit_input.clone(), cx));
-                    }
-                } else {
-                    // ── Normal commit detail panel (existing behaviour) ──
-                    body_row = body_row.when_some(detail, |el, d| {
-                        if let Some(diff_view) = file_diff_view {
-                            // ── Diff view mode ──────────────────
-                            el.child(divider2)
-                                .child(render_diff_panel(diff_view, panel_width, cx))
-                        } else {
-                            // ── Commit metadata + changed files ─
-                            let at = CommitId(d.full_sha.as_ref().to_string());
-                            let files = changed_files.clone();
-                            let files_for_click = changed_files.clone();
-                            el.child(divider2)
-                                .child(render_detail_panel(d, at, files.unwrap_or(None), files_for_click.unwrap_or(None), panel_width, cx))
-                        }
-                    });
-                }
-
-                body_row
-            })
+            // ── Header slot ──────────────────────────────────
+            .child(self.render_header_slot(header, is_dirty, cx))
+            // ── Body slot: sidebar | list | optional panel ───
+            .child(self.render_body(
+                row_count, selected, detail, changed_files, file_diff_view,
+                branches, stashes, is_dirty, sidebar_width, panel_width,
+                badge_col_w, graph_col_w, commit_scroll_handle,
+                commit_panel_open, commit_panel.clone(), commit_input.clone(),
+                cx,
+            ))
+            // ── Bottom panel slot (T-BP-002+: empty for now) ─
+            .children(self.render_bottom_panel_slot())
             // ── Plan modal overlay (above everything) ──────
             .when_some(plan_modal, |el, modal| {
                 el.child(render_plan_modal(modal, cx))
@@ -2569,9 +2313,337 @@ impl Render for KagiApp {
                     }
                 },
             )
-            // ── Status footer (T017) — last operation result ─
-            .child(render_status_footer(status_footer))
+            // ── Status bar slot (T017) — last operation result ─
+            .child(self.render_status_bar(status_footer))
             .into_any()
+    }
+
+}
+
+// ── AppShell layout slots ────────────────────────────────────────────────────
+// ADR-0007 / T-BP-001: KagiApp::render is decomposed into four vertical
+// flex slots.  Each slot is a plain method so that later tickets
+// (T-BP-002, T-HT-001, …) can extend their signatures without
+// touching the caller site.
+impl KagiApp {
+    /// Header slot — the top bar showing repo name, HEAD info, and the Stash button.
+    ///
+    /// Today this is identical to the former inline header bar block.
+    /// T-HT-001 will add toolbar buttons here.
+    fn render_header_slot(
+        &mut self,
+        header: SharedString,
+        is_dirty: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let stash_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+            this.open_stash_push_modal(cx);
+            cx.notify();
+        });
+        let mut header_bar = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .w_full()
+            .px_3()
+            .py_1()
+            .bg(rgb(BG_SURFACE))
+            .text_color(rgb(TEXT_SUB))
+            .child(div().flex_1().overflow_hidden().child(header));
+        // Show Stash button only when working tree is dirty.
+        if is_dirty {
+            header_bar = header_bar.child(
+                div()
+                    .id("stash-push-btn")
+                    .ml_2()
+                    .px_2()
+                    .py_px()
+                    .rounded_sm()
+                    .bg(rgb(COLOR_WARNING))
+                    .text_sm()
+                    .text_color(rgb(BG_BASE))
+                    .on_click(stash_click)
+                    .hover(|style| style.opacity(0.85))
+                    .child(SharedString::from("Stash")),
+            );
+        }
+        header_bar
+    }
+
+    /// Body slot — the main content area: sidebar | divider | commit list | optional panel.
+    ///
+    /// All parameters are pre-cloned values from `render`; no additional
+    /// state access is performed inside this method.
+    #[allow(clippy::too_many_arguments)]
+    fn render_body(
+        &mut self,
+        row_count: usize,
+        selected: Option<usize>,
+        detail: Option<detail_panel::CommitDetail>,
+        changed_files: Option<Option<Vec<FileStatus>>>,
+        file_diff_view: Option<FileDiffView>,
+        branches: Vec<(String, bool)>,
+        stashes: Vec<kagi::git::Stash>,
+        is_dirty: bool,
+        sidebar_width: f32,
+        panel_width: f32,
+        badge_col_w: f32,
+        graph_col_w: f32,
+        commit_scroll_handle: UniformListScrollHandle,
+        commit_panel_open: bool,
+        commit_panel: Option<commit_panel::CommitPanelState>,
+        commit_input: Option<Entity<InputState>>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        // Build divider 1: sidebar | main.
+        let divider1 = div()
+            .id("divider-sidebar")
+            .w(px(4.))
+            .flex_shrink_0()
+            .h_full()
+            .bg(rgb(BG_SURFACE))
+            .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
+            .cursor_col_resize()
+            .on_drag(
+                DividerDrag { kind: DividerKind::Sidebar },
+                |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
+            );
+
+        // ── WIP row (shown above the list when working tree is dirty) ──
+        let wip_click = cx.listener(move |this, _event: &gpui::ClickEvent, window, cx| {
+            this.open_commit_panel(window, cx);
+            cx.notify();
+        });
+        let wip_bg = if commit_panel_open { BG_SELECTED } else { 0x2a2a3a };
+
+        // T030: column header row (fixed, above WIP and commit list).
+        let col_header = div()
+            .id("col-header")
+            .flex()
+            .flex_row()
+            .items_center()
+            .w_full()
+            .px_3()
+            .h(px(COL_HEADER_H))
+            .flex_shrink_0()
+            .bg(rgb(BG_SURFACE))
+            // Badge column label
+            .child(
+                div()
+                    .w(px(badge_col_w))
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_end()
+                    .text_xs()
+                    .text_color(rgb(TEXT_MUTED))
+                    .child(SharedString::from("BRANCH / TAG")),
+            )
+            // Handle between badge and graph columns
+            .child(
+                div()
+                    .id("divider-badge-col")
+                    .w(px(INNER_DIV_W))
+                    .flex_shrink_0()
+                    .h_full()
+                    .bg(rgb(BG_SURFACE))
+                    .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
+                    .cursor_col_resize()
+                    .on_drag(
+                        DividerDrag { kind: DividerKind::BadgeCol },
+                        |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
+                    ),
+            )
+            // Graph column label
+            .child(
+                div()
+                    .w(px(graph_col_w))
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_center()
+                    .text_xs()
+                    .text_color(rgb(TEXT_MUTED))
+                    .child(SharedString::from("GRAPH")),
+            )
+            // Handle between graph and message columns
+            .child(
+                div()
+                    .id("divider-graph-col")
+                    .w(px(INNER_DIV_W))
+                    .flex_shrink_0()
+                    .h_full()
+                    .bg(rgb(BG_SURFACE))
+                    .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
+                    .cursor_col_resize()
+                    .on_drag(
+                        DividerDrag { kind: DividerKind::GraphCol },
+                        |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
+                    ),
+            )
+            // Message column label
+            .child(
+                div()
+                    .flex_1()
+                    .overflow_hidden()
+                    .text_xs()
+                    .text_color(rgb(TEXT_MUTED))
+                    .child(SharedString::from("MESSAGE")),
+            );
+
+        let commit_list_col = div()
+            .flex_1()
+            .h_full()
+            .flex()
+            .flex_col()
+            // ── Column header row (T030) ──────────────
+            .child(col_header)
+            // ── WIP row (only when dirty) ────────────
+            .when(is_dirty, |el| {
+                el.child(
+                    div()
+                        .id("wip-row")
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .w_full()
+                        .px_3()
+                        .h(px(graph_view::ROW_H))
+                        .bg(rgb(wip_bg))
+                        .on_click(wip_click)
+                        .hover(|s| s.bg(rgb(BG_SELECTED)))
+                        // Badges column: user-resizable width (T030)
+                        .child(
+                            div()
+                                .w(px(badge_col_w))
+                                .flex_shrink_0()
+                                .overflow_hidden()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .justify_end()
+                                .child(
+                                    div()
+                                        .px_1()
+                                        .rounded_sm()
+                                        .bg(rgb(COLOR_WARNING))
+                                        .text_color(rgb(BG_BASE))
+                                        .text_sm()
+                                        .flex_shrink_0()
+                                        .child(SharedString::from("WIP")),
+                                ),
+                        )
+                        // Inner divider spacer (badge|graph handle width)
+                        .child(div().w(px(INNER_DIV_W)).flex_shrink_0())
+                        // Graph column placeholder (empty for WIP row)
+                        .child(
+                            div()
+                                .w(px(graph_col_w))
+                                .flex_shrink_0(),
+                        )
+                        // Inner divider spacer (graph|message handle width)
+                        .child(div().w(px(INNER_DIV_W)).flex_shrink_0())
+                        // Summary area: "// WIP — N changes"
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_color(rgb(TEXT_MUTED))
+                                .overflow_hidden()
+                                .child(SharedString::from("// WIP")),
+                        ),
+                )
+            })
+            // ── Virtualized commit list ──────────────
+            .child(
+                uniform_list(
+                    "commit-list",
+                    row_count,
+                    cx.processor(move |this, range, _window, cx| {
+                        render_rows(&this.rows, range, selected, this.badge_col_w, this.graph_col_w, cx)
+                    }),
+                )
+                // T028: wire scroll handle so jump_to_branch can scroll the list.
+                .track_scroll(commit_scroll_handle)
+                .flex_1()
+                .min_h(px(0.)),
+            );
+
+        let mut body_row = div()
+            .flex()
+            .flex_row()
+            .flex_1()
+            .h_full()
+            // ── Left sidebar ──────────────────────────
+            .child(render_sidebar(&branches, &stashes, sidebar_width, cx))
+            // ── Sidebar divider ───────────────────────
+            .child(divider1)
+            // ── Commit list column (WIP row + virtualized list) ──
+            .child(commit_list_col);
+
+        // ── Right panel: commit panel OR detail panel ───────────
+        // Build divider 2 (shared between both panel modes).
+        let divider2 = div()
+            .id("divider-panel")
+            .w(px(4.))
+            .flex_shrink_0()
+            .h_full()
+            .bg(rgb(BG_SURFACE))
+            .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
+            .cursor_col_resize()
+            .on_drag(
+                DividerDrag { kind: DividerKind::Panel },
+                |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
+            );
+
+        if commit_panel_open {
+            // ── Commit Panel mode (T025) ──────────────
+            if let Some(panel_state) = commit_panel.clone() {
+                body_row = body_row
+                    .child(divider2)
+                    .child(render_commit_panel(panel_state, panel_width, commit_input.clone(), cx));
+            }
+        } else {
+            // ── Normal commit detail panel (existing behaviour) ──
+            body_row = body_row.when_some(detail, |el, d| {
+                if let Some(diff_view) = file_diff_view {
+                    // ── Diff view mode ──────────────────
+                    el.child(divider2)
+                        .child(render_diff_panel(diff_view, panel_width, cx))
+                } else {
+                    // ── Commit metadata + changed files ─
+                    let at = CommitId(d.full_sha.as_ref().to_string());
+                    let files = changed_files.clone();
+                    let files_for_click = changed_files.clone();
+                    el.child(divider2)
+                        .child(render_detail_panel(d, at, files.unwrap_or(None), files_for_click.unwrap_or(None), panel_width, cx))
+                }
+            });
+        }
+
+        body_row
+    }
+
+    /// Bottom panel slot — currently empty (placeholder for T-BP-002+).
+    ///
+    /// Returns `None` so that `div().children(…)` adds no child element.
+    /// T-BP-002 will change the return type / add the resizable panel here.
+    fn render_bottom_panel_slot(&mut self) -> Option<impl IntoElement> {
+        None::<gpui::Empty>
+    }
+
+    /// Status bar slot — the 22 px footer showing the last operation result.
+    ///
+    /// Delegates to the standalone `render_status_footer` function unchanged.
+    /// T-SB-001 will extend this slot with icons / extra indicators.
+    fn render_status_bar(
+        &mut self,
+        status_footer: FooterStatus,
+    ) -> impl IntoElement {
+        render_status_footer(status_footer)
     }
 }
 

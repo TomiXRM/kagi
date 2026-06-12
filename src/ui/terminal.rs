@@ -160,6 +160,9 @@ pub fn build_terminal_view(
     // Weak handle back to KagiApp so the exit callback can clear the dead
     // session (next tab activation restarts the shell).
     let weak_app = cx.weak_entity();
+    // W4-TABS: capture this session's repo path so the exit callback clears
+    // the correct entry in the per-repo sessions map.
+    let exit_repo_path = repo_path.to_path_buf();
 
     // Create the TerminalView entity.  `cx.new` is called on `Context<KagiApp>`
     // and produces `Entity<TerminalView>`.
@@ -178,7 +181,7 @@ pub fn build_terminal_view(
             .with_exit_callback(move |_window, cx| {
                 eprintln!("[kagi] terminal: shell exited");
                 let _ = weak_app.update(cx, |app, cx| {
-                    if let Some(session) = app.terminal_session.as_mut() {
+                    if let Some(session) = app.terminal_sessions.get_mut(&exit_repo_path) {
                         session.view = None;
                     }
                     cx.notify();

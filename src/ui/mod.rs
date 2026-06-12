@@ -2397,8 +2397,8 @@ impl KagiApp {
         let mut stack = div()
             .absolute()
             .bottom(px(34.))
-            .right(px(12.))
-            .w(px(360.))
+            .left(px(12.))
+            .w(px(460.))
             .flex()
             .flex_col()
             .gap_2();
@@ -2420,13 +2420,13 @@ impl KagiApp {
                     .flex_row()
                     .items_start()
                     .gap_2()
-                    .px_3()
-                    .py_2()
-                    .rounded(px(6.))
+                    .px_4()
+                    .py_3()
+                    .rounded(px(8.))
                     .bg(rgb(BG_PANEL))
                     .border_1()
                     .border_color(rgb(accent))
-                    .text_sm()
+                    .text_base()
                     .text_color(rgb(TEXT_MAIN))
                     .child(
                         div()
@@ -8872,7 +8872,7 @@ pub fn run_app(mut app_state: KagiApp) {
                 let (w, h) = s.split_once('x')?;
                 Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
             })
-            .unwrap_or((1024.0, 768.0));
+            .unwrap_or((1440.0, 920.0));
         let bounds = Bounds::centered(None, size(px(win_w), px(win_h)), cx);
         cx.open_window(
             WindowOptions {

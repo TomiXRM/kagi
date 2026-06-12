@@ -12,6 +12,20 @@ use kagi::git::{Commit, CommitId, Head, RepoSnapshot};
 use kagi::graph::{GraphEdge, layout};
 
 // ──────────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────────
+
+/// Extract the HEAD commit target SHA from a [`Head`] value.
+/// Returns `None` for unborn repos (no commits yet).
+fn head_target(head: &Head) -> Option<&str> {
+    match head {
+        Head::Attached { target, .. } => Some(target.as_str()),
+        Head::Detached { target } => Some(target.as_str()),
+        Head::Unborn { .. } => None,
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
 // Badge types
 // ──────────────────────────────────────────────────────────────
 
@@ -131,6 +145,11 @@ pub struct CommitRow {
     pub edges: Vec<GraphEdge>,
     /// Total lane count across the entire graph (needed to compute graph width).
     pub lane_count: usize,
+    // ── Visual flags (W2-GRAPH) ───────────────────────────────
+    /// Whether this commit is the current HEAD.
+    pub is_head: bool,
+    /// Whether this commit is a merge commit (two or more parents).
+    pub is_merge: bool,
 }
 
 /// Build the full list of [`CommitRow`]s from a snapshot, pre-computing all
@@ -141,6 +160,9 @@ pub struct CommitRow {
 pub fn build_commit_rows(snap: &RepoSnapshot) -> Vec<CommitRow> {
     let badge_map = build_badge_map(snap);
     let now_secs = now_unix_secs();
+
+    // Resolve HEAD commit id (W2-GRAPH).
+    let head_sha: Option<&str> = head_target(&snap.head);
 
     // Compute commit graph layout once up-front (T009).
     let graph = layout(&snap.commits);
@@ -153,7 +175,10 @@ pub fn build_commit_rows(snap: &RepoSnapshot) -> Vec<CommitRow> {
             let graph_row = graph.rows.get(i);
             let lane = graph_row.map(|r| r.lane).unwrap_or(0);
             let edges = graph_row.map(|r| r.edges.clone()).unwrap_or_default();
-            commit_to_row(c, &badge_map, now_secs, lane, edges, lane_count)
+            // W2-GRAPH: determine HEAD / merge flags.
+            let is_head = head_sha.map(|sha| c.id.0 == sha).unwrap_or(false);
+            let is_merge = c.parents.len() >= 2;
+            commit_to_row(c, &badge_map, now_secs, lane, edges, lane_count, is_head, is_merge)
         })
         .collect()
 }
@@ -166,6 +191,8 @@ fn commit_to_row(
     lane: usize,
     edges: Vec<GraphEdge>,
     lane_count: usize,
+    is_head: bool,
+    is_merge: bool,
 ) -> CommitRow {
     let short_id = SharedString::from(c.id.short().to_string());
 
@@ -184,7 +211,7 @@ fn commit_to_row(
     let date = SharedString::from(relative_time(c.author.time, now_secs));
     let badges = badge_map.get(&c.id).cloned().unwrap_or_default();
 
-    CommitRow { short_id, summary, author, author_email, date, badges, lane, edges, lane_count }
+    CommitRow { short_id, summary, author, author_email, date, badges, lane, edges, lane_count, is_head, is_merge }
 }
 
 // ──────────────────────────────────────────────────────────────

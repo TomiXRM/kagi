@@ -201,10 +201,21 @@ fn draw_out_of_node(
 /// `visible_lanes` — how many lanes fit in the rendered column width.
 /// Edges/nodes with lane indices >= visible_lanes are skipped so that no
 /// drawing bleeds beyond the right edge of the graph column (T030).
+///
+/// `is_head` — whether this commit is the current HEAD (draws larger node + ring).
+///
+/// `is_merge` — whether this commit has 2+ parents (draws double-circle node).
+///
+/// `has_badges` — whether the badge column holds any badge chips for this row.
+///   When true a thin horizontal connector line is drawn from lane 0's left
+///   edge to the node centre (W2-GRAPH item 5: label→node connection).
 pub fn graph_canvas(
     node_lane: usize,
     edges: Vec<GraphEdge>,
     visible_lanes: usize,
+    is_head: bool,
+    is_merge: bool,
+    has_badges: bool,
 ) -> Canvas<()> {
     canvas(
         // prepaint: nothing to measure
@@ -277,26 +288,114 @@ pub fn graph_canvas(
                 }
             }
 
+            // ── Draw label→node connector line (W2-GRAPH item 5) ──
+            // When the badge column has chips, draw a 1px horizontal line
+            // from the left edge of the graph canvas (= right edge of badge
+            // column) to the node centre.  The line uses the node's lane colour.
+            // Only drawn when the node is in a visible lane.
+            if has_badges && node_lane < clip {
+                let x_node = lane_x(node_lane);
+                // Draw from the left edge of the graph area (ox) to the node.
+                // If the node is in lane 0 the line has zero length; only draw
+                // when there is meaningful horizontal distance.
+                if x_node > ox + 0.5 {
+                    let color = lane_color(node_lane);
+                    let mut builder = PathBuilder::stroke(px(1.0));
+                    builder.move_to(point(px(ox), px(mid_y)));
+                    builder.line_to(point(px(x_node), px(mid_y)));
+                    if let Ok(path) = builder.build() {
+                        window.paint_path(path, color);
+                    }
+                }
+            }
+
             // ── Draw node ● ─────────────────────────────────
             if node_lane < clip {
                 let cx_abs = lane_x(node_lane);
                 let color = lane_color(node_lane);
-                // Approximate circle with an 8-point polygon.
+
+                // W2-GRAPH: HEAD node gets a larger radius + outer ring.
+                // W2-GRAPH: merge node gets a double-circle (filled inner + stroked outer).
+                let base_r = NODE_R;
+                let head_r = base_r * 1.5; // 1.5× radius for HEAD
+
                 const SEGMENTS: usize = 12;
-                let mut builder = PathBuilder::fill();
-                for i in 0..=SEGMENTS {
-                    let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
-                    let px_val = cx_abs + NODE_R * angle.cos();
-                    let py_val = mid_y + NODE_R * angle.sin();
-                    if i == 0 {
-                        builder.move_to(point(px(px_val), px(py_val)));
-                    } else {
-                        builder.line_to(point(px(px_val), px(py_val)));
+
+                if is_head {
+                    // HEAD: large filled circle + outer ring (same colour, slightly transparent).
+                    // Outer ring (stroke).
+                    let ring_r = head_r + 1.5;
+                    let mut rb = PathBuilder::stroke(px(1.2));
+                    for i in 0..=SEGMENTS {
+                        let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
+                        let px_val = cx_abs + ring_r * angle.cos();
+                        let py_val = mid_y  + ring_r * angle.sin();
+                        if i == 0 { rb.move_to(point(px(px_val), px(py_val))); }
+                        else       { rb.line_to(point(px(px_val), px(py_val))); }
                     }
-                }
-                builder.close();
-                if let Ok(path) = builder.build() {
-                    window.paint_path(path, color);
+                    rb.close();
+                    if let Ok(path) = rb.build() {
+                        window.paint_path(path, color);
+                    }
+                    // Filled inner circle.
+                    let mut fb = PathBuilder::fill();
+                    for i in 0..=SEGMENTS {
+                        let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
+                        let px_val = cx_abs + head_r * angle.cos();
+                        let py_val = mid_y  + head_r * angle.sin();
+                        if i == 0 { fb.move_to(point(px(px_val), px(py_val))); }
+                        else       { fb.line_to(point(px(px_val), px(py_val))); }
+                    }
+                    fb.close();
+                    if let Ok(path) = fb.build() {
+                        window.paint_path(path, color);
+                    }
+                } else if is_merge {
+                    // Merge: double circle — stroked outer ring + stroked inner circle.
+                    // Outer ring.
+                    let outer_r = base_r + 2.5;
+                    let mut rb = PathBuilder::stroke(px(1.2));
+                    for i in 0..=SEGMENTS {
+                        let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
+                        let px_val = cx_abs + outer_r * angle.cos();
+                        let py_val = mid_y  + outer_r * angle.sin();
+                        if i == 0 { rb.move_to(point(px(px_val), px(py_val))); }
+                        else       { rb.line_to(point(px(px_val), px(py_val))); }
+                    }
+                    rb.close();
+                    if let Ok(path) = rb.build() {
+                        window.paint_path(path, color);
+                    }
+                    // Filled inner circle (standard size).
+                    let mut fb = PathBuilder::fill();
+                    for i in 0..=SEGMENTS {
+                        let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
+                        let px_val = cx_abs + base_r * angle.cos();
+                        let py_val = mid_y  + base_r * angle.sin();
+                        if i == 0 { fb.move_to(point(px(px_val), px(py_val))); }
+                        else       { fb.line_to(point(px(px_val), px(py_val))); }
+                    }
+                    fb.close();
+                    if let Ok(path) = fb.build() {
+                        window.paint_path(path, color);
+                    }
+                } else {
+                    // Normal node: filled circle (existing behaviour).
+                    let mut builder = PathBuilder::fill();
+                    for i in 0..=SEGMENTS {
+                        let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
+                        let px_val = cx_abs + base_r * angle.cos();
+                        let py_val = mid_y  + base_r * angle.sin();
+                        if i == 0 {
+                            builder.move_to(point(px(px_val), px(py_val)));
+                        } else {
+                            builder.line_to(point(px(px_val), px(py_val)));
+                        }
+                    }
+                    builder.close();
+                    if let Ok(path) = builder.build() {
+                        window.paint_path(path, color);
+                    }
                 }
             }
         },

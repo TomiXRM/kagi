@@ -160,6 +160,7 @@ use kagi::git::{
         plan_push, execute_push,
         preflight_check_stash,
         plan_cherry_pick, execute_cherry_pick,
+        plan_revert, execute_revert,
         plan_delete_branch, execute_delete_branch,
     },
     oplog::{OpLogEntry, OpOutcome, append_oplog, read_oplog_tail},
@@ -965,6 +966,21 @@ pub struct CherryPickModal {
 }
 
 // ──────────────────────────────────────────────────────────────
+// RevertModal — state for the revert plan overlay (T-CM-034)
+// ──────────────────────────────────────────────────────────────
+
+/// State for an in-progress revert plan confirmation.
+#[derive(Clone)]
+pub struct RevertModal {
+    /// The commit id that will be reverted.
+    pub commit_id: CommitId,
+    /// The computed plan.
+    pub plan: std::sync::Arc<OperationPlan>,
+    /// Error message to show if execute or preflight failed.
+    pub error: Option<SharedString>,
+}
+
+// ──────────────────────────────────────────────────────────────
 // DeleteBranchModal — state for the delete-branch confirmation overlay (W2-DELETE)
 // ──────────────────────────────────────────────────────────────
 
@@ -1044,6 +1060,8 @@ pub struct KagiApp {
     pub stash_push_focus: Option<FocusHandle>,
     /// When `Some`, the cherry-pick plan modal is visible (T016).
     pub cherry_pick_modal: Option<CherryPickModal>,
+    /// When `Some`, the revert plan modal is visible (T-CM-034).
+    pub revert_modal: Option<RevertModal>,
     /// Status footer message (T017): the result of the most recent operation.
     pub status_footer: FooterStatus,
     /// Current sidebar width in pixels (T023: user-resizable).
@@ -1292,6 +1310,7 @@ impl KagiApp {
             stash_apply_modal: None,
             stash_push_focus: None,
             cherry_pick_modal: None,
+            revert_modal: None,
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
             sidebar_width: SIDEBAR_DEFAULT,
             panel_width: PANEL_DEFAULT,
@@ -1365,6 +1384,7 @@ impl KagiApp {
             stash_apply_modal: None,
             stash_push_focus: None,
             cherry_pick_modal: None,
+            revert_modal: None,
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
             sidebar_width: SIDEBAR_DEFAULT,
             panel_width: PANEL_DEFAULT,
@@ -1464,6 +1484,7 @@ impl KagiApp {
         self.stash_apply_modal = None;
         self.stash_push_focus = None;
         self.cherry_pick_modal = None;
+        self.revert_modal = None;
         self.commit_menu = None;
         // T025/T026: reset commit panel and input so it reflects fresh status after reload.
         self.commit_panel_open = false;
@@ -2325,6 +2346,166 @@ impl KagiApp {
         }
 
         // Reload display data (new commit should appear in graph).
+        self.reload();
+    }
+
+    // ── Revert modal (T-CM-034) ─────────────────────────────
+
+    /// Open the revert plan modal for commit `id`.
+    pub fn open_revert_modal(&mut self, commit_id: CommitId) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => {
+                eprintln!("[kagi] open_revert_modal: no repo_path set");
+                return;
+            }
+        };
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] revert plan: repo open error: {}", e.message());
+                return;
+            }
+        };
+
+        match plan_revert(&repo, &commit_id) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: revert {} blockers={} preview_files={}",
+                    commit_id.short(),
+                    plan.blockers.len(),
+                    plan.preview_files.len()
+                );
+                self.revert_modal = Some(RevertModal {
+                    commit_id,
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                eprintln!("[kagi] revert plan: error: {}", e);
+            }
+        }
+    }
+
+    /// Cancel and close the revert modal without making any changes.
+    pub fn cancel_revert_modal(&mut self) {
+        self.revert_modal = None;
+    }
+
+    /// Confirm the revert plan: run preflight, execute, verify, record, reload.
+    pub fn confirm_revert(&mut self) {
+        let modal = match self.revert_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        if !modal.plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: revert plan has blockers, not executing");
+            if let Some(ref rp) = self.repo_path.clone() {
+                self.record_op(
+                    "revert",
+                    modal.plan.current.clone(),
+                    OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                    rp,
+                );
+            }
+            return;
+        }
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                let err_msg = format!("Repo open error: {}", e.message());
+                self.record_op(
+                    "revert",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() },
+                    &repo_path,
+                );
+                if let Some(ref mut m) = self.revert_modal {
+                    m.error = Some(SharedString::from(err_msg));
+                }
+                return;
+            }
+        };
+
+        if let Err(e) = preflight_check(&repo, &modal.plan) {
+            let err_msg = format!("Preflight failed: {}", e);
+            self.record_op(
+                "revert",
+                modal.plan.current.clone(),
+                OpOutcome::Failed { error: err_msg.clone() },
+                &repo_path,
+            );
+            if let Some(ref mut m) = self.revert_modal {
+                m.error = Some(SharedString::from(err_msg));
+            }
+            return;
+        }
+
+        match execute_revert(&repo, &modal.commit_id) {
+            Ok(new_id) => {
+                eprintln!(
+                    "[kagi] executed: revert {} -> {}",
+                    modal.commit_id.short(),
+                    new_id.short()
+                );
+
+                let mut repo2 = match git2::Repository::open(&repo_path) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("[kagi] verify: repo open error: {}", e.message());
+                        self.reload();
+                        return;
+                    }
+                };
+                let after_summary = match kagi::git::snapshot(&mut repo2, 10_000) {
+                    Ok(snap) => {
+                        if let Head::Attached { target, branch } = &snap.head {
+                            if *target == new_id.0 {
+                                eprintln!("[kagi] verified: revert HEAD={} on {}", new_id.short(), branch);
+                            } else {
+                                eprintln!("[kagi] verify: HEAD={} expected {}", &target[..8.min(target.len())], new_id.short());
+                            }
+                        }
+                        StateSummary {
+                            head: snap.head.display(),
+                            dirty: if snap.status.is_dirty() { "dirty".to_string() } else { "clean".to_string() },
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[kagi] verify: snapshot error: {}", e);
+                        modal.plan.predicted.clone()
+                    }
+                };
+
+                self.record_op(
+                    "revert",
+                    modal.plan.current.clone(),
+                    OpOutcome::Success { after: after_summary },
+                    &repo_path,
+                );
+            }
+            Err(e) => {
+                let err_msg = format!("Revert failed: {}", e);
+                self.record_op(
+                    "revert",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() },
+                    &repo_path,
+                );
+                if let Some(ref mut m) = self.revert_modal {
+                    m.error = Some(SharedString::from(err_msg));
+                }
+                return;
+            }
+        }
+
         self.reload();
     }
 
@@ -4238,10 +4419,14 @@ impl KagiApp {
                     }
                 }
             }
+            CommitAction::CherryPick => {
+                self.open_cherry_pick_modal(target);
+            }
+            CommitAction::Revert => {
+                self.open_revert_modal(target);
+            }
             CommitAction::CreateBranchHere
             | CommitAction::CreateWorktreeHere
-            | CommitAction::CherryPick
-            | CommitAction::Revert
             | CommitAction::CheckoutCommit
             | CommitAction::CheckoutRef(_)
             | CommitAction::CompareWithHead
@@ -4251,8 +4436,6 @@ impl KagiApp {
                 let action_name = match action {
                     CommitAction::CreateBranchHere => "Create branch here",
                     CommitAction::CreateWorktreeHere => "Create worktree here",
-                    CommitAction::CherryPick => "Cherry-pick",
-                    CommitAction::Revert => "Revert",
                     CommitAction::CheckoutCommit => "Checkout commit",
                     CommitAction::CheckoutRef(_) => "Checkout ref",
                     CommitAction::CompareWithHead => "Compare with HEAD",
@@ -4372,6 +4555,7 @@ impl Render for KagiApp {
         let stash_push_focus = self.stash_push_focus.clone();
         let stash_apply_modal = self.stash_apply_modal.clone();
         let cherry_pick_modal = self.cherry_pick_modal.clone();
+        let revert_modal = self.revert_modal.clone();
         let status_footer = self.status_footer.clone();
         let commit_menu_overlay = self
             .commit_menu
@@ -4580,6 +4764,10 @@ impl Render for KagiApp {
             // ── Cherry-pick modal overlay (T016) ────────────
             .when_some(cherry_pick_modal, |el, modal| {
                 el.child(render_cherry_pick_modal(modal, cx))
+            })
+            // ── Revert modal overlay (T-CM-034) ──────────────
+            .when_some(revert_modal, |el, modal| {
+                el.child(render_revert_modal(modal, cx))
             })
             // ── Delete-branch modal overlay (W2-DELETE) ──────
             .when_some(delete_branch_modal, |el, modal| {
@@ -6623,6 +6811,35 @@ fn render_delete_branch_modal(
         modal.plan,
         modal.error,
         "Delete",
+        cancel_handler,
+        confirm_handler,
+    )
+    .into_any_element()
+}
+
+/// Revert confirmation overlay (T-CM-034).
+fn render_revert_modal(
+    modal: RevertModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.cancel_revert_modal();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.confirm_revert();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    render_plan_modal_card(
+        modal.plan,
+        modal.error,
+        "Revert",
         cancel_handler,
         confirm_handler,
     )

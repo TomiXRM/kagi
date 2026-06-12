@@ -231,7 +231,7 @@ pub fn render_inspector(
 
     // ── "Cherry-pick onto HEAD" button (T016) ────────────────────────────
     let cherry_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.open_cherry_pick_modal(at_for_cherry.clone());
+        this.dispatch_commit_action(CommitAction::CherryPick, at_for_cherry.clone(), _window, cx);
         cx.notify();
     });
     let cherry_pick_button = action_button(

@@ -23,7 +23,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use gpui::{Hsla, hsla};
+use gpui::{App, Hsla, hsla, rgb};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Theme struct
@@ -256,6 +256,94 @@ pub fn init_active() {
     }
     let t = theme();
     eprintln!("[kagi] theme: {} dark={}", t.slug, t.dark);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// W12-GCADOPT: gpui-component theme bridge (one-way push, kagi → gpui-component)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Convert a kagi `0xRRGGBB` colour to `gpui::Hsla` (opaque) via `gpui::rgb`.
+/// `Hsla: From<Rgba>` is provided by gpui, so this never loses precision beyond
+/// the RGB→HSL round-trip the renderer would do anyway.
+#[inline]
+fn to_hsla(rgb_u32: u32) -> Hsla {
+    Hsla::from(rgb(rgb_u32))
+}
+
+/// Push kagi's active [`theme()`] palette into `gpui_component`'s global
+/// `ThemeColor` so every adopted gpui-component widget (Input, Tooltip,
+/// Scrollbar, Checkbox, …) renders with kagi's colours.
+///
+/// **One-way only** (kagi → gpui-component): kagi's `theme()` stays the single
+/// source of truth (ADR-0036); nothing ever reads back from `ThemeColor`.
+///
+/// Call sites:
+/// * startup, **after** `gpui_component::init(cx)` (which runs
+///   `sync_system_appearance` and would otherwise leave system colours showing);
+/// * every `View → Theme` switch (`KagiApp::set_theme`).
+///
+/// Only the fields the adopted components actually read are mapped; the other
+/// ~70 `ThemeColor` fields keep their gpui-component defaults (the audit doc
+/// confirms full coverage is unnecessary).  `mode` is set from `theme().dark`
+/// so any dark/light-conditional logic inside gpui-component matches kagi.
+pub fn sync_gpui_component_theme(cx: &mut App) {
+    let k = theme();
+    let gc = gpui_component::Theme::global_mut(cx);
+
+    // ── Surfaces ────────────────────────────────────────────────
+    gc.colors.background = to_hsla(k.bg_base);
+    gc.colors.foreground = to_hsla(k.text_main);
+    gc.colors.border = to_hsla(k.selected);
+    gc.colors.muted = to_hsla(k.surface);
+    gc.colors.muted_foreground = to_hsla(k.text_muted);
+
+    // ── Popover / overlay / selection (Tooltip, modals, Input) ──
+    gc.colors.popover = to_hsla(k.modal);
+    gc.colors.popover_foreground = to_hsla(k.text_main);
+    gc.colors.overlay = to_hsla(k.modal_overlay);
+    gc.colors.selection = to_hsla(k.selected);
+
+    // ── Primary / accent (Checkbox checked, focus ring, links) ──
+    gc.colors.primary = to_hsla(k.color_branch);
+    gc.colors.primary_foreground = to_hsla(k.bg_base);
+    gc.colors.primary_hover = to_hsla(k.color_branch);
+    gc.colors.primary_active = to_hsla(k.color_branch);
+    gc.colors.ring = to_hsla(k.color_branch);
+    gc.colors.accent = to_hsla(k.selected);
+    gc.colors.accent_foreground = to_hsla(k.text_main);
+    gc.colors.link = to_hsla(k.color_branch);
+
+    // ── Input border (Input, Checkbox unchecked) ────────────────
+    gc.colors.input = to_hsla(k.text_muted);
+    gc.colors.caret = to_hsla(k.text_main);
+
+    // ── Status colours (Notification, Alert, etc.) ──────────────
+    gc.colors.success = to_hsla(k.color_success);
+    gc.colors.warning = to_hsla(k.color_warning);
+    gc.colors.danger = to_hsla(k.color_blocker);
+    gc.colors.info = to_hsla(k.color_branch);
+
+    // ── List / sidebar (PopupMenu, ListItem, Sidebar) ───────────
+    gc.colors.list = to_hsla(k.bg_base);
+    gc.colors.list_active = to_hsla(k.selected);
+    gc.colors.list_hover = to_hsla(k.surface);
+    gc.colors.sidebar = to_hsla(k.sidebar);
+    gc.colors.sidebar_foreground = to_hsla(k.text_main);
+
+    // ── Scrollbar (W12-GCADOPT §2.10) ───────────────────────────
+    gc.colors.scrollbar = to_hsla(k.bg_base);
+    gc.colors.scrollbar_thumb = to_hsla(k.text_muted);
+    gc.colors.scrollbar_thumb_hover = to_hsla(k.text_sub);
+
+    // ── Drag handle (resizable dividers, future adoption) ───────
+    gc.colors.drag_border = to_hsla(k.color_branch);
+
+    // ── Mode (drives dark/light-conditional logic inside gpui-component) ──
+    gc.mode = if k.dark {
+        gpui_component::ThemeMode::Dark
+    } else {
+        gpui_component::ThemeMode::Light
+    };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

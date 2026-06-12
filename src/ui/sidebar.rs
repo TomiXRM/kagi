@@ -151,6 +151,153 @@ fn group_key(section: &str, prefix: &str) -> String {
     format!("{section}:{prefix}")
 }
 
+/// Build the collapse key for a remote *name* level-1 header
+/// (e.g. `"remote:origin"`).
+fn remote_key(remote: &str) -> String {
+    format!("{SECTION_REMOTE}:{remote}")
+}
+
+/// Build the collapse key for a sub-group *within* a remote
+/// (e.g. `"remote:origin:feat"`). This is namespaced by remote name so two
+/// remotes can both have a `feat` sub-group without their collapse state
+/// colliding, and it never collides with the level-1 remote header key
+/// (which has no third segment) nor with local keys (`local:…`).
+fn remote_group_key(remote: &str, prefix: &str) -> String {
+    format!("{SECTION_REMOTE}:{remote}:{prefix}")
+}
+
+// ──────────────────────────────────────────────────────────────
+// W19-REMOTE-TREE: two-level grouping for REMOTE BRANCHES
+// ──────────────────────────────────────────────────────────────
+
+/// One flattened render row for the REMOTE BRANCHES section.
+///
+/// Remote branches are grouped on **two** levels: the remote name is the first
+/// level (`origin`, `upstream`, …), and within each remote the branch name's
+/// own first `/`-segment is the second level (so `origin/feat/x` →
+/// `origin ▸ feat ▸ x`, while `origin/main` → `origin ▸ main`). This mirrors
+/// the single-level [`group_by_prefix`] used for local branches, but applied
+/// *per remote* to the name with the remote stripped (which `RemoteBranch`
+/// already stores separately in `name`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteRow<T> {
+    /// Level-1 header: the remote name, with the total branch count under it.
+    Remote {
+        /// The remote name, e.g. `"origin"`.
+        remote: String,
+        /// Number of branches belonging to this remote.
+        count: usize,
+    },
+    /// Level-2 header: a `/`-prefix sub-group within a remote.
+    SubGroup {
+        /// The owning remote name (for the namespaced collapse key).
+        remote: String,
+        /// The prefix before the first `/` of the branch name, e.g. `"feat"`.
+        prefix: String,
+        /// Number of leaves under this sub-group.
+        count: usize,
+    },
+    /// A branch leaf that sits directly under a remote (no `/` in its name),
+    /// e.g. `origin/main`.
+    RemoteLeaf {
+        /// The owning remote name.
+        remote: String,
+        /// The visible label (the branch name as-is for direct leaves).
+        leaf_label: String,
+        /// The original item, preserved verbatim (carries full display name).
+        item: T,
+    },
+    /// A branch leaf nested under a level-2 sub-group, e.g. `origin/feat/x`
+    /// → leaf `x` under sub-group `feat`.
+    SubGroupedLeaf {
+        /// The owning remote name.
+        remote: String,
+        /// The owning sub-group prefix (for the namespaced collapse key).
+        prefix: String,
+        /// The visible label (the name remainder after the first `/`).
+        leaf_label: String,
+        /// The original item, preserved verbatim.
+        item: T,
+    },
+}
+
+/// Build the two-level remote render rows.
+///
+/// Pure function (no UI/gpui types) so it can be unit-tested. `remote_of`
+/// returns the remote name (level-1 key); `name_of` returns the branch name
+/// *without* the remote prefix (the part that gets second-level grouping).
+/// Remotes appear in first-seen order; within a remote, sub-groups and leaves
+/// preserve input order exactly like [`group_by_prefix`].
+fn group_remotes<T: Clone>(
+    items: &[T],
+    remote_of: impl Fn(&T) -> &str,
+    name_of: impl Fn(&T) -> &str,
+) -> Vec<RemoteRow<T>> {
+    // First pass: remote order + total counts (first-seen order).
+    let mut remote_order: Vec<String> = Vec::new();
+    let mut remote_count: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for it in items {
+        let r = remote_of(it).to_string();
+        if !remote_count.contains_key(&r) {
+            remote_order.push(r.clone());
+        }
+        *remote_count.entry(r).or_insert(0) += 1;
+    }
+
+    let mut out: Vec<RemoteRow<T>> = Vec::new();
+    for remote in &remote_order {
+        let count = *remote_count.get(remote).unwrap_or(&0);
+        out.push(RemoteRow::Remote {
+            remote: remote.clone(),
+            count,
+        });
+
+        // Collect this remote's items in input order.
+        let members: Vec<&T> = items
+            .iter()
+            .filter(|it| remote_of(it) == remote.as_str())
+            .collect();
+
+        // Pre-compute sub-group counts (first-seen order within remote).
+        let mut sub_count: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for it in &members {
+            if let Some((prefix, _rest)) = split_first_segment(name_of(it)) {
+                *sub_count.entry(prefix).or_insert(0) += 1;
+            }
+        }
+
+        let mut emitted_sub: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for it in members {
+            match split_first_segment(name_of(it)) {
+                Some((prefix, rest)) => {
+                    if emitted_sub.insert(prefix.clone()) {
+                        out.push(RemoteRow::SubGroup {
+                            remote: remote.clone(),
+                            prefix: prefix.clone(),
+                            count: *sub_count.get(&prefix).unwrap_or(&0),
+                        });
+                    }
+                    out.push(RemoteRow::SubGroupedLeaf {
+                        remote: remote.clone(),
+                        prefix,
+                        leaf_label: rest,
+                        item: it.clone(),
+                    });
+                }
+                None => out.push(RemoteRow::RemoteLeaf {
+                    remote: remote.clone(),
+                    leaf_label: name_of(it).to_string(),
+                    item: it.clone(),
+                }),
+            }
+        }
+    }
+    out
+}
+
 /// Build a `.tooltip(...)` closure showing the full (untruncated) name.
 /// Row labels are single-line + ellipsized, so the tooltip is how the user
 /// reads a name that doesn't fit the sidebar width.
@@ -535,20 +682,28 @@ pub fn render_sidebar(
         );
 
         if !remote_collapsed {
-            // W13-BRANCHTREE: remote rows are grouped by their first `/`
-            // segment — which is the *remote name* (`origin/feat/x` → group
-            // `origin`, leaf `feat/x`). Single-level grouping by remote name,
-            // per the ticket. Jump/tooltip/id all use the full display name.
+            // W19-REMOTE-TREE: remote rows are grouped on TWO levels — the
+            // remote name is level 1 (`origin`, `upstream`, …) and the branch
+            // name's own first `/`-segment is level 2 within that remote
+            // (`origin/feat/x` → origin ▸ feat ▸ x; `origin/main` →
+            // origin ▸ main). `RemoteBranch` already stores remote/name split,
+            // so we group on `name` per remote. Jump/tooltip/id all use the
+            // full `origin/…` display name. `depth` sets the indent: 1 for a
+            // leaf directly under a remote, 2 for a leaf under a sub-group.
             let remote_leaf_row = |display: &str,
                                    display_label: &str,
                                    rb_target: CommitId,
-                                   indented: bool,
+                                   depth: u8,
                                    cx: &mut Context<KagiApp>|
              -> gpui::AnyElement {
                 let can_jump = commit_row_index.contains_key(&rb_target);
                 let full_name = SharedString::from(display.to_string());
                 let label = SharedString::from(display_label.to_string());
-                let left_pad = if indented { px(28.) } else { px(12.) };
+                let left_pad = match depth {
+                    0 => px(12.),
+                    1 => px(28.),
+                    _ => px(44.),
+                };
                 if can_jump {
                     let click_handler = cx.listener(move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
                         this.jump_to_commit(&rb_target);
@@ -590,20 +745,37 @@ pub fn render_sidebar(
                 }
             };
 
-            // Build (display, target) tuples then group by `/`-prefix.
-            let remote_owned: Vec<(String, CommitId)> = remote_filtered
+            // Build (remote, name, display, target) tuples then group on two
+            // levels via `group_remotes`. `display` is the full `origin/…`
+            // name used for jump/tooltip/id; `name` (remote stripped) drives
+            // the level-2 prefix grouping.
+            let remote_owned: Vec<(String, String, String, CommitId)> = remote_filtered
                 .iter()
-                .map(|rb| (format!("{}/{}", rb.remote, rb.name), rb.target.clone()))
+                .map(|rb| {
+                    (
+                        rb.remote.clone(),
+                        rb.name.clone(),
+                        format!("{}/{}", rb.remote, rb.name),
+                        rb.target.clone(),
+                    )
+                })
                 .collect();
-            let grouped = group_by_prefix(&remote_owned, |(d, _)| d.as_str());
+            let grouped = group_remotes(
+                &remote_owned,
+                |(r, _, _, _)| r.as_str(),
+                |(_, n, _, _)| n.as_str(),
+            );
 
+            // A sub-group is hidden when either its own key OR its parent
+            // remote key is collapsed; the level-1 remote collapse also hides
+            // every descendant. Filter active ⇒ everything auto-expands.
             for row in &grouped {
                 match row {
-                    GroupRow::Group { prefix, count } => {
-                        let key = group_key(SECTION_REMOTE, prefix);
-                        let group_collapsed = !has_filter && groups_collapsed.contains(&key);
-                        let arrow = if group_collapsed { "\u{25b8}" } else { "\u{25be}" };
-                        let glabel = SharedString::from(format!("{} {} ({})", arrow, prefix, count));
+                    RemoteRow::Remote { remote, count } => {
+                        let key = remote_key(remote);
+                        let collapsed_now = !has_filter && groups_collapsed.contains(&key);
+                        let arrow = if collapsed_now { "\u{25b8}" } else { "\u{25be}" };
+                        let glabel = SharedString::from(format!("{} {} ({})", arrow, remote, count));
                         let key_for_toggle = key.clone();
                         let toggle = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
                             if this.branch_groups_collapsed.contains(&key_for_toggle) {
@@ -631,17 +803,65 @@ pub fn render_sidebar(
                                 .child(div().flex_1().truncate().child(glabel)),
                         );
                     }
-                    GroupRow::GroupedLeaf { prefix, leaf_label, item } => {
-                        let key = group_key(SECTION_REMOTE, prefix);
-                        let group_collapsed = !has_filter && groups_collapsed.contains(&key);
-                        if !group_collapsed {
-                            let (display, target) = item;
-                            col = col.child(remote_leaf_row(display, leaf_label, target.clone(), true, cx));
+                    RemoteRow::SubGroup { remote, prefix, count } => {
+                        let parent_key = remote_key(remote);
+                        let remote_collapsed_now =
+                            !has_filter && groups_collapsed.contains(&parent_key);
+                        if remote_collapsed_now {
+                            continue;
                         }
+                        let key = remote_group_key(remote, prefix);
+                        let collapsed_now = !has_filter && groups_collapsed.contains(&key);
+                        let arrow = if collapsed_now { "\u{25b8}" } else { "\u{25be}" };
+                        let glabel = SharedString::from(format!("{} {} ({})", arrow, prefix, count));
+                        let key_for_toggle = key.clone();
+                        let toggle = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                            if this.branch_groups_collapsed.contains(&key_for_toggle) {
+                                this.branch_groups_collapsed.remove(&key_for_toggle);
+                            } else {
+                                this.branch_groups_collapsed.insert(key_for_toggle.clone());
+                            }
+                            cx.notify();
+                        });
+                        col = col.child(
+                            div()
+                                .id(SharedString::from(format!("sidebar-group-{}", key)))
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .flex_shrink_0()
+                                .pl(px(32.))
+                                .pr_3()
+                                .py_1()
+                                .text_sm()
+                                .text_color(rgb(theme().text_sub))
+                                .overflow_hidden()
+                                .on_click(toggle)
+                                .hover(|s| s.bg(rgb(theme().surface)))
+                                .child(div().flex_1().truncate().child(glabel)),
+                        );
                     }
-                    GroupRow::TopLevel { item } => {
-                        let (display, target) = item;
-                        col = col.child(remote_leaf_row(display, display, target.clone(), false, cx));
+                    RemoteRow::RemoteLeaf { remote, leaf_label, item } => {
+                        let parent_key = remote_key(remote);
+                        let remote_collapsed_now =
+                            !has_filter && groups_collapsed.contains(&parent_key);
+                        if remote_collapsed_now {
+                            continue;
+                        }
+                        let (_r, _n, display, target) = item;
+                        col = col.child(remote_leaf_row(display, leaf_label, target.clone(), 1, cx));
+                    }
+                    RemoteRow::SubGroupedLeaf { remote, prefix, leaf_label, item } => {
+                        let parent_key = remote_key(remote);
+                        let sub_key = remote_group_key(remote, prefix);
+                        let hidden = !has_filter
+                            && (groups_collapsed.contains(&parent_key)
+                                || groups_collapsed.contains(&sub_key));
+                        if hidden {
+                            continue;
+                        }
+                        let (_r, _n, display, target) = item;
+                        col = col.child(remote_leaf_row(display, leaf_label, target.clone(), 2, cx));
                     }
                 }
             }
@@ -977,5 +1197,111 @@ mod tests {
         let rows = group(&["main", "dev", "trunk"]);
         assert!(rows.iter().all(|r| matches!(r, GroupRow::TopLevel { .. })));
         assert_eq!(rows.len(), 3);
+    }
+
+    // ── W19-REMOTE-TREE: two-level remote grouping ──────────────────
+
+    /// Compact view of a RemoteRow: ("R", remote, count), ("S", prefix, count),
+    /// ("RL", remote, leaf), ("SL", prefix, leaf).
+    fn summarize_remote(rows: &[RemoteRow<(String, String)>]) -> Vec<(&'static str, String, String)> {
+        rows.iter()
+            .map(|r| match r {
+                RemoteRow::Remote { remote, count } => ("R", remote.clone(), count.to_string()),
+                RemoteRow::SubGroup { prefix, count, .. } => ("S", prefix.clone(), count.to_string()),
+                RemoteRow::RemoteLeaf { leaf_label, .. } => ("RL", leaf_label.clone(), String::new()),
+                RemoteRow::SubGroupedLeaf { prefix, leaf_label, .. } => ("SL", prefix.clone(), leaf_label.clone()),
+            })
+            .collect()
+    }
+
+    /// Build remote rows from (remote, name) pairs.
+    fn group_rem(pairs: &[(&str, &str)]) -> Vec<RemoteRow<(String, String)>> {
+        let owned: Vec<(String, String)> =
+            pairs.iter().map(|(r, n)| (r.to_string(), n.to_string())).collect();
+        group_remotes(&owned, |(r, _)| r.as_str(), |(_, n)| n.as_str())
+    }
+
+    #[test]
+    fn remote_two_levels_basic() {
+        // origin/main → origin ▸ main (direct leaf)
+        // origin/feat/x → origin ▸ feat ▸ x (sub-grouped leaf)
+        let rows = group_rem(&[("origin", "main"), ("origin", "feat/x")]);
+        assert_eq!(
+            summarize_remote(&rows),
+            vec![
+                ("R", "origin".into(), "2".into()),
+                ("RL", "main".into(), String::new()),
+                ("S", "feat".into(), "1".into()),
+                ("SL", "feat".into(), "x".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn remote_multiple_remotes_independent() {
+        // origin and upstream group independently, in first-seen order.
+        let rows = group_rem(&[
+            ("origin", "feat/a"),
+            ("origin", "feat/b"),
+            ("upstream", "feat/c"),
+            ("upstream", "dev"),
+        ]);
+        assert_eq!(
+            summarize_remote(&rows),
+            vec![
+                ("R", "origin".into(), "2".into()),
+                ("S", "feat".into(), "2".into()),
+                ("SL", "feat".into(), "a".into()),
+                ("SL", "feat".into(), "b".into()),
+                ("R", "upstream".into(), "2".into()),
+                ("S", "feat".into(), "1".into()),
+                ("SL", "feat".into(), "c".into()),
+                ("RL", "dev".into(), String::new()),
+            ]
+        );
+    }
+
+    #[test]
+    fn remote_deep_name_keeps_remainder() {
+        // origin/feat/ui/x → origin ▸ feat ▸ ui/x (single sub-level split).
+        let rows = group_rem(&[("origin", "feat/ui/x")]);
+        assert_eq!(
+            summarize_remote(&rows),
+            vec![
+                ("R", "origin".into(), "1".into()),
+                ("S", "feat".into(), "1".into()),
+                ("SL", "feat".into(), "ui/x".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn remote_collapse_keys_unique_and_no_collision() {
+        // Level-1 remote header vs level-2 sub-group vs local must all differ.
+        assert_eq!(remote_key("origin"), "remote:origin");
+        assert_eq!(remote_group_key("origin", "feat"), "remote:origin:feat");
+        assert_eq!(remote_group_key("upstream", "feat"), "remote:upstream:feat");
+        // Two remotes with the same sub-group prefix get distinct keys.
+        assert_ne!(
+            remote_group_key("origin", "feat"),
+            remote_group_key("upstream", "feat")
+        );
+        // The remote header key (2 segments) never equals any sub-group key
+        // (3 segments), and never matches a local key.
+        assert_ne!(remote_key("origin"), remote_group_key("origin", "feat"));
+        assert_ne!(remote_group_key("origin", "feat"), group_key(SECTION_LOCAL, "feat"));
+    }
+
+    #[test]
+    fn remote_non_ascii_subgroup() {
+        let rows = group_rem(&[("origin", "機能/あ")]);
+        assert_eq!(
+            summarize_remote(&rows),
+            vec![
+                ("R", "origin".into(), "1".into()),
+                ("S", "機能".into(), "1".into()),
+                ("SL", "機能".into(), "あ".into()),
+            ]
+        );
     }
 }

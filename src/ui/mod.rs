@@ -32,6 +32,10 @@ pub enum DividerKind {
     Sidebar,
     /// The divider between the commit list and the detail/diff panel.
     Panel,
+    /// T030: The divider between the badge column and the graph column.
+    BadgeCol,
+    /// T030: The divider between the graph column and the message column.
+    GraphCol,
 }
 
 /// Drag payload for a divider drag.  Only the divider kind is needed: widths
@@ -61,6 +65,22 @@ const PANEL_MAX: f32 = 800.0;
 const SIDEBAR_DEFAULT: f32 = 200.0;
 const PANEL_DEFAULT: f32 = 360.0;
 
+// T030: Commit-list inner column width limits and defaults.
+const BADGE_COL_MIN: f32 = 60.0;
+const BADGE_COL_MAX: f32 = 400.0;
+const BADGE_COL_DEFAULT: f32 = 150.0;
+
+const GRAPH_COL_MIN: f32 = 28.0;
+const GRAPH_COL_MAX: f32 = 600.0;
+// Default: 8 lanes × LANE_W = 112px (matches the pre-T030 MAX_LANES=8 behaviour).
+const GRAPH_COL_DEFAULT: f32 = 8.0 * graph_view::LANE_W;
+
+// Height of the column header row above the commit list.
+const COL_HEADER_H: f32 = 20.0;
+
+// Width of the inner divider handles (badge|graph and graph|message).
+const INNER_DIV_W: f32 = 4.0;
+
 use kagi::git::{
     ChangeKind, CommitId, FileDiff, DiffLineKind, FileStatus, Head, RepoSnapshot, Stash,
     ops::{
@@ -77,7 +97,7 @@ use kagi::git::{
 use commit_panel::{CommitPanelState, CommitPanelFileRef, CommitPlanModal, status_badge};
 use commit_list::{BadgeKind, CommitRow, build_commit_rows};
 use detail_panel::{CommitDetail, build_commit_details};
-use graph_view::{graph_canvas, graph_width};
+use graph_view::graph_canvas;
 
 // ──────────────────────────────────────────────────────────────
 // Catppuccin Mocha palette (subset)
@@ -345,6 +365,10 @@ pub struct KagiApp {
     pub sidebar_width: f32,
     /// Current detail/diff panel width in pixels (T023: user-resizable).
     pub panel_width: f32,
+    /// T030: Width of the badge (branch/tag) column in pixels.
+    pub badge_col_w: f32,
+    /// T030: Width of the graph column in pixels.
+    pub graph_col_w: f32,
     // ── T025: Commit Panel ───────────────────────────────────────
     /// Whether the commit panel is currently open (WIP row selected).
     pub commit_panel_open: bool,
@@ -466,6 +490,8 @@ impl KagiApp {
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
             sidebar_width: SIDEBAR_DEFAULT,
             panel_width: PANEL_DEFAULT,
+            badge_col_w: BADGE_COL_DEFAULT,
+            graph_col_w: GRAPH_COL_DEFAULT,
             commit_panel_open: false,
             commit_panel: None,
             commit_input: None,
@@ -499,6 +525,8 @@ impl KagiApp {
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
             sidebar_width: SIDEBAR_DEFAULT,
             panel_width: PANEL_DEFAULT,
+            badge_col_w: BADGE_COL_DEFAULT,
+            graph_col_w: GRAPH_COL_DEFAULT,
             commit_panel_open: false,
             commit_panel: None,
             commit_input: None,
@@ -2130,6 +2158,9 @@ impl Render for KagiApp {
         // T023: pane widths for divider rendering.
         let sidebar_width = self.sidebar_width;
         let panel_width = self.panel_width;
+        // T030: inner column widths for the commit list.
+        let badge_col_w = self.badge_col_w;
+        let graph_col_w = self.graph_col_w;
 
         // T028: clone scroll handle for wiring into uniform_list via track_scroll.
         let commit_scroll_handle = self.commit_scroll_handle.clone();
@@ -2161,6 +2192,28 @@ impl Render for KagiApp {
                     let new_width = (viewport_w - cursor_x - 2.0).clamp(PANEL_MIN, PANEL_MAX);
                     if (new_width - this.panel_width).abs() > 0.5 {
                         this.panel_width = new_width;
+                        cx.notify();
+                    }
+                }
+                DividerKind::BadgeCol => {
+                    // T030: badge column left edge = sidebar_width + INNER_DIV_W (sidebar divider).
+                    // badge_col_w = cursor_x - badge_col_left_edge
+                    let badge_col_left = this.sidebar_width + INNER_DIV_W; // sidebar divider = 4px
+                    let new_w = (cursor_x - badge_col_left - INNER_DIV_W / 2.0)
+                        .clamp(BADGE_COL_MIN, BADGE_COL_MAX);
+                    if (new_w - this.badge_col_w).abs() > 0.5 {
+                        this.badge_col_w = new_w;
+                        cx.notify();
+                    }
+                }
+                DividerKind::GraphCol => {
+                    // T030: graph column left edge = badge_col_left_edge + badge_col_w + INNER_DIV_W
+                    let badge_col_left = this.sidebar_width + INNER_DIV_W;
+                    let graph_col_left = badge_col_left + this.badge_col_w + INNER_DIV_W;
+                    let new_w = (cursor_x - graph_col_left - INNER_DIV_W / 2.0)
+                        .clamp(GRAPH_COL_MIN, GRAPH_COL_MAX);
+                    if (new_w - this.graph_col_w).abs() > 0.5 {
+                        this.graph_col_w = new_w;
                         cx.notify();
                     }
                 }
@@ -2238,11 +2291,92 @@ impl Render for KagiApp {
                 });
                 let wip_bg = if commit_panel_open { BG_SELECTED } else { 0x2a2a3a };
 
+                // T030: column header row (fixed, above WIP and commit list).
+                let col_header = div()
+                    .id("col-header")
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .w_full()
+                    .px_3()
+                    .h(px(COL_HEADER_H))
+                    .flex_shrink_0()
+                    .bg(rgb(BG_SURFACE))
+                    // Badge column label
+                    .child(
+                        div()
+                            .w(px(badge_col_w))
+                            .flex_shrink_0()
+                            .overflow_hidden()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .justify_end()
+                            .text_xs()
+                            .text_color(rgb(TEXT_MUTED))
+                            .child(SharedString::from("BRANCH / TAG")),
+                    )
+                    // Handle between badge and graph columns
+                    .child(
+                        div()
+                            .id("divider-badge-col")
+                            .w(px(INNER_DIV_W))
+                            .flex_shrink_0()
+                            .h_full()
+                            .bg(rgb(BG_SURFACE))
+                            .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
+                            .cursor_col_resize()
+                            .on_drag(
+                                DividerDrag { kind: DividerKind::BadgeCol },
+                                |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
+                            ),
+                    )
+                    // Graph column label
+                    .child(
+                        div()
+                            .w(px(graph_col_w))
+                            .flex_shrink_0()
+                            .overflow_hidden()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .justify_center()
+                            .text_xs()
+                            .text_color(rgb(TEXT_MUTED))
+                            .child(SharedString::from("GRAPH")),
+                    )
+                    // Handle between graph and message columns
+                    .child(
+                        div()
+                            .id("divider-graph-col")
+                            .w(px(INNER_DIV_W))
+                            .flex_shrink_0()
+                            .h_full()
+                            .bg(rgb(BG_SURFACE))
+                            .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
+                            .cursor_col_resize()
+                            .on_drag(
+                                DividerDrag { kind: DividerKind::GraphCol },
+                                |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
+                            ),
+                    )
+                    // Message column label
+                    .child(
+                        div()
+                            .flex_1()
+                            .overflow_hidden()
+                            .text_xs()
+                            .text_color(rgb(TEXT_MUTED))
+                            .child(SharedString::from("MESSAGE")),
+                    );
+
                 let commit_list_col = div()
                     .flex_1()
                     .h_full()
                     .flex()
                     .flex_col()
+                    // ── Column header row (T030) ──────────────
+                    .child(col_header)
                     // ── WIP row (only when dirty) ────────────
                     .when(is_dirty, |el| {
                         el.child(
@@ -2257,10 +2391,10 @@ impl Render for KagiApp {
                                 .bg(rgb(wip_bg))
                                 .on_click(wip_click)
                                 .hover(|s| s.bg(rgb(BG_SELECTED)))
-                                // Badges column: WIP badge
+                                // Badges column: user-resizable width (T030)
                                 .child(
                                     div()
-                                        .w(px(150.))
+                                        .w(px(badge_col_w))
                                         .flex_shrink_0()
                                         .overflow_hidden()
                                         .flex()
@@ -2278,6 +2412,16 @@ impl Render for KagiApp {
                                                 .child(SharedString::from("WIP")),
                                         ),
                                 )
+                                // Inner divider spacer (badge|graph handle width)
+                                .child(div().w(px(INNER_DIV_W)).flex_shrink_0())
+                                // Graph column placeholder (empty for WIP row)
+                                .child(
+                                    div()
+                                        .w(px(graph_col_w))
+                                        .flex_shrink_0(),
+                                )
+                                // Inner divider spacer (graph|message handle width)
+                                .child(div().w(px(INNER_DIV_W)).flex_shrink_0())
                                 // Summary area: "// WIP — N changes"
                                 .child(
                                     div()
@@ -2294,7 +2438,7 @@ impl Render for KagiApp {
                             "commit-list",
                             row_count,
                             cx.processor(move |this, range, _window, cx| {
-                                render_rows(&this.rows, range, selected, cx)
+                                render_rows(&this.rows, range, selected, this.badge_col_w, this.graph_col_w, cx)
                             }),
                         )
                         // T028: wire scroll handle so jump_to_branch can scroll the list.
@@ -2408,6 +2552,8 @@ fn render_rows(
     rows: &[CommitRow],
     range: std::ops::Range<usize>,
     selected: Option<usize>,
+    badge_col_w: f32,
+    graph_col_w: f32,
     cx: &mut Context<KagiApp>,
 ) -> Vec<impl IntoElement> {
     range
@@ -2425,10 +2571,10 @@ fn render_rows(
                 0x1a1a2a
             };
 
-            // ── Graph lane area (T009) ────────────────────────
-            // Width is clamped to MAX_LANES lanes; unborn/empty repos
-            // get lane_count=0 → graph_w=0 → no canvas rendered.
-            let g_w = graph_width(row.lane_count);
+            // ── Graph lane area (T030) ────────────────────────
+            // visible_lanes = how many lanes fit in the current graph column width.
+            // This replaces the old MAX_LANES-based clipping.
+            let visible_lanes = graph_view::lanes_for_width(graph_col_w);
 
             // on_click handler: update KagiApp.selected via cx.listener.
             let click_handler = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
@@ -2452,21 +2598,28 @@ fn render_rows(
                 .h(px(graph_view::ROW_H))
                 .bg(rgb(row_bg))
                 .on_click(click_handler)
-                // ── Badges column: fixed 150px, right-aligned, graph side (T021) ──
-                .child(render_badges_column(&row.badges))
-                // ── Graph lane area (T009) ────────────────────────
-                .when(g_w > 0.0, |el| {
-                    el.child(
-                        div()
-                            .w(px(g_w))
-                            .h_full()
-                            .flex_shrink_0()
-                            .child(
-                                graph_canvas(row.lane, row.edges.clone())
+                // ── Badges column: user-resizable width (T030) ──
+                .child(render_badges_column(&row.badges, badge_col_w))
+                // ── Inner divider spacer (badge|graph handle width) ──
+                .child(div().w(px(INNER_DIV_W)).flex_shrink_0())
+                // ── Graph lane area (T030) ────────────────────────
+                // Always render the graph column at graph_col_w width.
+                // Clip by visible_lanes to prevent bleed into message column.
+                .child(
+                    div()
+                        .w(px(graph_col_w))
+                        .h_full()
+                        .flex_shrink_0()
+                        .overflow_hidden()
+                        .when(visible_lanes > 0, |el| {
+                            el.child(
+                                graph_canvas(row.lane, row.edges.clone(), visible_lanes)
                                     .size_full(),
-                            ),
-                    )
-                })
+                            )
+                        }),
+                )
+                // ── Inner divider spacer (graph|message handle width) ──
+                .child(div().w(px(INNER_DIV_W)).flex_shrink_0())
                 // ── Author avatar: 18px circle after graph ────────
                 .child(
                     div()
@@ -2979,10 +3132,11 @@ fn badge_priority(kind: &BadgeKind) -> u8 {
     }
 }
 
-/// Render the badges column: fixed 150px, right-aligned (`justify_end`),
-/// `overflow_hidden`.  An empty badges list still occupies the full 150px so
-/// that all rows share the same graph start position (GitKraken layout, T021).
-fn render_badges_column(badges: &[commit_list::RefBadge]) -> impl IntoElement {
+/// Render the badges column: user-resizable width (T030), right-aligned
+/// (`justify_end`), `overflow_hidden`.  An empty badges list still occupies
+/// the full width so that all rows share the same graph start position
+/// (GitKraken layout, T021).  `badge_col_w` is the current column width.
+fn render_badges_column(badges: &[commit_list::RefBadge], badge_col_w: f32) -> impl IntoElement {
     // The column is a fixed 150px box.  Right-justified content that exceeds
     // the box overflows to the LEFT, which gpui does not clip — long branch
     // names bled underneath the sidebar (user report).  So instead of relying
@@ -3052,9 +3206,9 @@ fn render_badges_column(badges: &[commit_list::RefBadge]) -> impl IntoElement {
         inner = inner.child(chip);
     }
 
-    // Fixed 150px container, overflow clipped so long badge lists don't push graph.
+    // User-resizable container (T030), overflow clipped so long badge lists don't push graph.
     div()
-        .w(px(150.))
+        .w(px(badge_col_w))
         .flex_shrink_0()
         .overflow_hidden()
         .flex()

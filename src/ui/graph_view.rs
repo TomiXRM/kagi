@@ -39,7 +39,11 @@ use kagi::graph::{EdgeKind, GraphEdge};
 
 /// Width of one lane column in pixels.
 pub const LANE_W: f32 = 14.0;
-/// Maximum lanes to render (lanes beyond this are clipped).
+/// Default maximum lanes to render when no explicit width is given.
+/// T030: this is no longer the hard upper bound; `graph_canvas` now takes a
+/// `visible_lanes` argument that replaces MAX_LANES for per-row clipping.
+/// Retained for reference / GRAPH_COL_DEFAULT calculation.
+#[allow(dead_code)]
 pub const MAX_LANES: usize = 8;
 /// Row height in pixels (must match what uniform_list computes for each row).
 /// T008 rows use `py(px(3.))` (6 px total padding) plus text ≈ 18 px → 24 px.
@@ -75,9 +79,23 @@ fn lane_color(lane: usize) -> gpui::Hsla {
 // Graph area width computation
 // ──────────────────────────────────────────────────────────────
 
-/// Compute the pixel width of the graph area for a given lane count.
+/// Compute the pixel width of the graph area for a given lane count,
+/// using the default MAX_LANES cap (for legacy call sites).
+/// T030: kept for reference; render_rows now uses `graph_col_w` directly.
+#[allow(dead_code)]
 pub fn graph_width(lane_count: usize) -> f32 {
     (lane_count.min(MAX_LANES) as f32) * LANE_W
+}
+
+/// Compute the pixel width for a given visible_lanes value (T030: column-resize aware).
+#[allow(dead_code)]
+pub fn graph_width_for_lanes(visible_lanes: usize) -> f32 {
+    (visible_lanes as f32) * LANE_W
+}
+
+/// Compute how many lanes fit in a given pixel width (T030).
+pub fn lanes_for_width(width_px: f32) -> usize {
+    ((width_px / LANE_W).floor() as usize).max(0)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -179,9 +197,14 @@ fn draw_out_of_node(
 ///
 /// The returned [`Canvas<()>`] implements [`Styled`] so the caller can chain
 /// `.size_full()`, `.w(...)`, etc. directly on the return value.
+///
+/// `visible_lanes` — how many lanes fit in the rendered column width.
+/// Edges/nodes with lane indices >= visible_lanes are skipped so that no
+/// drawing bleeds beyond the right edge of the graph column (T030).
 pub fn graph_canvas(
     node_lane: usize,
     edges: Vec<GraphEdge>,
+    visible_lanes: usize,
 ) -> Canvas<()> {
     canvas(
         // prepaint: nothing to measure
@@ -200,10 +223,13 @@ pub fn graph_canvas(
                 ox + (lane as f32) * LANE_W + LANE_W / 2.0
             };
 
+            // Effective clip limit: skip lanes at or beyond this index.
+            let clip = visible_lanes;
+
             // ── Draw edges ──────────────────────────────────
             for edge in &edges {
-                // Skip edges entirely outside the clipped lane area.
-                if edge.from_lane >= MAX_LANES && edge.to_lane >= MAX_LANES {
+                // Skip edges entirely outside the clipped lane area (T030).
+                if edge.from_lane >= clip && edge.to_lane >= clip {
                     continue;
                 }
 
@@ -252,7 +278,7 @@ pub fn graph_canvas(
             }
 
             // ── Draw node ● ─────────────────────────────────
-            if node_lane < MAX_LANES {
+            if node_lane < clip {
                 let cx_abs = lane_x(node_lane);
                 let color = lane_color(node_lane);
                 // Approximate circle with an 8-point polygon.

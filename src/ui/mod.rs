@@ -5613,6 +5613,18 @@ impl KagiApp {
         }
     }
 
+    /// True when keyboard focus is on the app root (the commit-list
+    /// context). Keyboard shortcuts that act on the selected commit must
+    /// not fire while the terminal, a text input or any other focusable
+    /// element owns the focus — key events bubble up to the root from
+    /// every focused element (user-reported: Enter in the terminal almost
+    /// checked out the selected commit).
+    fn root_has_focus(&self, window: &Window) -> bool {
+        self.root_focus
+            .as_ref()
+            .map_or(false, |fh| fh.is_focused(window))
+    }
+
     /// Enter on a selected commit: open the checkout plan for it
     /// (branch checkout when a local branch points here, otherwise a
     /// detached commit checkout). On a dirty working tree the confirm
@@ -5620,6 +5632,9 @@ impl KagiApp {
     /// plan warning + `stash_first` on the modal.
     pub fn checkout_selected_commit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         use gpui_component::WindowExt as _;
+        if !self.root_has_focus(window) {
+            return;
+        }
         if self.busy_op.is_some() || self.repo_path.is_none() {
             return;
         }
@@ -6008,7 +6023,10 @@ impl Render for KagiApp {
             .on_action(close_main_diff)
             // Arrows: step diff files while the main diff is open, otherwise
             // move the commit selection (user request).
-            .on_action(cx.listener(|this, _: &DiffPrevFile, _window, cx| {
+            .on_action(cx.listener(|this, _: &DiffPrevFile, window, cx| {
+                if !this.root_has_focus(window) {
+                    return;
+                }
                 if this.main_diff.is_some() {
                     this.main_diff_step(-1);
                 } else {
@@ -6016,7 +6034,10 @@ impl Render for KagiApp {
                 }
                 cx.notify();
             }))
-            .on_action(cx.listener(|this, _: &DiffNextFile, _window, cx| {
+            .on_action(cx.listener(|this, _: &DiffNextFile, window, cx| {
+                if !this.root_has_focus(window) {
+                    return;
+                }
                 if this.main_diff.is_some() {
                     this.main_diff_step(1);
                 } else {

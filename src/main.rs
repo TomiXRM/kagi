@@ -320,6 +320,38 @@ fn main() {
         }
     }
 
+    // ── T-COMMIT-010/011: headless amend plan / execute ──────
+    // KAGI_AMEND=<mode>: mode ∈ {message, staged, both}. Build an amend plan and
+    // log it.  KAGI_AMEND_MSG=<text> supplies the new message (for message/both).
+    // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, drive the TWO-STAGE confirm
+    // (arm + execute).  For fixture/tempdir testing only.  Do not set in normal use.
+    if let Ok(mode_str) = std::env::var("KAGI_AMEND") {
+        match kagi::git::ops::AmendMode::from_env_str(&mode_str) {
+            Some(mode) => {
+                let message = std::env::var("KAGI_AMEND_MSG").unwrap_or_default();
+                app_state.open_amend_modal_with_message(mode, message);
+                if std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1") {
+                    if let Some(modal) = app_state.amend_modal.clone() {
+                        if modal.plan.blockers.is_empty() {
+                            // Stage 1: arm the two-stage confirm.
+                            app_state.confirm_amend();
+                            // Stage 2: execute.
+                            app_state.confirm_amend();
+                        } else {
+                            eprintln!(
+                                "[kagi] KAGI_AUTO_CONFIRM=1 but amend has {} blocker(s), skipping",
+                                modal.plan.blockers.len()
+                            );
+                        }
+                    }
+                }
+            }
+            None => {
+                eprintln!("[kagi] KAGI_AMEND: invalid mode '{}' (use message|staged|both)", mode_str);
+            }
+        }
+    }
+
     // ── W2-DELETE: headless delete-branch plan / execute ─────
     // KAGI_DELETE_BRANCH=<name>: generate a delete-branch plan and log it.
     // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, execute immediately.

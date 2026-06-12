@@ -183,6 +183,7 @@ use kagi::git::{
         plan_stash_apply, execute_stash_apply,
         plan_pull, execute_pull, PullOutcome,
         plan_undo_commit, execute_undo_commit,
+        plan_amend, execute_amend, AmendMode,
         plan_stash_pop, execute_stash_pop,
         plan_push, execute_push,
         preflight_check_stash,
@@ -918,6 +919,24 @@ pub struct UndoPlanModal {
     pub error: Option<SharedString>,
 }
 
+/// State for an in-progress amend confirmation (T-COMMIT-011, ADR-0040).
+///
+/// Amend is history-rewriting (ADR-0023) so the modal requires a **two-stage
+/// confirmation**: the first Confirm click *arms* the action (`confirm_armed`
+/// flips to `true` and the button text changes to a final, explicit confirm),
+/// and only the second click executes.
+#[derive(Clone)]
+pub struct AmendPlanModal {
+    pub plan: std::sync::Arc<OperationPlan>,
+    pub error: Option<SharedString>,
+    /// Which amend mode this plan was built for.
+    pub mode: AmendMode,
+    /// The new message (for MessageOnly / Both); ignored for Staged.
+    pub message: String,
+    /// Two-stage confirm gate: `false` = first click pending, `true` = armed.
+    pub confirm_armed: bool,
+}
+
 /// State for an in-progress stash-pop confirmation (T-HT-007).
 #[derive(Clone)]
 pub struct PopPlanModal {
@@ -1128,6 +1147,8 @@ pub struct KagiApp {
     pub pull_modal: Option<PullPlanModal>,
     /// When `Some`, the undo-commit confirmation modal is visible (T-HT-009).
     pub undo_modal: Option<UndoPlanModal>,
+    /// When `Some`, the amend confirmation modal is visible (T-COMMIT-011).
+    pub amend_modal: Option<AmendPlanModal>,
     /// When `Some`, the stash-pop confirmation modal is visible (T-HT-007).
     pub pop_modal: Option<PopPlanModal>,
     /// When `Some`, the push plan confirmation modal is visible (T-HT-004).
@@ -1523,6 +1544,7 @@ impl KagiApp {
             plan_modal: None,
             pull_modal: None,
             undo_modal: None,
+            amend_modal: None,
             pop_modal: None,
             push_modal: None,
             create_branch_modal: None,
@@ -1613,6 +1635,7 @@ impl KagiApp {
             plan_modal: None,
             pull_modal: None,
             undo_modal: None,
+            amend_modal: None,
             pop_modal: None,
             push_modal: None,
             create_branch_modal: None,
@@ -1730,6 +1753,7 @@ impl KagiApp {
         self.plan_modal = None;
         self.pull_modal = None;
         self.undo_modal = None;
+        self.amend_modal = None;
         self.pop_modal = None;
         self.create_branch_modal = None;
         self.create_worktree_modal = None;
@@ -4211,6 +4235,132 @@ impl KagiApp {
         }
     }
 
+    // ── Amend (T-COMMIT-011, ADR-0040) ───────────────────────
+
+    /// Build an amend plan for `mode` and open the confirmation modal.
+    ///
+    /// The new message is read from the commit input (UI path) or the commit
+    /// panel's `commit_msg` (headless path).  For [`AmendMode::Staged`] the
+    /// message is ignored by the backend.
+    ///
+    /// Entry point for the Commit Panel "Amend" control — wired by the PM when
+    /// the W14-PREVIEW/TEMPLATE commit-panel lanes merge (this lane owns the
+    /// backend + modal/confirm plumbing, not `commit_panel.rs`).
+    #[allow(dead_code)]
+    pub fn open_amend_modal(&mut self, mode: AmendMode, cx: &mut Context<Self>) {
+        let message: String = if let Some(ref input_entity) = self.commit_input {
+            input_entity.read(cx).value().to_string()
+        } else {
+            self.commit_panel.as_ref().map(|p| p.commit_msg.clone()).unwrap_or_default()
+        };
+        self.open_amend_modal_with_message(mode, message);
+    }
+
+    /// Build an amend plan from an explicit `message` (no `Context` needed).
+    /// Used by the headless `KAGI_AMEND` path and by [`open_amend_modal`].
+    pub fn open_amend_modal_with_message(&mut self, mode: AmendMode, message: String) {
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    format!("amend: repo open error: {}", e.message())));
+                return;
+            }
+        };
+        let msg_opt = if message.trim().is_empty() { None } else { Some(message.as_str()) };
+        match plan_amend(&repo, mode, msg_opt) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: amend mode={:?} blockers={} warnings={} destructive={}",
+                    mode, plan.blockers.len(), plan.warnings.len(), plan.destructive
+                );
+                self.amend_modal = Some(AmendPlanModal {
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                    mode,
+                    message,
+                    confirm_armed: false,
+                });
+            }
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    format!("amend plan error: {}", e)));
+            }
+        }
+    }
+
+    /// Cancel the amend modal (also disarms the two-stage confirm).
+    pub fn cancel_amend_modal(&mut self) { self.amend_modal = None; }
+
+    /// First stage of the two-stage confirm: arm the action.  If already armed
+    /// this is the final stage and executes the amend (ADR-0023 history-rewrite).
+    pub fn confirm_amend(&mut self) {
+        let modal = match self.amend_modal.clone() { Some(m) => m, None => return };
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+
+        // Defence: never execute with blockers present.
+        if !modal.plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: amend plan has blockers, not executing");
+            self.record_op("amend", modal.plan.current.clone(),
+                OpOutcome::Refused { blockers: modal.plan.blockers.clone() }, &repo_path);
+            return;
+        }
+
+        // ── Two-stage confirm: first click only arms ─────────
+        if !modal.confirm_armed {
+            self.amend_modal = Some(AmendPlanModal { confirm_armed: true, ..modal });
+            eprintln!("[kagi] amend: armed (second confirm required — history rewrite)");
+            return;
+        }
+
+        // ── Armed: proceed to preflight → execute ────────────
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                let err_msg = format!("Repo open error: {}", e.message());
+                self.record_op("amend", modal.plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
+                self.amend_modal = Some(AmendPlanModal { error: Some(SharedString::from(err_msg)), ..modal });
+                return;
+            }
+        };
+        if let Err(e) = preflight_check(&repo, &modal.plan) {
+            let err_msg = format!("Preflight failed: {}", e);
+            self.record_op("amend", modal.plan.current.clone(),
+                OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
+            self.amend_modal = Some(AmendPlanModal { error: Some(SharedString::from(err_msg)), ..modal });
+            return;
+        }
+
+        // ADR-0040: record the OLD HEAD SHA in the oplog BEFORE execution.
+        // `record_op` writes the before-state; the success record below captures
+        // the new HEAD so the旧→新 transition is fully logged.
+        let msg_opt = if modal.message.trim().is_empty() { None } else { Some(modal.message.as_str()) };
+        match execute_amend(&repo, modal.mode, msg_opt) {
+            Ok(outcome) => {
+                eprintln!("[kagi] executed: amend {} -> {}", outcome.old.short(), outcome.new.short());
+                self.amend_modal = None;
+                let after = StateSummary {
+                    head: format!("branch @ {} (was {})", outcome.new.short(), outcome.old.short()),
+                    dirty: "amended".to_string(),
+                };
+                self.record_op("amend", modal.plan.current.clone(),
+                    OpOutcome::Success { after }, &repo_path);
+                self.status_footer = FooterStatus::Success(SharedString::from(format!(
+                    "amend: {} → {} (restore: git reset --hard {})",
+                    outcome.old.short(), outcome.new.short(), outcome.old.short())));
+                self.reload();
+            }
+            Err(e) => {
+                let err_msg = format!("Amend failed: {}", e);
+                self.record_op("amend", modal.plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
+                self.amend_modal = Some(AmendPlanModal { error: Some(SharedString::from(err_msg)), ..modal });
+            }
+        }
+    }
+
     /// Build a stash-pop plan and open the confirmation modal.
     pub fn open_pop_modal(&mut self, index: usize) {
         let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
@@ -5628,6 +5778,7 @@ impl KagiApp {
             || self.pull_modal.is_some()
             || self.push_modal.is_some()
             || self.undo_modal.is_some()
+            || self.amend_modal.is_some()
             || self.pop_modal.is_some()
             || self.create_branch_modal.is_some()
             || self.create_worktree_modal.is_some()
@@ -5819,6 +5970,7 @@ impl Render for KagiApp {
         let plan_modal = self.plan_modal.clone();
         let pull_modal = self.pull_modal.clone();
         let undo_modal = self.undo_modal.clone();
+        let amend_modal = self.amend_modal.clone();
         let pop_modal = self.pop_modal.clone();
         let push_modal = self.push_modal.clone();
         let create_branch_modal = self.create_branch_modal.clone();
@@ -6086,6 +6238,9 @@ impl Render for KagiApp {
             // ── Undo / Pop plan modal overlays ───────────────
             .when_some(undo_modal, |el, modal| {
                 el.child(render_undo_modal(modal, cx))
+            })
+            .when_some(amend_modal, |el, modal| {
+                el.child(render_amend_modal(modal, cx))
             })
             .when_some(pop_modal, |el, modal| {
                 el.child(render_pop_modal(modal, cx))
@@ -8322,6 +8477,213 @@ fn render_undo_modal(modal: UndoPlanModal, cx: &mut Context<KagiApp>) -> gpui::A
         cx.notify();
     });
     render_plan_modal_card(modal.plan, modal.error, "Undo", cancel_handler, confirm_handler, None, cx)
+        .into_any_element()
+}
+
+/// Amend confirmation overlay (T-COMMIT-011, ADR-0040 / 0023).
+///
+/// History-rewriting → **two-stage confirm**.  The first Confirm click arms the
+/// action (`confirm_armed` flips to true); the button then turns into an
+/// explicit, red final-confirm that lists what is lost (the old SHA).  No typed
+/// confirmation is required (ADR-0023).
+fn render_amend_modal(modal: AmendPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let armed = modal.confirm_armed;
+    let has_blockers = !modal.plan.blockers.is_empty();
+    let plan = modal.plan.clone();
+    let error = modal.error.clone();
+
+    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.cancel_amend_modal();
+        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        // First click arms; second click executes (handled in confirm_amend).
+        this.confirm_amend();
+        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
+        cx.notify();
+    });
+
+    // Build the standard plan card body (title / current→predicted / warnings /
+    // blockers / recovery / error) and append a two-stage confirm row.
+    let mut card = div()
+        .w(px(480.))
+        .bg(rgb(theme().modal))
+        .rounded_lg()
+        .p_4()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(
+            div()
+                .text_color(rgb(theme().text_main))
+                .text_xl()
+                .child(SharedString::from(plan.title.clone())),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from("Current")))
+                .child(
+                    div().flex().flex_row().gap_2().text_sm()
+                        .child(div().text_color(rgb(theme().text_main)).child(SharedString::from(plan.current.head.clone())))
+                        .child(div().text_color(rgb(theme().text_sub)).child(SharedString::from(format!("[{}]", plan.current.dirty)))),
+                )
+                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from("\u{2192} Predicted")))
+                .child(
+                    div().flex().flex_row().gap_2().text_sm()
+                        .child(div().text_color(rgb(theme().text_main)).child(SharedString::from(plan.predicted.head.clone())))
+                        .child(div().text_color(rgb(theme().text_sub)).child(SharedString::from(format!("[{}]", plan.predicted.dirty)))),
+                ),
+        );
+
+    // Warnings.
+    if !plan.warnings.is_empty() {
+        let mut warn_col = div().flex().flex_col().gap_1();
+        for w in &plan.warnings {
+            warn_col = warn_col.child(
+                div().text_sm().text_color(rgb(theme().color_warning)).overflow_hidden()
+                    .child(SharedString::from(format!("\u{26a0} {}", w))),
+            );
+        }
+        card = card.child(warn_col);
+    }
+
+    // Staged files folded in (preview_files), if any.
+    if !plan.preview_files.is_empty() {
+        let total = plan.preview_files.len();
+        let mut col = div().flex().flex_col().gap_1().child(
+            div().text_sm().text_color(rgb(theme().text_label))
+                .child(SharedString::from(format!("Staged changes folded in ({})", total))),
+        );
+        for f in plan.preview_files.iter().take(10) {
+            col = col.child(
+                div().text_xs().text_color(rgb(theme().text_sub)).overflow_hidden()
+                    .child(SharedString::from(f.path.display().to_string())),
+            );
+        }
+        card = card.child(col);
+    }
+
+    // Blockers.
+    if has_blockers {
+        let mut block_col = div().flex().flex_col().gap_1();
+        for b in &plan.blockers {
+            block_col = block_col.child(
+                div().text_sm().text_color(rgb(theme().color_blocker)).overflow_hidden()
+                    .child(SharedString::from(format!("\u{2717} {}", b))),
+            );
+        }
+        card = card.child(block_col);
+    }
+
+    // Recovery.
+    card = card.child(
+        div().text_xs().text_color(rgb(theme().text_muted)).overflow_hidden()
+            .child(SharedString::from(plan.recovery.clone())),
+    );
+
+    // When armed: explicit "what is lost" second-stage notice (ADR-0023).
+    if armed && !has_blockers {
+        card = card.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div().text_sm().text_color(rgb(theme().color_blocker))
+                        .child(SharedString::from("\u{26a0} This rewrites history. Click \u{201c}Rewrite history\u{201d} to confirm.")),
+                )
+                .child(
+                    div().text_xs().text_color(rgb(theme().text_sub)).overflow_hidden()
+                        .child(SharedString::from(
+                            "The current commit's SHA will be replaced. The old commit becomes unreachable from the branch (recoverable via git reflog / reset --hard <old>).",
+                        )),
+                ),
+        );
+    }
+
+    // Error.
+    if let Some(err) = &error {
+        card = card.child(
+            div().text_sm().text_color(rgb(theme().color_blocker)).overflow_hidden().child(err.clone()),
+        );
+    }
+
+    // Buttons.
+    let mut button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(
+            div()
+                .id("amend-cancel")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(theme().surface))
+                .text_sm()
+                .text_color(rgb(theme().text_main))
+                .on_click(cancel_handler)
+                .hover(|style| style.bg(rgb(theme().selected)))
+                .child(SharedString::from("Cancel")),
+        );
+
+    if !has_blockers {
+        // Stage 1 label = "Amend\u{2026}", stage 2 (armed) = red "Rewrite history".
+        let (label, bg) = if armed {
+            ("Rewrite history", theme().color_blocker)
+        } else {
+            ("Amend\u{2026}", theme().color_branch)
+        };
+        button_row = button_row.child(
+            div()
+                .id("amend-confirm")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(bg))
+                .text_sm()
+                .text_color(rgb(theme().bg_base))
+                .on_click(confirm_handler)
+                .hover(|style| style.opacity(0.85))
+                .child(SharedString::from(label)),
+        );
+    }
+
+    card = card.child(button_row);
+
+    // ── Full-screen overlay wrapper (matches render_plan_modal_card) ──
+    div()
+        .size_full()
+        .absolute()
+        .top_0()
+        .left_0()
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .occlude()
+                .bg(rgb(theme().modal_overlay))
+                .opacity(0.65),
+        )
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .items_center()
+                .child(card),
+        )
         .into_any_element()
 }
 

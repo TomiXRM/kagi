@@ -45,6 +45,7 @@ pub use ops::{
     plan_pull, execute_pull, PullOutcome,
     plan_push, execute_push, PushOutcome,
     plan_undo_commit, execute_undo_commit, UndoOutcome,
+    plan_amend, execute_amend, AmendMode, AmendOutcome,
     plan_delete_branch, execute_delete_branch,
     fetch_remote, FetchOutcome,
 };

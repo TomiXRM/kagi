@@ -606,3 +606,85 @@ fn patch_to_file_diff(diff: &git2::Diff<'_>, path: &Path) -> Result<FileDiff, Gi
         is_binary: false,
     })
 }
+
+// ────────────────────────────────────────────────────────────
+// Batch stage / unstage (T-UI-002: stage all / unstage all)
+// ────────────────────────────────────────────────────────────
+
+/// Stage every path in `paths` with a **single index write**.
+///
+/// Same per-file semantics as [`stage_file`] (existing files are added,
+/// deleted files have their removal staged), but the on-disk index is
+/// written once at the end, so staging hundreds of files is fast.
+/// Returns the number of paths processed.
+pub fn stage_files(repo: &Repository, paths: &[std::path::PathBuf]) -> Result<usize, GitError> {
+    if paths.is_empty() {
+        return Ok(0);
+    }
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?;
+    let mut index = repo
+        .index()
+        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+
+    for path in paths {
+        if workdir.join(path).exists() {
+            index
+                .add_path(path)
+                .map_err(|e| GitError::Other(format!("index.add_path({}) failed: {}", path.display(), e.message())))?;
+        } else {
+            index
+                .remove_path(path)
+                .map_err(|e| GitError::Other(format!("index.remove_path({}) failed: {}", path.display(), e.message())))?;
+        }
+    }
+
+    index
+        .write()
+        .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
+    Ok(paths.len())
+}
+
+/// Unstage every path in `paths`.
+///
+/// Same semantics as [`unstage_file`] (`git reset HEAD -- <paths>`), done in
+/// a single `reset_default` call when HEAD exists.  Returns the number of
+/// paths processed.
+pub fn unstage_files(repo: &Repository, paths: &[std::path::PathBuf]) -> Result<usize, GitError> {
+    if paths.is_empty() {
+        return Ok(0);
+    }
+    let head = resolve_head(repo)?;
+    match head {
+        Head::Unborn { .. } => {
+            let mut index = repo
+                .index()
+                .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+            for path in paths {
+                let _ = index.remove_path(path);
+            }
+            index
+                .write()
+                .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
+        }
+        _ => {
+            let head_ref = repo
+                .head()
+                .map_err(|e| GitError::Other(format!("repo.head() failed: {}", e.message())))?;
+            let head_oid = head_ref
+                .target()
+                .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
+            let head_obj = repo
+                .find_object(head_oid, None)
+                .map_err(|e| GitError::Other(format!("find_object(HEAD) failed: {}", e.message())))?;
+            let path_strs: Vec<String> = paths
+                .iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+            repo.reset_default(Some(&head_obj), path_strs.iter().map(|s| s.as_str()))
+                .map_err(|e| GitError::Other(format!("reset_default failed: {}", e.message())))?;
+        }
+    }
+    Ok(paths.len())
+}

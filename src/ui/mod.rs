@@ -2537,6 +2537,53 @@ impl KagiApp {
     /// Stage a single file in the commit panel.
     ///
     /// Calls `stage_file` from T024 and then refreshes the staging status.
+    /// Stage every non-conflicted unstaged file (T-UI-002: Stage all).
+    pub fn do_stage_all(&mut self) {
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let paths: Vec<std::path::PathBuf> = match self.commit_panel.as_ref() {
+            Some(p) => p.unstaged.iter()
+                .filter(|f| !p.is_conflicted(&f.path))
+                .map(|f| f.path.clone())
+                .collect(),
+            None => return,
+        };
+        if paths.is_empty() { return; }
+        let repo = match git2::Repository::open(&repo_path) { Ok(r) => r, Err(_) => return };
+        match kagi::git::stage_files(&repo, &paths) {
+            Ok(n) => {
+                eprintln!("[kagi] staged-all: {} file(s)", n);
+                if let Some(panel) = self.commit_panel.as_mut() {
+                    panel.reload_status(&repo_path);
+                }
+            }
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!("stage all failed: {}", e)));
+            }
+        }
+    }
+
+    /// Unstage every staged file (T-UI-002: Unstage all).
+    pub fn do_unstage_all(&mut self) {
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let paths: Vec<std::path::PathBuf> = match self.commit_panel.as_ref() {
+            Some(p) => p.staged.iter().map(|f| f.path.clone()).collect(),
+            None => return,
+        };
+        if paths.is_empty() { return; }
+        let repo = match git2::Repository::open(&repo_path) { Ok(r) => r, Err(_) => return };
+        match kagi::git::unstage_files(&repo, &paths) {
+            Ok(n) => {
+                eprintln!("[kagi] unstaged-all: {} file(s)", n);
+                if let Some(panel) = self.commit_panel.as_mut() {
+                    panel.reload_status(&repo_path);
+                }
+            }
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!("unstage all failed: {}", e)));
+            }
+        }
+    }
+
     pub fn do_stage_file(&mut self, index: usize) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
@@ -2613,12 +2660,6 @@ impl KagiApp {
         }
     }
 
-    /// Toggle tree view in the commit panel.
-    pub fn toggle_commit_panel_tree_view(&mut self) {
-        if let Some(ref mut panel) = self.commit_panel {
-            panel.tree_view = !panel.tree_view;
-        }
-    }
 
     /// Handle a key-down event for the commit message input.
     ///
@@ -6577,23 +6618,35 @@ fn render_commit_panel(
     let diff_view = panel.diff_view.clone();
     let selected_file = panel.selected_file.clone();
 
-    // ── Tree view toggle ─────────────────────────────────────
-    let toggle_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
-        this.toggle_commit_panel_tree_view();
+    // ── View switch: segmented [List | Tree] (T-UI-002) ──────
+    let list_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
+        if let Some(panel) = this.commit_panel.as_mut() { panel.tree_view = false; }
         cx.notify();
     });
-
+    let tree_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
+        if let Some(panel) = this.commit_panel.as_mut() { panel.tree_view = true; }
+        cx.notify();
+    });
+    let seg = |id: &'static str, label: &'static str, active: bool| {
+        div()
+            .id(id)
+            .px_1p5()
+            .py_px()
+            .text_xs()
+            .bg(rgb(if active { BG_SELECTED } else { BG_SURFACE }))
+            .text_color(rgb(if active { TEXT_MAIN } else { TEXT_MUTED }))
+            .hover(|st| st.text_color(rgb(TEXT_MAIN)).cursor_pointer())
+            .child(SharedString::from(label))
+    };
     let toggle_btn = div()
-        .id("cp-tree-toggle")
-        .px_1()
-        .py_px()
+        .flex()
+        .flex_row()
         .rounded_sm()
-        .bg(rgb(BG_SURFACE))
-        .text_xs()
-        .text_color(rgb(if tree_view { COLOR_BRANCH } else { TEXT_MUTED }))
-        .on_click(toggle_click)
-        .hover(|s| s.bg(rgb(BG_SELECTED)))
-        .child(SharedString::from(if tree_view { "tree" } else { "flat" }));
+        .overflow_hidden()
+        .border_1()
+        .border_color(rgb(BG_SURFACE))
+        .child(seg("cp-view-list", "List", !tree_view).on_click(list_click))
+        .child(seg("cp-view-tree", "Tree", tree_view).on_click(tree_click));
 
     // ── Helper: build file rows for a section ────────────────
     // Returns a Vec of (element, depth, name, is_conflicted) as IntoElement.
@@ -6617,6 +6670,26 @@ fn render_commit_panel(
                 .text_color(rgb(TEXT_LABEL))
                 .child(SharedString::from(format!("Unstaged ({})", unstaged_count))),
         )
+        .when(unstaged_count > 0, |el| {
+            let stage_all_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
+                this.do_stage_all();
+                cx.notify();
+            });
+            el.child(
+                div()
+                    .id("cp-stage-all")
+                    .mr_2()
+                    .px_1p5()
+                    .py_px()
+                    .rounded_sm()
+                    .bg(rgb(BG_SURFACE))
+                    .text_xs()
+                    .text_color(rgb(COLOR_SUCCESS))
+                    .hover(|st| st.bg(rgb(BG_SELECTED)).cursor_pointer())
+                    .on_click(stage_all_click)
+                    .child(SharedString::from("Stage all")),
+            )
+        })
         .child(toggle_btn);
 
     // Unstaged ファイル行コンテナ (スクロールボックス内に入る)
@@ -6816,7 +6889,26 @@ fn render_commit_panel(
                 .text_sm()
                 .text_color(rgb(TEXT_LABEL))
                 .child(SharedString::from(format!("Staged ({})", staged_count))),
-        );
+        )
+        .when(staged_count > 0, |el| {
+            let unstage_all_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
+                this.do_unstage_all();
+                cx.notify();
+            });
+            el.child(
+                div()
+                    .id("cp-unstage-all")
+                    .px_1p5()
+                    .py_px()
+                    .rounded_sm()
+                    .bg(rgb(BG_SURFACE))
+                    .text_xs()
+                    .text_color(rgb(COLOR_WARNING))
+                    .hover(|st| st.bg(rgb(BG_SELECTED)).cursor_pointer())
+                    .on_click(unstage_all_click)
+                    .child(SharedString::from("Unstage all")),
+            )
+        });
 
     // Staged ファイル行コンテナ (スクロールボックス内に入る)
     let mut staged_files = div()

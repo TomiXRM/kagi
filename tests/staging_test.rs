@@ -675,3 +675,37 @@ fn test_execute_commit_creates_commit_and_clears_staged() {
         "WT content must still contain the unstaged modification after commit"
     );
 }
+
+// ── T-UI-002: batch stage / unstage ──
+#[test]
+fn test_stage_files_batch() {
+    let tmp = TempDir::new().unwrap();
+    let repo = init_repo(&tmp);
+    let dir = tmp.path();
+    for i in 1..=5 {
+        write_file(dir, &format!("f{}.txt", i), "x\n");
+    }
+    let paths: Vec<std::path::PathBuf> = (1..=5).map(|i| std::path::PathBuf::from(format!("f{}.txt", i))).collect();
+    let n = kagi::git::stage_files(&repo, &paths).unwrap();
+    assert_eq!(n, 5);
+    let st = working_tree_status(&repo).unwrap();
+    assert_eq!(st.staged.len(), 5);
+    assert!(st.untracked.is_empty());
+}
+
+#[test]
+fn test_unstage_files_batch() {
+    let tmp = TempDir::new().unwrap();
+    let repo = init_repo(&tmp);
+    let dir = tmp.path();
+    for i in 1..=4 {
+        write_file(dir, &format!("g{}.txt", i), "y\n");
+        git(dir, &["add", &format!("g{}.txt", i)]);
+    }
+    let paths: Vec<std::path::PathBuf> = (1..=4).map(|i| std::path::PathBuf::from(format!("g{}.txt", i))).collect();
+    let n = kagi::git::unstage_files(&repo, &paths).unwrap();
+    assert_eq!(n, 4);
+    let st = working_tree_status(&repo).unwrap();
+    assert!(st.staged.is_empty());
+    assert_eq!(st.untracked.len(), 4);
+}

@@ -45,6 +45,7 @@ pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo};
 pub use snapshot::{RepoSnapshot, snapshot};
 #[allow(unused_imports)]
 pub use staging::{
+    stage_files, unstage_files,
     stage_file, unstage_file,
     unstaged_file_diff, staged_file_diff,
     plan_commit, execute_commit,

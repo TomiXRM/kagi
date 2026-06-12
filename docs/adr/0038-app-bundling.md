@@ -1,6 +1,6 @@
 # ADR-0038: macOS .app バンドル化と配布パイプライン(xtask + cargo-bundle + 署名/notarization)
 
-- Status: Proposed
+- Status: Accepted(2026-06-13、ADR-0047 で Phase 1 + CI 実施を確定。cargo-bundle/create-dmg は ADR-0047 で手組み xtask + hdiutil に差し替え。Phase 2 署名は Developer ID 取得待ち)
 - Date: 2026-06-13
 - 関連調査: docs/research/openlogi-learnings.md(OpenLogi の配布パイプライン調査)
 - 関連 ADR: 0001(gpui)、0006(gpui-component)、0031(外部コード流用ポリシー)、0012(app shell responsibilities)、0036(color themes)

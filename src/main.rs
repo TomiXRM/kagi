@@ -352,6 +352,48 @@ fn main() {
         }
     }
 
+    // ── T-CM-041: headless detached commit checkout plan / execute ─
+    // KAGI_CHECKOUT_COMMIT=<row>: generate a detached checkout plan for the
+    // commit row and log it.
+    // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, proceed to execute.
+    // For fixture/tempdir testing only. Do not set in normal use.
+    if let Ok(row_str) = std::env::var("KAGI_CHECKOUT_COMMIT") {
+        let row_index: usize = row_str.parse().unwrap_or(usize::MAX);
+        let commit_id = app_state
+            .details
+            .get(row_index)
+            .map(|detail| kagi::git::CommitId(detail.full_sha.as_ref().to_string()));
+
+        match commit_id {
+            Some(commit_id) => {
+                app_state.open_checkout_commit_modal(commit_id);
+
+                let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
+                if auto_confirm {
+                    if let Some(ref modal) = app_state.plan_modal.clone() {
+                        if modal.plan.blockers.is_empty() {
+                            app_state.confirm_checkout();
+                        } else {
+                            eprintln!(
+                                "[kagi] KAGI_AUTO_CONFIRM=1 but checkout-commit has {} blocker(s), skipping",
+                                modal.plan.blockers.len()
+                            );
+                            record_headless_op(
+                                "checkout-commit",
+                                modal.plan.current.clone(),
+                                OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                                &repo_path,
+                            );
+                        }
+                    }
+                }
+            }
+            None => {
+                eprintln!("[kagi] KAGI_CHECKOUT_COMMIT: row={} out of range", row_index);
+            }
+        }
+    }
+
     // ── T014: headless create-branch plan / execute ──────────
     // KAGI_CREATE_BRANCH=<name>: generate a create-branch plan using HEAD commit
     // as the starting point and log it.

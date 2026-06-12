@@ -2,6 +2,7 @@
 //!
 //! Implements the **plan → preflight → execute** pipeline for:
 //! - `checkout` (ADR-0004, Guarded class): `plan_checkout` / `preflight_check` / `execute_checkout`
+//! - `checkout commit` (ADR-0022): `plan_checkout_commit` / `preflight_check` / `execute_checkout_commit`
 //! - `create-branch` (ADR-0004, Safe class): `plan_create_branch` / `execute_create_branch`
 //! - `stash-push` (ADR-0004, Guarded class): `plan_stash_push` / `execute_stash_push`
 //! - `stash-apply` (ADR-0004, Guarded class): `plan_stash_apply` / `execute_stash_apply`
@@ -32,8 +33,10 @@
 //! # Public API
 //!
 //! - [`plan_checkout`]          — generate an [`OperationPlan`] for checkout
+//! - [`plan_checkout_commit`]   — generate an [`OperationPlan`] for detached commit checkout
 //! - [`preflight_check`]        — verify HEAD has not moved since planning
 //! - [`execute_checkout`]       — perform the checkout (safe-mode only)
+//! - [`execute_checkout_commit`] — detach HEAD at a commit (safe-mode only)
 //! - [`plan_create_branch`]     — generate an [`OperationPlan`] for branch creation
 //! - [`execute_create_branch`]  — create the branch (force=false, no checkout)
 //! - [`plan_stash_push`]        — generate an [`OperationPlan`] for stash push
@@ -55,6 +58,7 @@
 //! | Variable            | Effect |
 //! |---------------------|--------|
 //! | `KAGI_PLAN_CHECKOUT=<branch>`  | generate a plan for `<branch>` and emit a plan log |
+//! | `KAGI_CHECKOUT_COMMIT=<row>`    | generate a detached checkout plan for commit row and emit a plan log |
 //! | `KAGI_CREATE_BRANCH=<name>`    | generate a create-branch plan for HEAD and emit a plan log |
 //! | `KAGI_STASH_PUSH=1`            | generate a stash-push plan and emit a plan log |
 //! | `KAGI_STASH_APPLY=<index>`     | generate a stash-apply plan for `<index>` and emit a plan log |
@@ -131,6 +135,28 @@ impl OperationPlan {
     /// list has not changed since the plan was generated.
     pub fn stash_count_at_plan(&self) -> usize {
         self.stash_count_at_plan
+    }
+}
+
+fn status_summary_display(status: &super::status::WorkingTreeStatus) -> String {
+    let dirty_parts: Vec<String> = [
+        (!status.staged.is_empty())
+            .then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty())
+            .then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty())
+            .then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty())
+            .then(|| format!("{} conflicted", status.conflicted.len())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    if dirty_parts.is_empty() {
+        "clean".to_string()
+    } else {
+        dirty_parts.join(", ")
     }
 }
 
@@ -355,6 +381,120 @@ pub fn execute_checkout(repo: &Repository, branch: &str) -> Result<(), GitError>
     let refname = format!("refs/heads/{}", branch);
     repo.set_head(&refname)
         .map_err(|e| GitError::Other(format!("set_head failed: {}", e.message())))?;
+
+    Ok(())
+}
+
+// ────────────────────────────────────────────────────────────
+// plan_checkout_commit / execute_checkout_commit
+// ────────────────────────────────────────────────────────────
+
+/// Analyse whether checking out `id` as detached HEAD is safe and return an
+/// [`OperationPlan`].
+///
+/// Dirty working-tree state is surfaced as a warning, not a blocker: execution
+/// still uses `checkout_tree(...safe())`, so libgit2 refuses rather than
+/// overwriting local changes. This keeps the normal plan → confirm → preflight
+/// → execute → verify pipeline intact while preserving the repository on safe
+/// checkout failure.
+pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<OperationPlan, GitError> {
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+    let dirty_display = status_summary_display(&status);
+
+    let current = StateSummary {
+        head: head.display(),
+        dirty: dirty_display.clone(),
+    };
+
+    let mut warnings = vec![
+        "detached HEAD になります。新しい作業を残す場合は branch を作成してください。"
+            .to_string(),
+        "Create branch here を先に使うことを推奨します。".to_string(),
+    ];
+    let mut blockers = Vec::new();
+
+    let target_oid = git2::Oid::from_str(&id.0)
+        .or_else(|_| repo.revparse_single(&id.0).map(|obj| obj.id()))
+        .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.0, e.message())))?;
+    let commit = repo
+        .find_commit(target_oid)
+        .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.short(), e.message())))?;
+
+    if matches!(&head, Head::Attached { target, .. } | Head::Detached { target } if target == &target_oid.to_string())
+    {
+        blockers.push("Commit is already HEAD.".to_string());
+    }
+
+    if status.is_dirty() {
+        warnings.push(format!(
+            "Working tree is dirty ({}). Safe checkout may fail; stash or commit first.",
+            dirty_display
+        ));
+    }
+
+    let target_short = id.short().to_string();
+    let predicted = StateSummary {
+        head: format!("detached: {}", target_short),
+        dirty: dirty_display,
+    };
+
+    let current_ref = match &head {
+        Head::Attached { branch, .. } => branch.clone(),
+        Head::Detached { target } => target.get(..8).unwrap_or(target).to_string(),
+        Head::Unborn { branch } => branch.clone(),
+    };
+    let summary_line = commit
+        .summary()
+        .ok()
+        .flatten()
+        .unwrap_or("(no message)")
+        .chars()
+        .take(72)
+        .collect::<String>();
+    let recovery = format!(
+        "If this was accidental, return with:\n  git checkout {}\n\
+         To keep new work from the detached state, create a branch:\n  git switch -c <name>\n\
+         The reflog records every HEAD movement:\n  git reflog",
+        current_ref
+    );
+
+    Ok(OperationPlan {
+        title: format!("Checkout commit {} '{}' (detached HEAD)", target_short, summary_line),
+        current,
+        predicted,
+        warnings,
+        blockers,
+        recovery,
+        head_at_plan: head,
+        stash_count_at_plan: 0,
+        preview_files: Vec::new(),
+        preview_commits: Vec::new(),
+    })
+}
+
+/// Execute a detached commit checkout using **safe mode only**.
+///
+/// Order matters: this checks out the target tree while HEAD still points at
+/// the old baseline, then detaches HEAD at the target commit. Moving HEAD first
+/// would make safe checkout compare the target tree to itself and risk a no-op.
+pub fn execute_checkout_commit(repo: &Repository, id: &CommitId) -> Result<(), GitError> {
+    let target_oid = git2::Oid::from_str(&id.0)
+        .or_else(|_| repo.revparse_single(&id.0).map(|obj| obj.id()))
+        .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.0, e.message())))?;
+
+    let commit = repo
+        .find_commit(target_oid)
+        .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.short(), e.message())))?;
+    let obj = commit.into_object();
+
+    let mut cb = git2::build::CheckoutBuilder::new();
+    cb.safe();
+    repo.checkout_tree(&obj, Some(&mut cb))
+        .map_err(|e| GitError::Other(format!("checkout_tree failed: {}", e.message())))?;
+
+    repo.set_head_detached(target_oid)
+        .map_err(|e| GitError::Other(format!("set_head_detached failed: {}", e.message())))?;
 
     Ok(())
 }

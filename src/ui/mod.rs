@@ -1257,6 +1257,11 @@ pub struct KagiApp {
     pub next_toast_id: u64,
     /// True while the 500ms auto-dismiss ticker task is alive.
     pub toast_ticker_alive: bool,
+    /// Debounce generation for modal live re-planning. Each input change
+    /// bumps it; a 250ms timer task re-plans only if no newer change arrived.
+    /// Per-keystroke synchronous re-planning (Repository::open + plan build,
+    /// the stash modal even scans status) was the user-reported input lag.
+    pub modal_replan_gen: u64,
     /// Name of the git operation currently running on a background thread
     /// (e.g. "pull"/"push"). While `Some`, toolbar git buttons are disabled
     /// and new plan modals are refused so operations never overlap.
@@ -1557,6 +1562,7 @@ impl KagiApp {
             next_toast_id: 0,
             toast_ticker_alive: false,
             busy_op: None,
+            modal_replan_gen: 0,
             // W2-DELETE
             delete_branch_modal: None,
             commit_menu: None,
@@ -1644,6 +1650,7 @@ impl KagiApp {
             next_toast_id: 0,
             toast_ticker_alive: false,
             busy_op: None,
+            modal_replan_gen: 0,
             // W2-DELETE
             delete_branch_modal: None,
             commit_menu: None,
@@ -2034,6 +2041,9 @@ impl KagiApp {
     ///
     /// On failure the modal remains open and shows the error text.
     pub fn confirm_create_branch(&mut self) {
+        // The live plan is debounced; rebuild it from the latest input so a
+        // fast type-then-click can never execute a stale plan.
+        self.run_modal_replans();
         let modal = match self.create_branch_modal.clone() {
             Some(m) => m,
             None => return,
@@ -2301,6 +2311,9 @@ impl KagiApp {
     }
 
     pub fn confirm_create_worktree(&mut self) {
+        // The live plan is debounced; rebuild it from the latest input so a
+        // fast type-then-click can never execute a stale plan.
+        self.run_modal_replans();
         let modal = match self.create_worktree_modal.clone() {
             Some(m) => m,
             None => return,
@@ -2470,6 +2483,9 @@ impl KagiApp {
     ///
     /// On failure the modal remains open and shows the error text.
     pub fn confirm_stash_push(&mut self) {
+        // The live plan is debounced; rebuild it from the latest input so a
+        // fast type-then-click can never execute a stale plan.
+        self.run_modal_replans();
         let modal = match self.stash_push_modal.clone() {
             Some(m) => m,
             None => return,
@@ -3122,6 +3138,37 @@ impl KagiApp {
         self.toasts.retain(|t| t.id != id);
     }
 
+    /// Debounced live re-plan for the open modal(s): waits 250ms of input
+    /// silence before doing git work, so typing stays fluid.
+    fn schedule_modal_replan(&mut self, cx: &mut Context<Self>) {
+        self.modal_replan_gen = self.modal_replan_gen.wrapping_add(1);
+        let gen = self.modal_replan_gen;
+        cx.spawn(async move |this, acx| {
+            gpui::Timer::after(Duration::from_millis(250)).await;
+            let _ = this.update(acx, |app, cx| {
+                if app.modal_replan_gen == gen {
+                    app.run_modal_replans();
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Re-plan whichever input-bearing modal is open (used by the debounce
+    /// timer and as a freshness guard right before confirm).
+    fn run_modal_replans(&mut self) {
+        if self.create_branch_modal.is_some() {
+            self.replan_create_branch();
+        }
+        if self.create_worktree_modal.is_some() {
+            self.replan_create_worktree();
+        }
+        if self.stash_push_modal.is_some() {
+            self.replan_stash_push();
+        }
+    }
+
     /// Lazily create + sync the real text inputs of the create-branch /
     /// create-worktree / stash-push modals (gpui-component `InputState`).
     ///
@@ -3147,7 +3194,7 @@ impl KagiApp {
             if v != m.input {
                 m.input = v;
                 m.error = None;
-                self.replan_create_branch();
+                self.schedule_modal_replan(cx);
             }
         }
 
@@ -3198,7 +3245,7 @@ impl KagiApp {
                 m.error = None;
             }
             if dirty && set_path.is_none() {
-                self.replan_create_worktree();
+                self.schedule_modal_replan(cx);
             }
         }
         if let Some(branch) = set_path {
@@ -3210,7 +3257,7 @@ impl KagiApp {
                     st.update(cx, |s, cx| s.set_value(auto, window, cx));
                 }
             }
-            self.replan_create_worktree();
+            self.schedule_modal_replan(cx);
         }
 
         // ── Stash push (message) ────────────────────────────
@@ -3228,7 +3275,7 @@ impl KagiApp {
             if v != m.input {
                 m.input = v;
                 m.error = None;
-                self.replan_stash_push();
+                self.schedule_modal_replan(cx);
             }
         }
     }

@@ -40,6 +40,7 @@ use git2::{DiffOptions, Repository};
 
 use super::{
     GitError,
+    checklist::checklist,
     diff::{FileDiff, Hunk, DiffLine, DiffLineKind},
     ops::{OperationPlan, StateSummary, build_signature},
     status::working_tree_status,
@@ -346,6 +347,14 @@ pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, Gi
             parts.join(", ")
         ));
     }
+
+    // Staged-content checklist (ADR-0043 rules 4/5/6): conflict markers (block),
+    // secret/.env (warn), large binary (warn).  Inspects index BLOBs, not WT.
+    // Rules 1–3 (staged empty / message empty / repo conflicted) are handled
+    // above; the checklist adds the content-level rules.
+    let (mut check_blockers, mut check_warnings) = checklist(repo, &status)?;
+    blockers.append(&mut check_blockers);
+    warnings.append(&mut check_warnings);
 
     // ── 4. Predicted StateSummary ─────────────────────────────
     // After commit: staged becomes empty; unstaged/untracked remain.

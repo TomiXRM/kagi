@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use gpui::SharedString;
 
 use kagi::git::{
-    ChangeKind, FileStatus,
+    ChangeKind, FileDiffStat, FileStatus,
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -57,6 +57,10 @@ pub struct CommitPanelState {
     pub unstaged: Vec<FileStatus>,
     /// Files in the staged section.
     pub staged: Vec<FileStatus>,
+    /// W16-DIFFSTAT: per-file additions/deletions for unstaged files (index→WT).
+    pub unstaged_stats: Vec<FileDiffStat>,
+    /// W16-DIFFSTAT: per-file additions/deletions for staged files (HEAD→index).
+    pub staged_stats: Vec<FileDiffStat>,
     /// Paths of conflicted files (subset of unstaged — these cannot be staged).
     pub conflicted_paths: std::collections::HashSet<PathBuf>,
     /// Currently selected file (for row highlight in the panel).
@@ -75,6 +79,8 @@ impl CommitPanelState {
         let mut state = CommitPanelState {
             unstaged: Vec::new(),
             staged: Vec::new(),
+            unstaged_stats: Vec::new(),
+            staged_stats: Vec::new(),
             conflicted_paths: std::collections::HashSet::new(),
             selected_file: None,
             commit_msg: String::new(),
@@ -92,7 +98,7 @@ impl CommitPanelState {
 
     /// Reload unstaged/staged lists from the repository.
     pub fn reload_status(&mut self, repo_path: &PathBuf) {
-        use kagi::git::working_tree_status;
+        use kagi::git::{staged_diffstat, unstaged_diffstat, working_tree_status};
         let repo = match git2::Repository::open(repo_path) {
             Ok(r) => r,
             Err(e) => {
@@ -123,6 +129,10 @@ impl CommitPanelState {
                 }
                 self.unstaged = unstaged;
                 self.staged = status.staged;
+                // W16-DIFFSTAT: aggregate additions/deletions for both sides.
+                // Best-effort: on error leave the lists empty (bar omitted).
+                self.unstaged_stats = unstaged_diffstat(&repo).unwrap_or_default();
+                self.staged_stats = staged_diffstat(&repo).unwrap_or_default();
                 // Clear selection on status change.
                 self.selected_file = None;
             }

@@ -14,3 +14,9 @@
 
 - [ ] 要件の例(+10-0 / +0-10 / +5-5 / +1-20 / +200-10)を unit test で固定
 - [ ] `cargo test` 全パス、own-code warning 0
+
+## 実装メモ (done)
+
+- Status: done
+- 純関数 `bar_segments(additions, deletions, max_segments) -> (green, red)`。total=0→(0,0)。片側のみ→全segment。両側ありは各最低1 + 残りを additions 比率で四捨五入配分。`green+red <= max_segments` を保証。
+- 要件の 5 例(+10-0 / +0-10 / +5-5 / +1-20 / +200-10)を unit test で固定 + 0..50×0..50×max1..8 の網羅 property test。全 green。

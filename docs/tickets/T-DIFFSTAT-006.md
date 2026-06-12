@@ -12,3 +12,11 @@
 ## 完了条件
 
 - [ ] 上記 3 点を PM スクリーンショットで確認できる状態
+
+## 実装メモ (done)
+
+- Status: done
+- selected row: 数値・bar とも theme semantic color(accent 背景でも change_added/deleted は視認可)。
+- compact mode(KAGI_COMPACT): bar は text_xs + 固定高 9px segment で行高に追従、破綻なし。path は min_w(0)+truncate。
+- tooltip: gpui-component `Tooltip`(`.id` 必須 → `("diffstat-unit", id_seed)` で付与)。文言 `"N additions, M deletions"`(変更0は "No line changes")。
+- PM スクリーンショット確認待ち(GUI 起動は PM 側)。

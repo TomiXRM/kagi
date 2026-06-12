@@ -10,6 +10,7 @@
 mod checklist;
 pub mod cli;
 mod diff;
+mod diffstat;
 pub mod drafts;
 mod log;
 pub mod message_gen;
@@ -25,6 +26,10 @@ pub use diff::{
     DiffLine, DiffLineKind, FileDiff, Hunk, commit_changed_files, commit_file_diff,
     compare_commit_to_workdir, compare_commit_to_workdir_file_diff, compare_commits,
     compare_file_diff,
+};
+#[allow(unused_imports)]
+pub use diffstat::{
+    FileDiffStat, bar_segments, commit_diffstat, find_stat, staged_diffstat, unstaged_diffstat,
 };
 #[allow(unused_imports)]
 pub use message_gen::{

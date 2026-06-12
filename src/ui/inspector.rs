@@ -260,12 +260,14 @@ pub fn render_inspector(
     );
 
     // ── Path⇄Tree toggle ─────────────────────────────────────────────────
+    // Each button sets its mode explicitly (a shared toggle would make the
+    // active button flip the view to the other mode on click).
     let toggle_click_a = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.inspector_tree_view = !this.inspector_tree_view;
+        this.inspector_tree_view = false;
         cx.notify();
     });
     let toggle_click_b = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.inspector_tree_view = !this.inspector_tree_view;
+        this.inspector_tree_view = true;
         cx.notify();
     });
     let path_active = !tree_view;

@@ -3552,7 +3552,10 @@ impl KagiApp {
             .scroll_to_item(row_ix, ScrollStrategy::Center);
 
         // Select the row (opens detail panel, emits selected log).
-        self.select(row_ix);
+        // `select` toggles on a repeated index; a jump must stay selected.
+        if self.selected != Some(row_ix) {
+            self.select(row_ix);
+        }
     }
 
     /// W2-SIDEBAR: Jump directly to a commit by its CommitId.
@@ -3577,7 +3580,10 @@ impl KagiApp {
         eprintln!("[kagi] jump: commit {} -> row {}", target.short(), row_ix);
         self.commit_scroll_handle
             .scroll_to_item(row_ix, ScrollStrategy::Center);
-        self.select(row_ix);
+        // `select` toggles on a repeated index; a jump must stay selected.
+        if self.selected != Some(row_ix) {
+            self.select(row_ix);
+        }
     }
 
     /// W2-SIDEBAR: Lazily create the sidebar filter InputState (requires &mut Window).

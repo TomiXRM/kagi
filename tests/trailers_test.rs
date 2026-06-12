@@ -129,3 +129,22 @@ fn trailers_interspersed_with_other_lines() {
         ]
     );
 }
+
+// Regression: a Japanese prose line whose byte 15 falls inside a multi-byte
+// char must not panic (crash report 2026-06-13: "end byte index 15 is not a
+// char boundary; it is inside 'を'").
+#[test]
+fn japanese_prose_line_does_not_panic() {
+    let msg = "回路図修正\n\n基板の配線を全面的に見直した。\nハーネスを整理。\n\nCo-authored-by: 太郎 <taro@example.jp>\n";
+    let co = kagi::git::parse_coauthors(msg);
+    assert_eq!(co.len(), 1);
+    assert_eq!(co[0].name, "太郎");
+}
+
+#[test]
+fn japanese_prose_only_no_trailer_does_not_panic() {
+    // Lines >= 15 bytes of pure Japanese (3 bytes/char) hit the old
+    // split_at(15) mid-char.
+    let msg = "実装メモ\n\nこの変更では設定を読み込む処理を追加した。\n";
+    assert!(kagi::git::parse_coauthors(msg).is_empty());
+}

@@ -53,16 +53,17 @@ pub fn parse_coauthors(message: &str) -> Vec<CoAuthor> {
 
     for line in message.lines() {
         let trimmed = line.trim_start();
-        // Case-insensitive prefix match on the trailer key.  We only need to
-        // lower-case the key-length prefix, not the whole (potentially long)
-        // line, and only when the line is at least key-length.
-        if trimmed.len() < KEY.len() {
-            continue;
-        }
-        let (head, value) = trimmed.split_at(KEY.len());
+        // Case-insensitive prefix match on the trailer key.  `get` (not
+        // `split_at`) so a multi-byte char straddling the key-length byte
+        // offset yields None instead of panicking (e.g. Japanese prose lines).
+        let head = match trimmed.get(..KEY.len()) {
+            Some(h) => h,
+            None => continue,
+        };
         if !head.eq_ignore_ascii_case(KEY) {
             continue;
         }
+        let value = &trimmed[KEY.len()..];
 
         let value = value.trim();
         let (name, email) = split_name_email(value);

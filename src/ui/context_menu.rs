@@ -294,6 +294,12 @@ pub fn render_commit_menu_overlay(
     );
 
     let mut menu = div()
+        .id("commit-context-menu")
+        // Block mouse events from reaching the dismiss backdrop below —
+        // without this, pressing a menu item fires the backdrop's
+        // on_mouse_down first, the menu unmounts, and the item's on_click
+        // (down+up on the same element) never completes (user-reported bug).
+        .occlude()
         .absolute()
         .top(px(y))
         .left(px(x))

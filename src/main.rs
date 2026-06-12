@@ -826,7 +826,14 @@ fn main() {
             ui::BottomTab::OperationLog => "OperationLog",
             ui::BottomTab::Terminal => "Terminal",
         };
-        eprintln!("[kagi] bottom-panel: open height={} tab={}", h, tab_label);
+        // W2-STATUS: the height is resolved at first render (18% of viewport);
+        // before that the field holds the 0.0 sentinel.
+        let h_label = if h > 0.0 {
+            format!("{}", h)
+        } else {
+            "18%-of-viewport".to_string()
+        };
+        eprintln!("[kagi] bottom-panel: open height={} tab={}", h_label, tab_label);
         eprintln!("[kagi] oplog-tab: {} entries", app_state.op_entries.len());
     }
 

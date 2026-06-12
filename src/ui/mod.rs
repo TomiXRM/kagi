@@ -103,7 +103,11 @@ const OP_ENTRIES_LOAD: usize = 100;
 
 // T-BP-002: Bottom panel height limits and default.
 const BOTTOM_PANEL_MIN_H: f32 = 80.0;
-const BOTTOM_PANEL_DEFAULT_H: f32 = 220.0;
+// W2-STATUS / ADR-0017: default height = 18% of the viewport (requirement: ≤20%).
+// Resolved lazily on first render (the viewport size is unknown at construction);
+// `BOTTOM_PANEL_H_UNSET` marks "not yet resolved".
+const BOTTOM_PANEL_DEFAULT_FRAC: f32 = 0.18;
+const BOTTOM_PANEL_H_UNSET: f32 = 0.0;
 // Maximum fraction of the viewport height the bottom panel may occupy.
 const BOTTOM_PANEL_MAX_FRAC: f32 = 0.6;
 // Height of the horizontal divider handle at the top of the bottom panel.
@@ -217,6 +221,8 @@ pub struct StatusBarSummary {
     /// Upstream tracking ref name, e.g. `"origin/main"` (empty when no upstream / detached).
     /// ADR-0013: displayed in the left toolbar region as `→ upstream_name`.
     pub upstream_name: String,
+    /// Number of conflicted files (W2-STATUS: shown as `!N` in red when > 0).
+    pub conflict_count: usize,
 }
 
 impl StatusBarSummary {
@@ -265,6 +271,7 @@ impl StatusBarSummary {
             repo_name: String::new(), // filled in by caller after from_snapshot
             has_remote,
             upstream_name,
+            conflict_count: snap.status.conflicted.len(),
         }
     }
 
@@ -274,9 +281,13 @@ impl StatusBarSummary {
     pub fn log_headless(&self) {
         let ahead = self.ahead.unwrap_or(0);
         let behind = self.behind.unwrap_or(0);
+        // W2-STATUS: conflicts / stash / upstream appended (prefix kept
+        // identical so older verification greps keep matching).
         eprintln!(
-            "[kagi] statusbar: {} \u{2191}{} \u{2193}{} staged={} unstaged={}",
-            self.branch, ahead, behind, self.staged, self.unstaged
+            "[kagi] statusbar: {} \u{2191}{} \u{2193}{} staged={} unstaged={} conflicts={} stash={} upstream={}",
+            self.branch, ahead, behind, self.staged, self.unstaged,
+            self.conflict_count, self.stash_count,
+            if self.upstream_name.is_empty() { "-" } else { &self.upstream_name },
         );
     }
 
@@ -382,6 +393,7 @@ mod toolbar_tests {
             repo_name: "repo".to_string(),
             has_remote: true,
             upstream_name: "origin/main".to_string(),
+            conflict_count: 0,
         }
     }
 
@@ -433,6 +445,7 @@ mod toolbar_tests {
             repo_name: "repo".to_string(),
             has_remote: true,
             upstream_name: String::new(),
+            conflict_count: 0,
         };
         let t = s.toolbar_state();
         assert!(!t.pull_on, "pull must be off on detached HEAD");
@@ -508,6 +521,11 @@ pub enum FooterStatus {
     Failed(SharedString),
     /// Idle state: shows repo name / branch info (no colour tint).
     Idle(SharedString),
+    /// W2-STATUS: a git operation is in progress (shown in blue with ⟳).
+    /// Operations are currently synchronous, so this renders only once they
+    /// become async — the state machinery is wired ahead of that.
+    #[allow(dead_code)]
+    Busy(SharedString),
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1160,7 +1178,7 @@ impl KagiApp {
             badge_col_w: BADGE_COL_DEFAULT,
             graph_col_w: GRAPH_COL_DEFAULT,
             bottom_panel_open: false,
-            bottom_panel_height: BOTTOM_PANEL_DEFAULT_H,
+            bottom_panel_height: BOTTOM_PANEL_H_UNSET,
             bottom_tab: BottomTab::OperationLog,
             commit_panel_open: false,
             commit_panel: None,
@@ -1217,7 +1235,7 @@ impl KagiApp {
             badge_col_w: BADGE_COL_DEFAULT,
             graph_col_w: GRAPH_COL_DEFAULT,
             bottom_panel_open: false,
-            bottom_panel_height: BOTTOM_PANEL_DEFAULT_H,
+            bottom_panel_height: BOTTOM_PANEL_H_UNSET,
             bottom_tab: BottomTab::OperationLog,
             commit_panel_open: false,
             commit_panel: None,
@@ -3605,7 +3623,19 @@ impl KagiApp {
 }
 
 impl Render for KagiApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // W2-STATUS / ADR-0017: resolve the bottom-panel default height on
+        // first render, once the viewport size is known (18% of viewport).
+        if self.bottom_panel_height <= BOTTOM_PANEL_H_UNSET {
+            let viewport_h = f32::from(window.viewport_size().height);
+            let h = (viewport_h * BOTTOM_PANEL_DEFAULT_FRAC).max(BOTTOM_PANEL_MIN_H);
+            self.bottom_panel_height = h;
+            eprintln!(
+                "[kagi] bottom-panel: default height={:.0} ({:.0}% of viewport {:.0})",
+                h, BOTTOM_PANEL_DEFAULT_FRAC * 100.0, viewport_h
+            );
+        }
+
         let row_count = self.rows.len();
         let selected = self.selected;
 
@@ -4809,6 +4839,10 @@ impl KagiApp {
             FooterStatus::Success(msg) => (COLOR_SUCCESS, msg.clone()),
             FooterStatus::Failed(msg) => (COLOR_BLOCKER, msg.clone()),
             FooterStatus::Idle(msg) => (TEXT_MUTED, msg.clone()),
+            FooterStatus::Busy(msg) => (
+                COLOR_BRANCH,
+                SharedString::from(format!("\u{27f3} {}", msg)), // ⟳ msg
+            ),
         };
 
         // ── Branch label ───────────────────────────────────────
@@ -4846,6 +4880,45 @@ impl KagiApp {
                     .text_color(rgb(COLOR_WARNING))
                     .flex_shrink_0()
                     .child(SharedString::from(format!("~{}", summary.unstaged))),
+            )
+        } else {
+            None
+        };
+
+        // ── Conflict count (W2-STATUS) ─────────────────────────
+        let conflict_chip = if summary.conflict_count > 0 {
+            Some(
+                div()
+                    .ml(px(4.))
+                    .text_color(rgb(COLOR_BLOCKER))
+                    .flex_shrink_0()
+                    .child(SharedString::from(format!("!{}", summary.conflict_count))),
+            )
+        } else {
+            None
+        };
+
+        // ── Stash count (W2-STATUS) ────────────────────────────
+        let stash_chip = if summary.stash_count > 0 {
+            Some(
+                div()
+                    .ml(px(4.))
+                    .text_color(rgb(TEXT_SUB))
+                    .flex_shrink_0()
+                    .child(SharedString::from(format!("\u{2691}{}", summary.stash_count))), // ⚑N
+            )
+        } else {
+            None
+        };
+
+        // ── Upstream name (W2-STATUS) ──────────────────────────
+        let upstream_name_chip = if !summary.upstream_name.is_empty() {
+            Some(
+                div()
+                    .ml(px(6.))
+                    .text_color(rgb(TEXT_MUTED))
+                    .flex_shrink_0()
+                    .child(SharedString::from(format!("\u{2192} {}", summary.upstream_name))), // → origin/main
             )
         } else {
             None
@@ -4980,8 +5053,18 @@ impl KagiApp {
         if let Some(chip) = unstaged_chip {
             bar = bar.child(chip);
         }
-        // Upstream ahead/behind
+        // Conflict / stash counts (W2-STATUS)
+        if let Some(chip) = conflict_chip {
+            bar = bar.child(chip);
+        }
+        if let Some(chip) = stash_chip {
+            bar = bar.child(chip);
+        }
+        // Upstream ahead/behind + tracking-ref name
         if let Some(chip) = upstream_chip {
+            bar = bar.child(chip);
+        }
+        if let Some(chip) = upstream_name_chip {
             bar = bar.child(chip);
         }
         // Refresh time
@@ -5469,6 +5552,10 @@ fn render_status_footer(status: FooterStatus) -> impl IntoElement {
         FooterStatus::Success(msg) => (COLOR_SUCCESS, msg.clone()),
         FooterStatus::Failed(msg) => (COLOR_BLOCKER, msg.clone()),
         FooterStatus::Idle(msg) => (TEXT_MUTED, msg.clone()),
+        FooterStatus::Busy(msg) => (
+            COLOR_BRANCH,
+            SharedString::from(format!("\u{27f3} {}", msg)), // ⟳ msg
+        ),
     };
 
     div()

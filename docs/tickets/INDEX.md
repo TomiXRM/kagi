@@ -69,3 +69,9 @@
 | T-HT-008 | Undo Commit ADR | - | done(ADR-0011) |
 | T-HT-009 | Undo Commit(ref 付け替えのみの soft 相当) | ADR-0011 | done |
 | T-HT-010 | Header 操作後の refresh 統合確認 | T-HT-003〜009 | done(各 confirm_* が reload + watcher が補完) |
+| W2-HEADER | Header 再グルーピング(左集約 / Pull↓N Push↑N / Undo ラベル / Refresh 分離) | ADR-0013 | done |
+| W2-INSPECTOR | Commit Inspector(Summary→Metadata→Actions→Files / copy SHA / Path⇄Tree) | ADR-0015 | done |
+| W2-SIDEBAR | Repository Navigator(REMOTE/TAGS / 折りたたみ+件数 / filter / upstream 表示) | ADR-0014 | done |
+| W2-STATUS | Status Bar 拡張(conflict/stash/upstream/Busy)+ Bottom default 18% | ADR-0017 | done |
+| W2-GRAPH | HEAD/merge node 視覚区別 / 選択強調 / compact mode / label接続 | ADR-0016 | todo |
+| W2-DELETE | plan_delete_branch backend(merged のみ、plan 経由)+ sidebar context menu | ADR-0014 | todo |

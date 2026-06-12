@@ -153,6 +153,26 @@ pub fn theme() -> &'static Theme {
     &THEMES[i.min(THEMES.len() - 1)]
 }
 
+/// GitKraken-style ref-badge styling (user request).
+///
+/// Dark themes: tinted chip — the ref colour at low alpha for the fill, a
+/// stronger alpha for the border, white text. Light themes keep the solid
+/// chip (tints wash out on light backgrounds).
+///
+/// Returns `(bg_rgba, border_rgba, text_rgb)` for use with
+/// `gpui::rgba` / `gpui::rgb`.
+#[inline]
+pub fn badge_style(color: u32) -> (u32, u32, u32) {
+    let t = theme();
+    if t.dark {
+        // 0x33 ≈ 20% fill, 0x66 ≈ 40% border (rgitui grammar).
+        ((color << 8) | 0x33, (color << 8) | 0x66, 0xffffff)
+    } else {
+        // Solid chip: opaque fill/border, dark text from the theme base.
+        ((color << 8) | 0xff, (color << 8) | 0xff, t.bg_base)
+    }
+}
+
 /// Index of the active theme (for the menu "✓" marker).
 #[inline]
 pub fn active_index() -> usize {

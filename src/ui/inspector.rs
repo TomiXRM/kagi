@@ -506,11 +506,14 @@ pub fn render_inspector(
             } else {
                 badge.label.clone()
             };
+            let (badge_bg, badge_border, badge_text) = super::theme::badge_style(color);
             row = row.child(
                 div()
                     .px_1().rounded_sm()
-                    .bg(rgb(color))
-                    .text_color(rgb(theme().bg_base))
+                    .bg(gpui::rgba(badge_bg))
+                    .border_1()
+                    .border_color(gpui::rgba(badge_border))
+                    .text_color(rgb(badge_text))
                     .text_xs().flex_shrink_0()
                     .child(label),
             );

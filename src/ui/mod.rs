@@ -6218,7 +6218,25 @@ impl KagiApp {
             .flex_shrink_0()
             .bg(rgb(theme().surface))
             .text_color(rgb(theme().text_sub))
-            // ── LEFT: repo name + branch/upstream/ahead-behind ──
+            // ── LEFT: Refresh (user request: left of the repo title) ──
+            .child(
+                div()
+                    .id("tb-refresh")
+                    .flex_shrink_0()
+                    .mr_2()
+                    .p_1()
+                    .rounded_md()
+                    .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
+                    .on_click(refresh_click)
+                    .child(
+                        gpui::svg()
+                            .path("icons/refresh-cw.svg")
+                            .w(px(16.0))
+                            .h(px(16.0))
+                            .text_color(rgb(theme().text_main)),
+                    ),
+            )
+            // ── repo name + branch/upstream/ahead-behind ──
             .child(
                 div()
                     .text_sm()
@@ -6284,13 +6302,7 @@ impl KagiApp {
                 make_btn("tb-terminal", "Terminal", gpui_component::IconName::SquareTerminal, terminal_on, 0)
                     .on_click(terminal_click),
             )
-            // Spacer — pushes Refresh to the right
             .child(div().flex_1())
-            // ── RIGHT: Refresh ──
-            .child(
-                make_btn("tb-refresh", "Refresh", gpui_component::IconName::LoaderCircle, true, 0)
-                    .on_click(refresh_click),
-            )
     }
 
     /// Body slot — the main content area: sidebar | divider | commit list | optional panel.
@@ -7768,11 +7780,14 @@ fn render_badges_column(badges: &[commit_list::RefBadge], badge_col_w: f32) -> i
             badge.label.clone()
         };
         let is_primary = i == 0;
+        let (badge_bg, badge_border, badge_text) = theme::badge_style(color);
         let chip = div()
             .px_1()
             .rounded_sm()
-            .bg(rgb(color))
-            .text_color(rgb(theme().bg_base))
+            .bg(gpui::rgba(badge_bg))
+            .border_1()
+            .border_color(gpui::rgba(badge_border))
+            .text_color(rgb(badge_text))
             .text_sm()
             .when(is_primary, |c| c.flex_shrink_0())
             // Secondary chips may shrink to fit; their text ellipsizes.

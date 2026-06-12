@@ -29,6 +29,7 @@ const ASSETS: &[(&str, &[u8])] = &[
     ("icons/loader-circle.svg", include_bytes!("../../assets/icons/loader-circle.svg")),
     ("icons/square-terminal.svg", include_bytes!("../../assets/icons/square-terminal.svg")),
     ("icons/menu.svg", include_bytes!("../../assets/icons/menu.svg")),
+    ("icons/refresh-cw.svg", include_bytes!("../../assets/icons/refresh-cw.svg")),
 ];
 
 impl AssetSource for KagiAssets {

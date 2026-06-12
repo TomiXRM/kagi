@@ -498,7 +498,7 @@ fn cherry_pick_state(ctx: &MenuContext) -> ItemState {
     } else if ctx.is_merge {
         disabled("merge commit は MVP 対象外")
     } else if ctx.is_ancestor_of_head {
-        disabled("既に到達可能")
+        disabled("既に現在 branch に含まれています")
     } else {
         ItemState::Enabled
     }
@@ -649,7 +649,7 @@ mod tests {
         c.is_ancestor_of_head = true;
         let groups = build_commit_menu(&c);
 
-        assert_disabled_contains(&groups, CommitAction::CherryPick, "既に到達可能");
+        assert_disabled_contains(&groups, CommitAction::CherryPick, "現在 branch に含まれています");
         assert_enabled(&groups, CommitAction::Revert);
         assert_enabled(&groups, CommitAction::CheckoutCommit);
         assert_enabled(&groups, CommitAction::CompareWithHead);

@@ -41,6 +41,7 @@ pub use ops::{
     plan_stash_pop, execute_stash_pop,
     preflight_check_stash,
     plan_cherry_pick, execute_cherry_pick,
+    plan_revert, execute_revert,
     plan_pull, execute_pull, PullOutcome,
     plan_push, execute_push, PushOutcome,
     plan_undo_commit, execute_undo_commit, UndoOutcome,

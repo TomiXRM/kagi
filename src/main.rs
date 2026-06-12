@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use kagi::git::{Head, open_repository, snapshot};
 use kagi::git::oplog::{OpLogEntry, OpOutcome, append_oplog};
 use kagi::git::ops::StateSummary;
-use ui::{KagiApp, StashPushModal, StashApplyModal, CherryPickModal, run_app};
+use ui::{KagiApp, StashPushModal, StashApplyModal, CherryPickModal, RevertModal, run_app};
 use ui::commit_panel::CommitPanelState;
 
 /// Write an oplog entry and emit footer log.  Non-fatal on write error.
@@ -917,6 +917,146 @@ fn main() {
             }
             Err(e) => {
                 eprintln!("[kagi] plan: cherry-pick error: {}", e);
+            }
+        }
+    }
+
+    // ── T-CM-034: headless revert plan / execute ────────────
+    // KAGI_REVERT=<row-or-sha>: generate a revert plan and log it.
+    // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, execute immediately.
+    if let Ok(sha_str) = std::env::var("KAGI_REVERT") {
+        let commit_id = match sha_str.parse::<usize>() {
+            Ok(row) => match app_state.details.get(row) {
+                Some(detail) => {
+                    eprintln!(
+                        "[kagi] KAGI_REVERT: row {} -> {}",
+                        row,
+                        detail.full_sha.as_ref()
+                    );
+                    kagi::git::CommitId(detail.full_sha.to_string())
+                }
+                None => {
+                    eprintln!("[kagi] KAGI_REVERT: row {} out of range", row);
+                    run_app(app_state);
+                    return;
+                }
+            },
+            Err(_) => kagi::git::CommitId(sha_str.clone()),
+        };
+        let repo_revert = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kagi] KAGI_REVERT: repo open error: {}", e.message());
+                run_app(app_state);
+                return;
+            }
+        };
+
+        match kagi::git::plan_revert(&repo_revert, &commit_id) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: revert {} blockers={} preview_files={}",
+                    commit_id.short(),
+                    plan.blockers.len(),
+                    plan.preview_files.len()
+                );
+                for b in &plan.blockers {
+                    eprintln!("[kagi] plan: blocker: {}", b);
+                }
+                for w in &plan.warnings {
+                    eprintln!("[kagi] plan: warning: {}", w);
+                }
+                for f in &plan.preview_files {
+                    eprintln!(
+                        "[kagi] plan: preview_file: {} ({})",
+                        f.path.display(),
+                        f.change.label()
+                    );
+                }
+
+                let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
+                if auto_confirm {
+                    if plan.blockers.is_empty() {
+                        let repo2 = match git2::Repository::open(&repo_path) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                eprintln!("[kagi] KAGI_REVERT: repo open error: {}", e.message());
+                                run_app(app_state);
+                                return;
+                            }
+                        };
+                        if let Err(e) = kagi::git::preflight_check(&repo2, &plan) {
+                            let err_msg = format!("preflight failed: {}", e);
+                            eprintln!("[kagi] {}", err_msg);
+                            record_headless_op("revert", plan.current.clone(), OpOutcome::Failed { error: err_msg }, &repo_path);
+                        } else {
+                            match kagi::git::execute_revert(&repo2, &commit_id) {
+                                Ok(new_id) => {
+                                    eprintln!(
+                                        "[kagi] executed: revert {} -> {}",
+                                        commit_id.short(),
+                                        new_id.short()
+                                    );
+                                    let mut repo3 = match git2::Repository::open(&repo_path) {
+                                        Ok(r) => r,
+                                        Err(e) => {
+                                            eprintln!("[kagi] verify: repo open error: {}", e.message());
+                                            run_app(app_state);
+                                            return;
+                                        }
+                                    };
+                                    match snapshot(&mut repo3, 10_000) {
+                                        Ok(snap) => {
+                                            if let Head::Attached { target, branch } = &snap.head {
+                                                if *target == new_id.0 {
+                                                    eprintln!("[kagi] verified: revert HEAD={} on {}", new_id.short(), branch);
+                                                } else {
+                                                    eprintln!("[kagi] verify: HEAD={} (expected {})", &target[..8.min(target.len())], new_id.short());
+                                                }
+                                            }
+                                            let is_clean = !snap.status.is_dirty();
+                                            eprintln!(
+                                                "[kagi] verified: working tree {} after revert",
+                                                if is_clean { "clean" } else { "dirty" }
+                                            );
+                                            if let Some(c) = snap.commits.first() {
+                                                eprintln!("[kagi] verified: new HEAD message: {}", c.summary);
+                                            }
+                                            record_headless_op("revert", plan.current.clone(), OpOutcome::Success {
+                                                after: StateSummary { head: snap.head.display(), dirty: if is_clean { "clean".to_string() } else { "dirty".to_string() } }
+                                            }, &repo_path);
+                                        }
+                                        Err(e) => {
+                                            eprintln!("[kagi] verify: snapshot error: {}", e);
+                                            record_headless_op("revert", plan.current.clone(), OpOutcome::Success { after: plan.predicted.clone() }, &repo_path);
+                                        }
+                                    }
+                                    app_state.reload();
+                                }
+                                Err(e) => {
+                                    let err_msg = format!("revert execute failed: {}", e);
+                                    eprintln!("[kagi] {}", err_msg);
+                                    record_headless_op("revert", plan.current.clone(), OpOutcome::Failed { error: err_msg }, &repo_path);
+                                }
+                            }
+                        }
+                    } else {
+                        eprintln!(
+                            "[kagi] KAGI_AUTO_CONFIRM=1 but revert has {} blocker(s), skipping",
+                            plan.blockers.len()
+                        );
+                        record_headless_op("revert", plan.current.clone(), OpOutcome::Refused { blockers: plan.blockers.clone() }, &repo_path);
+                    }
+                } else {
+                    app_state.revert_modal = Some(RevertModal {
+                        commit_id,
+                        plan: std::sync::Arc::new(plan),
+                        error: None,
+                    });
+                }
+            }
+            Err(e) => {
+                eprintln!("[kagi] plan: revert error: {}", e);
             }
         }
     }

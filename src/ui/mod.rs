@@ -1211,6 +1211,10 @@ pub struct KagiApp {
     // ── W2-GRAPH: Compact graph mode ────────────────────────────
     /// When `true` row height is 18px (compact); `false` (default) = 24px.
     pub graph_compact: bool,
+    /// Horizontal scroll offset (px) of the graph column. Lanes hidden by a
+    /// narrow column width are revealed by horizontal scrolling (clamped in
+    /// render against the current lane count).
+    pub graph_scroll_x: f32,
     // ── W2-INSPECTOR: Changed-files display mode ─────────────────
     /// When `true` the inspector shows files in tree view; `false` = flat path list.
     /// Default: `true`.
@@ -1524,6 +1528,7 @@ impl KagiApp {
             inspector_split: INSPECTOR_SPLIT_DEFAULT,
             inspector_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: false,
+            graph_scroll_x: 0.0,
             // W2-SIDEBAR
             remote_branches,
             tags,
@@ -1607,6 +1612,7 @@ impl KagiApp {
             inspector_split: INSPECTOR_SPLIT_DEFAULT,
             inspector_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: false,
+            graph_scroll_x: 0.0,
             // W2-SIDEBAR
             remote_branches: Vec::new(),
             tags: Vec::new(),
@@ -3156,6 +3162,25 @@ impl KagiApp {
     /// Remove a toast by id (× button).
     pub fn dismiss_toast(&mut self, id: u64) {
         self.toasts.retain(|t| t.id != id);
+    }
+
+    /// Apply a horizontal wheel delta to the graph column scroll offset.
+    /// Vertical deltas are ignored (the commit list owns vertical scroll).
+    fn scroll_graph_by(&mut self, delta: &gpui::ScrollDelta, cx: &mut Context<Self>) {
+        let dx = match delta {
+            gpui::ScrollDelta::Pixels(p) => f32::from(p.x),
+            gpui::ScrollDelta::Lines(l) => l.x * graph_view::LANE_W,
+        };
+        if dx.abs() < 0.01 {
+            return;
+        }
+        let lane_count = self.rows.first().map(|r| r.lane_count).unwrap_or(0);
+        let max = (lane_count as f32 * graph_view::LANE_W - self.graph_col_w).max(0.0);
+        let next = (self.graph_scroll_x - dx).clamp(0.0, max);
+        if (next - self.graph_scroll_x).abs() > 0.1 {
+            self.graph_scroll_x = next;
+            cx.notify();
+        }
     }
 
     /// Spawn the 500ms auto-dismiss ticker if toasts exist and it is not
@@ -5404,6 +5429,17 @@ impl Render for KagiApp {
         self.toasts.retain(|t| !t.expired());
         self.ensure_toast_ticker(cx);
 
+        // Graph horizontal scroll: clamp against the current repo's lane
+        // count so the offset self-heals after tab switches and column
+        // resizes.
+        {
+            let lane_count = self.rows.first().map(|r| r.lane_count).unwrap_or(0);
+            let max = (lane_count as f32 * graph_view::LANE_W - self.graph_col_w).max(0.0);
+            if self.graph_scroll_x > max {
+                self.graph_scroll_x = max;
+            }
+        }
+
         let row_count = self.rows.len();
         let selected = self.selected;
 
@@ -6226,6 +6262,11 @@ impl KagiApp {
                     .flex_shrink_0()
                     .h_full()
                     .bg(rgb(BG_SURFACE))
+                    // Subtle centre line so the resize boundary is visible
+                    // without hovering (user request).
+                    .flex()
+                    .justify_center()
+                    .child(div().w(px(1.)).h_full().bg(rgb(BG_SELECTED)))
                     .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
                     .cursor_col_resize()
                     .on_drag(
@@ -6249,6 +6290,9 @@ impl KagiApp {
                     .items_center()
                     .justify_between()
                     .px_1()
+                    .on_scroll_wheel(cx.listener(move |this, e: &gpui::ScrollWheelEvent, _w, cx| {
+                        this.scroll_graph_by(&e.delta, cx);
+                    }))
                     .child(
                         div()
                             .text_xs()
@@ -6274,6 +6318,11 @@ impl KagiApp {
                     .flex_shrink_0()
                     .h_full()
                     .bg(rgb(BG_SURFACE))
+                    // Subtle centre line so the resize boundary is visible
+                    // without hovering (user request).
+                    .flex()
+                    .justify_center()
+                    .child(div().w(px(1.)).h_full().bg(rgb(BG_SELECTED)))
                     .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
                     .cursor_col_resize()
                     .on_drag(
@@ -6335,7 +6384,8 @@ impl KagiApp {
                                 ),
                         )
                         // Inner divider spacer (badge|graph handle width)
-                        .child(div().w(px(INNER_DIV_W)).flex_shrink_0())
+                        .child(div().w(px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
+                            .child(div().w(px(1.)).h_full().bg(rgb(BG_SURFACE))))
                         // Graph column placeholder (empty for WIP row)
                         .child(
                             div()
@@ -6343,7 +6393,8 @@ impl KagiApp {
                                 .flex_shrink_0(),
                         )
                         // Inner divider spacer (graph|message handle width)
-                        .child(div().w(px(INNER_DIV_W)).flex_shrink_0())
+                        .child(div().w(px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
+                            .child(div().w(px(1.)).h_full().bg(rgb(BG_SURFACE))))
                         // Summary area: "// WIP — N changes"
                         .child(
                             div()
@@ -6360,7 +6411,7 @@ impl KagiApp {
                     "commit-list",
                     row_count,
                     cx.processor(move |this, range, _window, cx| {
-                        render_rows(&this.rows, range, selected, this.badge_col_w, this.graph_col_w, this.graph_compact, cx)
+                        render_rows(&this.rows, range, selected, this.badge_col_w, this.graph_col_w, this.graph_compact, this.graph_scroll_x, cx)
                     }),
                 )
                 // T028: wire scroll handle so jump_to_branch can scroll the list.
@@ -7102,6 +7153,7 @@ fn render_rows(
     badge_col_w: f32,
     graph_col_w: f32,
     graph_compact: bool,
+    graph_scroll_x: f32,
     cx: &mut Context<KagiApp>,
 ) -> Vec<impl IntoElement> {
     let rh = row_height(graph_compact);
@@ -7172,7 +7224,8 @@ fn render_rows(
                 // ── Badges column: user-resizable width (T030) ──
                 .child(render_badges_column(&row.badges, badge_col_w))
                 // ── Inner divider spacer (badge|graph handle width) ──
-                .child(div().w(px(INNER_DIV_W)).flex_shrink_0())
+                .child(div().w(px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
+                    .child(div().w(px(1.)).h_full().bg(rgb(BG_SURFACE))))
                 // ── Graph lane area (T030) ────────────────────────
                 // Always render the graph column at graph_col_w width.
                 // Clip by visible_lanes to prevent bleed into message column.
@@ -7182,6 +7235,12 @@ fn render_rows(
                         .h_full()
                         .flex_shrink_0()
                         .overflow_hidden()
+                        // Horizontal wheel/trackpad scroll reveals clipped
+                        // lanes. Vertical deltas are left untouched so the
+                        // commit list keeps scrolling normally.
+                        .on_scroll_wheel(cx.listener(move |this, e: &gpui::ScrollWheelEvent, _w, cx| {
+                            this.scroll_graph_by(&e.delta, cx);
+                        }))
                         .when(visible_lanes > 0, |el| {
                             el.child(
                                 graph_canvas(
@@ -7191,13 +7250,15 @@ fn render_rows(
                                     row.is_head,
                                     row.is_merge,
                                     has_badges,
+                                    graph_scroll_x,
                                 )
                                 .size_full(),
                             )
                         }),
                 )
                 // ── Inner divider spacer (graph|message handle width) ──
-                .child(div().w(px(INNER_DIV_W)).flex_shrink_0())
+                .child(div().w(px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
+                    .child(div().w(px(1.)).h_full().bg(rgb(BG_SURFACE))))
                 // ── Author avatar: 18px circle after graph ────────
                 .child(
                     div()

@@ -216,6 +216,9 @@ pub fn graph_canvas(
     is_head: bool,
     is_merge: bool,
     has_badges: bool,
+    // kagi: horizontal scroll offset in px — lanes hidden by a narrow column
+    // can be brought into view by scrolling the graph column sideways.
+    scroll_x: f32,
 ) -> Canvas<()> {
     canvas(
         // prepaint: nothing to measure
@@ -229,18 +232,25 @@ pub fn graph_canvas(
             let row_h = f32::from(bounds.size.height);
             let mid_y = oy + row_h / 2.0;
 
-            // Helper: x-centre of a lane in absolute coords.
+            // Helper: x-centre of a lane in absolute coords (scroll-aware).
             let lane_x = |lane: usize| -> f32 {
-                ox + (lane as f32) * LANE_W + LANE_W / 2.0
+                ox + (lane as f32) * LANE_W + LANE_W / 2.0 - scroll_x
             };
 
-            // Effective clip limit: skip lanes at or beyond this index.
-            let clip = visible_lanes;
+            // Visible lane window for the current scroll offset.  The canvas
+            // paints outside its bounds in BOTH directions, so clipping is
+            // done by skipping lanes whose centre falls outside the window
+            // (same technique as the original right-edge clip).
+            let lane_lo = (scroll_x / LANE_W).floor().max(0.0) as usize;
+            let clip = lane_lo + visible_lanes;
+            let lane_in = |lane: usize| -> bool { lane >= lane_lo && lane < clip };
 
             // ── Draw edges ──────────────────────────────────
             for edge in &edges {
-                // Skip edges entirely outside the clipped lane area (T030).
-                if edge.from_lane >= clip && edge.to_lane >= clip {
+                // Skip edges that touch any lane outside the visible window.
+                // (Partially-visible edges would bleed over the neighbouring
+                // columns because the canvas does not clip.)
+                if !lane_in(edge.from_lane) || !lane_in(edge.to_lane) {
                     continue;
                 }
 
@@ -293,7 +303,7 @@ pub fn graph_canvas(
             // from the left edge of the graph canvas (= right edge of badge
             // column) to the node centre.  The line uses the node's lane colour.
             // Only drawn when the node is in a visible lane.
-            if has_badges && node_lane < clip {
+            if has_badges && lane_in(node_lane) && scroll_x < 0.5 {
                 let x_node = lane_x(node_lane);
                 // Draw from the left edge of the graph area (ox) to the node.
                 // If the node is in lane 0 the line has zero length; only draw
@@ -310,7 +320,7 @@ pub fn graph_canvas(
             }
 
             // ── Draw node ● ─────────────────────────────────
-            if node_lane < clip {
+            if lane_in(node_lane) {
                 let cx_abs = lane_x(node_lane);
                 let color = lane_color(node_lane);
 

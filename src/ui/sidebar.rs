@@ -223,6 +223,13 @@ pub fn render_sidebar(
 
                 let full_name = SharedString::from(branch_name.to_string());
                 let row: gpui::AnyElement = if is_head {
+                    // The checked-out branch row still jumps the view to its
+                    // commit (user report: clicking it did nothing while
+                    // scrolled away).
+                    let head_click = cx.listener(move |this: &mut KagiApp, _e: &gpui::ClickEvent, _w, cx| {
+                        this.jump_to_branch(&branch_for_click);
+                        cx.notify();
+                    });
                     div()
                         .id(SharedString::from(format!("sidebar-branch-{}", branch_name)))
                         .flex()
@@ -234,6 +241,8 @@ pub fn render_sidebar(
                         .text_sm()
                         .text_color(rgb(text_color))
                         .overflow_hidden()
+                        .on_click(head_click)
+                        .hover(|style| style.bg(rgb(theme().surface)))
                         .tooltip(name_tooltip(full_name))
                         .child(div().flex_1().truncate().child(label))
                         .when_some(upstream_label, |el, ul| {

@@ -44,7 +44,7 @@ use gpui_component::Sizable as _;
 
 // cmd-j toggle action for the bottom panel.
 // escape to close main diff view.
-actions!(kagi, [ToggleBottomPanel, CloseMainDiff, DiffPrevFile, DiffNextFile]);
+actions!(kagi, [ToggleBottomPanel, CloseMainDiff, DiffPrevFile, DiffNextFile, CheckoutSelected]);
 
 /// Active tab in the bottom panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -885,6 +885,9 @@ fn highlight_diff_rows(rows: &mut Vec<DiffRow>, file_path: &std::path::Path) -> 
 pub struct CheckoutPlanModal {
     /// Branch or commit target captured when the plan was opened.
     pub target: CheckoutPlanTarget,
+    /// When `true` (Enter-checkout on a dirty tree), confirm stashes the
+    /// working-tree changes first, then checks out.
+    pub stash_first: bool,
     /// The computed plan (title, current, predicted, warnings, blockers, recovery).
     pub plan: std::sync::Arc<OperationPlan>,
     /// Error message to show if execute or preflight failed (replaces normal buttons).
@@ -1907,6 +1910,7 @@ impl KagiApp {
                     plan.warnings.len()
                 );
                 self.plan_modal = Some(CheckoutPlanModal {
+                    stash_first: false,
                     target: CheckoutPlanTarget::Branch(branch.clone()),
                     plan: std::sync::Arc::new(plan),
                     error: None,
@@ -1945,6 +1949,7 @@ impl KagiApp {
                     plan.warnings.len()
                 );
                 self.plan_modal = Some(CheckoutPlanModal {
+                    stash_first: false,
                     target: CheckoutPlanTarget::Commit(commit_id),
                     plan: std::sync::Arc::new(plan),
                     error: None,
@@ -3529,11 +3534,92 @@ impl KagiApp {
     ///
     /// On preflight or execute failure the modal remains open and shows the
     /// error text + recovery guidance.  The app never crashes.
+    /// Stash the working tree ahead of an Enter-checkout. Returns `true`
+    /// when the tree is clean afterwards; on Refused/Failed the plan modal
+    /// shows the error and the checkout is aborted.
+    fn stash_before_checkout(&mut self) -> bool {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return false,
+        };
+        let mut repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                if let Some(m) = self.plan_modal.as_mut() {
+                    m.error = Some(SharedString::from(format!("stash: repo open error: {}", e.message())));
+                }
+                return false;
+            }
+        };
+        let msg = "kagi: auto-stash before checkout";
+        let plan = match plan_stash_push(&mut repo, Some(msg), true) {
+            Ok(p) => p,
+            Err(e) => {
+                if let Some(m) = self.plan_modal.as_mut() {
+                    m.error = Some(SharedString::from(format!("stash plan error: {}", e)));
+                }
+                return false;
+            }
+        };
+        if !plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: auto-stash has blockers, checkout aborted");
+            self.record_op(
+                "stash-push",
+                plan.current.clone(),
+                OpOutcome::Refused { blockers: plan.blockers.clone() },
+                &repo_path,
+            );
+            if let Some(m) = self.plan_modal.as_mut() {
+                m.error = Some(SharedString::from(format!(
+                    "stash refused: {}",
+                    plan.blockers.join(" / ")
+                )));
+            }
+            return false;
+        }
+        match execute_stash_push(&mut repo, Some(msg), true) {
+            Ok(()) => {
+                eprintln!("[kagi] executed: auto-stash before checkout");
+                self.record_op(
+                    "stash-push",
+                    plan.current.clone(),
+                    OpOutcome::Success { after: plan.predicted.clone() },
+                    &repo_path,
+                );
+                // Keep status fresh so the checkout preflight sees the
+                // now-clean tree.
+                self.reload();
+                true
+            }
+            Err(e) => {
+                let err = format!("stash failed: {}", e);
+                self.record_op(
+                    "stash-push",
+                    plan.current.clone(),
+                    OpOutcome::Failed { error: err.clone() },
+                    &repo_path,
+                );
+                if let Some(m) = self.plan_modal.as_mut() {
+                    m.error = Some(SharedString::from(err));
+                }
+                false
+            }
+        }
+    }
+
     pub fn confirm_checkout(&mut self) {
         let modal = match self.plan_modal.clone() {
             Some(m) => m,
             None => return,
         };
+        // Enter-checkout on a dirty tree: stash the changes first (plan
+        // pipeline; refused/failed stash aborts the checkout with the error
+        // shown in the modal).
+        if modal.stash_first && self.status_summary.is_dirty {
+            if !self.stash_before_checkout() {
+                return;
+            }
+        }
         // Defence in depth: the UI never renders the confirm button when
         // blockers exist, but refuse here too so no code path can execute a
         // blocked plan.
@@ -3569,6 +3655,7 @@ impl KagiApp {
                     &repo_path,
                 );
                 self.plan_modal = Some(CheckoutPlanModal {
+                    stash_first: false,
                     target: modal.target.clone(),
                     plan: modal.plan.clone(),
                     error: Some(SharedString::from(err_msg)),
@@ -3587,6 +3674,7 @@ impl KagiApp {
                 &repo_path,
             );
             self.plan_modal = Some(CheckoutPlanModal {
+                stash_first: false,
                 target: modal.target.clone(),
                 plan: modal.plan.clone(),
                 error: Some(SharedString::from(err_msg)),
@@ -3608,6 +3696,7 @@ impl KagiApp {
                 &repo_path,
             );
             self.plan_modal = Some(CheckoutPlanModal {
+                stash_first: false,
                 target: modal.target.clone(),
                 plan: modal.plan.clone(),
                 error: Some(SharedString::from(err_msg)),
@@ -5513,6 +5602,77 @@ impl KagiApp {
         }
     }
 
+    /// Enter on a selected commit: open the checkout plan for it
+    /// (branch checkout when a local branch points here, otherwise a
+    /// detached commit checkout). On a dirty working tree the confirm
+    /// stashes the changes first (user request) — surfaced as an extra
+    /// plan warning + `stash_first` on the modal.
+    pub fn checkout_selected_commit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui_component::WindowExt as _;
+        if self.busy_op.is_some() || self.repo_path.is_none() {
+            return;
+        }
+        // Ignore Enter while any overlay / panel / text input is active.
+        if self.plan_modal.is_some()
+            || self.pull_modal.is_some()
+            || self.push_modal.is_some()
+            || self.undo_modal.is_some()
+            || self.pop_modal.is_some()
+            || self.create_branch_modal.is_some()
+            || self.create_worktree_modal.is_some()
+            || self.stash_push_modal.is_some()
+            || self.stash_apply_modal.is_some()
+            || self.cherry_pick_modal.is_some()
+            || self.delete_branch_modal.is_some()
+            || self.commit_menu.is_some()
+            || self.commit_panel_open
+        {
+            return;
+        }
+        if window.has_focused_input(cx) {
+            return;
+        }
+        let Some(ix) = self.selected else {
+            self.status_footer = FooterStatus::Idle(SharedString::from(
+                "Checkout: commit を選択してから Enter",
+            ));
+            return;
+        };
+        let Some(ctx_info) = self.menu_context(ix) else { return };
+        if ctx_info.is_head {
+            self.status_footer =
+                FooterStatus::Idle(SharedString::from("既に HEAD です"));
+            return;
+        }
+        let Some(id) = self.commit_id_for_row(ix) else { return };
+        let dirty = self.status_summary.is_dirty;
+
+        // Prefer a local branch pointing at the commit; fall back to a
+        // detached commit checkout.
+        let branch = ctx_info
+            .refs_here
+            .iter()
+            .find(|b| matches!(b.kind, BadgeKind::Branch))
+            .map(|b| b.label.to_string());
+        match branch {
+            Some(name) => self.open_plan_modal(name),
+            None => self.open_checkout_commit_modal(id),
+        }
+        if dirty {
+            if let Some(m) = self.plan_modal.as_mut() {
+                m.stash_first = true;
+                // Surface it in the plan card's warnings.
+                let mut plan = (*m.plan).clone();
+                plan.warnings.insert(
+                    0,
+                    "Working tree が dirty です: 確定すると先に変更を stash します(stash@{0} に保存、`git stash pop` で復元)".to_string(),
+                );
+                m.plan = std::sync::Arc::new(plan);
+            }
+        }
+        cx.notify();
+    }
+
     /// Move the commit selection up/down by `delta` rows (arrow keys).
     /// No selection yet → selects the first row. Idempotent at the ends.
     pub fn step_commit_selection(&mut self, delta: i64) {
@@ -5851,6 +6011,29 @@ impl Render for KagiApp {
                     this.step_commit_selection(1);
                 }
                 cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &CheckoutSelected, window, cx| {
+                this.checkout_selected_commit(window, cx);
+            }))
+            // Enter checks out the selected commit. Handled as a raw key on
+            // the root (the "enter" KeyBinding never dispatched — its
+            // key_char "\n" takes a different path through the keymap than
+            // chord keys like the arrows). All overlay/input guards live in
+            // checkout_selected_commit.
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
+                if std::env::var("KAGI_DEBUG_KEYS").as_deref() == Ok("1") {
+                    eprintln!("[kagi] key: {:?} char={:?}", e.keystroke.key, e.keystroke.key_char);
+                }
+                let ks = &e.keystroke;
+                if ks.key == "enter"
+                    && !ks.modifiers.platform
+                    && !ks.modifiers.control
+                    && !ks.modifiers.alt
+                    && !ks.modifiers.shift
+                {
+                    this.checkout_selected_commit(window, cx);
+                    cx.notify();
+                }
             }))
             // ── W5-MENU / ADR-0029: conditional command handlers ──────────
             // Each menu action's handler is registered on the focused root ONLY
@@ -6364,6 +6547,9 @@ impl KagiApp {
                     .overflow_hidden()
                     .child(SharedString::from(branch_label)),
             )
+            // Spacer — centres the button group in the remaining width
+            // (user request: buttons in the middle, not left-aligned).
+            .child(div().flex_1())
             .child(sep())
             // ── CENTRE: Pull Push | Branch Stash Pop | Undo Terminal ──
             // Pull (↓N chip when behind>0)
@@ -10752,6 +10938,9 @@ pub fn run_app(mut app_state: KagiApp) {
             KeyBinding::new("up", DiffPrevFile, None),
             KeyBinding::new("down", DiffNextFile, None),
         ]);
+        // NOTE: a KeyBinding::new("enter", …) here never dispatched (the
+        // Return key's key_char "\n" path); Enter is handled as a raw key
+        // on the root element instead — see render().
 
         // W5-MENU / ADR-0029: register the command-registry keystrokes and the
         // native menu bar.  Keystrokes are passed into `set_menus` via the live

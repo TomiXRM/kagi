@@ -5,6 +5,7 @@
 //! independent of GPUI.
 
 pub mod avatar;
+pub mod avatar_fetch;
 pub mod assets;
 pub mod commands;
 pub mod commit_list;
@@ -1281,6 +1282,16 @@ pub struct KagiApp {
     /// When `Some(name)`, the main pane shows a `Loading <name>…` placeholder
     /// (uncached first open) until the background load completes.
     pub loading_tab: Option<SharedString>,
+    // ── W11-AVATAR: GitHub avatar images (ADR-0037) ──────────────
+    /// Resolved avatar images keyed by author email.  Populated by a background
+    /// resolution pass for GitHub repos; rows/inspector swap the initial circle
+    /// for `img(...)` when an entry exists.  Memory cache (the disk cache lives
+    /// under `~/.kagi/avatars/`).
+    pub avatar_images: HashMap<String, std::sync::Arc<gpui::Image>>,
+    /// Guard so avatar resolution runs at most once per repository path (avoids
+    /// re-hitting the network on every reload / render).  Holds the repo path
+    /// whose avatars have been (or are being) resolved.
+    pub avatar_fetch_for: Option<PathBuf>,
 }
 
 /// W6-TABSPEED: snapshot-derived **pure data** for one repository tab.
@@ -1551,6 +1562,9 @@ impl KagiApp {
             tab_cache: HashMap::new(),
             switch_generation: 0,
             loading_tab: None,
+            // W11-AVATAR
+            avatar_images: HashMap::new(),
+            avatar_fetch_for: None,
         }
     }
 
@@ -1635,6 +1649,9 @@ impl KagiApp {
             tab_cache: HashMap::new(),
             switch_generation: 0,
             loading_tab: None,
+            // W11-AVATAR
+            avatar_images: HashMap::new(),
+            avatar_fetch_for: None,
         }
     }
 
@@ -1776,6 +1793,69 @@ impl KagiApp {
 
         // Notify gpui that state has changed so the window repaints.
         cx.notify();
+    }
+
+    /// W11-AVATAR (ADR-0037): start GitHub avatar resolution for the current
+    /// repo, at most once per repository path.
+    ///
+    /// Resolution runs entirely on a background thread (`cx.background_spawn`):
+    /// it determines the GitHub `(owner, repo)` from the repo's remotes, then
+    /// resolves each distinct author email to an avatar image (noreply parse →
+    /// Commits API batch → disk/network fetch).  When it completes the resolved
+    /// images are merged into `self.avatar_images` on the main thread and a
+    /// `cx.notify()` repaints rows/inspector with real avatars.
+    ///
+    /// No-op for non-GitHub repos, `KAGI_OFFLINE=1`, or a repo already started.
+    /// The required startup log line is emitted exactly once per repo.
+    fn ensure_avatars(&mut self, cx: &mut Context<Self>) {
+        let Some(repo_path) = self.repo_path.clone() else { return };
+
+        // Run at most once per repository path.
+        if self.avatar_fetch_for.as_deref() == Some(repo_path.as_path()) {
+            return;
+        }
+        self.avatar_fetch_for = Some(repo_path.clone());
+
+        // Distinct author emails across the loaded commit rows.
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut emails: Vec<String> = Vec::new();
+        for row in &self.rows {
+            if !row.author_email.is_empty() && seen.insert(row.author_email.clone()) {
+                emails.push(row.author_email.clone());
+            }
+        }
+
+        let offline = avatar_fetch::offline();
+
+        // Determine GitHub coordinates (read-only git2). Non-GitHub repos get
+        // the initial circle and emit a pending-only log line.
+        let coords = avatar_fetch::repo_github_coords(&repo_path);
+        let Some((owner, repo)) = coords else {
+            eprintln!(
+                "[kagi] avatar: resolved=0 pending={} offline={}",
+                emails.len(),
+                offline
+            );
+            return;
+        };
+
+        let task = cx.background_spawn(async move {
+            avatar_fetch::resolve_avatars(&owner, &repo, &emails)
+        });
+        cx.spawn(async move |this, acx| {
+            let outcome = task.await;
+            let _ = this.update(acx, |app, cx| {
+                for (email, img) in outcome.images {
+                    app.avatar_images.insert(email, img);
+                }
+                eprintln!(
+                    "[kagi] avatar: resolved={} pending={} offline={}",
+                    outcome.resolved, outcome.pending, offline
+                );
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Open the checkout plan modal for `branch`.
@@ -5407,6 +5487,10 @@ impl Render for KagiApp {
             );
         }
 
+        // W11-AVATAR: kick off GitHub avatar resolution once per repo (no-op
+        // for non-GitHub repos / offline / already-started).
+        self.ensure_avatars(cx);
+
         // W3-NOTIFY: drop expired toasts and keep the auto-dismiss ticker
         // alive while any remain.
         self.toasts.retain(|t| !t.expired());
@@ -6201,6 +6285,9 @@ impl KagiApp {
         commit_input: Option<Entity<InputState>>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        // W11-AVATAR: snapshot the resolved avatar images so the inspector can
+        // swap the initial circle for a real image without re-borrowing self.
+        let avatar_images = self.avatar_images.clone();
         // Build divider 1: sidebar | main.
         let divider1 = div()
             .id("divider-sidebar")
@@ -6404,7 +6491,7 @@ impl KagiApp {
                     "commit-list",
                     row_count,
                     cx.processor(move |this, range, _window, cx| {
-                        render_rows(&this.rows, range, selected, this.badge_col_w, this.graph_col_w, this.graph_compact, this.graph_scroll_x, cx)
+                        render_rows(&this.rows, &this.avatar_images, range, selected, this.badge_col_w, this.graph_col_w, this.graph_compact, this.graph_scroll_x, cx)
                     }),
                 )
                 // T028: wire scroll handle so jump_to_branch can scroll the list.
@@ -6497,7 +6584,8 @@ impl KagiApp {
                         d, at, selected_badges.clone(),
                         files, compare_for_panel,
                         active_commit_file, inspector_tree_view,
-                        self.inspector_split, self.inspector_geom.clone(), panel_width, cx,
+                        self.inspector_split, self.inspector_geom.clone(), panel_width,
+                        &avatar_images, cx,
                     ))
             });
         }
@@ -7141,6 +7229,7 @@ impl KagiApp {
 ///         used to build `cx.listener(...)` for the on_click handler.
 fn render_rows(
     rows: &[CommitRow],
+    avatar_images: &HashMap<String, std::sync::Arc<gpui::Image>>,
     range: std::ops::Range<usize>,
     selected: Option<usize>,
     badge_col_w: f32,
@@ -7186,11 +7275,13 @@ fn render_rows(
                 },
             );
 
-            // ── Avatar (T020) ─────────────────────────────────
+            // ── Avatar (T020 / W11-AVATAR) ────────────────────
             let avatar_color = avatar::avatar_color(&row.author_email);
             let avatar_init = SharedString::from(avatar::avatar_initial(&row.author));
             // Convert Hsla to the rgb u32 that gpui's `bg()` accepts via hsla().
             let av_bg = avatar_color;
+            // W11-AVATAR: real GitHub avatar if resolved, else initial circle.
+            let avatar_image = avatar_images.get(&row.author_email).cloned();
 
             // W2-GRAPH: badge presence flag for label→node connector line.
             let has_badges = !row.badges.is_empty();
@@ -7253,24 +7344,35 @@ fn render_rows(
                 .child(div().w(px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
                     .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))))
                 // ── Author avatar: 18px circle after graph ────────
-                .child(
-                    div()
+                // W11-AVATAR: when a GitHub avatar is resolved, show the image
+                // clipped to the circle; otherwise the initial-on-colour circle.
+                .child({
+                    let circle = div()
                         .w(px(18.))
                         .h(px(18.))
                         .flex_shrink_0()
                         .mr(px(4.))
                         .rounded_full()
-                        .bg(av_bg)
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
-                                .text_color(gpui::white())
-                                .text_xs()
-                                .child(avatar_init),
+                        .overflow_hidden();
+                    match avatar_image {
+                        Some(image) => circle.child(
+                            gpui::img(gpui::ImageSource::Image(image))
+                                .size_full()
+                                .rounded_full(),
                         ),
-                )
+                        None => circle
+                            .bg(av_bg)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .text_color(gpui::white())
+                                    .text_xs()
+                                    .child(avatar_init),
+                            ),
+                    }
+                })
                 .child(
                     div()
                         .flex_1()

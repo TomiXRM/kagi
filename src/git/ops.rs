@@ -2193,6 +2193,83 @@ pub fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOutcome, 
 }
 
 // ────────────────────────────────────────────────────────────
+// Fetch (W5-MENU) — download remote objects, never merge
+// ────────────────────────────────────────────────────────────
+
+/// Result of a fetch: which remote was fetched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchOutcome {
+    /// The remote name that was fetched (e.g. "origin"), or "--all" when every
+    /// remote was fetched because no single upstream could be resolved.
+    pub remote: String,
+}
+
+/// Run `git fetch` for the repository at `repo_path`.
+///
+/// This is **fetch-only**: it downloads remote objects and updates the
+/// remote-tracking refs, but it **never merges, fast-forwards, or moves the
+/// current branch**.  It is the safe sibling of [`execute_pull`] and is wired
+/// to the Repository → Fetch menu command (W5-MENU / ADR-0029).
+///
+/// The remote is resolved from the current branch's upstream when possible;
+/// otherwise `git fetch --all` is used so a detached / no-upstream repo still
+/// gets its remote-tracking refs updated.  The CLI wrapper ([`run_git`]) is
+/// reused (60 s timeout, `GIT_TERMINAL_PROMPT=0`).
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] when the git CLI fails to start or exits
+/// non-zero.
+pub fn fetch_remote(repo: &Repository, repo_path: &Path) -> Result<FetchOutcome, GitError> {
+    // Resolve the upstream remote for the current branch, falling back to
+    // fetching every remote when no single upstream can be determined.
+    let remote = resolve_fetch_remote(repo);
+
+    let args: Vec<&str> = match remote.as_deref() {
+        Some(name) => vec!["fetch", name],
+        None => vec!["fetch", "--all"],
+    };
+
+    let out = run_git(repo_path, &args)
+        .map_err(|e| GitError::Other(format!("fetch failed: {}", e)))?;
+
+    if out.status != 0 {
+        return Err(GitError::Other(format!(
+            "fetch failed (exit {}): {}",
+            out.status,
+            out.stderr.trim()
+        )));
+    }
+
+    Ok(FetchOutcome {
+        remote: remote.unwrap_or_else(|| "--all".to_string()),
+    })
+}
+
+/// Best-effort resolution of the remote to fetch: the current branch's
+/// configured upstream remote, else the sole configured remote, else `None`
+/// (caller fetches `--all`).
+fn resolve_fetch_remote(repo: &Repository) -> Option<String> {
+    // Prefer the current branch's upstream remote.
+    if let Ok(head_ref) = repo.head() {
+        if let Ok(branch_name) = head_ref.shorthand() {
+            if let Ok((_, remote_name, _)) = resolve_upstream_info(repo, branch_name) {
+                return Some(remote_name);
+            }
+        }
+    }
+    // Otherwise, if exactly one remote is configured, use it.
+    if let Ok(remotes) = repo.remotes() {
+        if remotes.len() == 1 {
+            if let Some(Ok(Some(name))) = remotes.iter().next() {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
+}
+
+// ────────────────────────────────────────────────────────────
 // Internal helpers (pull)
 // ────────────────────────────────────────────────────────────
 

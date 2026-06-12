@@ -55,8 +55,8 @@
 | T-BP-006 | Terminal 実装方式の調査 ADR | - | done(ADR-0008) |
 | T-BP-007 | MVP Terminal(単一 session) | T-BP-002, ADR-0008 | done |
 | T-BP-008 | Terminal 内 git 操作後の state refresh | T-BP-007 | done 相当(T029 watcher が充足。T-BP-007 で確認のみ) |
-| T-HT-001 | Header Toolbar UI skeleton(ボタン並び + disabled 理由表示) | T-BP-001 | todo |
-| T-HT-002 | branch / upstream / ahead-behind 表示(Toolbar + StatusBar) | T-HT-001 | todo |
+| T-HT-001 | Header Toolbar UI skeleton + branch/ahead-behind 表示(T-HT-002 統合) | T-BP-001 | in-progress |
+| T-HT-002 | branch / upstream / ahead-behind 表示 | T-HT-001 | done 相当(T-HT-001 に統合) |
 | T-HT-003 | Pull(fetch 含む)の plan + 実行(CLI wrapper) | T-HT-001, ADR-0009 | todo |
 | T-HT-004 | Push の plan + 実行(CLI wrapper、set-upstream flow) | T-HT-003 | todo |
 | T-HT-005 | Branch Create dialog 拡張(作成後 checkout 選択) | T-HT-001 | todo |

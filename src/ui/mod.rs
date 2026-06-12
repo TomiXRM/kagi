@@ -6601,11 +6601,13 @@ impl KagiApp {
             CommitAction::CopySha => {
                 if let Some(row_index) = self.row_for_commit_id(&target) {
                     if let Some(detail) = self.details.get(row_index) {
-                        context_menu::copy_full_sha(
-                            self,
-                            detail.full_sha.as_ref().to_string(),
-                            cx,
-                        );
+                        let full_sha = detail.full_sha.as_ref().to_string();
+                        let short: String = full_sha.chars().take(8).collect();
+                        context_menu::copy_full_sha(self, full_sha, cx);
+                        // W18-COAUTHOR-COPY: surface a toast so the copy is
+                        // visible regardless of where it was triggered
+                        // (hash chip click or the "Copy SHA" action button).
+                        self.push_toast(ToastKind::Info, format!("Copied {}", short));
                     }
                 }
             }

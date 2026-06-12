@@ -2553,10 +2553,15 @@ impl KagiApp {
     /// Confirm the stash push plan: run preflight, execute, then reload.
     ///
     /// On failure the modal remains open and shows the error text.
-    pub fn confirm_stash_push(&mut self) {
+    pub fn confirm_stash_push(&mut self, cx: &mut Context<Self>) {
         // The live plan is debounced; rebuild it from the latest input so a
         // fast type-then-click can never execute a stale plan.
         self.run_modal_replans();
+        if self.busy_op.is_some() {
+            self.status_footer =
+                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+            return;
+        }
         let modal = match self.stash_push_modal.clone() {
             Some(m) => m,
             None => return,
@@ -2565,7 +2570,6 @@ impl KagiApp {
             Some(p) => p.clone(),
             None => return,
         };
-        // Defence in depth: refuse if blockers exist.
         if !plan.blockers.is_empty() {
             eprintln!("[kagi] refused: stash-push plan has blockers, not executing");
             if let Some(ref rp) = self.repo_path.clone() {
@@ -2583,98 +2587,56 @@ impl KagiApp {
             None => return,
         };
 
-        let mut repo = match git2::Repository::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                let err_msg = format!("Repo open error: {}", e.message());
-                self.record_op(
-                    "stash-push",
-                    plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() },
-                    &repo_path,
-                );
-                if let Some(ref mut m) = self.stash_push_modal {
-                    m.error = Some(SharedString::from(err_msg));
+        // Stashing copies the working tree (incl. untracked) into the stash
+        // — minutes on big repos. Run it on a background thread (W3 pattern)
+        // so the UI stays responsive instead of appearing frozen.
+        self.busy_op = Some("stash");
+        self.stash_push_modal = None;
+        self.status_footer = FooterStatus::Busy(SharedString::from("stash 実行中…"));
+        self.push_toast(ToastKind::Info, "stash: 開始しました");
+        eprintln!("[kagi] async: stash-push started");
+
+        let msg_opt = if modal.input.is_empty() { None } else { Some(modal.input.clone()) };
+        let bg_path = repo_path.clone();
+        let bg_plan = plan.clone();
+        let task = cx.background_spawn(async move {
+            stash_push_blocking(&bg_path, &bg_plan, msg_opt)
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok((summary, after)) => {
+                        eprintln!("[kagi] async: stash-push finished");
+                        app.record_op(
+                            "stash-push",
+                            plan.current.clone(),
+                            OpOutcome::Success { after },
+                            &repo_path,
+                        );
+                        app.status_footer = FooterStatus::Success(SharedString::from(
+                            format!("stash: {}", summary),
+                        ));
+                        app.reload();
+                    }
+                    Err(err_msg) => {
+                        eprintln!("[kagi] async: stash-push failed — {}", err_msg);
+                        app.record_op(
+                            "stash-push",
+                            plan.current.clone(),
+                            OpOutcome::Failed { error: err_msg },
+                            &repo_path,
+                        );
+                    }
                 }
-                return;
-            }
-        };
-
-        // Preflight check (HEAD + stash count).
-        if let Err(e) = preflight_check_stash(&mut repo, &plan, plan.stash_count_at_plan()) {
-            let err_msg = format!("Preflight failed: {}", e);
-            self.record_op(
-                "stash-push",
-                plan.current.clone(),
-                OpOutcome::Failed { error: err_msg.clone() },
-                &repo_path,
-            );
-            if let Some(ref mut m) = self.stash_push_modal {
-                m.error = Some(SharedString::from(err_msg));
-            }
-            return;
-        }
-
-        let msg_opt: Option<&str> = if modal.input.is_empty() { None } else { Some(modal.input.as_str()) };
-
-        // Execute stash push.
-        if let Err(e) = execute_stash_push(&mut repo, msg_opt, true) {
-            let err_msg = format!("Stash push failed: {}", e);
-            self.record_op(
-                "stash-push",
-                plan.current.clone(),
-                OpOutcome::Failed { error: err_msg.clone() },
-                &repo_path,
-            );
-            if let Some(ref mut m) = self.stash_push_modal {
-                m.error = Some(SharedString::from(err_msg));
-            }
-            return;
-        }
-
-        eprintln!("[kagi] executed: stash-push message={:?}", modal.input);
-
-        // Verify: check working tree is now clean and stash count increased.
-        let mut repo2 = match git2::Repository::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("[kagi] verify: repo open error: {}", e.message());
-                self.reload();
-                return;
-            }
-        };
-        let after_summary = match kagi::git::snapshot(&mut repo2, 10_000) {
-            Ok(snap) => {
-                let is_clean = !snap.status.is_dirty();
-                let stash_count = snap.stashes.len();
-                if is_clean {
-                    eprintln!("[kagi] verified: working tree clean after stash-push");
-                } else {
-                    eprintln!("[kagi] verify: working tree NOT clean after stash-push");
-                }
-                eprintln!("[kagi] verified: stash count={}", stash_count);
-                StateSummary {
-                    head: snap.head.display(),
-                    dirty: if is_clean { "clean".to_string() } else { "dirty".to_string() },
-                }
-            }
-            Err(e) => {
-                eprintln!("[kagi] verify: snapshot error: {}", e);
-                plan.predicted.clone()
-            }
-        };
-
-        // Record success to oplog + update footer.
-        self.record_op(
-            "stash-push",
-            plan.current.clone(),
-            OpOutcome::Success { after: after_summary },
-            &repo_path,
-        );
-
-        // Reload display data.
-        self.reload();
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
+
 
     // ── Stash apply modal (T015) ─────────────────────────────
 
@@ -6252,6 +6214,15 @@ impl Render for KagiApp {
         // Modal text inputs: lazy-create + sync (needs Window).
         self.sync_modal_inputs(window, cx);
 
+        if std::env::var("KAGI_DEBUG_RENDER").as_deref() == Ok("1") {
+            use std::sync::atomic::{AtomicU64, Ordering as O};
+            static N: AtomicU64 = AtomicU64::new(0);
+            let n = N.fetch_add(1, O::Relaxed) + 1;
+            if n % 50 == 0 {
+                eprintln!("[kagi] render: {} frames", n);
+            }
+        }
+
         // T-COMMIT-016: a Smart Commit message generated on a background thread
         // is pushed into the commit-message Input here, where `&mut Window` is
         // available (set_value requires it).
@@ -8690,6 +8661,43 @@ fn render_badges_column(badges: &[commit_list::RefBadge], badge_col_w: f32) -> i
 // run it via `cx.background_spawn` while the headless path calls it inline.
 // ──────────────────────────────────────────────────────────────
 
+/// Blocking part of stash push (preflight → execute → verify). Stashing
+/// copies the working tree (and untracked files) into the stash, which can
+/// take a long time on large repos — running it on the UI thread looked
+/// like a total freeze (user-reported).
+fn stash_push_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    message: Option<String>,
+) -> Result<(String, StateSummary), String> {
+    let mut repo = git2::Repository::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    preflight_check_stash(&mut repo, plan, plan.stash_count_at_plan())
+        .map_err(|e| format!("Preflight failed: {}", e))?;
+    execute_stash_push(&mut repo, message.as_deref(), true)
+        .map_err(|e| format!("Stash push failed: {}", e))?;
+    eprintln!("[kagi] executed: stash-push message={:?}", message.unwrap_or_default());
+
+    let mut repo2 = git2::Repository::open(repo_path)
+        .map_err(|e| format!("verify: repo open error: {}", e.message()))?;
+    let after = match kagi::git::snapshot(&mut repo2, 10_000) {
+        Ok(snap) => {
+            if !snap.status.is_dirty() {
+                eprintln!("[kagi] verified: working tree clean after stash-push");
+            } else {
+                eprintln!("[kagi] verify: working tree NOT clean after stash-push");
+            }
+            eprintln!("[kagi] verified: stash count={}", snap.stashes.len());
+            StateSummary {
+                head: snap.head.display(),
+                dirty: if snap.status.is_dirty() { "dirty".into() } else { "clean".into() },
+            }
+        }
+        Err(_) => plan.predicted.clone(),
+    };
+    Ok(("stashed working tree".to_string(), after))
+}
+
 /// Blocking part of pull. Returns (human summary, after-state) or an error
 /// message suitable for the oplog / modal.
 fn pull_blocking(
@@ -10001,7 +10009,7 @@ fn render_stash_push_modal(
     });
 
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.confirm_stash_push();
+        this.confirm_stash_push(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh);
         }

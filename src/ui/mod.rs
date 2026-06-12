@@ -6737,7 +6737,7 @@ impl KagiApp {
     /// 3. Not yet started (session is None, or view is None with no error) →
     ///    show a "starting…" placeholder.  The Terminal tab click listener has
     ///    already called `ensure_terminal`; the view will appear on next repaint.
-    fn render_terminal_body(&mut self, _cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn render_terminal_body(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         // W4-TABS: look up the active repo's session in the HashMap.
         let active_session = self
             .repo_path
@@ -6746,10 +6746,40 @@ impl KagiApp {
         // Case 1: running terminal view.
         if let Some(session) = active_session {
             if let Some(ref view_entity) = session.view {
+                // cmd-v paste: gpui-terminal 0.1.0 has no built-in clipboard
+                // paste, so an ancestor key listener reads the gpui clipboard
+                // and writes straight to the PTY. Key events bubble along the
+                // focus path, so this fires while the terminal is focused.
+                let paste_writer = session.paste_writer.clone();
+                let term_focus = view_entity.read(cx).focus_handle().clone();
                 return div()
                     .flex_1()
                     .min_h(px(0.))
                     .w_full()
+                    // Clicking anywhere in the terminal area refocuses the
+                    // terminal (the view's own mouse handling is a no-op in
+                    // gpui-terminal 0.1.0, so a stray click could leave the
+                    // keyboard focus elsewhere and break typing/cmd-v).
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |_this, _e: &gpui::MouseDownEvent, window, _cx| {
+                            window.focus(&term_focus);
+                        }),
+                    )
+                    .on_key_down(cx.listener(move |_this, event: &KeyDownEvent, _window, cx| {
+                        let ks = &event.keystroke;
+                        if ks.modifiers.platform && ks.key == "v" {
+                            if let Some(writer) = paste_writer.as_ref() {
+                                if let Some(text) =
+                                    cx.read_from_clipboard().and_then(|item| item.text())
+                                {
+                                    writer.paste_text(&text);
+                                    eprintln!("[kagi] terminal: paste {} chars", text.chars().count());
+                                }
+                            }
+                            cx.stop_propagation();
+                        }
+                    }))
                     .child(view_entity.clone())
                     .into_any();
             }

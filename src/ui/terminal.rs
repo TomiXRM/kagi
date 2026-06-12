@@ -34,6 +34,46 @@ pub struct KagiTerminalSession {
     pub start_error: Option<String>,
     /// Repository root — used as the working directory for spawned shells.
     pub repo_path: PathBuf,
+    /// Second handle to the PTY writer, used by the cmd-v paste path
+    /// (gpui-terminal 0.1.0 has no built-in paste; we write directly).
+    pub paste_writer: Option<SharedWriter>,
+}
+
+/// Cloneable wrapper around the single PTY writer.
+///
+/// `portable_pty::take_writer` can only be called once, but both the
+/// `TerminalView` (keystrokes) and the cmd-v paste path need to write.
+/// All writes go through one mutex-guarded handle.
+#[derive(Clone)]
+pub struct SharedWriter(Arc<Mutex<Box<dyn std::io::Write + Send>>>);
+
+impl SharedWriter {
+    fn new(inner: Box<dyn std::io::Write + Send>) -> Self {
+        SharedWriter(Arc::new(Mutex::new(inner)))
+    }
+
+    /// Write the given text to the PTY (used by paste).
+    pub fn paste_text(&self, text: &str) {
+        if let Ok(mut w) = self.0.lock() {
+            let _ = w.write_all(text.as_bytes());
+            let _ = w.flush();
+        }
+    }
+}
+
+impl std::io::Write for SharedWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self.0.lock() {
+            Ok(mut w) => w.write(buf),
+            Err(_) => Err(std::io::Error::new(std::io::ErrorKind::Other, "poisoned")),
+        }
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self.0.lock() {
+            Ok(mut w) => w.flush(),
+            Err(_) => Ok(()),
+        }
+    }
 }
 
 impl KagiTerminalSession {
@@ -43,6 +83,7 @@ impl KagiTerminalSession {
             view: None,
             start_error: None,
             repo_path,
+            paste_writer: None,
         }
     }
 
@@ -72,6 +113,7 @@ pub fn build_terminal_view(
     (
         Entity<TerminalView>,
         Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
+        SharedWriter,
     ),
     String,
 > {
@@ -99,10 +141,12 @@ pub fn build_terminal_view(
         .map_err(|e| format!("spawn '{}': {}", shell, e))?;
 
     // Take the write/read ends of the master.
-    let writer = pair
-        .master
-        .take_writer()
-        .map_err(|e| format!("take_writer: {}", e))?;
+    let writer = SharedWriter::new(
+        pair.master
+            .take_writer()
+            .map_err(|e| format!("take_writer: {}", e))?,
+    );
+    let paste_writer = writer.clone();
 
     let reader = pair
         .master
@@ -189,7 +233,7 @@ pub fn build_terminal_view(
             })
     });
 
-    Ok((view_entity, master_arc))
+    Ok((view_entity, master_arc, paste_writer))
 }
 
 /// Pick the terminal font family: prefer Nerd Fonts (user request),
@@ -261,12 +305,13 @@ pub fn ensure_terminal(
     eprintln!("[kagi] terminal: starting shell={}", shell);
 
     match build_terminal_view(&shell, &session.repo_path, cx) {
-        Ok((view_entity, _master_arc)) => {
+        Ok((view_entity, _master_arc, paste_writer)) => {
             // Focus the new terminal.
             let fh = view_entity.read(cx).focus_handle().clone();
             window.focus(&fh);
 
             session.view = Some(view_entity);
+            session.paste_writer = Some(paste_writer);
             session.start_error = None;
             eprintln!("[kagi] terminal: started shell={}", shell);
             true

@@ -61,6 +61,8 @@
 
 use crate::colors::ColorPalette;
 use crate::event::GpuiEventProxy;
+// kagi: selection highlight rendering.
+use crate::mouse::Selection;
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point as AlacPoint};
 use alacritty_terminal::term::Term;
@@ -155,7 +157,7 @@ impl BackgroundRect {
 /// renderer.measure_cell(window);
 ///
 /// // Paint the terminal grid
-/// renderer.paint(bounds, padding, &term, window, cx);
+/// renderer.paint(bounds, padding, &term, None, window, cx);
 /// ```
 ///
 /// # Performance
@@ -433,6 +435,40 @@ impl TerminalRenderer {
         merged
     }
 
+    // kagi: paint a single horizontal run of selected cells [start_col, end_col)
+    // on `row` as one translucent quad.
+    fn paint_selection_span(
+        &self,
+        origin: Point<Pixels>,
+        start_col: usize,
+        end_col: usize,
+        row: usize,
+        color: Hsla,
+        window: &mut Window,
+    ) {
+        if end_col <= start_col {
+            return;
+        }
+        let x = origin.x + self.cell_width * (start_col as f32);
+        let y = origin.y + self.cell_height * (row as f32);
+        let width = self.cell_width * ((end_col - start_col) as f32);
+        let rect_bounds = Bounds {
+            origin: Point { x, y },
+            size: Size {
+                width,
+                height: self.cell_height,
+            },
+        };
+        window.paint_quad(quad(
+            rect_bounds,
+            px(0.0),
+            color,
+            Edges::<Pixels>::default(),
+            transparent_black(),
+            Default::default(),
+        ));
+    }
+
     /// Paint terminal content to the window.
     ///
     /// This is the main rendering method that draws the terminal grid,
@@ -450,6 +486,8 @@ impl TerminalRenderer {
         bounds: Bounds<Pixels>,
         padding: Edges<Pixels>,
         term: &Term<GpuiEventProxy>,
+        // kagi: optional active selection to highlight.
+        selection: Option<&Selection>,
         window: &mut Window,
         _cx: &mut App,
     ) {
@@ -480,6 +518,40 @@ impl TerminalRenderer {
             x: bounds.origin.x + padding.left,
             y: bounds.origin.y + padding.top,
         };
+
+        // kagi: paint the selection highlight underneath the text. Each visible
+        // line is scanned for a contiguous span of selected columns, which is
+        // drawn as a single translucent quad so the glyphs painted afterwards
+        // remain readable. Selection points are viewport-relative grid points,
+        // matching the renderer's `Line(line_idx)` convention (no scrollback
+        // offset is applied here).
+        if let Some(sel) = selection {
+            let sel_color = self.palette.selection();
+            for line_idx in 0..num_lines {
+                let line = Line(line_idx as i32);
+                let mut span_start: Option<usize> = None;
+                for col_idx in 0..num_cols {
+                    let point = AlacPoint::new(line, Column(col_idx));
+                    let selected = sel.contains(point);
+                    match (selected, span_start) {
+                        (true, None) => span_start = Some(col_idx),
+                        (false, Some(start)) => {
+                            self.paint_selection_span(
+                                origin, start, col_idx, line_idx, sel_color, window,
+                            );
+                            span_start = None;
+                        }
+                        _ => {}
+                    }
+                }
+                // Flush a span that runs to the end of the line.
+                if let Some(start) = span_start {
+                    self.paint_selection_span(
+                        origin, start, num_cols, line_idx, sel_color, window,
+                    );
+                }
+            }
+        }
 
         // Iterate over visible lines
         for line_idx in 0..num_lines {

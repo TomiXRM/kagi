@@ -189,6 +189,47 @@ pub fn pixel_to_cell(
     AlacPoint::new(Line(row), Column(col))
 }
 
+/// Clamp a grid point into the visible viewport `[0, cols) x [0, rows)`.
+///
+/// Mouse positions can fall outside the rendered grid (e.g. dragging past the
+/// last column or below the last row). This clamps the raw point produced by
+/// [`pixel_to_cell`] to the nearest valid cell so callers always get an
+/// addressable grid coordinate.
+///
+/// # Arguments
+///
+/// * `point` - The raw grid point (may be out of range)
+/// * `cols` - Number of visible columns
+/// * `rows` - Number of visible rows
+///
+/// # Returns
+///
+/// The point clamped so its column is in `0..cols` and line is in `0..rows`.
+/// If `cols` or `rows` is zero the corresponding coordinate is clamped to 0.
+///
+/// # Examples
+///
+/// ```
+/// use alacritty_terminal::index::{Point, Line, Column};
+/// use gpui_terminal::mouse::clamp_point_to_grid;
+///
+/// // Past the right/bottom edge clamps to the last cell.
+/// let p = clamp_point_to_grid(Point::new(Line(99), Column(99)), 80, 24);
+/// assert_eq!(p.column.0, 79);
+/// assert_eq!(p.line.0, 23);
+///
+/// // Negative line clamps to 0.
+/// let p = clamp_point_to_grid(Point::new(Line(-5), Column(3)), 80, 24);
+/// assert_eq!(p.line.0, 0);
+/// assert_eq!(p.column.0, 3);
+/// ```
+pub fn clamp_point_to_grid(point: AlacPoint, cols: usize, rows: usize) -> AlacPoint {
+    let col = point.column.0.min(cols.saturating_sub(1));
+    let max_line = rows.saturating_sub(1) as i32;
+    let line = point.line.0.clamp(0, max_line);
+    AlacPoint::new(Line(line), Column(col))
+}
+
 /// Determine the selection type based on the number of clicks.
 ///
 /// # Arguments
@@ -516,6 +557,38 @@ mod tests {
         let point = pixel_to_cell(position, origin, cell_width, cell_height);
         assert_eq!(point.column.0, 0);
         assert_eq!(point.line.0, 0);
+    }
+
+    #[test]
+    fn test_clamp_point_to_grid_in_range() {
+        // A point already inside the grid is unchanged.
+        let p = clamp_point_to_grid(AlacPoint::new(Line(5), Column(10)), 80, 24);
+        assert_eq!(p.line.0, 5);
+        assert_eq!(p.column.0, 10);
+    }
+
+    #[test]
+    fn test_clamp_point_to_grid_past_edges() {
+        // Past the right and bottom edges clamps to the last cell.
+        let p = clamp_point_to_grid(AlacPoint::new(Line(99), Column(99)), 80, 24);
+        assert_eq!(p.column.0, 79);
+        assert_eq!(p.line.0, 23);
+    }
+
+    #[test]
+    fn test_clamp_point_to_grid_negative_line() {
+        // Negative lines clamp to row 0; column is preserved when in range.
+        let p = clamp_point_to_grid(AlacPoint::new(Line(-5), Column(3)), 80, 24);
+        assert_eq!(p.line.0, 0);
+        assert_eq!(p.column.0, 3);
+    }
+
+    #[test]
+    fn test_clamp_point_to_grid_zero_dimensions() {
+        // Degenerate grids clamp both coordinates to 0 without panicking.
+        let p = clamp_point_to_grid(AlacPoint::new(Line(4), Column(4)), 0, 0);
+        assert_eq!(p.line.0, 0);
+        assert_eq!(p.column.0, 0);
     }
 
     #[test]

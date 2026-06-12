@@ -183,6 +183,9 @@ pub fn build_terminal_view(
         .bright_magenta(0xcb, 0xa6, 0xf7)
         .bright_cyan(0x89, 0xdc, 0xeb)
         .bright_white(0xcd, 0xd6, 0xf4)
+        // W8-TERMSEL: selection highlight — Catppuccin Mocha "surface2" with a
+        // translucent alpha so selected glyphs stay readable.
+        .selection(0x58, 0x5b, 0x70, 0x99)
         .build();
 
     let config = TerminalConfig {

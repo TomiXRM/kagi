@@ -7191,7 +7191,7 @@ impl KagiApp {
             .px_3()
             .h(px(52.0))
             .flex_shrink_0()
-            .bg(rgb(theme().surface))
+            .bg(rgb(theme().panel))
             .text_color(rgb(theme().text_sub))
             // ── LEFT: Refresh (user request: left of the repo title) ──
             .child({
@@ -7380,7 +7380,7 @@ impl KagiApp {
             .px_3()
             .h(px(COL_HEADER_H))
             .flex_shrink_0()
-            .bg(rgb(theme().surface))
+            .bg(rgb(theme().panel))
             // Badge column label
             .child(
                 div()
@@ -7402,7 +7402,7 @@ impl KagiApp {
                     .w(px(INNER_DIV_W))
                     .flex_shrink_0()
                     .h_full()
-                    .bg(rgb(theme().surface))
+                    .bg(rgb(theme().panel))
                     // Subtle centre line so the resize boundary is visible
                     // without hovering (user request).
                     .flex()
@@ -7458,7 +7458,7 @@ impl KagiApp {
                     .w(px(INNER_DIV_W))
                     .flex_shrink_0()
                     .h_full()
-                    .bg(rgb(theme().surface))
+                    .bg(rgb(theme().panel))
                     // Subtle centre line so the resize boundary is visible
                     // without hovering (user request).
                     .flex()

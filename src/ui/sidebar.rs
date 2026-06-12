@@ -13,6 +13,7 @@ use gpui::{
     div, prelude::*, px, rgb,
 };
 use gpui_component::input::{Input, InputState};
+use gpui_component::tooltip::Tooltip;
 use gpui_component::Sizable as _;
 
 use kagi::git::{CommitId, RemoteBranch, Stash, Tag, UpstreamInfo};
@@ -41,6 +42,15 @@ pub const SECTION_LOCAL: &str = "local";
 pub const SECTION_REMOTE: &str = "remote";
 pub const SECTION_TAGS: &str = "tags";
 pub const SECTION_STASHES: &str = "stashes";
+
+/// Build a `.tooltip(...)` closure showing the full (untruncated) name.
+/// Row labels are single-line + ellipsized, so the tooltip is how the user
+/// reads a name that doesn't fit the sidebar width.
+fn name_tooltip(
+    full: SharedString,
+) -> impl Fn(&mut gpui::Window, &mut gpui::App) -> gpui::AnyView + 'static {
+    move |window, cx| Tooltip::new(full.clone()).build(window, cx)
+}
 
 // ──────────────────────────────────────────────────────────────
 // render_sidebar — main entry point
@@ -216,8 +226,10 @@ pub fn render_sidebar(
                 let text_color = if is_head { COLOR_SUCCESS } else { TEXT_MAIN };
                 let branch_for_click = branch_name.clone();
 
+                let full_name = SharedString::from(branch_name.to_string());
                 let row: gpui::AnyElement = if is_head {
                     div()
+                        .id(SharedString::from(format!("sidebar-branch-{}", branch_name)))
                         .flex()
                         .flex_row()
                         .items_center()
@@ -227,7 +239,8 @@ pub fn render_sidebar(
                         .text_sm()
                         .text_color(rgb(text_color))
                         .overflow_hidden()
-                        .child(div().flex_1().overflow_hidden().child(label))
+                        .tooltip(name_tooltip(full_name))
+                        .child(div().flex_1().truncate().child(label))
                         .when_some(upstream_label, |el, ul| {
                             el.child(
                                 div()
@@ -266,7 +279,8 @@ pub fn render_sidebar(
                         .overflow_hidden()
                         .on_click(click_handler)
                         .hover(|style| style.bg(rgb(BG_SURFACE)))
-                        .child(div().flex_1().overflow_hidden().child(label))
+                        .tooltip(name_tooltip(full_name))
+                        .child(div().flex_1().truncate().child(label))
                         .when_some(upstream_label, |el, ul| {
                             el.child(
                                 div()
@@ -344,6 +358,7 @@ pub fn render_sidebar(
                 // Check if this remote commit is in our row index (for jump).
                 let can_jump = commit_row_index.contains_key(&rb_target);
 
+                let full_name = SharedString::from(display.clone());
                 let row: gpui::AnyElement = if can_jump {
                     let click_handler = cx.listener(move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
                         this.jump_to_commit(&rb_target);
@@ -362,10 +377,12 @@ pub fn render_sidebar(
                         .overflow_hidden()
                         .on_click(click_handler)
                         .hover(|style| style.bg(rgb(BG_SURFACE)))
-                        .child(display_label)
+                        .tooltip(name_tooltip(full_name))
+                        .child(div().flex_1().truncate().child(display_label))
                         .into_any()
                 } else {
                     div()
+                        .id(SharedString::from(format!("sidebar-remote-{}", display)))
                         .flex()
                         .flex_row()
                         .items_center()
@@ -375,7 +392,8 @@ pub fn render_sidebar(
                         .text_sm()
                         .text_color(rgb(COLOR_REMOTE))
                         .overflow_hidden()
-                        .child(display_label)
+                        .tooltip(name_tooltip(full_name))
+                        .child(div().flex_1().truncate().child(display_label))
                         .into_any()
                 };
 
@@ -425,6 +443,7 @@ pub fn render_sidebar(
                 let tag_label = SharedString::from(tag.name.clone());
                 let can_jump = commit_row_index.contains_key(&tag_target);
 
+                let full_name = SharedString::from(tag.name.clone());
                 let row: gpui::AnyElement = if can_jump {
                     let click_handler = cx.listener(move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
                         this.jump_to_commit(&tag_target);
@@ -443,10 +462,12 @@ pub fn render_sidebar(
                         .overflow_hidden()
                         .on_click(click_handler)
                         .hover(|style| style.bg(rgb(BG_SURFACE)))
-                        .child(tag_label)
+                        .tooltip(name_tooltip(full_name))
+                        .child(div().flex_1().truncate().child(tag_label))
                         .into_any()
                 } else {
                     div()
+                        .id(SharedString::from(format!("sidebar-tag-{}", tag.name)))
                         .flex()
                         .flex_row()
                         .items_center()
@@ -456,7 +477,8 @@ pub fn render_sidebar(
                         .text_sm()
                         .text_color(rgb(COLOR_TAG))
                         .overflow_hidden()
-                        .child(tag_label)
+                        .tooltip(name_tooltip(full_name))
+                        .child(div().flex_1().truncate().child(tag_label))
                         .into_any()
                 };
 
@@ -504,13 +526,7 @@ pub fn render_sidebar(
             for stash in &stashes_filtered {
                 let idx = stash.index;
                 let raw_label = format!("stash@{{{}}}: {}", idx, stash.message);
-                const MAX_STASH_CHARS: usize = 28;
-                let display_label = if raw_label.chars().count() > MAX_STASH_CHARS {
-                    let tail: String = raw_label.chars().take(MAX_STASH_CHARS - 1).collect();
-                    format!("{}\u{2026}", tail)
-                } else {
-                    raw_label
-                };
+                let full_name = SharedString::from(raw_label.clone());
 
                 let click_handler = cx.listener(move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
                     this.open_stash_apply_modal(idx);
@@ -528,9 +544,11 @@ pub fn render_sidebar(
                         .py_1()
                         .text_sm()
                         .text_color(rgb(COLOR_WARNING))
+                        .overflow_hidden()
                         .on_click(click_handler)
                         .hover(|style| style.bg(rgb(BG_SURFACE)))
-                        .child(SharedString::from(display_label)),
+                        .tooltip(name_tooltip(full_name))
+                        .child(div().flex_1().truncate().child(SharedString::from(raw_label))),
                 );
             }
         }

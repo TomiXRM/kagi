@@ -7655,9 +7655,17 @@ impl KagiApp {
         if commit_panel_open {
             // ── Commit Panel mode (T025) ──────────────
             if let Some(panel_state) = commit_panel.clone() {
+                // T-COMMIT-001: build the staged preview (count / A·M·D / target
+                // branch / author) from the current repo.  Pure read; falls back
+                // to None (preview hidden) if the repo cannot be opened.
+                let preview = self.repo_path.as_ref().and_then(|p| {
+                    git2::Repository::open(p)
+                        .ok()
+                        .and_then(|repo| kagi::git::commit_preview(&repo).ok())
+                });
                 body_row = body_row
                     .child(divider2)
-                    .child(render_commit_panel(panel_state, panel_width, commit_input.clone(), active_wip.clone(), self.smart_commit.clone(), cx));
+                    .child(render_commit_panel(panel_state, panel_width, commit_input.clone(), active_wip.clone(), self.smart_commit.clone(), preview, cx));
             }
         } else if self.inspector_visible {
             // ── Commit Inspector panel (W2-INSPECTOR; W5-MENU toggle) ──
@@ -11318,6 +11326,7 @@ fn render_commit_panel(
     commit_input: Option<Entity<InputState>>,
     active_wip: Option<(bool, PathBuf)>,
     smart: smart_commit::SmartCommitState,
+    preview: Option<kagi::git::CommitPreview>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     // theme().change_dir now sourced from theme().change_dir (W9-THEME).
@@ -11983,6 +11992,66 @@ fn render_commit_panel(
         col
     };
 
+    // ── Commit preview header (T-COMMIT-001) ──────────────────
+    // Shows what the *next* commit contains: staged count, A/M/D summary,
+    // target branch (detached/unborn handled), and author.  Pure read from
+    // `commit_preview()`; hidden if the preview could not be built.
+    let preview_block: gpui::AnyElement = if let Some(ref pv) = preview {
+        let count_line = format!(
+            "{} file{} staged",
+            pv.staged_count,
+            if pv.staged_count == 1 { "" } else { "s" }
+        );
+        let summary = pv.summary();
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .gap_px()
+            // Line 1: count + A/M/D summary
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(theme().text_main))
+                            .child(SharedString::from(count_line)),
+                    )
+                    .when(!summary.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(theme().text_muted))
+                                .child(SharedString::from(summary)),
+                        )
+                    }),
+            );
+        // Line 2: target branch
+        col = col.child(
+            div()
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .overflow_hidden()
+                .truncate()
+                .child(SharedString::from(format!("→ {}", pv.target_branch))),
+        );
+        // Line 3: author
+        col = col.child(
+            div()
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .overflow_hidden()
+                .truncate()
+                .child(SharedString::from(format!("by {}", pv.author))),
+        );
+        col.into_any_element()
+    } else {
+        div().into_any_element()
+    };
+
     // ── Assemble panel ───────────────────────────────────────
     // T-UI-003: diff ボックス廃止。Unstaged/Staged 箱が flex_1 で全体を占める(1:1)。
     div()
@@ -12054,6 +12123,8 @@ fn render_commit_panel(
                 .py_1()
                 .gap_1()
                 .bg(rgb(theme().surface))
+                // T-COMMIT-001: staged preview (count / A·M·D / branch / author)
+                .child(preview_block)
                 // Message label + input
                 .child(
                     div()

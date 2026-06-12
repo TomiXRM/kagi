@@ -1,6 +1,6 @@
 # T-COMMIT-002: Commit Preview — staged diff preview
 
-- Status: todo
+- Status: done
 - 依存: T-COMMIT-001 / 既存 diff viewer(T012 / T-UI-003 / T-UI-004)
 - 関連: ADR-0039、lane W14-PREVIEW
 
@@ -40,3 +40,16 @@ diff viewer を Commit Panel の preview として束ねる。
 ## リスク・規約
 
 - staged と unstaged の diff source を取り違えない(`staged_file_diff` を使う)
+
+## 実装メモ(done)
+
+- staged diff preview は既存配線で完結しており、**新規 diff レンダラは追加していない**(再利用に留めた):
+  - Commit Panel の staged 行(flat / tree 両 view)クリック → `select_commit_panel_file(CommitPanelFileRef::Staged{index})`
+    → `KagiApp::open_main_diff_wip`(`src/ui/mod.rs`)。
+  - `open_main_diff_wip` は `is_staged` 分岐で **`staged_file_diff`**(HEAD tree ↔ index)を呼ぶ。
+    unstaged 行は `unstaged_file_diff`。両者を取り違えないことを確認済み(staged 選択 → STAGED diff のみ)。
+  - 既存 main-pane diff viewer をそのまま使用:`FileDiffView::from_file_diff` + `highlight_diff_rows`(T-UI-004 syntax highlight)。
+    `MainDiffSource::Staged { path }` を source に設定。
+- binary / 大ファイル閾値は既存 `patch_to_file_diff` / diff viewer の挙動を踏襲(本チケットで viewer 本体は無改変)。
+- `src/ui/file_tree.rs` は staged 側の選択がすでに `Staged` ref を生成するため変更不要。
+- 検証: `cargo build` own-code warning 0 / `cargo test` 全 suite green(exit 0)。

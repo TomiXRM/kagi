@@ -1,6 +1,6 @@
 # W14-PREVIEW: Commit Preview(staged 概要 + staged diff preview)
 
-- Status: in-progress
+- Status: done
 - 担当: worktree agent(Opus)
 - チケット: T-COMMIT-001 / T-COMMIT-002(各ファイル参照。完了条件・触ってよいファイルはチケットが正)
 - 関連: ADR-0039、requirements-commit-suite.md

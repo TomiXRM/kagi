@@ -34,6 +34,7 @@ use kagi::git::{
     stage_file, unstage_file,
     unstaged_file_diff, staged_file_diff,
     plan_commit, execute_commit,
+    commit_preview,
     DiffLineKind,
     working_tree_status,
 };
@@ -706,4 +707,144 @@ fn test_unstage_files_batch() {
     let st = working_tree_status(&repo).unwrap();
     assert!(st.staged.is_empty());
     assert_eq!(st.untracked.len(), 4);
+}
+
+// ────────────────────────────────────────────────────────────
+// commit_preview — T-COMMIT-001
+// ────────────────────────────────────────────────────────────
+
+/// Staged A/M/D files are counted into the correct buckets, and the
+/// target branch/author reflect the attached HEAD + config.
+#[test]
+fn test_commit_preview_amd_counts_attached() {
+    let tmp = TempDir::new().unwrap();
+    let (dir, repo) = build_clean_repo(&tmp);
+
+    // Add (new file), Modify (existing README), Delete (an extra tracked file).
+    write_file(&dir, "extra.txt", "to-be-deleted\n");
+    git(&dir, &["add", "extra.txt"]);
+    git(&dir, &["commit", "-qm", "add extra"]);
+
+    write_file(&dir, "newfile.txt", "new\n"); // -> Added
+    write_file(&dir, "README.md", "# changed\n"); // -> Modified
+    std::fs::remove_file(dir.join("extra.txt")).unwrap(); // -> Deleted
+
+    stage_file(&repo, Path::new("newfile.txt")).unwrap();
+    stage_file(&repo, Path::new("README.md")).unwrap();
+    stage_file(&repo, Path::new("extra.txt")).unwrap();
+
+    let pv = commit_preview(&repo).unwrap();
+    assert_eq!(pv.staged_count, 3, "3 files staged");
+    assert_eq!(pv.added, 1, "one Added");
+    assert_eq!(pv.modified, 1, "one Modified");
+    assert_eq!(pv.deleted, 1, "one Deleted");
+    assert_eq!(pv.other, 0);
+    assert_eq!(pv.target_branch, "main", "attached HEAD -> branch name");
+    assert_eq!(
+        pv.author, "Test <test@example.com>",
+        "author from user.name/user.email"
+    );
+    // Summary string reflects all three buckets.
+    let s = pv.summary();
+    assert!(s.contains("+1") && s.contains("~1") && s.contains("-1"), "summary was {:?}", s);
+}
+
+/// Unborn HEAD: no commits yet — branch field marked "(unborn)", no panic.
+#[test]
+fn test_commit_preview_unborn_head() {
+    let tmp = TempDir::new().unwrap();
+    let (dir, repo) = build_unborn_repo(&tmp);
+
+    write_file(&dir, "first.txt", "hi\n");
+    stage_file(&repo, Path::new("first.txt")).unwrap();
+
+    let pv = commit_preview(&repo).unwrap();
+    assert_eq!(pv.staged_count, 1);
+    assert_eq!(pv.added, 1);
+    assert_eq!(pv.target_branch, "main (unborn)", "unborn branch label");
+    assert_eq!(pv.author, "Test <test@example.com>");
+}
+
+/// Detached HEAD: branch field is "<short-sha> (detached)".
+#[test]
+fn test_commit_preview_detached_head() {
+    let tmp = TempDir::new().unwrap();
+    let (dir, _repo) = build_clean_repo(&tmp);
+
+    // Detach onto the current commit.
+    git(&dir, &["checkout", "-q", "--detach", "HEAD"]);
+    let repo = Repository::open(&dir).unwrap();
+
+    write_file(&dir, "d.txt", "x\n");
+    stage_file(&repo, Path::new("d.txt")).unwrap();
+
+    let pv = commit_preview(&repo).unwrap();
+    assert_eq!(pv.staged_count, 1);
+    assert!(
+        pv.target_branch.ends_with("(detached)"),
+        "detached label, got {:?}",
+        pv.target_branch
+    );
+    // Short SHA prefix is 8 hex chars.
+    let short = pv.target_branch.split_whitespace().next().unwrap();
+    assert_eq!(short.len(), 8, "short sha prefix");
+    assert!(short.chars().all(|c| c.is_ascii_hexdigit()));
+}
+
+/// No user.name / user.email configured -> author falls back to "(unknown)",
+/// no panic.  Empty staged -> empty summary.
+///
+/// Identity is resolved by libgit2 from the *merged* config (system + global +
+/// local).  To exercise the genuine fallback deterministically we redirect
+/// libgit2's global + system + XDG config search paths to an empty directory
+/// and leave the repo-local config without an identity.  `set_search_path` is
+/// process-global, so a static mutex serialises this test against itself; the
+/// other `commit_preview` tests set a repo-*local* identity which overrides the
+/// global path and are therefore unaffected.
+#[test]
+fn test_commit_preview_author_unknown_fallback() {
+    use std::sync::Mutex;
+    static GUARD: Mutex<()> = Mutex::new(());
+    let _lock = GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
+    let tmp = TempDir::new().unwrap();
+    let d = tmp.path();
+    // Empty config dir (no user.* anywhere).
+    let cfg_dir = d.join("emptycfg");
+    std::fs::create_dir_all(&cfg_dir).unwrap();
+
+    // Redirect libgit2's config discovery to the empty dir for all non-local
+    // levels, open the repo + run the preview under that redirect, then restore
+    // the defaults.  The repo must be opened *after* the redirect so libgit2's
+    // config snapshot does not include the real global config.
+    let pv = unsafe {
+        for level in [
+            git2::ConfigLevel::System,
+            git2::ConfigLevel::Global,
+            git2::ConfigLevel::XDG,
+            git2::ConfigLevel::ProgramData,
+        ] {
+            let _ = git2::opts::set_search_path(level, &cfg_dir);
+        }
+        // git init via libgit2 so no `git` CLI global config bleeds in.
+        let repo = Repository::init_opts(
+            d,
+            git2::RepositoryInitOptions::new().initial_head("main"),
+        )
+        .unwrap();
+        let pv = commit_preview(&repo).unwrap();
+        for level in [
+            git2::ConfigLevel::System,
+            git2::ConfigLevel::Global,
+            git2::ConfigLevel::XDG,
+            git2::ConfigLevel::ProgramData,
+        ] {
+            let _ = git2::opts::reset_search_path(level);
+        }
+        pv
+    };
+
+    assert_eq!(pv.staged_count, 0);
+    assert_eq!(pv.author, "(unknown)", "fallback when no identity set");
+    assert_eq!(pv.summary(), "", "empty staged -> empty summary");
 }

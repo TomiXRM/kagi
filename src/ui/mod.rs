@@ -1,4 +1,4 @@
-//! UI module — T008: GPUI commit list / T009: commit graph lane / T010: commit selection + detail panel / T011: changed files list / T012: file diff viewer / T013: checkout plan modal + sidebar / T023: pane resize / T-BP-002: bottom panel open/close + resize
+//! UI module — T008: GPUI commit list / T009: commit graph lane / T010: commit selection + detail panel / T011: changed files list / T012: file diff viewer / T013: checkout plan modal + sidebar / T023: pane resize / T-BP-002: bottom panel open/close + resize / T-BP-007: terminal
 //!
 //! This module lives in the binary crate (`main.rs` does `mod ui;`).
 //! It must not be added to `src/lib.rs` so that domain tests stay
@@ -10,6 +10,7 @@ pub mod commit_panel;
 pub mod detail_panel;
 pub mod file_tree;
 pub mod graph_view;
+pub mod terminal;
 pub mod watcher;
 
 use std::collections::{HashMap, VecDeque};
@@ -548,6 +549,10 @@ pub struct KagiApp {
     pub oplog_scroll_handle: UniformListScrollHandle,
     /// Which row index (0 = newest) is currently expanded; None = none.
     pub oplog_expanded: Option<usize>,
+    // ── T-BP-007: Terminal session ───────────────────────────────
+    /// Lazy terminal session.  `None` until `repo_path` is known and the
+    /// Terminal tab is first displayed (or KAGI_TERMINAL=1 at startup).
+    pub terminal_session: Option<terminal::KagiTerminalSession>,
 }
 
 impl KagiApp {
@@ -673,6 +678,7 @@ impl KagiApp {
             op_entries,
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
+            terminal_session: None,
         }
     }
 
@@ -716,6 +722,7 @@ impl KagiApp {
             op_entries: VecDeque::new(),
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
+            terminal_session: None,
         }
     }
 
@@ -1694,6 +1701,56 @@ impl KagiApp {
         } else {
             eprintln!("[kagi] footer: {}", footer_msg);
             self.status_footer = FooterStatus::Failed(footer_msg);
+        }
+    }
+
+    // ── T-BP-007: Terminal session ────────────────────────────
+
+    /// Ensure the terminal session is initialised and the shell is running.
+    ///
+    /// * Creates a `KagiTerminalSession` on first call if `repo_path` is set.
+    /// * Delegates to `terminal::ensure_terminal` which handles PTY startup,
+    ///   focus, and failure recording.
+    /// * On startup failure, calls `record_op` with `op="terminal-start"` and
+    ///   `OpOutcome::Failed`.
+    pub fn ensure_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Initialise the session container if we haven't yet.
+        if self.terminal_session.is_none() {
+            if let Some(ref rp) = self.repo_path.clone() {
+                self.terminal_session =
+                    Some(terminal::KagiTerminalSession::new(rp.clone()));
+            } else {
+                eprintln!("[kagi] terminal: no repo_path — cannot start terminal");
+                return;
+            }
+        }
+
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+
+        // Mutably borrow session; we need to split the borrow to call record_op.
+        // Collect the failure message first (if any) then record it after.
+        let session = self.terminal_session.as_mut().expect("just set above");
+
+        let mut failure_msg: Option<String> = None;
+        terminal::ensure_terminal(session, window, cx, |msg| {
+            failure_msg = Some(msg);
+        });
+
+        if let Some(err) = failure_msg {
+            use kagi::git::oplog::OpOutcome;
+            use kagi::git::ops::StateSummary;
+            self.record_op(
+                "terminal-start",
+                StateSummary {
+                    head: "n/a".to_string(),
+                    dirty: "n/a".to_string(),
+                },
+                OpOutcome::Failed { error: err },
+                &repo_path,
+            );
         }
     }
 
@@ -2901,8 +2958,10 @@ impl KagiApp {
                 this.bottom_tab = BottomTab::OperationLog;
                 cx.notify();
             });
-            let tab_terminal_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
+            let tab_terminal_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
                 this.bottom_tab = BottomTab::Terminal;
+                // T-BP-007: lazy-start the terminal on first show.
+                this.ensure_terminal(window, cx);
                 cx.notify();
             });
 
@@ -2950,19 +3009,10 @@ impl KagiApp {
                 )
         };
 
-        // ── Body: Operation Log or Terminal placeholder ──
+        // ── Body: Operation Log or Terminal ──
         let body = match active_tab {
             BottomTab::OperationLog => self.render_oplog_body(cx),
-            BottomTab::Terminal => div()
-                .flex_1()
-                .min_h(px(0.))
-                .bg(rgb(BG_PANEL))
-                .px_3()
-                .py_2()
-                .text_sm()
-                .text_color(rgb(TEXT_MUTED))
-                .child(SharedString::from("(Terminal — T-BP-007)"))
-                .into_any(),
+            BottomTab::Terminal => self.render_terminal_body(cx),
         };
 
         // ── Panel container (height = fixed, flex_shrink_0) ──
@@ -3138,6 +3188,55 @@ impl KagiApp {
         .into_any()
     }
 
+    /// Render the Terminal tab body (T-BP-007).
+    ///
+    /// Three possible states:
+    /// 1. Session running → render `TerminalView` entity directly (flex_1 + min_h).
+    /// 2. Session failed to start → show the error message.
+    /// 3. Not yet started (session is None, or view is None with no error) →
+    ///    show a "starting…" placeholder.  The Terminal tab click listener has
+    ///    already called `ensure_terminal`; the view will appear on next repaint.
+    fn render_terminal_body(&mut self, _cx: &mut Context<Self>) -> gpui::AnyElement {
+        // Case 1: running terminal view.
+        if let Some(ref session) = self.terminal_session {
+            if let Some(ref view_entity) = session.view {
+                return div()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .w_full()
+                    .child(view_entity.clone())
+                    .into_any();
+            }
+
+            // Case 2: start failed — show error.
+            if let Some(ref err) = session.start_error {
+                let msg = SharedString::from(format!("terminal error: {}", err));
+                return div()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .bg(rgb(BG_PANEL))
+                    .px_3()
+                    .py_2()
+                    .text_sm()
+                    .text_color(rgb(COLOR_BLOCKER))
+                    .child(msg)
+                    .into_any();
+            }
+        }
+
+        // Case 3: placeholder (no session yet / shell exited, will restart).
+        div()
+            .flex_1()
+            .min_h(px(0.))
+            .bg(rgb(BG_PANEL))
+            .px_3()
+            .py_2()
+            .text_sm()
+            .text_color(rgb(TEXT_MUTED))
+            .child(SharedString::from("(terminal exited — re-opening will restart)"))
+            .into_any()
+    }
+
     /// Status bar slot — the 22 px footer (T-BP-003 full implementation).
     ///
     /// Left → Right layout:
@@ -3243,13 +3342,15 @@ impl KagiApp {
         let oplog_active = bottom_panel_open && bottom_tab == BottomTab::OperationLog;
         let terminal_active = bottom_panel_open && bottom_tab == BottomTab::Terminal;
 
-        let icon_terminal_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+        let icon_terminal_click = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
             if terminal_active {
                 // Same tab visible → close panel.
                 this.bottom_panel_open = false;
             } else {
                 this.bottom_panel_open = true;
                 this.bottom_tab = BottomTab::Terminal;
+                // T-BP-007: lazy-start terminal when opening via status bar icon.
+                this.ensure_terminal(window, cx);
             }
             cx.notify();
         });
@@ -6443,6 +6544,12 @@ pub fn run_app(mut app_state: KagiApp) {
                 // pre-window env path in main.rs cannot create them).
                 if std::env::var("KAGI_COMMIT_PANEL").as_deref() == Ok("1") {
                     kagi.update(cx, |app, cx| app.open_commit_panel(window, cx));
+                }
+
+                // T-BP-007: KAGI_TERMINAL=1 (requires KAGI_BOTTOM_PANEL=1) starts
+                // the terminal session now that a Window context is available.
+                if std::env::var("KAGI_TERMINAL").as_deref() == Ok("1") {
+                    kagi.update(cx, |app, cx| app.ensure_terminal(window, cx));
                 }
 
                 // T029: if the watcher started successfully, spawn a background

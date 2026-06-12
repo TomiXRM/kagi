@@ -726,6 +726,19 @@ fn main() {
     // T-BP-004: also emits `[kagi] oplog-tab: N entries` (loaded from JSONL at startup).
     if std::env::var("KAGI_BOTTOM_PANEL").as_deref() == Ok("1") {
         app_state.bottom_panel_open = true;
+
+        // T-BP-007: KAGI_TERMINAL=1 switches to the Terminal tab and pre-wires
+        // the session container so the PTY can be started inside run_app (where
+        // a Window context is available).
+        if std::env::var("KAGI_TERMINAL").as_deref() == Ok("1") {
+            app_state.bottom_tab = ui::BottomTab::Terminal;
+            // Pre-create the session container so it exists when run_app starts.
+            if let Some(ref rp) = app_state.repo_path.clone() {
+                app_state.terminal_session =
+                    Some(ui::terminal::KagiTerminalSession::new(rp.clone()));
+            }
+        }
+
         let h = app_state.bottom_panel_height;
         let t = app_state.bottom_tab;
         let tab_label = match t {

@@ -2400,7 +2400,9 @@ fn render_rows(
                     div()
                         .flex_1()
                         .text_color(rgb(TEXT_MAIN))
-                        .overflow_hidden()
+                        // Single line, no wrapping: long summaries ellipsize
+                        // (truncate = overflow_hidden + nowrap + ellipsis).
+                        .truncate()
                         .child(row.summary.clone()),
                 )
                 .child(
@@ -2408,7 +2410,7 @@ fn render_rows(
                         .w(px(130.))
                         .flex_shrink_0()
                         .text_color(rgb(TEXT_SUB))
-                        .overflow_hidden()
+                        .truncate()
                         .child(row.author.clone()),
                 )
                 .child(
@@ -2891,42 +2893,71 @@ fn badge_priority(kind: &BadgeKind) -> u8 {
 /// `overflow_hidden`.  An empty badges list still occupies the full 150px so
 /// that all rows share the same graph start position (GitKraken layout, T021).
 fn render_badges_column(badges: &[commit_list::RefBadge]) -> impl IntoElement {
-    const MAX_BADGE_CHARS: usize = 24;
+    // The column is a fixed 150px box.  Right-justified content that exceeds
+    // the box overflows to the LEFT, which gpui does not clip — long branch
+    // names bled underneath the sidebar (user report).  So instead of relying
+    // on clipping, make the content fit by construction:
+    //   - show at most MAX_BADGES chips (highest priority kept, and rendered
+    //     rightmost = nearest the graph),
+    //   - the highest-priority chip keeps its label (char-truncated),
+    //   - any additional chip may flex-shrink with an ellipsis,
+    //   - remaining refs collapse into a small "+N" chip.
+    const MAX_BADGES: usize = 2;
+    const MAX_BADGE_CHARS: usize = 20;
 
-    // Highest-priority badge (HEAD) goes RIGHTMOST: the column is
-    // right-justified and clips on the left, so the rightmost badge — the
-    // one nearest the graph — is the one that survives clipping.
-    let mut sorted: Vec<&commit_list::RefBadge> = badges.iter().collect();
-    sorted.sort_by_key(|b| std::cmp::Reverse(badge_priority(&b.kind)));
+    let mut by_prio: Vec<&commit_list::RefBadge> = badges.iter().collect();
+    by_prio.sort_by_key(|b| badge_priority(&b.kind));
+    let extra = by_prio.len().saturating_sub(MAX_BADGES);
+    let shown = &by_prio[..by_prio.len().min(MAX_BADGES)];
 
     let mut inner = div()
         .flex()
         .flex_row()
         .items_center()
         .justify_end()
-        .gap_1();
+        .gap_1()
+        .overflow_hidden();
 
-    for badge in &sorted {
+    // "+N" chip first (leftmost) when there are hidden refs.
+    if extra > 0 {
+        inner = inner.child(
+            div()
+                .px_1()
+                .rounded_sm()
+                .bg(rgb(BG_SURFACE))
+                .text_color(rgb(TEXT_SUB))
+                .text_sm()
+                .flex_shrink_0()
+                .child(SharedString::from(format!("+{extra}"))),
+        );
+    }
+
+    // Render shown badges in reverse priority order so the highest-priority
+    // one ends up rightmost (next to the graph).
+    for (i, badge) in shown.iter().enumerate().rev() {
         let color = match badge.kind {
             BadgeKind::HeadBranch => COLOR_HEAD,
             BadgeKind::Branch => COLOR_BRANCH,
             BadgeKind::Remote => COLOR_REMOTE,
             BadgeKind::Tag => COLOR_TAG,
         };
-        // Truncate long labels so they don't overflow the column.
+        // Char-truncate long labels.
         let label: SharedString = if badge.label.chars().count() > MAX_BADGE_CHARS {
             let s: String = badge.label.chars().take(MAX_BADGE_CHARS - 1).collect();
             SharedString::from(format!("{}\u{2026}", s))
         } else {
             badge.label.clone()
         };
+        let is_primary = i == 0;
         let chip = div()
             .px_1()
             .rounded_sm()
             .bg(rgb(color))
             .text_color(rgb(BG_BASE))
             .text_sm()
-            .flex_shrink_0()
+            .when(is_primary, |c| c.flex_shrink_0())
+            // Secondary chips may shrink to fit; their text ellipsizes.
+            .when(!is_primary, |c| c.min_w(px(20.)).truncate())
             .child(label);
         inner = inner.child(chip);
     }

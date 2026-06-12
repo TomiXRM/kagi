@@ -2659,7 +2659,10 @@ impl KagiApp {
             .flex()
             .flex_row()
             .flex_1()
-            .h_full()
+            // min_h(0) — NOT h_full: the body must be able to shrink below its
+            // natural content height, otherwise it pushes the bottom panel and
+            // status bar out of the window on small window sizes (user report).
+            .min_h(px(0.))
             // ── Left sidebar ──────────────────────────
             .child(render_sidebar(&branches, &stashes, sidebar_width, cx))
             // ── Sidebar divider ───────────────────────
@@ -5875,7 +5878,16 @@ pub fn run_app(mut app_state: KagiApp) {
         // context = None means the binding fires regardless of focus context.
         cx.bind_keys([KeyBinding::new("cmd-j", ToggleBottomPanel, None)]);
 
-        let bounds = Bounds::centered(None, size(px(1024.), px(768.)), cx);
+        // KAGI_WINDOW=WxH (dev/testing only): override the initial window size
+        // so layout behaviour at small sizes can be verified headlessly.
+        let (win_w, win_h) = std::env::var("KAGI_WINDOW")
+            .ok()
+            .and_then(|s| {
+                let (w, h) = s.split_once('x')?;
+                Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
+            })
+            .unwrap_or((1024.0, 768.0));
+        let bounds = Bounds::centered(None, size(px(win_w), px(win_h)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),

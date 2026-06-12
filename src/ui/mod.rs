@@ -4429,29 +4429,29 @@ fn render_commit_panel(
     // We render inline to avoid capture issues.
 
     // ── Unstaged section ─────────────────────────────────────
-    let mut unstaged_section = div()
-        .flex()
-        .flex_col()
-        .flex_shrink_0();
+    // T027: ヘッダ行は箱の外に固定し、ファイル行のみをスクロールボックス内に入れる
 
-    // Header row
-    unstaged_section = unstaged_section.child(
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .px_2()
-            .py_1()
-            .flex_shrink_0()
-            .child(
-                div()
-                    .flex_1()
-                    .text_sm()
-                    .text_color(rgb(TEXT_LABEL))
-                    .child(SharedString::from(format!("Unstaged ({})", unstaged_count))),
-            )
-            .child(toggle_btn),
-    );
+    // Unstaged ヘッダ行 (固定 — flex_shrink_0 で高さを保持)
+    let unstaged_header = div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .px_2()
+        .py_1()
+        .flex_shrink_0()
+        .child(
+            div()
+                .flex_1()
+                .text_sm()
+                .text_color(rgb(TEXT_LABEL))
+                .child(SharedString::from(format!("Unstaged ({})", unstaged_count))),
+        )
+        .child(toggle_btn);
+
+    // Unstaged ファイル行コンテナ (スクロールボックス内に入る)
+    let mut unstaged_files = div()
+        .flex()
+        .flex_col();
 
     if tree_view {
         // Tree view: use build_file_tree
@@ -4460,7 +4460,7 @@ fn render_commit_panel(
             match row {
                 file_tree::TreeRow::Dir { depth, name } => {
                     let indent = (*depth as f32) * 12.0;
-                    unstaged_section = unstaged_section.child(
+                    unstaged_files = unstaged_files.child(
                         div()
                             .id(SharedString::from(format!("cp-us-dir-{}", name.as_ref())))
                             .pl(px(8.0 + indent))
@@ -4544,7 +4544,7 @@ fn render_commit_panel(
                                 .child(SharedString::from("Conflict")),
                         );
                     }
-                    unstaged_section = unstaged_section.child(file_row);
+                    unstaged_files = unstaged_files.child(file_row);
                 }
             }
         }
@@ -4624,33 +4624,33 @@ fn render_commit_panel(
                         .child(SharedString::from("Conflict")),
                 );
             }
-            unstaged_section = unstaged_section.child(file_row);
+            unstaged_files = unstaged_files.child(file_row);
         }
     }
 
     // ── Staged section ───────────────────────────────────────
-    let mut staged_section = div()
-        .flex()
-        .flex_col()
-        .flex_shrink_0()
-        .mt_1();
+    // T027: ヘッダ行は箱の外に固定し、ファイル行のみをスクロールボックス内に入れる
 
-    staged_section = staged_section.child(
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .px_2()
-            .py_1()
-            .flex_shrink_0()
-            .child(
-                div()
-                    .flex_1()
-                    .text_sm()
-                    .text_color(rgb(TEXT_LABEL))
-                    .child(SharedString::from(format!("Staged ({})", staged_count))),
-            ),
-    );
+    // Staged ヘッダ行 (固定)
+    let staged_header = div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .px_2()
+        .py_1()
+        .flex_shrink_0()
+        .child(
+            div()
+                .flex_1()
+                .text_sm()
+                .text_color(rgb(TEXT_LABEL))
+                .child(SharedString::from(format!("Staged ({})", staged_count))),
+        );
+
+    // Staged ファイル行コンテナ (スクロールボックス内に入る)
+    let mut staged_files = div()
+        .flex()
+        .flex_col();
 
     if tree_view {
         let tree_rows = file_tree::build_file_tree(&panel.staged);
@@ -4658,7 +4658,7 @@ fn render_commit_panel(
             match row {
                 file_tree::TreeRow::Dir { depth, name } => {
                     let indent = (*depth as f32) * 12.0;
-                    staged_section = staged_section.child(
+                    staged_files = staged_files.child(
                         div()
                             .id(SharedString::from(format!("cp-st-dir-{}", name.as_ref())))
                             .pl(px(8.0 + indent))
@@ -4680,7 +4680,7 @@ fn render_commit_panel(
                         this.do_unstage_file(fi);
                         cx.notify();
                     });
-                    staged_section = staged_section.child(
+                    staged_files = staged_files.child(
                         div()
                             .id(("cp-st-file", fi))
                             .flex()
@@ -4742,7 +4742,7 @@ fn render_commit_panel(
                 this.do_unstage_file(fi);
                 cx.notify();
             });
-            staged_section = staged_section.child(
+            staged_files = staged_files.child(
                 div()
                     .id(("cp-st-flat-file", fi))
                     .flex()
@@ -4883,6 +4883,10 @@ fn render_commit_panel(
     };
 
     // ── Assemble panel ───────────────────────────────────────
+    // T027: ファイル領域(Unstaged箱 + Staged箱)とdiff領域を flex_1 で 1:1 に分割する。
+    // 高さ配分: ファイル領域(flex_1) : diff領域(flex_1) = 1:1
+    // 各箱はさらに 1:1 に分割(各 flex_1 + min_h(px(0.)) + overflow_y_scroll)。
+    // ヘッダは各箱の外で flex_shrink_0 に固定し、スクロール対象はファイル行のみ。
     div()
         .w(px(panel_width))
         .flex_shrink_0()
@@ -4901,25 +4905,48 @@ fn render_commit_panel(
                 .text_color(rgb(TEXT_MAIN))
                 .child(SharedString::from("Commit Panel")),
         )
-        // Unstaged section (scrollable within fixed height)
+        // T027: ファイル領域コンテナ (flex_1 + min_h(0)) — Unstaged箱 + Staged箱を 1:1 で収める
         .child(
             div()
-                .id("cp-unstaged-scroll")
-                .flex_shrink_0()
-                .max_h(px(150.))
-                .overflow_y_scroll()
-                .child(unstaged_section),
+                .id("cp-files-container")
+                .flex_1()
+                .min_h(px(0.))
+                .flex()
+                .flex_col()
+                // Unstaged ヘッダ (固定)
+                .child(unstaged_header)
+                // T027: Unstaged スクロールボックス (flex_1 + min_h(0) + 薄枠)
+                .child(
+                    div()
+                        .id("cp-unstaged-scroll")
+                        .flex_1()
+                        .min_h(px(0.))
+                        .overflow_y_scroll()
+                        .mx_1()
+                        .mb_px()
+                        .border_1()
+                        .border_color(rgb(BG_SURFACE))
+                        .rounded_sm()
+                        .child(unstaged_files),
+                )
+                // Staged ヘッダ (固定)
+                .child(staged_header)
+                // T027: Staged スクロールボックス (flex_1 + min_h(0) + 薄枠)
+                .child(
+                    div()
+                        .id("cp-staged-scroll")
+                        .flex_1()
+                        .min_h(px(0.))
+                        .overflow_y_scroll()
+                        .mx_1()
+                        .mb_px()
+                        .border_1()
+                        .border_color(rgb(BG_SURFACE))
+                        .rounded_sm()
+                        .child(staged_files),
+                ),
         )
-        // Staged section (scrollable within fixed height)
-        .child(
-            div()
-                .id("cp-staged-scroll")
-                .flex_shrink_0()
-                .max_h(px(150.))
-                .overflow_y_scroll()
-                .child(staged_section),
-        )
-        // Diff area (flex_1 — takes remaining space)
+        // Diff area (flex_1 — takes remaining space equal to files container)
         .child(
             div()
                 .id("cp-diff-area")

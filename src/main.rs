@@ -71,6 +71,11 @@ fn main() {
     // Collect CLI arguments (skip argv[0]).
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    // W9-THEME / ADR-0036: resolve the active colour theme before anything
+    // renders.  Priority: KAGI_THEME env → ~/.kagi/settings.json → default
+    // (Catppuccin Mocha).  Logs `[kagi] theme: <slug> dark=<bool>`.
+    crate::ui::theme::init_active();
+
     // W4-TABS: KAGI_OPEN_REPO=<path> opens a repo as a tab even when no CLI
     // arg is given (headless picker substitute, ADR-0027/0028).
     let env_open_repo = std::env::var("KAGI_OPEN_REPO").ok().map(PathBuf::from);

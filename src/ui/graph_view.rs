@@ -28,10 +28,12 @@
 //! or row height.
 
 use gpui::{
-    App, Bounds, Canvas, PathBuilder, Pixels, Window, canvas, hsla, point, px,
+    App, Bounds, Canvas, PathBuilder, Pixels, Window, canvas, point, px,
 };
 
 use kagi::graph::{EdgeKind, GraphEdge};
+
+use crate::ui::theme::theme;
 
 // ──────────────────────────────────────────────────────────────
 // Layout constants
@@ -59,20 +61,10 @@ const CORNER_R: f32 = 6.0;
 // Lane colour palette (6 colours, Catppuccin-inspired)
 // ──────────────────────────────────────────────────────────────
 
-/// Return the HSLA colour for a given lane index (cycles through a palette).
+/// Return the HSLA colour for a given lane index (cycles through the active
+/// theme's 6-colour lane palette — W9-THEME / ADR-0036).
 fn lane_color(lane: usize) -> gpui::Hsla {
-    // Hue values spaced evenly for 6 distinct colours (full saturation, mid
-    // lightness, full opacity).
-    const HUES: [f32; 6] = [
-        0.583, // blue  (210°/360°)
-        0.333, // green (120°/360°)
-        0.083, // yellow/gold (30°/360°)
-        0.917, // pink  (330°/360°)
-        0.750, // purple (270°/360°)
-        0.500, // cyan  (180°/360°)
-    ];
-    let h = HUES[lane % HUES.len()];
-    hsla(h, 0.75, 0.65, 1.0)
+    theme().lane_color(lane)
 }
 
 // ──────────────────────────────────────────────────────────────

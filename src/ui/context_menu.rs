@@ -12,15 +12,9 @@ use super::{
     commit_list::{BadgeKind, RefBadge},
     FooterStatus, KagiApp,
 };
+use super::theme::theme;
 
-const BG_SURFACE: u32 = 0x313244;
-const BG_SELECTED: u32 = 0x45475a;
-const BG_MODAL: u32 = 0x313244;
-const BG_MODAL_OVERLAY: u32 = 0x000000;
-const TEXT_MAIN: u32 = 0xcdd6f4;
-const TEXT_MUTED: u32 = 0x585b70;
-const COLOR_BLOCKER: u32 = 0xf38ba8;
-const COLOR_WARNING: u32 = 0xf9e2af;
+// W9-THEME: all colours come from `theme()` (see theme.rs).
 
 const MENU_W: f32 = 280.0;
 const MENU_MARGIN: f32 = 8.0;
@@ -308,8 +302,8 @@ pub fn render_commit_menu_overlay(
         .overflow_hidden()
         .rounded(px(6.))
         .border_1()
-        .border_color(rgb(BG_SELECTED))
-        .bg(rgb(BG_MODAL))
+        .border_color(rgb(theme().selected))
+        .bg(rgb(theme().modal))
         .shadow_md()
         .child(
             div()
@@ -319,9 +313,9 @@ pub fn render_commit_menu_overlay(
                 .flex_row()
                 .items_center()
                 .border_b_1()
-                .border_color(rgb(BG_SELECTED))
+                .border_color(rgb(theme().selected))
                 .text_sm()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .truncate()
                 .child(header),
         );
@@ -336,9 +330,9 @@ pub fn render_commit_menu_overlay(
         }
         if let Some(title) = group.title {
             let title_color = if title == "Advanced / Dangerous" {
-                COLOR_WARNING
+                theme().color_warning
             } else {
-                TEXT_MUTED
+                theme().text_muted
             };
             menu = menu.child(
                 div()
@@ -375,7 +369,7 @@ pub fn render_commit_menu_overlay(
                 .absolute()
                 .top_0()
                 .left_0()
-                .bg(rgb(BG_MODAL_OVERLAY))
+                .bg(rgb(theme().modal_overlay))
                 .opacity(0.01)
                 .on_mouse_down(MouseButton::Left, dismiss_left)
                 .on_mouse_down(MouseButton::Right, dismiss_right),
@@ -422,11 +416,11 @@ fn render_menu_item(
     let enabled = item.state == ItemState::Enabled;
     let action = item.action.clone();
     let label_color = match (&item.state, item.dangerous) {
-        (ItemState::Enabled, true) => COLOR_BLOCKER,
-        (ItemState::Enabled, false) => TEXT_MAIN,
-        (ItemState::Disabled(_), true) => 0x8f5360,
-        (ItemState::Disabled(_), false) => TEXT_MUTED,
-        (ItemState::Hidden, _) => TEXT_MUTED,
+        (ItemState::Enabled, true) => theme().color_blocker,
+        (ItemState::Enabled, false) => theme().text_main,
+        (ItemState::Disabled(_), true) => theme().color_blocker_muted,
+        (ItemState::Disabled(_), false) => theme().text_muted,
+        (ItemState::Hidden, _) => theme().text_muted,
     };
     let text = if item.dangerous {
         SharedString::from(format!("⚠ {}", item.label.as_ref()))
@@ -459,9 +453,9 @@ fn render_menu_item(
 
     let row = if enabled {
         row.on_click(click)
-            .hover(|style| style.bg(rgb(BG_SELECTED)).cursor_pointer())
+            .hover(|style| style.bg(rgb(theme().selected)).cursor_pointer())
     } else {
-        row.hover(|style| style.bg(rgb(BG_SURFACE)))
+        row.hover(|style| style.bg(rgb(theme().surface)))
     };
 
     match item.state {

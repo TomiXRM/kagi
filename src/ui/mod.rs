@@ -17,7 +17,10 @@ pub mod inspector;
 pub mod sidebar;
 pub mod tabs;
 pub mod terminal;
+pub mod theme;
 pub mod watcher;
+
+use theme::theme;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -190,33 +193,11 @@ use detail_panel::{CommitDetail, build_commit_details};
 use graph_view::graph_canvas;
 
 // ──────────────────────────────────────────────────────────────
-// Catppuccin Mocha palette (subset)
+// Colours (W9-THEME / ADR-0036): sourced from the active `theme()`.
+// All former hard-coded Catppuccin constants moved to `theme.rs`; UI code
+// reads `theme().<field>` every frame so a theme switch needs no signature
+// churn (just an atomic index update + cx.notify).
 // ──────────────────────────────────────────────────────────────
-const BG_BASE: u32 = 0x1e1e2e;
-const BG_SURFACE: u32 = 0x313244;
-const BG_SELECTED: u32 = 0x45475a; // surface1 — selected row highlight
-const BG_PANEL: u32 = 0x181825;    // mantle — detail panel background
-const TEXT_MAIN: u32 = 0xcdd6f4;
-const TEXT_SUB: u32 = 0xa6adc8;
-const TEXT_MUTED: u32 = 0x585b70;
-const TEXT_LABEL: u32 = 0x6c7086; // overlay0 — field labels in detail panel
-const COLOR_HEAD: u32 = 0xf38ba8; // red  — HEAD / attached branch
-const COLOR_BRANCH: u32 = 0x89b4fa; // blue — local branch
-const COLOR_REMOTE: u32 = 0xa6e3a1; // green — remote branch
-const COLOR_TAG: u32 = 0xfab387; // peach — tag
-
-// Diff display colours
-const BG_DIFF_ADDED: u32 = 0x1c3a2a;   // dark green background for added lines
-const BG_DIFF_REMOVED: u32 = 0x3a1c1c; // dark red background for removed lines
-const COLOR_DIFF_HUNK: u32 = 0x89b4fa; // blue — hunk header
-
-// Sidebar / modal colours (T013)
-// BG_SIDEBAR moved to sidebar.rs (W2-SIDEBAR)
-const COLOR_WARNING: u32 = 0xf9e2af;    // yellow — warning text
-const COLOR_BLOCKER: u32 = 0xf38ba8;    // red — blocker text
-const COLOR_SUCCESS: u32 = 0xa6e3a1;    // green — success / checked-out mark
-const BG_MODAL_OVERLAY: u32 = 0x000000; // semi-transparent overlay (set opacity in render)
-const BG_MODAL: u32 = 0x313244;         // surface0 — modal background
 
 // ──────────────────────────────────────────────────────────────
 // T-BP-003: StatusBarSummary — data snapshot for the status bar
@@ -844,9 +825,14 @@ fn highlight_diff_rows(rows: &mut Vec<DiffRow>, file_path: &std::path::Path) -> 
     let rope = Rope::from_str(&combined);
     highlighter.update(None, &rope);
 
-    // Get dark-theme styles for the full text.
-    let theme = HighlightTheme::default_dark();
-    let all_styles = highlighter.styles(&(0..combined.len()), &theme);
+    // Use a syntax-highlight theme matching the active UI theme's brightness
+    // (W9-THEME): dark themes → default_dark, light themes → default_light.
+    let hl_theme = if theme::theme().dark {
+        HighlightTheme::default_dark()
+    } else {
+        HighlightTheme::default_light()
+    };
+    let all_styles = highlighter.styles(&(0..combined.len()), &hl_theme);
 
     // Distribute styles back to rows.
     // For each row we know: rope_byte_start (start of content inside `combined`,
@@ -3229,9 +3215,9 @@ impl KagiApp {
 
         for toast in &self.toasts {
             let (accent, icon) = match toast.kind {
-                ToastKind::Info => (COLOR_BRANCH, "\u{27f3}"),    // ⟳
-                ToastKind::Success => (COLOR_SUCCESS, "\u{2713}"), // ✓
-                ToastKind::Error => (COLOR_BLOCKER, "\u{2715}"),   // ✕
+                ToastKind::Info => (theme().color_branch, "\u{27f3}"),    // ⟳
+                ToastKind::Success => (theme().color_success, "\u{2713}"), // ✓
+                ToastKind::Error => (theme().color_blocker, "\u{2715}"),   // ✕
             };
             let id = toast.id;
             let dismiss = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
@@ -3247,11 +3233,11 @@ impl KagiApp {
                     .px_4()
                     .py_3()
                     .rounded(px(8.))
-                    .bg(rgb(BG_PANEL))
+                    .bg(rgb(theme().panel))
                     .border_1()
                     .border_color(rgb(accent))
                     .text_base()
-                    .text_color(rgb(TEXT_MAIN))
+                    .text_color(rgb(theme().text_main))
                     .child(
                         div()
                             .flex_shrink_0()
@@ -3264,8 +3250,8 @@ impl KagiApp {
                             .id(("toast-dismiss", id))
                             .flex_shrink_0()
                             .px_1()
-                            .text_color(rgb(TEXT_MUTED))
-                            .hover(|s| s.text_color(rgb(TEXT_MAIN)))
+                            .text_color(rgb(theme().text_muted))
+                            .hover(|s| s.text_color(rgb(theme().text_main)))
                             .on_click(dismiss)
                             .child(SharedString::from("\u{00d7}")),
                     ),
@@ -5453,11 +5439,11 @@ impl Render for KagiApp {
                 .items_center()
                 .justify_center()
                 .size_full()
-                .bg(rgb(BG_BASE))
+                .bg(rgb(theme().bg_base))
                 .child(
                     div()
                         .text_xl()
-                        .text_color(rgb(TEXT_MAIN))
+                        .text_color(rgb(theme().text_main))
                         .child(err),
                 )
                 .into_any();
@@ -5675,7 +5661,7 @@ impl Render for KagiApp {
             .flex()
             .flex_col()
             .size_full()
-            .bg(rgb(BG_BASE))
+            .bg(rgb(theme().bg_base))
             // Key events only dispatch along the focus path, so the root must
             // own (and initially hold) focus for window-wide actions to work.
             .when_some(self.root_focus.clone(), |el, fh| el.track_focus(&fh))
@@ -5853,6 +5839,13 @@ impl KagiApp {
         let el = menu_act!(el, cmds::KeyboardShortcuts, "help.shortcuts");
         let el = menu_act!(el, cmds::Documentation, "help.documentation");
         let el = menu_act!(el, cmds::ReportIssue, "help.reportIssue");
+        // W9-THEME: theme switch actions (always enabled).
+        let el = menu_act!(el, cmds::ThemeCatppuccin, "theme.catppuccin");
+        let el = menu_act!(el, cmds::ThemeXcodeDark, "theme.xcodeDark");
+        let el = menu_act!(el, cmds::ThemeXcodeLight, "theme.xcodeLight");
+        let el = menu_act!(el, cmds::ThemeOneDark, "theme.oneDark");
+        let el = menu_act!(el, cmds::ThemeOneLight, "theme.oneLight");
+        let el = menu_act!(el, cmds::ThemeMonokai, "theme.monokai");
         el
     }
 
@@ -6008,8 +6001,8 @@ impl KagiApp {
                         label: String,
                         icon: gpui_component::IconName,
                         enabled: bool| {
-            let text_color = if enabled { TEXT_MAIN } else { TEXT_MUTED };
-            let bg_color = if enabled { BG_SELECTED } else { BG_SURFACE };
+            let text_color = if enabled { theme().text_main } else { theme().text_muted };
+            let bg_color = if enabled { theme().selected } else { theme().surface };
             div()
                 .id(id)
                 .px_2()
@@ -6084,7 +6077,7 @@ impl KagiApp {
             div()
                 .w(px(1.0))
                 .h(px(16.0))
-                .bg(rgb(TEXT_MUTED))
+                .bg(rgb(theme().text_muted))
                 .mx_1()
                 .flex_shrink_0()
         };
@@ -6099,13 +6092,13 @@ impl KagiApp {
             .px_3()
             .h(px(34.0))
             .flex_shrink_0()
-            .bg(rgb(BG_SURFACE))
-            .text_color(rgb(TEXT_SUB))
+            .bg(rgb(theme().surface))
+            .text_color(rgb(theme().text_sub))
             // ── LEFT: repo name + branch/upstream/ahead-behind ──
             .child(
                 div()
                     .text_sm()
-                    .text_color(rgb(TEXT_MAIN))
+                    .text_color(rgb(theme().text_main))
                     .font_weight(gpui::FontWeight::BOLD)
                     .mr_1()
                     .flex_shrink_0()
@@ -6115,7 +6108,7 @@ impl KagiApp {
             .child(
                 div()
                     .text_sm()
-                    .text_color(rgb(TEXT_SUB))
+                    .text_color(rgb(theme().text_sub))
                     .mr_2()
                     .flex_shrink_0()
                     .overflow_hidden()
@@ -6214,8 +6207,8 @@ impl KagiApp {
             .w(px(4.))
             .flex_shrink_0()
             .h_full()
-            .bg(rgb(BG_SURFACE))
-            .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
+            .bg(rgb(theme().surface))
+            .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
             .cursor_col_resize()
             .on_drag(
                 DividerDrag { kind: DividerKind::Sidebar },
@@ -6227,7 +6220,7 @@ impl KagiApp {
             this.open_commit_panel(window, cx);
             cx.notify();
         });
-        let wip_bg = if commit_panel_open { BG_SELECTED } else { 0x2a2a3a };
+        let wip_bg = if commit_panel_open { theme().selected } else { theme().surface };
 
         // T030: column header row (fixed, above WIP and commit list).
         let col_header = div()
@@ -6239,7 +6232,7 @@ impl KagiApp {
             .px_3()
             .h(px(COL_HEADER_H))
             .flex_shrink_0()
-            .bg(rgb(BG_SURFACE))
+            .bg(rgb(theme().surface))
             // Badge column label
             .child(
                 div()
@@ -6251,7 +6244,7 @@ impl KagiApp {
                     .items_center()
                     .justify_start()
                     .text_xs()
-                    .text_color(rgb(TEXT_MUTED))
+                    .text_color(rgb(theme().text_muted))
                     .child(SharedString::from("BRANCH / TAG")),
             )
             // Handle between badge and graph columns
@@ -6261,13 +6254,13 @@ impl KagiApp {
                     .w(px(INNER_DIV_W))
                     .flex_shrink_0()
                     .h_full()
-                    .bg(rgb(BG_SURFACE))
+                    .bg(rgb(theme().surface))
                     // Subtle centre line so the resize boundary is visible
                     // without hovering (user request).
                     .flex()
                     .justify_center()
-                    .child(div().w(px(1.)).h_full().bg(rgb(BG_SELECTED)))
-                    .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
+                    .child(div().w(px(1.)).h_full().bg(rgb(theme().selected)))
+                    .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
                     .cursor_col_resize()
                     .on_drag(
                         DividerDrag { kind: DividerKind::BadgeCol },
@@ -6296,7 +6289,7 @@ impl KagiApp {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(rgb(TEXT_MUTED))
+                            .text_color(rgb(theme().text_muted))
                             .child(SharedString::from("GRAPH")),
                     )
                     .child(
@@ -6304,8 +6297,8 @@ impl KagiApp {
                             .id("compact-toggle")
                             .text_xs()
                             .cursor_pointer()
-                            .text_color(rgb(if is_compact { COLOR_BRANCH } else { TEXT_MUTED }))
-                            .hover(|s| s.text_color(rgb(COLOR_BRANCH)))
+                            .text_color(rgb(if is_compact { theme().color_branch } else { theme().text_muted }))
+                            .hover(|s| s.text_color(rgb(theme().color_branch)))
                             .on_click(compact_click)
                             .child(SharedString::from(if is_compact { "▥" } else { "▤" }))
                     )
@@ -6317,13 +6310,13 @@ impl KagiApp {
                     .w(px(INNER_DIV_W))
                     .flex_shrink_0()
                     .h_full()
-                    .bg(rgb(BG_SURFACE))
+                    .bg(rgb(theme().surface))
                     // Subtle centre line so the resize boundary is visible
                     // without hovering (user request).
                     .flex()
                     .justify_center()
-                    .child(div().w(px(1.)).h_full().bg(rgb(BG_SELECTED)))
-                    .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
+                    .child(div().w(px(1.)).h_full().bg(rgb(theme().selected)))
+                    .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
                     .cursor_col_resize()
                     .on_drag(
                         DividerDrag { kind: DividerKind::GraphCol },
@@ -6336,7 +6329,7 @@ impl KagiApp {
                     .flex_1()
                     .overflow_hidden()
                     .text_xs()
-                    .text_color(rgb(TEXT_MUTED))
+                    .text_color(rgb(theme().text_muted))
                     .child(SharedString::from("MESSAGE")),
             );
 
@@ -6361,7 +6354,7 @@ impl KagiApp {
                         .h(px(row_height(self.graph_compact)))
                         .bg(rgb(wip_bg))
                         .on_click(wip_click)
-                        .hover(|s| s.bg(rgb(BG_SELECTED)))
+                        .hover(|s| s.bg(rgb(theme().selected)))
                         // Badges column: user-resizable width (T030)
                         .child(
                             div()
@@ -6376,8 +6369,8 @@ impl KagiApp {
                                     div()
                                         .px_1()
                                         .rounded_sm()
-                                        .bg(rgb(COLOR_WARNING))
-                                        .text_color(rgb(BG_BASE))
+                                        .bg(rgb(theme().color_warning))
+                                        .text_color(rgb(theme().bg_base))
                                         .text_sm()
                                         .flex_shrink_0()
                                         .child(SharedString::from("WIP")),
@@ -6385,7 +6378,7 @@ impl KagiApp {
                         )
                         // Inner divider spacer (badge|graph handle width)
                         .child(div().w(px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
-                            .child(div().w(px(1.)).h_full().bg(rgb(BG_SURFACE))))
+                            .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))))
                         // Graph column placeholder (empty for WIP row)
                         .child(
                             div()
@@ -6394,12 +6387,12 @@ impl KagiApp {
                         )
                         // Inner divider spacer (graph|message handle width)
                         .child(div().w(px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
-                            .child(div().w(px(1.)).h_full().bg(rgb(BG_SURFACE))))
+                            .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))))
                         // Summary area: "// WIP — N changes"
                         .child(
                             div()
                                 .flex_1()
-                                .text_color(rgb(TEXT_MUTED))
+                                .text_color(rgb(theme().text_muted))
                                 .overflow_hidden()
                                 .child(SharedString::from("// WIP")),
                         ),
@@ -6474,8 +6467,8 @@ impl KagiApp {
             .w(px(4.))
             .flex_shrink_0()
             .h_full()
-            .bg(rgb(BG_SURFACE))
-            .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_col_resize())
+            .bg(rgb(theme().surface))
+            .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
             .cursor_col_resize()
             .on_drag(
                 DividerDrag { kind: DividerKind::Panel },
@@ -6536,8 +6529,8 @@ impl KagiApp {
             .w_full()
             .h(px(BOTTOM_PANEL_DIVIDER_H))
             .flex_shrink_0()
-            .bg(rgb(BG_SURFACE))
-            .hover(|style| style.bg(rgb(COLOR_BRANCH)).cursor_row_resize())
+            .bg(rgb(theme().surface))
+            .hover(|style| style.bg(rgb(theme().color_branch)).cursor_row_resize())
             .cursor_row_resize()
             .on_drag(
                 DividerDrag { kind: DividerKind::BottomPanel },
@@ -6558,8 +6551,8 @@ impl KagiApp {
             });
 
             let make_tab = |label: &'static str, is_active: bool| {
-                let text_color = if is_active { TEXT_MAIN } else { TEXT_MUTED };
-                let bg_color = if is_active { BG_SELECTED } else { BG_PANEL };
+                let text_color = if is_active { theme().text_main } else { theme().text_muted };
+                let bg_color = if is_active { theme().selected } else { theme().panel };
                 div()
                     .px_3()
                     .h(px(BOTTOM_PANEL_TAB_H))
@@ -6569,7 +6562,7 @@ impl KagiApp {
                     .bg(rgb(bg_color))
                     .text_sm()
                     .text_color(rgb(text_color))
-                    .hover(|s| s.bg(rgb(BG_SURFACE)))
+                    .hover(|s| s.bg(rgb(theme().surface)))
                     .child(SharedString::from(label))
             };
 
@@ -6580,7 +6573,7 @@ impl KagiApp {
                 .items_center()
                 .w_full()
                 .flex_shrink_0()
-                .bg(rgb(BG_PANEL))
+                .bg(rgb(theme().panel))
                 .child(
                     div()
                         .id("tab-oplog")
@@ -6635,12 +6628,12 @@ impl KagiApp {
             return div()
                 .flex_1()
                 .min_h(px(0.))
-                .bg(rgb(BG_PANEL))
+                .bg(rgb(theme().panel))
                 .flex()
                 .items_center()
                 .justify_center()
                 .text_sm()
-                .text_color(rgb(TEXT_MUTED))
+                .text_color(rgb(theme().text_muted))
                 .child(SharedString::from("No operations yet"))
                 .into_any();
         }
@@ -6661,11 +6654,11 @@ impl KagiApp {
                         let (outcome_label, outcome_color) = match &entry.outcome {
                             OpOutcome::Success { after } => (
                                 SharedString::from(format!("Success \u{2192} {}", after.head)),
-                                COLOR_SUCCESS,
+                                theme().color_success,
                             ),
                             OpOutcome::Failed { error } => (
                                 SharedString::from(format!("Failed: {}", error)),
-                                COLOR_BLOCKER,
+                                theme().color_blocker,
                             ),
                             OpOutcome::Refused { blockers } => (
                                 SharedString::from(format!(
@@ -6673,7 +6666,7 @@ impl KagiApp {
                                     blockers.len(),
                                     if blockers.len() == 1 { "" } else { "s" }
                                 )),
-                                COLOR_WARNING,
+                                theme().color_warning,
                             ),
                         };
 
@@ -6688,7 +6681,7 @@ impl KagiApp {
                             cx.notify();
                         });
 
-                        let row_bg = if i % 2 == 0 { BG_PANEL } else { BG_BASE };
+                        let row_bg = if i % 2 == 0 { theme().panel } else { theme().bg_base };
 
                         // Summary row.
                         let mut row_div = div()
@@ -6697,7 +6690,7 @@ impl KagiApp {
                             .flex_col()
                             .w_full()
                             .bg(rgb(row_bg))
-                            .hover(|s| s.bg(rgb(BG_SURFACE)).cursor_pointer())
+                            .hover(|s| s.bg(rgb(theme().surface)).cursor_pointer())
                             .on_click(row_click)
                             .child(
                                 div()
@@ -6711,7 +6704,7 @@ impl KagiApp {
                                             .w(px(60.))
                                             .flex_shrink_0()
                                             .text_xs()
-                                            .text_color(rgb(TEXT_MUTED))
+                                            .text_color(rgb(theme().text_muted))
                                             .child(time_label),
                                     )
                                     .child(
@@ -6720,7 +6713,7 @@ impl KagiApp {
                                             .flex_shrink_0()
                                             .ml(px(6.))
                                             .text_xs()
-                                            .text_color(rgb(TEXT_SUB))
+                                            .text_color(rgb(theme().text_sub))
                                             .child(op_label),
                                     )
                                     .child(
@@ -6759,9 +6752,9 @@ impl KagiApp {
                                 .w_full()
                                 .px_3()
                                 .py_1()
-                                .bg(rgb(BG_SELECTED))
+                                .bg(rgb(theme().selected))
                                 .text_xs()
-                                .text_color(rgb(TEXT_SUB))
+                                .text_color(rgb(theme().text_sub))
                                 .children(detail_lines.into_iter().map(|line| {
                                     div().child(line)
                                 }));
@@ -6776,7 +6769,7 @@ impl KagiApp {
         .track_scroll(scroll_handle)
         .flex_1()
         .min_h(px(0.))
-        .bg(rgb(BG_PANEL))
+        .bg(rgb(theme().panel))
         .into_any()
     }
 
@@ -6841,11 +6834,11 @@ impl KagiApp {
                 return div()
                     .flex_1()
                     .min_h(px(0.))
-                    .bg(rgb(BG_PANEL))
+                    .bg(rgb(theme().panel))
                     .px_3()
                     .py_2()
                     .text_sm()
-                    .text_color(rgb(COLOR_BLOCKER))
+                    .text_color(rgb(theme().color_blocker))
                     .child(msg)
                     .into_any();
             }
@@ -6855,11 +6848,11 @@ impl KagiApp {
         div()
             .flex_1()
             .min_h(px(0.))
-            .bg(rgb(BG_PANEL))
+            .bg(rgb(theme().panel))
             .px_3()
             .py_2()
             .text_sm()
-            .text_color(rgb(TEXT_MUTED))
+            .text_color(rgb(theme().text_muted))
             .child(SharedString::from("(terminal exited — re-opening will restart)"))
             .into_any()
     }
@@ -6883,11 +6876,11 @@ impl KagiApp {
 
         // ── Footer message colour ──────────────────────────────
         let (footer_color, footer_text) = match &status_footer {
-            FooterStatus::Success(msg) => (COLOR_SUCCESS, msg.clone()),
-            FooterStatus::Failed(msg) => (COLOR_BLOCKER, msg.clone()),
-            FooterStatus::Idle(msg) => (TEXT_MUTED, msg.clone()),
+            FooterStatus::Success(msg) => (theme().color_success, msg.clone()),
+            FooterStatus::Failed(msg) => (theme().color_blocker, msg.clone()),
+            FooterStatus::Idle(msg) => (theme().text_muted, msg.clone()),
             FooterStatus::Busy(msg) => (
-                COLOR_BRANCH,
+                theme().color_branch,
                 SharedString::from(format!("\u{27f3} {}", msg)), // ⟳ msg
             ),
         };
@@ -6900,7 +6893,7 @@ impl KagiApp {
             Some(
                 div()
                     .ml(px(4.))
-                    .text_color(rgb(COLOR_WARNING))
+                    .text_color(rgb(theme().color_warning))
                     .flex_shrink_0()
                     .child(SharedString::from("\u{25cf}")), // ●
             )
@@ -6913,7 +6906,7 @@ impl KagiApp {
             Some(
                 div()
                     .ml(px(4.))
-                    .text_color(rgb(COLOR_SUCCESS))
+                    .text_color(rgb(theme().color_success))
                     .flex_shrink_0()
                     .child(SharedString::from(format!("+{}", summary.staged))),
             )
@@ -6924,7 +6917,7 @@ impl KagiApp {
             Some(
                 div()
                     .ml(px(4.))
-                    .text_color(rgb(COLOR_WARNING))
+                    .text_color(rgb(theme().color_warning))
                     .flex_shrink_0()
                     .child(SharedString::from(format!("~{}", summary.unstaged))),
             )
@@ -6937,7 +6930,7 @@ impl KagiApp {
             Some(
                 div()
                     .ml(px(4.))
-                    .text_color(rgb(COLOR_BLOCKER))
+                    .text_color(rgb(theme().color_blocker))
                     .flex_shrink_0()
                     .child(SharedString::from(format!("!{}", summary.conflict_count))),
             )
@@ -6950,7 +6943,7 @@ impl KagiApp {
             Some(
                 div()
                     .ml(px(4.))
-                    .text_color(rgb(TEXT_SUB))
+                    .text_color(rgb(theme().text_sub))
                     .flex_shrink_0()
                     .child(SharedString::from(format!("\u{2691}{}", summary.stash_count))), // ⚑N
             )
@@ -6963,7 +6956,7 @@ impl KagiApp {
             Some(
                 div()
                     .ml(px(6.))
-                    .text_color(rgb(TEXT_MUTED))
+                    .text_color(rgb(theme().text_muted))
                     .flex_shrink_0()
                     .child(SharedString::from(format!("\u{2192} {}", summary.upstream_name))), // → origin/main
             )
@@ -6978,7 +6971,7 @@ impl KagiApp {
                 Some(
                     div()
                         .ml(px(6.))
-                        .text_color(rgb(TEXT_SUB))
+                        .text_color(rgb(theme().text_sub))
                         .flex_shrink_0()
                         .child(SharedString::from(label)),
                 )
@@ -6986,7 +6979,7 @@ impl KagiApp {
             _ if summary.no_upstream => Some(
                 div()
                     .ml(px(6.))
-                    .text_color(rgb(TEXT_MUTED))
+                    .text_color(rgb(theme().text_muted))
                     .flex_shrink_0()
                     .child(SharedString::from("no upstream")),
             ),
@@ -6998,7 +6991,7 @@ impl KagiApp {
             Some(
                 div()
                     .ml(px(6.))
-                    .text_color(rgb(TEXT_MUTED))
+                    .text_color(rgb(theme().text_muted))
                     .flex_shrink_0()
                     .child(SharedString::from(format_hms(summary.last_refresh_secs))),
             )
@@ -7036,8 +7029,8 @@ impl KagiApp {
             cx.notify();
         });
 
-        let icon_terminal_color = if terminal_active { TEXT_MAIN } else { TEXT_MUTED };
-        let icon_oplog_color = if oplog_active { TEXT_MAIN } else { TEXT_MUTED };
+        let icon_terminal_color = if terminal_active { theme().text_main } else { theme().text_muted };
+        let icon_oplog_color = if oplog_active { theme().text_main } else { theme().text_muted };
 
         let icon_terminal = div()
             .id("status-icon-terminal")
@@ -7045,7 +7038,7 @@ impl KagiApp {
             .px_1()
             .flex_shrink_0()
             .text_color(rgb(icon_terminal_color))
-            .hover(|s| s.text_color(rgb(TEXT_MAIN)).cursor_pointer())
+            .hover(|s| s.text_color(rgb(theme().text_main)).cursor_pointer())
             .on_click(icon_terminal_click)
             .child(
                 gpui_component::Icon::new(gpui_component::IconName::SquareTerminal)
@@ -7059,7 +7052,7 @@ impl KagiApp {
             .px_1()
             .flex_shrink_0()
             .text_color(rgb(icon_oplog_color))
-            .hover(|s| s.text_color(rgb(TEXT_MAIN)).cursor_pointer())
+            .hover(|s| s.text_color(rgb(theme().text_main)).cursor_pointer())
             .on_click(icon_oplog_click)
             .child(
                 gpui_component::Icon::new(gpui_component::IconName::Menu)
@@ -7077,15 +7070,15 @@ impl KagiApp {
             .h(px(22.))
             .flex_shrink_0()
             .px_2()
-            .bg(rgb(BG_PANEL))
+            .bg(rgb(theme().panel))
             .text_xs()
-            .text_color(rgb(TEXT_MUTED))
+            .text_color(rgb(theme().text_muted))
             .overflow_hidden()
             // Branch label
             .child(
                 div()
                     .flex_shrink_0()
-                    .text_color(rgb(TEXT_MAIN))
+                    .text_color(rgb(theme().text_main))
                     .child(branch_text),
             );
 
@@ -7167,9 +7160,9 @@ fn render_rows(
             // Selected row gets a prominent surface highlight;
             // even/odd stripes apply otherwise.
             let row_bg = if is_selected {
-                BG_SELECTED
+                theme().selected
             } else if ix % 2 == 0 {
-                BG_BASE
+                theme().bg_base
             } else {
                 0x1a1a2a
             };
@@ -7214,7 +7207,7 @@ fn render_rows(
                 .when(is_selected, |el| {
                     el.pl(px(10.))  // 12 - 2 = 10px to account for 2px bar
                         .border_l_2()
-                        .border_color(rgb(COLOR_BRANCH))
+                        .border_color(rgb(theme().color_branch))
                 })
                 .when(!is_selected, |el| el.px_3())
                 .h(px(rh))
@@ -7225,7 +7218,7 @@ fn render_rows(
                 .child(render_badges_column(&row.badges, badge_col_w))
                 // ── Inner divider spacer (badge|graph handle width) ──
                 .child(div().w(px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
-                    .child(div().w(px(1.)).h_full().bg(rgb(BG_SURFACE))))
+                    .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))))
                 // ── Graph lane area (T030) ────────────────────────
                 // Always render the graph column at graph_col_w width.
                 // Clip by visible_lanes to prevent bleed into message column.
@@ -7258,7 +7251,7 @@ fn render_rows(
                 )
                 // ── Inner divider spacer (graph|message handle width) ──
                 .child(div().w(px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
-                    .child(div().w(px(1.)).h_full().bg(rgb(BG_SURFACE))))
+                    .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))))
                 // ── Author avatar: 18px circle after graph ────────
                 .child(
                     div()
@@ -7281,7 +7274,7 @@ fn render_rows(
                 .child(
                     div()
                         .flex_1()
-                        .text_color(rgb(TEXT_MAIN))
+                        .text_color(rgb(theme().text_main))
                         // Single line, no wrapping: long summaries ellipsize
                         // (truncate = overflow_hidden + nowrap + ellipsis).
                         .truncate()
@@ -7291,7 +7284,7 @@ fn render_rows(
                     div()
                         .w(px(130.))
                         .flex_shrink_0()
-                        .text_color(rgb(TEXT_SUB))
+                        .text_color(rgb(theme().text_sub))
                         .truncate()
                         .child(row.author.clone()),
                 )
@@ -7299,7 +7292,7 @@ fn render_rows(
                     div()
                         .w(px(72.))
                         .flex_shrink_0()
-                        .text_color(rgb(TEXT_MUTED))
+                        .text_color(rgb(theme().text_muted))
                         .child(row.date.clone()),
                 )
         })
@@ -7328,17 +7321,17 @@ fn render_loading_placeholder(label: SharedString) -> impl IntoElement {
         .items_center()
         .justify_center()
         .gap_2()
-        .bg(rgb(BG_BASE))
+        .bg(rgb(theme().bg_base))
         .child(
             div()
                 .text_lg()
-                .text_color(rgb(TEXT_SUB))
+                .text_color(rgb(theme().text_sub))
                 .child(label),
         )
         .child(
             div()
                 .text_sm()
-                .text_color(rgb(TEXT_MUTED))
+                .text_color(rgb(theme().text_muted))
                 .child(SharedString::from("\u{27f3}")), // ⟳
         )
 }
@@ -7365,7 +7358,7 @@ fn render_main_diff_view(
         .h_full()
         .flex()
         .flex_col()
-        .bg(rgb(BG_PANEL))
+        .bg(rgb(theme().panel))
         // ── Header row (fixed height) ─────────────────────────────────────
         .child(
             div()
@@ -7377,7 +7370,7 @@ fn render_main_diff_view(
                 .px_3()
                 .py_1()
                 .gap_2()
-                .bg(rgb(BG_SURFACE))
+                .bg(rgb(theme().surface))
                 // ← Back button
                 .child(
                     div()
@@ -7385,11 +7378,11 @@ fn render_main_diff_view(
                         .px_2()
                         .py_px()
                         .rounded_sm()
-                        .bg(rgb(BG_BASE))
+                        .bg(rgb(theme().bg_base))
                         .text_sm()
-                        .text_color(rgb(TEXT_SUB))
+                        .text_color(rgb(theme().text_sub))
                         .on_click(back_click)
-                        .hover(|s| s.bg(rgb(BG_SELECTED)).cursor_pointer())
+                        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
                         .child(SharedString::from("\u{2190} Back")),
                 )
                 // File name
@@ -7397,7 +7390,7 @@ fn render_main_diff_view(
                     div()
                         .flex_1()
                         .text_sm()
-                        .text_color(rgb(TEXT_MAIN))
+                        .text_color(rgb(theme().text_main))
                         .truncate()
                         .child(title),
                 )
@@ -7405,7 +7398,7 @@ fn render_main_diff_view(
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(TEXT_SUB))
+                        .text_color(rgb(theme().text_sub))
                         .flex_shrink_0()
                         .child(stats),
                 ),
@@ -7426,7 +7419,7 @@ fn render_main_diff_view(
 }
 
 /// Render a range of diff rows for the `"main-diff-list"` uniform_list.
-/// Includes line numbers: old/new each 5 chars wide, TEXT_MUTED colour.
+/// Includes line numbers: old/new each 5 chars wide, theme().text_muted colour.
 fn render_main_diff_rows(
     rows: &[DiffRow],
     range: std::ops::Range<usize>,
@@ -7440,23 +7433,23 @@ fn render_main_diff_rows(
                     .w_full()
                     .px_2()
                     .py_px()
-                    .bg(rgb(BG_SURFACE))
+                    .bg(rgb(theme().surface))
                     .text_sm()
-                    .text_color(rgb(COLOR_DIFF_HUNK))
+                    .text_color(rgb(theme().diff_hunk))
                     .overflow_hidden()
                     .child(header.clone())
                     .into_any()
             }
             DiffRow::Line { kind, text, old_lineno, new_lineno, highlights } => {
                 let bg = match kind {
-                    DiffLineKind::Added   => BG_DIFF_ADDED,
-                    DiffLineKind::Removed => BG_DIFF_REMOVED,
-                    DiffLineKind::Context => BG_BASE,
+                    DiffLineKind::Added   => theme().diff_added_bg,
+                    DiffLineKind::Removed => theme().diff_removed_bg,
+                    DiffLineKind::Context => theme().bg_base,
                 };
                 let text_color = match kind {
                     DiffLineKind::Added   => 0xa6e3a1u32, // green
                     DiffLineKind::Removed => 0xf38ba8u32, // red
-                    DiffLineKind::Context => TEXT_MAIN,
+                    DiffLineKind::Context => theme().text_main,
                 };
                 // Format line numbers: 5 chars fixed width, muted colour.
                 let old_str = match old_lineno {
@@ -7520,7 +7513,7 @@ fn render_main_diff_rows(
                         div()
                             .flex_shrink_0()
                             .w(px(44.))
-                            .text_color(rgb(TEXT_MUTED))
+                            .text_color(rgb(theme().text_muted))
                             .child(SharedString::from(old_str)),
                     )
                     // New line number
@@ -7528,7 +7521,7 @@ fn render_main_diff_rows(
                         div()
                             .flex_shrink_0()
                             .w(px(44.))
-                            .text_color(rgb(TEXT_MUTED))
+                            .text_color(rgb(theme().text_muted))
                             .child(SharedString::from(new_str)),
                     )
                     // Content (sigil + highlighted text)
@@ -7542,7 +7535,7 @@ fn render_main_diff_rows(
                     .px_2()
                     .py_1()
                     .text_sm()
-                    .text_color(rgb(TEXT_MUTED))
+                    .text_color(rgb(theme().text_muted))
                     .child(SharedString::from("Binary file (no diff)"))
                     .into_any()
             }
@@ -7600,10 +7593,10 @@ fn render_badges_column(badges: &[commit_list::RefBadge], badge_col_w: f32) -> i
     // Badges in priority order: primary (HEAD/branch) leftmost.
     for (i, badge) in shown.iter().enumerate() {
         let color = match badge.kind {
-            BadgeKind::HeadBranch => COLOR_HEAD,
-            BadgeKind::Branch => COLOR_BRANCH,
-            BadgeKind::Remote => COLOR_REMOTE,
-            BadgeKind::Tag => COLOR_TAG,
+            BadgeKind::HeadBranch => theme().color_head,
+            BadgeKind::Branch => theme().color_branch,
+            BadgeKind::Remote => theme().color_remote,
+            BadgeKind::Tag => theme().color_tag,
         };
         // Char-truncate long labels.
         let label: SharedString = if badge.label.chars().count() > MAX_BADGE_CHARS {
@@ -7617,7 +7610,7 @@ fn render_badges_column(badges: &[commit_list::RefBadge], badge_col_w: f32) -> i
             .px_1()
             .rounded_sm()
             .bg(rgb(color))
-            .text_color(rgb(BG_BASE))
+            .text_color(rgb(theme().bg_base))
             .text_sm()
             .when(is_primary, |c| c.flex_shrink_0())
             // Secondary chips may shrink to fit; their text ellipsizes.
@@ -7631,8 +7624,8 @@ fn render_badges_column(badges: &[commit_list::RefBadge], badge_col_w: f32) -> i
                 div()
                     .px_1()
                     .rounded_sm()
-                    .bg(rgb(BG_SURFACE))
-                    .text_color(rgb(TEXT_SUB))
+                    .bg(rgb(theme().surface))
+                    .text_color(rgb(theme().text_sub))
                     .text_sm()
                     .flex_shrink_0()
                     .child(SharedString::from(format!("+{extra}"))),
@@ -7738,11 +7731,11 @@ fn verify_after_snapshot(repo_path: &std::path::Path, plan: &OperationPlan) -> S
 #[allow(dead_code)]
 fn render_status_footer(status: FooterStatus) -> impl IntoElement {
     let (text_color, text) = match &status {
-        FooterStatus::Success(msg) => (COLOR_SUCCESS, msg.clone()),
-        FooterStatus::Failed(msg) => (COLOR_BLOCKER, msg.clone()),
-        FooterStatus::Idle(msg) => (TEXT_MUTED, msg.clone()),
+        FooterStatus::Success(msg) => (theme().color_success, msg.clone()),
+        FooterStatus::Failed(msg) => (theme().color_blocker, msg.clone()),
+        FooterStatus::Idle(msg) => (theme().text_muted, msg.clone()),
         FooterStatus::Busy(msg) => (
-            COLOR_BRANCH,
+            theme().color_branch,
             SharedString::from(format!("\u{27f3} {}", msg)), // ⟳ msg
         ),
     };
@@ -7756,7 +7749,7 @@ fn render_status_footer(status: FooterStatus) -> impl IntoElement {
         .h(px(22.))
         .flex_shrink_0()
         .px_3()
-        .bg(rgb(BG_PANEL))
+        .bg(rgb(theme().panel))
         .text_xs()
         .text_color(rgb(text_color))
         .overflow_hidden()
@@ -7965,7 +7958,7 @@ fn render_plan_modal_card(
     // ── Build modal card ────────────────────────────────────
     let mut card = div()
         .w(px(480.))
-        .bg(rgb(BG_MODAL))
+        .bg(rgb(theme().modal))
         .rounded_lg()
         .p_4()
         .flex()
@@ -7974,7 +7967,7 @@ fn render_plan_modal_card(
         // ── Title ─────────────────────────────────────────
         .child(
             div()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .text_xl()
                 .child(SharedString::from(plan.title.clone())),
         )
@@ -7987,7 +7980,7 @@ fn render_plan_modal_card(
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(TEXT_LABEL))
+                        .text_color(rgb(theme().text_label))
                         .child(SharedString::from("Current")),
                 )
                 .child(
@@ -7998,19 +7991,19 @@ fn render_plan_modal_card(
                         .text_sm()
                         .child(
                             div()
-                                .text_color(rgb(TEXT_MAIN))
+                                .text_color(rgb(theme().text_main))
                                 .child(SharedString::from(plan.current.head.clone())),
                         )
                         .child(
                             div()
-                                .text_color(rgb(TEXT_SUB))
+                                .text_color(rgb(theme().text_sub))
                                 .child(SharedString::from(format!("[{}]", plan.current.dirty))),
                         ),
                 )
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(TEXT_LABEL))
+                        .text_color(rgb(theme().text_label))
                         .child(SharedString::from("\u{2192} Predicted")),
                 )
                 .child(
@@ -8021,12 +8014,12 @@ fn render_plan_modal_card(
                         .text_sm()
                         .child(
                             div()
-                                .text_color(rgb(TEXT_MAIN))
+                                .text_color(rgb(theme().text_main))
                                 .child(SharedString::from(plan.predicted.head.clone())),
                         )
                         .child(
                             div()
-                                .text_color(rgb(TEXT_SUB))
+                                .text_color(rgb(theme().text_sub))
                                 .child(SharedString::from(format!("[{}]", plan.predicted.dirty))),
                         ),
                 ),
@@ -8039,7 +8032,7 @@ fn render_plan_modal_card(
             warn_col = warn_col.child(
                 div()
                     .text_sm()
-                    .text_color(rgb(COLOR_WARNING))
+                    .text_color(rgb(theme().color_warning))
                     .overflow_hidden()
                     .child(SharedString::from(format!("\u{26a0} {}", w))),
             );
@@ -8060,7 +8053,7 @@ fn render_plan_modal_card(
             .child(
                 div()
                     .text_sm()
-                    .text_color(rgb(TEXT_LABEL))
+                    .text_color(rgb(theme().text_label))
                     .child(SharedString::from(label)),
             );
         for entry in plan.preview_commits.iter().take(show_count) {
@@ -8068,7 +8061,7 @@ fn render_plan_modal_card(
             commit_col = commit_col.child(
                 div()
                     .text_xs()
-                    .text_color(rgb(TEXT_SUB))
+                    .text_color(rgb(theme().text_sub))
                     .overflow_hidden()
                     .child(SharedString::from(line)),
             );
@@ -8077,7 +8070,7 @@ fn render_plan_modal_card(
             commit_col = commit_col.child(
                 div()
                     .text_xs()
-                    .text_color(rgb(TEXT_MUTED))
+                    .text_color(rgb(theme().text_muted))
                     .child(SharedString::from(format!("\u{2026} and {} more", total - 10))),
             );
         }
@@ -8091,7 +8084,7 @@ fn render_plan_modal_card(
             block_col = block_col.child(
                 div()
                     .text_sm()
-                    .text_color(rgb(COLOR_BLOCKER))
+                    .text_color(rgb(theme().color_blocker))
                     .overflow_hidden()
                     .child(SharedString::from(format!("\u{2717} {}", b))),
             );
@@ -8103,7 +8096,7 @@ fn render_plan_modal_card(
     card = card.child(
         div()
             .text_xs()
-            .text_color(rgb(TEXT_MUTED))
+            .text_color(rgb(theme().text_muted))
             .overflow_hidden()
             .child(SharedString::from(plan.recovery.clone())),
     );
@@ -8113,7 +8106,7 @@ fn render_plan_modal_card(
         card = card.child(
             div()
                 .text_sm()
-                .text_color(rgb(COLOR_BLOCKER))
+                .text_color(rgb(theme().color_blocker))
                 .overflow_hidden()
                 .child(err.clone()),
         );
@@ -8132,11 +8125,11 @@ fn render_plan_modal_card(
                 .px_3()
                 .py_1()
                 .rounded_sm()
-                .bg(rgb(BG_SURFACE))
+                .bg(rgb(theme().surface))
                 .text_sm()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(BG_SELECTED)))
+                .hover(|style| style.bg(rgb(theme().selected)))
                 .child(SharedString::from("Cancel")),
         );
 
@@ -8155,11 +8148,11 @@ fn render_plan_modal_card(
                 .px_3()
                 .py_1()
                 .rounded_sm()
-                .bg(rgb(BG_SURFACE))
+                .bg(rgb(theme().surface))
                 .text_sm()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .on_click(create_handler)
-                .hover(|style| style.bg(rgb(BG_SELECTED)))
+                .hover(|style| style.bg(rgb(theme().selected)))
                 .child(SharedString::from("Create branch here...")),
         );
     }
@@ -8172,9 +8165,9 @@ fn render_plan_modal_card(
                 .px_3()
                 .py_1()
                 .rounded_sm()
-                .bg(rgb(COLOR_BRANCH))
+                .bg(rgb(theme().color_branch))
                 .text_sm()
-                .text_color(rgb(BG_BASE))
+                .text_color(rgb(theme().bg_base))
                 .on_click(confirm_handler)
                 .hover(|style| style.opacity(0.85))
                 .child(SharedString::from(confirm_label)),
@@ -8200,7 +8193,7 @@ fn render_plan_modal_card(
                 // Block mouse events from reaching the UI beneath the modal
                 // (user-reported click-through on the create-branch dialog).
                 .occlude()
-                .bg(rgb(BG_MODAL_OVERLAY))
+                .bg(rgb(theme().modal_overlay))
                 .opacity(0.65),
         )
         // Card centred on top of the backdrop.
@@ -8279,7 +8272,7 @@ fn render_create_branch_modal(
     // ── Build modal card ────────────────────────────────────
     let mut card = div()
         .w(px(480.))
-        .bg(rgb(BG_MODAL))
+        .bg(rgb(theme().modal))
         .rounded_lg()
         .p_4()
         .flex()
@@ -8288,7 +8281,7 @@ fn render_create_branch_modal(
         // ── Title ─────────────────────────────────────────
         .child(
             div()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .text_xl()
                 .child(SharedString::from(format!(
                     "Create branch @ {}  {}",
@@ -8305,7 +8298,7 @@ fn render_create_branch_modal(
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(TEXT_LABEL))
+                        .text_color(rgb(theme().text_label))
                         .child(SharedString::from("Branch name")),
                 )
                 .children(modal.input_state.as_ref().map(|st| Input::new(st).small())),
@@ -8317,9 +8310,9 @@ fn render_create_branch_modal(
                 .py_1()
                 .rounded_sm()
                 .text_sm()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .on_click(toggle_checkout)
-                .hover(|style| style.bg(rgb(BG_SURFACE)))
+                .hover(|style| style.bg(rgb(theme().surface)))
                 .child(SharedString::from(checkout_label)),
         );
 
@@ -8333,7 +8326,7 @@ fn render_create_branch_modal(
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(TEXT_LABEL))
+                        .text_color(rgb(theme().text_label))
                         .child(SharedString::from("Current")),
                 )
                 .child(
@@ -8344,25 +8337,25 @@ fn render_create_branch_modal(
                         .text_sm()
                         .child(
                             div()
-                                .text_color(rgb(TEXT_MAIN))
+                                .text_color(rgb(theme().text_main))
                                 .child(SharedString::from(p.current.head.clone())),
                         )
                         .child(
                             div()
-                                .text_color(rgb(TEXT_SUB))
+                                .text_color(rgb(theme().text_sub))
                                 .child(SharedString::from(format!("[{}]", p.current.dirty))),
                         ),
                 )
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(TEXT_LABEL))
+                        .text_color(rgb(theme().text_label))
                         .child(SharedString::from("\u{2192} Predicted")),
                 )
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(TEXT_MUTED))
+                        .text_color(rgb(theme().text_muted))
                         .child(SharedString::from(p.title.clone())),
                 ),
         );
@@ -8374,7 +8367,7 @@ fn render_create_branch_modal(
                 block_col = block_col.child(
                     div()
                         .text_sm()
-                        .text_color(rgb(COLOR_BLOCKER))
+                        .text_color(rgb(theme().color_blocker))
                         .overflow_hidden()
                         .child(SharedString::from(format!("\u{2717} {}", b))),
                 );
@@ -8386,7 +8379,7 @@ fn render_create_branch_modal(
         card = card.child(
             div()
                 .text_xs()
-                .text_color(rgb(TEXT_MUTED))
+                .text_color(rgb(theme().text_muted))
                 .overflow_hidden()
                 .child(SharedString::from(p.recovery.clone())),
         );
@@ -8397,7 +8390,7 @@ fn render_create_branch_modal(
         card = card.child(
             div()
                 .text_sm()
-                .text_color(rgb(COLOR_BLOCKER))
+                .text_color(rgb(theme().color_blocker))
                 .overflow_hidden()
                 .child(err.clone()),
         );
@@ -8415,11 +8408,11 @@ fn render_create_branch_modal(
                 .px_3()
                 .py_1()
                 .rounded_sm()
-                .bg(rgb(BG_SURFACE))
+                .bg(rgb(theme().surface))
                 .text_sm()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(BG_SELECTED)))
+                .hover(|style| style.bg(rgb(theme().selected)))
                 .child(SharedString::from("Cancel")),
         );
 
@@ -8431,9 +8424,9 @@ fn render_create_branch_modal(
                 .px_3()
                 .py_1()
                 .rounded_sm()
-                .bg(rgb(COLOR_SUCCESS))
+                .bg(rgb(theme().color_success))
                 .text_sm()
-                .text_color(rgb(BG_BASE))
+                .text_color(rgb(theme().bg_base))
                 .on_click(confirm_handler)
                 .hover(|style| style.opacity(0.85))
                 .child(SharedString::from("Create")),
@@ -8465,7 +8458,7 @@ fn render_create_branch_modal(
                 // Block mouse events from reaching the UI beneath the modal
                 // (user-reported click-through on the create-branch dialog).
                 .occlude()
-                .bg(rgb(BG_MODAL_OVERLAY))
+                .bg(rgb(theme().modal_overlay))
                 .opacity(0.65),
         )
         .child(
@@ -8507,7 +8500,7 @@ fn render_create_worktree_modal(
 
     let mut card = div()
         .w(px(540.))
-        .bg(rgb(BG_MODAL))
+        .bg(rgb(theme().modal))
         .rounded_lg()
         .p_4()
         .flex()
@@ -8515,7 +8508,7 @@ fn render_create_worktree_modal(
         .gap_3()
         .child(
             div()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .text_xl()
                 .child(SharedString::from(format!(
                     "Create worktree @ {}  {}",
@@ -8528,7 +8521,7 @@ fn render_create_worktree_modal(
                 .flex()
                 .flex_col()
                 .gap_1()
-                .child(div().text_sm().text_color(rgb(TEXT_LABEL)).child(SharedString::from("Branch name")))
+                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from("Branch name")))
                 .children(modal.branch_state.as_ref().map(|st| Input::new(st).small())),
         )
         .child(
@@ -8536,7 +8529,7 @@ fn render_create_worktree_modal(
                 .flex()
                 .flex_col()
                 .gap_1()
-                .child(div().text_sm().text_color(rgb(TEXT_LABEL)).child(SharedString::from("Path")))
+                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from("Path")))
                 .children(modal.path_state.as_ref().map(|st| Input::new(st).small())),
         );
 
@@ -8546,18 +8539,18 @@ fn render_create_worktree_modal(
                 .flex()
                 .flex_col()
                 .gap_1()
-                .child(div().text_sm().text_color(rgb(TEXT_LABEL)).child(SharedString::from("Current")))
+                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from("Current")))
                 .child(
                     div()
                         .flex()
                         .flex_row()
                         .gap_2()
                         .text_sm()
-                        .child(div().text_color(rgb(TEXT_MAIN)).child(SharedString::from(p.current.head.clone())))
-                        .child(div().text_color(rgb(TEXT_SUB)).child(SharedString::from(format!("[{}]", p.current.dirty)))),
+                        .child(div().text_color(rgb(theme().text_main)).child(SharedString::from(p.current.head.clone())))
+                        .child(div().text_color(rgb(theme().text_sub)).child(SharedString::from(format!("[{}]", p.current.dirty)))),
                 )
-                .child(div().text_sm().text_color(rgb(TEXT_LABEL)).child(SharedString::from("\u{2192} Predicted")))
-                .child(div().text_sm().text_color(rgb(TEXT_MUTED)).child(SharedString::from(p.title.clone()))),
+                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from("\u{2192} Predicted")))
+                .child(div().text_sm().text_color(rgb(theme().text_muted)).child(SharedString::from(p.title.clone()))),
         );
 
         if !p.warnings.is_empty() {
@@ -8566,7 +8559,7 @@ fn render_create_worktree_modal(
                 warn_col = warn_col.child(
                     div()
                         .text_sm()
-                        .text_color(rgb(COLOR_WARNING))
+                        .text_color(rgb(theme().color_warning))
                         .overflow_hidden()
                         .child(SharedString::from(format!("! {}", w))),
                 );
@@ -8580,7 +8573,7 @@ fn render_create_worktree_modal(
                 block_col = block_col.child(
                     div()
                         .text_sm()
-                        .text_color(rgb(COLOR_BLOCKER))
+                        .text_color(rgb(theme().color_blocker))
                         .overflow_hidden()
                         .child(SharedString::from(format!("\u{2717} {}", b))),
                 );
@@ -8591,7 +8584,7 @@ fn render_create_worktree_modal(
         card = card.child(
             div()
                 .text_xs()
-                .text_color(rgb(TEXT_MUTED))
+                .text_color(rgb(theme().text_muted))
                 .overflow_hidden()
                 .child(SharedString::from(p.recovery.clone())),
         );
@@ -8601,7 +8594,7 @@ fn render_create_worktree_modal(
         card = card.child(
             div()
                 .text_sm()
-                .text_color(rgb(COLOR_BLOCKER))
+                .text_color(rgb(theme().color_blocker))
                 .overflow_hidden()
                 .child(err.clone()),
         );
@@ -8618,11 +8611,11 @@ fn render_create_worktree_modal(
                 .px_3()
                 .py_1()
                 .rounded_sm()
-                .bg(rgb(BG_SURFACE))
+                .bg(rgb(theme().surface))
                 .text_sm()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(BG_SELECTED)))
+                .hover(|style| style.bg(rgb(theme().selected)))
                 .child(SharedString::from("Cancel")),
         );
     if !has_blockers {
@@ -8632,9 +8625,9 @@ fn render_create_worktree_modal(
                 .px_3()
                 .py_1()
                 .rounded_sm()
-                .bg(rgb(COLOR_SUCCESS))
+                .bg(rgb(theme().color_success))
                 .text_sm()
-                .text_color(rgb(BG_BASE))
+                .text_color(rgb(theme().bg_base))
                 .on_click(confirm_handler)
                 .hover(|style| style.opacity(0.85))
                 .child(SharedString::from("Create")),
@@ -8662,7 +8655,7 @@ fn render_create_worktree_modal(
                 // Block mouse events from reaching the UI beneath the modal
                 // (user-reported click-through on the create-branch dialog).
                 .occlude()
-                .bg(rgb(BG_MODAL_OVERLAY))
+                .bg(rgb(theme().modal_overlay))
                 .opacity(0.65),
         )
         .child(
@@ -8723,7 +8716,7 @@ fn render_stash_push_modal(
 
     let mut card = div()
         .w(px(480.))
-        .bg(rgb(BG_MODAL))
+        .bg(rgb(theme().modal))
         .rounded_lg()
         .p_4()
         .flex()
@@ -8731,7 +8724,7 @@ fn render_stash_push_modal(
         .gap_3()
         .child(
             div()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .text_xl()
                 .child(SharedString::from("Stash push — save local modifications")),
         )
@@ -8744,7 +8737,7 @@ fn render_stash_push_modal(
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(TEXT_LABEL))
+                        .text_color(rgb(theme().text_label))
                         .child(SharedString::from("Message (optional)")),
                 )
                 .children(modal.input_state.as_ref().map(|st| Input::new(st).small())),
@@ -8760,7 +8753,7 @@ fn render_stash_push_modal(
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(TEXT_LABEL))
+                        .text_color(rgb(theme().text_label))
                         .child(SharedString::from("Current")),
                 )
                 .child(
@@ -8771,19 +8764,19 @@ fn render_stash_push_modal(
                         .text_sm()
                         .child(
                             div()
-                                .text_color(rgb(TEXT_MAIN))
+                                .text_color(rgb(theme().text_main))
                                 .child(SharedString::from(p.current.head.clone())),
                         )
                         .child(
                             div()
-                                .text_color(rgb(TEXT_SUB))
+                                .text_color(rgb(theme().text_sub))
                                 .child(SharedString::from(format!("[{}]", p.current.dirty))),
                         ),
                 )
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(TEXT_LABEL))
+                        .text_color(rgb(theme().text_label))
                         .child(SharedString::from("\u{2192} Predicted")),
                 )
                 .child(
@@ -8794,12 +8787,12 @@ fn render_stash_push_modal(
                         .text_sm()
                         .child(
                             div()
-                                .text_color(rgb(TEXT_MAIN))
+                                .text_color(rgb(theme().text_main))
                                 .child(SharedString::from(p.predicted.head.clone())),
                         )
                         .child(
                             div()
-                                .text_color(rgb(TEXT_SUB))
+                                .text_color(rgb(theme().text_sub))
                                 .child(SharedString::from(format!("[{}]", p.predicted.dirty))),
                         ),
                 ),
@@ -8812,7 +8805,7 @@ fn render_stash_push_modal(
                 warn_col = warn_col.child(
                     div()
                         .text_sm()
-                        .text_color(rgb(COLOR_WARNING))
+                        .text_color(rgb(theme().color_warning))
                         .overflow_hidden()
                         .child(SharedString::from(format!("\u{26a0} {}", w))),
                 );
@@ -8827,7 +8820,7 @@ fn render_stash_push_modal(
                 block_col = block_col.child(
                     div()
                         .text_sm()
-                        .text_color(rgb(COLOR_BLOCKER))
+                        .text_color(rgb(theme().color_blocker))
                         .overflow_hidden()
                         .child(SharedString::from(format!("\u{2717} {}", b))),
                 );
@@ -8839,7 +8832,7 @@ fn render_stash_push_modal(
         card = card.child(
             div()
                 .text_xs()
-                .text_color(rgb(TEXT_MUTED))
+                .text_color(rgb(theme().text_muted))
                 .overflow_hidden()
                 .child(SharedString::from(p.recovery.clone())),
         );
@@ -8850,7 +8843,7 @@ fn render_stash_push_modal(
         card = card.child(
             div()
                 .text_sm()
-                .text_color(rgb(COLOR_BLOCKER))
+                .text_color(rgb(theme().color_blocker))
                 .overflow_hidden()
                 .child(err.clone()),
         );
@@ -8868,11 +8861,11 @@ fn render_stash_push_modal(
                 .px_3()
                 .py_1()
                 .rounded_sm()
-                .bg(rgb(BG_SURFACE))
+                .bg(rgb(theme().surface))
                 .text_sm()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(BG_SELECTED)))
+                .hover(|style| style.bg(rgb(theme().selected)))
                 .child(SharedString::from("Cancel")),
         );
 
@@ -8883,9 +8876,9 @@ fn render_stash_push_modal(
                 .px_3()
                 .py_1()
                 .rounded_sm()
-                .bg(rgb(COLOR_WARNING))
+                .bg(rgb(theme().color_warning))
                 .text_sm()
-                .text_color(rgb(BG_BASE))
+                .text_color(rgb(theme().bg_base))
                 .on_click(confirm_handler)
                 .hover(|style| style.opacity(0.85))
                 .child(SharedString::from("Stash")),
@@ -8915,7 +8908,7 @@ fn render_stash_push_modal(
                 // Block mouse events from reaching the UI beneath the modal
                 // (user-reported click-through on the create-branch dialog).
                 .occlude()
-                .bg(rgb(BG_MODAL_OVERLAY))
+                .bg(rgb(theme().modal_overlay))
                 .opacity(0.65),
         )
         .child(
@@ -8973,7 +8966,7 @@ fn render_stash_apply_modal(
 
     let mut card = div()
         .w(px(480.))
-        .bg(rgb(BG_MODAL))
+        .bg(rgb(theme().modal))
         .rounded_lg()
         .p_4()
         .flex()
@@ -8981,7 +8974,7 @@ fn render_stash_apply_modal(
         .gap_3()
         .child(
             div()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .text_xl()
                 .child(SharedString::from(plan.title.clone())),
         )
@@ -8994,7 +8987,7 @@ fn render_stash_apply_modal(
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(TEXT_LABEL))
+                        .text_color(rgb(theme().text_label))
                         .child(SharedString::from("Current")),
                 )
                 .child(
@@ -9005,19 +8998,19 @@ fn render_stash_apply_modal(
                         .text_sm()
                         .child(
                             div()
-                                .text_color(rgb(TEXT_MAIN))
+                                .text_color(rgb(theme().text_main))
                                 .child(SharedString::from(plan.current.head.clone())),
                         )
                         .child(
                             div()
-                                .text_color(rgb(TEXT_SUB))
+                                .text_color(rgb(theme().text_sub))
                                 .child(SharedString::from(format!("[{}]", plan.current.dirty))),
                         ),
                 )
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(TEXT_LABEL))
+                        .text_color(rgb(theme().text_label))
                         .child(SharedString::from("\u{2192} Predicted")),
                 )
                 .child(
@@ -9028,12 +9021,12 @@ fn render_stash_apply_modal(
                         .text_sm()
                         .child(
                             div()
-                                .text_color(rgb(TEXT_MAIN))
+                                .text_color(rgb(theme().text_main))
                                 .child(SharedString::from(plan.predicted.head.clone())),
                         )
                         .child(
                             div()
-                                .text_color(rgb(TEXT_SUB))
+                                .text_color(rgb(theme().text_sub))
                                 .child(SharedString::from(format!("[{}]", plan.predicted.dirty))),
                         ),
                 ),
@@ -9046,7 +9039,7 @@ fn render_stash_apply_modal(
             block_col = block_col.child(
                 div()
                     .text_sm()
-                    .text_color(rgb(COLOR_BLOCKER))
+                    .text_color(rgb(theme().color_blocker))
                     .overflow_hidden()
                     .child(SharedString::from(format!("\u{2717} {}", b))),
             );
@@ -9058,7 +9051,7 @@ fn render_stash_apply_modal(
     card = card.child(
         div()
             .text_xs()
-            .text_color(rgb(TEXT_MUTED))
+            .text_color(rgb(theme().text_muted))
             .overflow_hidden()
             .child(SharedString::from(plan.recovery.clone())),
     );
@@ -9068,7 +9061,7 @@ fn render_stash_apply_modal(
         card = card.child(
             div()
                 .text_sm()
-                .text_color(rgb(COLOR_BLOCKER))
+                .text_color(rgb(theme().color_blocker))
                 .overflow_hidden()
                 .child(err.clone()),
         );
@@ -9086,11 +9079,11 @@ fn render_stash_apply_modal(
                 .px_3()
                 .py_1()
                 .rounded_sm()
-                .bg(rgb(BG_SURFACE))
+                .bg(rgb(theme().surface))
                 .text_sm()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(BG_SELECTED)))
+                .hover(|style| style.bg(rgb(theme().selected)))
                 .child(SharedString::from("Cancel")),
         );
 
@@ -9101,9 +9094,9 @@ fn render_stash_apply_modal(
                 .px_3()
                 .py_1()
                 .rounded_sm()
-                .bg(rgb(COLOR_SUCCESS))
+                .bg(rgb(theme().color_success))
                 .text_sm()
-                .text_color(rgb(BG_BASE))
+                .text_color(rgb(theme().bg_base))
                 .on_click(confirm_handler)
                 .hover(|style| style.opacity(0.85))
                 .child(SharedString::from("Apply")),
@@ -9127,7 +9120,7 @@ fn render_stash_apply_modal(
                 // Block mouse events from reaching the UI beneath the modal
                 // (user-reported click-through on the create-branch dialog).
                 .occlude()
-                .bg(rgb(BG_MODAL_OVERLAY))
+                .bg(rgb(theme().modal_overlay))
                 .opacity(0.65),
         )
         .child(
@@ -9184,13 +9177,7 @@ fn render_cherry_pick_modal(
         cx.notify();
     });
 
-    // Colour constants mirroring the detail panel.
-    const COLOR_ADDED:    u32 = 0xa6e3a1;
-    const COLOR_MODIFIED: u32 = 0xf9e2af;
-    const COLOR_DELETED:  u32 = 0xf38ba8;
-    const COLOR_RENAMED:  u32 = 0x89b4fa;
-    const COLOR_TYPECHANGE: u32 = 0x585b70;
-    const COLOR_DIR:      u32 = 0x6c7086;
+    // Change-kind colours come from the active theme (W9-THEME).
 
     // ── Build preview file tree rows ────────────────────────
     let tree_rows = file_tree::build_file_tree(&plan.preview_files);
@@ -9208,7 +9195,7 @@ fn render_cherry_pick_modal(
                     .child(
                         div()
                             .text_sm()
-                            .text_color(rgb(COLOR_DIR))
+                            .text_color(rgb(theme().change_dir))
                             .child(name.clone()),
                     )
                     .into_any()
@@ -9216,11 +9203,11 @@ fn render_cherry_pick_modal(
             file_tree::TreeRow::File { depth, name, file_index, change } => {
                 let indent = (*depth as f32) * 12.0;
                 let (badge_char, badge_color) = match change {
-                    ChangeKind::Added      => ("A", COLOR_ADDED),
-                    ChangeKind::Modified   => ("M", COLOR_MODIFIED),
-                    ChangeKind::Deleted    => ("D", COLOR_DELETED),
-                    ChangeKind::Renamed { .. } => ("R", COLOR_RENAMED),
-                    ChangeKind::TypeChange => ("T", COLOR_TYPECHANGE),
+                    ChangeKind::Added      => ("A", theme().change_added),
+                    ChangeKind::Modified   => ("M", theme().change_modified),
+                    ChangeKind::Deleted    => ("D", theme().change_deleted),
+                    ChangeKind::Renamed { .. } => ("R", theme().change_renamed),
+                    ChangeKind::TypeChange => ("T", theme().change_typechange),
                 };
                 let _ = file_index; // not clickable in preview
                 div()
@@ -9243,7 +9230,7 @@ fn render_cherry_pick_modal(
                         div()
                             .flex_1()
                             .text_sm()
-                            .text_color(rgb(TEXT_MAIN))
+                            .text_color(rgb(theme().text_main))
                             .overflow_hidden()
                             .child(name.clone()),
                     )
@@ -9255,7 +9242,7 @@ fn render_cherry_pick_modal(
     // ── Build modal card ────────────────────────────────────
     let mut card = div()
         .w(px(520.))
-        .bg(rgb(BG_MODAL))
+        .bg(rgb(theme().modal))
         .rounded_lg()
         .p_4()
         .flex()
@@ -9264,7 +9251,7 @@ fn render_cherry_pick_modal(
         // ── Title ─────────────────────────────────────────
         .child(
             div()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .text_xl()
                 .child(SharedString::from(plan.title.clone())),
         )
@@ -9277,7 +9264,7 @@ fn render_cherry_pick_modal(
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(TEXT_LABEL))
+                        .text_color(rgb(theme().text_label))
                         .child(SharedString::from("Current")),
                 )
                 .child(
@@ -9288,19 +9275,19 @@ fn render_cherry_pick_modal(
                         .text_sm()
                         .child(
                             div()
-                                .text_color(rgb(TEXT_MAIN))
+                                .text_color(rgb(theme().text_main))
                                 .child(SharedString::from(plan.current.head.clone())),
                         )
                         .child(
                             div()
-                                .text_color(rgb(TEXT_SUB))
+                                .text_color(rgb(theme().text_sub))
                                 .child(SharedString::from(format!("[{}]", plan.current.dirty))),
                         ),
                 )
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(TEXT_LABEL))
+                        .text_color(rgb(theme().text_label))
                         .child(SharedString::from("\u{2192} Predicted")),
                 )
                 .child(
@@ -9311,7 +9298,7 @@ fn render_cherry_pick_modal(
                         .text_sm()
                         .child(
                             div()
-                                .text_color(rgb(TEXT_MAIN))
+                                .text_color(rgb(theme().text_main))
                                 .child(SharedString::from(plan.predicted.head.clone())),
                         ),
                 ),
@@ -9326,7 +9313,7 @@ fn render_cherry_pick_modal(
             .child(
                 div()
                     .text_sm()
-                    .text_color(rgb(TEXT_LABEL))
+                    .text_color(rgb(theme().text_label))
                     .mb_1()
                     .child(SharedString::from(format!(
                         "Preview ({} file{})",
@@ -9347,7 +9334,7 @@ fn render_cherry_pick_modal(
             warn_col = warn_col.child(
                 div()
                     .text_sm()
-                    .text_color(rgb(COLOR_WARNING))
+                    .text_color(rgb(theme().color_warning))
                     .overflow_hidden()
                     .child(SharedString::from(format!("\u{26a0} {}", w))),
             );
@@ -9362,7 +9349,7 @@ fn render_cherry_pick_modal(
             block_col = block_col.child(
                 div()
                     .text_sm()
-                    .text_color(rgb(COLOR_BLOCKER))
+                    .text_color(rgb(theme().color_blocker))
                     .overflow_hidden()
                     .child(SharedString::from(format!("\u{2717} {}", b))),
             );
@@ -9374,7 +9361,7 @@ fn render_cherry_pick_modal(
     card = card.child(
         div()
             .text_xs()
-            .text_color(rgb(TEXT_MUTED))
+            .text_color(rgb(theme().text_muted))
             .overflow_hidden()
             .child(SharedString::from(plan.recovery.clone())),
     );
@@ -9384,7 +9371,7 @@ fn render_cherry_pick_modal(
         card = card.child(
             div()
                 .text_sm()
-                .text_color(rgb(COLOR_BLOCKER))
+                .text_color(rgb(theme().color_blocker))
                 .overflow_hidden()
                 .child(err.clone()),
         );
@@ -9402,11 +9389,11 @@ fn render_cherry_pick_modal(
                 .px_3()
                 .py_1()
                 .rounded_sm()
-                .bg(rgb(BG_SURFACE))
+                .bg(rgb(theme().surface))
                 .text_sm()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(BG_SELECTED)))
+                .hover(|style| style.bg(rgb(theme().selected)))
                 .child(SharedString::from("Cancel")),
         );
 
@@ -9417,9 +9404,9 @@ fn render_cherry_pick_modal(
                 .px_3()
                 .py_1()
                 .rounded_sm()
-                .bg(rgb(0xcba6f7)) // mauve
+                .bg(rgb(theme().accent)) // mauve accent
                 .text_sm()
-                .text_color(rgb(BG_BASE))
+                .text_color(rgb(theme().bg_base))
                 .on_click(confirm_handler)
                 .hover(|style| style.opacity(0.85))
                 .child(SharedString::from("Cherry-pick")),
@@ -9443,7 +9430,7 @@ fn render_cherry_pick_modal(
                 // Block mouse events from reaching the UI beneath the modal
                 // (user-reported click-through on the create-branch dialog).
                 .occlude()
-                .bg(rgb(BG_MODAL_OVERLAY))
+                .bg(rgb(theme().modal_overlay))
                 .opacity(0.65),
         )
         .child(
@@ -9480,7 +9467,7 @@ fn render_commit_panel(
     active_wip: Option<(bool, PathBuf)>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
-    const COLOR_DIR: u32      = 0x6c7086;
+    // theme().change_dir now sourced from theme().change_dir (W9-THEME).
 
     let tree_view = panel.tree_view;
     let unstaged_count = panel.unstaged.len();
@@ -9510,9 +9497,9 @@ fn render_commit_panel(
             .px_1p5()
             .py_px()
             .text_xs()
-            .bg(rgb(if active { BG_SELECTED } else { BG_SURFACE }))
-            .text_color(rgb(if active { TEXT_MAIN } else { TEXT_MUTED }))
-            .hover(|st| st.text_color(rgb(TEXT_MAIN)).cursor_pointer())
+            .bg(rgb(if active { theme().selected } else { theme().surface }))
+            .text_color(rgb(if active { theme().text_main } else { theme().text_muted }))
+            .hover(|st| st.text_color(rgb(theme().text_main)).cursor_pointer())
             .child(SharedString::from(label))
     };
     let toggle_btn = div()
@@ -9521,7 +9508,7 @@ fn render_commit_panel(
         .rounded_sm()
         .overflow_hidden()
         .border_1()
-        .border_color(rgb(BG_SURFACE))
+        .border_color(rgb(theme().surface))
         .child(seg("cp-view-list", "List", !tree_view).on_click(list_click))
         .child(seg("cp-view-tree", "Tree", tree_view).on_click(tree_click));
 
@@ -9544,7 +9531,7 @@ fn render_commit_panel(
             div()
                 .flex_1()
                 .text_sm()
-                .text_color(rgb(TEXT_LABEL))
+                .text_color(rgb(theme().text_label))
                 .child(SharedString::from(format!("Unstaged ({})", unstaged_count))),
         )
         .when(unstaged_count > 0, |el| {
@@ -9559,10 +9546,10 @@ fn render_commit_panel(
                     .px_1p5()
                     .py_px()
                     .rounded_sm()
-                    .bg(rgb(BG_SURFACE))
+                    .bg(rgb(theme().surface))
                     .text_xs()
-                    .text_color(rgb(COLOR_SUCCESS))
-                    .hover(|st| st.bg(rgb(BG_SELECTED)).cursor_pointer())
+                    .text_color(rgb(theme().color_success))
+                    .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
                     .on_click(stage_all_click)
                     .child(SharedString::from("Stage all")),
             )
@@ -9586,7 +9573,7 @@ fn render_commit_panel(
                             .id(SharedString::from(format!("cp-us-dir-{}", name.as_ref())))
                             .pl(px(8.0 + indent))
                             .text_xs()
-                            .text_color(rgb(COLOR_DIR))
+                            .text_color(rgb(theme().change_dir))
                             .child(name.clone()),
                     );
                 }
@@ -9607,14 +9594,14 @@ fn render_commit_panel(
                         this.do_stage_file(fi);
                         cx.notify();
                     });
-                    let row_bg = if is_conflicted_file { 0x3a1c1c } else if is_sel { BG_SELECTED } else { BG_PANEL };
+                    let row_bg = if is_conflicted_file { theme().diff_removed_bg } else if is_sel { theme().selected } else { theme().panel };
                     let mut file_row = div()
                         .id(("cp-us-file", fi))
                         .when(
                             active_wip.as_ref().map_or(false, |(st, p)| {
                                 *st == false && panel.unstaged.get(fi).map_or(false, |f| &f.path == p)
                             }),
-                            |el| el.bg(rgb(BG_SELECTED)),
+                            |el| el.bg(rgb(theme().selected)),
                         )
                         .flex()
                         .flex_row()
@@ -9623,7 +9610,7 @@ fn render_commit_panel(
                         .pr(px(2.0))
                         .py_px()
                         .bg(rgb(row_bg))
-                        .hover(|s| s.bg(rgb(BG_SURFACE)))
+                        .hover(|s| s.bg(rgb(theme().surface)))
                         .on_click(file_click)
                         .child(
                             div()
@@ -9637,7 +9624,7 @@ fn render_commit_panel(
                             div()
                                 .flex_1()
                                 .text_xs()
-                                .text_color(rgb(TEXT_MAIN))
+                                .text_color(rgb(theme().text_main))
                                 .overflow_hidden()
                                 .truncate()
                                 .child(name.clone()),
@@ -9650,9 +9637,9 @@ fn render_commit_panel(
                                 .py_px()
                                 .rounded_sm()
                                 .flex_shrink_0()
-                                .bg(rgb(COLOR_SUCCESS))
+                                .bg(rgb(theme().color_success))
                                 .text_xs()
-                                .text_color(rgb(BG_BASE))
+                                .text_color(rgb(theme().bg_base))
                                 .on_click(stage_click)
                                 .hover(|s| s.opacity(0.8))
                                 .child(SharedString::from("Stage")),
@@ -9665,9 +9652,9 @@ fn render_commit_panel(
                                 .py_px()
                                 .rounded_sm()
                                 .flex_shrink_0()
-                                .bg(rgb(0xf38ba8))
+                                .bg(rgb(theme().color_blocker))
                                 .text_xs()
-                                .text_color(rgb(BG_BASE))
+                                .text_color(rgb(theme().bg_base))
                                 .child(SharedString::from("Conflict")),
                         );
                     }
@@ -9693,14 +9680,14 @@ fn render_commit_panel(
                 cx.notify();
             });
             // Row background: conflicted files get red tint
-            let row_bg = if is_conflicted_file { 0x3a1c1c } else if is_sel { BG_SELECTED } else { BG_PANEL };
+            let row_bg = if is_conflicted_file { theme().diff_removed_bg } else if is_sel { theme().selected } else { theme().panel };
             let mut file_row = div()
                 .id(("cp-us-flat-file", fi))
                         .when(
                             active_wip.as_ref().map_or(false, |(st, p)| {
                                 *st == false && panel.unstaged.get(fi).map_or(false, |f| &f.path == p)
                             }),
-                            |el| el.bg(rgb(BG_SELECTED)),
+                            |el| el.bg(rgb(theme().selected)),
                         )
                 .flex()
                 .flex_row()
@@ -9708,7 +9695,7 @@ fn render_commit_panel(
                 .px_2()
                 .py_px()
                 .bg(rgb(row_bg))
-                .hover(|s| s.bg(rgb(BG_SURFACE)))
+                .hover(|s| s.bg(rgb(theme().surface)))
                 .on_click(file_click)
                 .child(
                     div()
@@ -9722,7 +9709,7 @@ fn render_commit_panel(
                     div()
                         .flex_1()
                         .text_xs()
-                        .text_color(rgb(TEXT_MAIN))
+                        .text_color(rgb(theme().text_main))
                         .overflow_hidden()
                         .truncate()
                         .child(SharedString::from(name)),
@@ -9736,9 +9723,9 @@ fn render_commit_panel(
                         .py_px()
                         .rounded_sm()
                         .flex_shrink_0()
-                        .bg(rgb(COLOR_SUCCESS))
+                        .bg(rgb(theme().color_success))
                         .text_xs()
-                        .text_color(rgb(BG_BASE))
+                        .text_color(rgb(theme().bg_base))
                         .on_click(stage_click)
                         .hover(|s| s.opacity(0.8))
                         .child(SharedString::from("Stage")),
@@ -9751,9 +9738,9 @@ fn render_commit_panel(
                         .py_px()
                         .rounded_sm()
                         .flex_shrink_0()
-                        .bg(rgb(0xf38ba8)) // red
+                        .bg(rgb(theme().color_blocker)) // red
                         .text_xs()
-                        .text_color(rgb(BG_BASE))
+                        .text_color(rgb(theme().bg_base))
                         .child(SharedString::from("Conflict")),
                 );
             }
@@ -9776,7 +9763,7 @@ fn render_commit_panel(
             div()
                 .flex_1()
                 .text_sm()
-                .text_color(rgb(TEXT_LABEL))
+                .text_color(rgb(theme().text_label))
                 .child(SharedString::from(format!("Staged ({})", staged_count))),
         )
         .when(staged_count > 0, |el| {
@@ -9790,10 +9777,10 @@ fn render_commit_panel(
                     .px_1p5()
                     .py_px()
                     .rounded_sm()
-                    .bg(rgb(BG_SURFACE))
+                    .bg(rgb(theme().surface))
                     .text_xs()
-                    .text_color(rgb(COLOR_WARNING))
-                    .hover(|st| st.bg(rgb(BG_SELECTED)).cursor_pointer())
+                    .text_color(rgb(theme().color_warning))
+                    .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
                     .on_click(unstage_all_click)
                     .child(SharedString::from("Unstage all")),
             )
@@ -9815,7 +9802,7 @@ fn render_commit_panel(
                             .id(SharedString::from(format!("cp-st-dir-{}", name.as_ref())))
                             .pl(px(8.0 + indent))
                             .text_xs()
-                            .text_color(rgb(COLOR_DIR))
+                            .text_color(rgb(theme().change_dir))
                             .child(name.clone()),
                     );
                 }
@@ -9839,7 +9826,7 @@ fn render_commit_panel(
                             active_wip.as_ref().map_or(false, |(st, p)| {
                                 *st == true && panel.staged.get(fi).map_or(false, |f| &f.path == p)
                             }),
-                            |el| el.bg(rgb(BG_SELECTED)),
+                            |el| el.bg(rgb(theme().selected)),
                         )
                             .flex()
                             .flex_row()
@@ -9847,8 +9834,8 @@ fn render_commit_panel(
                             .pl(px(8.0 + indent))
                             .pr(px(2.0))
                             .py_px()
-                            .bg(rgb(if is_sel { BG_SELECTED } else { BG_PANEL }))
-                            .hover(|s| s.bg(rgb(BG_SURFACE)))
+                            .bg(rgb(if is_sel { theme().selected } else { theme().panel }))
+                            .hover(|s| s.bg(rgb(theme().surface)))
                             .on_click(file_click)
                             .child(
                                 div()
@@ -9862,7 +9849,7 @@ fn render_commit_panel(
                                 div()
                                     .flex_1()
                                     .text_xs()
-                                    .text_color(rgb(TEXT_MAIN))
+                                    .text_color(rgb(theme().text_main))
                                     .overflow_hidden()
                                     .truncate()
                                     .child(name.clone()),
@@ -9874,9 +9861,9 @@ fn render_commit_panel(
                                     .py_px()
                                     .rounded_sm()
                                     .flex_shrink_0()
-                                    .bg(rgb(COLOR_WARNING))
+                                    .bg(rgb(theme().color_warning))
                                     .text_xs()
-                                    .text_color(rgb(BG_BASE))
+                                    .text_color(rgb(theme().bg_base))
                                     .on_click(unstage_click)
                                     .hover(|s| s.opacity(0.8))
                                     .child(SharedString::from("Unstage")),
@@ -9907,15 +9894,15 @@ fn render_commit_panel(
                             active_wip.as_ref().map_or(false, |(st, p)| {
                                 *st == true && panel.staged.get(fi).map_or(false, |f| &f.path == p)
                             }),
-                            |el| el.bg(rgb(BG_SELECTED)),
+                            |el| el.bg(rgb(theme().selected)),
                         )
                     .flex()
                     .flex_row()
                     .items_center()
                     .px_2()
                     .py_px()
-                    .bg(rgb(if is_sel { BG_SELECTED } else { BG_PANEL }))
-                    .hover(|s| s.bg(rgb(BG_SURFACE)))
+                    .bg(rgb(if is_sel { theme().selected } else { theme().panel }))
+                    .hover(|s| s.bg(rgb(theme().surface)))
                     .on_click(file_click)
                     .child(
                         div()
@@ -9929,7 +9916,7 @@ fn render_commit_panel(
                         div()
                             .flex_1()
                             .text_xs()
-                            .text_color(rgb(TEXT_MAIN))
+                            .text_color(rgb(theme().text_main))
                             .overflow_hidden()
                             .truncate()
                             .child(SharedString::from(name)),
@@ -9941,9 +9928,9 @@ fn render_commit_panel(
                             .py_px()
                             .rounded_sm()
                             .flex_shrink_0()
-                            .bg(rgb(COLOR_WARNING))
+                            .bg(rgb(theme().color_warning))
                             .text_xs()
-                            .text_color(rgb(BG_BASE))
+                            .text_color(rgb(theme().bg_base))
                             .on_click(unstage_click)
                             .hover(|s| s.opacity(0.8))
                             .child(SharedString::from("Unstage")),
@@ -9964,10 +9951,10 @@ fn render_commit_panel(
         div()
             .px_2()
             .py_1()
-            .bg(rgb(BG_BASE))
+            .bg(rgb(theme().bg_base))
             .rounded_sm()
             .text_xs()
-            .text_color(rgb(TEXT_MUTED))
+            .text_color(rgb(theme().text_muted))
             .child(SharedString::from("(commit message input unavailable)"))
             .into_any_element()
     };
@@ -9985,9 +9972,9 @@ fn render_commit_panel(
             .px_2()
             .py_1()
             .rounded_sm()
-            .bg(rgb(COLOR_BRANCH))
+            .bg(rgb(theme().color_branch))
             .text_sm()
-            .text_color(rgb(BG_BASE))
+            .text_color(rgb(theme().bg_base))
             .on_click(commit_click)
             .hover(|s| s.opacity(0.85))
             .child(SharedString::from(format!("Commit ({} file{})",
@@ -10011,9 +9998,9 @@ fn render_commit_panel(
             .px_2()
             .py_1()
             .rounded_sm()
-            .bg(rgb(BG_SURFACE))
+            .bg(rgb(theme().surface))
             .text_sm()
-            .text_color(rgb(TEXT_MUTED))
+            .text_color(rgb(theme().text_muted))
             .child(SharedString::from(reason))
             .into_any_element()
     };
@@ -10026,16 +10013,16 @@ fn render_commit_panel(
         .h_full()
         .flex()
         .flex_col()
-        .bg(rgb(BG_PANEL))
+        .bg(rgb(theme().panel))
         // Header
         .child(
             div()
                 .flex_shrink_0()
                 .px_2()
                 .py_1()
-                .bg(rgb(BG_SURFACE))
+                .bg(rgb(theme().surface))
                 .text_sm()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .child(SharedString::from("Commit Panel")),
         )
         // T-UI-003: ファイル領域コンテナ (flex_1 + min_h(0)) — diff 廃止でフル高さ
@@ -10058,7 +10045,7 @@ fn render_commit_panel(
                         .mx_1()
                         .mb_px()
                         .border_1()
-                        .border_color(rgb(BG_SURFACE))
+                        .border_color(rgb(theme().surface))
                         .rounded_sm()
                         .child(unstaged_files),
                 )
@@ -10074,7 +10061,7 @@ fn render_commit_panel(
                         .mx_1()
                         .mb_px()
                         .border_1()
-                        .border_color(rgb(BG_SURFACE))
+                        .border_color(rgb(theme().surface))
                         .rounded_sm()
                         .child(staged_files),
                 ),
@@ -10088,12 +10075,12 @@ fn render_commit_panel(
                 .px_2()
                 .py_1()
                 .gap_1()
-                .bg(rgb(BG_SURFACE))
+                .bg(rgb(theme().surface))
                 // Message label + input
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(TEXT_LABEL))
+                        .text_color(rgb(theme().text_label))
                         .child(SharedString::from("Commit message")),
                 )
                 .child(msg_input_wrapper)
@@ -10102,7 +10089,7 @@ fn render_commit_panel(
                     el.child(
                         div()
                             .text_xs()
-                            .text_color(rgb(COLOR_WARNING))
+                            .text_color(rgb(theme().color_warning))
                             .child(SharedString::from(format!(
                                 "⚠ {} unstaged change(s) not included",
                                 unstaged_count
@@ -10158,7 +10145,7 @@ fn render_commit_plan_modal(
         .child(
             div()
                 .text_sm()
-                .text_color(rgb(TEXT_LABEL))
+                .text_color(rgb(theme().text_label))
                 .mb_1()
                 .child(SharedString::from(format!(
                     "Staging ({} file{})",
@@ -10176,7 +10163,7 @@ fn render_commit_plan_modal(
                         .id(SharedString::from(format!("cpk-dir-{}", name.as_ref())))
                         .pl(px(indent))
                         .text_xs()
-                        .text_color(rgb(0x6c7086u32))
+                        .text_color(rgb(theme().change_dir))
                         .child(name.clone()),
                 );
             }
@@ -10204,7 +10191,7 @@ fn render_commit_plan_modal(
                             div()
                                 .flex_1()
                                 .text_xs()
-                                .text_color(rgb(TEXT_MAIN))
+                                .text_color(rgb(theme().text_main))
                                 .overflow_hidden()
                                 .child(name.clone()),
                         ),
@@ -10215,7 +10202,7 @@ fn render_commit_plan_modal(
 
     let mut card = div()
         .w(px(480.))
-        .bg(rgb(BG_MODAL))
+        .bg(rgb(theme().modal))
         .rounded_lg()
         .p_4()
         .flex()
@@ -10223,7 +10210,7 @@ fn render_commit_plan_modal(
         .gap_3()
         .child(
             div()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .text_xl()
                 .child(SharedString::from(plan.title.clone())),
         )
@@ -10235,7 +10222,7 @@ fn render_commit_plan_modal(
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(TEXT_LABEL))
+                        .text_color(rgb(theme().text_label))
                         .child(SharedString::from("Current")),
                 )
                 .child(
@@ -10246,25 +10233,25 @@ fn render_commit_plan_modal(
                         .text_sm()
                         .child(
                             div()
-                                .text_color(rgb(TEXT_MAIN))
+                                .text_color(rgb(theme().text_main))
                                 .child(SharedString::from(plan.current.head.clone())),
                         )
                         .child(
                             div()
-                                .text_color(rgb(TEXT_SUB))
+                                .text_color(rgb(theme().text_sub))
                                 .child(SharedString::from(format!("[{}]", plan.current.dirty))),
                         ),
                 )
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(TEXT_LABEL))
+                        .text_color(rgb(theme().text_label))
                         .child(SharedString::from("\u{2192} Predicted")),
                 )
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(TEXT_MAIN))
+                        .text_color(rgb(theme().text_main))
                         .child(SharedString::from(plan.predicted.head.clone())),
                 ),
         )
@@ -10278,7 +10265,7 @@ fn render_commit_plan_modal(
             warn_col = warn_col.child(
                 div()
                     .text_sm()
-                    .text_color(rgb(COLOR_WARNING))
+                    .text_color(rgb(theme().color_warning))
                     .overflow_hidden()
                     .child(SharedString::from(format!("\u{26a0} {}", w))),
             );
@@ -10293,7 +10280,7 @@ fn render_commit_plan_modal(
             block_col = block_col.child(
                 div()
                     .text_sm()
-                    .text_color(rgb(COLOR_BLOCKER))
+                    .text_color(rgb(theme().color_blocker))
                     .overflow_hidden()
                     .child(SharedString::from(format!("\u{2717} {}", b))),
             );
@@ -10306,7 +10293,7 @@ fn render_commit_plan_modal(
         card = card.child(
             div()
                 .text_sm()
-                .text_color(rgb(COLOR_BLOCKER))
+                .text_color(rgb(theme().color_blocker))
                 .overflow_hidden()
                 .child(err.clone()),
         );
@@ -10323,11 +10310,11 @@ fn render_commit_plan_modal(
                 .px_3()
                 .py_1()
                 .rounded_sm()
-                .bg(rgb(BG_SURFACE))
+                .bg(rgb(theme().surface))
                 .text_sm()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(BG_SELECTED)))
+                .hover(|style| style.bg(rgb(theme().selected)))
                 .child(SharedString::from("Cancel")),
         );
 
@@ -10338,9 +10325,9 @@ fn render_commit_plan_modal(
                 .px_3()
                 .py_1()
                 .rounded_sm()
-                .bg(rgb(COLOR_BRANCH))
+                .bg(rgb(theme().color_branch))
                 .text_sm()
-                .text_color(rgb(BG_BASE))
+                .text_color(rgb(theme().bg_base))
                 .on_click(confirm_handler)
                 .hover(|style| style.opacity(0.85))
                 .child(SharedString::from("Commit")),
@@ -10363,7 +10350,7 @@ fn render_commit_plan_modal(
                 // Block mouse events from reaching the UI beneath the modal
                 // (user-reported click-through on the create-branch dialog).
                 .occlude()
-                .bg(rgb(BG_MODAL_OVERLAY))
+                .bg(rgb(theme().modal_overlay))
                 .opacity(0.65),
         )
         .child(

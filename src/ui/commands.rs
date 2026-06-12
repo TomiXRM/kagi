@@ -38,9 +38,9 @@ use kagi::git::CommitId;
 
 use super::{
     BottomTab, FooterStatus, KagiApp, ToastKind, ToggleBottomPanel,
-    BG_BASE, BG_PANEL, BG_SELECTED, COLOR_BRANCH, TEXT_MAIN, TEXT_MUTED, TEXT_SUB,
 };
 use super::context_menu::CommitAction;
+use super::theme::{self, theme};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Actions — one gpui Action per command (1:1, ADR-0029).
@@ -96,8 +96,28 @@ actions!(
         KeyboardShortcuts,
         Documentation,
         ReportIssue,
+        // View → Theme (W9-THEME / ADR-0036): one action per built-in theme.
+        ThemeCatppuccin,
+        ThemeXcodeDark,
+        ThemeXcodeLight,
+        ThemeOneDark,
+        ThemeOneLight,
+        ThemeMonokai,
     ]
 );
+
+/// Map a theme command id back to its theme slug.
+pub fn theme_slug_for_command(id: &str) -> Option<&'static str> {
+    match id {
+        "theme.catppuccin" => Some("catppuccin"),
+        "theme.xcodeDark" => Some("xcode-dark"),
+        "theme.xcodeLight" => Some("xcode-light"),
+        "theme.oneDark" => Some("one-dark"),
+        "theme.oneLight" => Some("one-light"),
+        "theme.monokai" => Some("monokai"),
+        _ => None,
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Command registry types (ADR-0029).
@@ -179,6 +199,15 @@ pub const COMMANDS: &[Command] = &[
     Command { id: "help.shortcuts", label: "Keyboard Shortcuts", keystroke: None, dangerous: false },
     Command { id: "help.documentation", label: "Documentation", keystroke: None, dangerous: false },
     Command { id: "help.reportIssue", label: "Report Issue", keystroke: None, dangerous: false },
+
+    // View → Theme (W9-THEME / ADR-0036). Labels here are the plain theme names;
+    // the live "✓ " active marker is applied in `theme_submenu`.
+    Command { id: "theme.catppuccin", label: "Catppuccin Mocha", keystroke: None, dangerous: false },
+    Command { id: "theme.xcodeDark", label: "Xcode Dark", keystroke: None, dangerous: false },
+    Command { id: "theme.xcodeLight", label: "Xcode Light", keystroke: None, dangerous: false },
+    Command { id: "theme.oneDark", label: "One Dark", keystroke: None, dangerous: false },
+    Command { id: "theme.oneLight", label: "One Light", keystroke: None, dangerous: false },
+    Command { id: "theme.monokai", label: "Monokai (Warm Hybrid)", keystroke: None, dangerous: false },
 ];
 
 /// Look up a command's metadata by id.
@@ -219,7 +248,14 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         | "window.close"
         | "help.shortcuts"
         | "help.documentation"
-        | "help.reportIssue" => Enabled,
+        | "help.reportIssue"
+        // Theme switching is always available (W9-THEME).
+        | "theme.catppuccin"
+        | "theme.xcodeDark"
+        | "theme.xcodeLight"
+        | "theme.oneDark"
+        | "theme.oneLight"
+        | "theme.monokai" => Enabled,
 
         // ── Placeholders (feature not implemented; greyed with a reason) ──
         "file.cloneRepository" => Disabled("clone は未実装です"),
@@ -372,6 +408,9 @@ pub fn build_menus() -> Vec<Menu> {
                 MenuItem::action("Toggle Terminal", ToggleBottomPanel),
                 mi("view.toggleCommitDetails", ToggleCommitDetails),
                 mi("view.toggleDiffView", ToggleDiffView),
+                MenuItem::separator(),
+                // W9-THEME: Theme submenu (active item prefixed with "✓ ").
+                MenuItem::submenu(theme_submenu()),
             ],
         },
         // ── Repository ───────────────────────────────────────────────
@@ -434,6 +473,40 @@ pub fn build_menus() -> Vec<Menu> {
             ],
         },
     ]
+}
+
+/// Build the View → Theme submenu (W9-THEME / ADR-0036).
+///
+/// Each item is one built-in theme; the currently-active theme's label is
+/// prefixed with "✓ ".  Because the label changes when the active theme
+/// changes, the menu bar must be rebuilt (`cx.set_menus`) on every switch —
+/// unlike the disabled/enabled mechanism, which is purely dispatch-tree based.
+fn theme_submenu() -> Menu {
+    let active = theme::active_index();
+    let mut items: Vec<MenuItem> = Vec::with_capacity(theme::THEMES.len());
+    for (i, t) in theme::THEMES.iter().enumerate() {
+        let label = if i == active {
+            format!("\u{2713} {}", t.name)
+        } else {
+            format!("   {}", t.name)
+        };
+        let label = SharedString::from(label);
+        // Each theme has a distinct action so dispatch is 1:1.
+        let item = match t.slug {
+            "catppuccin" => MenuItem::action(label, ThemeCatppuccin),
+            "xcode-dark" => MenuItem::action(label, ThemeXcodeDark),
+            "xcode-light" => MenuItem::action(label, ThemeXcodeLight),
+            "one-dark" => MenuItem::action(label, ThemeOneDark),
+            "one-light" => MenuItem::action(label, ThemeOneLight),
+            "monokai" => MenuItem::action(label, ThemeMonokai),
+            _ => continue,
+        };
+        items.push(item);
+    }
+    Menu {
+        name: "Theme".into(),
+        items,
+    }
 }
 
 // Edit-menu action stubs: gpui's `os_action` still needs an `Action` value for
@@ -630,8 +703,50 @@ impl KagiApp {
             "help.documentation" => cx.open_url(GITHUB_URL),
             "help.reportIssue" => cx.open_url(ISSUES_URL),
 
+            // ── View → Theme (W9-THEME / ADR-0036) ──────────────────
+            "theme.catppuccin"
+            | "theme.xcodeDark"
+            | "theme.xcodeLight"
+            | "theme.oneDark"
+            | "theme.oneLight"
+            | "theme.monokai" => {
+                if let Some(slug) = theme_slug_for_command(id) {
+                    self.set_theme(slug, cx);
+                }
+            }
+
             _ => {}
         }
+        cx.notify();
+    }
+
+    /// Switch the active colour theme (W9-THEME / ADR-0036).
+    ///
+    /// 1. Update + persist the active theme (`theme::set_active`).
+    /// 2. Live-apply the new palette to any running terminal sessions via
+    ///    `TerminalView::update_config`.
+    /// 3. Rebuild the menu bar so the "✓ " active marker moves (the label
+    ///    changes, so `cx.set_menus` must be re-called — unlike the disabled
+    ///    mechanism, which is purely dispatch-tree based).
+    /// 4. `cx.notify()` so every `theme()`-reading render path repaints.
+    pub fn set_theme(&mut self, slug: &str, cx: &mut Context<Self>) {
+        if !theme::set_active(slug) {
+            return;
+        }
+        let t = theme::theme();
+        eprintln!("[kagi] theme: {} dark={}", t.slug, t.dark);
+
+        // Live-apply to running terminal sessions.
+        let new_config = super::terminal::build_terminal_config();
+        for session in self.terminal_sessions.values() {
+            if let Some(view) = session.view.clone() {
+                let cfg = new_config.clone();
+                view.update(cx, |v, vcx| v.update_config(cfg, vcx));
+            }
+        }
+
+        // Rebuild the menu bar (active marker moved).
+        cx.set_menus(build_menus());
         cx.notify();
     }
 
@@ -786,16 +901,16 @@ impl KagiApp {
             .overflow_hidden()
             .rounded(px(8.0))
             .border_1()
-            .border_color(rgb(BG_SELECTED))
-            .bg(rgb(BG_PANEL))
+            .border_color(rgb(theme().selected))
+            .bg(rgb(theme().panel))
             .shadow_lg()
             .child(
                 div()
                     .px_3()
                     .py_2()
                     .border_b_1()
-                    .border_color(rgb(BG_SELECTED))
-                    .text_color(rgb(TEXT_MAIN))
+                    .border_color(rgb(theme().selected))
+                    .text_color(rgb(theme().text_main))
                     .child(SharedString::from(title)),
             );
 
@@ -804,7 +919,7 @@ impl KagiApp {
                 div()
                     .px_3()
                     .py_2()
-                    .text_color(rgb(TEXT_MUTED))
+                    .text_color(rgb(theme().text_muted))
                     .child(SharedString::from("No local branches")),
             );
         }
@@ -827,9 +942,9 @@ impl KagiApp {
                     .px_3()
                     .py(px(6.0))
                     .text_sm()
-                    .text_color(rgb(TEXT_SUB))
+                    .text_color(rgb(theme().text_sub))
                     .cursor_pointer()
-                    .hover(|s| s.bg(rgb(BG_SELECTED)).text_color(rgb(TEXT_MAIN)))
+                    .hover(|s| s.bg(rgb(theme().selected)).text_color(rgb(theme().text_main)))
                     .on_click(click)
                     .child(SharedString::from(name)),
             );
@@ -850,16 +965,16 @@ impl KagiApp {
             .overflow_hidden()
             .rounded(px(8.0))
             .border_1()
-            .border_color(rgb(BG_SELECTED))
-            .bg(rgb(BG_PANEL))
+            .border_color(rgb(theme().selected))
+            .bg(rgb(theme().panel))
             .shadow_lg()
             .child(
                 div()
                     .px_4()
                     .py_2()
                     .border_b_1()
-                    .border_color(rgb(BG_SELECTED))
-                    .text_color(rgb(COLOR_BRANCH))
+                    .border_color(rgb(theme().selected))
+                    .text_color(rgb(theme().color_branch))
                     .child(title),
             );
 
@@ -869,7 +984,7 @@ impl KagiApp {
                     .px_4()
                     .py(px(3.0))
                     .text_sm()
-                    .text_color(rgb(TEXT_SUB))
+                    .text_color(rgb(theme().text_sub))
                     .child(line),
             );
         }
@@ -902,7 +1017,7 @@ impl KagiApp {
                     .top_0()
                     .left_0()
                     .size_full()
-                    .bg(rgb(BG_BASE))
+                    .bg(rgb(theme().bg_base))
                     .opacity(0.55)
                     .on_mouse_down(MouseButton::Left, dismiss),
             )

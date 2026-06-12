@@ -47,8 +47,10 @@ pub fn avatar_color(email: &str) -> Hsla {
     let bucket = hash % HUE_COUNT;
     // hue in [0.0, 1.0) — gpui uses the 0–1 range for HSLA hue.
     let hue = (bucket as f32) / (HUE_COUNT as f32);
-    // Fixed saturation=0.70, lightness=0.60, alpha=1.0.
-    hsla(hue, 0.70, 0.60, 1.0)
+    // Saturation / lightness come from the active theme so light themes get
+    // legible avatars (W9-THEME). Catppuccin (default) keeps 0.70 / 0.60.
+    let t = crate::ui::theme::theme();
+    hsla(hue, t.avatar_sat, t.avatar_light, 1.0)
 }
 
 // ──────────────────────────────────────────────────────────────

@@ -27,26 +27,8 @@ use super::{
     file_tree,
 };
 
-// ── Catppuccin Mocha palette — mirrors mod.rs (kept local to avoid pub(super)) ──
-const BG_BASE:      u32 = 0x1e1e2e;
-const BG_SURFACE:   u32 = 0x313244;
-const BG_SELECTED:  u32 = 0x45475a;
-const BG_PANEL:     u32 = 0x181825;
-const TEXT_MAIN:    u32 = 0xcdd6f4;
-const TEXT_SUB:     u32 = 0xa6adc8;
-const TEXT_MUTED:   u32 = 0x585b70;
-const COLOR_HEAD:   u32 = 0xf38ba8;
-const COLOR_BRANCH: u32 = 0x89b4fa;
-const COLOR_REMOTE: u32 = 0xa6e3a1;
-const COLOR_TAG:    u32 = 0xfab387;
-
-// ── Change-kind badge colours ─────────────────────────────────────────────
-const COLOR_ADDED:      u32 = 0xa6e3a1;
-const COLOR_MODIFIED:   u32 = 0xf9e2af;
-const COLOR_DELETED:    u32 = 0xf38ba8;
-const COLOR_RENAMED:    u32 = 0x89b4fa;
-const COLOR_TYPECHANGE: u32 = 0x585b70;
-const COLOR_DIR:        u32 = 0x6c7086;
+// W9-THEME: all colours come from `theme()` (see theme.rs). No local palette.
+use super::theme::{self, theme};
 
 const MAX_FILES: usize = 100;
 const MAX_BADGE_CHARS: usize = 20;
@@ -130,7 +112,7 @@ pub fn render_inspector(
             div()
                 .flex().flex_row().w_full()
                 .flex_shrink_0()
-                .text_color(rgb(TEXT_MAIN))
+                .text_color(rgb(theme().text_main))
                 .text_sm()
                 .truncate()
                 .child(text)
@@ -158,7 +140,7 @@ pub fn render_inspector(
                             .overflow_hidden()
                             .child(
                                 div()
-                                    .text_sm().text_color(rgb(COLOR_DIR))
+                                    .text_sm().text_color(rgb(theme().change_dir))
                                     .truncate()
                                     .child(name.clone()),
                             )
@@ -177,7 +159,7 @@ pub fn render_inspector(
                             .flex().flex_row().items_center().gap_1()
                             .pl(px(indent)).mb_px()
                             .flex_shrink_0()
-                            .when(active_file == Some(fi), |el| el.bg(rgb(BG_SELECTED)).rounded_sm())
+                            .when(active_file == Some(fi), |el| el.bg(rgb(theme().selected)).rounded_sm())
                             .on_click(click)
                             .child(
                                 div().w(px(14.)).flex_shrink_0()
@@ -186,7 +168,7 @@ pub fn render_inspector(
                             )
                             .child(
                                 div().flex_1()
-                                    .text_sm().text_color(rgb(TEXT_MAIN))
+                                    .text_sm().text_color(rgb(theme().text_main))
                                     .truncate()
                                     .child(name.clone()),
                             )
@@ -213,7 +195,7 @@ pub fn render_inspector(
                     .flex().flex_row().items_center().gap_1()
                     .mb_px()
                     .flex_shrink_0()
-                    .when(active_file == Some(fi), |el| el.bg(rgb(BG_SELECTED)).rounded_sm())
+                    .when(active_file == Some(fi), |el| el.bg(rgb(theme().selected)).rounded_sm())
                     .on_click(click)
                     .child(
                         div().w(px(14.)).flex_shrink_0()
@@ -222,7 +204,7 @@ pub fn render_inspector(
                     )
                     .child(
                         div().flex_1()
-                            .text_sm().text_color(rgb(TEXT_MAIN))
+                            .text_sm().text_color(rgb(theme().text_main))
                             .truncate()
                             .child(path_text),
                     )
@@ -241,7 +223,7 @@ pub fn render_inspector(
     let create_branch_button = action_button(
         "create-branch-btn",
         "+ Branch here",
-        COLOR_BRANCH,
+        theme().color_branch,
         create_branch_click,
     );
 
@@ -253,7 +235,7 @@ pub fn render_inspector(
     let cherry_pick_button = action_button(
         "cherry-pick-btn",
         "\u{1f352} Cherry-pick",
-        0xcba6f7, // Catppuccin mauve
+        theme::theme().accent, // accent (cherry-pick)
         cherry_click,
     );
 
@@ -261,7 +243,7 @@ pub fn render_inspector(
     let copy_sha_button = action_button(
         "copy-sha-actions-btn",
         "Copy SHA",
-        0x89dceb, // Catppuccin sky
+        theme::theme().accent_alt, // accent (copy-sha)
         copy_sha_click2,
     );
 
@@ -278,10 +260,10 @@ pub fn render_inspector(
     });
     let path_active = !tree_view;
     let tree_active =  tree_view;
-    let path_bg = if path_active { BG_SELECTED } else { BG_SURFACE };
-    let tree_bg = if tree_active { BG_SELECTED } else { BG_SURFACE };
-    let path_col = if path_active { TEXT_MAIN } else { TEXT_SUB };
-    let tree_col = if tree_active { TEXT_MAIN } else { TEXT_SUB };
+    let path_bg = if path_active { theme().selected } else { theme().surface };
+    let tree_bg = if tree_active { theme().selected } else { theme().surface };
+    let path_col = if path_active { theme().text_main } else { theme().text_sub };
+    let tree_col = if tree_active { theme().text_main } else { theme().text_sub };
 
     let toggle_row = div()
         .id("files-toggle-row")
@@ -338,7 +320,7 @@ pub fn render_inspector(
         div()
             .flex().flex_row().items_center()
             .mb_1()
-            .text_xs().text_color(rgb(TEXT_SUB))
+            .text_xs().text_color(rgb(theme().text_sub))
             .truncate()
             .child(text)
     });
@@ -359,13 +341,13 @@ pub fn render_inspector(
             .px_2()
             .py_1()
             .rounded_sm()
-            .bg(rgb(BG_SURFACE))
+            .bg(rgb(theme().surface))
             .child(
                 div()
                     .flex_1()
                     .truncate()
                     .text_sm()
-                    .text_color(rgb(TEXT_MAIN))
+                    .text_color(rgb(theme().text_main))
                     .child(SharedString::from(format!("Comparing: {}", view.title.as_ref()))),
             )
             .child(
@@ -374,8 +356,8 @@ pub fn render_inspector(
                     .px_1()
                     .rounded_sm()
                     .text_sm()
-                    .text_color(rgb(TEXT_SUB))
-                    .hover(|s| s.bg(rgb(BG_SELECTED)).cursor_pointer())
+                    .text_color(rgb(theme().text_sub))
+                    .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
                     .on_click(close_click)
                     .child(SharedString::from("×")),
             )
@@ -396,7 +378,7 @@ pub fn render_inspector(
 
     if changed_files.is_none() {
         files_list = files_list.child(
-            div().text_sm().text_color(rgb(TEXT_MUTED))
+            div().text_sm().text_color(rgb(theme().text_muted))
                 .child(SharedString::from("(diff unavailable)")),
         );
     } else {
@@ -405,7 +387,7 @@ pub fn render_inspector(
         }
         if let Some(remaining) = truncated_count {
             files_list = files_list.child(
-                div().text_sm().text_color(rgb(TEXT_MUTED))
+                div().text_sm().text_color(rgb(theme().text_muted))
                     .child(SharedString::from(format!("\u{2026} and {} more", remaining))),
             );
         }
@@ -427,7 +409,7 @@ pub fn render_inspector(
         d.full_message.as_ref().lines().next().unwrap_or("").to_string()
     );
     let title_el = div()
-        .text_color(rgb(TEXT_MAIN))
+        .text_color(rgb(theme().text_main))
         .font_weight(gpui::FontWeight::MEDIUM)
         .mb_1()
         .line_clamp(2)
@@ -441,7 +423,7 @@ pub fn render_inspector(
         .flex().items_center().justify_center()
         .rounded_full()
         .bg(avatar_hsla)
-        .text_xs().text_color(rgb(BG_BASE))
+        .text_xs().text_color(rgb(theme().bg_base))
         .child(initial);
 
     let author_name_short: SharedString = if author_name.chars().count() > 24 {
@@ -462,9 +444,9 @@ pub fn render_inspector(
         .id("inspector-hash-chip")
         .flex_shrink_0()
         .px_1().rounded_sm()
-        .bg(rgb(BG_SURFACE))
-        .text_xs().text_color(rgb(TEXT_SUB))
-        .hover(|s| s.bg(rgb(BG_SELECTED)).text_color(rgb(TEXT_MAIN)).cursor_pointer())
+        .bg(rgb(theme().surface))
+        .text_xs().text_color(rgb(theme().text_sub))
+        .hover(|s| s.bg(rgb(theme().selected)).text_color(rgb(theme().text_main)).cursor_pointer())
         .on_click(copy_sha_click1)
         .tooltip(move |_window, cx| {
             cx.new(|_| HashTooltip { sha: tooltip_text.clone() }).into()
@@ -479,13 +461,13 @@ pub fn render_inspector(
                 .flex().flex_row().items_center().gap_2()
                 .child(
                     div().flex_shrink().min_w(px(0.))
-                        .text_sm().text_color(rgb(TEXT_MAIN))
+                        .text_sm().text_color(rgb(theme().text_main))
                         .truncate()
                         .child(author_name_short),
                 )
                 .child(
                     div().flex_shrink_0()
-                        .text_xs().text_color(rgb(TEXT_MUTED))
+                        .text_xs().text_color(rgb(theme().text_muted))
                         .child(d.committed_date),
                 ),
         )
@@ -498,10 +480,10 @@ pub fn render_inspector(
         by_prio.sort_by_key(|b| badge_priority(&b.kind));
         for badge in &by_prio {
             let color = match badge.kind {
-                BadgeKind::HeadBranch => COLOR_HEAD,
-                BadgeKind::Branch     => COLOR_BRANCH,
-                BadgeKind::Remote     => COLOR_REMOTE,
-                BadgeKind::Tag        => COLOR_TAG,
+                BadgeKind::HeadBranch => theme().color_head,
+                BadgeKind::Branch     => theme().color_branch,
+                BadgeKind::Remote     => theme().color_remote,
+                BadgeKind::Tag        => theme().color_tag,
             };
             let label: SharedString = if badge.label.chars().count() > MAX_BADGE_CHARS {
                 let s: String = badge.label.chars().take(MAX_BADGE_CHARS - 1).collect();
@@ -513,7 +495,7 @@ pub fn render_inspector(
                 div()
                     .px_1().rounded_sm()
                     .bg(rgb(color))
-                    .text_color(rgb(BG_BASE))
+                    .text_color(rgb(theme().bg_base))
                     .text_xs().flex_shrink_0()
                     .child(label),
             );
@@ -548,8 +530,8 @@ pub fn render_inspector(
         .h(px(INSPECTOR_SPLIT_DIVIDER_H))
         .flex_shrink_0()
         .w_full()
-        .bg(rgb(BG_SURFACE))
-        .hover(|s| s.bg(rgb(COLOR_BRANCH)).cursor_row_resize())
+        .bg(rgb(theme().surface))
+        .hover(|s| s.bg(rgb(theme().color_branch)).cursor_row_resize())
         .cursor_row_resize()
         .on_drag(
             DividerDrag { kind: DividerKind::InspectorSplit },
@@ -603,7 +585,7 @@ pub fn render_inspector(
         .flex_shrink_0()
         .h_full()
         .flex().flex_col()
-        .bg(rgb(BG_PANEL))
+        .bg(rgb(theme().panel))
         .child(header_region)
         .child(split_region)
 }
@@ -638,8 +620,8 @@ impl gpui::Render for HashTooltip {
             .flex().flex_col()
             .px_2().py_1()
             .rounded_sm()
-            .bg(rgb(BG_SURFACE))
-            .text_xs().text_color(rgb(TEXT_MAIN));
+            .bg(rgb(theme().surface))
+            .text_xs().text_color(rgb(theme().text_main));
         for line in self.sha.as_ref().split('\n') {
             col = col.child(div().child(SharedString::from(line.to_string())));
         }
@@ -663,22 +645,22 @@ fn action_button(
         .px(px(6.))
         .py(px(2.))
         .rounded_sm()
-        .bg(rgb(BG_SURFACE))
+        .bg(rgb(theme().surface))
         .text_xs()
         .text_color(rgb(color))
         .on_click(click)
-        .hover(|style| style.bg(rgb(BG_SELECTED)))
+        .hover(|style| style.bg(rgb(theme().selected)))
         .child(SharedString::from(label))
 }
 
 /// Change-kind badge char and colour.
 fn change_badge(change: &ChangeKind) -> (&'static str, u32) {
     match change {
-        ChangeKind::Added          => ("A", COLOR_ADDED),
-        ChangeKind::Modified       => ("M", COLOR_MODIFIED),
-        ChangeKind::Deleted        => ("D", COLOR_DELETED),
-        ChangeKind::Renamed { .. } => ("R", COLOR_RENAMED),
-        ChangeKind::TypeChange     => ("T", COLOR_TYPECHANGE),
+        ChangeKind::Added          => ("A", theme().change_added),
+        ChangeKind::Modified       => ("M", theme().change_modified),
+        ChangeKind::Deleted        => ("D", theme().change_deleted),
+        ChangeKind::Renamed { .. } => ("R", theme().change_renamed),
+        ChangeKind::TypeChange     => ("T", theme().change_typechange),
     }
 }
 

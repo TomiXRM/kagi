@@ -32,6 +32,7 @@ pub use ops::{
     plan_create_branch, execute_create_branch,
     plan_stash_push, execute_stash_push,
     plan_stash_apply, execute_stash_apply,
+    plan_stash_pop, execute_stash_pop,
     preflight_check_stash,
     plan_cherry_pick, execute_cherry_pick,
     plan_pull, execute_pull, PullOutcome,

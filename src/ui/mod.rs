@@ -1274,7 +1274,7 @@ impl KagiApp {
             }
         };
         let msg_opt = if message_str.is_empty() { None } else { Some(message_str.as_str()) };
-        match plan_stash_push(&mut repo, msg_opt) {
+        match plan_stash_push(&mut repo, msg_opt, true) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: stash-push blockers={} warnings={}",
@@ -1356,7 +1356,7 @@ impl KagiApp {
         let msg_opt: Option<&str> = if modal.input.is_empty() { None } else { Some(modal.input.as_str()) };
 
         // Execute stash push.
-        if let Err(e) = execute_stash_push(&mut repo, msg_opt) {
+        if let Err(e) = execute_stash_push(&mut repo, msg_opt, true) {
             let err_msg = format!("Stash push failed: {}", e);
             self.record_op(
                 "stash-push",

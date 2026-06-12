@@ -627,7 +627,7 @@ fn test_stash_push_normal_cleans_working_tree() {
     // Dirty the repo.
     write_file(&repo_dir, "README.md", "modified\n");
 
-    let plan = plan_stash_push(&mut repo, Some("test stash"))
+    let plan = plan_stash_push(&mut repo, Some("test stash"), true)
         .expect("plan_stash_push failed");
 
     assert!(
@@ -638,7 +638,7 @@ fn test_stash_push_normal_cleans_working_tree() {
 
     // Execute.
     let mut repo2 = Repository::open(&repo_dir).expect("re-open");
-    execute_stash_push(&mut repo2, Some("test stash"))
+    execute_stash_push(&mut repo2, Some("test stash"), true)
         .expect("execute_stash_push failed");
 
     // Working tree must be clean after push.
@@ -659,7 +659,7 @@ fn test_stash_push_blocker_on_clean_repo() {
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, mut repo) = build_clean_repo(&tmp);
 
-    let plan = plan_stash_push(&mut repo, None)
+    let plan = plan_stash_push(&mut repo, None, true)
         .expect("plan_stash_push failed");
 
     assert!(
@@ -687,7 +687,7 @@ fn test_stash_push_untracked_warning() {
     // Add only an untracked file.
     write_file(&repo_dir, "untracked.txt", "not tracked\n");
 
-    let plan = plan_stash_push(&mut repo, None)
+    let plan = plan_stash_push(&mut repo, None, true)
         .expect("plan_stash_push failed");
 
     assert!(
@@ -712,7 +712,7 @@ fn test_stash_apply_normal_restores_content_stash_remains() {
     write_file(&repo_dir, "README.md", "stashed content\n");
 
     // Push to stash so working tree is clean.
-    execute_stash_push(&mut repo, Some("wip"))
+    execute_stash_push(&mut repo, Some("wip"), true)
         .expect("execute_stash_push failed");
 
     // Verify clean + 1 stash.
@@ -760,7 +760,7 @@ fn test_stash_apply_blocker_dirty_working_tree() {
 
     // Push something to stash first so there's a stash entry.
     write_file(&repo_dir, "README.md", "to stash\n");
-    execute_stash_push(&mut repo, None)
+    execute_stash_push(&mut repo, None, true)
         .expect("execute_stash_push failed");
 
     // Now dirty the working tree again (unstaged change).
@@ -823,7 +823,7 @@ fn test_stash_push_apply_round_trip_content_matches() {
     write_file(&repo_dir, "README.md", original_content);
 
     // Push to stash.
-    execute_stash_push(&mut repo, Some("round-trip stash"))
+    execute_stash_push(&mut repo, Some("round-trip stash"), true)
         .expect("execute_stash_push failed");
 
     // File must be reverted to its committed content.
@@ -867,7 +867,7 @@ fn test_preflight_check_stash_detects_count_change() {
 
     // Create stash 1.
     write_file(&repo_dir, "README.md", "first stash content\n");
-    execute_stash_push(&mut repo, Some("first"))
+    execute_stash_push(&mut repo, Some("first"), true)
         .expect("first push failed");
 
     // Plan apply at index 0.
@@ -879,7 +879,7 @@ fn test_preflight_check_stash_detects_count_change() {
 
     // Simulate another stash being added between plan and execution.
     write_file(&repo_dir, "extra.txt", "extra content\n");
-    execute_stash_push(&mut repo, Some("extra stash"))
+    execute_stash_push(&mut repo, Some("extra stash"), true)
         .expect("second push failed");
 
     // preflight_check_stash must detect the count changed.

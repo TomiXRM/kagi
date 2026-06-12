@@ -5,6 +5,7 @@
 //! independent of GPUI.
 
 pub mod avatar;
+pub mod assets;
 pub mod commit_list;
 pub mod commit_panel;
 pub mod detail_panel;
@@ -7449,7 +7450,9 @@ pub fn run_app(mut app_state: KagiApp) {
     let maybe_watcher: Option<(mpsc::Receiver<()>, notify::RecommendedWatcher)> =
         app_state.repo_path.as_ref().and_then(|p| watcher::start_git_watcher(p));
 
-    Application::new().run(move |cx: &mut App| {
+    Application::new()
+        .with_assets(assets::KagiAssets)
+        .run(move |cx: &mut App| {
         // T025: initialize gpui-component (registers key bindings, themes, etc.)
         gpui_component::init(cx);
 

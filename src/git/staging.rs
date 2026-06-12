@@ -246,6 +246,121 @@ pub fn staged_file_diff(repo: &Repository, path: &Path) -> Result<FileDiff, GitE
 }
 
 // ────────────────────────────────────────────────────────────
+// commit_preview  (T-COMMIT-001)
+// ────────────────────────────────────────────────────────────
+
+/// A read-only summary of what the *next* commit would contain.
+///
+/// Built purely from the current repository status + config — no git mutation
+/// happens.  Used by the Commit Panel preview header (T-COMMIT-001).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitPreview {
+    /// Total number of staged files (== `added + modified + deleted + other`).
+    pub staged_count: usize,
+    /// Number of staged files that are additions (`A`).
+    pub added: usize,
+    /// Number of staged files that are modifications (`M`).
+    pub modified: usize,
+    /// Number of staged files that are deletions (`D`).
+    pub deleted: usize,
+    /// Number of staged files that are neither A/M/D (rename/typechange).
+    pub other: usize,
+    /// Target branch / ref for the commit, ready to display:
+    /// - attached  → the branch name (e.g. `"main"`)
+    /// - unborn    → `"<branch> (unborn)"`
+    /// - detached  → `"<short-sha> (detached)"`
+    pub target_branch: String,
+    /// Author line `"Name <email>"` from `user.name` / `user.email`, or
+    /// `"(unknown)"` when neither is configured.
+    pub author: String,
+}
+
+impl CommitPreview {
+    /// Human-readable A/M/D summary, e.g. `"+2 ~1 -1"`.  Empty staged → `""`.
+    pub fn summary(&self) -> String {
+        if self.staged_count == 0 {
+            return String::new();
+        }
+        let mut parts: Vec<String> = Vec::new();
+        if self.added > 0 {
+            parts.push(format!("+{}", self.added));
+        }
+        if self.modified > 0 {
+            parts.push(format!("~{}", self.modified));
+        }
+        if self.deleted > 0 {
+            parts.push(format!("-{}", self.deleted));
+        }
+        if self.other > 0 {
+            parts.push(format!("\u{00b1}{}", self.other));
+        }
+        parts.join(" ")
+    }
+}
+
+/// Build a [`CommitPreview`] for the current repository state.
+///
+/// Pure read: opens no new git operation beyond status + HEAD + config reads.
+/// Never panics — author defaults to `"(unknown)"` when config is missing, and
+/// all HEAD states (attached / unborn / detached) are handled.
+///
+/// # Errors
+///
+/// Returns [`GitError`] only if the working-tree status or HEAD cannot be read.
+pub fn commit_preview(repo: &Repository) -> Result<CommitPreview, GitError> {
+    let status = working_tree_status(repo)?;
+    let head = resolve_head(repo)?;
+
+    let mut added = 0usize;
+    let mut modified = 0usize;
+    let mut deleted = 0usize;
+    let mut other = 0usize;
+    for f in &status.staged {
+        match f.change {
+            ChangeKind::Added => added += 1,
+            ChangeKind::Modified => modified += 1,
+            ChangeKind::Deleted => deleted += 1,
+            ChangeKind::Renamed { .. } | ChangeKind::TypeChange => other += 1,
+        }
+    }
+
+    let target_branch = match &head {
+        Head::Attached { branch, .. } => branch.clone(),
+        Head::Unborn { branch } => format!("{} (unborn)", branch),
+        Head::Detached { target } => {
+            let short: String = target.chars().take(8).collect();
+            format!("{} (detached)", short)
+        }
+    };
+
+    // Author from config; "(unknown)" fallback when nothing is set (no panic).
+    let author = repo
+        .config()
+        .ok()
+        .map(|cfg| {
+            let name = cfg.get_string("user.name").ok();
+            let email = cfg.get_string("user.email").ok();
+            match (name, email) {
+                (Some(n), Some(e)) => format!("{} <{}>", n, e),
+                (Some(n), None) => n,
+                (None, Some(e)) => format!("<{}>", e),
+                (None, None) => "(unknown)".to_string(),
+            }
+        })
+        .unwrap_or_else(|| "(unknown)".to_string());
+
+    Ok(CommitPreview {
+        staged_count: status.staged.len(),
+        added,
+        modified,
+        deleted,
+        other,
+        target_branch,
+        author,
+    })
+}
+
+// ────────────────────────────────────────────────────────────
 // plan_commit
 // ────────────────────────────────────────────────────────────
 

@@ -32,8 +32,8 @@ cmd-v paste は app 側で実装済み(src/ui/mod.rs render_terminal_body + term
 
 ## 完了条件
 
-- [x] ドラッグで選択ハイライトが出る(単語=ダブルクリック、行=トリプルクリックも)— 実装済み(PM 実機確認推奨)
-- [x] Cmd+C で選択テキストがクリップボードに入る(`pbpaste` で確認)— 実装 + unit test 済み(PM 実機確認推奨)
+- [x] ドラッグで選択ハイライトが出る(単語=ダブルクリック、行=トリプルクリックも)— ユーザー実機確認済み(2026-06-13)
+- [x] Cmd+C で選択テキストがクリップボードに入る(`pbpaste` で確認)— ユーザー実機確認済み(2026-06-13)
 - [x] 選択なし Cmd+C は no-op、ctrl-c の SIGINT は従来どおり(control 除外で非干渉)
 - [x] クリック/入力で選択解除
 - [x] cmd-v paste(既存)に回帰なし(app 側 listener 無改変・cmd-c は vendor 側で処理)

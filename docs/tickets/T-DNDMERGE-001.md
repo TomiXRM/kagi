@@ -120,6 +120,41 @@ title を大きく表示)。confirm ボタンは既存どおり `Merge`(conflict
 start_merge_from_drag + unit tests)、`src/ui/sidebar.rs`(drag/drop 配線 + import)、
 `tests/drag_merge_test.rs`(新規)、本ファイル。i18n は既存 `Msg::OpInProgress` を流用。
 
+### graph BRANCH/TAG badge への拡張(branch `rearch/dnd-graph-badges`, base = `re-architecture`)
+
+ユーザーが本来欲しかった一次導線=コミットグラフの BRANCH/TAG バッジでも同じ
+drag-and-drop を実装(sidebar 版は維持、両方が同じ `BranchDrag` /
+`start_merge_from_drag` / merge パイプラインを再利用)。
+
+- **`render_badges_column`**(`src/ui/mod.rs`):`cx: &mut Context<KagiApp>` 引数を追加。
+  各チップに安定 id(`graph-badge-{i}-{label}`)を付与。`BadgeKind::Branch` のチップは
+  個別に draggable(`cursor_grab` + `on_drag(BranchDrag { name }, ghost ctor)`)。1 コミット
+  が複数 branch を持つ場合でも各バッジが自分の branch 名を payload に運ぶので、特定の
+  バッジを掴めば曖昧さなくその branch を選べる。`BadgeKind::HeadBranch`(current)は
+  drop target:`drag_over::<BranchDrag>`(valid ハイライト)+ `on_drop::<BranchDrag>` で
+  `start_merge_from_drag(payload.name, cx)` へディスパッチ(view から git は呼ばない)。
+  `Remote` / `Tag` は draggable でも drop target でもない。
+- **`render_rows`**(`src/ui/mod.rs`):`render_badges_column(..., &mut *cx)` と reborrow して
+  `.map()` クロージャから `cx` を渡す(同クロージャは既に `cx.listener(...)` 用に `cx` を
+  可変借用しているので、行ごとに `&mut *cx` で再借用)。
+- **payload の branch 名取得**:純粋ヘルパ `draggable_branch_name(&RefBadge) -> Option<String>`
+  を新設。`BadgeKind::Branch` のとき `label`(= 素の branch 名)を返し、HeadBranch
+  (label は `"<name> ✓"`、かつ drop 先であって source ではない)/ Remote / Tag は `None`。
+  単体テスト `draggable_branch_name_tests` を追加。
+- **`BranchDragGhost`**(`src/ui/mod.rs`):ghost を実際の branch バッジと同じ見た目の
+  チップに変更(`badge_style(color_branch)` の tint、`rounded_sm`、`px_1`、`text_sm`)。
+  掴んだバッジがカーソルに「貼り付く」アニメーションになる。sidebar 版も同じ
+  `BranchDragGhost` を使うので両方が同時に改善(一貫性キープ)。
+- **`+N` overflow 制限(既知)**:`render_badges_column` は `MAX_BADGES=2` まで表示し、
+  以降を `+N` チップに畳む。`+N` の裏に隠れたバッジは現状まだ個別に draggable で
+  ない(コードに `// TODO(T-DNDMERGE-001)`)。overflow の再設計(draggable popover 等)は
+  本レーン対象外。
+- 変更ファイル:`src/ui/mod.rs`(render_badges_column / render_rows / BranchDragGhost /
+  draggable_branch_name + unit tests)、本ファイルのみ。`commit_list.rs` への raw-name
+  追加は不要だった(`Branch` の `label` がそのまま素の branch 名のため)。
+- `cargo test --workspace` 全 suite 0 failed。`grep -rnE 'git2::|Repository::open' src/ui` = 0。
+  既存 `drag_merge_validation_tests` / `tests/drag_merge_test.rs` も全 pass(action 層は不変)。
+
 ## PM acceptance (2026-06-14, GUI-verified with cliclick)
 
 Drove the real gesture: dragged `feature/two` onto the current branch `main` in the

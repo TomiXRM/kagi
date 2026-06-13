@@ -45,6 +45,10 @@ Kagi shows you **exactly what will happen before any Git operation runs** — an
 <img src="docs/images/commit-panel.png" width="850" alt="Commit panel — staging, diffstat bars, commit preview, message template" />
 </div>
 
+<div align="center">
+<img src="docs/images/conflict.png" width="850" alt="Conflict Mode — GitKraken-style 3-pane editor with file/chunk/line-level accept, live Result preview, and conflict dashboard" />
+</div>
+
 ## 🔒 Safety design
 
 This is the core of Kagi, not an afterthought:

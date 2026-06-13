@@ -176,6 +176,19 @@ pub fn checklist(
 // Rule 4 — conflict markers
 // ────────────────────────────────────────────────────────────
 
+/// Return `true` if `text` contains a git conflict marker line
+/// (`<<<<<<< ` / `=======` / `>>>>>>> `), reusing the same line-oriented
+/// detection as the staged-content checklist (ADR-0043 §rule 4).
+///
+/// This is the public entry point shared with the conflict-resolution buffer
+/// (ADR-0057 marker-residue gate) so both paths agree on what counts as a
+/// residual marker.  Operates on a `&str` because the resolution buffer holds
+/// decoded text; the scan compares only ASCII marker prefixes so it is
+/// UTF-8-safe.
+pub fn text_has_conflict_marker(text: &str) -> bool {
+    has_conflict_marker(text.as_bytes())
+}
+
 /// Return `true` if `bytes` contains a line whose start matches a git conflict
 /// marker: `<<<<<<< ` / `=======` / `>>>>>>> ` (ADR-0043 §rule 4).
 ///

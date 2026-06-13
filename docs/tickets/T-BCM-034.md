@@ -1,6 +1,6 @@
 # T-BCM-034: conflict mode 中の merge/rebase 制限を実装する
 
-- Status: todo
+- Status: done
 - Group: Integrate
 - 仕様の正: docs/requirements-branch-context-menu.md + ADR-0049〜0055
 
@@ -18,3 +18,9 @@ conflicted 状態では integrate 系を disabled(理由表示)
 - 操作 handler の二重実装禁止(ADR-0049)。fixture / tempdir のみで検証
 - 文字列は chars() ベース・バイトスライス禁止(split_at 含む)。色は theme() 経由
 - UI 説明文は i18n の Msg 経由(ADR-0048。ドメインワード・branch 名は英語のまま)
+
+## 実装メモ(Codex / w25-bcm-int)
+
+- `BranchMenuContext.conflict_mode` で Merge/Rebase を disabled 化。
+- Rebase は MVP 外の disabled stub のまま、conflict mode 中は `resolve conflicts first` 理由を優先表示。
+- direction label と conflict-mode availability の unit test を追加。

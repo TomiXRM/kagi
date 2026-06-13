@@ -106,6 +106,8 @@ pub struct Worktree {
     pub name: String,
     /// Top-level working tree path.
     pub path: std::path::PathBuf,
+    /// Checked-out local branch name, when the worktree is attached to a branch.
+    pub branch: Option<String>,
     /// True for the repository currently opened by kagi.
     pub is_current: bool,
     /// True for the primary worktree rather than a linked worktree.

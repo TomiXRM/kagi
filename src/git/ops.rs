@@ -964,10 +964,71 @@ pub fn plan_create_worktree(
     path: impl AsRef<Path>,
     start: &CommitId,
 ) -> Result<OperationPlan, GitError> {
+    plan_create_worktree_impl(repo, branch, path, start, false)
+}
+
+/// Analyse whether creating a linked worktree for an existing local branch is safe.
+pub fn plan_open_worktree_for_branch(
+    repo: &Repository,
+    branch: &str,
+    path: impl AsRef<Path>,
+) -> Result<OperationPlan, GitError> {
+    let branch_commit = resolve_branch_commit(repo, branch)?;
+    plan_create_worktree_impl(
+        repo,
+        branch,
+        path,
+        &CommitId(branch_commit.id().to_string()),
+        true,
+    )
+}
+
+fn plan_create_worktree_impl(
+    repo: &Repository,
+    branch: &str,
+    path: impl AsRef<Path>,
+    start: &CommitId,
+    allow_existing_branch: bool,
+) -> Result<OperationPlan, GitError> {
     let repo_root = repo
         .workdir()
         .ok_or_else(|| GitError::Other("bare repositories are not supported".to_string()))?;
-    let mut plan = plan_create_branch(repo, branch, start)?;
+    let mut plan = if allow_existing_branch {
+        let head = resolve_head(repo)?;
+        let status = working_tree_status(repo)?;
+        let mut blockers = Vec::new();
+        if repo.find_branch(branch, BranchType::Local).is_err() {
+            blockers.push(format!("Branch '{}' does not exist in this repository.", branch));
+        }
+        if let Some(path) = branch_checked_out_worktree_path(repo, branch)? {
+            blockers.push(format!(
+                "Branch '{}' is already checked out in another worktree: {}",
+                branch,
+                path.display()
+            ));
+        }
+        OperationPlan {
+            title: format!("Open worktree for '{}'", branch),
+            current: StateSummary {
+                head: head.display(),
+                dirty: status_summary_display(&status),
+            },
+            predicted: StateSummary {
+                head: head.display(),
+                dirty: status_summary_display(&status),
+            },
+            warnings: Vec::new(),
+            blockers,
+            recovery: String::new(),
+            head_at_plan: head,
+            stash_count_at_plan: 0,
+            preview_files: Vec::new(),
+            preview_commits: Vec::new(),
+            destructive: false,
+        }
+    } else {
+        plan_create_branch(repo, branch, start)?
+    };
     let target_path = match validate_worktree_path(repo_root, path.as_ref()) {
         Ok(path) => path,
         Err(msg) => {
@@ -1014,12 +1075,48 @@ pub fn execute_create_worktree(
     path: impl AsRef<Path>,
     start: &CommitId,
 ) -> Result<(), GitError> {
+    execute_create_worktree_impl(repo, branch, path, start, false)
+}
+
+/// Attach an existing local branch to a new linked worktree.
+pub fn execute_open_worktree_for_branch(
+    repo: &Repository,
+    branch: &str,
+    path: impl AsRef<Path>,
+) -> Result<(), GitError> {
+    let branch_commit = resolve_branch_commit(repo, branch)?;
+    execute_create_worktree_impl(
+        repo,
+        branch,
+        path,
+        &CommitId(branch_commit.id().to_string()),
+        true,
+    )
+}
+
+fn execute_create_worktree_impl(
+    repo: &Repository,
+    branch: &str,
+    path: impl AsRef<Path>,
+    start: &CommitId,
+    allow_existing_branch: bool,
+) -> Result<(), GitError> {
     let repo_root = repo
         .workdir()
         .ok_or_else(|| GitError::Other("bare repositories are not supported".to_string()))?;
     let target_path = validate_worktree_path(repo_root, path.as_ref()).map_err(GitError::Other)?;
 
-    execute_create_branch(repo, branch, start)?;
+    if allow_existing_branch {
+        if let Some(path) = branch_checked_out_worktree_path(repo, branch)? {
+            return Err(GitError::Other(format!(
+                "Branch '{}' is already checked out in another worktree: {}",
+                branch,
+                path.display()
+            )));
+        }
+    } else {
+        execute_create_branch(repo, branch, start)?;
+    }
 
     let refname = format!("refs/heads/{}", branch);
     let branch_ref = repo
@@ -1782,6 +1879,155 @@ pub(crate) fn build_signature(repo: &Repository) -> Result<git2::Signature<'stat
         .map_err(|e| GitError::Other(format!("failed to create signature: {}", e.message())))
 }
 
+fn short_oid(oid: git2::Oid) -> String {
+    oid.to_string().chars().take(8).collect()
+}
+
+fn conflict_paths_from_index(index: &mut git2::Index) -> Result<Vec<String>, GitError> {
+    let mut conflict_files = Vec::new();
+    let conflicts = index
+        .conflicts()
+        .map_err(|e| GitError::Other(format!("index.conflicts() failed: {}", e.message())))?;
+    for conflict_result in conflicts {
+        let conflict = conflict_result
+            .map_err(|e| GitError::Other(format!("conflict entry error: {}", e.message())))?;
+        let path_bytes: Option<Vec<u8>> = conflict
+            .our
+            .as_ref()
+            .map(|e| e.path.clone())
+            .or_else(|| conflict.their.as_ref().map(|e| e.path.clone()))
+            .or_else(|| conflict.ancestor.as_ref().map(|e| e.path.clone()));
+        if let Some(p) = path_bytes {
+            conflict_files.push(String::from_utf8_lossy(&p).into_owned());
+        }
+    }
+    Ok(conflict_files)
+}
+
+fn preview_files_between_trees(
+    repo: &Repository,
+    old_tree: &git2::Tree<'_>,
+    new_tree: &git2::Tree<'_>,
+) -> Result<Vec<FileStatus>, GitError> {
+    let mut diff = repo
+        .diff_tree_to_tree(Some(old_tree), Some(new_tree), None)
+        .map_err(|e| GitError::Other(format!("diff_tree_to_tree for preview failed: {}", e.message())))?;
+    let mut find_opts = git2::DiffFindOptions::new();
+    find_opts.renames(true);
+    diff.find_similar(Some(&mut find_opts))
+        .map_err(|e| GitError::Other(format!("diff find_similar failed: {}", e.message())))?;
+
+    let mut preview_files = Vec::new();
+    for delta in diff.deltas() {
+        use git2::Delta;
+        let change = match delta.status() {
+            Delta::Added => ChangeKind::Added,
+            Delta::Deleted => ChangeKind::Deleted,
+            Delta::Modified => ChangeKind::Modified,
+            Delta::Renamed => {
+                let from = delta
+                    .old_file()
+                    .path()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_default();
+                ChangeKind::Renamed { from }
+            }
+            Delta::Typechange => ChangeKind::TypeChange,
+            _ => ChangeKind::Modified,
+        };
+        let path = delta
+            .new_file()
+            .path()
+            .map(std::path::PathBuf::from)
+            .or_else(|| delta.old_file().path().map(std::path::PathBuf::from))
+            .unwrap_or_default();
+        preview_files.push(FileStatus { path, change });
+    }
+    Ok(preview_files)
+}
+
+fn resolve_branch_commit<'repo>(
+    repo: &'repo Repository,
+    name: &str,
+) -> Result<git2::Commit<'repo>, GitError> {
+    repo.find_branch(name, BranchType::Local)
+        .or_else(|_| repo.find_branch(name, BranchType::Remote))
+        .and_then(|branch| branch.get().peel_to_commit())
+        .or_else(|_| repo.revparse_single(name).and_then(|obj| obj.peel_to_commit()))
+        .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", name, e.message())))
+}
+
+fn merge_dirty_warnings(status: &super::status::WorkingTreeStatus, op: &str) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if !status.staged.is_empty() || !status.unstaged.is_empty() {
+        let mut parts = Vec::new();
+        if !status.staged.is_empty() {
+            parts.push(format!("{} staged", status.staged.len()));
+        }
+        if !status.unstaged.is_empty() {
+            parts.push(format!("{} modified", status.unstaged.len()));
+        }
+        warnings.push(format!(
+            "Working tree has {}. Stash or commit before {} if you want a clean rollback point.",
+            parts.join(", "),
+            op
+        ));
+        warnings.push("Suggested command: git stash push -u".to_string());
+    }
+    if !status.untracked.is_empty() {
+        warnings.push(format!(
+            "{} untracked file(s) will remain untouched.",
+            status.untracked.len()
+        ));
+    }
+    warnings
+}
+
+/// Return the path of a registered worktree that currently has `branch`
+/// checked out, if any.
+pub fn branch_checked_out_worktree_path(
+    repo: &Repository,
+    branch: &str,
+) -> Result<Option<PathBuf>, GitError> {
+    let current_path = repo
+        .workdir()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default();
+    let mut paths = Vec::new();
+    if repo.is_worktree() {
+        if let Some(main_path) = repo.commondir().parent().map(|p| p.to_path_buf()) {
+            paths.push(main_path);
+        }
+    } else {
+        paths.push(current_path.clone());
+    }
+    let names = repo
+        .worktrees()
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    for name in names.iter() {
+        let Ok(Some(name)) = name else {
+            continue;
+        };
+        if let Ok(wt) = repo.find_worktree(name) {
+            paths.push(wt.path().to_path_buf());
+        }
+    }
+
+    for path in paths {
+        let Ok(wt_repo) = Repository::open(&path) else {
+            continue;
+        };
+        let checked = wt_repo
+            .head()
+            .ok()
+            .and_then(|h| h.shorthand().ok().map(str::to_string));
+        if checked.as_deref() == Some(branch) {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
 // ────────────────────────────────────────────────────────────
 // plan_cherry_pick  (T016)
 // ────────────────────────────────────────────────────────────
@@ -2295,6 +2541,396 @@ pub fn execute_cherry_pick(repo: &Repository, id: &CommitId) -> Result<CommitId,
     .map_err(|e| GitError::Other(format!("branch ref update (cherry-pick) failed: {}", e.message())))?;
 
     Ok(CommitId(new_oid.to_string()))
+}
+
+// ────────────────────────────────────────────────────────────
+// plan_merge_branch / execute_merge_branch  (T-BCM-030)
+// ────────────────────────────────────────────────────────────
+
+/// Analyse whether merging `target` into the current branch is safe.
+///
+/// The dry run is entirely in-memory. Predicted conflicts are blockers and no
+/// working-tree or ref writes occur during planning.
+pub fn plan_merge_branch(repo: &Repository, target: &str) -> Result<OperationPlan, GitError> {
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+    let current = StateSummary {
+        head: head.display(),
+        dirty: status_summary_display(&status),
+    };
+    let warnings = merge_dirty_warnings(&status, "merging");
+    let mut blockers = Vec::new();
+
+    let (current_branch, head_oid) = match &head {
+        Head::Attached { branch, target } => {
+            let oid = git2::Oid::from_str(target)
+                .map_err(|e| GitError::Other(format!("HEAD oid parse failed: {}", e.message())))?;
+            (branch.clone(), oid)
+        }
+        Head::Detached { .. } => {
+            blockers.push("HEAD is detached. Merge is only supported on a branch.".to_string());
+            (String::new(), git2::Oid::ZERO_SHA1)
+        }
+        Head::Unborn { .. } => {
+            blockers.push("HEAD is unborn. Cannot merge into an empty branch.".to_string());
+            (String::new(), git2::Oid::ZERO_SHA1)
+        }
+    };
+
+    if !status.conflicted.is_empty() {
+        blockers.push(format!(
+            "Repository has {} conflicted file(s). Resolve conflicts before merging.",
+            status.conflicted.len()
+        ));
+    }
+
+    let target_commit = resolve_branch_commit(repo, target)?;
+    let target_oid = target_commit.id();
+    if !current_branch.is_empty() && target == current_branch {
+        blockers.push(format!("Branch '{}' is already the current branch.", target));
+    }
+    if head_oid == target_oid {
+        blockers.push(format!("{} is already HEAD. Nothing to merge.", target));
+    } else if head_oid != git2::Oid::ZERO_SHA1
+        && repo.graph_descendant_of(head_oid, target_oid).unwrap_or(false)
+    {
+        blockers.push(format!(
+            "Current branch '{}' already contains '{}'. Nothing to merge.",
+            current_branch, target
+        ));
+    }
+
+    let title = if current_branch.is_empty() {
+        format!("Merge {} into current branch", target)
+    } else {
+        format!("Merge {} into {}", target, current_branch)
+    };
+    let recovery = format!(
+        "If this merge is not wanted after execution, use git reflog to find the previous HEAD.\n\
+         Fast-forward merges can be undone by moving the branch back; merge commits can be reverted with git revert -m 1 <merge-commit>."
+    );
+
+    let blocked_plan = |blockers: Vec<String>, warnings: Vec<String>, current: StateSummary| OperationPlan {
+        title: title.clone(),
+        current: current.clone(),
+        predicted: StateSummary {
+            head: current.head.clone(),
+            dirty: current.dirty.clone(),
+        },
+        warnings,
+        blockers,
+        recovery: recovery.clone(),
+        head_at_plan: head.clone(),
+        stash_count_at_plan: 0,
+        preview_files: Vec::new(),
+        preview_commits: Vec::new(),
+        destructive: false,
+    };
+
+    if !blockers.is_empty() {
+        return Ok(blocked_plan(blockers, warnings, current));
+    }
+
+    let head_commit = repo
+        .find_commit(head_oid)
+        .map_err(|e| GitError::Other(format!("HEAD commit lookup failed: {}", e.message())))?;
+    let head_tree = head_commit
+        .tree()
+        .map_err(|e| GitError::Other(format!("HEAD tree lookup failed: {}", e.message())))?;
+    let target_tree = target_commit
+        .tree()
+        .map_err(|e| GitError::Other(format!("target tree lookup failed: {}", e.message())))?;
+    let can_ff = repo.graph_descendant_of(target_oid, head_oid).unwrap_or(false);
+
+    let (preview_files, predicted_head) = if can_ff {
+        (
+            preview_files_between_trees(repo, &head_tree, &target_tree)?,
+            format!(
+                "branch: {} (fast-forward to {} {})",
+                current_branch,
+                target,
+                short_oid(target_oid)
+            ),
+        )
+    } else {
+        let mut index = repo
+            .merge_commits(&head_commit, &target_commit, None)
+            .map_err(|e| GitError::Other(format!("merge_commits in-memory failed: {}", e.message())))?;
+        if index.has_conflicts() {
+            let conflict_files = conflict_paths_from_index(&mut index)?;
+            blockers.push(format!(
+                "Merge would produce {} conflict(s): {}.",
+                conflict_files.len(),
+                if conflict_files.is_empty() {
+                    "(unknown files)".to_string()
+                } else {
+                    conflict_files.join(", ")
+                }
+            ));
+            return Ok(blocked_plan(blockers, warnings, current));
+        }
+        let new_tree_oid = index
+            .write_tree_to(repo)
+            .map_err(|e| GitError::Other(format!("index.write_tree_to failed: {}", e.message())))?;
+        let new_tree = repo
+            .find_tree(new_tree_oid)
+            .map_err(|e| GitError::Other(format!("find_tree for preview failed: {}", e.message())))?;
+        (
+            preview_files_between_trees(repo, &head_tree, &new_tree)?,
+            format!(
+                "branch: {} (+1 merge commit from {} {})",
+                current_branch,
+                target,
+                short_oid(target_oid)
+            ),
+        )
+    };
+
+    if preview_files.is_empty() {
+        blockers.push(format!("Merging '{}' would produce no changes.", target));
+        return Ok(blocked_plan(blockers, warnings, current));
+    }
+
+    Ok(OperationPlan {
+        title,
+        current,
+        predicted: StateSummary {
+            head: predicted_head,
+            dirty: "clean".to_string(),
+        },
+        warnings,
+        blockers,
+        recovery,
+        head_at_plan: head,
+        stash_count_at_plan: 0,
+        preview_files,
+        preview_commits: Vec::new(),
+        destructive: false,
+    })
+}
+
+/// Execute a branch merge planned by [`plan_merge_branch`].
+///
+/// Fast-forward execution checks out the target tree before moving the branch
+/// ref. Non-fast-forward execution creates the merge commit without moving any
+/// ref, checks out the merge tree, then advances the current branch.
+pub fn execute_merge_branch(repo: &Repository, target: &str) -> Result<CommitId, GitError> {
+    let head_ref = repo
+        .head()
+        .map_err(|e| GitError::Other(format!("HEAD lookup failed: {}", e.message())))?;
+    if !head_ref.is_branch() {
+        return Err(GitError::Other(
+            "HEAD is detached. Merge is only supported on a branch.".to_string(),
+        ));
+    }
+    let refname = head_ref
+        .name()
+        .map_err(|e| GitError::Other(format!("HEAD name failed: {}", e.message())))?
+        .to_string();
+    let current_branch = head_ref
+        .shorthand()
+        .map_err(|e| GitError::Other(format!("HEAD shorthand failed: {}", e.message())))?
+        .to_string();
+    let head_oid = head_ref
+        .target()
+        .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
+    let head_commit = repo
+        .find_commit(head_oid)
+        .map_err(|e| GitError::Other(format!("HEAD commit lookup failed: {}", e.message())))?;
+    let target_commit = resolve_branch_commit(repo, target)?;
+    let target_oid = target_commit.id();
+
+    if head_oid == target_oid || repo.graph_descendant_of(head_oid, target_oid).unwrap_or(false) {
+        return Err(GitError::Other(format!(
+            "Current branch '{}' already contains '{}'. Re-plan before executing.",
+            current_branch, target
+        )));
+    }
+
+    if repo.graph_descendant_of(target_oid, head_oid).unwrap_or(false) {
+        let obj = target_commit.as_object();
+        let mut cb = git2::build::CheckoutBuilder::new();
+        cb.safe();
+        repo.checkout_tree(obj, Some(&mut cb))
+            .map_err(|e| GitError::Other(format!("checkout_tree (merge FF) failed: {}", e.message())))?;
+        let mut branch_ref = repo
+            .find_reference(&refname)
+            .map_err(|e| GitError::Other(format!("branch ref lookup failed: {}", e.message())))?;
+        branch_ref
+            .set_target(target_oid, &format!("merge: fast-forward {} into {}", target, current_branch))
+            .map_err(|e| GitError::Other(format!("branch ref update (merge FF) failed: {}", e.message())))?;
+        repo.set_head(&refname)
+            .map_err(|e| GitError::Other(format!("set_head (merge FF) failed: {}", e.message())))?;
+        return Ok(CommitId(target_oid.to_string()));
+    }
+
+    let mut index = repo
+        .merge_commits(&head_commit, &target_commit, None)
+        .map_err(|e| GitError::Other(format!("merge_commits in-memory failed: {}", e.message())))?;
+    if index.has_conflicts() {
+        return Err(GitError::Other(format!(
+            "Merge of '{}' would produce conflicts. Re-plan before executing.",
+            target
+        )));
+    }
+    let new_tree_oid = index
+        .write_tree_to(repo)
+        .map_err(|e| GitError::Other(format!("index.write_tree_to failed: {}", e.message())))?;
+    let new_tree = repo
+        .find_tree(new_tree_oid)
+        .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?;
+    let committer = build_signature(repo)?;
+    let author = committer.clone();
+    let merge_message = format!("Merge branch '{}' into {}", target, current_branch);
+    let new_oid = repo
+        .commit(
+            None,
+            &author,
+            &committer,
+            &merge_message,
+            &new_tree,
+            &[&head_commit, &target_commit],
+        )
+        .map_err(|e| GitError::Other(format!("merge commit creation failed: {}", e.message())))?;
+
+    let mut cb = git2::build::CheckoutBuilder::new();
+    cb.safe();
+    repo.checkout_tree(new_tree.as_object(), Some(&mut cb))
+        .map_err(|e| GitError::Other(format!("checkout_tree after merge failed: {}", e.message())))?;
+    let mut branch_ref = repo
+        .find_reference(&refname)
+        .map_err(|e| GitError::Other(format!("branch ref lookup failed: {}", e.message())))?;
+    branch_ref
+        .set_target(new_oid, &format!("merge: {} into {}", target, current_branch))
+        .map_err(|e| GitError::Other(format!("branch ref update (merge) failed: {}", e.message())))?;
+    repo.set_head(&refname)
+        .map_err(|e| GitError::Other(format!("set_head (merge) failed: {}", e.message())))?;
+
+    Ok(CommitId(new_oid.to_string()))
+}
+
+// ────────────────────────────────────────────────────────────
+// plan_checkout_tracking_branch / execute_checkout_tracking_branch (T-BCM-061)
+// ────────────────────────────────────────────────────────────
+
+/// Default local branch name for a remote-tracking branch display name.
+pub fn default_tracking_branch_name(remote_branch: &str) -> String {
+    remote_branch
+        .split_once('/')
+        .map(|(_, name)| name.to_string())
+        .unwrap_or_else(|| remote_branch.to_string())
+}
+
+/// Plan creation of a local tracking branch from `remote_branch`, followed by
+/// checking it out as one confirmed operation.
+pub fn plan_checkout_tracking_branch(
+    repo: &Repository,
+    remote_branch: &str,
+    local_branch: &str,
+) -> Result<OperationPlan, GitError> {
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+    let current = StateSummary {
+        head: head.display(),
+        dirty: status_summary_display(&status),
+    };
+    let mut blockers = Vec::new();
+    let mut warnings = Vec::new();
+
+    if local_branch.trim().is_empty() {
+        blockers.push("Local branch name is empty.".to_string());
+    }
+    if repo.find_branch(local_branch, BranchType::Local).is_ok() {
+        blockers.push(format!("Local branch '{}' already exists.", local_branch));
+    }
+    if !status.conflicted.is_empty() {
+        blockers.push(format!(
+            "Repository has {} conflicted file(s). Resolve conflicts before checkout.",
+            status.conflicted.len()
+        ));
+    }
+    if !status.staged.is_empty() || !status.unstaged.is_empty() {
+        let mut parts = Vec::new();
+        if !status.staged.is_empty() {
+            parts.push(format!("{} staged", status.staged.len()));
+        }
+        if !status.unstaged.is_empty() {
+            parts.push(format!("{} modified", status.unstaged.len()));
+        }
+        blockers.push(format!(
+            "Working tree has {} — stash or commit changes before checkout.",
+            parts.join(", ")
+        ));
+        warnings.push("Suggested command: git stash push -u".to_string());
+    }
+    if !status.untracked.is_empty() {
+        warnings.push(format!(
+            "{} untracked file(s) will remain after checkout.",
+            status.untracked.len()
+        ));
+    }
+
+    let remote_commit = resolve_branch_commit(repo, remote_branch)?;
+    let predicted = StateSummary {
+        head: format!("branch: {} (tracks {})", local_branch, remote_branch),
+        dirty: current.dirty.clone(),
+    };
+    let recovery = format!(
+        "If checkout succeeds but you do not want the branch, switch back and delete it:\n  git checkout -\n  git branch -d {}",
+        local_branch
+    );
+
+    Ok(OperationPlan {
+        title: format!(
+            "Checkout {} as local branch {}",
+            remote_branch, local_branch
+        ),
+        current,
+        predicted,
+        warnings,
+        blockers,
+        recovery,
+        head_at_plan: head,
+        stash_count_at_plan: 0,
+        preview_files: Vec::new(),
+        preview_commits: vec![format!(
+            "{}  {}",
+            short_oid(remote_commit.id()),
+            remote_branch
+        )],
+        destructive: false,
+    })
+}
+
+/// Create a local branch tracking `remote_branch` and check it out.
+pub fn execute_checkout_tracking_branch(
+    repo: &Repository,
+    remote_branch: &str,
+    local_branch: &str,
+) -> Result<(), GitError> {
+    if repo.find_branch(local_branch, BranchType::Local).is_ok() {
+        return Err(GitError::Other(format!(
+            "Local branch '{}' already exists.",
+            local_branch
+        )));
+    }
+    let remote_commit = resolve_branch_commit(repo, remote_branch)?;
+    let mut branch = repo
+        .branch(local_branch, &remote_commit, false)
+        .map_err(|e| GitError::Other(format!("branch create failed: {}", e.message())))?;
+    branch
+        .set_upstream(Some(remote_branch))
+        .map_err(|e| GitError::Other(format!("set upstream failed: {}", e.message())))?;
+
+    let obj = remote_commit.as_object();
+    let mut cb = git2::build::CheckoutBuilder::new();
+    cb.safe();
+    repo.checkout_tree(obj, Some(&mut cb))
+        .map_err(|e| GitError::Other(format!("checkout_tree failed: {}", e.message())))?;
+    let refname = format!("refs/heads/{}", local_branch);
+    repo.set_head(&refname)
+        .map_err(|e| GitError::Other(format!("set_head failed: {}", e.message())))?;
+    Ok(())
 }
 
 // ────────────────────────────────────────────────────────────

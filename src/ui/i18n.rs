@@ -170,6 +170,7 @@ pub enum Msg {
     BusyDiscard,
     BusyCommit,
     BusyCreateWorktree,
+    BusyMerge,
 
     // ── Operation-started toasts ────────────────────────────────────
     StartedCheckout,
@@ -184,6 +185,7 @@ pub enum Msg {
     StartedDiscard,
     StartedCommit,
     StartedCreateWorktree,
+    StartedMerge,
 
     // ── Toolbar guard reasons (domain words kept English) ───────────
     PullBusy,
@@ -227,6 +229,7 @@ pub enum Msg {
     BcmNoUpstream,
     BcmDetachedHead,
     BcmCheckedOutElsewhere,
+    BcmConflictMode,
     BcmNothingToPull,
     BcmNothingToPush,
 
@@ -298,6 +301,8 @@ impl Msg {
             (Ja, BusyCommit) => "commit 実行中…",
             (En, BusyCreateWorktree) => "create worktree in progress…",
             (Ja, BusyCreateWorktree) => "create worktree 実行中…",
+            (En, BusyMerge) => "merge in progress…",
+            (Ja, BusyMerge) => "merge 実行中…",
 
             // ── Started toasts ──────────────────────────────────────
             (En, StartedCheckout) => "checkout: started",
@@ -324,6 +329,8 @@ impl Msg {
             (Ja, StartedCommit) => "commit: 開始しました",
             (En, StartedCreateWorktree) => "create-worktree: started",
             (Ja, StartedCreateWorktree) => "create-worktree: 開始しました",
+            (En, StartedMerge) => "merge: started",
+            (Ja, StartedMerge) => "merge: 開始しました",
 
             // ── Toolbar guards ──────────────────────────────────────
             (En, PullBusy) => "Pull: another operation is in progress",
@@ -410,6 +417,8 @@ impl Msg {
             (Ja, BcmDetachedHead) => "detached HEAD",
             (En, BcmCheckedOutElsewhere) => "branch is checked out in another worktree",
             (Ja, BcmCheckedOutElsewhere) => "branch は別の worktree で checkout 済みです",
+            (En, BcmConflictMode) => "resolve conflicts first",
+            (Ja, BcmConflictMode) => "先に conflict を解決してください",
             (En, BcmNothingToPull) => "nothing to pull",
             (Ja, BcmNothingToPull) => "pull するものがありません",
             (En, BcmNothingToPush) => "nothing to push",

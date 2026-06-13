@@ -1,6 +1,6 @@
 # T-BCM-041: worktree path dialog を実装する
 
-- Status: todo
+- Status: done
 - Group: Worktree
 - 仕様の正: docs/requirements-branch-context-menu.md + ADR-0049〜0055
 
@@ -18,3 +18,8 @@
 - 操作 handler の二重実装禁止(ADR-0049)。fixture / tempdir のみで検証
 - 文字列は chars() ベース・バイトスライス禁止(split_at 含む)。色は theme() 経由
 - UI 説明文は i18n の Msg 経由(ADR-0048。ドメインワード・branch 名は英語のまま)
+
+## 実装メモ(Codex / w25-bcm-int)
+
+- branch menu から既存 create-worktree modal を branch 名つきで開く共有 handler を追加。
+- `Open worktree from branch` は既存 branch attach mode、`Create worktree from here` は新規 branch 作成 mode として同じ modal を使う。

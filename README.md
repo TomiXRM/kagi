@@ -60,7 +60,7 @@ Grab the latest build from [**GitHub Releases**](https://github.com/TomiXRM/kagi
 
 | OS | Asset |
 |----|-------|
-| macOS (Apple Silicon / Intel) | `Kagi-<version>-<arch>.dmg` |
+| macOS (Apple Silicon) | `Kagi-<version>-arm64.dmg` |
 | Linux (x86_64) | `kagi-<version>-x86_64.tar.gz` (binary + `.desktop` + icon) |
 
 ### ⚠️ macOS: first launch on an unsigned build
@@ -109,7 +109,7 @@ cargo run -p xtask -- dmg-macos           # target/dist/Kagi-<version>-<arch>.dm
 cargo run -p xtask -- bundle-linux        # target/dist/kagi-<version>-x86_64.tar.gz
 ```
 
-Tagging `v*` runs the [release workflow](.github/workflows/release.yml): macOS arm64 + x86_64 + Linux x86_64 builds, checksums, and a draft GitHub release.
+Tagging `v*` runs the [release workflow](.github/workflows/release.yml): macOS arm64 + Linux builds, checksums, and a draft GitHub release.
 
 ## 🧑‍💻 Development
 

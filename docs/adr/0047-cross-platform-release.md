@@ -11,7 +11,7 @@
 
 | OS | 形態 | 備考 |
 |----|------|------|
-| macOS (arm64 / x86_64) | `.app` + `.dmg` | **ad-hoc 署名**(`codesign -s -`)。Gatekeeper は右クリック→開く案内を README に記載 |
+| macOS (arm64。x86_64 は 2026-06-13 ユーザー判断で対象外) | `.app` + `.dmg` | **ad-hoc 署名**(`codesign -s -`)。Gatekeeper は右クリック→開く案内を README に記載 |
 | Linux (x86_64 / arm64) | `tar.gz`(bin + .desktop + icon)+ **AppImage zip** | 下記追補 |
 | Windows | 対象外(将来) | gpui 0.2.2 の Windows 成熟度待ち。別 ADR |
 

@@ -5723,8 +5723,17 @@ impl KagiApp {
                     plan.preview_files.len(),
                     kind
                 );
+                // Current (checked-out) branch = the merge destination, for the
+                // explicit confirm-button label (ADR-0079).
+                let into_branch = self
+                    .branches
+                    .iter()
+                    .find(|(_, is_head)| *is_head)
+                    .map(|(name, _)| name.clone())
+                    .unwrap_or_else(|| "HEAD".to_string());
                 self.merge_modal = Some(MergePlanModal {
                     target,
+                    into_branch,
                     plan: std::sync::Arc::new(plan),
                     kind,
                     error: None,
@@ -5834,6 +5843,7 @@ impl KagiApp {
                         );
                         app.merge_modal = Some(MergePlanModal {
                             target: modal.target.clone(),
+                            into_branch: modal.into_branch.clone(),
                             plan: modal.plan.clone(),
                             kind: modal.kind.clone(),
                             error: Some(SharedString::from(err_msg)),

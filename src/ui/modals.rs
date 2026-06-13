@@ -108,7 +108,13 @@ pub struct PushPlanModal {
 /// State for an in-progress branch merge confirmation (T-BCM-030).
 #[derive(Clone)]
 pub struct MergePlanModal {
+    /// The branch merged INTO HEAD (the "source" in user terms; the argument to
+    /// `git merge`).
     pub target: String,
+    /// The current/checked-out branch the source is merged into (destination).
+    /// Drives the explicit confirm-button label `Merge <target> into
+    /// <into_branch>` (ADR-0079 / T-DNDMERGE-001).
+    pub into_branch: String,
     pub plan: std::sync::Arc<OperationPlan>,
     /// W31-MERGE-INTO-CONFLICT: what executing this merge will do. When
     /// [`MergeKind::Conflicts`] the modal shows a "resolve conflicts" confirm
@@ -1114,14 +1120,24 @@ pub(crate) fn render_merge_modal(
     // W31-MERGE-INTO-CONFLICT: a conflict-producing merge gets a localized
     // "resolve conflicts" confirm label and a prominent localized warning banner
     // prepended to the plan's (English, git-layer) per-file warning.
-    let (confirm_label, plan): (&'static str, std::sync::Arc<OperationPlan>) =
+    // T-DNDMERGE-001 / ADR-0079: the confirm button must be explicit, not vague —
+    // `Merge <source> into <current>` (domain words / branch names stay English).
+    let (confirm_label, plan): (SharedString, std::sync::Arc<OperationPlan>) =
         if matches!(modal.kind, MergeKind::Conflicts(_)) {
             let mut plan = (*modal.plan).clone();
             plan.warnings
                 .insert(0, Msg::MergeConflictWarning.t().to_string());
-            (Msg::MergeAndResolveConflicts.t(), std::sync::Arc::new(plan))
+            let label = SharedString::from(format!(
+                "Merge {} into {} ({})",
+                modal.target,
+                modal.into_branch,
+                Msg::MergeAndResolveConflicts.t()
+            ));
+            (label, std::sync::Arc::new(plan))
         } else {
-            ("Merge", modal.plan)
+            let label =
+                SharedString::from(format!("Merge {} into {}", modal.target, modal.into_branch));
+            (label, modal.plan)
         };
     render_plan_modal_card(
         plan,
@@ -1467,12 +1483,15 @@ pub(crate) fn render_revert_modal(
 pub(crate) fn render_plan_modal_card(
     plan: std::sync::Arc<OperationPlan>,
     error: Option<SharedString>,
-    confirm_label: &'static str,
+    confirm_label: impl Into<SharedString>,
     cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     create_branch_target: Option<CommitId>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
+    // Accept either a `&'static str` (most modals) or a dynamic `String`/
+    // `SharedString` (merge: `Merge <source> into <target>`, T-DNDMERGE-001).
+    let confirm_label: SharedString = confirm_label.into();
     let has_blockers = !plan.blockers.is_empty();
 
     // ── Build modal card ────────────────────────────────────

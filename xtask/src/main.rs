@@ -5,9 +5,11 @@
 //!   bundle-macos  release build → target/dist/Kagi.app (ad-hoc signed)
 //!   dmg-macos     hdiutil DMG (Kagi.app + /Applications) → target/dist/Kagi-<v>-<arch>.dmg
 //!   bundle-linux  tar.gz layout (bin + .desktop + 512px icon) → target/dist/
+//!   bundle-appimage  Kagi.AppDir → Kagi-<arch>.AppImage (appimagetool) + zip
 //!
 //! Run via: `cargo run -p xtask -- <subcommand>`
 
+mod appimage;
 mod icon;
 mod linux;
 mod macos;
@@ -24,6 +26,8 @@ subcommands:
   bundle-macos             release build + assemble & ad-hoc-sign Kagi.app
   dmg-macos                build the distributable DMG (run bundle-macos first)
   bundle-linux [--bin P]   assemble the Linux tar.gz layout (--bin overrides the binary)
+  bundle-appimage --bin P [--arch x86_64|aarch64]
+                           assemble Kagi.AppDir, run appimagetool when present, and zip
 "
 }
 
@@ -46,6 +50,26 @@ fn run() -> Result<(), String> {
                 }
             }
             linux::bundle(&root, override_bin)
+        }
+        Some("bundle-appimage") => {
+            let mut override_bin = None;
+            let mut arch = util::host_arch_appimage().to_string();
+            let mut it = args.iter().skip(1);
+            while let Some(a) = it.next() {
+                match a.as_str() {
+                    "--bin" => {
+                        override_bin = it.next().map(String::as_str);
+                    }
+                    "--arch" => {
+                        arch = it
+                            .next()
+                            .cloned()
+                            .ok_or_else(|| format!("--arch needs a value\n\n{}", usage()))?;
+                    }
+                    other => return Err(format!("unknown argument: {other}\n\n{}", usage())),
+                }
+            }
+            appimage::bundle(&root, override_bin, &arch)
         }
         Some("-h") | Some("--help") | Some("help") => {
             print!("{}", usage());

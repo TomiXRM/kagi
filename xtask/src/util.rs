@@ -52,6 +52,16 @@ pub fn host_arch() -> &'static str {
     }
 }
 
+/// Host architecture string in AppImage convention: `aarch64` or `x86_64`
+/// (note: AppImage uses `aarch64`, unlike the tar/dmg names which use `arm64`).
+pub fn host_arch_appimage() -> &'static str {
+    if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else {
+        "x86_64"
+    }
+}
+
 /// Run a command, streaming its stdio, and fail on non-zero exit.
 pub fn run(cmd: &mut Command) -> Result<(), String> {
     let rendered = render(cmd);

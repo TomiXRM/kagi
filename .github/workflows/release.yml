@@ -19,6 +19,9 @@ jobs:
   build:
     name: build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    # Per-leg opt-in: the linux-arm64 leg sets continue-on-error so a missing
+    # private-repo arm64 runner does not block the release (ADR-0047 追補).
+    continue-on-error: ${{ matrix.allow-failure || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +38,11 @@ jobs:
             target: linux-x86_64
             kind: linux
             arch: x86_64
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            kind: linux
+            arch: aarch64
+            allow-failure: true
     steps:
       - uses: actions/checkout@v4
 
@@ -81,13 +89,28 @@ jobs:
         if: matrix.kind == 'linux'
         run: cargo run -p xtask -- bundle-linux --bin target/release/kagi
 
+      # ── Linux: AppImage zip (ADR-0047 追補, W21-APPIMAGE) ──────────────────
+      # Fetch the matching appimagetool (FUSE-free via --appimage-extract-and-run,
+      # which xtask passes through) and build Kagi-<arch>.AppImage + the zip.
+      - name: Download appimagetool
+        if: matrix.kind == 'linux'
+        run: |
+          url="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.arch }}.AppImage"
+          curl -fsSL -o "${RUNNER_TEMP}/appimagetool" "$url"
+          chmod +x "${RUNNER_TEMP}/appimagetool"
+          echo "APPIMAGETOOL=${RUNNER_TEMP}/appimagetool" >> "$GITHUB_ENV"
+
+      - name: Bundle AppImage zip
+        if: matrix.kind == 'linux'
+        run: cargo run -p xtask -- bundle-appimage --bin target/release/kagi --arch ${{ matrix.arch }}
+
       # ── Checksums over this leg's artifacts ───────────────────────────────
       - name: Generate SHA256SUMS
         shell: bash
         working-directory: target/dist
         run: |
           shopt -s nullglob
-          files=( *.dmg *.tar.gz )
+          files=( *.dmg *.tar.gz *.zip )
           if [ ${#files[@]} -eq 0 ]; then
             echo "no artifacts produced" >&2
             exit 1
@@ -108,6 +131,7 @@ jobs:
           path: |
             target/dist/*.dmg
             target/dist/*.tar.gz
+            target/dist/*.zip
             target/dist/SHA256SUMS-${{ matrix.target }}.txt
           if-no-files-found: error
 

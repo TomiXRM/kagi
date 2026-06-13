@@ -27,6 +27,19 @@ internal re-architecture. See `docs/rearch/` for the architecture work and
   reflog-backed branch-ref moves through the plan→confirm→preflight→execute→verify
   pipeline — every move shows a preview first, no commit is ever destroyed, and
   `reset --hard` is never used (undone commits stay recoverable via the reflog).
+- **`kagi <repo>` CLI** — `cargo install --path .` puts a self-contained `kagi`
+  binary on your `PATH`; `kagi <repo-dir>` opens that repo (no arg → Welcome).
+- **Smooth commit** — the Commit button commits immediately (no confirmation
+  popup) when the pre-commit checklist finds no blockers; blockers (conflict
+  markers / secrets / large binaries) still show the safety modal.
+
+### Fixed
+- Integrated **terminal arrow keys** (shell history) and **Escape** (vim/less) now
+  work — they were being consumed by global diff/close key bindings.
+- Settings window: the top-right gear icon now renders (missing bundled SVG), the
+  layout/contrast is correct (rebuilt as a native view), the theme selector is a
+  dropdown, and opening Settings no longer panics.
+- Header toolbar button cluster is now centered (was right-shifted).
 
 ### Changed (internal — v1.0 re-architecture groundwork)
 - Extracted a pure **`kagi-domain`** crate (commit/graph/diff/conflict model, rules,

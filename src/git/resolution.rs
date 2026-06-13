@@ -70,6 +70,8 @@ pub enum LineOrigin {
     Incoming,
     /// Hand-typed by the user (manual edit) or otherwise synthesized.
     Manual,
+    /// A non-conflict passthrough line shared by both sides (context).
+    Context,
 }
 
 impl LineOrigin {
@@ -79,6 +81,7 @@ impl LineOrigin {
             LineOrigin::Current => 'c',
             LineOrigin::Incoming => 'i',
             LineOrigin::Manual => 'm',
+            LineOrigin::Context => 'x',
         }
     }
 
@@ -86,6 +89,7 @@ impl LineOrigin {
         match c {
             'c' => LineOrigin::Current,
             'i' => LineOrigin::Incoming,
+            'x' => LineOrigin::Context,
             _ => LineOrigin::Manual,
         }
     }
@@ -98,6 +102,287 @@ pub struct ResolvedLine {
     pub text: String,
     /// Where the line came from.
     pub origin: LineOrigin,
+}
+
+// ────────────────────────────────────────────────────────────
+// Hunk-level model (W32-CONFLICT-EDITOR, T-CONFLICT-020..025)
+// ────────────────────────────────────────────────────────────
+
+/// A per-hunk choice in the hunk-level Conflict Editor (ADR-0064 buttons).
+///
+/// This is the hunk analogue of [`ResolutionChoice`] with two extra states the
+/// file-level API does not need: a free-form [`HunkChoice::Manual`] edit of a
+/// single hunk and an explicit [`HunkChoice::Unresolved`] reset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HunkChoice {
+    /// Keep the current branch side only ("Accept current").
+    AcceptCurrent,
+    /// Take the incoming side only ("Accept incoming").
+    AcceptIncoming,
+    /// Keep both, current side first ("Accept both: current then incoming").
+    BothCurrentFirst,
+    /// Keep both, incoming side first ("Accept both: incoming then current").
+    BothIncomingFirst,
+    /// Hand-edited replacement text for this hunk ("Edit result").
+    Manual(String),
+    /// Not yet decided — the hunk is still unresolved ("Reset this hunk").
+    Unresolved,
+}
+
+/// One ordered region of a conflicted file's zdiff3 materialization.
+///
+/// A file splits into an ordered list of regions: [`Region::Passthrough`] for
+/// the non-conflict context lines git produced verbatim, and [`Region::Hunk`]
+/// for each conflict block with its Current / Incoming / Base line groups and a
+/// per-hunk [`HunkChoice`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Region {
+    /// Non-conflict context lines (shared by both sides), kept verbatim.
+    Passthrough(Vec<String>),
+    /// One conflict block.
+    Hunk(ConflictHunk),
+}
+
+/// One conflict hunk: the three side line groups plus the user's choice.
+///
+/// Line groups hold the text **without** trailing newlines; the file assembler
+/// re-joins them on `\n`.  `base` is the zdiff3 common-ancestor context (may be
+/// empty when git emitted standard markers instead of zdiff3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictHunk {
+    /// Current branch (A) side lines.
+    pub current: Vec<String>,
+    /// Incoming (B) side lines.
+    pub incoming: Vec<String>,
+    /// Base / common-ancestor lines (zdiff3); empty under standard markers.
+    pub base: Vec<String>,
+    /// The per-hunk resolution choice.
+    pub choice: HunkChoice,
+}
+
+impl ConflictHunk {
+    /// Whether this hunk has been resolved (anything but [`HunkChoice::Unresolved`]).
+    pub fn is_resolved(&self) -> bool {
+        !matches!(self.choice, HunkChoice::Unresolved)
+    }
+
+    /// The resolved lines this hunk contributes to the file Result, tagged with
+    /// provenance.  An [`HunkChoice::Unresolved`] hunk re-emits the conflict
+    /// markers (so an unresolved Result is recognizably unfinished and the
+    /// marker gate still trips), tagged [`LineOrigin::Manual`].
+    fn resolved_lines(&self) -> Vec<ResolvedLine> {
+        let cur = |g: &[String]| {
+            g.iter()
+                .map(|t| ResolvedLine { text: t.clone(), origin: LineOrigin::Current })
+                .collect::<Vec<_>>()
+        };
+        let inc = |g: &[String]| {
+            g.iter()
+                .map(|t| ResolvedLine { text: t.clone(), origin: LineOrigin::Incoming })
+                .collect::<Vec<_>>()
+        };
+        match &self.choice {
+            HunkChoice::AcceptCurrent => cur(&self.current),
+            HunkChoice::AcceptIncoming => inc(&self.incoming),
+            HunkChoice::BothCurrentFirst => {
+                let mut v = cur(&self.current);
+                v.extend(inc(&self.incoming));
+                v
+            }
+            HunkChoice::BothIncomingFirst => {
+                let mut v = inc(&self.incoming);
+                v.extend(cur(&self.current));
+                v
+            }
+            HunkChoice::Manual(text) => text_to_lines(text, LineOrigin::Manual),
+            HunkChoice::Unresolved => self.marker_lines(),
+        }
+    }
+
+    /// Re-emit the conflict markers for an unresolved hunk (so the assembled
+    /// Result is recognizably unfinished and trips the marker-residue gate).
+    fn marker_lines(&self) -> Vec<ResolvedLine> {
+        let m = |s: String| ResolvedLine { text: s, origin: LineOrigin::Manual };
+        let mut v = vec![m("<<<<<<< Current".to_string())];
+        v.extend(self.current.iter().cloned().map(m));
+        if !self.base.is_empty() {
+            v.push(m("||||||| Base".to_string()));
+            v.extend(self.base.iter().cloned().map(m));
+        }
+        v.push(m("=======".to_string()));
+        v.extend(self.incoming.iter().cloned().map(m));
+        v.push(m(">>>>>>> Incoming".to_string()));
+        v
+    }
+}
+
+/// The hunk decomposition of one conflicted file: an ordered region list.
+///
+/// Built from the zdiff3 (or standard-marker fallback) materialization via
+/// [`HunkModel::from_marker_text`].  The file Result is assembled from all
+/// regions in order ([`HunkModel::assemble`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HunkModel {
+    /// The ordered regions (passthrough + conflict hunks).
+    pub regions: Vec<Region>,
+}
+
+impl HunkModel {
+    /// Parse a zdiff3 / standard marker text into an ordered region list.
+    ///
+    /// Recognizes:
+    /// - `<<<<<<< …` opens the Current side of a hunk,
+    /// - `||||||| …` opens the Base side (zdiff3 only),
+    /// - `=======` switches to the Incoming side,
+    /// - `>>>>>>> …` closes the hunk.
+    ///
+    /// Lines outside any hunk are collected into [`Region::Passthrough`].  Each
+    /// new hunk starts [`HunkChoice::Unresolved`].  Splitting is on `\n` over
+    /// `&str` (no byte slicing).
+    pub fn from_marker_text(text: &str) -> HunkModel {
+        let mut regions: Vec<Region> = Vec::new();
+        let mut passthrough: Vec<String> = Vec::new();
+
+        // Parser state while inside a hunk.
+        #[derive(PartialEq)]
+        enum Phase {
+            None,
+            Current,
+            Base,
+            Incoming,
+        }
+        let mut phase = Phase::None;
+        let mut cur: Vec<String> = Vec::new();
+        let mut base: Vec<String> = Vec::new();
+        let mut inc: Vec<String> = Vec::new();
+
+        // Drop a single trailing empty element from a trailing newline so the
+        // round-trip is stable (matches `text_to_lines`).
+        let mut lines: Vec<&str> = text.split('\n').collect();
+        if let Some(last) = lines.last() {
+            if last.is_empty() {
+                lines.pop();
+            }
+        }
+
+        for line in lines {
+            if line.starts_with("<<<<<<<") {
+                // Flush any accumulated passthrough before opening a hunk.
+                if !passthrough.is_empty() {
+                    regions.push(Region::Passthrough(std::mem::take(&mut passthrough)));
+                }
+                phase = Phase::Current;
+                cur.clear();
+                base.clear();
+                inc.clear();
+            } else if line.starts_with("|||||||") && phase == Phase::Current {
+                phase = Phase::Base;
+            } else if line == "=======" && (phase == Phase::Current || phase == Phase::Base) {
+                phase = Phase::Incoming;
+            } else if line.starts_with(">>>>>>>") && phase == Phase::Incoming {
+                regions.push(Region::Hunk(ConflictHunk {
+                    current: std::mem::take(&mut cur),
+                    incoming: std::mem::take(&mut inc),
+                    base: std::mem::take(&mut base),
+                    choice: HunkChoice::Unresolved,
+                }));
+                phase = Phase::None;
+            } else {
+                match phase {
+                    Phase::None => passthrough.push(line.to_string()),
+                    Phase::Current => cur.push(line.to_string()),
+                    Phase::Base => base.push(line.to_string()),
+                    Phase::Incoming => inc.push(line.to_string()),
+                }
+            }
+        }
+
+        // A malformed / truncated hunk (no closing marker) is recovered as a
+        // best-effort unresolved hunk so no content is lost.
+        if phase != Phase::None {
+            regions.push(Region::Hunk(ConflictHunk {
+                current: cur,
+                incoming: inc,
+                base,
+                choice: HunkChoice::Unresolved,
+            }));
+        } else if !passthrough.is_empty() {
+            regions.push(Region::Passthrough(passthrough));
+        }
+
+        HunkModel { regions }
+    }
+
+    /// The conflict hunks in order (skipping passthrough regions).
+    pub fn hunks(&self) -> Vec<&ConflictHunk> {
+        self.regions
+            .iter()
+            .filter_map(|r| match r {
+                Region::Hunk(h) => Some(h),
+                Region::Passthrough(_) => None,
+            })
+            .collect()
+    }
+
+    /// Number of conflict hunks.
+    pub fn hunk_count(&self) -> usize {
+        self.regions
+            .iter()
+            .filter(|r| matches!(r, Region::Hunk(_)))
+            .count()
+    }
+
+    /// Number of resolved conflict hunks.
+    pub fn resolved_hunk_count(&self) -> usize {
+        self.hunks().iter().filter(|h| h.is_resolved()).count()
+    }
+
+    /// Whether every conflict hunk is resolved.
+    pub fn all_resolved(&self) -> bool {
+        self.hunks().iter().all(|h| h.is_resolved())
+    }
+
+    /// Set the choice of the `n`-th conflict hunk (0-based among hunks).  No-op
+    /// if the index is out of range.  Returns `true` on success.
+    pub fn set_choice(&mut self, hunk_index: usize, choice: HunkChoice) -> bool {
+        let mut i = 0usize;
+        for r in &mut self.regions {
+            if let Region::Hunk(h) = r {
+                if i == hunk_index {
+                    h.choice = choice;
+                    return true;
+                }
+                i += 1;
+            }
+        }
+        false
+    }
+
+    /// Assemble the file Result lines from all regions, in order, tracking
+    /// per-line provenance.  Passthrough lines are [`LineOrigin::Context`].
+    pub fn assemble(&self) -> Vec<ResolvedLine> {
+        let mut out: Vec<ResolvedLine> = Vec::new();
+        for r in &self.regions {
+            match r {
+                Region::Passthrough(lines) => {
+                    for l in lines {
+                        out.push(ResolvedLine {
+                            text: l.clone(),
+                            origin: LineOrigin::Context,
+                        });
+                    }
+                }
+                Region::Hunk(h) => out.extend(h.resolved_lines()),
+            }
+        }
+        out
+    }
+
+    /// The assembled Result text (lines joined with `\n`, single trailing
+    /// newline), like [`ResolutionBuffer::resolved_text`].
+    pub fn assembled_text(&self) -> String {
+        lines_to_text(&self.assemble())
+    }
 }
 
 /// The Result draft for a single file: the materialized side texts plus the
@@ -150,6 +435,11 @@ pub struct ResolutionBuffer {
     repo_path: PathBuf,
     /// Per-file resolutions, ordered by path for deterministic serialization.
     files: BTreeMap<PathBuf, FileResolution>,
+    /// Per-file **hunk-level** editing state for the Conflict Editor (W32).  In
+    /// memory only (rebuilt from the materialization on demand): the persisted
+    /// artifact is the assembled `result` in [`FileResolution`].  A file appears
+    /// here once [`ResolutionBuffer::ensure_hunks`] has decomposed it.
+    hunks: BTreeMap<PathBuf, HunkModel>,
 }
 
 // ────────────────────────────────────────────────────────────
@@ -162,6 +452,7 @@ impl ResolutionBuffer {
         ResolutionBuffer {
             repo_path: repo_path.to_path_buf(),
             files: BTreeMap::new(),
+            hunks: BTreeMap::new(),
         }
     }
 
@@ -322,6 +613,77 @@ impl ResolutionBuffer {
             },
             None => false,
         }
+    }
+}
+
+// ────────────────────────────────────────────────────────────
+// Hunk-level editing (W32-CONFLICT-EDITOR)
+// ────────────────────────────────────────────────────────────
+
+impl ResolutionBuffer {
+    /// Ensure a [`HunkModel`] exists for `path`, decomposing it from the supplied
+    /// `marker_text` (the zdiff3 / standard materialization) on first use.
+    ///
+    /// Idempotent: if a model already exists (e.g. the user has been editing
+    /// hunks), it is preserved so per-hunk choices are not lost.  Returns `false`
+    /// if `path` is not a tracked conflict.
+    pub fn ensure_hunks(&mut self, path: &Path, marker_text: &str) -> bool {
+        if !self.files.contains_key(path) {
+            return false;
+        }
+        self.hunks
+            .entry(path.to_path_buf())
+            .or_insert_with(|| HunkModel::from_marker_text(marker_text));
+        true
+    }
+
+    /// The hunk model for `path`, if one has been built via [`Self::ensure_hunks`].
+    pub fn hunk_model(&self, path: &Path) -> Option<&HunkModel> {
+        self.hunks.get(path)
+    }
+
+    /// Apply a per-hunk choice to the `n`-th hunk of `path`, then re-assemble and
+    /// commit the file Result (pushing the prior Result onto the undo stack, so
+    /// file-level undo still works).  Returns `true` on success.
+    ///
+    /// The repository is untouched; the caller autosaves (in-memory first).
+    pub fn apply_hunk_choice(
+        &mut self,
+        path: &Path,
+        hunk_index: usize,
+        choice: HunkChoice,
+    ) -> bool {
+        let Some(model) = self.hunks.get_mut(path) else {
+            return false;
+        };
+        if !model.set_choice(hunk_index, choice) {
+            return false;
+        }
+        let assembled = model.assemble();
+        // Commit the re-assembled Result into the file resolution.
+        if let Some(fr) = self.files.get_mut(path) {
+            fr.checkpoint();
+            fr.result = Some(assembled);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Reset the `n`-th hunk of `path` to [`HunkChoice::Unresolved`] and
+    /// re-assemble.  Convenience wrapper over [`Self::apply_hunk_choice`].
+    pub fn reset_hunk(&mut self, path: &Path, hunk_index: usize) -> bool {
+        self.apply_hunk_choice(path, hunk_index, HunkChoice::Unresolved)
+    }
+
+    /// Number of conflict hunks in `path`'s model (0 if not built / not tracked).
+    pub fn hunk_count(&self, path: &Path) -> usize {
+        self.hunks.get(path).map(|m| m.hunk_count()).unwrap_or(0)
+    }
+
+    /// Whether every hunk of `path` is resolved (false if the model is absent).
+    pub fn hunks_all_resolved(&self, path: &Path) -> bool {
+        self.hunks.get(path).map(|m| m.all_resolved()).unwrap_or(false)
     }
 }
 
@@ -1168,5 +1530,179 @@ mod tests {
     #[test]
     fn parse_rejects_non_object() {
         assert!(parse_buffer_json(Path::new("/tmp/repo"), "nope").is_none());
+    }
+
+    // ── Hunk-level model (W32-CONFLICT-EDITOR) ──────────────────────
+
+    /// A two-hunk zdiff3 materialization with passthrough context around and
+    /// between the conflicts.
+    const TWO_HUNK_ZDIFF3: &str = "\
+keep top
+<<<<<<< Current
+a-current
+||||||| Base
+a-base
+=======
+a-incoming
+>>>>>>> Incoming
+keep middle
+<<<<<<< Current
+b-current
+=======
+b-incoming
+>>>>>>> Incoming
+keep bottom
+";
+
+    #[test]
+    fn hunk_split_multiple_regions_in_one_file() {
+        let m = HunkModel::from_marker_text(TWO_HUNK_ZDIFF3);
+        // passthrough, hunk, passthrough, hunk, passthrough = 5 regions.
+        assert_eq!(m.regions.len(), 5);
+        assert_eq!(m.hunk_count(), 2);
+        assert!(matches!(m.regions[0], Region::Passthrough(_)));
+        assert!(matches!(m.regions[1], Region::Hunk(_)));
+        assert!(matches!(m.regions[2], Region::Passthrough(_)));
+        assert!(matches!(m.regions[3], Region::Hunk(_)));
+        assert!(matches!(m.regions[4], Region::Passthrough(_)));
+
+        let hunks = m.hunks();
+        assert_eq!(hunks[0].current, vec!["a-current".to_string()]);
+        assert_eq!(hunks[0].base, vec!["a-base".to_string()]);
+        assert_eq!(hunks[0].incoming, vec!["a-incoming".to_string()]);
+        // Second hunk had no base group (standard-style block).
+        assert!(hunks[1].base.is_empty());
+        assert_eq!(hunks[1].current, vec!["b-current".to_string()]);
+    }
+
+    #[test]
+    fn hunk_accept_variants_assemble_with_provenance() {
+        // Accept current on hunk 0, accept both (incoming first) on hunk 1.
+        let mut m = HunkModel::from_marker_text(TWO_HUNK_ZDIFF3);
+        assert!(m.set_choice(0, HunkChoice::AcceptCurrent));
+        assert!(m.set_choice(1, HunkChoice::BothIncomingFirst));
+        assert!(m.all_resolved());
+
+        let lines = m.assemble();
+        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "keep top",
+                "a-current",
+                "keep middle",
+                "b-incoming",
+                "b-current",
+                "keep bottom",
+            ]
+        );
+        let origins: Vec<LineOrigin> = lines.iter().map(|l| l.origin).collect();
+        assert_eq!(
+            origins,
+            vec![
+                LineOrigin::Context, // keep top
+                LineOrigin::Current, // a-current
+                LineOrigin::Context, // keep middle
+                LineOrigin::Incoming, // b-incoming (incoming first)
+                LineOrigin::Current, // b-current
+                LineOrigin::Context, // keep bottom
+            ]
+        );
+    }
+
+    #[test]
+    fn hunk_accept_incoming_and_both_current_first() {
+        let mut m = HunkModel::from_marker_text(TWO_HUNK_ZDIFF3);
+        m.set_choice(0, HunkChoice::AcceptIncoming);
+        m.set_choice(1, HunkChoice::BothCurrentFirst);
+        let texts: Vec<String> =
+            m.assemble().into_iter().map(|l| l.text).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "keep top".to_string(),
+                "a-incoming".to_string(),
+                "keep middle".to_string(),
+                "b-current".to_string(),
+                "b-incoming".to_string(),
+                "keep bottom".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn hunk_manual_edit_provenance() {
+        let mut m = HunkModel::from_marker_text(TWO_HUNK_ZDIFF3);
+        m.set_choice(0, HunkChoice::Manual("merged a\n".to_string()));
+        m.set_choice(1, HunkChoice::AcceptCurrent);
+        let lines = m.assemble();
+        // Find the manual line.
+        let manual = lines.iter().find(|l| l.text == "merged a").unwrap();
+        assert_eq!(manual.origin, LineOrigin::Manual);
+    }
+
+    #[test]
+    fn hunk_reset_re_emits_markers_and_keeps_gate_closed() {
+        let mut m = HunkModel::from_marker_text(TWO_HUNK_ZDIFF3);
+        m.set_choice(0, HunkChoice::AcceptCurrent);
+        m.set_choice(1, HunkChoice::AcceptIncoming);
+        assert!(m.all_resolved());
+
+        // Reset hunk 1 → unresolved again.
+        assert!(m.set_choice(1, HunkChoice::Unresolved));
+        assert!(!m.all_resolved());
+        assert_eq!(m.resolved_hunk_count(), 1);
+
+        // The assembled text still carries the markers of the unresolved hunk.
+        let text = m.assembled_text();
+        assert!(super::super::checklist::text_has_conflict_marker(&text));
+    }
+
+    #[test]
+    fn all_resolved_file_assembled_result_is_marker_free() {
+        let mut m = HunkModel::from_marker_text(TWO_HUNK_ZDIFF3);
+        m.set_choice(0, HunkChoice::AcceptCurrent);
+        m.set_choice(1, HunkChoice::AcceptIncoming);
+        let text = m.assembled_text();
+        assert!(
+            !super::super::checklist::text_has_conflict_marker(&text),
+            "fully resolved Result must contain no conflict markers: {:?}",
+            text
+        );
+    }
+
+    #[test]
+    fn buffer_apply_hunk_choice_updates_result_and_undo() {
+        let (mut b, p) = buf_with_sides("x\n", "y\n");
+        assert!(b.ensure_hunks(&p, TWO_HUNK_ZDIFF3));
+        assert_eq!(b.hunk_count(&p), 2);
+
+        assert!(b.apply_hunk_choice(&p, 0, HunkChoice::AcceptCurrent));
+        assert!(b.apply_hunk_choice(&p, 1, HunkChoice::AcceptIncoming));
+        assert!(b.hunks_all_resolved(&p));
+
+        let text = b.resolved_text(&p).unwrap();
+        assert!(text.contains("a-current"));
+        assert!(text.contains("b-incoming"));
+        assert!(text.contains("keep top"));
+        assert!(!super::super::checklist::text_has_conflict_marker(&text));
+
+        // File-level undo unwinds the last hunk commit.
+        assert!(b.undo(&p));
+        let after_undo = b.resolved_text(&p).unwrap();
+        // After undoing hunk 1's commit, only hunk 0 was applied → hunk 1 still
+        // contributes its markers, so residue is present again.
+        assert!(super::super::checklist::text_has_conflict_marker(&after_undo));
+    }
+
+    #[test]
+    fn ensure_hunks_is_idempotent() {
+        let (mut b, p) = buf_with_sides("x\n", "y\n");
+        b.ensure_hunks(&p, TWO_HUNK_ZDIFF3);
+        b.apply_hunk_choice(&p, 0, HunkChoice::AcceptCurrent);
+        // A second ensure with different text must NOT clobber existing choices.
+        b.ensure_hunks(&p, "<<<<<<< Current\nz\n=======\nw\n>>>>>>> Incoming\n");
+        assert_eq!(b.hunk_count(&p), 2);
+        assert_eq!(b.hunk_model(&p).unwrap().resolved_hunk_count(), 1);
     }
 }

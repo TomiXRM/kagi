@@ -1,6 +1,6 @@
 # W32-CONFLICT-EDITOR: hunk 単位 Conflict Editor(Phase 3 + Phase 4 hunk actions + log)
 
-- Status: in-progress / 担当: Opus lane
+- Status: done / 担当: Opus lane
 - 仕様: requirements-conflict-ux.md v2 §2.4/2.5 + ADR-0064(layout)/ 0057(buffer)/ 0066(marker)/ 0058(用語)
 - チケット: T-CONFLICT-020〜025, 030〜035
 
@@ -32,3 +32,46 @@
 - in-memory(Save=buffer、index 反映は continue 時)。chars() のみ・バイトスライス禁止。
   theme()・i18n Msg(ours/theirs 非表示)。own-code warning 0。`cargo test --workspace` green。
   fixture のみ。完了時メモ + Status: done。worktree に commit(push/merge しない)
+
+## 完了メモ(実装結果)
+
+### MVP として実装したもの
+- **hunk model**(`resolution.rs`): `Region::{Passthrough(Vec<String>) | Hunk(ConflictHunk)}` の
+  順序付きリスト。`ConflictHunk { current, incoming, base, choice: HunkChoice }`。
+  `HunkChoice = AcceptCurrent | AcceptIncoming | BothCurrentFirst | BothIncomingFirst |
+  Manual(String) | Unresolved`。`LineOrigin` に `Context`(passthrough 行)を追加。
+  `HunkModel::from_marker_text`(zdiff3 `<<<`/`|||`/`===`/`>>>` を chars()-safe な `\n` split で
+  パース)/ `set_choice` / `assemble`(行ごと provenance 付き)/ `assembled_text`。
+  未解決 hunk は assemble 時に marker を再出力 → marker gate が確実にトリップ。
+- `ResolutionBuffer` に **in-memory hunk 編集 API**: `ensure_hunks`(idempotent, materialization から
+  構築)/ `apply_hunk_choice`(再アセンブル → file Result に commit + checkpoint で file-level undo
+  互換)/ `reset_hunk` / `hunk_count` / `hunks_all_resolved` / `hunk_model`。既存 file 単位 API は不変。
+- **Conflict Editor**(`conflict_editor.rs`): ADR-0064 レイアウト。Top Toolbar(back/path/`conflict n/m`/
+  prev/next/Open external tool/Reset all/Save)、Upper split A|B(uniform_list 仮想化、hunk ごとに
+  6 つの **文言ボタン**)、Lower Result/Output(行ごと由来タグ + 未解決数表示、選択で即更新)。
+  全 prose は Msg(en+ja)、scaled_px、ours/theirs 非表示。
+- **mod.rs 配線**: `conflict_editing: Option<PathBuf>` + `conflict_editing_before_text`。
+  content conflict を activate → `conflict_open_editor`(repo から materialize → ensure_hunks)。
+  render 分岐(conflict Some かつ editing Some → editor、それ以外は従来通り)。
+  `conflict_editor_apply_hunk` / `reset_all` / `nav_hunk` / `open_external`(導線のみ + toast)/ `save`。
+- **Save(T-034/T-035)**: marker 検査は **warning**(Continue が hard gate)。buffer autosave +
+  file を resolved candidate に。oplog(既存 `append_oplog` 再利用、新ログファイルは作らない)へ
+  `conflict-save:<op>` を記録(session id + hunk action slug + before/after の FNV ハッシュ)。
+
+### v0.2 送り(MVP 外)
+- 外部マージツールの実起動(W33)/ Open external tool は導線 + toast のみ。
+- in-app テキストエディタによる本格的な手編集。現状 "Edit result" は current 側を seed にした
+  Manual 編集を commit(provenance 経路と文言は満たすが、自由入力 UI は未)。
+- prev/next は MVP では Dashboard の unresolved-file ナビを再利用して隣接ファイルへ。
+  hunk 内スクロールナビ(同一ファイル内 hunk へのジャンプ)は v0.2。
+- hunk ごとの undo(現状は file-level undo を共有)/ syntax highlight / minimap / semantic 区切り。
+- hunk model 自体は in-memory(restart 後は materialization から再構築。assembled result は
+  buffer.json に永続化されるが per-hunk choice は再構築されない)。
+
+### 検証
+- `resolution.rs` unit: 19 tests green(multi-hunk split / 各 accept / both 両順 / manual / reset 再 marker /
+  全解決 marker-free / buffer 経由 apply+undo / ensure_hunks idempotent)。
+- `tests/conflicts_test.rs`: 実 repo の 2-hunk merge conflict を zdiff3 materialize → 2 hunk に分割 →
+  hunk0=current / hunk1=incoming → Result が marker-free・provenance に Current/Incoming/Context、
+  reset で marker 残存 → `plan_conflict_continue` が blocker を返すことを確認。
+- `cargo test --workspace` 全 36 バイナリ green、own-code clippy/warning 0。

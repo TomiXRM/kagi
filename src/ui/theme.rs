@@ -177,6 +177,74 @@ pub fn active_index() -> usize {
     ACTIVE.load(Ordering::Relaxed).min(THEMES.len() - 1)
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// W27-UIPOLISH: global UI zoom (rem-size scaling).
+// ──────────────────────────────────────────────────────────────────────────
+//
+// gpui's `text_*` helpers (text_sm/xs/lg/…) and rem-based lengths resolve
+// through `Window::rem_size()` (default 16px). Scaling rem_size therefore
+// scales virtually all of kagi's text — kagi uses `text_sm`/`text_xs` 260+
+// times and explicit `.text_size(px(..))` only twice. We store the zoom as a
+// global permille (×1000) integer in an `AtomicUsize` (mirroring `ACTIVE`),
+// persist it to `settings.json` under `"ui_zoom"`, and apply it every frame
+// via `window.set_rem_size(px(BASE_REM_PX * zoom()))` at the top of render.
+
+/// Base (1.0×) rem size in pixels — gpui's own default.
+pub const BASE_REM_PX: f32 = 16.0;
+
+/// Zoom clamp bounds (inclusive), as documented in the ticket.
+pub const ZOOM_MIN: f32 = 0.7;
+pub const ZOOM_MAX: f32 = 1.5;
+
+/// One zoom step (cmd-+ / cmd--).
+pub const ZOOM_STEP: f32 = 0.1;
+
+/// Active UI zoom factor stored as permille (×1000) so it fits an atomic int.
+/// Defaults to 1000 = 1.0× (no zoom).
+static UI_ZOOM_PERMILLE: AtomicUsize = AtomicUsize::new(1000);
+
+/// Clamp a raw zoom factor into `[ZOOM_MIN, ZOOM_MAX]`.
+#[inline]
+pub fn clamp_zoom(z: f32) -> f32 {
+    z.clamp(ZOOM_MIN, ZOOM_MAX)
+}
+
+/// The currently-active UI zoom factor (e.g. `1.0`, `1.2`). Read every frame.
+#[inline]
+pub fn zoom() -> f32 {
+    UI_ZOOM_PERMILLE.load(Ordering::Relaxed) as f32 / 1000.0
+}
+
+/// The rem size in pixels for the current zoom (`BASE_REM_PX * zoom()`), passed
+/// to `window.set_rem_size(..)` so all rem-based text/layout scales.
+#[inline]
+pub fn rem_size_px() -> f32 {
+    BASE_REM_PX * zoom()
+}
+
+/// Set the active zoom factor (clamped) and persist it to `settings.json`.
+/// Returns the clamped value that is now active.
+pub fn set_zoom(z: f32) -> f32 {
+    let clamped = clamp_zoom(z);
+    let permille = (clamped * 1000.0).round() as usize;
+    UI_ZOOM_PERMILLE.store(permille, Ordering::Relaxed);
+    write_setting("ui_zoom", Some(&format!("{}", permille)));
+    clamped
+}
+
+/// Initialise the active zoom at startup from `settings.json` (`"ui_zoom"`,
+/// stored as a permille integer). Missing / unparsable / out-of-range values
+/// fall back to 1.0×.
+pub fn init_zoom() {
+    if let Some(raw) = read_setting("ui_zoom") {
+        if let Ok(permille) = raw.trim().parse::<u32>() {
+            let z = clamp_zoom(permille as f32 / 1000.0);
+            UI_ZOOM_PERMILLE.store((z * 1000.0).round() as usize, Ordering::Relaxed);
+        }
+    }
+    eprintln!("[kagi] zoom: {:.2}x", zoom());
+}
+
 /// Look up a theme index by slug.
 pub fn index_of(slug: &str) -> Option<usize> {
     THEMES.iter().position(|t| t.slug == slug)
@@ -294,9 +362,10 @@ fn settings_escape(s: &str) -> String {
 
 /// All known string-valued `settings.json` keys.  Listed so [`write_setting`]
 /// can round-trip every key it doesn't recognise as the current target.
-const SETTINGS_KEYS: [&str; 8] = [
+const SETTINGS_KEYS: [&str; 9] = [
     "theme",
     "lang",
+    "ui_zoom",
     "smart_commit_llm_enabled",
     "smart_commit_model",
     "smart_commit_lang",
@@ -1022,6 +1091,20 @@ mod tests {
             Some("gemma:2b")
         );
         assert_eq!(parse_string_value(json, "missing"), None);
+    }
+
+    #[test]
+    fn zoom_clamps_to_bounds() {
+        assert_eq!(clamp_zoom(0.5), ZOOM_MIN);
+        assert_eq!(clamp_zoom(2.0), ZOOM_MAX);
+        assert_eq!(clamp_zoom(1.0), 1.0);
+        // rem_size_px tracks the default 1.0x (no settings.json mutation here).
+        assert!((BASE_REM_PX - 16.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn ui_zoom_in_settings_keys() {
+        assert!(SETTINGS_KEYS.contains(&"ui_zoom"));
     }
 
     #[test]

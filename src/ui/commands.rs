@@ -177,9 +177,9 @@ pub const COMMANDS: &[Command] = &[
     Command { id: "file.openInTerminal", label: "Open Repository in Terminal", keystroke: None, dangerous: false },
     Command { id: "file.refresh", label: "Refresh Repository", keystroke: Some("cmd-r"), dangerous: false },
 
-    Command { id: "view.zoomIn", label: "Zoom In", keystroke: None, dangerous: false },
-    Command { id: "view.zoomOut", label: "Zoom Out", keystroke: None, dangerous: false },
-    Command { id: "view.zoomReset", label: "Actual Size", keystroke: None, dangerous: false },
+    Command { id: "view.zoomIn", label: "Zoom In", keystroke: Some("cmd-="), dangerous: false },
+    Command { id: "view.zoomOut", label: "Zoom Out", keystroke: Some("cmd--"), dangerous: false },
+    Command { id: "view.zoomReset", label: "Actual Size", keystroke: Some("cmd-0"), dangerous: false },
     Command { id: "view.fullScreen", label: "Enter Full Screen", keystroke: Some("ctrl-cmd-f"), dangerous: false },
     Command { id: "view.toggleSidebar", label: "Toggle Sidebar", keystroke: None, dangerous: false },
     Command { id: "view.toggleTerminal", label: "Toggle Terminal", keystroke: Some("cmd-j"), dangerous: false },
@@ -258,6 +258,10 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         | "app.quit"
         | "file.newTab"
         | "file.openRepository"
+        // W27-UIPOLISH: zoom is global (rem-size scaling) — always available.
+        | "view.zoomIn"
+        | "view.zoomOut"
+        | "view.zoomReset"
         | "view.fullScreen"
         | "view.toggleSidebar"
         | "view.toggleTerminal"
@@ -280,9 +284,6 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
 
         // ── Placeholders (feature not implemented; greyed with a reason) ──
         "file.cloneRepository" => Disabled(Msg::CloneUnimplemented.t()),
-        "view.zoomIn" | "view.zoomOut" | "view.zoomReset" => {
-            Disabled(Msg::ZoomUnimplemented.t())
-        }
         "branch.rename" => Disabled(Msg::RenameBranchUnimplemented.t()),
         "window.new" => Disabled(Msg::MultiWindowUnsupported.t()),
         // Reset stays disabled per ADR-0024 (no reset in MVP).
@@ -585,6 +586,12 @@ pub fn register_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-shift-o", CloneRepository, None),
         KeyBinding::new("cmd-o", OpenRepository, None),
         KeyBinding::new("cmd-r", RefreshRepository, None),
+        // W27-UIPOLISH: UI zoom. `cmd-=` is the conventional "zoom in" (so the
+        // user doesn't need shift for `+`); `cmd--` zoom out; `cmd-0` reset.
+        KeyBinding::new("cmd-=", ZoomIn, None),
+        KeyBinding::new("cmd-+", ZoomIn, None),
+        KeyBinding::new("cmd--", ZoomOut, None),
+        KeyBinding::new("cmd-0", ZoomReset, None),
         KeyBinding::new("ctrl-cmd-f", EnterFullScreen, None),
         KeyBinding::new("cmd-m", MinimizeWindow, None),
     ]);
@@ -699,6 +706,21 @@ impl KagiApp {
             }
 
             // ── View ────────────────────────────────────────────────
+            // W27-UIPOLISH: zoom mutates the global rem-size factor; the next
+            // render reads `theme::rem_size_px()` and re-applies it. Persisted
+            // to settings.json by `set_zoom`.
+            "view.zoomIn" => {
+                let z = theme::set_zoom(theme::zoom() + theme::ZOOM_STEP);
+                eprintln!("[kagi] zoom: {:.2}x", z);
+            }
+            "view.zoomOut" => {
+                let z = theme::set_zoom(theme::zoom() - theme::ZOOM_STEP);
+                eprintln!("[kagi] zoom: {:.2}x", z);
+            }
+            "view.zoomReset" => {
+                let z = theme::set_zoom(1.0);
+                eprintln!("[kagi] zoom: {:.2}x", z);
+            }
             "view.fullScreen" => window.toggle_fullscreen(),
             "view.toggleSidebar" => {
                 self.sidebar_visible = !self.sidebar_visible;

@@ -7794,6 +7794,13 @@ impl KagiApp {
 
 impl Render for KagiApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // W27-UIPOLISH: apply the global UI zoom by scaling the window's rem
+        // size. gpui's `text_*` helpers and rem-based lengths resolve through
+        // `rem_size()`, so this zooms virtually all of kagi's text/layout like
+        // a web-page zoom. `set_rem_size` persists, but kagi re-asserts it every
+        // frame so it self-heals after window re-create / zoom changes.
+        window.set_rem_size(px(theme::rem_size_px()));
+
         // W2-STATUS / ADR-0017: resolve the bottom-panel default height on
         // first render, once the viewport size is known (18% of viewport).
         if self.bottom_panel_height <= BOTTOM_PANEL_H_UNSET {
@@ -11639,12 +11646,14 @@ fn render_file_menu_overlay(
                 .border_color(rgb(theme().surface))
                 .rounded_md()
                 .shadow_lg()
-                .py_1()
+                // W27-UIPOLISH: compact (Zed-style) density — tighter vertical
+                // padding to match the commit/branch context menus.
+                .py(px(2.))
                 .child(
                     div()
                         .id(("file-menu-discard", fi))
                         .px_3()
-                        .py_1()
+                        .py(px(3.))
                         .text_sm()
                         .text_color(rgb(theme().color_blocker))
                         .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())

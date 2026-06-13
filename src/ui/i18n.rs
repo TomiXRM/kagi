@@ -152,7 +152,6 @@ pub enum Msg {
 
     // ── Placeholder / unimplemented menu reasons ────────────────────
     CloneUnimplemented,
-    ZoomUnimplemented,
     RenameBranchUnimplemented,
     MultiWindowUnsupported,
     ResetUnimplemented,
@@ -267,8 +266,6 @@ impl Msg {
             // ── Placeholders ────────────────────────────────────────
             (En, CloneUnimplemented) => "clone is not implemented yet",
             (Ja, CloneUnimplemented) => "clone は未実装です",
-            (En, ZoomUnimplemented) => "zoom is not implemented yet",
-            (Ja, ZoomUnimplemented) => "zoom は未実装です",
             (En, RenameBranchUnimplemented) => "rename branch is not implemented yet",
             (Ja, RenameBranchUnimplemented) => "rename branch は未実装です",
             (En, MultiWindowUnsupported) => "multiple windows are not supported",

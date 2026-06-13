@@ -65,7 +65,7 @@ pub use ops::{
     plan_stash_pop, execute_stash_pop,
     preflight_check_stash,
     plan_cherry_pick, execute_cherry_pick,
-    plan_merge_branch, execute_merge_branch,
+    plan_merge_branch, execute_merge_branch, execute_merge_into_conflict, MergeKind,
     default_tracking_branch_name,
     plan_checkout_tracking_branch, execute_checkout_tracking_branch,
     plan_revert, execute_revert,

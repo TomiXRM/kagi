@@ -357,6 +357,12 @@ pub enum Msg {
     NoRepositoryOpenWelcome,
     /// Branch menu Sync item when no upstream is configured.
     NoUpstreamSet,
+
+    // ── Merge-into-conflict (W31-MERGE-INTO-CONFLICT) ────────────────
+    /// Confirm-button label on a merge plan that will produce conflicts.
+    MergeAndResolveConflicts,
+    /// Prominent warning shown on the merge modal when conflicts are predicted.
+    MergeConflictWarning,
 }
 
 impl Msg {
@@ -751,6 +757,16 @@ impl Msg {
             }
             (En, NoUpstreamSet) => "No upstream set",
             (Ja, NoUpstreamSet) => "upstream が設定されていません",
+
+            // ── Merge-into-conflict (W31-MERGE-INTO-CONFLICT) ────────
+            (En, MergeAndResolveConflicts) => "Merge and resolve conflicts",
+            (Ja, MergeAndResolveConflicts) => "マージして衝突を解決",
+            (En, MergeConflictWarning) => {
+                "This merge will produce conflicts. It will leave conflict markers and enter Conflict Mode, where you resolve each file (or abort to restore the pre-merge state)."
+            }
+            (Ja, MergeConflictWarning) => {
+                "このマージは衝突を発生させます。conflict marker を残して Conflict Mode に入り、各ファイルを解決します(中止すればマージ前の状態に戻せます)。"
+            }
         }
     }
 }

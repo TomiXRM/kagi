@@ -212,8 +212,8 @@ use kagi::git::{
         preflight_check_stash,
         plan_cherry_pick, execute_cherry_pick,
         default_tracking_branch_name,
-        execute_checkout_tracking_branch, execute_merge_branch,
-        plan_checkout_tracking_branch, plan_merge_branch,
+        execute_checkout_tracking_branch, execute_merge_branch, execute_merge_into_conflict,
+        plan_checkout_tracking_branch, plan_merge_branch, MergeKind,
         plan_revert, execute_revert,
         plan_delete_branch, execute_delete_branch,
         plan_discard, execute_discard,
@@ -991,6 +991,10 @@ pub struct PushPlanModal {
 pub struct MergePlanModal {
     pub target: String,
     pub plan: std::sync::Arc<OperationPlan>,
+    /// W31-MERGE-INTO-CONFLICT: what executing this merge will do. When
+    /// [`MergeKind::Conflicts`] the modal shows a "resolve conflicts" confirm
+    /// and `start_merge` drives the real merge into Conflict Mode.
+    pub kind: MergeKind,
     pub error: Option<SharedString>,
 }
 
@@ -5619,17 +5623,19 @@ impl KagiApp {
             }
         };
         match plan_merge_branch(&repo, &target) {
-            Ok(plan) => {
+            Ok((plan, kind)) => {
                 eprintln!(
-                    "[kagi] plan: merge {} blockers={} warnings={} preview_files={}",
+                    "[kagi] plan: merge {} blockers={} warnings={} preview_files={} kind={:?}",
                     target,
                     plan.blockers.len(),
                     plan.warnings.len(),
-                    plan.preview_files.len()
+                    plan.preview_files.len(),
+                    kind
                 );
                 self.merge_modal = Some(MergePlanModal {
                     target,
                     plan: std::sync::Arc::new(plan),
+                    kind,
                     error: None,
                 });
             }
@@ -5678,8 +5684,9 @@ impl KagiApp {
 
         let plan = modal.plan.clone();
         let target = modal.target.clone();
+        let kind = modal.kind.clone();
         let bg_path = repo_path.clone();
-        let task = cx.background_spawn(async move { merge_blocking(&bg_path, &plan, &target) });
+        let task = cx.background_spawn(async move { merge_blocking(&bg_path, &plan, &target, &kind) });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
@@ -5693,6 +5700,10 @@ impl KagiApp {
                             OpOutcome::Success { after },
                             &repo_path,
                         );
+                        // reload() resets the conflict-mode detection guard and
+                        // re-runs detect_conflict_mode(); a merge that left
+                        // conflict markers (MergeKind::Conflicts) therefore enters
+                        // Conflict Mode here. Non-conflict merges stay Normal.
                         app.reload();
                     }
                     Err(err_msg) => {
@@ -5706,6 +5717,7 @@ impl KagiApp {
                         app.merge_modal = Some(MergePlanModal {
                             target: modal.target.clone(),
                             plan: modal.plan.clone(),
+                            kind: modal.kind.clone(),
                             error: Some(SharedString::from(err_msg)),
                         });
                     }
@@ -11458,18 +11470,37 @@ fn merge_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
     target: &str,
+    kind: &MergeKind,
 ) -> Result<(String, StateSummary), String> {
     let repo = git2::Repository::open(repo_path)
         .map_err(|e| format!("Repo open error: {}", e.message()))?;
     preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
 
-    let new_head =
-        execute_merge_branch(&repo, target).map_err(|e| format!("Merge failed: {}", e))?;
-    eprintln!("[kagi] executed: merge {} -> {}", target, new_head.short());
+    match kind {
+        MergeKind::Conflicts(_) => {
+            // W31: perform the real conflicting merge — leaves markers + index
+            // stages + MERGE_HEAD. No commit is created; Conflict Mode takes over
+            // on the subsequent reload.
+            let files = execute_merge_into_conflict(&repo, target)
+                .map_err(|e| format!("Merge failed: {}", e))?;
+            eprintln!(
+                "[kagi] executed: merge-into-conflict {} -> {} conflict(s)",
+                target,
+                files.len()
+            );
+            let after = verify_after_snapshot(repo_path, plan);
+            Ok((format!("merge {} (conflicts: {})", target, files.len()), after))
+        }
+        MergeKind::FastForward | MergeKind::MergeCommit => {
+            let new_head =
+                execute_merge_branch(&repo, target).map_err(|e| format!("Merge failed: {}", e))?;
+            eprintln!("[kagi] executed: merge {} -> {}", target, new_head.short());
 
-    let after = verify_after_snapshot(repo_path, plan);
-    eprintln!("[kagi] verified: merge after = {}", after.head);
-    Ok((format!("merge {}", target), after))
+            let after = verify_after_snapshot(repo_path, plan);
+            eprintln!("[kagi] verified: merge after = {}", after.head);
+            Ok((format!("merge {}", target), after))
+        }
+    }
 }
 
 fn checkout_tracking_blocking(
@@ -12463,7 +12494,19 @@ fn render_merge_modal(modal: MergePlanModal, cx: &mut Context<KagiApp>) -> gpui:
         }
         cx.notify();
     });
-    render_plan_modal_card(modal.plan, modal.error, "Merge", cancel_handler, confirm_handler, None, cx)
+    // W31-MERGE-INTO-CONFLICT: a conflict-producing merge gets a localized
+    // "resolve conflicts" confirm label and a prominent localized warning banner
+    // prepended to the plan's (English, git-layer) per-file warning.
+    let (confirm_label, plan): (&'static str, std::sync::Arc<OperationPlan>) =
+        if matches!(modal.kind, MergeKind::Conflicts(_)) {
+            let mut plan = (*modal.plan).clone();
+            plan.warnings
+                .insert(0, Msg::MergeConflictWarning.t().to_string());
+            (Msg::MergeAndResolveConflicts.t(), std::sync::Arc::new(plan))
+        } else {
+            ("Merge", modal.plan)
+        };
+    render_plan_modal_card(plan, modal.error, confirm_label, cancel_handler, confirm_handler, None, cx)
         .into_any_element()
 }
 

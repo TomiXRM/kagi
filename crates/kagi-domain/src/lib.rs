@@ -11,3 +11,6 @@
 
 pub mod commit;
 pub mod graph;
+pub mod message_template;
+pub mod refs;
+pub mod trailers;

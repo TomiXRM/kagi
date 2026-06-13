@@ -17,6 +17,7 @@ pub mod graph;
 pub mod head;
 pub mod message_gen;
 pub mod message_template;
+pub mod operation;
 pub mod plan;
 pub mod refs;
 pub mod resolution;

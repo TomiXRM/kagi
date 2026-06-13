@@ -1,13 +1,14 @@
 use std::path::{Path, PathBuf};
 
 use git2::Repository;
+use kagi_domain::operation::{Operation, OperationOutcome};
 
 use super::{
     conflicts, diff, diffstat, message_gen, ops, resolution::ResolutionBuffer, resolve_head,
     snapshot, staging, status, AmendMode, AmendOutcome, BranchRenameValidation, CommitId,
-    CommitPreview,
-    DiscardOutcome, FetchOutcome, FileDiff, FileDiffStat, FileStatus, GitError, Head, MergeKind,
-    OperationPlan, PullOutcome, PushOutcome, RepoSnapshot, UndoOutcome, WorkingTreeStatus,
+    CommitPreview, DiscardOutcome, FetchOutcome, FileDiff, FileDiffStat, FileStatus, GitError,
+    Head, MergeKind, OperationPlan, PullOutcome, PushOutcome, RepoSnapshot, UndoOutcome,
+    WorkingTreeStatus,
 };
 
 pub struct Backend {
@@ -209,6 +210,190 @@ impl Backend {
 
     pub fn commit_preview(&self) -> Result<CommitPreview, GitError> {
         staging::commit_preview(&self.repo)
+    }
+
+    pub fn plan(&self, op: &Operation) -> Result<OperationPlan, GitError> {
+        match op {
+            Operation::Commit { message } => self.plan_commit(message),
+            Operation::Checkout { branch } => self.plan_checkout(branch),
+            Operation::CheckoutCommit { id } => self.plan_checkout_commit(id),
+            Operation::CreateBranch { name, at } => self.plan_create_branch(name, at),
+            Operation::CreateBranchWithCheckout {
+                name,
+                at,
+                checkout_after,
+            } => self.plan_create_branch_with_checkout(name, at, *checkout_after),
+            Operation::CreateWorktree {
+                branch,
+                path,
+                start,
+            } => self.plan_create_worktree(branch, path.as_str(), start),
+            Operation::OpenWorktreeForBranch { branch, path } => {
+                self.plan_open_worktree_for_branch(branch, path.as_str())
+            }
+            Operation::StashPush {
+                message,
+                include_untracked,
+            } => {
+                let mut backend = Backend::open(&self.path)?;
+                backend.plan_stash_push(message.as_deref(), *include_untracked)
+            }
+            Operation::StashApply { index } => {
+                let mut backend = Backend::open(&self.path)?;
+                backend.plan_stash_apply(*index)
+            }
+            Operation::StashPop { index } => {
+                let mut backend = Backend::open(&self.path)?;
+                backend.plan_stash_pop(*index)
+            }
+            Operation::CherryPick { id } => self.plan_cherry_pick(id),
+            Operation::MergeBranch { target } => {
+                self.plan_merge_branch(target).map(|(plan, _)| plan)
+            }
+            Operation::MergeIntoConflict { target } => {
+                self.plan_merge_branch(target).map(|(plan, _)| plan)
+            }
+            Operation::CheckoutTrackingBranch {
+                remote_branch,
+                local_branch,
+            } => self.plan_checkout_tracking_branch(remote_branch, local_branch),
+            Operation::Revert { id } => self.plan_revert(id),
+            Operation::Pull => self.plan_pull(),
+            Operation::Push => self.plan_push(),
+            Operation::PullBranchFf { branch_name } => self.plan_pull_branch_ff(branch_name),
+            Operation::PushBranch {
+                branch_name,
+                set_upstream,
+            } => self.plan_push_branch(branch_name, *set_upstream),
+            Operation::SetUpstream {
+                branch_name,
+                upstream,
+            } => self.plan_set_upstream(branch_name, upstream),
+            Operation::RenameBranch { old_name, new_name } => {
+                self.plan_rename_branch(old_name, new_name)
+            }
+            Operation::UndoCommit => self.plan_undo_commit(),
+            Operation::Amend { mode, message } => self.plan_amend(*mode, message.as_deref()),
+            Operation::DeleteBranch { name } => self.plan_delete_branch(name),
+            Operation::Discard { paths } => self.plan_discard(paths),
+        }
+    }
+
+    pub fn execute(&self, op: &Operation) -> Result<OperationOutcome, GitError> {
+        match op {
+            Operation::Commit { message } => {
+                self.execute_commit(message).map(OperationOutcome::Commit)
+            }
+            Operation::Checkout { branch } => self
+                .execute_checkout(branch)
+                .map(|()| OperationOutcome::Unit),
+            Operation::CheckoutCommit { id } => self
+                .execute_checkout_commit(id)
+                .map(|()| OperationOutcome::Unit),
+            Operation::CreateBranch { name, at } => self
+                .execute_create_branch(name, at)
+                .map(|()| OperationOutcome::Unit),
+            Operation::CreateBranchWithCheckout {
+                name,
+                at,
+                checkout_after,
+            } => {
+                self.execute_create_branch(name, at)?;
+                if *checkout_after {
+                    self.execute_checkout(name)?;
+                }
+                Ok(OperationOutcome::Unit)
+            }
+            Operation::CreateWorktree {
+                branch,
+                path,
+                start,
+            } => self
+                .execute_create_worktree(branch, path.as_str(), start)
+                .map(|()| OperationOutcome::Unit),
+            Operation::OpenWorktreeForBranch { branch, path } => self
+                .execute_open_worktree_for_branch(branch, path.as_str())
+                .map(|()| OperationOutcome::Unit),
+            Operation::StashPush {
+                message,
+                include_untracked,
+            } => {
+                let mut backend = Backend::open(&self.path)?;
+                backend
+                    .execute_stash_push(message.as_deref(), *include_untracked)
+                    .map(|()| OperationOutcome::Unit)
+            }
+            Operation::StashApply { index } => {
+                let mut backend = Backend::open(&self.path)?;
+                backend
+                    .execute_stash_apply(*index)
+                    .map(|()| OperationOutcome::Unit)
+            }
+            Operation::StashPop { index } => {
+                let mut backend = Backend::open(&self.path)?;
+                backend
+                    .execute_stash_pop(*index)
+                    .map(|()| OperationOutcome::Unit)
+            }
+            Operation::CherryPick { id } => {
+                self.execute_cherry_pick(id).map(OperationOutcome::Commit)
+            }
+            Operation::MergeBranch { target } => self
+                .execute_merge_branch(target)
+                .map(OperationOutcome::Commit),
+            Operation::MergeIntoConflict { target } => self
+                .execute_merge_into_conflict(target)
+                .map(OperationOutcome::MergeIntoConflict),
+            Operation::CheckoutTrackingBranch {
+                remote_branch,
+                local_branch,
+            } => self
+                .execute_checkout_tracking_branch(remote_branch, local_branch)
+                .map(|()| OperationOutcome::Unit),
+            Operation::Revert { id } => self.execute_revert(id).map(OperationOutcome::Commit),
+            Operation::Pull => self.execute_pull().map(OperationOutcome::Pull),
+            Operation::Push => self.execute_push().map(OperationOutcome::Push),
+            Operation::PullBranchFf { branch_name } => {
+                let plan = self.plan_pull_branch_ff(branch_name)?;
+                self.execute_pull_branch_ff(&plan, branch_name)
+                    .map(OperationOutcome::Pull)
+            }
+            Operation::PushBranch {
+                branch_name,
+                set_upstream,
+            } => {
+                let plan = self.plan_push_branch(branch_name, *set_upstream)?;
+                self.execute_push_branch(&plan, branch_name, *set_upstream)
+                    .map(OperationOutcome::Push)
+            }
+            Operation::SetUpstream {
+                branch_name,
+                upstream,
+            } => {
+                let plan = self.plan_set_upstream(branch_name, upstream)?;
+                self.execute_set_upstream(&plan, branch_name, upstream)
+                    .map(|()| OperationOutcome::Unit)
+            }
+            Operation::RenameBranch { old_name, new_name } => {
+                let plan = self.plan_rename_branch(old_name, new_name)?;
+                self.execute_rename_branch(&plan, old_name, new_name)
+                    .map(|()| OperationOutcome::Unit)
+            }
+            Operation::UndoCommit => self.execute_undo_commit().map(OperationOutcome::Undo),
+            Operation::Amend { mode, message } => self
+                .execute_amend(*mode, message.as_deref())
+                .map(OperationOutcome::Amend),
+            Operation::DeleteBranch { name } => {
+                let plan = self.plan_delete_branch(name)?;
+                self.execute_delete_branch(&plan, name)
+                    .map(|()| OperationOutcome::Unit)
+            }
+            Operation::Discard { paths } => {
+                let plan = self.plan_discard(paths)?;
+                self.execute_discard(&plan, paths)
+                    .map(OperationOutcome::Discard)
+            }
+        }
     }
 
     pub fn plan_commit(&self, message: &str) -> Result<OperationPlan, GitError> {

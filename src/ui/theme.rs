@@ -522,6 +522,26 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     } else {
         gpui_component::ThemeMode::Light
     };
+
+    // ── Code-editor highlight theme (CodeEditor InputState) ──────
+    // The CodeEditor's editor background, current/active-line highlight and
+    // line numbers come from `highlight_theme` (the Zed-format syntax theme),
+    // NOT from `gc.colors`. gpui-component defaults this to `default_light()`,
+    // so on kagi's dark UI the conflict editor's active line painted WHITE
+    // (user report). Pick the matching preset, then override the editor
+    // surfaces to kagi's own palette so the panes blend with the rest of the UI
+    // (active line = the subtle row-highlight `selected`, not a bright bar).
+    let mut ht = if k.dark {
+        (*gpui_component::highlighter::HighlightTheme::default_dark()).clone()
+    } else {
+        (*gpui_component::highlighter::HighlightTheme::default_light()).clone()
+    };
+    ht.style.editor_background = Some(to_hsla(k.bg_base));
+    ht.style.editor_foreground = Some(to_hsla(k.text_main));
+    ht.style.editor_active_line = Some(to_hsla(k.bg_row_alt));
+    ht.style.editor_line_number = Some(to_hsla(k.text_muted));
+    ht.style.editor_active_line_number = Some(to_hsla(k.text_sub));
+    gc.highlight_theme = std::sync::Arc::new(ht);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

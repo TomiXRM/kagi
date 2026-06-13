@@ -3,7 +3,7 @@ name: release
 # ADR-0047 / W20-RELEASE: cross-platform distribution Phase 1 (unsigned/ad-hoc).
 # Triggered by `v*` tags. Builds macOS (.app + .dmg) and Linux (tar.gz) artifacts
 # via the `xtask` helper, generates SHA256SUMS, and uploads everything to a
-# DRAFT GitHub release for manual review before publishing.
+# single DRAFT GitHub release for manual review before publishing.
 
 on:
   push:
@@ -51,6 +51,20 @@ jobs:
         run: |
           echo "uname -m: $(uname -m)"
 
+      # ── Linux: gpui system build dependencies ─────────────────────────────
+      - name: Install Linux system dependencies
+        if: matrix.kind == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev \
+            libx11-dev libxcb1-dev \
+            libfontconfig-dev libfreetype-dev \
+            libasound2-dev \
+            libvulkan-dev \
+            libzstd-dev
+
       # ── macOS: .app (ad-hoc signed) + .dmg ────────────────────────────────
       - name: Bundle macOS app + dmg
         if: matrix.kind == 'macos'
@@ -85,11 +99,34 @@ jobs:
           fi
           cat "SHA256SUMS-${{ matrix.target }}.txt"
 
-      - name: Upload artifacts to draft release
-        uses: softprops/action-gh-release@v2
+      # Hand artifacts to the single release job (avoids concurrent
+      # action-gh-release invocations racing and creating duplicate drafts).
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
         with:
-          draft: true
-          files: |
+          name: dist-${{ matrix.target }}
+          path: |
             target/dist/*.dmg
             target/dist/*.tar.gz
             target/dist/SHA256SUMS-${{ matrix.target }}.txt
+          if-no-files-found: error
+
+  release:
+    name: draft release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist/
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: dist/*

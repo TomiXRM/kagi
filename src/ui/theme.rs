@@ -294,12 +294,14 @@ fn settings_escape(s: &str) -> String {
 
 /// All known string-valued `settings.json` keys.  Listed so [`write_setting`]
 /// can round-trip every key it doesn't recognise as the current target.
-const SETTINGS_KEYS: [&str; 5] = [
+const SETTINGS_KEYS: [&str; 7] = [
     "theme",
     "smart_commit_llm_enabled",
     "smart_commit_model",
     "smart_commit_lang",
     "smart_commit_style",
+    "session_repos",
+    "session_active",
 ];
 
 /// Persist the theme slug to `settings.json` (preserving other keys).

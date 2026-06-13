@@ -140,6 +140,7 @@ impl KagiApp {
 
         // Re-arm the watcher for the new repo and repaint immediately so the
         // instant-apply / loading placeholder is visible this frame.
+        self.save_session();
         self.log_tabs();
         self.arm_watcher(cx);
         cx.notify();
@@ -233,6 +234,32 @@ impl KagiApp {
     /// Close the tab at `index`.  Discards that tab's per-repo state only
     /// (the repository itself is untouched).  Closing the last tab returns to
     /// the Welcome screen (ADR-0027 / ADR-0028).
+    /// Persist the open tabs + active index to `settings.json` so a fresh
+    /// launch (or a Dock-reopen after the last window closed) restores the
+    /// previous session.  Paths are joined with U+001F (unit separator) —
+    /// settings.json is kagi-private and read back by the same tolerant
+    /// parser, and U+001F cannot appear in a sane path.
+    pub fn save_session(&self) {
+        // KAGI_NO_RESTORE disables session persistence entirely (both save and
+        // restore) so dev/test launches never clobber the user's real session.
+        if std::env::var("KAGI_NO_RESTORE").as_deref() == Ok("1") {
+            return;
+        }
+        let joined = self
+            .tabs
+            .iter()
+            .map(|t| t.path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("\u{1f}");
+        if joined.is_empty() {
+            super::theme::write_setting("session_repos", None);
+            super::theme::write_setting("session_active", None);
+        } else {
+            super::theme::write_setting("session_repos", Some(&joined));
+            super::theme::write_setting("session_active", Some(&self.active_tab.to_string()));
+        }
+    }
+
     pub fn close_tab(&mut self, index: usize, cx: &mut Context<Self>) {
         if index >= self.tabs.len() {
             return;
@@ -248,6 +275,7 @@ impl KagiApp {
             self.active_tab = 0;
             self.repo_path = None;
             self.show_welcome();
+            self.save_session();
             self.log_tabs();
             // Bump generation so the old watcher loop terminates; no new arm.
             self.watcher_generation = self.watcher_generation.wrapping_add(1);
@@ -563,4 +591,44 @@ impl KagiApp {
             .child(button)
             .into_any()
     }
+}
+
+/// Rebuild tabs from the saved session (`session_repos` / `session_active`).
+///
+/// Pre-window path (no `Context` available) used by a fresh `.app` launch and
+/// by the Dock-reopen handler after the last window closed.  Paths that no
+/// longer exist or fail to open are skipped silently; with zero valid paths
+/// the app stays on the Welcome screen.
+pub fn restore_saved_session(app: &mut super::KagiApp) {
+    let saved = match super::theme::read_setting("session_repos") {
+        Some(s) if !s.is_empty() => s,
+        _ => return,
+    };
+    for raw in saved.split('\u{1f}') {
+        let path = PathBuf::from(raw);
+        if app.tabs.iter().any(|t| t.path == path) {
+            continue;
+        }
+        match kagi::git::open_repository(&path) {
+            Ok(info) => {
+                app.tabs.push(RepoTab {
+                    path: path.clone(),
+                    name: info.name.clone(),
+                });
+            }
+            Err(e) => eprintln!("[kagi] session: skip {} ({})", path.display(), e),
+        }
+    }
+    if app.tabs.is_empty() {
+        return;
+    }
+    let active = super::theme::read_setting("session_active")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0)
+        .min(app.tabs.len() - 1);
+    app.active_tab = active;
+    app.repo_path = Some(app.tabs[active].path.clone());
+    app.error = None;
+    app.reload();
+    eprintln!("[kagi] session: restored {} tab(s)", app.tabs.len());
 }

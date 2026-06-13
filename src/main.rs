@@ -217,6 +217,16 @@ fn main() {
         // The usage error string is still emitted to stderr for headless compat.
         eprintln!("[kagi] usage: kagi <repo-path>");
         let mut welcome = KagiApp::with_error("");
+        // Session restore: a plain GUI launch (Kagi.app from Dock/Finder has
+        // no argv) reopens the previous session's tabs instead of the Welcome
+        // screen.  Skipped for headless paths (KAGI_OPEN_REPO / KAGI_MENU_DUMP
+        // drive their own state) and with KAGI_NO_RESTORE=1.
+        let headless_env = env_open_repo.is_some()
+            || std::env::var("KAGI_MENU_DUMP").as_deref() == Ok("1")
+            || std::env::var("KAGI_NO_RESTORE").as_deref() == Ok("1");
+        if !headless_env {
+            ui::tabs::restore_saved_session(&mut welcome);
+        }
         welcome.log_tabs();
         // KAGI_OPEN_REPO: open the named repo as the first tab before launching.
         if let Some(ref env_path) = env_open_repo {

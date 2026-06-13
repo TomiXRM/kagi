@@ -13647,16 +13647,30 @@ fn render_smart_commit_modal(
 // ──────────────────────────────────────────────────────────────
 
 /// Open the GPUI window and start the event loop.
-pub fn run_app(mut app_state: KagiApp) {
-    use gpui::{Application, Bounds, WindowBounds, WindowOptions, size};
+pub fn run_app(app_state: KagiApp) {
+    use gpui::Application;
 
     // W4-TABS / ADR-0027: the watcher is armed from inside the window context
     // via `arm_watcher` (generation scheme), replacing the fixed spawn that
     // used to live here.  No pre-window watcher is created.
 
-    Application::new()
-        .with_assets(assets::KagiAssets)
-        .run(move |cx: &mut App| {
+    let application = Application::new().with_assets(assets::KagiAssets);
+
+    // macOS Dock-reopen: clicking the Dock icon after the last window was
+    // closed (✕) must bring a window back — the process stays alive, so
+    // without this handler the app looks dead while still running.  The
+    // previous session's tabs are restored from settings.json.
+    application.on_reopen(|cx: &mut App| {
+        if cx.windows().is_empty() {
+            let mut fresh = KagiApp::with_error("");
+            tabs::restore_saved_session(&mut fresh);
+            fresh.log_tabs();
+            open_main_window(fresh, cx);
+        }
+        cx.activate(true);
+    });
+
+    application.run(move |cx: &mut App| {
         // T025: initialize gpui-component (registers key bindings, themes, etc.)
         gpui_component::init(cx);
 
@@ -13688,17 +13702,30 @@ pub fn run_app(mut app_state: KagiApp) {
         commands::register_keybindings(cx);
         cx.set_menus(commands::build_menus());
 
-        // KAGI_WINDOW=WxH (dev/testing only): override the initial window size
-        // so layout behaviour at small sizes can be verified headlessly.
-        let (win_w, win_h) = std::env::var("KAGI_WINDOW")
-            .ok()
-            .and_then(|s| {
-                let (w, h) = s.split_once('x')?;
-                Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
-            })
-            .unwrap_or((1440.0, 920.0));
-        let bounds = Bounds::centered(None, size(px(win_w), px(win_h)), cx);
-        cx.open_window(
+        open_main_window(app_state, cx);
+        cx.activate(true);
+    });
+}
+
+/// Open (or re-open) the main kagi window hosting `app_state`.
+///
+/// Factored out of [`run_app`] so the Dock-reopen handler can recreate the
+/// window after the user closed it (the one-time init — gpui_component,
+/// keybindings, menus — stays in `run_app`).
+fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
+    use gpui::{Bounds, WindowBounds, WindowOptions, size};
+
+    // KAGI_WINDOW=WxH (dev/testing only): override the initial window size
+    // so layout behaviour at small sizes can be verified headlessly.
+    let (win_w, win_h) = std::env::var("KAGI_WINDOW")
+        .ok()
+        .and_then(|s| {
+            let (w, h) = s.split_once('x')?;
+            Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
+        })
+        .unwrap_or((1440.0, 920.0));
+    let bounds = Bounds::centered(None, size(px(win_w), px(win_h)), cx);
+    cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
@@ -13751,6 +13778,4 @@ pub fn run_app(mut app_state: KagiApp) {
             },
         )
         .unwrap();
-        cx.activate(true);
-    });
 }

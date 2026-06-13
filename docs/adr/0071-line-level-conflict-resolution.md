@@ -42,7 +42,7 @@ pub struct LineSelection {
 - `assemble()` は `line_select` があればそれで行を組み、無ければ `choice`(hunk 一括)で組む。
   **後方互換**: 既存の hunk 単位 accept はそのまま動く(line_select=None)。
 - chunk チェック = その hunk の `choice` を設定(line_select クリア)。line チェック = `line_select`
-  の該当フラグ tr�。file チェック = 全 hunk に同 choice。**tri-state**(全/一部/無し)を上位へ伝播。
+  の該当フラグをトグル。file チェック = 全 hunk に同 choice。**tri-state**(全/一部/無し)を上位へ伝播。
 
 ### 2. レンダリング戦略(ADR-0069 の見直し)
 

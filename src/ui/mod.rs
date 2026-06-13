@@ -11753,6 +11753,11 @@ impl KagiApp {
                     .flex_1()
                     .min_h(px(0.))
                     .w_full()
+                    // Mark this subtree as the "Terminal" key context so global
+                    // arrow/escape KeyBindings (scoped `!Terminal`) don't consume
+                    // those keys while the terminal is focused — they flow to the
+                    // terminal's own on_key_down → PTY (history, vim, etc.).
+                    .key_context("Terminal")
                     // Clicking anywhere in the terminal area refocuses the
                     // terminal (the view's own mouse handling is a no-op in
                     // gpui-terminal 0.1.0, so a stray click could leave the
@@ -14651,12 +14656,14 @@ pub fn run_app(app_state: KagiApp) {
         // context = None means the binding fires regardless of focus context.
         cx.bind_keys([KeyBinding::new("cmd-j", ToggleBottomPanel, None)]);
         // T-UI-003: Esc closes the main diff view (no-op when main_diff is None).
-        cx.bind_keys([KeyBinding::new("escape", CloseMainDiff, None)]);
+        // Scoped `!Terminal` so Escape reaches a focused terminal (vim/less/etc.).
+        cx.bind_keys([KeyBinding::new("escape", CloseMainDiff, Some("!Terminal"))]);
         // Arrow keys step through files while the main diff is open
-        // (no-ops otherwise; see main_diff_step).
+        // (no-ops otherwise; see main_diff_step). Scoped `!Terminal` so up/down
+        // reach a focused terminal (shell history) instead of being consumed here.
         cx.bind_keys([
-            KeyBinding::new("up", DiffPrevFile, None),
-            KeyBinding::new("down", DiffNextFile, None),
+            KeyBinding::new("up", DiffPrevFile, Some("!Terminal")),
+            KeyBinding::new("down", DiffNextFile, Some("!Terminal")),
         ]);
         // NOTE: a KeyBinding::new("enter", …) here never dispatched (the
         // Return key's key_char "\n" path); Enter is handled as a raw key

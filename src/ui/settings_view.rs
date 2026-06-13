@@ -45,6 +45,9 @@ pub fn render_settings_overlay(
         cx.notify();
     });
 
+    // Theme dropdown expanded state (rendered inline below the field).
+    let theme_open = app.read(cx).settings_theme_open;
+
     let panel = div()
         .w(px(640.0))
         .h(px(560.0))
@@ -98,7 +101,7 @@ pub fn render_settings_overlay(
                 .flex()
                 .flex_col()
                 .gap_6()
-                .child(appearance_section(&app))
+                .child(appearance_section(&app, theme_open))
                 .child(language_section(&app)),
         );
 
@@ -206,23 +209,95 @@ fn chip(
 // Appearance
 // ────────────────────────────────────────────────────────────
 
-fn appearance_section(app: &Entity<KagiApp>) -> impl IntoElement {
+fn appearance_section(app: &Entity<KagiApp>, theme_open: bool) -> impl IntoElement {
     let cur_slug = theme().slug;
 
-    // ── Theme chips (one per built-in theme) ──
-    let mut theme_chips = div().flex().flex_row().flex_wrap().gap_2().justify_end().max_w(px(360.0));
-    for t in theme::THEMES.iter() {
-        let slug = t.slug;
-        let app2 = app.clone();
-        let handler = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
-            app2.update(cx, |app, cx| app.set_theme(slug, cx));
-        };
-        theme_chips = theme_chips.child(chip(
-            t.slug,
-            SharedString::from(t.name),
-            t.slug == cur_slug,
-            handler,
-        ));
+    // ── Theme dropdown (Kagi-native pull-down) ──
+    // Clickable "field" (current theme name + ▾ chevron) with an inline option
+    // list rendered directly below when `theme_open`. All colours from theme()
+    // to guarantee contrast under the Kagi theme bridge (no gpui Select widget).
+    let cur_name = theme::THEMES
+        .iter()
+        .find(|t| t.slug == cur_slug)
+        .map(|t| t.name)
+        .unwrap_or(cur_slug);
+
+    let app_toggle = app.clone();
+    let toggle_open = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
+        app_toggle.update(cx, |a, cx| {
+            a.settings_theme_open = !a.settings_theme_open;
+            cx.notify();
+        });
+    };
+
+    let field = div()
+        .id("theme-field")
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .w(px(220.0))
+        .px_3()
+        .py_1()
+        .rounded_md()
+        .border_1()
+        .border_color(rgb(theme().selected))
+        .bg(rgb(theme().bg_base))
+        .text_sm()
+        .text_color(rgb(theme().text_main))
+        .hover(|s| s.border_color(rgb(theme().color_branch)).cursor_pointer())
+        .on_click(toggle_open)
+        .child(SharedString::from(cur_name))
+        .child(
+            div()
+                .text_color(rgb(theme().text_sub))
+                .child(SharedString::from("\u{25be}")),
+        );
+
+    let mut theme_dropdown = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .items_end()
+        .child(field);
+
+    if theme_open {
+        let mut options = div()
+            .flex()
+            .flex_col()
+            .w(px(220.0))
+            .rounded_md()
+            .border_1()
+            .border_color(rgb(theme().selected))
+            .bg(rgb(theme().panel))
+            .overflow_hidden();
+        for t in theme::THEMES.iter() {
+            let slug = t.slug;
+            let is_cur = t.slug == cur_slug;
+            let app2 = app.clone();
+            let handler = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
+                app2.update(cx, |app, cx| {
+                    app.set_theme(slug, cx);
+                    app.settings_theme_open = false;
+                    cx.notify();
+                });
+            };
+            let mut row = div()
+                .id(t.slug)
+                .px_3()
+                .py_1()
+                .text_sm()
+                .text_color(rgb(theme().text_main))
+                .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+                .on_click(handler)
+                .child(SharedString::from(t.name));
+            if is_cur {
+                row = row.bg(rgb(theme().selected));
+            }
+            options = options.child(row);
+        }
+        theme_dropdown = theme_dropdown.child(options);
     }
 
     // ── UI Zoom stepper:  [−]  110%  [+] ──
@@ -281,7 +356,7 @@ fn appearance_section(app: &Entity<KagiApp>) -> impl IntoElement {
         .child(setting_row(
             SharedString::from(Msg::SettingsTheme.t()),
             SharedString::from(Msg::SettingsThemeDesc.t()),
-            theme_chips.into_any_element(),
+            theme_dropdown.into_any_element(),
         ))
         .child(setting_row(
             SharedString::from(Msg::SettingsZoom.t()),

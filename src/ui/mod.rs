@@ -189,10 +189,14 @@ use kagi::git::{
         plan_stash_push, execute_stash_push,
         plan_stash_apply, execute_stash_apply,
         plan_pull, execute_pull, PullOutcome,
+        plan_pull_branch_ff, execute_pull_branch_ff,
         plan_undo_commit, execute_undo_commit,
         plan_amend, execute_amend, AmendMode,
         plan_stash_pop, execute_stash_pop,
         plan_push, execute_push,
+        plan_push_branch, execute_push_branch,
+        plan_set_upstream, execute_set_upstream,
+        plan_rename_branch, execute_rename_branch, validate_branch_rename, BranchRenameValidation,
         preflight_check_stash,
         plan_cherry_pick, execute_cherry_pick,
         plan_revert, execute_revert,
@@ -1114,6 +1118,40 @@ pub struct DeleteBranchModal {
     pub error: Option<SharedString>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BranchPlanKind {
+    PullFfOnly,
+    Push,
+    PushSetUpstream,
+}
+
+#[derive(Clone)]
+pub struct BranchPlanModal {
+    pub kind: BranchPlanKind,
+    pub branch_name: String,
+    pub plan: std::sync::Arc<OperationPlan>,
+    pub error: Option<SharedString>,
+}
+
+#[derive(Clone)]
+pub struct SetUpstreamModal {
+    pub branch_name: String,
+    pub input: String,
+    pub input_state: Option<Entity<InputState>>,
+    pub plan: Option<std::sync::Arc<OperationPlan>>,
+    pub error: Option<SharedString>,
+}
+
+#[derive(Clone)]
+pub struct RenameBranchModal {
+    pub old_name: String,
+    pub input: String,
+    pub input_state: Option<Entity<InputState>>,
+    pub validation: BranchRenameValidation,
+    pub plan: Option<std::sync::Arc<OperationPlan>>,
+    pub error: Option<SharedString>,
+}
+
 /// State for an in-progress discard confirmation (W17-DISCARD, ADR-0046).
 ///
 /// Danger modal: shows the target file list, any skipped (untracked/conflicted)
@@ -1187,6 +1225,9 @@ pub struct KagiApp {
     pub pop_modal: Option<PopPlanModal>,
     /// When `Some`, the push plan confirmation modal is visible (T-HT-004).
     pub push_modal: Option<PushPlanModal>,
+    pub branch_plan_modal: Option<BranchPlanModal>,
+    pub set_upstream_modal: Option<SetUpstreamModal>,
+    pub rename_branch_modal: Option<RenameBranchModal>,
     /// When `Some`, the create-branch modal is visible.
     pub create_branch_modal: Option<CreateBranchModal>,
     /// When `Some`, the create-worktree modal is visible.
@@ -1613,6 +1654,9 @@ impl KagiApp {
             amend_modal: None,
             pop_modal: None,
             push_modal: None,
+            branch_plan_modal: None,
+            set_upstream_modal: None,
+            rename_branch_modal: None,
             create_branch_modal: None,
             create_worktree_modal: None,
             modal_focus: None,
@@ -1715,6 +1759,9 @@ impl KagiApp {
             amend_modal: None,
             pop_modal: None,
             push_modal: None,
+            branch_plan_modal: None,
+            set_upstream_modal: None,
+            rename_branch_modal: None,
             create_branch_modal: None,
             create_worktree_modal: None,
             modal_focus: None,
@@ -1843,6 +1890,9 @@ impl KagiApp {
         self.undo_modal = None;
         self.amend_modal = None;
         self.pop_modal = None;
+        self.branch_plan_modal = None;
+        self.set_upstream_modal = None;
+        self.rename_branch_modal = None;
         self.discard_modal = None;
         self.create_branch_modal = None;
         self.create_worktree_modal = None;
@@ -3166,6 +3216,12 @@ impl KagiApp {
         if self.stash_push_modal.is_some() {
             self.replan_stash_push();
         }
+        if self.set_upstream_modal.is_some() {
+            self.replan_set_upstream();
+        }
+        if self.rename_branch_modal.is_some() {
+            self.replan_rename_branch();
+        }
     }
 
     /// Lazily create + sync the real text inputs of the create-branch /
@@ -3300,6 +3356,52 @@ impl KagiApp {
         if let Some(m) = self.stash_push_modal.as_mut() {
             if m.input_state.is_none() {
                 let st = cx.new(|cx| InputState::new(window, cx).placeholder("stash message (optional)"));
+                st.update(cx, |s, cx| s.focus(window, cx));
+                m.input_state = Some(st);
+            }
+            let v = m
+                .input_state
+                .as_ref()
+                .map(|st| st.read(cx).value().to_string())
+                .unwrap_or_default();
+            if v != m.input {
+                m.input = v;
+                m.error = None;
+                self.schedule_modal_replan(cx);
+            }
+        }
+
+        if let Some(m) = self.set_upstream_modal.as_mut() {
+            if m.input_state.is_none() {
+                let initial = m.input.clone();
+                let st = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .placeholder("origin/branch")
+                        .default_value(initial)
+                });
+                st.update(cx, |s, cx| s.focus(window, cx));
+                m.input_state = Some(st);
+            }
+            let v = m
+                .input_state
+                .as_ref()
+                .map(|st| st.read(cx).value().to_string())
+                .unwrap_or_default();
+            if v != m.input {
+                m.input = v;
+                m.error = None;
+                self.schedule_modal_replan(cx);
+            }
+        }
+
+        if let Some(m) = self.rename_branch_modal.as_mut() {
+            if m.input_state.is_none() {
+                let initial = m.input.clone();
+                let st = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .placeholder("branch-name")
+                        .default_value(initial)
+                });
                 st.update(cx, |s, cx| s.focus(window, cx));
                 m.input_state = Some(st);
             }
@@ -4246,6 +4348,333 @@ impl KagiApp {
                 );
             }
         }
+    }
+
+    pub fn open_branch_plan_modal(&mut self, branch_name: String, kind: BranchPlanKind) {
+        if self.busy_op.is_some() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    format!("branch operation: repo open error: {}", e.message()),
+                ));
+                return;
+            }
+        };
+        let plan_result = match kind {
+            BranchPlanKind::PullFfOnly => plan_pull_branch_ff(&repo, &branch_name),
+            BranchPlanKind::Push => plan_push_branch(&repo, &branch_name, false),
+            BranchPlanKind::PushSetUpstream => plan_push_branch(&repo, &branch_name, true),
+        };
+        match plan_result {
+            Ok(plan) => {
+                self.branch_plan_modal = Some(BranchPlanModal {
+                    kind,
+                    branch_name,
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    format!("branch operation plan error: {}", e),
+                ));
+            }
+        }
+    }
+
+    pub fn cancel_branch_plan_modal(&mut self) {
+        self.branch_plan_modal = None;
+    }
+
+    pub fn start_branch_plan(&mut self, cx: &mut Context<Self>) {
+        if self.busy_op.is_some() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
+        let modal = match self.branch_plan_modal.clone() { Some(m) => m, None => return };
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let op_name = match modal.kind {
+            BranchPlanKind::PullFfOnly => "branch-pull-ff",
+            BranchPlanKind::Push => "branch-push",
+            BranchPlanKind::PushSetUpstream => "branch-push-set-upstream",
+        };
+        if !modal.plan.blockers.is_empty() {
+            self.record_op(
+                op_name,
+                modal.plan.current.clone(),
+                OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                &repo_path,
+            );
+            self.branch_plan_modal = None;
+            cx.notify();
+            return;
+        }
+
+        self.busy_op = Some(op_name);
+        self.branch_plan_modal = None;
+        self.status_footer = FooterStatus::Busy(SharedString::from(format!("{} in progress...", op_name)));
+        let bg_path = repo_path.clone();
+        let bg_modal = modal.clone();
+        let task = cx.background_spawn(async move {
+            branch_plan_blocking(&bg_path, &bg_modal)
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok(after) => {
+                        app.record_op(
+                            op_name,
+                            modal.plan.current.clone(),
+                            OpOutcome::Success { after: after.clone() },
+                            &repo_path,
+                        );
+                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                            "{}: {}",
+                            op_name, after.dirty
+                        )));
+                        app.reload();
+                    }
+                    Err(err_msg) => {
+                        app.record_op(
+                            op_name,
+                            modal.plan.current.clone(),
+                            OpOutcome::Failed { error: err_msg.clone() },
+                            &repo_path,
+                        );
+                        app.branch_plan_modal = Some(BranchPlanModal {
+                            kind: modal.kind.clone(),
+                            branch_name: modal.branch_name.clone(),
+                            plan: modal.plan.clone(),
+                            error: Some(SharedString::from(err_msg)),
+                        });
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub fn open_set_upstream_modal(&mut self, branch_name: String) {
+        let input = self
+            .branch_upstream_info
+            .get(&branch_name)
+            .map(|u| u.remote_branch.clone())
+            .unwrap_or_else(|| format!("origin/{}", branch_name));
+        self.set_upstream_modal = Some(SetUpstreamModal {
+            branch_name,
+            input,
+            input_state: None,
+            plan: None,
+            error: None,
+        });
+        self.replan_set_upstream();
+    }
+
+    pub fn cancel_set_upstream_modal(&mut self) {
+        self.set_upstream_modal = None;
+    }
+
+    fn replan_set_upstream(&mut self) {
+        let (branch_name, input) = match self.set_upstream_modal.as_ref() {
+            Some(m) => (m.branch_name.clone(), m.input.clone()),
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let repo = match git2::Repository::open(&repo_path) { Ok(r) => r, Err(_) => return };
+        match plan_set_upstream(&repo, &branch_name, &input) {
+            Ok(plan) => {
+                if let Some(m) = self.set_upstream_modal.as_mut() {
+                    m.plan = Some(std::sync::Arc::new(plan));
+                }
+            }
+            Err(e) => {
+                if let Some(m) = self.set_upstream_modal.as_mut() {
+                    m.error = Some(SharedString::from(format!("Set upstream plan error: {}", e)));
+                }
+            }
+        }
+    }
+
+    pub fn start_set_upstream(&mut self, cx: &mut Context<Self>) {
+        self.run_modal_replans();
+        if self.busy_op.is_some() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
+        let modal = match self.set_upstream_modal.clone() { Some(m) => m, None => return };
+        let plan = match modal.plan.clone() { Some(p) => p, None => return };
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        if !plan.blockers.is_empty() {
+            self.record_op(
+                "set-upstream",
+                plan.current.clone(),
+                OpOutcome::Refused { blockers: plan.blockers.clone() },
+                &repo_path,
+            );
+            return;
+        }
+
+        self.busy_op = Some("set-upstream");
+        self.set_upstream_modal = None;
+        let branch_name = modal.branch_name.clone();
+        let upstream = modal.input.clone();
+        let bg_path = repo_path.clone();
+        let bg_plan = plan.clone();
+        let task = cx.background_spawn(async move {
+            set_upstream_blocking(&bg_path, &bg_plan, &branch_name, &upstream)
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok(after) => {
+                        app.record_op(
+                            "set-upstream",
+                            plan.current.clone(),
+                            OpOutcome::Success { after },
+                            &repo_path,
+                        );
+                        app.reload();
+                    }
+                    Err(err_msg) => {
+                        app.record_op(
+                            "set-upstream",
+                            plan.current.clone(),
+                            OpOutcome::Failed { error: err_msg.clone() },
+                            &repo_path,
+                        );
+                        app.set_upstream_modal = Some(SetUpstreamModal {
+                            branch_name: modal.branch_name.clone(),
+                            input: modal.input.clone(),
+                            input_state: None,
+                            plan: Some(plan.clone()),
+                            error: Some(SharedString::from(err_msg)),
+                        });
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub fn open_rename_branch_modal(&mut self, branch_name: String) {
+        let existing: Vec<String> = self.branches.iter().map(|(name, _)| name.clone()).collect();
+        let validation = validate_branch_rename(&branch_name, &branch_name, &existing);
+        self.rename_branch_modal = Some(RenameBranchModal {
+            old_name: branch_name.clone(),
+            input: branch_name,
+            input_state: None,
+            validation,
+            plan: None,
+            error: None,
+        });
+        self.replan_rename_branch();
+    }
+
+    pub fn cancel_rename_branch_modal(&mut self) {
+        self.rename_branch_modal = None;
+    }
+
+    fn replan_rename_branch(&mut self) {
+        let (old_name, input) = match self.rename_branch_modal.as_ref() {
+            Some(m) => (m.old_name.clone(), m.input.clone()),
+            None => return,
+        };
+        let existing: Vec<String> = self.branches.iter().map(|(name, _)| name.clone()).collect();
+        let validation = validate_branch_rename(&old_name, &input, &existing);
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let repo = match git2::Repository::open(&repo_path) { Ok(r) => r, Err(_) => return };
+        match plan_rename_branch(&repo, &old_name, &input) {
+            Ok(plan) => {
+                if let Some(m) = self.rename_branch_modal.as_mut() {
+                    m.validation = validation;
+                    m.plan = Some(std::sync::Arc::new(plan));
+                }
+            }
+            Err(e) => {
+                if let Some(m) = self.rename_branch_modal.as_mut() {
+                    m.validation = validation;
+                    m.error = Some(SharedString::from(format!("Rename plan error: {}", e)));
+                }
+            }
+        }
+    }
+
+    pub fn start_rename_branch(&mut self, cx: &mut Context<Self>) {
+        self.run_modal_replans();
+        if self.busy_op.is_some() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
+        let modal = match self.rename_branch_modal.clone() { Some(m) => m, None => return };
+        let plan = match modal.plan.clone() { Some(p) => p, None => return };
+        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        if !plan.blockers.is_empty() {
+            self.record_op(
+                "rename-branch",
+                plan.current.clone(),
+                OpOutcome::Refused { blockers: plan.blockers.clone() },
+                &repo_path,
+            );
+            return;
+        }
+        self.busy_op = Some("rename-branch");
+        self.rename_branch_modal = None;
+        let bg_path = repo_path.clone();
+        let bg_plan = plan.clone();
+        let old_name = modal.old_name.clone();
+        let new_name = modal.input.clone();
+        let task = cx.background_spawn(async move {
+            rename_branch_blocking(&bg_path, &bg_plan, &old_name, &new_name)
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok(after) => {
+                        app.record_op(
+                            "rename-branch",
+                            plan.current.clone(),
+                            OpOutcome::Success { after },
+                            &repo_path,
+                        );
+                        app.reload();
+                    }
+                    Err(err_msg) => {
+                        app.record_op(
+                            "rename-branch",
+                            plan.current.clone(),
+                            OpOutcome::Failed { error: err_msg.clone() },
+                            &repo_path,
+                        );
+                        app.rename_branch_modal = Some(RenameBranchModal {
+                            old_name: modal.old_name.clone(),
+                            input: modal.input.clone(),
+                            input_state: None,
+                            validation: modal.validation.clone(),
+                            plan: Some(plan.clone()),
+                            error: Some(SharedString::from(err_msg)),
+                        });
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     // ── T-HT-009: Undo Commit / T-HT-007: Stash Pop ──────────
@@ -6726,19 +7155,56 @@ impl KagiApp {
                     self.open_delete_branch_modal(state.name);
                 }
             }
+            BranchAction::Pull => {
+                if matches!(state.kind, BranchKind::Local) {
+                    let is_current = self
+                        .branches
+                        .iter()
+                        .any(|(name, current)| name == &state.name && *current);
+                    if is_current {
+                        self.open_pull_modal();
+                    } else {
+                        self.open_branch_plan_modal(state.name, BranchPlanKind::PullFfOnly);
+                    }
+                }
+            }
+            BranchAction::Push => {
+                if matches!(state.kind, BranchKind::Local) {
+                    let is_current = self
+                        .branches
+                        .iter()
+                        .any(|(name, current)| name == &state.name && *current);
+                    if is_current {
+                        self.open_push_modal();
+                    } else {
+                        self.open_branch_plan_modal(state.name, BranchPlanKind::Push);
+                    }
+                }
+            }
+            BranchAction::PushAndCreateUpstream => {
+                if matches!(state.kind, BranchKind::Local) {
+                    self.open_branch_plan_modal(state.name, BranchPlanKind::PushSetUpstream);
+                }
+            }
+            BranchAction::SetUpstream => {
+                if matches!(state.kind, BranchKind::Local) {
+                    self.open_set_upstream_modal(state.name);
+                }
+            }
+            BranchAction::RenameBranch => {
+                if matches!(state.kind, BranchKind::Local) {
+                    self.open_rename_branch_modal(state.name);
+                }
+            }
             BranchAction::OpenWorktreeFromBranch
-            | BranchAction::Pull
+            | BranchAction::NoUpstreamInfo
             | BranchAction::PullFfOnly
-            | BranchAction::Push
-            | BranchAction::PushAndCreateUpstream
-            | BranchAction::SetUpstream
             | BranchAction::FetchRemoteBranch
             | BranchAction::CreatePr
             | BranchAction::MergeIntoCurrent
             | BranchAction::RebaseCurrentOnto
             | BranchAction::CreateWorktreeFromHere
             | BranchAction::CreateTagHere
-            | BranchAction::RenameBranch
             | BranchAction::ResetCurrentToHead
             | BranchAction::ForceWithLeasePush
             | BranchAction::DeleteRemoteBranch => {
@@ -6873,6 +7339,9 @@ impl KagiApp {
         if self.plan_modal.is_some()
             || self.pull_modal.is_some()
             || self.push_modal.is_some()
+            || self.branch_plan_modal.is_some()
+            || self.set_upstream_modal.is_some()
+            || self.rename_branch_modal.is_some()
             || self.undo_modal.is_some()
             || self.amend_modal.is_some()
             || self.pop_modal.is_some()
@@ -7090,6 +7559,9 @@ impl Render for KagiApp {
         let amend_modal = self.amend_modal.clone();
         let pop_modal = self.pop_modal.clone();
         let push_modal = self.push_modal.clone();
+        let branch_plan_modal = self.branch_plan_modal.clone();
+        let set_upstream_modal = self.set_upstream_modal.clone();
+        let rename_branch_modal = self.rename_branch_modal.clone();
         let create_branch_modal = self.create_branch_modal.clone();
         let create_worktree_modal = self.create_worktree_modal.clone();
         let delete_branch_modal = self.delete_branch_modal.clone();
@@ -7386,6 +7858,15 @@ impl Render for KagiApp {
             // ── Push plan modal overlay (T-HT-004) ──────────
             .when_some(push_modal, |el, modal| {
                 el.child(render_push_modal(modal, cx))
+            })
+            .when_some(branch_plan_modal, |el, modal| {
+                el.child(render_branch_plan_modal(modal, cx))
+            })
+            .when_some(set_upstream_modal, |el, modal| {
+                el.child(render_set_upstream_modal(modal, cx))
+            })
+            .when_some(rename_branch_modal, |el, modal| {
+                el.child(render_rename_branch_modal(modal, cx))
             })
             // ── Create-branch modal overlay (above everything) ──
             .when_some(create_branch_modal, |el, modal| {
@@ -9889,6 +10370,83 @@ fn delete_branch_blocking(
     })
 }
 
+fn branch_plan_blocking(
+    repo_path: &std::path::Path,
+    modal: &BranchPlanModal,
+) -> Result<StateSummary, String> {
+    let repo = git2::Repository::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    match modal.kind {
+        BranchPlanKind::PullFfOnly => {
+            let outcome = execute_pull_branch_ff(&repo, repo_path, &modal.plan, &modal.branch_name)
+                .map_err(|e| format!("Pull failed: {}", e))?;
+            let dirty = match outcome {
+                PullOutcome::UpToDate => format!("branch '{}' already up to date", modal.branch_name),
+                PullOutcome::FastForward { to } => {
+                    format!("branch '{}' fast-forwarded to {}", modal.branch_name, to.short())
+                }
+                PullOutcome::Merged { .. } => "unexpected merge outcome".to_string(),
+            };
+            Ok(StateSummary {
+                head: modal.plan.current.head.clone(),
+                dirty,
+            })
+        }
+        BranchPlanKind::Push | BranchPlanKind::PushSetUpstream => {
+            let set_upstream = modal.kind == BranchPlanKind::PushSetUpstream;
+            let outcome = execute_push_branch(
+                &repo,
+                repo_path,
+                &modal.plan,
+                &modal.branch_name,
+                set_upstream,
+            )
+            .map_err(|e| format!("Push failed: {}", e))?;
+            Ok(StateSummary {
+                head: modal.plan.current.head.clone(),
+                dirty: format!(
+                    "branch '{}' pushed {} commit(s){}",
+                    modal.branch_name,
+                    outcome.pushed,
+                    if outcome.set_upstream { " and upstream set" } else { "" }
+                ),
+            })
+        }
+    }
+}
+
+fn set_upstream_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    branch_name: &str,
+    upstream: &str,
+) -> Result<StateSummary, String> {
+    let repo = git2::Repository::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    execute_set_upstream(&repo, plan, branch_name, upstream)
+        .map_err(|e| format!("Set upstream failed: {}", e))?;
+    Ok(StateSummary {
+        head: plan.current.head.clone(),
+        dirty: format!("branch '{}' upstream set to '{}'", branch_name, upstream),
+    })
+}
+
+fn rename_branch_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    old_name: &str,
+    new_name: &str,
+) -> Result<StateSummary, String> {
+    let repo = git2::Repository::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    execute_rename_branch(&repo, plan, old_name, new_name)
+        .map_err(|e| format!("Rename failed: {}", e))?;
+    Ok(StateSummary {
+        head: plan.predicted.head.clone(),
+        dirty: format!("branch '{}' renamed to '{}'", old_name, new_name),
+    })
+}
+
 /// Blocking part of create-worktree (checks out a full tree into a new linked
 /// worktree on disk — scales with tree size).
 fn create_worktree_blocking(
@@ -10343,6 +10901,215 @@ fn render_push_modal(modal: PushPlanModal, cx: &mut Context<KagiApp>) -> gpui::A
     });
     render_plan_modal_card(modal.plan, modal.error, "Push", cancel_handler, confirm_handler, None, cx)
         .into_any_element()
+}
+
+fn render_branch_plan_modal(modal: BranchPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let label = match modal.kind {
+        BranchPlanKind::PullFfOnly => "Pull",
+        BranchPlanKind::Push | BranchPlanKind::PushSetUpstream => "Push",
+    };
+    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.cancel_branch_plan_modal();
+        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.start_branch_plan(cx);
+        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
+        cx.notify();
+    });
+    render_plan_modal_card(modal.plan, modal.error, label, cancel_handler, confirm_handler, None, cx)
+        .into_any_element()
+}
+
+fn render_input_plan_modal(
+    title: String,
+    label: &'static str,
+    input_state: Option<Entity<InputState>>,
+    plan: Option<std::sync::Arc<OperationPlan>>,
+    validation: Option<BranchRenameValidation>,
+    error: Option<SharedString>,
+    confirm_label: &'static str,
+    cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::AnyElement {
+    let has_blockers = plan.as_ref().map(|p| !p.blockers.is_empty()).unwrap_or(true);
+    let mut card = div()
+        .w(px(480.))
+        .bg(rgb(theme().modal))
+        .rounded_lg()
+        .p_4()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(div().text_color(rgb(theme().text_main)).text_xl().child(SharedString::from(title)))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from(label)))
+                .children(input_state.as_ref().map(|st| Input::new(st).small())),
+        );
+
+    if let Some(BranchRenameValidation::Invalid(reason)) = validation {
+        card = card.child(
+            div().text_sm().text_color(rgb(theme().color_blocker)).overflow_hidden()
+                .child(SharedString::from(reason)),
+        );
+    }
+
+    if let Some(plan) = plan {
+        card = card.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from("Current")))
+                .child(div().text_sm().text_color(rgb(theme().text_main)).child(SharedString::from(plan.current.head.clone())))
+                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from("\u{2192} Predicted")))
+                .child(div().text_sm().text_color(rgb(theme().text_main)).child(SharedString::from(plan.predicted.head.clone()))),
+        );
+
+        if !plan.warnings.is_empty() {
+            let mut warn_col = div().flex().flex_col().gap_1();
+            for warning in &plan.warnings {
+                warn_col = warn_col.child(
+                    div().text_sm().text_color(rgb(theme().color_warning)).overflow_hidden()
+                        .child(SharedString::from(format!("\u{26a0} {}", warning))),
+                );
+            }
+            card = card.child(warn_col);
+        }
+        if !plan.blockers.is_empty() {
+            let mut block_col = div().flex().flex_col().gap_1();
+            for blocker in &plan.blockers {
+                block_col = block_col.child(
+                    div().text_sm().text_color(rgb(theme().color_blocker)).overflow_hidden()
+                        .child(SharedString::from(format!("\u{2717} {}", blocker))),
+                );
+            }
+            card = card.child(block_col);
+        }
+    }
+
+    if let Some(err) = error {
+        card = card.child(
+            div().text_sm().text_color(rgb(theme().color_blocker)).overflow_hidden().child(err),
+        );
+    }
+
+    let mut buttons = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(
+            div()
+                .id("branch-input-cancel")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(theme().surface))
+                .text_sm()
+                .text_color(rgb(theme().text_main))
+                .on_click(cancel_handler)
+                .hover(|style| style.bg(rgb(theme().selected)))
+                .child(SharedString::from("Cancel")),
+        );
+    if !has_blockers {
+        buttons = buttons.child(
+            div()
+                .id("branch-input-confirm")
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .bg(rgb(theme().color_branch))
+                .text_sm()
+                .text_color(rgb(theme().bg_base))
+                .on_click(confirm_handler)
+                .hover(|style| style.opacity(0.85))
+                .child(SharedString::from(confirm_label)),
+        );
+    }
+    card = card.child(buttons);
+
+    div()
+        .size_full()
+        .absolute()
+        .top_0()
+        .left_0()
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .occlude()
+                .bg(rgb(theme().modal_overlay))
+                .opacity(0.65),
+        )
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .items_center()
+                .child(card),
+        )
+        .into_any_element()
+}
+
+fn render_set_upstream_modal(modal: SetUpstreamModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.cancel_set_upstream_modal();
+        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.start_set_upstream(cx);
+        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
+        cx.notify();
+    });
+    render_input_plan_modal(
+        format!("Set upstream for {}", modal.branch_name),
+        "Upstream",
+        modal.input_state,
+        modal.plan,
+        None,
+        modal.error,
+        "Set upstream",
+        cancel_handler,
+        confirm_handler,
+    )
+}
+
+fn render_rename_branch_modal(modal: RenameBranchModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.cancel_rename_branch_modal();
+        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.start_rename_branch(cx);
+        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
+        cx.notify();
+    });
+    render_input_plan_modal(
+        format!("Rename {}", modal.old_name),
+        "New branch name",
+        modal.input_state,
+        modal.plan,
+        Some(modal.validation),
+        modal.error,
+        "Rename",
+        cancel_handler,
+        confirm_handler,
+    )
 }
 
 /// Delete-branch confirmation overlay (W2-DELETE).

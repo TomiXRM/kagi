@@ -1,6 +1,6 @@
 # T-BCM-072: dirty/conflict/protected branch 時の availability test を作る
 
-- Status: todo
+- Status: done
 - Group: Tests
 - 仕様の正: docs/requirements-branch-context-menu.md + ADR-0049〜0055
 
@@ -18,3 +18,8 @@ R6/ADR-0052 の disabled・warning 系
 - 操作 handler の二重実装禁止(ADR-0049)。fixture / tempdir のみで検証
 - 文字列は chars() ベース・バイトスライス禁止(split_at 含む)。色は theme() 経由
 - UI 説明文は i18n の Msg 経由(ADR-0048。ドメインワード・branch 名は英語のまま)
+
+## 実装メモ
+
+- Extended branch menu tests for busy-state disabling across Sync and Manage actions.
+- Existing dirty/conflict labels remain in the pure availability model; ref-only set-upstream/copy paths stay safe.

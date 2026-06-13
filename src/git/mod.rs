@@ -9,6 +9,7 @@
 
 mod checklist;
 pub mod cli;
+pub mod conflicts;
 mod diff;
 mod diffstat;
 pub mod drafts;
@@ -18,6 +19,7 @@ pub mod message_template;
 pub mod oplog;
 pub mod ops;
 mod refs;
+pub mod resolution;
 mod snapshot;
 mod staging;
 mod status;
@@ -71,7 +73,19 @@ pub use ops::{
     fetch_remote, FetchOutcome,
 };
 #[allow(unused_imports)]
-pub use checklist::checklist;
+pub use checklist::{checklist, text_has_conflict_marker};
+#[allow(unused_imports)]
+pub use conflicts::{
+    AbortOutcome, ConflictFile, ConflictKind, ConflictOp, ConflictSession, ConflictStatus,
+    ContinueOutcome, SideLabel, SideLabels,
+    detect_conflict_session, side_labels,
+    plan_conflict_continue, execute_conflict_continue,
+    plan_conflict_abort, execute_conflict_abort,
+};
+#[allow(unused_imports)]
+pub use resolution::{
+    LineOrigin, ResolutionBuffer, ResolutionChoice, ResolvedLine,
+};
 #[allow(unused_imports)]
 pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
 #[allow(unused_imports)]

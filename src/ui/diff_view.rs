@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use gpui::SharedString;
+use gpui::{div, prelude::*, rgb, SharedString};
 
 use kagi::git::{CommitId, DiffLineKind, FileDiff, FileStatus};
 
@@ -284,4 +284,127 @@ pub(crate) fn highlight_diff_rows(rows: &mut Vec<DiffRow>, file_path: &std::path
     }
 
     lang
+}
+
+/// Render a range of diff rows for the `"main-diff-list"` uniform_list.
+/// Includes line numbers: old/new each 5 chars wide, theme::theme().text_muted colour.
+pub(crate) fn render_main_diff_rows(rows: &[DiffRow], range: std::ops::Range<usize>) -> Vec<impl IntoElement> {
+    range
+        .filter_map(|i| rows.get(i).map(|row| (i, row)))
+        .map(|(i, row)| match row {
+            DiffRow::HunkHeader(header) => div()
+                .id(("main-diff-hunk", i))
+                .w_full()
+                .px_2()
+                .py_px()
+                .bg(rgb(theme::theme().surface))
+                .text_sm()
+                .text_color(rgb(theme::theme().diff_hunk))
+                .overflow_hidden()
+                .child(header.clone())
+                .into_any(),
+            DiffRow::Line {
+                kind,
+                text,
+                old_lineno,
+                new_lineno,
+                highlights,
+            } => {
+                let bg = match kind {
+                    DiffLineKind::Added => theme::theme().diff_added_bg,
+                    DiffLineKind::Removed => theme::theme().diff_removed_bg,
+                    DiffLineKind::Context => theme::theme().bg_base,
+                };
+                let text_color = match kind {
+                    DiffLineKind::Added => 0xa6e3a1u32,   // green
+                    DiffLineKind::Removed => 0xf38ba8u32, // red
+                    DiffLineKind::Context => theme::theme().text_main,
+                };
+                // Format line numbers: 5 chars fixed width, muted colour.
+                let old_str = match old_lineno {
+                    Some(n) => format!("{:5}", n),
+                    None => "     ".to_string(),
+                };
+                let new_str = match new_lineno {
+                    Some(n) => format!("{:5}", n),
+                    None => "     ".to_string(),
+                };
+
+                // T-UI-004: build highlighted content element.
+                // If we have pre-computed highlight spans, use StyledText; otherwise
+                // fall back to a plain text element (keeps the existing colour).
+                let content_el: gpui::AnyElement = if highlights.is_empty() {
+                    div()
+                        .flex_1()
+                        .text_color(rgb(text_color))
+                        .overflow_hidden()
+                        .child(text.clone())
+                        .into_any()
+                } else {
+                    // Validate that all highlight byte ranges lie within the text.
+                    // Silently drop spans that fall outside to prevent panics.
+                    let text_str: &str = text.as_ref();
+                    let text_len = text_str.len();
+                    let valid_highlights: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> =
+                        highlights
+                            .iter()
+                            .filter(|(r, _)| {
+                                r.start <= r.end
+                                    && r.end <= text_len
+                                    && text_str.is_char_boundary(r.start)
+                                    && text_str.is_char_boundary(r.end)
+                            })
+                            .cloned()
+                            .collect();
+                    div()
+                        .flex_1()
+                        .text_color(rgb(text_color))
+                        .overflow_hidden()
+                        .child(
+                            gpui::StyledText::new(text.clone()).with_highlights(valid_highlights),
+                        )
+                        .into_any()
+                };
+
+                div()
+                    .id(("main-diff-line", i))
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .py_px()
+                    .bg(rgb(bg))
+                    .text_sm()
+                    .overflow_hidden()
+                    // Old line number
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .w(theme::scaled_px(44.))
+                            .text_color(rgb(theme::theme().text_muted))
+                            .child(SharedString::from(old_str)),
+                    )
+                    // New line number
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .w(theme::scaled_px(44.))
+                            .text_color(rgb(theme::theme().text_muted))
+                            .child(SharedString::from(new_str)),
+                    )
+                    // Content (sigil + highlighted text)
+                    .child(content_el)
+                    .into_any()
+            }
+            DiffRow::Binary => div()
+                .id(("main-diff-binary", i))
+                .w_full()
+                .px_2()
+                .py_1()
+                .text_sm()
+                .text_color(rgb(theme::theme().text_muted))
+                .child(SharedString::from("Binary file (no diff)"))
+                .into_any(),
+        })
+        .collect()
 }

@@ -964,6 +964,9 @@ pub struct KagiApp {
     // ── W2-GRAPH: Compact graph mode ────────────────────────────
     /// When `true` row height is 18px (compact); `false` (default) = 24px.
     pub graph_compact: bool,
+    /// Settings overlay: whether the Theme dropdown (appearance section) is
+    /// expanded. The option list renders inline below the field when `true`.
+    pub settings_theme_open: bool,
     /// Horizontal scroll offset (px) of the graph column. Lanes hidden by a
     /// narrow column width are revealed by horizontal scrolling (clamped in
     /// render against the current lane count).
@@ -1401,6 +1404,7 @@ impl KagiApp {
             inspector_split: INSPECTOR_SPLIT_DEFAULT,
             inspector_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: theme::compact_graph(),
+            settings_theme_open: false,
             graph_scroll_x: 0.0,
             // W2-SIDEBAR
             remote_branches,
@@ -1526,6 +1530,7 @@ impl KagiApp {
             inspector_split: INSPECTOR_SPLIT_DEFAULT,
             inspector_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: theme::compact_graph(),
+            settings_theme_open: false,
             graph_scroll_x: 0.0,
             // W2-SIDEBAR
             remote_branches: Vec::new(),
@@ -10721,6 +10726,16 @@ impl KagiApp {
             .flex_shrink_0()
             .bg(rgb(theme().panel))
             .text_color(rgb(theme().text_sub))
+            // ── LEFT column (flex_1, equal width to the RIGHT column so the
+            // centre cluster is window-centred regardless of side widths).
+            // 3-column layout: [LEFT flex_1][centre cluster][RIGHT flex_1]. ──
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .flex_1()
+                    .min_w_0()
             // ── LEFT: Refresh (user request: left of the repo title) ──
             .child({
                 // Spin for one full turn after a click (user request).
@@ -10783,11 +10798,15 @@ impl KagiApp {
                     .overflow_hidden()
                     .child(SharedString::from(branch_label)),
             )
-            // Spacer — centres the button group in the remaining width
-            // (user request: buttons in the middle, not left-aligned).
-            .child(div().flex_1())
-            .child(sep())
-            // ── CENTRE: Pull Push | Branch Stash Pop | Undo Terminal ──
+            ) // ── end LEFT column ──
+            // ── CENTRE: window-centred cluster (flex_shrink_0 group) ──
+            // Pull Push | Branch Stash Pop | Undo Terminal
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .flex_shrink_0()
             // Pull (↓N chip when behind>0)
             .child(
                 make_btn(
@@ -10889,31 +10908,35 @@ impl KagiApp {
                 )
                 .on_click(terminal_click),
             )
-            .child(div().flex_1())
-            // ── RIGHT: Settings gear (T-SETTINGS-001 / ADR-0080) ──
-            // Opens the OpenLogi-style Settings overlay; also reachable via the
-            // kagi menu "Settings…" item and cmd-,.
-            .child({
-                let settings_click =
-                    cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
-                        this.menu_overlay = Some(commands::MenuOverlay::Settings);
-                        cx.notify();
-                    });
+            ) // ── end CENTRE cluster ──
+            // ── RIGHT column (flex_1, equal width to the LEFT column) ──
+            // Settings — now a standard toolbar button (icon + "Settings"
+            // label) matching Pull/Push (T-SETTINGS-001 / ADR-0080). Opens the
+            // Settings overlay; also reachable via the kagi menu and cmd-,.
+            .child(
                 div()
-                    .id("tb-settings")
-                    .flex_shrink_0()
-                    .ml_1()
-                    .p_1()
-                    .rounded_md()
-                    .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
-                    .tooltip(|window, cx| Tooltip::new("Settings").build(window, cx))
-                    .on_click(settings_click)
-                    .child(
-                        gpui_component::Icon::new(gpui_component::IconName::Settings)
-                            .with_size(gpui_component::Size::Size(theme::scaled_px(18.0)))
-                            .text_color(rgb(theme().text_main)),
-                    )
-            })
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_end()
+                    .flex_1()
+                    .child({
+                        let settings_click =
+                            cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
+                                this.menu_overlay =
+                                    Some(commands::MenuOverlay::Settings);
+                                cx.notify();
+                            });
+                        make_btn(
+                            "tb-settings",
+                            "Settings",
+                            gpui_component::IconName::Settings,
+                            true,
+                            0,
+                        )
+                        .on_click(settings_click)
+                    }),
+            )
     }
 
     /// Body slot — the main content area: sidebar | divider | commit list | optional panel.

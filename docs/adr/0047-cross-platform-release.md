@@ -12,8 +12,25 @@
 | OS | 形態 | 備考 |
 |----|------|------|
 | macOS (arm64 / x86_64) | `.app` + `.dmg` | **ad-hoc 署名**(`codesign -s -`)。Gatekeeper は右クリック→開く案内を README に記載 |
-| Linux (x86_64) | `tar.gz`(bin + .desktop + icon)| AppImage は後続候補 |
+| Linux (x86_64 / arm64) | `tar.gz`(bin + .desktop + icon)+ **AppImage zip** | 下記追補 |
 | Windows | 対象外(将来) | gpui 0.2.2 の Windows 成熟度待ち。別 ADR |
+
+### 追補(2026-06-13、ユーザー依頼): linux-arm64 + AppImage + 同梱インストールスクリプト
+
+- **linux-arm64** を matrix に追加(`ubuntu-24.04-arm`)。GitHub の arm64 runner は
+  **public repo では無料**、private のうちは起動しない可能性があるため当面 `continue-on-error`
+  (落ちても release は進む。公開後に外す)
+- **AppImage**(CANViewer の配布実績パターンを移植):
+  `kagi_Linux-AppImage_<arch>.zip` = `Kagi-<arch>.AppImage` + `kagi.png` + `install_linux_desktop.sh`
+  - AppImage は xtask `bundle-appimage` で AppDir(AppRun + .desktop + icon + bin)を組み、
+    `appimagetool`(CI が公式 release から取得、`--appimage-extract-and-run` で FUSE 不要)で生成。
+    ローカル macOS では AppDir レイアウト生成までを検証(appimagetool 不在ならスキップ)
+  - lib の同梱(linuxdeploy)は Phase 1 ではしない(Rust 単一バイナリ。system の
+    vulkan/xkbcommon 等に依存 — tar.gz と同条件)
+- **install_linux_desktop.sh**(オフライン・curl なし): AppImage を `~/.local/bin/Kagi.AppImage` へ、
+  icon を hicolor へ、`com.tomixrm.kagi.desktop` を `~/.local/share/applications/` へ配置し
+  `update-desktop-database` / `gtk-update-icon-cache` を best-effort 実行。
+  curl|bash 型ではなく**zip 同梱・検査可能**な形を採用
 
 ### 実装方式(ADR-0038 からの確定差分)
 

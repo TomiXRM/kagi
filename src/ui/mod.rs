@@ -4,15 +4,15 @@
 //! It must not be added to `src/lib.rs` so that domain tests stay
 //! independent of GPUI.
 
+pub mod assets;
 pub mod avatar;
 pub mod avatar_fetch;
-pub mod assets;
 pub mod branch_menu;
 pub mod commands;
 pub mod commit_list;
-pub mod conflict_view;
-pub mod conflict_editor;
 pub mod commit_panel;
+pub mod conflict_editor;
+pub mod conflict_view;
 pub mod context_menu;
 pub mod detail_panel;
 pub mod diffstat_bar;
@@ -20,6 +20,7 @@ pub mod file_tree;
 pub mod graph_view;
 pub mod i18n;
 pub mod inspector;
+pub mod modals;
 pub mod sidebar;
 pub mod smart_commit;
 pub mod tabs;
@@ -27,8 +28,9 @@ pub mod terminal;
 pub mod theme;
 pub mod watcher;
 
-use theme::theme;
 use i18n::Msg;
+pub use modals::*;
+use theme::theme;
 
 use kagi::git::message_gen;
 
@@ -37,15 +39,13 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, ClipboardItem, Context, Entity, FocusHandle, KeyDownEvent, KeyBinding, MouseButton,
-    SharedString, Window,
-    UniformListScrollHandle, ScrollStrategy,
-    actions, div, prelude::*, px, rgb, uniform_list,
+    actions, div, prelude::*, px, rgb, uniform_list, App, ClipboardItem, Context, Entity,
+    FocusHandle, KeyBinding, KeyDownEvent, MouseButton, ScrollStrategy, SharedString,
+    UniformListScrollHandle, Window,
 };
 use gpui_component::input::{Input, InputState};
-use gpui_component::tooltip::Tooltip;
-use gpui_component::checkbox::Checkbox;
 use gpui_component::scroll::Scrollbar;
+use gpui_component::tooltip::Tooltip;
 use gpui_component::Sizable as _;
 
 // ──────────────────────────────────────────────────────────────
@@ -54,7 +54,16 @@ use gpui_component::Sizable as _;
 
 // cmd-j toggle action for the bottom panel.
 // escape to close main diff view.
-actions!(kagi, [ToggleBottomPanel, CloseMainDiff, DiffPrevFile, DiffNextFile, CheckoutSelected]);
+actions!(
+    kagi,
+    [
+        ToggleBottomPanel,
+        CloseMainDiff,
+        DiffPrevFile,
+        DiffNextFile,
+        CheckoutSelected
+    ]
+);
 
 /// Active tab in the bottom panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -160,7 +169,7 @@ const COL_HEADER_H: f32 = 20.0;
 
 // W7-INSPECTOR2: inspector message/files vertical split.
 /// Default split ratio (message:files = 1:1).
-const INSPECTOR_SPLIT_DEFAULT: f32 = 0.35;  // message 35% : files 65% (user request: files +30%)
+const INSPECTOR_SPLIT_DEFAULT: f32 = 0.35; // message 35% : files 65% (user request: files +30%)
 /// Clamp bounds for the split ratio when dragging the divider.
 const INSPECTOR_SPLIT_MIN: f32 = 0.2;
 const INSPECTOR_SPLIT_MAX: f32 = 0.8;
@@ -191,9 +200,9 @@ const CONFLICT_SPLIT_DIVIDER: f32 = 4.0;
 
 // ── W2-GRAPH: compact mode ────────────────────────────────────
 /// Row height for normal (full) mode.
-const ROW_H_FULL: f32 = graph_view::ROW_H;  // 29.0 (= 24 * 1.2)
+const ROW_H_FULL: f32 = graph_view::ROW_H; // 29.0 (= 24 * 1.2)
 /// Row height for compact mode.
-const ROW_H_COMPACT: f32 = 22.0;  // 18.0 * 1.2 (keeps compact:full ratio)
+const ROW_H_COMPACT: f32 = 22.0; // 18.0 * 1.2 (keeps compact:full ratio)
 
 /// Return the row height for the current compact mode setting.
 ///
@@ -209,24 +218,23 @@ fn row_height(compact: bool) -> f32 {
     theme::scaled(if compact { ROW_H_COMPACT } else { ROW_H_FULL })
 }
 
-use kagi::git::{
-    ChangeKind, CommitId, FileDiff, DiffLineKind, FileDiffStat, FileStatus, Head, RemoteBranch, RepoSnapshot, Stash, Tag, UpstreamInfo, Worktree,
-    ops::{
-        OperationPlan, StateSummary, PullOutcome, AmendMode,
-        validate_branch_rename, BranchRenameValidation,
-        default_tracking_branch_name,
-        MergeKind,
-    },
-    oplog::{OpLogEntry, OpOutcome, append_oplog, read_oplog_tail},
-};
-use commit_panel::{CommitPanelState, CommitPanelFileRef, CommitPlanModal, status_badge};
-use commit_list::{BadgeKind, CommitRow, build_commit_rows};
 use branch_menu::{
     BranchAction, BranchConflictMode, BranchKind, BranchMenuContext, BranchMenuState,
 };
+use commit_list::{build_commit_rows, BadgeKind, CommitRow};
+use commit_panel::{status_badge, CommitPanelFileRef, CommitPanelState, CommitPlanModal};
 use context_menu::{CommitAction, CommitMenuState, MenuContext};
-use detail_panel::{CommitDetail, build_commit_details};
+use detail_panel::{build_commit_details, CommitDetail};
 use graph_view::graph_canvas;
+use kagi::git::{
+    oplog::{append_oplog, read_oplog_tail, OpLogEntry, OpOutcome},
+    ops::{
+        default_tracking_branch_name, validate_branch_rename, AmendMode, MergeKind, OperationPlan,
+        PullOutcome, StateSummary,
+    },
+    ChangeKind, CommitId, DiffLineKind, FileDiff, FileDiffStat, FileStatus, Head, RemoteBranch,
+    RepoSnapshot, Stash, Tag, UpstreamInfo, Worktree,
+};
 
 // ──────────────────────────────────────────────────────────────
 // Colours (W9-THEME / ADR-0036): sourced from the active `theme()`.
@@ -281,30 +289,61 @@ pub struct StatusBarSummary {
 impl StatusBarSummary {
     /// Build from a [`RepoSnapshot`] at the current wall clock time.
     pub fn from_snapshot(snap: &kagi::git::RepoSnapshot) -> Self {
-        use kagi::git::Head;
         use commit_list::now_unix_secs;
+        use kagi::git::Head;
 
-        let (branch, ahead, behind, no_upstream, is_detached, is_unborn, upstream_name) = match &snap.head {
-            Head::Attached { branch, .. } => {
-                // Look up upstream info for this branch.
-                let upstream = snap
-                    .branches
-                    .iter()
-                    .find(|b| &b.name == branch)
-                    .and_then(|b| b.upstream.as_ref());
-                match upstream {
-                    Some(u) => (branch.clone(), Some(u.ahead), Some(u.behind), false, false, false, u.remote_branch.clone()),
-                    None => (branch.clone(), None, None, true, false, false, String::new()),
+        let (branch, ahead, behind, no_upstream, is_detached, is_unborn, upstream_name) =
+            match &snap.head {
+                Head::Attached { branch, .. } => {
+                    // Look up upstream info for this branch.
+                    let upstream = snap
+                        .branches
+                        .iter()
+                        .find(|b| &b.name == branch)
+                        .and_then(|b| b.upstream.as_ref());
+                    match upstream {
+                        Some(u) => (
+                            branch.clone(),
+                            Some(u.ahead),
+                            Some(u.behind),
+                            false,
+                            false,
+                            false,
+                            u.remote_branch.clone(),
+                        ),
+                        None => (
+                            branch.clone(),
+                            None,
+                            None,
+                            true,
+                            false,
+                            false,
+                            String::new(),
+                        ),
+                    }
                 }
-            }
-            Head::Detached { target } => {
-                let short = target.get(..8).unwrap_or(target).to_string();
-                (format!("detached HEAD ({})", short), None, None, false, true, false, String::new())
-            }
-            Head::Unborn { branch } => {
-                (format!("no commits yet ({})", branch), None, None, false, false, true, String::new())
-            }
-        };
+                Head::Detached { target } => {
+                    let short = target.get(..8).unwrap_or(target).to_string();
+                    (
+                        format!("detached HEAD ({})", short),
+                        None,
+                        None,
+                        false,
+                        true,
+                        false,
+                        String::new(),
+                    )
+                }
+                Head::Unborn { branch } => (
+                    format!("no commits yet ({})", branch),
+                    None,
+                    None,
+                    false,
+                    false,
+                    true,
+                    String::new(),
+                ),
+            };
 
         // Derive has_remote from remote_branches (any entry means at least one remote exists).
         let has_remote = !snap.remote_branches.is_empty();
@@ -360,8 +399,8 @@ impl StatusBarSummary {
         let pull_on = !no_upstream && behind > 0;
         // Push: enabled when (upstream && ahead>0) OR (no-upstream && attached && remote exists).
         // Dirty WT is irrelevant — push never changes local state.
-        let push_on = (!no_upstream && ahead > 0)
-            || (self.no_upstream && !not_attached && self.has_remote);
+        let push_on =
+            (!no_upstream && ahead > 0) || (self.no_upstream && !not_attached && self.has_remote);
         let stash_on = self.is_dirty; // Stash: disabled if working tree is clean
         let pop_on = self.stash_count > 0; // Pop: disabled if no stashes
         let undo_on = !not_attached && ahead > 0; // disabled if detached/unborn or ahead=0
@@ -430,7 +469,12 @@ mod toolbar_tests {
     use super::*;
 
     /// Build a minimal `StatusBarSummary` with upstream set.
-    fn make_summary(ahead: usize, behind: usize, is_dirty: bool, stash_count: usize) -> StatusBarSummary {
+    fn make_summary(
+        ahead: usize,
+        behind: usize,
+        is_dirty: bool,
+        stash_count: usize,
+    ) -> StatusBarSummary {
         StatusBarSummary {
             branch: "main".to_string(),
             is_dirty,
@@ -524,7 +568,10 @@ mod toolbar_tests {
         let s = make_summary(0, 1, false, 0);
         let t = s.toolbar_state();
         assert!(t.pull_on, "feature/two (behind=1) must have pull=on");
-        assert!(!t.push_on, "feature/two (ahead=0) must have push=off (no upstream-new branch)");
+        assert!(
+            !t.push_on,
+            "feature/two (ahead=0) must have push=off (no upstream-new branch)"
+        );
         assert!(!t.undo_on, "feature/two (ahead=0) must have undo=off");
     }
 
@@ -669,10 +716,7 @@ pub struct FileDiffView {
 impl FileDiffView {
     /// Build a [`FileDiffView`] from a [`FileDiff`] result.
     pub fn from_file_diff(file_diff: &FileDiff, file_index: usize) -> Self {
-        let path = file_diff
-            .new_path
-            .as_ref()
-            .or(file_diff.old_path.as_ref());
+        let path = file_diff.new_path.as_ref().or(file_diff.old_path.as_ref());
         let file_name = SharedString::from(
             path.map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default(),
@@ -687,10 +731,7 @@ impl FileDiffView {
                 // Build hunk header string.
                 let (os, oc) = hunk.old_range;
                 let (ns, nc) = hunk.new_range;
-                let header = SharedString::from(format!(
-                    "@@ -{},{} +{},{} @@",
-                    os, oc, ns, nc
-                ));
+                let header = SharedString::from(format!("@@ -{},{} +{},{} @@", os, oc, ns, nc));
                 rows.push(DiffRow::HunkHeader(header));
 
                 for line in &hunk.lines {
@@ -698,7 +739,7 @@ impl FileDiffView {
                     let raw = line.content.trim_end_matches('\n').trim_end_matches('\r');
                     // Add leading sigil for clarity.
                     let text = match line.kind {
-                        DiffLineKind::Added   => SharedString::from(format!("+{}", raw)),
+                        DiffLineKind::Added => SharedString::from(format!("+{}", raw)),
                         DiffLineKind::Removed => SharedString::from(format!("-{}", raw)),
                         DiffLineKind::Context => SharedString::from(format!(" {}", raw)),
                     };
@@ -778,28 +819,28 @@ pub struct MainDiffView {
 /// `LanguageRegistry`.  Returns `None` for unknown extensions.
 fn lang_for_ext(ext: &str) -> Option<&'static str> {
     match ext.to_ascii_lowercase().as_str() {
-        "rs"                   => Some("rust"),
-        "py"                   => Some("python"),
-        "js" | "jsx"           => Some("javascript"),
-        "ts"                   => Some("typescript"),
-        "tsx"                  => Some("tsx"),
-        "json" | "jsonc"       => Some("json"),
-        "toml"                 => Some("toml"),
-        "yaml" | "yml"         => Some("yaml"),
-        "md" | "mdx"           => Some("markdown"),
-        "sh" | "bash"          => Some("bash"),
-        "c"                    => Some("c"),
-        "cpp" | "cc" | "cxx"  => Some("cpp"),
-        "h" | "hpp"            => Some("cpp"),
-        "css" | "scss"         => Some("css"),
-        "html" | "htm"         => Some("html"),
-        "go"                   => Some("go"),
-        "java"                 => Some("java"),
-        "rb"                   => Some("ruby"),
-        "zig"                  => Some("zig"),
-        "sql"                  => Some("sql"),
-        "swift"                => Some("swift"),
-        _                      => None,
+        "rs" => Some("rust"),
+        "py" => Some("python"),
+        "js" | "jsx" => Some("javascript"),
+        "ts" => Some("typescript"),
+        "tsx" => Some("tsx"),
+        "json" | "jsonc" => Some("json"),
+        "toml" => Some("toml"),
+        "yaml" | "yml" => Some("yaml"),
+        "md" | "mdx" => Some("markdown"),
+        "sh" | "bash" => Some("bash"),
+        "c" => Some("c"),
+        "cpp" | "cc" | "cxx" => Some("cpp"),
+        "h" | "hpp" => Some("cpp"),
+        "css" | "scss" => Some("css"),
+        "html" | "htm" => Some("html"),
+        "go" => Some("go"),
+        "java" => Some("java"),
+        "rb" => Some("ruby"),
+        "zig" => Some("zig"),
+        "sql" => Some("sql"),
+        "swift" => Some("swift"),
+        _ => None,
     }
 }
 
@@ -811,7 +852,7 @@ fn lang_for_ext(ext: &str) -> Option<&'static str> {
 ///
 /// Returns the language name that was used (or "none").
 fn highlight_diff_rows(rows: &mut Vec<DiffRow>, file_path: &std::path::Path) -> &'static str {
-    use gpui_component::highlighter::{SyntaxHighlighter, HighlightTheme};
+    use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};
     use gpui_component::Rope;
 
     // Determine language from extension.
@@ -887,13 +928,13 @@ fn highlight_diff_rows(rows: &mut Vec<DiffRow>, file_path: &std::path::Path) -> 
         let mut row_highlights: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> = Vec::new();
         for (range, style) in &all_styles {
             let clipped_start = range.start.max(rope_start);
-            let clipped_end   = range.end.min(content_end);
+            let clipped_end = range.end.min(content_end);
             if clipped_start >= clipped_end {
                 continue;
             }
             // Translate back to row-local byte offsets (offset by 1 for the sigil).
             let local_start = 1 + (clipped_start - rope_start);
-            let local_end   = 1 + (clipped_end   - rope_start);
+            let local_end = 1 + (clipped_end - rope_start);
             row_highlights.push((local_start..local_end, *style));
         }
 
@@ -903,119 +944,6 @@ fn highlight_diff_rows(rows: &mut Vec<DiffRow>, file_path: &std::path::Path) -> 
     }
 
     lang
-}
-
-// ──────────────────────────────────────────────────────────────
-// CheckoutPlanModal — state for the plan confirmation overlay (T013)
-// ──────────────────────────────────────────────────────────────
-
-/// State for an in-progress checkout plan confirmation.
-#[derive(Clone)]
-pub struct CheckoutPlanModal {
-    /// Branch or commit target captured when the plan was opened.
-    pub target: CheckoutPlanTarget,
-    /// When `true` (Enter-checkout on a dirty tree), confirm stashes the
-    /// working-tree changes first, then checks out.
-    pub stash_first: bool,
-    /// The computed plan (title, current, predicted, warnings, blockers, recovery).
-    pub plan: std::sync::Arc<OperationPlan>,
-    /// Error message to show if execute or preflight failed (replaces normal buttons).
-    pub error: Option<SharedString>,
-}
-
-/// Execution target for the shared checkout plan modal.
-#[derive(Clone, Debug)]
-pub enum CheckoutPlanTarget {
-    Branch(String),
-    Commit(CommitId),
-}
-
-/// State for an in-progress pull confirmation (T-HT-003).  Same shape as
-/// [`CheckoutPlanModal`] but kept separate so the confirm path can't be mixed up.
-#[derive(Clone)]
-pub struct PullPlanModal {
-    /// The computed pull plan.
-    pub plan: std::sync::Arc<OperationPlan>,
-    /// Error message to show if execute or preflight failed.
-    pub error: Option<SharedString>,
-}
-
-/// State for an in-progress undo-commit confirmation (T-HT-009).
-#[derive(Clone)]
-pub struct UndoPlanModal {
-    pub plan: std::sync::Arc<OperationPlan>,
-    pub error: Option<SharedString>,
-}
-
-/// State for a sequencer (rebase / cherry-pick / revert) conflict-continue
-/// confirmation (ADR-0068 / T-CONFLICT-FLOW-032).  A `git <op> --continue` plan
-/// shown before the sequencer is advanced.  Merge does NOT use this modal — it
-/// routes to the commit panel instead.
-#[derive(Clone)]
-pub struct ConflictContinuePlanModal {
-    /// The computed `<op> --continue` plan.
-    pub plan: std::sync::Arc<OperationPlan>,
-    /// Error message to show if execute failed (replaces the confirm button).
-    pub error: Option<SharedString>,
-}
-
-/// State for an in-progress amend confirmation (T-COMMIT-011, ADR-0040).
-///
-/// Amend is history-rewriting (ADR-0023) so the modal requires a **two-stage
-/// confirmation**: the first Confirm click *arms* the action (`confirm_armed`
-/// flips to `true` and the button text changes to a final, explicit confirm),
-/// and only the second click executes.
-#[derive(Clone)]
-pub struct AmendPlanModal {
-    pub plan: std::sync::Arc<OperationPlan>,
-    pub error: Option<SharedString>,
-    /// Which amend mode this plan was built for.
-    pub mode: AmendMode,
-    /// The new message (for MessageOnly / Both); ignored for Staged.
-    pub message: String,
-    /// Two-stage confirm gate: `false` = first click pending, `true` = armed.
-    pub confirm_armed: bool,
-}
-
-/// State for an in-progress stash-pop confirmation (T-HT-007).
-#[derive(Clone)]
-pub struct PopPlanModal {
-    pub plan: std::sync::Arc<OperationPlan>,
-    pub error: Option<SharedString>,
-    /// Stash index the plan was built for.
-    pub stash_index: usize,
-}
-
-/// State for an in-progress push confirmation (T-HT-004).  Same shape as
-/// [`PullPlanModal`] but kept separate so the confirm path can't be mixed up.
-#[derive(Clone)]
-pub struct PushPlanModal {
-    /// The computed push plan.
-    pub plan: std::sync::Arc<OperationPlan>,
-    /// Error message to show if execute or preflight failed.
-    pub error: Option<SharedString>,
-}
-
-/// State for an in-progress branch merge confirmation (T-BCM-030).
-#[derive(Clone)]
-pub struct MergePlanModal {
-    pub target: String,
-    pub plan: std::sync::Arc<OperationPlan>,
-    /// W31-MERGE-INTO-CONFLICT: what executing this merge will do. When
-    /// [`MergeKind::Conflicts`] the modal shows a "resolve conflicts" confirm
-    /// and `start_merge` drives the real merge into Conflict Mode.
-    pub kind: MergeKind,
-    pub error: Option<SharedString>,
-}
-
-/// State for creating a local tracking branch from a remote branch and checking
-/// it out as one operation (T-BCM-061).
-#[derive(Clone)]
-pub struct TrackingCheckoutPlanModal {
-    pub remote_branch: String,
-    pub local_branch: String,
-    pub plan: std::sync::Arc<OperationPlan>,
-    pub error: Option<SharedString>,
 }
 
 /// W29-I18N-WAVE2: build the localized blocker list for an [`OperationPlan`].
@@ -1037,218 +965,6 @@ fn localize_plan_blockers(
             None => SharedString::from(b.clone()),
         })
         .collect()
-}
-
-// ──────────────────────────────────────────────────────────────
-// CreateBranchModal — state for the create-branch overlay (T014)
-// ──────────────────────────────────────────────────────────────
-
-/// State for an in-progress create-branch confirmation.
-///
-/// The user types a branch name; the plan is regenerated live on each keystroke.
-#[derive(Clone)]
-pub struct CreateBranchModal {
-    /// The commit at which the branch will be created.
-    pub at: CommitId,
-    /// First line of the start commit message, used to identify menu origin.
-    pub start_title: String,
-    /// Current text in the branch-name input field (synced from `input_state`).
-    pub input: String,
-    /// Real text-input entity (gpui-component). Created lazily on first
-    /// render (needs a Window); `None` in headless paths.
-    pub input_state: Option<Entity<InputState>>,
-    /// Whether to check out the new branch after creating it.
-    pub checkout_after: bool,
-    /// Live plan (re-generated each keystroke from `input` and `at`).
-    pub plan: Option<std::sync::Arc<OperationPlan>>,
-    /// Error message to show if execute or preflight failed.
-    pub error: Option<SharedString>,
-    /// Localized blocker texts for display (W29-I18N-WAVE2). The keyed
-    /// branch-name reasons are localized; non-keyed plan blockers pass through
-    /// in English. Recomputed each replan. The execute-guard still uses
-    /// `plan.blockers` (English) so behaviour is unchanged.
-    pub localized_blockers: Vec<SharedString>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // legacy hand-rolled input era; kept for struct compat
-pub enum WorktreeModalField {
-    Branch,
-    Path,
-}
-
-/// State for an in-progress create-worktree confirmation.
-#[derive(Clone)]
-pub struct CreateWorktreeModal {
-    /// The commit used as the start point for the new branch.
-    pub at: CommitId,
-    /// First line of the start commit message.
-    pub start_title: String,
-    /// New branch name (synced from `branch_state`).
-    pub branch_input: String,
-    /// Real branch-name input entity (lazy; None headless).
-    pub branch_state: Option<Entity<InputState>>,
-    /// Target worktree path (synced from `path_state`).
-    pub path_input: String,
-    /// Real path input entity (lazy; None headless).
-    pub path_state: Option<Entity<InputState>>,
-    /// True once the user has manually edited the path.
-    pub path_touched: bool,
-    /// True when this modal attaches an existing local branch to a worktree
-    /// instead of creating a new branch first.
-    pub allow_existing_branch: bool,
-    /// Which field receives key input (legacy hand-rolled input era; the
-    /// real `InputState`s manage their own focus now).
-    #[allow(dead_code)]
-    pub active_field: WorktreeModalField,
-    /// Live plan regenerated from branch/path/start.
-    pub plan: Option<std::sync::Arc<OperationPlan>>,
-    /// Error message to show if execute or preflight failed.
-    pub error: Option<SharedString>,
-    /// Localized blocker texts for display (W29-I18N-WAVE2). The keyed
-    /// branch-name and worktree-path reasons are localized; non-keyed plan
-    /// blockers pass through in English. Recomputed each replan.
-    pub localized_blockers: Vec<SharedString>,
-}
-
-// ──────────────────────────────────────────────────────────────
-// StashPushModal — state for the stash push confirmation overlay (T015)
-// ──────────────────────────────────────────────────────────────
-
-/// State for an in-progress stash push confirmation.
-///
-/// The user may optionally type a stash message; the live plan is regenerated
-/// on each keystroke.
-#[derive(Clone)]
-pub struct StashPushModal {
-    /// Optional stash message (empty string → None passed to stash_save2).
-    /// Synced from `input_state`.
-    pub input: String,
-    /// Real text-input entity (lazy; None headless).
-    pub input_state: Option<Entity<InputState>>,
-    /// Live plan (re-generated each keystroke from `input`).
-    pub plan: Option<std::sync::Arc<OperationPlan>>,
-    /// Error message to show if execute or preflight failed.
-    pub error: Option<SharedString>,
-}
-
-// ──────────────────────────────────────────────────────────────
-// StashApplyModal — state for the stash apply confirmation overlay (T015)
-// ──────────────────────────────────────────────────────────────
-
-/// State for an in-progress stash apply confirmation.
-#[derive(Clone)]
-pub struct StashApplyModal {
-    /// The stash index to apply.
-    pub index: usize,
-    /// The computed plan.
-    pub plan: std::sync::Arc<OperationPlan>,
-    /// Error message to show if execute or preflight failed.
-    pub error: Option<SharedString>,
-}
-
-// ──────────────────────────────────────────────────────────────
-// CherryPickModal — state for the cherry-pick plan overlay (T016)
-// ──────────────────────────────────────────────────────────────
-
-/// State for an in-progress cherry-pick plan confirmation.
-///
-/// The modal shows a preview of affected files and any blockers before
-/// the user confirms execution.
-#[derive(Clone)]
-pub struct CherryPickModal {
-    /// The commit id that will be cherry-picked.
-    pub commit_id: CommitId,
-    /// The computed plan (title, current, predicted, preview_files, blockers, recovery).
-    pub plan: std::sync::Arc<OperationPlan>,
-    /// Error message to show if execute or preflight failed.
-    pub error: Option<SharedString>,
-}
-
-// ──────────────────────────────────────────────────────────────
-// RevertModal — state for the revert plan overlay (T-CM-034)
-// ──────────────────────────────────────────────────────────────
-
-/// State for an in-progress revert plan confirmation.
-#[derive(Clone)]
-pub struct RevertModal {
-    /// The commit id that will be reverted.
-    pub commit_id: CommitId,
-    /// The computed plan.
-    pub plan: std::sync::Arc<OperationPlan>,
-    /// Error message to show if execute or preflight failed.
-    pub error: Option<SharedString>,
-}
-
-// ──────────────────────────────────────────────────────────────
-// DeleteBranchModal — state for the delete-branch confirmation overlay (W2-DELETE)
-// ──────────────────────────────────────────────────────────────
-
-/// State for an in-progress delete-branch confirmation (W2-DELETE).
-///
-/// The modal shows blockers (unmerged / current branch) and the recovery
-/// `git branch <name> <sha>` string before the user confirms.
-#[derive(Clone)]
-pub struct DeleteBranchModal {
-    /// The local branch name to delete.
-    pub branch_name: String,
-    /// The computed plan.
-    pub plan: std::sync::Arc<OperationPlan>,
-    /// Error message to show if preflight or execute failed.
-    pub error: Option<SharedString>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BranchPlanKind {
-    PullFfOnly,
-    Push,
-    PushSetUpstream,
-}
-
-#[derive(Clone)]
-pub struct BranchPlanModal {
-    pub kind: BranchPlanKind,
-    pub branch_name: String,
-    pub plan: std::sync::Arc<OperationPlan>,
-    pub error: Option<SharedString>,
-}
-
-#[derive(Clone)]
-pub struct SetUpstreamModal {
-    pub branch_name: String,
-    pub input: String,
-    pub input_state: Option<Entity<InputState>>,
-    pub plan: Option<std::sync::Arc<OperationPlan>>,
-    pub error: Option<SharedString>,
-}
-
-#[derive(Clone)]
-pub struct RenameBranchModal {
-    pub old_name: String,
-    pub input: String,
-    pub input_state: Option<Entity<InputState>>,
-    pub validation: BranchRenameValidation,
-    pub plan: Option<std::sync::Arc<OperationPlan>>,
-    pub error: Option<SharedString>,
-}
-
-/// State for an in-progress discard confirmation (W17-DISCARD, ADR-0046).
-///
-/// Danger modal: shows the target file list, any skipped (untracked/conflicted)
-/// files, the recovery note, and a red Discard button. `paths` is the exact set
-/// passed to `execute_discard` (untracked/conflicted already excluded).
-#[derive(Clone)]
-pub struct DiscardModal {
-    /// The computed plan (`destructive: true`).
-    pub plan: std::sync::Arc<OperationPlan>,
-    /// Repo-relative paths that will be discarded (one operation).
-    pub paths: Vec<String>,
-    /// Repo-relative paths shown as "skipped" (untracked / conflicted).
-    pub skipped: Vec<String>,
-    /// Whether this was launched from the "Discard all" header button.
-    pub is_all: bool,
-    /// Error message to show if preflight or execute failed.
-    pub error: Option<SharedString>,
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1640,24 +1356,17 @@ pub struct TabViewState {
 pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
     let head_label = match &snap.head {
         Head::Attached { branch, .. } => format!("branch: {branch}"),
-        Head::Detached { target } => format!(
-            "detached: {}",
-            target.get(..8).unwrap_or(target)
-        ),
+        Head::Detached { target } => format!("detached: {}", target.get(..8).unwrap_or(target)),
         Head::Unborn { branch } => format!("unborn ({branch})"),
     };
 
     let status = &snap.status;
     let status_label = if status.is_dirty() {
         let parts: Vec<String> = [
-            (!status.staged.is_empty())
-                .then(|| format!("{}S", status.staged.len())),
-            (!status.unstaged.is_empty())
-                .then(|| format!("{}M", status.unstaged.len())),
-            (!status.untracked.is_empty())
-                .then(|| format!("{}?", status.untracked.len())),
-            (!status.conflicted.is_empty())
-                .then(|| format!("{}!", status.conflicted.len())),
+            (!status.staged.is_empty()).then(|| format!("{}S", status.staged.len())),
+            (!status.unstaged.is_empty()).then(|| format!("{}M", status.unstaged.len())),
+            (!status.untracked.is_empty()).then(|| format!("{}?", status.untracked.len())),
+            (!status.conflicted.is_empty()).then(|| format!("{}!", status.conflicted.len())),
         ]
         .into_iter()
         .flatten()
@@ -2174,7 +1883,8 @@ impl KagiApp {
         // Capture the CommitId of the currently selected row (if any) so we
         // can attempt to re-select it after the snapshot is refreshed.
         // `details[idx].full_sha` is the canonical commit hash string.
-        let prev_commit_id: Option<CommitId> = self.selected
+        let prev_commit_id: Option<CommitId> = self
+            .selected
             .and_then(|idx| self.details.get(idx))
             .map(|detail| CommitId(detail.full_sha.to_string()));
 
@@ -2191,9 +1901,8 @@ impl KagiApp {
 
         // Emit the required log line and update the footer.
         eprintln!("[kagi] refreshed (external change)");
-        self.status_footer = FooterStatus::Idle(
-            SharedString::from("[kagi] refreshed (external change)")
-        );
+        self.status_footer =
+            FooterStatus::Idle(SharedString::from("[kagi] refreshed (external change)"));
 
         // Notify gpui that state has changed so the window repaints.
         cx.notify();
@@ -2358,7 +2067,6 @@ impl KagiApp {
         self.conflict_editing = Some(path.to_path_buf());
     }
 
-
     /// T-CONFLICT-UX-010/012: set the focused hunk (selected-hunk highlight).
     pub fn conflict_editor_select_hunk(&mut self, hunk_index: usize) {
         self.conflict_selected_hunk = hunk_index;
@@ -2376,7 +2084,9 @@ impl KagiApp {
         if let Some(i) = self.conflict_editor_inputs.as_mut() {
             i.content_sig = 0;
         }
-        let Some(c) = self.conflict.as_mut() else { return };
+        let Some(c) = self.conflict.as_mut() else {
+            return;
+        };
         let residue = c.buffer.files_with_marker_residue();
         if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
             f.status = if !c.buffer.has_resolution(path) {
@@ -2396,7 +2106,9 @@ impl KagiApp {
         side: kagi::git::resolution::SelectionSide,
         taken: bool,
     ) {
-        let Some(c) = self.conflict.as_mut() else { return };
+        let Some(c) = self.conflict.as_mut() else {
+            return;
+        };
         if c.buffer.set_file_side_selection(path, side, taken) {
             self.conflict_editor_after_selection_change(path, None);
         }
@@ -2409,7 +2121,9 @@ impl KagiApp {
         side: kagi::git::resolution::SelectionSide,
         taken: bool,
     ) {
-        let Some(c) = self.conflict.as_mut() else { return };
+        let Some(c) = self.conflict.as_mut() else {
+            return;
+        };
         if c.buffer
             .set_hunk_side_selection(path, hunk_index, side, taken)
         {
@@ -2425,7 +2139,9 @@ impl KagiApp {
         line_index: usize,
         taken: bool,
     ) {
-        let Some(c) = self.conflict.as_mut() else { return };
+        let Some(c) = self.conflict.as_mut() else {
+            return;
+        };
         if c.buffer
             .set_hunk_line_selection(path, hunk_index, side, line_index, taken)
         {
@@ -2439,7 +2155,9 @@ impl KagiApp {
         hunk_index: usize,
         order: kagi::git::resolution::LineOrder,
     ) {
-        let Some(c) = self.conflict.as_mut() else { return };
+        let Some(c) = self.conflict.as_mut() else {
+            return;
+        };
         if c.buffer.set_hunk_line_order(path, hunk_index, order) {
             self.conflict_editor_after_selection_change(path, Some(hunk_index));
         }
@@ -2477,7 +2195,9 @@ impl KagiApp {
         if let Some(i) = self.conflict_editor_inputs.as_mut() {
             i.content_sig = 0;
         }
-        let Some(c) = self.conflict.as_mut() else { return };
+        let Some(c) = self.conflict.as_mut() else {
+            return;
+        };
         let n = c.buffer.hunk_count(path);
         for i in 0..n {
             c.buffer.reset_hunk(path, i);
@@ -2543,7 +2263,9 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let Some(c) = self.conflict.as_ref() else { return };
+        let Some(c) = self.conflict.as_ref() else {
+            return;
+        };
 
         // Before/after hashes of the file's resolved text for the oplog.
         let before_text = self
@@ -2606,7 +2328,10 @@ impl KagiApp {
                     }
                 }
                 let after = StateSummary {
-                    head: format!("staged (stage 0) before={} after={}", before_hash, after_hash),
+                    head: format!(
+                        "staged (stage 0) before={} after={}",
+                        before_hash, after_hash
+                    ),
                     dirty: "clean".to_string(),
                 };
                 self.record_op(&op_name, before, OpOutcome::Success { after }, &repo_path);
@@ -2626,7 +2351,9 @@ impl KagiApp {
                 self.record_op(
                     &op_name,
                     before,
-                    OpOutcome::Refused { blockers: vec![err_msg] },
+                    OpOutcome::Refused {
+                        blockers: vec![err_msg],
+                    },
                     &repo_path,
                 );
                 self.push_toast(
@@ -2659,7 +2386,9 @@ impl KagiApp {
     /// Move the selection to the previous (`dir < 0`) or next (`dir > 0`)
     /// **unresolved** file, wrapping around (KDiff3-style nav).
     pub fn conflict_nav_unresolved(&mut self, dir: i32) {
-        let Some(c) = self.conflict.as_mut() else { return };
+        let Some(c) = self.conflict.as_mut() else {
+            return;
+        };
         let n = c.session.files.len();
         if n == 0 {
             return;
@@ -2678,7 +2407,11 @@ impl KagiApp {
             }
         }
         // None unresolved — just step to the neighbour so nav still feels alive.
-        let i = if dir >= 0 { (start + 1) % n } else { (start + n - 1) % n };
+        let i = if dir >= 0 {
+            (start + 1) % n
+        } else {
+            (start + n - 1) % n
+        };
         c.selected_file = Some(i);
     }
 
@@ -2690,7 +2423,9 @@ impl KagiApp {
         path: &std::path::Path,
         choice: kagi::git::ResolutionChoice,
     ) {
-        let Some(c) = self.conflict.as_mut() else { return };
+        let Some(c) = self.conflict.as_mut() else {
+            return;
+        };
         match c.buffer.apply_choice(path, choice) {
             Ok(()) => {
                 // Refresh status for this file from the buffer.
@@ -2716,7 +2451,11 @@ impl KagiApp {
                 );
             }
             Err(e) => {
-                eprintln!("[kagi] conflict-mode: choice failed for {}: {}", path.display(), e);
+                eprintln!(
+                    "[kagi] conflict-mode: choice failed for {}: {}",
+                    path.display(),
+                    e
+                );
                 self.push_toast(ToastKind::Error, SharedString::from(format!("{}", e)));
             }
         }
@@ -2737,12 +2476,17 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let Some(mode) = self.conflict.clone() else { return };
+        let Some(mode) = self.conflict.clone() else {
+            return;
+        };
 
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e)));
+                self.push_toast(
+                    ToastKind::Error,
+                    SharedString::from(format!("Repo open error: {}", e)),
+                );
                 return;
             }
         };
@@ -2757,17 +2501,20 @@ impl KagiApp {
             Err(e) => {
                 eprintln!("[kagi] refused: {} blocked: {}", op_name, e);
                 // Surface the specific (localized) blocking reason (ADR-0067).
-                if let Some(first) =
-                    repo.continue_blockers(&mode.session, &mode.buffer).first()
-                {
+                if let Some(first) = repo.continue_blockers(&mode.session, &mode.buffer).first() {
                     self.push_toast(ToastKind::Error, conflict_view::blocker_msg(first).t());
                 } else {
                     self.push_toast(ToastKind::Error, SharedString::from(format!("{}", e)));
                 }
                 self.record_op(
                     &op_name,
-                    StateSummary { head: format!("op={}", mode.session.op.slug()), dirty: "blocked".to_string() },
-                    OpOutcome::Refused { blockers: vec![format!("{}", e)] },
+                    StateSummary {
+                        head: format!("op={}", mode.session.op.slug()),
+                        dirty: "blocked".to_string(),
+                    },
+                    OpOutcome::Refused {
+                        blockers: vec![format!("{}", e)],
+                    },
                     &repo_path,
                 );
                 cx.notify();
@@ -2780,7 +2527,10 @@ impl KagiApp {
                 // Transition to the commit message panel pre-filled with the merge
                 // message.  MERGE_HEAD stays present so the commit becomes a merge
                 // commit.  No commit is created here (ADR-0068).
-                eprintln!("[kagi] {}: routing to commit message panel (merge)", op_name);
+                eprintln!(
+                    "[kagi] {}: routing to commit message panel (merge)",
+                    op_name
+                );
                 self.open_commit_panel(window, cx);
                 self.commit_template_mode = false;
                 if let Some(input) = self.commit_input.clone() {
@@ -2793,7 +2543,10 @@ impl KagiApp {
             }
             kagi::git::ContinueRoute::SequencerPlan(plan) => {
                 // Confirmation modal before advancing the sequencer.
-                eprintln!("[kagi] {}: opening continue confirmation (sequencer)", op_name);
+                eprintln!(
+                    "[kagi] {}: opening continue confirmation (sequencer)",
+                    op_name
+                );
                 self.conflict_continue_modal = Some(ConflictContinuePlanModal {
                     plan: std::sync::Arc::new(*plan),
                     error: None,
@@ -2811,14 +2564,21 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let Some(mode) = self.conflict.clone() else { return };
-        let Some(modal) = self.conflict_continue_modal.clone() else { return };
+        let Some(mode) = self.conflict.clone() else {
+            return;
+        };
+        let Some(modal) = self.conflict_continue_modal.clone() else {
+            return;
+        };
         let plan = modal.plan;
 
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e)));
+                self.push_toast(
+                    ToastKind::Error,
+                    SharedString::from(format!("Repo open error: {}", e)),
+                );
                 return;
             }
         };
@@ -2832,7 +2592,12 @@ impl KagiApp {
                     head: plan.predicted.head.clone(),
                     dirty: "staged".to_string(),
                 };
-                self.record_op(&op_name, plan.current.clone(), OpOutcome::Success { after }, &repo_path);
+                self.record_op(
+                    &op_name,
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                );
                 self.conflict_continue_modal = None;
                 self.reload();
             }
@@ -2842,7 +2607,9 @@ impl KagiApp {
                 self.record_op(
                     &op_name,
                     plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() },
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
                     &repo_path,
                 );
                 if let Some(modal) = self.conflict_continue_modal.as_mut() {
@@ -2867,12 +2634,17 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let Some(mode) = self.conflict.clone() else { return };
+        let Some(mode) = self.conflict.clone() else {
+            return;
+        };
 
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e)));
+                self.push_toast(
+                    ToastKind::Error,
+                    SharedString::from(format!("Repo open error: {}", e)),
+                );
                 return;
             }
         };
@@ -2880,7 +2652,10 @@ impl KagiApp {
         let plan = match repo.plan_conflict_abort(&mode.session) {
             Ok(p) => p,
             Err(e) => {
-                self.push_toast(ToastKind::Error, SharedString::from(format!("abort plan error: {}", e)));
+                self.push_toast(
+                    ToastKind::Error,
+                    SharedString::from(format!("abort plan error: {}", e)),
+                );
                 return;
             }
         };
@@ -2919,7 +2694,11 @@ impl KagiApp {
     /// executes.  Surfaces the "saved resolution may be lost" warning in the UI
     /// (the dashboard shows the hint while armed).
     pub fn conflict_abort_request(&mut self, cx: &mut Context<Self>) {
-        let armed = self.conflict.as_ref().map(|c| c.abort_armed).unwrap_or(false);
+        let armed = self
+            .conflict
+            .as_ref()
+            .map(|c| c.abort_armed)
+            .unwrap_or(false);
         if !armed {
             if let Some(c) = self.conflict.as_mut() {
                 c.abort_armed = true;
@@ -2940,12 +2719,17 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let Some(mode) = self.conflict.clone() else { return };
+        let Some(mode) = self.conflict.clone() else {
+            return;
+        };
 
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e)));
+                self.push_toast(
+                    ToastKind::Error,
+                    SharedString::from(format!("Repo open error: {}", e)),
+                );
                 return;
             }
         };
@@ -2953,7 +2737,10 @@ impl KagiApp {
         let plan = match repo.plan_conflict_skip(&mode.session) {
             Ok(p) => p,
             Err(e) => {
-                self.push_toast(ToastKind::Error, SharedString::from(format!("skip plan error: {}", e)));
+                self.push_toast(
+                    ToastKind::Error,
+                    SharedString::from(format!("skip plan error: {}", e)),
+                );
                 return;
             }
         };
@@ -2988,17 +2775,19 @@ impl KagiApp {
         cx.notify();
     }
 
-
-
     /// Open the configured external merge tool for the selected conflict file
     /// (ADR-0060 / T-050).  Reads `settings.json` `"mergetool"` and substitutes
     /// `$LOCAL` / `$BASE` / `$REMOTE` / `$MERGED`.  If unset, shows how to
     /// configure it (we do NOT invent a default tool).  No plan needed
     /// (read-only launch); a note is recorded to the oplog footer via the toast.
     pub fn conflict_open_external_tool(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
-        let Some(c) = self.conflict.as_ref() else { return };
+        let Some(c) = self.conflict.as_ref() else {
+            return;
+        };
         let Some(idx) = c.selected_file else { return };
-        let Some(file) = c.session.files.get(idx) else { return };
+        let Some(file) = c.session.files.get(idx) else {
+            return;
+        };
 
         let template = match theme::read_setting("mergetool") {
             Some(t) if !t.trim().is_empty() => t,
@@ -3053,9 +2842,13 @@ impl KagiApp {
     /// Copy the selected conflict file's absolute path to the clipboard
     /// (ADR-0060 / T-052).
     pub fn conflict_copy_path(&mut self, cx: &mut Context<Self>) {
-        let Some(c) = self.conflict.as_ref() else { return };
+        let Some(c) = self.conflict.as_ref() else {
+            return;
+        };
         let Some(idx) = c.selected_file else { return };
-        let Some(file) = c.session.files.get(idx) else { return };
+        let Some(file) = c.session.files.get(idx) else {
+            return;
+        };
         let abs = match self.repo_path.clone() {
             Some(p) => p.join(&file.path).to_string_lossy().into_owned(),
             None => file.path.to_string_lossy().into_owned(),
@@ -3068,7 +2861,9 @@ impl KagiApp {
     /// (ADR-0060 / T-052), e.g. `git merge --continue` / `git rebase --abort` /
     /// `git rebase --skip`.
     pub fn conflict_copy_git_command(&mut self, cx: &mut Context<Self>) {
-        let Some(c) = self.conflict.as_ref() else { return };
+        let Some(c) = self.conflict.as_ref() else {
+            return;
+        };
         let slug = c.session.op.slug();
         let is_sequencer = c.session.op.is_sequencer();
         // Offer the most useful command for the current state: continue when the
@@ -3097,7 +2892,9 @@ impl KagiApp {
     /// No-op for non-GitHub repos, `KAGI_OFFLINE=1`, or a repo already started.
     /// The required startup log line is emitted exactly once per repo.
     fn ensure_avatars(&mut self, cx: &mut Context<Self>) {
-        let Some(repo_path) = self.repo_path.clone() else { return };
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
 
         // Run at most once per repository path.
         if self.avatar_fetch_for.as_deref() == Some(repo_path.as_path()) {
@@ -3128,9 +2925,8 @@ impl KagiApp {
             return;
         };
 
-        let task = cx.background_spawn(async move {
-            avatar_fetch::resolve_avatars(&owner, &repo, &emails)
-        });
+        let task = cx
+            .background_spawn(async move { avatar_fetch::resolve_avatars(&owner, &repo, &emails) });
         cx.spawn(async move |this, acx| {
             let outcome = task.await;
             let _ = this.update(acx, |app, cx| {
@@ -3310,9 +3106,12 @@ impl KagiApp {
                 // non-keyed plan blocker (commit-existence, checkout-after) is
                 // passed through in English.
                 let keyed = repo.create_branch_name_errors(&name);
-                let localized = localize_plan_blockers(&plan.blockers, keyed.iter().map(|e| {
-                    (e.to_string(), crate::ui::i18n::branch_name_error(e))
-                }));
+                let localized = localize_plan_blockers(
+                    &plan.blockers,
+                    keyed
+                        .iter()
+                        .map(|e| (e.to_string(), crate::ui::i18n::branch_name_error(e))),
+                );
                 if let Some(ref mut modal) = self.create_branch_modal {
                     modal.plan = Some(std::sync::Arc::new(plan));
                     modal.localized_blockers = localized;
@@ -3346,7 +3145,9 @@ impl KagiApp {
                 self.record_op(
                     "create-branch",
                     plan.current.clone(),
-                    OpOutcome::Refused { blockers: plan.blockers.clone() },
+                    OpOutcome::Refused {
+                        blockers: plan.blockers.clone(),
+                    },
                     rp,
                 );
             }
@@ -3364,7 +3165,9 @@ impl KagiApp {
                 self.record_op(
                     "create-branch",
                     plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() },
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
                     &repo_path,
                 );
                 if let Some(ref mut m) = self.create_branch_modal {
@@ -3380,7 +3183,9 @@ impl KagiApp {
             self.record_op(
                 "create-branch",
                 plan.current.clone(),
-                OpOutcome::Failed { error: err_msg.clone() },
+                OpOutcome::Failed {
+                    error: err_msg.clone(),
+                },
                 &repo_path,
             );
             if let Some(ref mut m) = self.create_branch_modal {
@@ -3395,7 +3200,9 @@ impl KagiApp {
             self.record_op(
                 "create-branch",
                 plan.current.clone(),
-                OpOutcome::Failed { error: err_msg.clone() },
+                OpOutcome::Failed {
+                    error: err_msg.clone(),
+                },
                 &repo_path,
             );
             if let Some(ref mut m) = self.create_branch_modal {
@@ -3404,7 +3211,11 @@ impl KagiApp {
             return;
         }
 
-        eprintln!("[kagi] executed: create-branch '{}' @ {}", modal.input, modal.at.short());
+        eprintln!(
+            "[kagi] executed: create-branch '{}' @ {}",
+            modal.input,
+            modal.at.short()
+        );
 
         // Verify: confirm the branch now exists.
         let repo2 = match kagi::git::Backend::open(&repo_path) {
@@ -3419,7 +3230,10 @@ impl KagiApp {
         if branch_exists {
             eprintln!("[kagi] verified: branch '{}' exists", modal.input);
         } else {
-            eprintln!("[kagi] verify: branch '{}' NOT found after create", modal.input);
+            eprintln!(
+                "[kagi] verify: branch '{}' NOT found after create",
+                modal.input
+            );
         }
 
         // Record branch creation success first. If checkout_after is on, the
@@ -3431,7 +3245,9 @@ impl KagiApp {
         self.record_op(
             "create-branch",
             plan.current.clone(),
-            OpOutcome::Success { after: create_after.clone() },
+            OpOutcome::Success {
+                after: create_after.clone(),
+            },
             &repo_path,
         );
 
@@ -3443,7 +3259,9 @@ impl KagiApp {
                     self.record_op(
                         "checkout",
                         create_after,
-                        OpOutcome::Failed { error: err_msg.clone() },
+                        OpOutcome::Failed {
+                            error: err_msg.clone(),
+                        },
                         &repo_path,
                     );
                     if let Some(ref mut m) = self.create_branch_modal {
@@ -3456,7 +3274,9 @@ impl KagiApp {
                 self.record_op(
                     "checkout",
                     checkout_plan.current.clone(),
-                    OpOutcome::Refused { blockers: checkout_plan.blockers.clone() },
+                    OpOutcome::Refused {
+                        blockers: checkout_plan.blockers.clone(),
+                    },
                     &repo_path,
                 );
                 if let Some(ref mut m) = self.create_branch_modal {
@@ -3471,7 +3291,9 @@ impl KagiApp {
                 self.record_op(
                     "checkout",
                     checkout_plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() },
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
                     &repo_path,
                 );
                 if let Some(ref mut m) = self.create_branch_modal {
@@ -3484,7 +3306,9 @@ impl KagiApp {
                 self.record_op(
                     "checkout",
                     checkout_plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() },
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
                     &repo_path,
                 );
                 if let Some(ref mut m) = self.create_branch_modal {
@@ -3496,7 +3320,9 @@ impl KagiApp {
             self.record_op(
                 "checkout",
                 checkout_plan.current.clone(),
-                OpOutcome::Success { after: checkout_plan.predicted.clone() },
+                OpOutcome::Success {
+                    after: checkout_plan.predicted.clone(),
+                },
                 &repo_path,
             );
         }
@@ -3648,8 +3474,7 @@ impl KagiApp {
         // a stale plan.
         self.run_modal_replans();
         if self.busy_op.is_some() {
-            self.status_footer =
-                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         let modal = match self.create_worktree_modal.clone() {
@@ -3666,7 +3491,9 @@ impl KagiApp {
                 self.record_op(
                     "create-worktree",
                     plan.current.clone(),
-                    OpOutcome::Refused { blockers: plan.blockers.clone() },
+                    OpOutcome::Refused {
+                        blockers: plan.blockers.clone(),
+                    },
                     rp,
                 );
             }
@@ -3772,7 +3599,11 @@ impl KagiApp {
                 return;
             }
         };
-        let msg_opt = if message_str.is_empty() { None } else { Some(message_str.as_str()) };
+        let msg_opt = if message_str.is_empty() {
+            None
+        } else {
+            Some(message_str.as_str())
+        };
         match repo.plan_stash_push(msg_opt, true) {
             Ok(plan) => {
                 eprintln!(
@@ -3798,8 +3629,7 @@ impl KagiApp {
         // fast type-then-click can never execute a stale plan.
         self.run_modal_replans();
         if self.busy_op.is_some() {
-            self.status_footer =
-                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         let modal = match self.stash_push_modal.clone() {
@@ -3816,7 +3646,9 @@ impl KagiApp {
                 self.record_op(
                     "stash-push",
                     plan.current.clone(),
-                    OpOutcome::Refused { blockers: plan.blockers.clone() },
+                    OpOutcome::Refused {
+                        blockers: plan.blockers.clone(),
+                    },
                     rp,
                 );
             }
@@ -3836,12 +3668,15 @@ impl KagiApp {
         self.push_toast(ToastKind::Info, Msg::StartedStash.t());
         eprintln!("[kagi] async: stash-push started");
 
-        let msg_opt = if modal.input.is_empty() { None } else { Some(modal.input.clone()) };
+        let msg_opt = if modal.input.is_empty() {
+            None
+        } else {
+            Some(modal.input.clone())
+        };
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
-        let task = cx.background_spawn(async move {
-            stash_push_blocking(&bg_path, &bg_plan, msg_opt)
-        });
+        let task =
+            cx.background_spawn(async move { stash_push_blocking(&bg_path, &bg_plan, msg_opt) });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
@@ -3855,9 +3690,10 @@ impl KagiApp {
                             OpOutcome::Success { after },
                             &repo_path,
                         );
-                        app.status_footer = FooterStatus::Success(SharedString::from(
-                            format!("stash: {}", summary),
-                        ));
+                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                            "stash: {}",
+                            summary
+                        )));
                         app.reload();
                     }
                     Err(err_msg) => {
@@ -3876,7 +3712,6 @@ impl KagiApp {
         .detach();
         cx.notify();
     }
-
 
     // ── Stash apply modal (T015) ─────────────────────────────
 
@@ -3942,7 +3777,9 @@ impl KagiApp {
                 self.record_op(
                     "stash-apply",
                     plan.current.clone(),
-                    OpOutcome::Refused { blockers: plan.blockers.clone() },
+                    OpOutcome::Refused {
+                        blockers: plan.blockers.clone(),
+                    },
                     rp,
                 );
             }
@@ -3960,7 +3797,9 @@ impl KagiApp {
                 self.record_op(
                     "stash-apply",
                     plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() },
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
                     &repo_path,
                 );
                 if let Some(ref mut m) = self.stash_apply_modal {
@@ -3976,7 +3815,9 @@ impl KagiApp {
             self.record_op(
                 "stash-apply",
                 plan.current.clone(),
-                OpOutcome::Failed { error: err_msg.clone() },
+                OpOutcome::Failed {
+                    error: err_msg.clone(),
+                },
                 &repo_path,
             );
             if let Some(ref mut m) = self.stash_apply_modal {
@@ -3991,7 +3832,9 @@ impl KagiApp {
             self.record_op(
                 "stash-apply",
                 plan.current.clone(),
-                OpOutcome::Failed { error: err_msg.clone() },
+                OpOutcome::Failed {
+                    error: err_msg.clone(),
+                },
                 &repo_path,
             );
             if let Some(ref mut m) = self.stash_apply_modal {
@@ -4022,13 +3865,24 @@ impl KagiApp {
                 }
                 // Stash must remain (apply, not pop).
                 if stash_count >= plan.stash_count_at_plan() {
-                    eprintln!("[kagi] verified: stash count={} (entry preserved)", stash_count);
+                    eprintln!(
+                        "[kagi] verified: stash count={} (entry preserved)",
+                        stash_count
+                    );
                 } else {
-                    eprintln!("[kagi] verify: stash count={} (expected >= {})", stash_count, plan.stash_count_at_plan());
+                    eprintln!(
+                        "[kagi] verify: stash count={} (expected >= {})",
+                        stash_count,
+                        plan.stash_count_at_plan()
+                    );
                 }
                 StateSummary {
                     head: snap.head.display(),
-                    dirty: if is_dirty { "dirty".to_string() } else { "clean".to_string() },
+                    dirty: if is_dirty {
+                        "dirty".to_string()
+                    } else {
+                        "clean".to_string()
+                    },
                 }
             }
             Err(e) => {
@@ -4041,7 +3895,9 @@ impl KagiApp {
         self.record_op(
             "stash-apply",
             plan.current.clone(),
-            OpOutcome::Success { after: after_summary },
+            OpOutcome::Success {
+                after: after_summary,
+            },
             &repo_path,
         );
 
@@ -4106,8 +3962,7 @@ impl KagiApp {
             None => return,
         };
         if self.busy_op.is_some() {
-            self.status_footer =
-                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         if !modal.plan.blockers.is_empty() {
@@ -4116,7 +3971,9 @@ impl KagiApp {
                 self.record_op(
                     "cherry-pick",
                     modal.plan.current.clone(),
-                    OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                    OpOutcome::Refused {
+                        blockers: modal.plan.blockers.clone(),
+                    },
                     rp,
                 );
             }
@@ -4140,9 +3997,8 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_commit = commit_id.clone();
-        let task = cx.background_spawn(async move {
-            cherry_pick_blocking(&bg_path, &bg_plan, &bg_commit)
-        });
+        let task = cx
+            .background_spawn(async move { cherry_pick_blocking(&bg_path, &bg_plan, &bg_commit) });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
@@ -4163,7 +4019,9 @@ impl KagiApp {
                         app.record_op(
                             "cherry-pick",
                             plan.current.clone(),
-                            OpOutcome::Failed { error: err_msg.clone() },
+                            OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
                             &repo_path,
                         );
                         app.cherry_pick_modal = Some(CherryPickModal {
@@ -4233,8 +4091,7 @@ impl KagiApp {
             None => return,
         };
         if self.busy_op.is_some() {
-            self.status_footer =
-                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         if !modal.plan.blockers.is_empty() {
@@ -4243,7 +4100,9 @@ impl KagiApp {
                 self.record_op(
                     "revert",
                     modal.plan.current.clone(),
-                    OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                    OpOutcome::Refused {
+                        blockers: modal.plan.blockers.clone(),
+                    },
                     rp,
                 );
             }
@@ -4267,9 +4126,8 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_commit = commit_id.clone();
-        let task = cx.background_spawn(async move {
-            revert_blocking(&bg_path, &bg_plan, &bg_commit)
-        });
+        let task =
+            cx.background_spawn(async move { revert_blocking(&bg_path, &bg_plan, &bg_commit) });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
@@ -4290,7 +4148,9 @@ impl KagiApp {
                         app.record_op(
                             "revert",
                             plan.current.clone(),
-                            OpOutcome::Failed { error: err_msg.clone() },
+                            OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
                             &repo_path,
                         );
                         app.revert_modal = Some(RevertModal {
@@ -4453,7 +4313,11 @@ impl KagiApp {
         }
         if let Some(branch) = set_path {
             // Recompute the suggested path outside the &mut borrow.
-            let auto = self.default_worktree_path(if branch.is_empty() { "new-branch" } else { &branch });
+            let auto = self.default_worktree_path(if branch.is_empty() {
+                "new-branch"
+            } else {
+                &branch
+            });
             if let Some(m) = self.create_worktree_modal.as_mut() {
                 m.path_input = auto.clone();
                 if let Some(st) = m.path_state.clone() {
@@ -4476,7 +4340,11 @@ impl KagiApp {
                     self.last_draft_value = v;
                     self.draft_save_gen = self.draft_save_gen.wrapping_add(1);
                     let gen = self.draft_save_gen;
-                    let mode = if self.commit_template_mode { "template" } else { "plain" };
+                    let mode = if self.commit_template_mode {
+                        "template"
+                    } else {
+                        "plain"
+                    };
                     let mode = mode.to_string();
                     cx.spawn(async move |this, acx| {
                         gpui::Timer::after(Duration::from_millis(250)).await;
@@ -4484,7 +4352,9 @@ impl KagiApp {
                             if app.draft_save_gen != gen {
                                 return;
                             }
-                            let Some(rp) = app.repo_path.clone() else { return };
+                            let Some(rp) = app.repo_path.clone() else {
+                                return;
+                            };
                             let branch = app.status_summary.branch.clone();
                             let msg = app.last_draft_value.clone();
                             if msg.trim().is_empty() {
@@ -4503,7 +4373,8 @@ impl KagiApp {
         // ── Stash push (message) ────────────────────────────
         if let Some(m) = self.stash_push_modal.as_mut() {
             if m.input_state.is_none() {
-                let st = cx.new(|cx| InputState::new(window, cx).placeholder("stash message (optional)"));
+                let st = cx
+                    .new(|cx| InputState::new(window, cx).placeholder("stash message (optional)"));
                 st.update(cx, |s, cx| s.focus(window, cx));
                 m.input_state = Some(st);
             }
@@ -4611,9 +4482,7 @@ impl KagiApp {
                             let _ = c.buffer.autosave();
                             // Refresh the file status from the buffer.
                             let residue = c.buffer.files_with_marker_residue();
-                            if let Some(f) =
-                                c.session.files.iter_mut().find(|f| f.path == path)
-                            {
+                            if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
                                 f.status = if residue.contains(&f.path) {
                                     kagi::git::ConflictStatus::NeedsReview
                                 } else if c.buffer.has_resolution(&path) {
@@ -4694,26 +4563,24 @@ impl KagiApp {
             return;
         }
         self.toast_ticker_alive = true;
-        cx.spawn(async move |this, acx| {
-            loop {
-                gpui::Timer::after(Duration::from_millis(500)).await;
-                let finished = this.update(acx, |app, cx| {
-                    let before = app.toasts.len();
-                    app.toasts.retain(|t| !t.expired());
-                    if app.toasts.len() != before {
-                        cx.notify();
-                    }
-                    if app.toasts.is_empty() {
-                        app.toast_ticker_alive = false;
-                        true
-                    } else {
-                        false
-                    }
-                });
-                match finished {
-                    Ok(true) | Err(_) => break,
-                    Ok(false) => {}
+        cx.spawn(async move |this, acx| loop {
+            gpui::Timer::after(Duration::from_millis(500)).await;
+            let finished = this.update(acx, |app, cx| {
+                let before = app.toasts.len();
+                app.toasts.retain(|t| !t.expired());
+                if app.toasts.len() != before {
+                    cx.notify();
                 }
+                if app.toasts.is_empty() {
+                    app.toast_ticker_alive = false;
+                    true
+                } else {
+                    false
+                }
+            });
+            match finished {
+                Ok(true) | Err(_) => break,
+                Ok(false) => {}
             }
         })
         .detach();
@@ -4736,9 +4603,9 @@ impl KagiApp {
 
         for toast in &self.toasts {
             let (accent, icon) = match toast.kind {
-                ToastKind::Info => (theme().color_branch, "\u{27f3}"),    // ⟳
+                ToastKind::Info => (theme().color_branch, "\u{27f3}"), // ⟳
                 ToastKind::Success => (theme().color_success, "\u{2713}"), // ✓
-                ToastKind::Error => (theme().color_blocker, "\u{2715}"),   // ✕
+                ToastKind::Error => (theme().color_blocker, "\u{2715}"), // ✕
             };
             let id = toast.id;
             let dismiss = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
@@ -4765,7 +4632,12 @@ impl KagiApp {
                             .text_color(rgb(accent))
                             .child(SharedString::from(icon)),
                     )
-                    .child(div().flex_1().overflow_hidden().child(toast.message.clone()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .overflow_hidden()
+                            .child(toast.message.clone()),
+                    )
                     .child(
                         div()
                             .id(("toast-dismiss", id))
@@ -4790,20 +4662,14 @@ impl KagiApp {
     ) {
         // Build the footer message before moving `outcome`.
         let (footer_msg, footer_ok) = match &outcome {
-            OpOutcome::Success { after } => {
-                (
-                    SharedString::from(format!(
-                        "{}: {} → {}",
-                        op,
-                        before.head,
-                        after.head
-                    )),
-                    true,
-                )
-            }
-            OpOutcome::Failed { error } => {
-                (SharedString::from(format!("{}: failed — {}", op, error)), false)
-            }
+            OpOutcome::Success { after } => (
+                SharedString::from(format!("{}: {} → {}", op, before.head, after.head)),
+                true,
+            ),
+            OpOutcome::Failed { error } => (
+                SharedString::from(format!("{}: failed — {}", op, error)),
+                false,
+            ),
             OpOutcome::Refused { blockers } => (
                 SharedString::from(format!(
                     "{}: refused ({} blocker{})",
@@ -4944,7 +4810,9 @@ impl KagiApp {
             self.record_op(
                 "stash-push",
                 plan.current.clone(),
-                OpOutcome::Refused { blockers: plan.blockers.clone() },
+                OpOutcome::Refused {
+                    blockers: plan.blockers.clone(),
+                },
                 &repo_path,
             );
             if let Some(m) = self.plan_modal.as_mut() {
@@ -4961,7 +4829,9 @@ impl KagiApp {
                 self.record_op(
                     "stash-push",
                     plan.current.clone(),
-                    OpOutcome::Success { after: plan.predicted.clone() },
+                    OpOutcome::Success {
+                        after: plan.predicted.clone(),
+                    },
                     &repo_path,
                 );
                 // Keep status fresh so the checkout preflight sees the
@@ -5007,7 +4877,9 @@ impl KagiApp {
                 self.record_op(
                     "checkout",
                     modal.plan.current.clone(),
-                    OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                    OpOutcome::Refused {
+                        blockers: modal.plan.blockers.clone(),
+                    },
                     rp,
                 );
             }
@@ -5029,7 +4901,9 @@ impl KagiApp {
                 self.record_op(
                     op_name,
                     modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() },
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
                     &repo_path,
                 );
                 self.plan_modal = Some(CheckoutPlanModal {
@@ -5048,7 +4922,9 @@ impl KagiApp {
             self.record_op(
                 op_name,
                 modal.plan.current.clone(),
-                OpOutcome::Failed { error: err_msg.clone() },
+                OpOutcome::Failed {
+                    error: err_msg.clone(),
+                },
                 &repo_path,
             );
             self.plan_modal = Some(CheckoutPlanModal {
@@ -5070,7 +4946,9 @@ impl KagiApp {
             self.record_op(
                 op_name,
                 modal.plan.current.clone(),
-                OpOutcome::Failed { error: err_msg.clone() },
+                OpOutcome::Failed {
+                    error: err_msg.clone(),
+                },
                 &repo_path,
             );
             self.plan_modal = Some(CheckoutPlanModal {
@@ -5103,23 +4981,32 @@ impl KagiApp {
                 match (&modal.target, &snap.head) {
                     (
                         CheckoutPlanTarget::Branch(branch),
-                        Head::Attached { branch: actual_branch, .. },
+                        Head::Attached {
+                            branch: actual_branch,
+                            ..
+                        },
                     ) if actual_branch == branch => {
                         eprintln!("[kagi] verified: HEAD={}", actual_branch);
                     }
-                    (
-                        CheckoutPlanTarget::Commit(commit_id),
-                        Head::Detached { target },
-                    ) if target == &commit_id.0 => {
+                    (CheckoutPlanTarget::Commit(commit_id), Head::Detached { target })
+                        if target == &commit_id.0 =>
+                    {
                         eprintln!("[kagi] verified: detached HEAD={}", commit_id.short());
                     }
                     other => {
-                        eprintln!("[kagi] verify: unexpected HEAD state after checkout: {:?}", other);
+                        eprintln!(
+                            "[kagi] verify: unexpected HEAD state after checkout: {:?}",
+                            other
+                        );
                     }
                 }
                 StateSummary {
                     head: snap.head.display(),
-                    dirty: if snap.status.is_dirty() { "dirty".to_string() } else { "clean".to_string() },
+                    dirty: if snap.status.is_dirty() {
+                        "dirty".to_string()
+                    } else {
+                        "clean".to_string()
+                    },
                 }
             }
             Err(e) => {
@@ -5132,7 +5019,9 @@ impl KagiApp {
         self.record_op(
             op_name,
             modal.plan.current.clone(),
-            OpOutcome::Success { after: after_summary },
+            OpOutcome::Success {
+                after: after_summary,
+            },
             &repo_path,
         );
 
@@ -5149,8 +5038,7 @@ impl KagiApp {
             None => return,
         };
         if self.busy_op.is_some() {
-            self.status_footer =
-                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         // Enter-checkout on a dirty tree: stash the changes first (synchronous;
@@ -5168,7 +5056,9 @@ impl KagiApp {
                 self.record_op(
                     "checkout",
                     modal.plan.current.clone(),
-                    OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                    OpOutcome::Refused {
+                        blockers: modal.plan.blockers.clone(),
+                    },
                     rp,
                 );
             }
@@ -5196,9 +5086,8 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_target = target.clone();
-        let task = cx.background_spawn(async move {
-            checkout_blocking(&bg_path, &bg_plan, &bg_target)
-        });
+        let task =
+            cx.background_spawn(async move { checkout_blocking(&bg_path, &bg_plan, &bg_target) });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
@@ -5219,7 +5108,9 @@ impl KagiApp {
                         app.record_op(
                             op_name,
                             plan.current.clone(),
-                            OpOutcome::Failed { error: err_msg.clone() },
+                            OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
                             &repo_path,
                         );
                         app.plan_modal = Some(CheckoutPlanModal {
@@ -5243,8 +5134,7 @@ impl KagiApp {
     pub fn open_pull_modal(&mut self) {
         // W3-NOTIFY: refuse while a background op runs.
         if self.busy_op.is_some() {
-            self.status_footer =
-                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         let repo_path = match self.repo_path.clone() {
@@ -5254,8 +5144,10 @@ impl KagiApp {
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("pull: repo open error: {}", e)));
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "pull: repo open error: {}",
+                    e
+                )));
                 return;
             }
         };
@@ -5302,7 +5194,9 @@ impl KagiApp {
             self.record_op(
                 "pull",
                 modal.plan.current.clone(),
-                OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
                 &repo_path,
             );
             return;
@@ -5314,7 +5208,9 @@ impl KagiApp {
                 self.record_op(
                     "pull",
                     modal.plan.current.clone(),
-                    OpOutcome::Success { after: after_summary },
+                    OpOutcome::Success {
+                        after: after_summary,
+                    },
                     &repo_path,
                 );
                 self.status_footer =
@@ -5325,7 +5221,9 @@ impl KagiApp {
                 self.record_op(
                     "pull",
                     modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() },
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
                     &repo_path,
                 );
                 self.pull_modal = Some(PullPlanModal {
@@ -5340,9 +5238,7 @@ impl KagiApp {
     /// so the window stays responsive, with start/finish toasts.
     pub fn start_pull(&mut self, cx: &mut Context<Self>) {
         if self.busy_op.is_some() {
-            self.status_footer = FooterStatus::Idle(SharedString::from(
-                Msg::OpInProgress.t(),
-            ));
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         let modal = match self.pull_modal.clone() {
@@ -5358,7 +5254,9 @@ impl KagiApp {
             self.record_op(
                 "pull",
                 modal.plan.current.clone(),
-                OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
                 &repo_path,
             );
             self.pull_modal = None;
@@ -5400,7 +5298,9 @@ impl KagiApp {
                 self.record_op(
                     "pull",
                     modal.plan.current.clone(),
-                    OpOutcome::Success { after: after_summary },
+                    OpOutcome::Success {
+                        after: after_summary,
+                    },
                     &repo_path,
                 );
                 self.status_footer =
@@ -5425,8 +5325,7 @@ impl KagiApp {
     pub fn open_push_modal(&mut self) {
         // W3-NOTIFY: refuse while a background op runs.
         if self.busy_op.is_some() {
-            self.status_footer =
-                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         let repo_path = match self.repo_path.clone() {
@@ -5436,8 +5335,10 @@ impl KagiApp {
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("push: repo open error: {}", e)));
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "push: repo open error: {}",
+                    e
+                )));
                 return;
             }
         };
@@ -5484,7 +5385,9 @@ impl KagiApp {
             self.record_op(
                 "push",
                 modal.plan.current.clone(),
-                OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
                 &repo_path,
             );
             return;
@@ -5496,7 +5399,9 @@ impl KagiApp {
                 self.record_op(
                     "push",
                     modal.plan.current.clone(),
-                    OpOutcome::Success { after: after_summary },
+                    OpOutcome::Success {
+                        after: after_summary,
+                    },
                     &repo_path,
                 );
                 self.status_footer =
@@ -5507,7 +5412,9 @@ impl KagiApp {
                 self.record_op(
                     "push",
                     modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() },
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
                     &repo_path,
                 );
                 self.push_modal = Some(PushPlanModal {
@@ -5521,9 +5428,7 @@ impl KagiApp {
     /// W3-NOTIFY: UI-path push — background thread + start/finish toasts.
     pub fn start_push(&mut self, cx: &mut Context<Self>) {
         if self.busy_op.is_some() {
-            self.status_footer = FooterStatus::Idle(SharedString::from(
-                Msg::OpInProgress.t(),
-            ));
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         let modal = match self.push_modal.clone() {
@@ -5539,7 +5444,9 @@ impl KagiApp {
             self.record_op(
                 "push",
                 modal.plan.current.clone(),
-                OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
                 &repo_path,
             );
             self.push_modal = None;
@@ -5581,7 +5488,9 @@ impl KagiApp {
                 self.record_op(
                     "push",
                     modal.plan.current.clone(),
-                    OpOutcome::Success { after: after_summary },
+                    OpOutcome::Success {
+                        after: after_summary,
+                    },
                     &repo_path,
                 );
                 self.status_footer =
@@ -5605,13 +5514,17 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    format!("branch operation: repo open error: {}", e),
-                ));
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "branch operation: repo open error: {}",
+                    e
+                )));
                 return;
             }
         };
@@ -5630,9 +5543,10 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    format!("branch operation plan error: {}", e),
-                ));
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "branch operation plan error: {}",
+                    e
+                )));
             }
         }
     }
@@ -5646,8 +5560,14 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let modal = match self.branch_plan_modal.clone() { Some(m) => m, None => return };
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let modal = match self.branch_plan_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
         let op_name = match modal.kind {
             BranchPlanKind::PullFfOnly => "branch-pull-ff",
             BranchPlanKind::Push => "branch-push",
@@ -5657,7 +5577,9 @@ impl KagiApp {
             self.record_op(
                 op_name,
                 modal.plan.current.clone(),
-                OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
                 &repo_path,
             );
             self.branch_plan_modal = None;
@@ -5667,12 +5589,11 @@ impl KagiApp {
 
         self.busy_op = Some(op_name);
         self.branch_plan_modal = None;
-        self.status_footer = FooterStatus::Busy(SharedString::from(format!("{} in progress...", op_name)));
+        self.status_footer =
+            FooterStatus::Busy(SharedString::from(format!("{} in progress...", op_name)));
         let bg_path = repo_path.clone();
         let bg_modal = modal.clone();
-        let task = cx.background_spawn(async move {
-            branch_plan_blocking(&bg_path, &bg_modal)
-        });
+        let task = cx.background_spawn(async move { branch_plan_blocking(&bg_path, &bg_modal) });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
@@ -5682,7 +5603,9 @@ impl KagiApp {
                         app.record_op(
                             op_name,
                             modal.plan.current.clone(),
-                            OpOutcome::Success { after: after.clone() },
+                            OpOutcome::Success {
+                                after: after.clone(),
+                            },
                             &repo_path,
                         );
                         app.status_footer = FooterStatus::Success(SharedString::from(format!(
@@ -5695,7 +5618,9 @@ impl KagiApp {
                         app.record_op(
                             op_name,
                             modal.plan.current.clone(),
-                            OpOutcome::Failed { error: err_msg.clone() },
+                            OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
                             &repo_path,
                         );
                         app.branch_plan_modal = Some(BranchPlanModal {
@@ -5738,8 +5663,14 @@ impl KagiApp {
             Some(m) => (m.branch_name.clone(), m.input.clone()),
             None => return,
         };
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
-        let repo = match kagi::git::Backend::open(&repo_path) { Ok(r) => r, Err(_) => return };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo = match kagi::git::Backend::open(&repo_path) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
         match repo.plan_set_upstream(&branch_name, &input) {
             Ok(plan) => {
                 if let Some(m) = self.set_upstream_modal.as_mut() {
@@ -5748,7 +5679,10 @@ impl KagiApp {
             }
             Err(e) => {
                 if let Some(m) = self.set_upstream_modal.as_mut() {
-                    m.error = Some(SharedString::from(format!("Set upstream plan error: {}", e)));
+                    m.error = Some(SharedString::from(format!(
+                        "Set upstream plan error: {}",
+                        e
+                    )));
                 }
             }
         }
@@ -5760,14 +5694,25 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let modal = match self.set_upstream_modal.clone() { Some(m) => m, None => return };
-        let plan = match modal.plan.clone() { Some(p) => p, None => return };
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let modal = match self.set_upstream_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let plan = match modal.plan.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
         if !plan.blockers.is_empty() {
             self.record_op(
                 "set-upstream",
                 plan.current.clone(),
-                OpOutcome::Refused { blockers: plan.blockers.clone() },
+                OpOutcome::Refused {
+                    blockers: plan.blockers.clone(),
+                },
                 &repo_path,
             );
             return;
@@ -5800,7 +5745,9 @@ impl KagiApp {
                         app.record_op(
                             "set-upstream",
                             plan.current.clone(),
-                            OpOutcome::Failed { error: err_msg.clone() },
+                            OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
                             &repo_path,
                         );
                         app.set_upstream_modal = Some(SetUpstreamModal {
@@ -5844,8 +5791,14 @@ impl KagiApp {
         };
         let existing: Vec<String> = self.branches.iter().map(|(name, _)| name.clone()).collect();
         let validation = validate_branch_rename(&old_name, &input, &existing);
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
-        let repo = match kagi::git::Backend::open(&repo_path) { Ok(r) => r, Err(_) => return };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo = match kagi::git::Backend::open(&repo_path) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
         match repo.plan_rename_branch(&old_name, &input) {
             Ok(plan) => {
                 if let Some(m) = self.rename_branch_modal.as_mut() {
@@ -5868,14 +5821,25 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let modal = match self.rename_branch_modal.clone() { Some(m) => m, None => return };
-        let plan = match modal.plan.clone() { Some(p) => p, None => return };
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let modal = match self.rename_branch_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let plan = match modal.plan.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
         if !plan.blockers.is_empty() {
             self.record_op(
                 "rename-branch",
                 plan.current.clone(),
-                OpOutcome::Refused { blockers: plan.blockers.clone() },
+                OpOutcome::Refused {
+                    blockers: plan.blockers.clone(),
+                },
                 &repo_path,
             );
             return;
@@ -5907,7 +5871,9 @@ impl KagiApp {
                         app.record_op(
                             "rename-branch",
                             plan.current.clone(),
-                            OpOutcome::Failed { error: err_msg.clone() },
+                            OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
                             &repo_path,
                         );
                         app.rename_branch_modal = Some(RenameBranchModal {
@@ -5994,7 +5960,9 @@ impl KagiApp {
             self.record_op(
                 "merge",
                 modal.plan.current.clone(),
-                OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
                 &repo_path,
             );
             self.merge_modal = None;
@@ -6012,7 +5980,8 @@ impl KagiApp {
         let target = modal.target.clone();
         let kind = modal.kind.clone();
         let bg_path = repo_path.clone();
-        let task = cx.background_spawn(async move { merge_blocking(&bg_path, &plan, &target, &kind) });
+        let task =
+            cx.background_spawn(async move { merge_blocking(&bg_path, &plan, &target, &kind) });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
@@ -6037,7 +6006,9 @@ impl KagiApp {
                         app.record_op(
                             "merge",
                             modal.plan.current.clone(),
-                            OpOutcome::Failed { error: err_msg.clone() },
+                            OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
                             &repo_path,
                         );
                         app.merge_modal = Some(MergePlanModal {
@@ -6122,7 +6093,9 @@ impl KagiApp {
             self.record_op(
                 "checkout-tracking",
                 modal.plan.current.clone(),
-                OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
                 &repo_path,
             );
             self.tracking_checkout_modal = None;
@@ -6163,7 +6136,9 @@ impl KagiApp {
                         app.record_op(
                             "checkout-tracking",
                             modal.plan.current.clone(),
-                            OpOutcome::Failed { error: err_msg.clone() },
+                            OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
                             &repo_path,
                         );
                         app.tracking_checkout_modal = Some(TrackingCheckoutPlanModal {
@@ -6185,73 +6160,139 @@ impl KagiApp {
 
     /// Build an undo-commit plan and open the confirmation modal.
     pub fn open_undo_modal(&mut self) {
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!("undo: repo open error: {}", e)));
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "undo: repo open error: {}",
+                    e
+                )));
                 return;
             }
         };
         match repo.plan_undo_commit() {
             Ok(plan) => {
-                eprintln!("[kagi] plan: undo blockers={} warnings={}", plan.blockers.len(), plan.warnings.len());
-                self.undo_modal = Some(UndoPlanModal { plan: std::sync::Arc::new(plan), error: None });
+                eprintln!(
+                    "[kagi] plan: undo blockers={} warnings={}",
+                    plan.blockers.len(),
+                    plan.warnings.len()
+                );
+                self.undo_modal = Some(UndoPlanModal {
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!("undo plan error: {}", e)));
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("undo plan error: {}", e)));
             }
         }
     }
 
-    pub fn cancel_undo_modal(&mut self) { self.undo_modal = None; }
+    pub fn cancel_undo_modal(&mut self) {
+        self.undo_modal = None;
+    }
 
     /// Confirm undo: preflight → execute (ref-only) → oplog → reload.
     pub fn confirm_undo(&mut self) {
-        let modal = match self.undo_modal.clone() { Some(m) => m, None => return };
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let modal = match self.undo_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
         if !modal.plan.blockers.is_empty() {
             eprintln!("[kagi] refused: undo plan has blockers, not executing");
-            self.record_op("undo-commit", modal.plan.current.clone(),
-                OpOutcome::Refused { blockers: modal.plan.blockers.clone() }, &repo_path);
+            self.record_op(
+                "undo-commit",
+                modal.plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
+                &repo_path,
+            );
             return;
         }
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
-                self.record_op("undo-commit", modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
-                self.undo_modal = Some(UndoPlanModal { plan: modal.plan.clone(), error: Some(SharedString::from(err_msg)) });
+                self.record_op(
+                    "undo-commit",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                );
+                self.undo_modal = Some(UndoPlanModal {
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
                 return;
             }
         };
         if let Err(e) = repo.preflight_check(&modal.plan) {
             let err_msg = format!("Preflight failed: {}", e);
-            self.record_op("undo-commit", modal.plan.current.clone(),
-                OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
-            self.undo_modal = Some(UndoPlanModal { plan: modal.plan.clone(), error: Some(SharedString::from(err_msg)) });
+            self.record_op(
+                "undo-commit",
+                modal.plan.current.clone(),
+                OpOutcome::Failed {
+                    error: err_msg.clone(),
+                },
+                &repo_path,
+            );
+            self.undo_modal = Some(UndoPlanModal {
+                plan: modal.plan.clone(),
+                error: Some(SharedString::from(err_msg)),
+            });
             return;
         }
         match repo.execute_undo_commit() {
             Ok(outcome) => {
-                eprintln!("[kagi] executed: undo {} -> now at {}", outcome.undone.short(), outcome.now_at.short());
+                eprintln!(
+                    "[kagi] executed: undo {} -> now at {}",
+                    outcome.undone.short(),
+                    outcome.now_at.short()
+                );
                 self.undo_modal = None;
                 let after = StateSummary {
                     head: format!("branch @ {}", outcome.now_at.short()),
                     dirty: "changes staged".to_string(),
                 };
-                self.record_op("undo-commit", modal.plan.current.clone(),
-                    OpOutcome::Success { after }, &repo_path);
-                self.status_footer = FooterStatus::Success(SharedString::from(
-                    format!("undo: {} (restore: git reset --soft {})", outcome.undone.short(), outcome.undone.short())));
+                self.record_op(
+                    "undo-commit",
+                    modal.plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                );
+                self.status_footer = FooterStatus::Success(SharedString::from(format!(
+                    "undo: {} (restore: git reset --soft {})",
+                    outcome.undone.short(),
+                    outcome.undone.short()
+                )));
                 self.reload();
             }
             Err(e) => {
                 let err_msg = format!("Undo failed: {}", e);
-                self.record_op("undo-commit", modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
-                self.undo_modal = Some(UndoPlanModal { plan: modal.plan.clone(), error: Some(SharedString::from(err_msg)) });
+                self.record_op(
+                    "undo-commit",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                );
+                self.undo_modal = Some(UndoPlanModal {
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
             }
         }
     }
@@ -6271,7 +6312,10 @@ impl KagiApp {
         let message: String = if let Some(ref input_entity) = self.commit_input {
             input_entity.read(cx).value().to_string()
         } else {
-            self.commit_panel.as_ref().map(|p| p.commit_msg.clone()).unwrap_or_default()
+            self.commit_panel
+                .as_ref()
+                .map(|p| p.commit_msg.clone())
+                .unwrap_or_default()
         };
         self.open_amend_modal_with_message(mode, message);
     }
@@ -6279,21 +6323,33 @@ impl KagiApp {
     /// Build an amend plan from an explicit `message` (no `Context` needed).
     /// Used by the headless `KAGI_AMEND` path and by [`open_amend_modal`].
     pub fn open_amend_modal_with_message(&mut self, mode: AmendMode, message: String) {
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    format!("amend: repo open error: {}", e)));
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "amend: repo open error: {}",
+                    e
+                )));
                 return;
             }
         };
-        let msg_opt = if message.trim().is_empty() { None } else { Some(message.as_str()) };
+        let msg_opt = if message.trim().is_empty() {
+            None
+        } else {
+            Some(message.as_str())
+        };
         match repo.plan_amend(mode, msg_opt) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: amend mode={:?} blockers={} warnings={} destructive={}",
-                    mode, plan.blockers.len(), plan.warnings.len(), plan.destructive
+                    mode,
+                    plan.blockers.len(),
+                    plan.warnings.len(),
+                    plan.destructive
                 );
                 self.amend_modal = Some(AmendPlanModal {
                     plan: std::sync::Arc::new(plan),
@@ -6304,32 +6360,49 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    format!("amend plan error: {}", e)));
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("amend plan error: {}", e)));
             }
         }
     }
 
     /// Cancel the amend modal (also disarms the two-stage confirm).
-    pub fn cancel_amend_modal(&mut self) { self.amend_modal = None; }
+    pub fn cancel_amend_modal(&mut self) {
+        self.amend_modal = None;
+    }
 
     /// First stage of the two-stage confirm: arm the action.  If already armed
     /// this is the final stage and executes the amend (ADR-0023 history-rewrite).
     pub fn confirm_amend(&mut self) {
-        let modal = match self.amend_modal.clone() { Some(m) => m, None => return };
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let modal = match self.amend_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
 
         // Defence: never execute with blockers present.
         if !modal.plan.blockers.is_empty() {
             eprintln!("[kagi] refused: amend plan has blockers, not executing");
-            self.record_op("amend", modal.plan.current.clone(),
-                OpOutcome::Refused { blockers: modal.plan.blockers.clone() }, &repo_path);
+            self.record_op(
+                "amend",
+                modal.plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
+                &repo_path,
+            );
             return;
         }
 
         // ── Two-stage confirm: first click only arms ─────────
         if !modal.confirm_armed {
-            self.amend_modal = Some(AmendPlanModal { confirm_armed: true, ..modal });
+            self.amend_modal = Some(AmendPlanModal {
+                confirm_armed: true,
+                ..modal
+            });
             eprintln!("[kagi] amend: armed (second confirm required — history rewrite)");
             return;
         }
@@ -6339,44 +6412,90 @@ impl KagiApp {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
-                self.record_op("amend", modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
-                self.amend_modal = Some(AmendPlanModal { error: Some(SharedString::from(err_msg)), ..modal });
+                self.record_op(
+                    "amend",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                );
+                self.amend_modal = Some(AmendPlanModal {
+                    error: Some(SharedString::from(err_msg)),
+                    ..modal
+                });
                 return;
             }
         };
         if let Err(e) = repo.preflight_check(&modal.plan) {
             let err_msg = format!("Preflight failed: {}", e);
-            self.record_op("amend", modal.plan.current.clone(),
-                OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
-            self.amend_modal = Some(AmendPlanModal { error: Some(SharedString::from(err_msg)), ..modal });
+            self.record_op(
+                "amend",
+                modal.plan.current.clone(),
+                OpOutcome::Failed {
+                    error: err_msg.clone(),
+                },
+                &repo_path,
+            );
+            self.amend_modal = Some(AmendPlanModal {
+                error: Some(SharedString::from(err_msg)),
+                ..modal
+            });
             return;
         }
 
         // ADR-0040: record the OLD HEAD SHA in the oplog BEFORE execution.
         // `record_op` writes the before-state; the success record below captures
         // the new HEAD so the旧→新 transition is fully logged.
-        let msg_opt = if modal.message.trim().is_empty() { None } else { Some(modal.message.as_str()) };
+        let msg_opt = if modal.message.trim().is_empty() {
+            None
+        } else {
+            Some(modal.message.as_str())
+        };
         match repo.execute_amend(modal.mode, msg_opt) {
             Ok(outcome) => {
-                eprintln!("[kagi] executed: amend {} -> {}", outcome.old.short(), outcome.new.short());
+                eprintln!(
+                    "[kagi] executed: amend {} -> {}",
+                    outcome.old.short(),
+                    outcome.new.short()
+                );
                 self.amend_modal = None;
                 let after = StateSummary {
-                    head: format!("branch @ {} (was {})", outcome.new.short(), outcome.old.short()),
+                    head: format!(
+                        "branch @ {} (was {})",
+                        outcome.new.short(),
+                        outcome.old.short()
+                    ),
                     dirty: "amended".to_string(),
                 };
-                self.record_op("amend", modal.plan.current.clone(),
-                    OpOutcome::Success { after }, &repo_path);
+                self.record_op(
+                    "amend",
+                    modal.plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                );
                 self.status_footer = FooterStatus::Success(SharedString::from(format!(
                     "amend: {} → {} (restore: git reset --hard {})",
-                    outcome.old.short(), outcome.new.short(), outcome.old.short())));
+                    outcome.old.short(),
+                    outcome.new.short(),
+                    outcome.old.short()
+                )));
                 self.reload();
             }
             Err(e) => {
                 let err_msg = format!("Amend failed: {}", e);
-                self.record_op("amend", modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
-                self.amend_modal = Some(AmendPlanModal { error: Some(SharedString::from(err_msg)), ..modal });
+                self.record_op(
+                    "amend",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                );
+                self.amend_modal = Some(AmendPlanModal {
+                    error: Some(SharedString::from(err_msg)),
+                    ..modal
+                });
             }
         }
     }
@@ -6386,28 +6505,42 @@ impl KagiApp {
     /// build + commit replace) runs on a background thread. Headless keeps
     /// `confirm_amend` (sync).
     pub fn start_amend(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.amend_modal.clone() { Some(m) => m, None => return };
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let modal = match self.amend_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
 
         // Defence: never execute with blockers present.
         if !modal.plan.blockers.is_empty() {
             eprintln!("[kagi] refused: amend plan has blockers, not executing");
-            self.record_op("amend", modal.plan.current.clone(),
-                OpOutcome::Refused { blockers: modal.plan.blockers.clone() }, &repo_path);
+            self.record_op(
+                "amend",
+                modal.plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
+                &repo_path,
+            );
             return;
         }
 
         // First click only arms (main thread) — matches confirm_amend exactly.
         if !modal.confirm_armed {
-            self.amend_modal = Some(AmendPlanModal { confirm_armed: true, ..modal });
+            self.amend_modal = Some(AmendPlanModal {
+                confirm_armed: true,
+                ..modal
+            });
             eprintln!("[kagi] amend: armed (second confirm required — history rewrite)");
             return;
         }
 
         // Armed → background execute. Refuse a concurrent background op.
         if self.busy_op.is_some() {
-            self.status_footer =
-                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
 
@@ -6423,9 +6556,8 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_msg = message.clone();
-        let task = cx.background_spawn(async move {
-            amend_blocking(&bg_path, &bg_plan, mode, &bg_msg)
-        });
+        let task =
+            cx.background_spawn(async move { amend_blocking(&bg_path, &bg_plan, mode, &bg_msg) });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
@@ -6433,17 +6565,30 @@ impl KagiApp {
                 match result {
                     Ok((after, old, new)) => {
                         eprintln!("[kagi] async: amend finished");
-                        app.record_op("amend", plan.current.clone(),
-                            OpOutcome::Success { after }, &repo_path);
+                        app.record_op(
+                            "amend",
+                            plan.current.clone(),
+                            OpOutcome::Success { after },
+                            &repo_path,
+                        );
                         app.status_footer = FooterStatus::Success(SharedString::from(format!(
                             "amend: {} → {} (restore: git reset --hard {})",
-                            old.short(), new.short(), old.short())));
+                            old.short(),
+                            new.short(),
+                            old.short()
+                        )));
                         app.reload();
                     }
                     Err(err_msg) => {
                         eprintln!("[kagi] async: amend failed — {}", err_msg);
-                        app.record_op("amend", plan.current.clone(),
-                            OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
+                        app.record_op(
+                            "amend",
+                            plan.current.clone(),
+                            OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
+                            &repo_path,
+                        );
                         app.amend_modal = Some(AmendPlanModal {
                             plan: plan.clone(),
                             error: Some(SharedString::from(err_msg)),
@@ -6462,69 +6607,137 @@ impl KagiApp {
 
     /// Build a stash-pop plan and open the confirmation modal.
     pub fn open_pop_modal(&mut self, index: usize) {
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
         let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!("pop: repo open error: {}", e)));
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "pop: repo open error: {}",
+                    e
+                )));
                 return;
             }
         };
         match repo.plan_stash_pop(index) {
             Ok(plan) => {
-                eprintln!("[kagi] plan: stash-pop index={} blockers={} warnings={}", index, plan.blockers.len(), plan.warnings.len());
-                self.pop_modal = Some(PopPlanModal { plan: std::sync::Arc::new(plan), error: None, stash_index: index });
+                eprintln!(
+                    "[kagi] plan: stash-pop index={} blockers={} warnings={}",
+                    index,
+                    plan.blockers.len(),
+                    plan.warnings.len()
+                );
+                self.pop_modal = Some(PopPlanModal {
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                    stash_index: index,
+                });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!("pop plan error: {}", e)));
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("pop plan error: {}", e)));
             }
         }
     }
 
-    pub fn cancel_pop_modal(&mut self) { self.pop_modal = None; }
+    pub fn cancel_pop_modal(&mut self) {
+        self.pop_modal = None;
+    }
 
     /// Confirm stash pop: preflight → apply-then-drop → oplog → reload.
     pub fn confirm_pop(&mut self) {
-        let modal = match self.pop_modal.clone() { Some(m) => m, None => return };
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let modal = match self.pop_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
         if !modal.plan.blockers.is_empty() {
             eprintln!("[kagi] refused: pop plan has blockers, not executing");
-            self.record_op("stash-pop", modal.plan.current.clone(),
-                OpOutcome::Refused { blockers: modal.plan.blockers.clone() }, &repo_path);
+            self.record_op(
+                "stash-pop",
+                modal.plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
+                &repo_path,
+            );
             return;
         }
         let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
-                self.record_op("stash-pop", modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
-                self.pop_modal = Some(PopPlanModal { plan: modal.plan.clone(), error: Some(SharedString::from(err_msg)), stash_index: modal.stash_index });
+                self.record_op(
+                    "stash-pop",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                );
+                self.pop_modal = Some(PopPlanModal {
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                    stash_index: modal.stash_index,
+                });
                 return;
             }
         };
         if let Err(e) = repo.preflight_check(&modal.plan) {
             let err_msg = format!("Preflight failed: {}", e);
-            self.record_op("stash-pop", modal.plan.current.clone(),
-                OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
-            self.pop_modal = Some(PopPlanModal { plan: modal.plan.clone(), error: Some(SharedString::from(err_msg)), stash_index: modal.stash_index });
+            self.record_op(
+                "stash-pop",
+                modal.plan.current.clone(),
+                OpOutcome::Failed {
+                    error: err_msg.clone(),
+                },
+                &repo_path,
+            );
+            self.pop_modal = Some(PopPlanModal {
+                plan: modal.plan.clone(),
+                error: Some(SharedString::from(err_msg)),
+                stash_index: modal.stash_index,
+            });
             return;
         }
         match repo.execute_stash_pop(modal.stash_index) {
             Ok(()) => {
                 eprintln!("[kagi] executed: stash-pop index={}", modal.stash_index);
                 self.pop_modal = None;
-                let after = StateSummary { head: modal.plan.current.head.clone(), dirty: "changes restored (stash removed)".to_string() };
-                self.record_op("stash-pop", modal.plan.current.clone(),
-                    OpOutcome::Success { after }, &repo_path);
-                self.status_footer = FooterStatus::Success(SharedString::from("stash pop: applied and dropped"));
+                let after = StateSummary {
+                    head: modal.plan.current.head.clone(),
+                    dirty: "changes restored (stash removed)".to_string(),
+                };
+                self.record_op(
+                    "stash-pop",
+                    modal.plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                );
+                self.status_footer =
+                    FooterStatus::Success(SharedString::from("stash pop: applied and dropped"));
                 self.reload();
             }
             Err(e) => {
                 let err_msg = format!("Pop failed: {}", e);
-                self.record_op("stash-pop", modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
-                self.pop_modal = Some(PopPlanModal { plan: modal.plan.clone(), error: Some(SharedString::from(err_msg)), stash_index: modal.stash_index });
+                self.record_op(
+                    "stash-pop",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                );
+                self.pop_modal = Some(PopPlanModal {
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                    stash_index: modal.stash_index,
+                });
             }
         }
     }
@@ -6532,17 +6745,28 @@ impl KagiApp {
     /// W15-ASYNCOPS: UI-path stash-pop — background thread + start/finish toasts.
     /// Headless keeps `confirm_pop` (sync).
     pub fn start_pop(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.pop_modal.clone() { Some(m) => m, None => return };
+        let modal = match self.pop_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
         if self.busy_op.is_some() {
-            self.status_footer =
-                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
         if !modal.plan.blockers.is_empty() {
             eprintln!("[kagi] refused: pop plan has blockers, not executing");
-            self.record_op("stash-pop", modal.plan.current.clone(),
-                OpOutcome::Refused { blockers: modal.plan.blockers.clone() }, &repo_path);
+            self.record_op(
+                "stash-pop",
+                modal.plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
+                &repo_path,
+            );
             self.pop_modal = None;
             cx.notify();
             return;
@@ -6558,9 +6782,8 @@ impl KagiApp {
         let stash_index = modal.stash_index;
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
-        let task = cx.background_spawn(async move {
-            stash_pop_blocking(&bg_path, &bg_plan, stash_index)
-        });
+        let task =
+            cx.background_spawn(async move { stash_pop_blocking(&bg_path, &bg_plan, stash_index) });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
@@ -6568,16 +6791,28 @@ impl KagiApp {
                 match result {
                     Ok((summary, after)) => {
                         eprintln!("[kagi] async: stash-pop finished");
-                        app.record_op("stash-pop", plan.current.clone(),
-                            OpOutcome::Success { after }, &repo_path);
-                        app.status_footer = FooterStatus::Success(SharedString::from(
-                            format!("stash pop: {}", summary)));
+                        app.record_op(
+                            "stash-pop",
+                            plan.current.clone(),
+                            OpOutcome::Success { after },
+                            &repo_path,
+                        );
+                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                            "stash pop: {}",
+                            summary
+                        )));
                         app.reload();
                     }
                     Err(err_msg) => {
                         eprintln!("[kagi] async: stash-pop failed — {}", err_msg);
-                        app.record_op("stash-pop", plan.current.clone(),
-                            OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
+                        app.record_op(
+                            "stash-pop",
+                            plan.current.clone(),
+                            OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
+                            &repo_path,
+                        );
                         app.pop_modal = Some(PopPlanModal {
                             plan: plan.clone(),
                             error: Some(SharedString::from(err_msg)),
@@ -6607,9 +6842,10 @@ impl KagiApp {
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    format!("delete-branch: repo open error: {}", e),
-                ));
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "delete-branch: repo open error: {}",
+                    e
+                )));
                 return;
             }
         };
@@ -6627,9 +6863,10 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    format!("delete-branch plan error: {}", e),
-                ));
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "delete-branch plan error: {}",
+                    e
+                )));
             }
         }
     }
@@ -6672,7 +6909,9 @@ impl KagiApp {
                 self.record_op(
                     "delete-branch",
                     modal.plan.current.clone(),
-                    kagi::git::oplog::OpOutcome::Failed { error: err_msg.clone() },
+                    kagi::git::oplog::OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
                     &repo_path,
                 );
                 self.delete_branch_modal = Some(DeleteBranchModal {
@@ -6689,7 +6928,9 @@ impl KagiApp {
             self.record_op(
                 "delete-branch",
                 modal.plan.current.clone(),
-                kagi::git::oplog::OpOutcome::Failed { error: err_msg.clone() },
+                kagi::git::oplog::OpOutcome::Failed {
+                    error: err_msg.clone(),
+                },
                 &repo_path,
             );
             self.delete_branch_modal = Some(DeleteBranchModal {
@@ -6726,7 +6967,9 @@ impl KagiApp {
                 self.record_op(
                     "delete-branch",
                     modal.plan.current.clone(),
-                    kagi::git::oplog::OpOutcome::Failed { error: err_msg.clone() },
+                    kagi::git::oplog::OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
                     &repo_path,
                 );
                 self.delete_branch_modal = Some(DeleteBranchModal {
@@ -6747,8 +6990,7 @@ impl KagiApp {
             None => return,
         };
         if self.busy_op.is_some() {
-            self.status_footer =
-                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         let repo_path = match self.repo_path.clone() {
@@ -6763,7 +7005,9 @@ impl KagiApp {
             self.record_op(
                 "delete-branch",
                 modal.plan.current.clone(),
-                kagi::git::oplog::OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                kagi::git::oplog::OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
                 &repo_path,
             );
             self.delete_branch_modal = None;
@@ -6782,9 +7026,10 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_branch = branch_name.clone();
-        let task = cx.background_spawn(async move {
-            delete_branch_blocking(&bg_path, &bg_plan, &bg_branch)
-        });
+        let task =
+            cx.background_spawn(
+                async move { delete_branch_blocking(&bg_path, &bg_plan, &bg_branch) },
+            );
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
@@ -6815,7 +7060,9 @@ impl KagiApp {
                         app.record_op(
                             "delete-branch",
                             plan.current.clone(),
-                            kagi::git::oplog::OpOutcome::Failed { error: err_msg.clone() },
+                            kagi::git::oplog::OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
                             &repo_path,
                         );
                         app.delete_branch_modal = Some(DeleteBranchModal {
@@ -6859,8 +7106,15 @@ impl KagiApp {
     /// commit panel's `unstaged` vector). Untracked / conflicted rows are not
     /// offered a Discard button, so this is only called for eligible rows.
     pub fn open_discard_modal_for_index(&mut self, index: usize) {
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
-        let path = match self.commit_panel.as_ref().and_then(|p| p.unstaged.get(index)) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let path = match self
+            .commit_panel
+            .as_ref()
+            .and_then(|p| p.unstaged.get(index))
+        {
             Some(f) => f.path.to_string_lossy().replace('\\', "/"),
             None => return,
         };
@@ -6868,7 +7122,8 @@ impl KagiApp {
             Ok(r) => r,
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "discard: repo open error: {}", e
+                    "discard: repo open error: {}",
+                    e
                 )));
                 return;
             }
@@ -6876,7 +7131,10 @@ impl KagiApp {
         let paths = vec![path];
         match repo.plan_discard(&paths) {
             Ok(plan) => {
-                eprintln!("[kagi] plan: discard 1 target blockers={}", plan.blockers.len());
+                eprintln!(
+                    "[kagi] plan: discard 1 target blockers={}",
+                    plan.blockers.len()
+                );
                 self.discard_modal = Some(DiscardModal {
                     plan: std::sync::Arc::new(plan),
                     paths,
@@ -6895,13 +7153,17 @@ impl KagiApp {
     /// Open the "Discard all" modal: every eligible unstaged file in one
     /// operation; untracked / conflicted files are listed as skipped.
     pub fn open_discard_all_modal(&mut self) {
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
         let (eligible, skipped) = self.discard_partition();
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "discard: repo open error: {}", e
+                    "discard: repo open error: {}",
+                    e
                 )));
                 return;
             }
@@ -6910,7 +7172,9 @@ impl KagiApp {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: discard-all {} target(s) blockers={} skipped={}",
-                    eligible.len(), plan.blockers.len(), skipped.len()
+                    eligible.len(),
+                    plan.blockers.len(),
+                    skipped.len()
                 );
                 self.discard_modal = Some(DiscardModal {
                     plan: std::sync::Arc::new(plan),
@@ -6928,24 +7192,33 @@ impl KagiApp {
     }
 
     /// Dismiss the discard modal without acting.
-    pub fn cancel_discard_modal(&mut self) { self.discard_modal = None; }
+    pub fn cancel_discard_modal(&mut self) {
+        self.discard_modal = None;
+    }
 
     /// Confirm the discard: run `discard_blocking` on a background thread
     /// (busy_op="discard"), then reload. Mirrors `start_pop`.
     pub fn start_discard(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.discard_modal.clone() { Some(m) => m, None => return };
+        let modal = match self.discard_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
         if self.busy_op.is_some() {
-            self.status_footer =
-                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
         if !modal.plan.blockers.is_empty() || modal.paths.is_empty() {
             eprintln!("[kagi] refused: discard plan has blockers / no targets");
             self.record_op(
                 "discard",
                 modal.plan.current.clone(),
-                OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
                 &repo_path,
             );
             self.discard_modal = None;
@@ -6964,9 +7237,8 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_paths = paths.clone();
-        let task = cx.background_spawn(async move {
-            discard_blocking(&bg_path, &bg_plan, &bg_paths)
-        });
+        let task =
+            cx.background_spawn(async move { discard_blocking(&bg_path, &bg_plan, &bg_paths) });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
@@ -6980,8 +7252,10 @@ impl KagiApp {
                             OpOutcome::Success { after },
                             &repo_path,
                         );
-                        app.status_footer =
-                            FooterStatus::Success(SharedString::from(format!("discard: {}", summary)));
+                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                            "discard: {}",
+                            summary
+                        )));
                         app.reload();
                     }
                     Err(err_msg) => {
@@ -6989,7 +7263,9 @@ impl KagiApp {
                         app.record_op(
                             "discard",
                             plan.current.clone(),
-                            OpOutcome::Failed { error: err_msg.clone() },
+                            OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
                             &repo_path,
                         );
                         app.discard_modal = Some(DiscardModal {
@@ -7028,8 +7304,10 @@ impl KagiApp {
                 .auto_grow(2, 8)
                 .placeholder("body (optional)")
         });
-        let test = cx.new(|cx| InputState::new(window, cx).placeholder("Test: how verified (optional)"));
-        let risk = cx.new(|cx| InputState::new(window, cx).placeholder("Risk: known risks (optional)"));
+        let test =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Test: how verified (optional)"));
+        let risk =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Risk: known risks (optional)"));
         self.commit_template_inputs = Some([ty, scope, summary, body, test, risk]);
     }
 
@@ -7132,7 +7410,11 @@ impl KagiApp {
         self.last_draft_value = msg;
         self.draft_save_gen = self.draft_save_gen.wrapping_add(1);
         let gen = self.draft_save_gen;
-        let mode = if self.commit_template_mode { "template" } else { "plain" };
+        let mode = if self.commit_template_mode {
+            "template"
+        } else {
+            "plain"
+        };
         let mode = mode.to_string();
         cx.spawn(async move |this, acx| {
             gpui::Timer::after(Duration::from_millis(250)).await;
@@ -7140,7 +7422,9 @@ impl KagiApp {
                 if app.draft_save_gen != gen {
                     return;
                 }
-                let Some(rp) = app.repo_path.clone() else { return };
+                let Some(rp) = app.repo_path.clone() else {
+                    return;
+                };
                 let branch = app.status_summary.branch.clone();
                 let msg = app.last_draft_value.clone();
                 if msg.trim().is_empty() {
@@ -7160,7 +7444,8 @@ impl KagiApp {
     pub fn open_commit_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // T026: lazy-create the InputState (requires &mut Window) on first open.
         if self.commit_input.is_none() {
-            let input_entity = cx.new(|cx| InputState::new(window, cx).placeholder("Commit message"));
+            let input_entity =
+                cx.new(|cx| InputState::new(window, cx).placeholder("Commit message"));
             self.commit_input = Some(input_entity);
         }
         let repo_path = match self.repo_path.clone() {
@@ -7237,7 +7522,9 @@ impl KagiApp {
     /// On success the panel shows "Local LLM available".  No-op when
     /// `KAGI_OFFLINE=1`.
     fn ensure_smart_commit_detection(&mut self, cx: &mut Context<Self>) {
-        let Some(repo_path) = self.repo_path.clone() else { return };
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
         if self.smart_commit_detected_for.as_deref() == Some(repo_path.as_path()) {
             return;
         }
@@ -7306,7 +7593,9 @@ impl KagiApp {
     /// non-empty message it is left untouched (the user's text wins; ticket:
     /// overwrite only when empty).
     pub fn smart_suggest(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(repo_path) = self.repo_path.clone() else { return };
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(_) => return,
@@ -7326,8 +7615,7 @@ impl KagiApp {
             self.smart_commit_set_msg(&msg, window, cx);
             self.smart_commit.status = Some("Rule-based suggestion inserted".to_string());
         } else {
-            self.smart_commit.status =
-                Some("Message not empty — kept your text".to_string());
+            self.smart_commit.status = Some("Message not empty — kept your text".to_string());
         }
         cx.notify();
     }
@@ -7365,8 +7653,7 @@ impl KagiApp {
         let models = self.smart_commit.detected_models.clone();
         if models.is_empty() {
             // No models installed → nothing to pick; fall back quietly.
-            self.smart_commit.status =
-                Some("No local models found — using rule-based".to_string());
+            self.smart_commit.status = Some("No local models found — using rule-based".to_string());
             cx.notify();
             return;
         }
@@ -7412,7 +7699,9 @@ impl KagiApp {
     /// the backend).  On any `Err` the result falls back to the rule-based draft
     /// so the UI never blocks or shows a blocking error.
     fn run_smart_generation(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(repo_path) = self.repo_path.clone() else { return };
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
         let (Some(model), lang, style) = (
             self.smart_commit.model.clone(),
             self.smart_commit.lang,
@@ -7488,16 +7777,26 @@ impl KagiApp {
     /// Calls `stage_file` from T024 and then refreshes the staging status.
     /// Stage every non-conflicted unstaged file (T-UI-002: Stage all).
     pub fn do_stage_all(&mut self) {
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
         let paths: Vec<std::path::PathBuf> = match self.commit_panel.as_ref() {
-            Some(p) => p.unstaged.iter()
+            Some(p) => p
+                .unstaged
+                .iter()
                 .filter(|f| !p.is_conflicted(&f.path))
                 .map(|f| f.path.clone())
                 .collect(),
             None => return,
         };
-        if paths.is_empty() { return; }
-        let repo = match kagi::git::Backend::open(&repo_path) { Ok(r) => r, Err(_) => return };
+        if paths.is_empty() {
+            return;
+        }
+        let repo = match kagi::git::Backend::open(&repo_path) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
         match repo.stage_files(&paths) {
             Ok(n) => {
                 eprintln!("[kagi] staged-all: {} file(s)", n);
@@ -7506,20 +7805,29 @@ impl KagiApp {
                 }
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!("stage all failed: {}", e)));
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("stage all failed: {}", e)));
             }
         }
     }
 
     /// Unstage every staged file (T-UI-002: Unstage all).
     pub fn do_unstage_all(&mut self) {
-        let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
         let paths: Vec<std::path::PathBuf> = match self.commit_panel.as_ref() {
             Some(p) => p.staged.iter().map(|f| f.path.clone()).collect(),
             None => return,
         };
-        if paths.is_empty() { return; }
-        let repo = match kagi::git::Backend::open(&repo_path) { Ok(r) => r, Err(_) => return };
+        if paths.is_empty() {
+            return;
+        }
+        let repo = match kagi::git::Backend::open(&repo_path) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
         match repo.unstage_files(&paths) {
             Ok(n) => {
                 eprintln!("[kagi] unstaged-all: {} file(s)", n);
@@ -7528,7 +7836,8 @@ impl KagiApp {
                 }
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!("unstage all failed: {}", e)));
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("unstage all failed: {}", e)));
             }
         }
     }
@@ -7538,7 +7847,11 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let path = match self.commit_panel.as_ref().and_then(|p| p.unstaged.get(index)) {
+        let path = match self
+            .commit_panel
+            .as_ref()
+            .and_then(|p| p.unstaged.get(index))
+        {
             Some(f) => f.path.clone(),
             None => return,
         };
@@ -7602,7 +7915,6 @@ impl KagiApp {
     pub fn select_commit_panel_file(&mut self, file_ref: CommitPanelFileRef) {
         self.open_main_diff_wip(file_ref);
     }
-
 
     /// Handle a key-down event for the commit message input.
     ///
@@ -7700,16 +8012,22 @@ impl KagiApp {
             None => return,
         };
         if self.busy_op.is_some() {
-            self.status_footer =
-                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         let commit_message: String = if self.commit_input.is_some() || self.commit_template_mode {
             self.effective_commit_message(cx)
         } else {
-            self.commit_panel.as_ref().map(|p| p.commit_msg.clone()).unwrap_or_default()
+            self.commit_panel
+                .as_ref()
+                .map(|p| p.commit_msg.clone())
+                .unwrap_or_default()
         };
-        let plan = match self.commit_panel.as_ref().and_then(|p| p.plan_modal.as_ref()) {
+        let plan = match self
+            .commit_panel
+            .as_ref()
+            .and_then(|p| p.plan_modal.as_ref())
+        {
             Some(modal) => modal.plan.clone(),
             None => return,
         };
@@ -7736,9 +8054,7 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_msg = commit_message.clone();
-        let task = cx.background_spawn(async move {
-            commit_blocking(&bg_path, &bg_plan, &bg_msg)
-        });
+        let task = cx.background_spawn(async move { commit_blocking(&bg_path, &bg_plan, &bg_msg) });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
@@ -7752,14 +8068,24 @@ impl KagiApp {
                         eprintln!("[kagi] draft: cleared {}", branch);
                         app.last_draft_value = String::new();
 
-                        app.record_op("commit", plan.current.clone(),
-                            OpOutcome::Success { after }, &repo_path);
+                        app.record_op(
+                            "commit",
+                            plan.current.clone(),
+                            OpOutcome::Success { after },
+                            &repo_path,
+                        );
                         app.reload();
                     }
                     Err(err_msg) => {
                         eprintln!("[kagi] async: commit failed — {}", err_msg);
-                        app.record_op("commit", plan.current.clone(),
-                            OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
+                        app.record_op(
+                            "commit",
+                            plan.current.clone(),
+                            OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
+                            &repo_path,
+                        );
                         if let Some(ref mut panel) = app.commit_panel {
                             if let Some(ref mut modal) = panel.plan_modal {
                                 modal.error = Some(SharedString::from(err_msg));
@@ -7791,7 +8117,10 @@ impl KagiApp {
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e)));
+                self.push_toast(
+                    ToastKind::Error,
+                    SharedString::from(format!("Repo open error: {}", e)),
+                );
                 return;
             }
         };
@@ -7806,7 +8135,12 @@ impl KagiApp {
                     head: format!("branch: {} (merge commit {})", branch, id.short()),
                     dirty: "clean".to_string(),
                 };
-                self.record_op("merge-commit", plan.current.clone(), OpOutcome::Success { after }, &repo_path);
+                self.record_op(
+                    "merge-commit",
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                );
                 // Leave the merge-commit / commit-panel state and re-detect so
                 // Conflict Mode clears (MERGE_HEAD is gone after cleanup_state).
                 self.conflict_merge_commit_pending = false;
@@ -7819,7 +8153,14 @@ impl KagiApp {
             Err(e) => {
                 let err_msg = format!("{}", e);
                 eprintln!("[kagi] merge commit failed: {}", err_msg);
-                self.record_op("merge-commit", plan.current.clone(), OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
+                self.record_op(
+                    "merge-commit",
+                    plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                );
                 if let Some(panel) = self.commit_panel.as_mut() {
                     if let Some(modal) = panel.plan_modal.as_mut() {
                         modal.error = Some(SharedString::from(err_msg));
@@ -7856,7 +8197,11 @@ impl KagiApp {
             let parent_count = detail.parent_ids.len();
             eprintln!(
                 "[kagi] selected: {} parents={}",
-                detail.full_sha.as_ref().get(..8).unwrap_or(&detail.full_sha),
+                detail
+                    .full_sha
+                    .as_ref()
+                    .get(..8)
+                    .unwrap_or(&detail.full_sha),
                 parent_count,
             );
         }
@@ -7893,8 +8238,18 @@ impl KagiApp {
                         file_tree::TreeRow::Dir { depth, name } => {
                             eprintln!("[kagi] tree: {}DIR  {}", "  ".repeat(*depth), name);
                         }
-                        file_tree::TreeRow::File { depth, name, file_index, .. } => {
-                            eprintln!("[kagi] tree: {}FILE {} (idx={})", "  ".repeat(*depth), name, file_index);
+                        file_tree::TreeRow::File {
+                            depth,
+                            name,
+                            file_index,
+                            ..
+                        } => {
+                            eprintln!(
+                                "[kagi] tree: {}FILE {} (idx={})",
+                                "  ".repeat(*depth),
+                                name,
+                                file_index
+                            );
                         }
                     }
                 }
@@ -7916,7 +8271,10 @@ impl KagiApp {
             None => return,
         };
         match source {
-            MainDiffSource::Commit { row_index, file_index } => {
+            MainDiffSource::Commit {
+                row_index,
+                file_index,
+            } => {
                 let len = self
                     .diff_cache
                     .get(&row_index)
@@ -7931,7 +8289,11 @@ impl KagiApp {
                     self.open_main_diff_commit(next);
                 }
             }
-            MainDiffSource::Compare { base, target, file_index } => {
+            MainDiffSource::Compare {
+                base,
+                target,
+                file_index,
+            } => {
                 let len = match self.compare_view.as_ref() {
                     Some(view) if view.base == base && view.target == target => view.files.len(),
                     _ => 0,
@@ -7952,26 +8314,37 @@ impl KagiApp {
                     ),
                     None => return,
                 };
-                let cur = match cur { Some(c) => c, None => return };
-                if len == 0 { return; }
+                let cur = match cur {
+                    Some(c) => c,
+                    None => return,
+                };
+                if len == 0 {
+                    return;
+                }
                 let next = (cur as i64 + delta).clamp(0, len as i64 - 1) as usize;
                 if next != cur {
-                    self.open_main_diff_wip(commit_panel::CommitPanelFileRef::Unstaged { index: next });
+                    self.open_main_diff_wip(commit_panel::CommitPanelFileRef::Unstaged {
+                        index: next,
+                    });
                 }
             }
             MainDiffSource::Staged { path } => {
                 let (cur, len) = match self.commit_panel.as_ref() {
-                    Some(p) => (
-                        p.staged.iter().position(|f| f.path == path),
-                        p.staged.len(),
-                    ),
+                    Some(p) => (p.staged.iter().position(|f| f.path == path), p.staged.len()),
                     None => return,
                 };
-                let cur = match cur { Some(c) => c, None => return };
-                if len == 0 { return; }
+                let cur = match cur {
+                    Some(c) => c,
+                    None => return,
+                };
+                if len == 0 {
+                    return;
+                }
                 let next = (cur as i64 + delta).clamp(0, len as i64 - 1) as usize;
                 if next != cur {
-                    self.open_main_diff_wip(commit_panel::CommitPanelFileRef::Staged { index: next });
+                    self.open_main_diff_wip(commit_panel::CommitPanelFileRef::Staged {
+                        index: next,
+                    });
                 }
             }
         }
@@ -8051,13 +8424,21 @@ impl KagiApp {
 
                 // T-UI-004: apply syntax highlighting once at open time.
                 let hl_lang = highlight_diff_rows(&mut rows, &path);
-                eprintln!("[kagi] main-diff: open {} rows={} highlight={}", path.display(), row_count, hl_lang);
+                eprintln!(
+                    "[kagi] main-diff: open {} rows={} highlight={}",
+                    path.display(),
+                    row_count,
+                    hl_lang
+                );
 
                 self.main_diff = Some(MainDiffView {
                     title,
                     stats,
                     rows,
-                    source: MainDiffSource::Commit { row_index: selected, file_index },
+                    source: MainDiffSource::Commit {
+                        row_index: selected,
+                        file_index,
+                    },
                 });
             }
             Err(e) => {
@@ -8094,7 +8475,9 @@ impl KagiApp {
                 };
                 repo.compare_file_diff(&view.base, &head, &path)
             }
-            CompareTarget::WorkingTree => repo.compare_commit_to_workdir_file_diff(&view.base, &path),
+            CompareTarget::WorkingTree => {
+                repo.compare_commit_to_workdir_file_diff(&view.base, &path)
+            }
         };
 
         match file_diff_result {
@@ -8128,7 +8511,12 @@ impl KagiApp {
                 let row_count = rows.len();
 
                 let hl_lang = highlight_diff_rows(&mut rows, &path);
-                eprintln!("[kagi] main-diff: open {} rows={} highlight={}", path.display(), row_count, hl_lang);
+                eprintln!(
+                    "[kagi] main-diff: open {} rows={} highlight={}",
+                    path.display(),
+                    row_count,
+                    hl_lang
+                );
 
                 self.main_diff = Some(MainDiffView {
                     title,
@@ -8188,11 +8576,24 @@ impl KagiApp {
 
         match file_diff_result {
             Ok(fd) => {
-                let added: usize = fd.hunks.iter().flat_map(|h| h.lines.iter())
-                    .filter(|l| l.kind == DiffLineKind::Added).count();
-                let removed: usize = fd.hunks.iter().flat_map(|h| h.lines.iter())
-                    .filter(|l| l.kind == DiffLineKind::Removed).count();
-                eprintln!("[kagi] commit-panel diff: {} (+{} -{})", path.display(), added, removed);
+                let added: usize = fd
+                    .hunks
+                    .iter()
+                    .flat_map(|h| h.lines.iter())
+                    .filter(|l| l.kind == DiffLineKind::Added)
+                    .count();
+                let removed: usize = fd
+                    .hunks
+                    .iter()
+                    .flat_map(|h| h.lines.iter())
+                    .filter(|l| l.kind == DiffLineKind::Removed)
+                    .count();
+                eprintln!(
+                    "[kagi] commit-panel diff: {} (+{} -{})",
+                    path.display(),
+                    added,
+                    removed
+                );
 
                 let fdv = FileDiffView::from_file_diff(&fd, 0);
                 let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
@@ -8202,14 +8603,24 @@ impl KagiApp {
 
                 // T-UI-004: apply syntax highlighting once at open time.
                 let hl_lang = highlight_diff_rows(&mut rows, &path);
-                eprintln!("[kagi] main-diff: open {} rows={} highlight={}", path.display(), row_count, hl_lang);
+                eprintln!(
+                    "[kagi] main-diff: open {} rows={} highlight={}",
+                    path.display(),
+                    row_count,
+                    hl_lang
+                );
 
                 let source = if is_staged {
                     MainDiffSource::Staged { path }
                 } else {
                     MainDiffSource::Unstaged { path }
                 };
-                self.main_diff = Some(MainDiffView { title, stats, rows, source });
+                self.main_diff = Some(MainDiffView {
+                    title,
+                    stats,
+                    rows,
+                    source,
+                });
             }
             Err(e) => {
                 eprintln!("[kagi] commit-panel diff error: {}", e);
@@ -8319,10 +8730,8 @@ impl KagiApp {
             }
             Err(e) => {
                 eprintln!("[kagi] compare: error: {}", e);
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "Compare failed: {}",
-                    e
-                )));
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("Compare failed: {}", e)));
             }
         }
     }
@@ -8353,9 +8762,8 @@ impl KagiApp {
                     "[kagi] compare: {} <-> working tree disabled(local changes がありません)",
                     target.short()
                 );
-                self.status_footer = FooterStatus::Idle(SharedString::from(
-                    Msg::NoLocalChanges.t(),
-                ));
+                self.status_footer =
+                    FooterStatus::Idle(SharedString::from(Msg::NoLocalChanges.t()));
                 return;
             }
             Err(e) => {
@@ -8386,10 +8794,8 @@ impl KagiApp {
             }
             Err(e) => {
                 eprintln!("[kagi] compare: error: {}", e);
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "Compare failed: {}",
-                    e
-                )));
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("Compare failed: {}", e)));
             }
         }
     }
@@ -8423,7 +8829,10 @@ impl KagiApp {
         let target = match self.branch_targets.get(branch_name) {
             Some(t) => t.clone(),
             None => {
-                eprintln!("[kagi] jump: branch '{}' not found in branch_targets", branch_name);
+                eprintln!(
+                    "[kagi] jump: branch '{}' not found in branch_targets",
+                    branch_name
+                );
                 return;
             }
         };
@@ -8495,7 +8904,10 @@ impl KagiApp {
         if self.selected != Some(row_index) {
             self.select(row_index);
         }
-        self.commit_menu = Some(CommitMenuState { row_index, position });
+        self.commit_menu = Some(CommitMenuState {
+            row_index,
+            position,
+        });
         eprintln!("[kagi] context-menu: open row={}", row_index);
         self.log_commit_menu(row_index);
     }
@@ -8583,7 +8995,10 @@ impl KagiApp {
         let target = match self.branch_targets.get(&branch_name) {
             Some(target) => target.clone(),
             None => {
-                eprintln!("[kagi] branch-menu: local branch '{}' target not found", branch_name);
+                eprintln!(
+                    "[kagi] branch-menu: local branch '{}' target not found",
+                    branch_name
+                );
                 return;
             }
         };
@@ -8773,24 +9188,14 @@ impl KagiApp {
                     )));
                     self.push_toast(ToastKind::Info, format!("Worktree: {}", path));
                 } else if matches!(state.kind, BranchKind::Local) {
-                    self.open_create_worktree_modal_prefilled(
-                        state.target,
-                        state.name,
-                        true,
-                        cx,
-                    );
+                    self.open_create_worktree_modal_prefilled(state.target, state.name, true, cx);
                 }
             }
             BranchAction::MergeIntoCurrent => {
                 self.open_merge_modal(state.name);
             }
             BranchAction::CreateWorktreeFromHere => {
-                self.open_create_worktree_modal_prefilled(
-                    state.target,
-                    state.name,
-                    false,
-                    cx,
-                );
+                self.open_create_worktree_modal_prefilled(state.target, state.name, false, cx);
             }
             BranchAction::NoUpstreamInfo
             | BranchAction::PullFfOnly
@@ -8801,9 +9206,8 @@ impl KagiApp {
             | BranchAction::ResetCurrentToHead
             | BranchAction::ForceWithLeasePush
             | BranchAction::DeleteRemoteBranch => {
-                self.status_footer = FooterStatus::Idle(SharedString::from(
-                    Msg::BcmNotImplementedYet.t(),
-                ));
+                self.status_footer =
+                    FooterStatus::Idle(SharedString::from(Msg::BcmNotImplementedYet.t()));
             }
         }
     }
@@ -8864,18 +9268,33 @@ impl KagiApp {
                 if ref_name.is_empty() {
                     self.status_footer =
                         FooterStatus::Idle(SharedString::from("Checkout ref unavailable"));
-                    eprintln!("[kagi] context-menu: checkout-ref unavailable {}", target.short());
+                    eprintln!(
+                        "[kagi] context-menu: checkout-ref unavailable {}",
+                        target.short()
+                    );
                 } else {
                     self.open_plan_modal(ref_name);
                 }
             }
             CommitAction::CreateBranchHere => {
                 self.open_create_branch_modal(target, cx);
-                eprintln!("[kagi] context-menu: create-branch {}", self.create_branch_modal.as_ref().map(|m| m.at.short()).unwrap_or_default());
+                eprintln!(
+                    "[kagi] context-menu: create-branch {}",
+                    self.create_branch_modal
+                        .as_ref()
+                        .map(|m| m.at.short())
+                        .unwrap_or_default()
+                );
             }
             CommitAction::CreateWorktreeHere => {
                 self.open_create_worktree_modal(target, cx);
-                eprintln!("[kagi] context-menu: create-worktree {}", self.create_worktree_modal.as_ref().map(|m| m.at.short()).unwrap_or_default());
+                eprintln!(
+                    "[kagi] context-menu: create-worktree {}",
+                    self.create_worktree_modal
+                        .as_ref()
+                        .map(|m| m.at.short())
+                        .unwrap_or_default()
+                );
             }
             CommitAction::CherryPick => {
                 self.open_cherry_pick_modal(target);
@@ -8886,9 +9305,8 @@ impl KagiApp {
             // ADR-0024: reset stays unimplemented; the menu item is disabled,
             // this arm is defence in depth.
             CommitAction::ResetToCommit => {
-                self.status_footer = FooterStatus::Idle(SharedString::from(
-                    Msg::ResetUnimplemented.t(),
-                ));
+                self.status_footer =
+                    FooterStatus::Idle(SharedString::from(Msg::ResetUnimplemented.t()));
                 eprintln!("[kagi] context-menu: stub Reset {}", target.short());
             }
             CommitAction::CompareWithHead => {
@@ -8956,18 +9374,20 @@ impl KagiApp {
             return;
         }
         let Some(ix) = self.selected else {
-            self.status_footer = FooterStatus::Idle(SharedString::from(
-                Msg::CheckoutSelectFirst.t(),
-            ));
+            self.status_footer =
+                FooterStatus::Idle(SharedString::from(Msg::CheckoutSelectFirst.t()));
             return;
         };
-        let Some(ctx_info) = self.menu_context(ix) else { return };
+        let Some(ctx_info) = self.menu_context(ix) else {
+            return;
+        };
         if ctx_info.is_head {
-            self.status_footer =
-                FooterStatus::Idle(SharedString::from(Msg::AlreadyHead.t()));
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::AlreadyHead.t()));
             return;
         }
-        let Some(id) = self.commit_id_for_row(ix) else { return };
+        let Some(id) = self.commit_id_for_row(ix) else {
+            return;
+        };
         let dirty = self.status_summary.is_dirty;
 
         // Prefer a local branch pointing at the commit; fall back to a
@@ -8986,7 +9406,8 @@ impl KagiApp {
                 m.stash_first = true;
                 // Surface it in the plan card's warnings.
                 let mut plan = (*m.plan).clone();
-                plan.warnings.insert(0, Msg::DirtyStashFirst.t().to_string());
+                plan.warnings
+                    .insert(0, Msg::DirtyStashFirst.t().to_string());
                 m.plan = std::sync::Arc::new(plan);
             }
         }
@@ -9049,7 +9470,9 @@ impl Render for KagiApp {
             self.bottom_panel_height = h;
             eprintln!(
                 "[kagi] bottom-panel: default height={:.0} ({:.0}% of viewport {:.0})",
-                h, BOTTOM_PANEL_DEFAULT_FRAC * 100.0, viewport_h
+                h,
+                BOTTOM_PANEL_DEFAULT_FRAC * 100.0,
+                viewport_h
             );
         }
 
@@ -9135,14 +9558,16 @@ impl Render for KagiApp {
         let detail = selected.and_then(|i| self.details.get(i)).cloned();
         // Clone cached changed-files list for the render closure.
         // `None` outer = no selection; `Some(None)` = diff unavailable; `Some(Some(v))` = files.
-        let changed_files: Option<Option<Vec<FileStatus>>> = selected
-            .map(|i| self.diff_cache.get(&i).cloned().unwrap_or(None));
+        let changed_files: Option<Option<Vec<FileStatus>>> =
+            selected.map(|i| self.diff_cache.get(&i).cloned().unwrap_or(None));
         // W16-DIFFSTAT: per-file additions/deletions for the selected commit.
-        let changed_diffstat: Option<Vec<FileDiffStat>> = selected
-            .and_then(|i| self.diffstat_cache.get(&i).cloned());
+        let changed_diffstat: Option<Vec<FileDiffStat>> =
+            selected.and_then(|i| self.diffstat_cache.get(&i).cloned());
         // W2-INSPECTOR: badges for the selected commit row and tree-view toggle state.
-        let selected_badges: Vec<commit_list::RefBadge> =
-            selected.and_then(|i| self.rows.get(i)).map(|r| r.badges.clone()).unwrap_or_default();
+        let selected_badges: Vec<commit_list::RefBadge> = selected
+            .and_then(|i| self.rows.get(i))
+            .map(|r| r.badges.clone())
+            .unwrap_or_default();
         let inspector_tree_view = self.inspector_tree_view;
 
         // T-UI-003: Clone main diff state if present.
@@ -9197,12 +9622,13 @@ impl Render for KagiApp {
         // T-CONFLICT-UI: chrome the 3-pane Conflict Editor needs from the app
         // (the editors live on `self`, not on the cloned `ConflictMode`).
         let conflict_chrome = conflict_view::EditorChrome {
-            inputs: self.conflict_editor_inputs.as_ref().map(|i| {
-                conflict_view::EditorInputs {
+            inputs: self
+                .conflict_editor_inputs
+                .as_ref()
+                .map(|i| conflict_view::EditorInputs {
                     path: i.path.clone(),
                     result: i.result.clone(),
-                }
-            }),
+                }),
             ab_scroll: self.conflict_ab_scroll_handle.clone(),
             result_editing: self.conflict_result_editing,
             reset_all_armed: self.conflict_reset_all_armed,
@@ -9252,167 +9678,168 @@ impl Render for KagiApp {
         // (The previous delta-based approach needed a drag-start anchor that
         // `on_drag` cannot provide, which made the divider jump to its
         // clamp bounds — the "two positions / inverted" bug.)
-        let divider_drag_move = cx.listener(move |this, event: &gpui::DragMoveEvent<DividerDrag>, window, cx| {
-            let drag = *event.drag(cx);
-            let cursor_x = f32::from(event.event.position.x);
-            // W28: sidebar/panel widths are stored UNSCALED (logical px) but
-            // rendered via `scaled_px`, so the divider visually sits at
-            // `width * zoom`.  The cursor is in raw window px, so convert back
-            // to logical space (divide by zoom) before clamping/storing, and
-            // interpret the 4px divider's 2px half-offset in scaled space too.
-            let z = theme::zoom();
-            match drag.kind {
-                DividerKind::Sidebar => {
-                    // Divider sits at x = sidebar_width * zoom; centre on cursor.
-                    let new_width = ((cursor_x - 2.0 * z) / z).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
-                    if (new_width - this.sidebar_width).abs() > 0.5 {
-                        this.sidebar_width = new_width;
-                        cx.notify();
+        let divider_drag_move = cx.listener(
+            move |this, event: &gpui::DragMoveEvent<DividerDrag>, window, cx| {
+                let drag = *event.drag(cx);
+                let cursor_x = f32::from(event.event.position.x);
+                // W28: sidebar/panel widths are stored UNSCALED (logical px) but
+                // rendered via `scaled_px`, so the divider visually sits at
+                // `width * zoom`.  The cursor is in raw window px, so convert back
+                // to logical space (divide by zoom) before clamping/storing, and
+                // interpret the 4px divider's 2px half-offset in scaled space too.
+                let z = theme::zoom();
+                match drag.kind {
+                    DividerKind::Sidebar => {
+                        // Divider sits at x = sidebar_width * zoom; centre on cursor.
+                        let new_width = ((cursor_x - 2.0 * z) / z).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+                        if (new_width - this.sidebar_width).abs() > 0.5 {
+                            this.sidebar_width = new_width;
+                            cx.notify();
+                        }
                     }
-                }
-                DividerKind::Panel => {
-                    // Divider sits at x = viewport_width - panel_width * zoom.
-                    let viewport_w = f32::from(window.viewport_size().width);
-                    let new_width =
-                        ((viewport_w - cursor_x - 2.0 * z) / z).clamp(PANEL_MIN, PANEL_MAX);
-                    if (new_width - this.panel_width).abs() > 0.5 {
-                        this.panel_width = new_width;
-                        cx.notify();
+                    DividerKind::Panel => {
+                        // Divider sits at x = viewport_width - panel_width * zoom.
+                        let viewport_w = f32::from(window.viewport_size().width);
+                        let new_width =
+                            ((viewport_w - cursor_x - 2.0 * z) / z).clamp(PANEL_MIN, PANEL_MAX);
+                        if (new_width - this.panel_width).abs() > 0.5 {
+                            this.panel_width = new_width;
+                            cx.notify();
+                        }
                     }
-                }
-                DividerKind::BadgeCol => {
-                    // T030/W28: badge column left edge = sidebar_width + INNER_DIV_W, all
-                    // rendered scaled, so the on-screen left edge is (..)*z; convert the
-                    // raw cursor back to logical space (/z) before clamping/storing.
-                    let badge_col_left = this.sidebar_width + INNER_DIV_W; // sidebar divider = 4px
-                    let new_w = ((cursor_x / z) - badge_col_left - INNER_DIV_W / 2.0)
-                        .clamp(BADGE_COL_MIN, BADGE_COL_MAX);
-                    if (new_w - this.badge_col_w).abs() > 0.5 {
-                        this.badge_col_w = new_w;
-                        cx.notify();
+                    DividerKind::BadgeCol => {
+                        // T030/W28: badge column left edge = sidebar_width + INNER_DIV_W, all
+                        // rendered scaled, so the on-screen left edge is (..)*z; convert the
+                        // raw cursor back to logical space (/z) before clamping/storing.
+                        let badge_col_left = this.sidebar_width + INNER_DIV_W; // sidebar divider = 4px
+                        let new_w = ((cursor_x / z) - badge_col_left - INNER_DIV_W / 2.0)
+                            .clamp(BADGE_COL_MIN, BADGE_COL_MAX);
+                        if (new_w - this.badge_col_w).abs() > 0.5 {
+                            this.badge_col_w = new_w;
+                            cx.notify();
+                        }
                     }
-                }
-                DividerKind::GraphCol => {
-                    // T030/W28: graph column left edge = badge_col_left + badge_col_w + INNER_DIV_W,
-                    // all rendered scaled; convert the raw cursor back to logical space (/z).
-                    let badge_col_left = this.sidebar_width + INNER_DIV_W;
-                    let graph_col_left = badge_col_left + this.badge_col_w + INNER_DIV_W;
-                    let new_w = ((cursor_x / z) - graph_col_left - INNER_DIV_W / 2.0)
-                        .clamp(GRAPH_COL_MIN, GRAPH_COL_MAX);
-                    if (new_w - this.graph_col_w).abs() > 0.5 {
-                        this.graph_col_w = new_w;
-                        cx.notify();
+                    DividerKind::GraphCol => {
+                        // T030/W28: graph column left edge = badge_col_left + badge_col_w + INNER_DIV_W,
+                        // all rendered scaled; convert the raw cursor back to logical space (/z).
+                        let badge_col_left = this.sidebar_width + INNER_DIV_W;
+                        let graph_col_left = badge_col_left + this.badge_col_w + INNER_DIV_W;
+                        let new_w = ((cursor_x / z) - graph_col_left - INNER_DIV_W / 2.0)
+                            .clamp(GRAPH_COL_MIN, GRAPH_COL_MAX);
+                        if (new_w - this.graph_col_w).abs() > 0.5 {
+                            this.graph_col_w = new_w;
+                            cx.notify();
+                        }
                     }
-                }
-                DividerKind::BottomPanel => {
-                    // T-BP-002: absolute-coordinate formula from ADR-0007:
-                    //   height = viewport_h - cursor_y - status_bar_h(22) - 2
-                    // W28: the panel is rendered scaled, so the on-screen gap
-                    // between the cursor and the window bottom is the *scaled*
-                    // height; divide by zoom to recover the unscaled stored
-                    // value. The status bar (also scaled) and divider half are
-                    // scaled in screen space too.
-                    let viewport_h = f32::from(window.viewport_size().height);
-                    let cursor_y = f32::from(event.event.position.y);
-                    // max fraction is a screen-space cap → convert to unscaled.
-                    let max_h = (viewport_h * BOTTOM_PANEL_MAX_FRAC) / z;
-                    let new_h = ((viewport_h - cursor_y - (22.0 + 2.0) * z) / z)
-                        .clamp(BOTTOM_PANEL_MIN_H, max_h);
-                    if (new_h - this.bottom_panel_height).abs() > 0.5 {
-                        this.bottom_panel_height = new_h;
-                        cx.notify();
-                    }
-                }
-                DividerKind::InspectorSplit => {
-                    // W7-INSPECTOR2: absolute-coordinate ratio against the
-                    // *measured* message+files region (paint-time canvas in
-                    // inspector.rs).  Static offsets miss the variable-height
-                    // header above the region, which showed up as a ~2cm jump
-                    // when starting a drag.  Falls back to the constant-based
-                    // approximation until the first paint has run.
-                    let cursor_y = f32::from(event.event.position.y);
-                    let (geom_top, geom_bottom) = this.inspector_geom.get();
-                    let (top, bottom) = if geom_bottom - geom_top > 1.0 {
-                        // Primary path: the canvas measured the real (already
-                        // scaled) region bounds in screen px — use as-is.
-                        (geom_top, geom_bottom)
-                    } else {
-                        // Transient fallback before first paint: the layout
-                        // chrome is rendered scaled, so scale the constant
-                        // offsets into screen space too.
+                    DividerKind::BottomPanel => {
+                        // T-BP-002: absolute-coordinate formula from ADR-0007:
+                        //   height = viewport_h - cursor_y - status_bar_h(22) - 2
+                        // W28: the panel is rendered scaled, so the on-screen gap
+                        // between the cursor and the window bottom is the *scaled*
+                        // height; divide by zoom to recover the unscaled stored
+                        // value. The status bar (also scaled) and divider half are
+                        // scaled in screen space too.
                         let viewport_h = f32::from(window.viewport_size().height);
-                        let bottom_taken = if this.bottom_panel_open {
-                            STATUS_BAR_H + this.bottom_panel_height + BOTTOM_PANEL_DIVIDER_H
+                        let cursor_y = f32::from(event.event.position.y);
+                        // max fraction is a screen-space cap → convert to unscaled.
+                        let max_h = (viewport_h * BOTTOM_PANEL_MAX_FRAC) / z;
+                        let new_h = ((viewport_h - cursor_y - (22.0 + 2.0) * z) / z)
+                            .clamp(BOTTOM_PANEL_MIN_H, max_h);
+                        if (new_h - this.bottom_panel_height).abs() > 0.5 {
+                            this.bottom_panel_height = new_h;
+                            cx.notify();
+                        }
+                    }
+                    DividerKind::InspectorSplit => {
+                        // W7-INSPECTOR2: absolute-coordinate ratio against the
+                        // *measured* message+files region (paint-time canvas in
+                        // inspector.rs).  Static offsets miss the variable-height
+                        // header above the region, which showed up as a ~2cm jump
+                        // when starting a drag.  Falls back to the constant-based
+                        // approximation until the first paint has run.
+                        let cursor_y = f32::from(event.event.position.y);
+                        let (geom_top, geom_bottom) = this.inspector_geom.get();
+                        let (top, bottom) = if geom_bottom - geom_top > 1.0 {
+                            // Primary path: the canvas measured the real (already
+                            // scaled) region bounds in screen px — use as-is.
+                            (geom_top, geom_bottom)
                         } else {
-                            STATUS_BAR_H
+                            // Transient fallback before first paint: the layout
+                            // chrome is rendered scaled, so scale the constant
+                            // offsets into screen space too.
+                            let viewport_h = f32::from(window.viewport_size().height);
+                            let bottom_taken = if this.bottom_panel_open {
+                                STATUS_BAR_H + this.bottom_panel_height + BOTTOM_PANEL_DIVIDER_H
+                            } else {
+                                STATUS_BAR_H
+                            };
+                            (INSPECTOR_TOP_OFFSET * z, viewport_h - bottom_taken * z)
                         };
-                        (INSPECTOR_TOP_OFFSET * z, viewport_h - bottom_taken * z)
-                    };
-                    // The divider itself occupies INSPECTOR_SPLIT_DIVIDER_H of
-                    // the region; the flex split applies to the remainder. The
-                    // span is in screen px (scaled), so scale the divider too.
-                    let span =
-                        bottom - top - inspector::INSPECTOR_SPLIT_DIVIDER_H * z;
-                    if std::env::var("KAGI_DEBUG_SPLIT").as_deref() == Ok("1") {
-                        eprintln!(
+                        // The divider itself occupies INSPECTOR_SPLIT_DIVIDER_H of
+                        // the region; the flex split applies to the remainder. The
+                        // span is in screen px (scaled), so scale the divider too.
+                        let span = bottom - top - inspector::INSPECTOR_SPLIT_DIVIDER_H * z;
+                        if std::env::var("KAGI_DEBUG_SPLIT").as_deref() == Ok("1") {
+                            eprintln!(
                             "[kagi] split-drag: cursor_y={:.1} top={:.1} bottom={:.1} split={:.3}",
                             cursor_y, top, bottom, this.inspector_split
                         );
+                        }
+                        if span > 1.0 {
+                            let ratio = ((cursor_y - top) / span)
+                                .clamp(INSPECTOR_SPLIT_MIN, INSPECTOR_SPLIT_MAX);
+                            if (ratio - this.inspector_split).abs() > 0.001 {
+                                this.inspector_split = ratio;
+                                cx.notify();
+                            }
+                        }
                     }
-                    if span > 1.0 {
-                        let ratio = ((cursor_y - top) / span)
-                            .clamp(INSPECTOR_SPLIT_MIN, INSPECTOR_SPLIT_MAX);
-                        if (ratio - this.inspector_split).abs() > 0.001 {
-                            this.inspector_split = ratio;
-                            cx.notify();
+                    DividerKind::ConflictAB => {
+                        // T-CONFLICT-UI-003: A|B vertical divider — ratio of the
+                        // measured A·B row width given to A.  The cursor sits on
+                        // the divider center, while flex layout assigns the ratio
+                        // to the space excluding the scaled divider.
+                        let cursor_x = f32::from(event.event.position.x);
+                        let (left, right) = this.conflict_ab_geom.get();
+                        if let Some(ratio) = conflict_split_ratio_from_cursor(
+                            cursor_x,
+                            left,
+                            right,
+                            CONFLICT_SPLIT_DIVIDER * z,
+                            CONFLICT_AB_MIN,
+                            CONFLICT_AB_MAX,
+                        ) {
+                            if (ratio - this.conflict_ab_split).abs() > 0.001 {
+                                this.conflict_ab_split = ratio;
+                                cx.notify();
+                            }
+                        }
+                    }
+                    DividerKind::ConflictResult => {
+                        // T-CONFLICT-UI-003: A·B / Result horizontal divider — ratio
+                        // of the measured editor split region given to the A·B row.
+                        // The previous separate hunk-control strip is gone; chunk
+                        // controls live inside the A/B lists, so this measured
+                        // region now matches the rendered split exactly.
+                        let cursor_y = f32::from(event.event.position.y);
+                        let (top, bottom) = this.conflict_geom.get();
+                        if let Some(ratio) = conflict_split_ratio_from_cursor(
+                            cursor_y,
+                            top,
+                            bottom,
+                            CONFLICT_SPLIT_DIVIDER * z,
+                            CONFLICT_RESULT_MIN,
+                            CONFLICT_RESULT_MAX,
+                        ) {
+                            if (ratio - this.conflict_result_split).abs() > 0.001 {
+                                this.conflict_result_split = ratio;
+                                cx.notify();
+                            }
                         }
                     }
                 }
-                DividerKind::ConflictAB => {
-                    // T-CONFLICT-UI-003: A|B vertical divider — ratio of the
-                    // measured A·B row width given to A.  The cursor sits on
-                    // the divider center, while flex layout assigns the ratio
-                    // to the space excluding the scaled divider.
-                    let cursor_x = f32::from(event.event.position.x);
-                    let (left, right) = this.conflict_ab_geom.get();
-                    if let Some(ratio) = conflict_split_ratio_from_cursor(
-                        cursor_x,
-                        left,
-                        right,
-                        CONFLICT_SPLIT_DIVIDER * z,
-                        CONFLICT_AB_MIN,
-                        CONFLICT_AB_MAX,
-                    ) {
-                        if (ratio - this.conflict_ab_split).abs() > 0.001 {
-                            this.conflict_ab_split = ratio;
-                            cx.notify();
-                        }
-                    }
-                }
-                DividerKind::ConflictResult => {
-                    // T-CONFLICT-UI-003: A·B / Result horizontal divider — ratio
-                    // of the measured editor split region given to the A·B row.
-                    // The previous separate hunk-control strip is gone; chunk
-                    // controls live inside the A/B lists, so this measured
-                    // region now matches the rendered split exactly.
-                    let cursor_y = f32::from(event.event.position.y);
-                    let (top, bottom) = this.conflict_geom.get();
-                    if let Some(ratio) = conflict_split_ratio_from_cursor(
-                        cursor_y,
-                        top,
-                        bottom,
-                        CONFLICT_SPLIT_DIVIDER * z,
-                        CONFLICT_RESULT_MIN,
-                        CONFLICT_RESULT_MAX,
-                    ) {
-                        if (ratio - this.conflict_result_split).abs() > 0.001 {
-                            this.conflict_result_split = ratio;
-                            cx.notify();
-                        }
-                    }
-                }
-            }
-        });
+            },
+        );
 
         // T025/T026: extract commit panel state for render.
         let commit_panel_open = self.commit_panel_open;
@@ -9496,7 +9923,10 @@ impl Render for KagiApp {
             // checkout_selected_commit.
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
                 if std::env::var("KAGI_DEBUG_KEYS").as_deref() == Ok("1") {
-                    eprintln!("[kagi] key: {:?} char={:?}", e.keystroke.key, e.keystroke.key_char);
+                    eprintln!(
+                        "[kagi] key: {:?} char={:?}",
+                        e.keystroke.key, e.keystroke.key_char
+                    );
                 }
                 let ks = &e.keystroke;
                 if ks.key == "enter"
@@ -9519,9 +9949,18 @@ impl Render for KagiApp {
             .children(self.render_tab_strip(cx))
             // ── Header slot ──────────────────────────────────
             // ADR-0013: pass HEAD commit summary for Undo label (first row = HEAD).
-            .child(self.render_header_slot(toolbar_state, status_summary, self.rows.first().map(|r| r.summary.to_string()), cx))
+            .child(self.render_header_slot(
+                toolbar_state,
+                status_summary,
+                self.rows.first().map(|r| r.summary.to_string()),
+                cx,
+            ))
             // ── W30-CONFLICT-UI: persistent conflict banner (under header) ──
-            .children(conflict.as_ref().map(|m| conflict_view::render_banner(m, cx)))
+            .children(
+                conflict
+                    .as_ref()
+                    .map(|m| conflict_view::render_banner(m, cx)),
+            )
             // ── Body slot: in Conflict Mode the conflict resolution pane
             //    replaces the normal sidebar | list | panel body. The center is
             //    the A/B hunk editor + Result Preview; the right is always the
@@ -9532,14 +9971,36 @@ impl Render for KagiApp {
             })
             .when(conflict.is_none() || conflict_merge_pending, |el| {
                 el.child(self.render_body(
-                    row_count, selected, detail, changed_files, changed_diffstat, selected_badges, inspector_tree_view,
-                    main_diff, compare_view, main_diff_scroll_handle,
-                    branches, remote_branches, tags, stashes, worktrees, branch_upstream_info,
-                    sidebar_collapsed, branch_groups_collapsed, sidebar_filter,
-                    is_dirty, sidebar_width, panel_width,
-                    badge_col_w, graph_col_w, commit_scroll_handle,
-                    commit_panel_open, commit_panel.clone(), commit_input.clone(),
-                    commit_template_mode, commit_template_inputs.clone(),
+                    row_count,
+                    selected,
+                    detail,
+                    changed_files,
+                    changed_diffstat,
+                    selected_badges,
+                    inspector_tree_view,
+                    main_diff,
+                    compare_view,
+                    main_diff_scroll_handle,
+                    branches,
+                    remote_branches,
+                    tags,
+                    stashes,
+                    worktrees,
+                    branch_upstream_info,
+                    sidebar_collapsed,
+                    branch_groups_collapsed,
+                    sidebar_filter,
+                    is_dirty,
+                    sidebar_width,
+                    panel_width,
+                    badge_col_w,
+                    graph_col_w,
+                    commit_scroll_handle,
+                    commit_panel_open,
+                    commit_panel.clone(),
+                    commit_input.clone(),
+                    commit_template_mode,
+                    commit_template_inputs.clone(),
                     cx,
                 ))
             })
@@ -9548,7 +10009,12 @@ impl Render for KagiApp {
             // 3-pane editor + dashboard own the whole body there. The terminal
             // returns once the conflict is resolved / the commit panel shows.
             .when(!(conflict.is_some() && !conflict_merge_pending), |el| {
-                el.children(self.render_bottom_panel_slot(bottom_panel_open, bottom_panel_height, bottom_tab, cx))
+                el.children(self.render_bottom_panel_slot(
+                    bottom_panel_open,
+                    bottom_panel_height,
+                    bottom_tab,
+                    cx,
+                ))
             })
             // ── Commit context menu overlay (below modals) ─────
             .children(commit_menu_overlay)
@@ -9575,9 +10041,7 @@ impl Render for KagiApp {
             .when_some(amend_modal, |el, modal| {
                 el.child(render_amend_modal(modal, cx))
             })
-            .when_some(pop_modal, |el, modal| {
-                el.child(render_pop_modal(modal, cx))
-            })
+            .when_some(pop_modal, |el, modal| el.child(render_pop_modal(modal, cx)))
             // ── Push plan modal overlay (T-HT-004) ──────────
             .when_some(push_modal, |el, modal| {
                 el.child(render_push_modal(modal, cx))
@@ -9635,9 +10099,15 @@ impl Render for KagiApp {
             })
             // ── Commit plan modal overlay (T025) ─────────────
             .when(
-                commit_panel_open && commit_panel.as_ref().and_then(|p| p.plan_modal.as_ref()).is_some(),
+                commit_panel_open
+                    && commit_panel
+                        .as_ref()
+                        .and_then(|p| p.plan_modal.as_ref())
+                        .is_some(),
                 |el| {
-                    if let Some(Some(plan_modal)) = commit_panel.as_ref().map(|p| p.plan_modal.clone()) {
+                    if let Some(Some(plan_modal)) =
+                        commit_panel.as_ref().map(|p| p.plan_modal.clone())
+                    {
                         el.child(render_commit_plan_modal(plan_modal, cx))
                     } else {
                         el
@@ -9654,7 +10124,6 @@ impl Render for KagiApp {
             .children(self.render_toasts(cx))
             .into_any()
     }
-
 }
 
 // ── AppShell layout slots ────────────────────────────────────────────────────
@@ -9714,7 +10183,11 @@ impl KagiApp {
         let el = menu_act!(el, cmds::CherryPickCommit, "commit.cherryPick");
         let el = menu_act!(el, cmds::RevertCommit, "commit.revert");
         let el = menu_act!(el, cmds::ResetToCommit, "commit.reset");
-        let el = menu_act!(el, cmds::CompareWithWorkingTree, "commit.compareWorkingTree");
+        let el = menu_act!(
+            el,
+            cmds::CompareWithWorkingTree,
+            "commit.compareWorkingTree"
+        );
         let el = menu_act!(el, cmds::MinimizeWindow, "window.minimize");
         let el = menu_act!(el, cmds::ZoomWindow, "window.zoom");
         let el = menu_act!(el, cmds::NewWindow, "window.new");
@@ -9797,12 +10270,15 @@ impl KagiApp {
         // Branch — always enabled; use selected commit if any, else HEAD.
         let branch_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
             // Resolve target commit: selected row → HEAD commit (first detail).
-            let at = this.selected
+            let at = this
+                .selected
                 .and_then(|i| this.details.get(i))
                 .map(|d| CommitId(d.full_sha.to_string()))
                 .or_else(|| {
                     // Fall back to HEAD commit (first detail entry).
-                    this.details.first().map(|d| CommitId(d.full_sha.to_string()))
+                    this.details
+                        .first()
+                        .map(|d| CommitId(d.full_sha.to_string()))
                 });
             if let Some(id) = at {
                 this.open_create_branch_modal(id, cx);
@@ -9816,9 +10292,7 @@ impl KagiApp {
             if stash_on {
                 this.open_stash_push_modal(cx);
             } else {
-                this.status_footer = FooterStatus::Idle(SharedString::from(
-                    Msg::StashClean.t(),
-                ));
+                this.status_footer = FooterStatus::Idle(SharedString::from(Msg::StashClean.t()));
             }
             cx.notify();
         });
@@ -9830,9 +10304,7 @@ impl KagiApp {
                 // Pop the newest stash (index 0) — plan with conflict prediction.
                 this.open_pop_modal(0);
             } else {
-                this.status_footer = FooterStatus::Idle(SharedString::from(
-                    Msg::PopEmpty.t(),
-                ));
+                this.status_footer = FooterStatus::Idle(SharedString::from(Msg::PopEmpty.t()));
             }
             cx.notify();
         });
@@ -9896,7 +10368,11 @@ impl KagiApp {
                         icon: gpui_component::IconName,
                         enabled: bool,
                         count: usize| {
-            let text_color = if enabled { theme().text_main } else { theme().text_muted };
+            let text_color = if enabled {
+                theme().text_main
+            } else {
+                theme().text_muted
+            };
             let chip_bg = theme().color_branch;
             let chip_fg = theme().bg_base;
 
@@ -9916,7 +10392,11 @@ impl KagiApp {
                         .text_color(rgb(text_color)),
                 );
             if count > 0 {
-                let chip_text = if count > 99 { "99+".to_string() } else { count.to_string() };
+                let chip_text = if count > 99 {
+                    "99+".to_string()
+                } else {
+                    count.to_string()
+                };
                 icon_cell = icon_cell.child(
                     div()
                         .absolute()
@@ -9950,7 +10430,11 @@ impl KagiApp {
                 .py(theme::scaled_px(2.0))
                 .rounded_md()
                 .hover(|style| style.bg(rgb(theme().selected)))
-                .cursor(if enabled { gpui::CursorStyle::PointingHand } else { gpui::CursorStyle::Arrow })
+                .cursor(if enabled {
+                    gpui::CursorStyle::PointingHand
+                } else {
+                    gpui::CursorStyle::Arrow
+                })
                 .child(icon_cell)
                 .child(
                     div()
@@ -10040,9 +10524,9 @@ impl KagiApp {
                         "tb-refresh-spin",
                         gpui::Animation::new(Duration::from_millis(SPIN_MS)),
                         |svg, delta| {
-                            svg.with_transformation(gpui::Transformation::rotate(
-                                gpui::radians(delta * std::f32::consts::TAU),
-                            ))
+                            svg.with_transformation(gpui::Transformation::rotate(gpui::radians(
+                                delta * std::f32::consts::TAU,
+                            )))
                         },
                     )
                     .into_any_element()
@@ -10086,47 +10570,89 @@ impl KagiApp {
             // ── CENTRE: Pull Push | Branch Stash Pop | Undo Terminal ──
             // Pull (↓N chip when behind>0)
             .child(
-                make_btn("tb-pull", "Pull", gpui_component::IconName::ArrowDown, toolbar.pull_on, toolbar.behind)
-                    .on_click(pull_click),
+                make_btn(
+                    "tb-pull",
+                    "Pull",
+                    gpui_component::IconName::ArrowDown,
+                    toolbar.pull_on,
+                    toolbar.behind,
+                )
+                .on_click(pull_click),
             )
             .child(div().w(theme::scaled_px(2.0)))
             // Push (↑N chip when ahead>0)
             .child(
-                make_btn("tb-push", "Push", gpui_component::IconName::ArrowUp, toolbar.push_on, toolbar.ahead)
-                    .on_click(push_click),
+                make_btn(
+                    "tb-push",
+                    "Push",
+                    gpui_component::IconName::ArrowUp,
+                    toolbar.push_on,
+                    toolbar.ahead,
+                )
+                .on_click(push_click),
             )
             .child(sep())
             // Branch
             .child(
-                make_btn("tb-branch", "Branch", gpui_component::IconName::Plus, true, 0)
-                    .on_click(branch_click),
+                make_btn(
+                    "tb-branch",
+                    "Branch",
+                    gpui_component::IconName::Plus,
+                    true,
+                    0,
+                )
+                .on_click(branch_click),
             )
             .child(div().w(theme::scaled_px(2.0)))
             // Stash
             .child(
-                make_btn("tb-stash", "Stash", gpui_component::IconName::Inbox, toolbar.stash_on, 0)
-                    .on_click(stash_click),
+                make_btn(
+                    "tb-stash",
+                    "Stash",
+                    gpui_component::IconName::Inbox,
+                    toolbar.stash_on,
+                    0,
+                )
+                .on_click(stash_click),
             )
             .child(div().w(theme::scaled_px(2.0)))
             // Pop
             .child(
-                make_btn("tb-pop", "Pop", gpui_component::IconName::FolderOpen, toolbar.pop_on, 0)
-                    .on_click(pop_click),
+                make_btn(
+                    "tb-pop",
+                    "Pop",
+                    gpui_component::IconName::FolderOpen,
+                    toolbar.pop_on,
+                    0,
+                )
+                .on_click(pop_click),
             )
             .child(sep())
             // Undo — fixed "Undo" label; target commit summary in tooltip.
             .child(
-                make_btn("tb-undo", "Undo", gpui_component::IconName::Undo2, toolbar.undo_on, 0)
-                    .when_some(undo_tooltip_text, |btn, text| {
-                        btn.tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
-                    })
-                    .on_click(undo_click),
+                make_btn(
+                    "tb-undo",
+                    "Undo",
+                    gpui_component::IconName::Undo2,
+                    toolbar.undo_on,
+                    0,
+                )
+                .when_some(undo_tooltip_text, |btn, text| {
+                    btn.tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
+                })
+                .on_click(undo_click),
             )
             .child(div().w(theme::scaled_px(2.0)))
             // Terminal (toggles bottom panel Terminal tab)
             .child(
-                make_btn("tb-terminal", "Terminal", gpui_component::IconName::SquareTerminal, terminal_on, 0)
-                    .on_click(terminal_click),
+                make_btn(
+                    "tb-terminal",
+                    "Terminal",
+                    gpui_component::IconName::SquareTerminal,
+                    terminal_on,
+                    0,
+                )
+                .on_click(terminal_click),
             )
             .child(div().flex_1())
     }
@@ -10183,7 +10709,9 @@ impl KagiApp {
             .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
             .cursor_col_resize()
             .on_drag(
-                DividerDrag { kind: DividerKind::Sidebar },
+                DividerDrag {
+                    kind: DividerKind::Sidebar,
+                },
                 |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
             );
 
@@ -10195,7 +10723,11 @@ impl KagiApp {
         // Row-like background (NOT the header surface colour) so the WIP row
         // reads as the next commit stacking onto the graph, not as part of
         // the column-legend chrome (user feedback).
-        let wip_bg = if commit_panel_open { theme().selected } else { theme().bg_row_alt };
+        let wip_bg = if commit_panel_open {
+            theme().selected
+        } else {
+            theme().bg_row_alt
+        };
 
         // T030: column header row (fixed, above WIP and commit list).
         let col_header = div()
@@ -10238,7 +10770,9 @@ impl KagiApp {
                     .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
                     .cursor_col_resize()
                     .on_drag(
-                        DividerDrag { kind: DividerKind::BadgeCol },
+                        DividerDrag {
+                            kind: DividerKind::BadgeCol,
+                        },
                         |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
                     ),
             )
@@ -10258,9 +10792,11 @@ impl KagiApp {
                     .items_center()
                     .justify_between()
                     .px_1()
-                    .on_scroll_wheel(cx.listener(move |this, e: &gpui::ScrollWheelEvent, _w, cx| {
-                        this.scroll_graph_by(&e.delta, cx);
-                    }))
+                    .on_scroll_wheel(cx.listener(
+                        move |this, e: &gpui::ScrollWheelEvent, _w, cx| {
+                            this.scroll_graph_by(&e.delta, cx);
+                        },
+                    ))
                     .child(
                         div()
                             .text_xs()
@@ -10272,10 +10808,14 @@ impl KagiApp {
                             .id("compact-toggle")
                             .text_xs()
                             .cursor_pointer()
-                            .text_color(rgb(if is_compact { theme().color_branch } else { theme().text_muted }))
+                            .text_color(rgb(if is_compact {
+                                theme().color_branch
+                            } else {
+                                theme().text_muted
+                            }))
                             .hover(|s| s.text_color(rgb(theme().color_branch)))
                             .on_click(compact_click)
-                            .child(SharedString::from(if is_compact { "▥" } else { "▤" }))
+                            .child(SharedString::from(if is_compact { "▥" } else { "▤" })),
                     )
             })
             // Handle between graph and message columns
@@ -10294,7 +10834,9 @@ impl KagiApp {
                     .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
                     .cursor_col_resize()
                     .on_drag(
-                        DividerDrag { kind: DividerKind::GraphCol },
+                        DividerDrag {
+                            kind: DividerKind::GraphCol,
+                        },
                         |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
                     ),
             )
@@ -10307,7 +10849,6 @@ impl KagiApp {
                     .text_color(rgb(theme().text_muted))
                     .child(SharedString::from("MESSAGE")),
             );
-
 
         let commit_list_col = div()
             .flex_1()
@@ -10356,8 +10897,14 @@ impl KagiApp {
                                 )
                         })
                         // Inner divider spacer (badge|graph handle width)
-                        .child(div().w(theme::scaled_px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
-                            .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))))
+                        .child(
+                            div()
+                                .w(theme::scaled_px(INNER_DIV_W))
+                                .flex_shrink_0()
+                                .flex()
+                                .justify_center()
+                                .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
+                        )
                         // Graph column: hollow "not yet committed" node on
                         // lane 0 — visually continues the graph upward.
                         .child(
@@ -10380,8 +10927,14 @@ impl KagiApp {
                                 ),
                         )
                         // Inner divider spacer (graph|message handle width)
-                        .child(div().w(theme::scaled_px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
-                            .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))))
+                        .child(
+                            div()
+                                .w(theme::scaled_px(INNER_DIV_W))
+                                .flex_shrink_0()
+                                .flex()
+                                .justify_center()
+                                .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
+                        )
                         // Summary area: change counts, styled like a row message.
                         .child({
                             let total = self.status_summary.staged + self.status_summary.unstaged;
@@ -10406,7 +10959,17 @@ impl KagiApp {
                         "commit-list",
                         row_count,
                         cx.processor(move |this, range, _window, cx| {
-                            render_rows(&this.rows, &this.avatar_images, range, selected, this.badge_col_w, this.graph_col_w, this.graph_compact, this.graph_scroll_x, cx)
+                            render_rows(
+                                &this.rows,
+                                &this.avatar_images,
+                                range,
+                                selected,
+                                this.badge_col_w,
+                                this.graph_col_w,
+                                this.graph_compact,
+                                this.graph_scroll_x,
+                                cx,
+                            )
                         }),
                     )
                     // T028: wire scroll handle so jump_to_branch can scroll the list.
@@ -10443,10 +11006,18 @@ impl KagiApp {
             // ── Left sidebar (W5-MENU: hidden when toggled off) ──
             .when(sidebar_visible, |el| {
                 el.child(sidebar::render_sidebar(
-                    &branches, &remote_branches, &tags, &stashes, &worktrees,
-                    &branch_upstream_info, &self.commit_row_index,
-                    &sidebar_collapsed, &branch_groups_collapsed, sidebar_filter,
-                    sidebar_width, cx,
+                    &branches,
+                    &remote_branches,
+                    &tags,
+                    &stashes,
+                    &worktrees,
+                    &branch_upstream_info,
+                    &self.commit_row_index,
+                    &sidebar_collapsed,
+                    &branch_groups_collapsed,
+                    sidebar_filter,
+                    sidebar_width,
+                    cx,
                 ))
                 // ── Sidebar divider ───────────────────────
                 .child(divider1)
@@ -10474,7 +11045,9 @@ impl KagiApp {
             .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
             .cursor_col_resize()
             .on_drag(
-                DividerDrag { kind: DividerKind::Panel },
+                DividerDrag {
+                    kind: DividerKind::Panel,
+                },
                 |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
             );
 
@@ -10489,9 +11062,17 @@ impl KagiApp {
                         .ok()
                         .and_then(|repo| repo.commit_preview().ok())
                 });
-                body_row = body_row
-                    .child(divider2)
-                    .child(render_commit_panel(panel_state, panel_width, commit_input.clone(), commit_template_mode, commit_template_inputs.clone(), active_wip.clone(), self.smart_commit.clone(), preview, cx));
+                body_row = body_row.child(divider2).child(render_commit_panel(
+                    panel_state,
+                    panel_width,
+                    commit_input.clone(),
+                    commit_template_mode,
+                    commit_template_inputs.clone(),
+                    active_wip.clone(),
+                    self.smart_commit.clone(),
+                    preview,
+                    cx,
+                ));
             }
         } else if self.inspector_visible {
             // ── Commit Inspector panel (W2-INSPECTOR; W5-MENU toggle) ──
@@ -10510,14 +11091,21 @@ impl KagiApp {
                 } else {
                     changed_diffstat.clone()
                 };
-                el.child(divider2)
-                    .child(inspector::render_inspector(
-                        d, at, selected_badges.clone(),
-                        files, diffstat, compare_for_panel,
-                        active_commit_file, inspector_tree_view,
-                        self.inspector_split, self.inspector_geom.clone(), panel_width,
-                        &avatar_images, cx,
-                    ))
+                el.child(divider2).child(inspector::render_inspector(
+                    d,
+                    at,
+                    selected_badges.clone(),
+                    files,
+                    diffstat,
+                    compare_for_panel,
+                    active_commit_file,
+                    inspector_tree_view,
+                    self.inspector_split,
+                    self.inspector_geom.clone(),
+                    panel_width,
+                    &avatar_images,
+                    cx,
+                ))
             });
         }
 
@@ -10552,7 +11140,9 @@ impl KagiApp {
             .hover(|style| style.bg(rgb(theme().color_branch)).cursor_row_resize())
             .cursor_row_resize()
             .on_drag(
-                DividerDrag { kind: DividerKind::BottomPanel },
+                DividerDrag {
+                    kind: DividerKind::BottomPanel,
+                },
                 |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
             );
 
@@ -10570,8 +11160,16 @@ impl KagiApp {
             });
 
             let make_tab = |label: &'static str, is_active: bool| {
-                let text_color = if is_active { theme().text_main } else { theme().text_muted };
-                let bg_color = if is_active { theme().selected } else { theme().panel };
+                let text_color = if is_active {
+                    theme().text_main
+                } else {
+                    theme().text_muted
+                };
+                let bg_color = if is_active {
+                    theme().selected
+                } else {
+                    theme().panel
+                };
                 div()
                     .px_3()
                     .h(theme::scaled_px(BOTTOM_PANEL_TAB_H))
@@ -10600,7 +11198,10 @@ impl KagiApp {
                         .flex_shrink_0()
                         .on_click(tab_operationlog_click)
                         .hover(|s| s.cursor_pointer())
-                        .child(make_tab(BottomTab::OperationLog.label(), active_tab == BottomTab::OperationLog)),
+                        .child(make_tab(
+                            BottomTab::OperationLog.label(),
+                            active_tab == BottomTab::OperationLog,
+                        )),
                 )
                 .child(
                     div()
@@ -10609,7 +11210,10 @@ impl KagiApp {
                         .flex_shrink_0()
                         .on_click(tab_terminal_click)
                         .hover(|s| s.cursor_pointer())
-                        .child(make_tab(BottomTab::Terminal.label(), active_tab == BottomTab::Terminal)),
+                        .child(make_tab(
+                            BottomTab::Terminal.label(),
+                            active_tab == BottomTab::Terminal,
+                        )),
                 )
         };
 
@@ -10671,7 +11275,8 @@ impl KagiApp {
             cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
                 let entries: Vec<OpLogEntry> = this.op_entries.iter().cloned().collect();
                 let expanded = this.oplog_expanded;
-                range.filter_map(|i| entries.get(i).cloned().map(|e| (i, e)))
+                range
+                    .filter_map(|i| entries.get(i).cloned().map(|e| (i, e)))
                     .map(move |(i, entry)| {
                         let time_label = SharedString::from(format_hms(entry.timestamp));
                         let op_label = SharedString::from(entry.op.clone());
@@ -10697,16 +11302,21 @@ impl KagiApp {
 
                         let is_expanded = expanded == Some(i);
 
-                        let row_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-                            this.oplog_expanded = if this.oplog_expanded == Some(i) {
-                                None
-                            } else {
-                                Some(i)
-                            };
-                            cx.notify();
-                        });
+                        let row_click =
+                            cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+                                this.oplog_expanded = if this.oplog_expanded == Some(i) {
+                                    None
+                                } else {
+                                    Some(i)
+                                };
+                                cx.notify();
+                            });
 
-                        let row_bg = if i % 2 == 0 { theme().panel } else { theme().bg_base };
+                        let row_bg = if i % 2 == 0 {
+                            theme().panel
+                        } else {
+                            theme().bg_base
+                        };
 
                         // Summary row.
                         let mut row_div = div()
@@ -10755,19 +11365,33 @@ impl KagiApp {
                         // Expansion detail rows (before + outcome specifics).
                         if is_expanded {
                             let mut detail_lines: Vec<SharedString> = Vec::new();
-                            detail_lines.push(SharedString::from(format!("  before:  {}", entry.before.head)));
-                            detail_lines.push(SharedString::from(format!("  dirty:   {}", entry.before.dirty)));
+                            detail_lines.push(SharedString::from(format!(
+                                "  before:  {}",
+                                entry.before.head
+                            )));
+                            detail_lines.push(SharedString::from(format!(
+                                "  dirty:   {}",
+                                entry.before.dirty
+                            )));
                             match &entry.outcome {
                                 OpOutcome::Success { after } => {
-                                    detail_lines.push(SharedString::from(format!("  after:   {}", after.head)));
-                                    detail_lines.push(SharedString::from(format!("  dirty:   {}", after.dirty)));
+                                    detail_lines.push(SharedString::from(format!(
+                                        "  after:   {}",
+                                        after.head
+                                    )));
+                                    detail_lines.push(SharedString::from(format!(
+                                        "  dirty:   {}",
+                                        after.dirty
+                                    )));
                                 }
                                 OpOutcome::Failed { error } => {
-                                    detail_lines.push(SharedString::from(format!("  error:   {}", error)));
+                                    detail_lines
+                                        .push(SharedString::from(format!("  error:   {}", error)));
                                 }
                                 OpOutcome::Refused { blockers } => {
                                     for b in blockers {
-                                        detail_lines.push(SharedString::from(format!("  blocker: {}", b)));
+                                        detail_lines
+                                            .push(SharedString::from(format!("  blocker: {}", b)));
                                     }
                                 }
                             }
@@ -10780,9 +11404,7 @@ impl KagiApp {
                                 .bg(rgb(theme().selected))
                                 .text_xs()
                                 .text_color(rgb(theme().text_sub))
-                                .children(detail_lines.into_iter().map(|line| {
-                                    div().child(line)
-                                }));
+                                .children(detail_lines.into_iter().map(|line| div().child(line)));
                             row_div = row_div.child(detail_div);
                         }
 
@@ -10837,20 +11459,25 @@ impl KagiApp {
                             window.focus(&term_focus);
                         }),
                     )
-                    .on_key_down(cx.listener(move |_this, event: &KeyDownEvent, _window, cx| {
-                        let ks = &event.keystroke;
-                        if ks.modifiers.platform && ks.key == "v" {
-                            if let Some(writer) = paste_writer.as_ref() {
-                                if let Some(text) =
-                                    cx.read_from_clipboard().and_then(|item| item.text())
-                                {
-                                    writer.paste_text(&text);
-                                    eprintln!("[kagi] terminal: paste {} chars", text.chars().count());
+                    .on_key_down(
+                        cx.listener(move |_this, event: &KeyDownEvent, _window, cx| {
+                            let ks = &event.keystroke;
+                            if ks.modifiers.platform && ks.key == "v" {
+                                if let Some(writer) = paste_writer.as_ref() {
+                                    if let Some(text) =
+                                        cx.read_from_clipboard().and_then(|item| item.text())
+                                    {
+                                        writer.paste_text(&text);
+                                        eprintln!(
+                                            "[kagi] terminal: paste {} chars",
+                                            text.chars().count()
+                                        );
+                                    }
                                 }
+                                cx.stop_propagation();
                             }
-                            cx.stop_propagation();
-                        }
-                    }))
+                        }),
+                    )
                     .child(view_entity.clone())
                     .into_any();
             }
@@ -10880,7 +11507,9 @@ impl KagiApp {
             .py_2()
             .text_sm()
             .text_color(rgb(theme().text_muted))
-            .child(SharedString::from("(terminal exited — re-opening will restart)"))
+            .child(SharedString::from(
+                "(terminal exited — re-opening will restart)",
+            ))
             .into_any()
     }
 
@@ -10972,7 +11601,10 @@ impl KagiApp {
                     .ml(theme::scaled_px(4.))
                     .text_color(rgb(theme().text_sub))
                     .flex_shrink_0()
-                    .child(SharedString::from(format!("\u{2691}{}", summary.stash_count))), // ⚑N
+                    .child(SharedString::from(format!(
+                        "\u{2691}{}",
+                        summary.stash_count
+                    ))), // ⚑N
             )
         } else {
             None
@@ -10985,7 +11617,10 @@ impl KagiApp {
                     .ml(theme::scaled_px(6.))
                     .text_color(rgb(theme().text_muted))
                     .flex_shrink_0()
-                    .child(SharedString::from(format!("\u{2192} {}", summary.upstream_name))), // → origin/main
+                    .child(SharedString::from(format!(
+                        "\u{2192} {}",
+                        summary.upstream_name
+                    ))), // → origin/main
             )
         } else {
             None
@@ -11056,8 +11691,16 @@ impl KagiApp {
             cx.notify();
         });
 
-        let icon_terminal_color = if terminal_active { theme().text_main } else { theme().text_muted };
-        let icon_oplog_color = if oplog_active { theme().text_main } else { theme().text_muted };
+        let icon_terminal_color = if terminal_active {
+            theme().text_main
+        } else {
+            theme().text_muted
+        };
+        let icon_oplog_color = if oplog_active {
+            theme().text_main
+        } else {
+            theme().text_muted
+        };
 
         let icon_terminal = div()
             .id("status-icon-terminal")
@@ -11150,8 +11793,7 @@ impl KagiApp {
         );
 
         // Icon buttons at the right end.
-        bar.child(icon_terminal)
-           .child(icon_oplog)
+        bar.child(icon_terminal).child(icon_oplog)
     }
 }
 
@@ -11206,13 +11848,12 @@ fn render_rows(
                 this.select(ix);
                 cx.notify();
             });
-            let context_click_handler = cx.listener(
-                move |this, event: &gpui::MouseDownEvent, _window, cx| {
+            let context_click_handler =
+                cx.listener(move |this, event: &gpui::MouseDownEvent, _window, cx| {
                     this.open_commit_menu(ix, event.position);
                     cx.stop_propagation();
                     cx.notify();
-                },
-            );
+                });
 
             // ── Avatar (T020 / W11-AVATAR) ────────────────────
             let avatar_color = avatar::avatar_color(&row.author_email);
@@ -11251,8 +11892,14 @@ fn render_rows(
                 // ── Badges column: user-resizable width (T030) ──
                 .child(render_badges_column(&row.badges, badge_col_w))
                 // ── Inner divider spacer (badge|graph handle width) ──
-                .child(div().w(theme::scaled_px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
-                    .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))))
+                .child(
+                    div()
+                        .w(theme::scaled_px(INNER_DIV_W))
+                        .flex_shrink_0()
+                        .flex()
+                        .justify_center()
+                        .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
+                )
                 // ── Graph lane area (T030) ────────────────────────
                 // Always render the graph column at graph_col_w width.
                 // Clip by visible_lanes to prevent bleed into message column.
@@ -11265,9 +11912,11 @@ fn render_rows(
                         // Horizontal wheel/trackpad scroll reveals clipped
                         // lanes. Vertical deltas are left untouched so the
                         // commit list keeps scrolling normally.
-                        .on_scroll_wheel(cx.listener(move |this, e: &gpui::ScrollWheelEvent, _w, cx| {
-                            this.scroll_graph_by(&e.delta, cx);
-                        }))
+                        .on_scroll_wheel(cx.listener(
+                            move |this, e: &gpui::ScrollWheelEvent, _w, cx| {
+                                this.scroll_graph_by(&e.delta, cx);
+                            },
+                        ))
                         .when(visible_lanes > 0, |el| {
                             el.child(
                                 graph_canvas(
@@ -11284,8 +11933,14 @@ fn render_rows(
                         }),
                 )
                 // ── Inner divider spacer (graph|message handle width) ──
-                .child(div().w(theme::scaled_px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
-                    .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))))
+                .child(
+                    div()
+                        .w(theme::scaled_px(INNER_DIV_W))
+                        .flex_shrink_0()
+                        .flex()
+                        .justify_center()
+                        .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
+                )
                 // ── Author avatar: 18px circle after graph ────────
                 // W11-AVATAR: when a GitHub avatar is resolved, show the image
                 // clipped to the circle; otherwise the initial-on-colour circle.
@@ -11310,12 +11965,7 @@ fn render_rows(
                             .flex()
                             .items_center()
                             .justify_center()
-                            .child(
-                                div()
-                                    .text_color(gpui::white())
-                                    .text_xs()
-                                    .child(avatar_init),
-                            ),
+                            .child(div().text_color(gpui::white()).text_xs().child(avatar_init)),
                     }
                 })
                 .child(
@@ -11475,45 +12125,46 @@ fn render_main_diff_view(
 
 /// Render a range of diff rows for the `"main-diff-list"` uniform_list.
 /// Includes line numbers: old/new each 5 chars wide, theme().text_muted colour.
-fn render_main_diff_rows(
-    rows: &[DiffRow],
-    range: std::ops::Range<usize>,
-) -> Vec<impl IntoElement> {
+fn render_main_diff_rows(rows: &[DiffRow], range: std::ops::Range<usize>) -> Vec<impl IntoElement> {
     range
         .filter_map(|i| rows.get(i).map(|row| (i, row)))
         .map(|(i, row)| match row {
-            DiffRow::HunkHeader(header) => {
-                div()
-                    .id(("main-diff-hunk", i))
-                    .w_full()
-                    .px_2()
-                    .py_px()
-                    .bg(rgb(theme().surface))
-                    .text_sm()
-                    .text_color(rgb(theme().diff_hunk))
-                    .overflow_hidden()
-                    .child(header.clone())
-                    .into_any()
-            }
-            DiffRow::Line { kind, text, old_lineno, new_lineno, highlights } => {
+            DiffRow::HunkHeader(header) => div()
+                .id(("main-diff-hunk", i))
+                .w_full()
+                .px_2()
+                .py_px()
+                .bg(rgb(theme().surface))
+                .text_sm()
+                .text_color(rgb(theme().diff_hunk))
+                .overflow_hidden()
+                .child(header.clone())
+                .into_any(),
+            DiffRow::Line {
+                kind,
+                text,
+                old_lineno,
+                new_lineno,
+                highlights,
+            } => {
                 let bg = match kind {
-                    DiffLineKind::Added   => theme().diff_added_bg,
+                    DiffLineKind::Added => theme().diff_added_bg,
                     DiffLineKind::Removed => theme().diff_removed_bg,
                     DiffLineKind::Context => theme().bg_base,
                 };
                 let text_color = match kind {
-                    DiffLineKind::Added   => 0xa6e3a1u32, // green
+                    DiffLineKind::Added => 0xa6e3a1u32,   // green
                     DiffLineKind::Removed => 0xf38ba8u32, // red
                     DiffLineKind::Context => theme().text_main,
                 };
                 // Format line numbers: 5 chars fixed width, muted colour.
                 let old_str = match old_lineno {
                     Some(n) => format!("{:5}", n),
-                    None    => "     ".to_string(),
+                    None => "     ".to_string(),
                 };
                 let new_str = match new_lineno {
                     Some(n) => format!("{:5}", n),
-                    None    => "     ".to_string(),
+                    None => "     ".to_string(),
                 };
 
                 // T-UI-004: build highlighted content element.
@@ -11547,8 +12198,7 @@ fn render_main_diff_rows(
                         .text_color(rgb(text_color))
                         .overflow_hidden()
                         .child(
-                            gpui::StyledText::new(text.clone())
-                                .with_highlights(valid_highlights),
+                            gpui::StyledText::new(text.clone()).with_highlights(valid_highlights),
                         )
                         .into_any()
                 };
@@ -11583,17 +12233,15 @@ fn render_main_diff_rows(
                     .child(content_el)
                     .into_any()
             }
-            DiffRow::Binary => {
-                div()
-                    .id(("main-diff-binary", i))
-                    .w_full()
-                    .px_2()
-                    .py_1()
-                    .text_sm()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from("Binary file (no diff)"))
-                    .into_any()
-            }
+            DiffRow::Binary => div()
+                .id(("main-diff-binary", i))
+                .w_full()
+                .px_2()
+                .py_1()
+                .text_sm()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from("Binary file (no diff)"))
+                .into_any(),
         })
         .collect()
 }
@@ -11721,14 +12369,17 @@ fn stash_push_blocking(
     message: Option<String>,
 ) -> Result<(String, StateSummary), String> {
     let t0 = Instant::now();
-    let mut repo = kagi::git::Backend::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e))?;
+    let mut repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
     repo.preflight_check_stash(plan, plan.stash_count_at_plan())
         .map_err(|e| format!("Preflight failed: {}", e))?;
     repo.execute_stash_push(message.as_deref(), true)
         .map_err(|e| format!("Stash push failed: {}", e))?;
     let t_stash = t0.elapsed();
-    eprintln!("[kagi] executed: stash-push message={:?}", message.unwrap_or_default());
+    eprintln!(
+        "[kagi] executed: stash-push message={:?}",
+        message.unwrap_or_default()
+    );
 
     // Light verify: the full reload that follows on the main thread already
     // rebuilds the complete snapshot, so re-walking 10k commits here only
@@ -11749,7 +12400,11 @@ fn stash_push_blocking(
             let head = plan.predicted.head.clone();
             StateSummary {
                 head,
-                dirty: if status.is_dirty() { "dirty".into() } else { "clean".into() },
+                dirty: if status.is_dirty() {
+                    "dirty".into()
+                } else {
+                    "clean".into()
+                },
             }
         }
         Err(_) => plan.predicted.clone(),
@@ -11768,11 +12423,14 @@ fn pull_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
 ) -> Result<(String, StateSummary), String> {
-    let repo = kagi::git::Backend::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan)
+        .map_err(|e| format!("Preflight failed: {}", e))?;
 
-    let outcome = repo.execute_pull().map_err(|e| format!("Pull failed: {}", e))?;
+    let outcome = repo
+        .execute_pull()
+        .map_err(|e| format!("Pull failed: {}", e))?;
     let summary = match &outcome {
         PullOutcome::UpToDate => "already up to date".to_string(),
         PullOutcome::FastForward { to } => format!("fast-forward to {}", to.short()),
@@ -11792,11 +12450,14 @@ fn push_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
 ) -> Result<(String, StateSummary), String> {
-    let repo = kagi::git::Backend::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan)
+        .map_err(|e| format!("Preflight failed: {}", e))?;
 
-    let outcome = repo.execute_push().map_err(|e| format!("Push failed: {}", e))?;
+    let outcome = repo
+        .execute_push()
+        .map_err(|e| format!("Push failed: {}", e))?;
     let summary = if outcome.set_upstream {
         format!("pushed {} commit(s), set upstream", outcome.pushed)
     } else {
@@ -11845,9 +12506,10 @@ fn checkout_blocking(
     plan: &OperationPlan,
     target: &CheckoutPlanTarget,
 ) -> Result<(String, StateSummary), String> {
-    let repo = kagi::git::Backend::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan)
+        .map_err(|e| format!("Preflight failed: {}", e))?;
 
     let execute_result = match target {
         CheckoutPlanTarget::Branch(branch) => repo.execute_checkout(branch),
@@ -11873,7 +12535,10 @@ fn checkout_blocking(
                 match (target, &snap.head) {
                     (
                         CheckoutPlanTarget::Branch(branch),
-                        Head::Attached { branch: actual_branch, .. },
+                        Head::Attached {
+                            branch: actual_branch,
+                            ..
+                        },
                     ) if actual_branch == branch => {
                         eprintln!("[kagi] verified: HEAD={}", actual_branch);
                     }
@@ -11891,7 +12556,11 @@ fn checkout_blocking(
                 }
                 StateSummary {
                     head: snap.head.display(),
-                    dirty: if snap.status.is_dirty() { "dirty".to_string() } else { "clean".to_string() },
+                    dirty: if snap.status.is_dirty() {
+                        "dirty".to_string()
+                    } else {
+                        "clean".to_string()
+                    },
                 }
             }
             Err(e) => {
@@ -11913,16 +12582,18 @@ fn merge_blocking(
     target: &str,
     kind: &MergeKind,
 ) -> Result<(String, StateSummary), String> {
-    let repo = kagi::git::Backend::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan)
+        .map_err(|e| format!("Preflight failed: {}", e))?;
 
     match kind {
         MergeKind::Conflicts(_) => {
             // W31: perform the real conflicting merge — leaves markers + index
             // stages + MERGE_HEAD. No commit is created; Conflict Mode takes over
             // on the subsequent reload.
-            let files = repo.execute_merge_into_conflict(target)
+            let files = repo
+                .execute_merge_into_conflict(target)
                 .map_err(|e| format!("Merge failed: {}", e))?;
             eprintln!(
                 "[kagi] executed: merge-into-conflict {} -> {} conflict(s)",
@@ -11930,11 +12601,15 @@ fn merge_blocking(
                 files.len()
             );
             let after = verify_after_snapshot(repo_path, plan);
-            Ok((format!("merge {} (conflicts: {})", target, files.len()), after))
+            Ok((
+                format!("merge {} (conflicts: {})", target, files.len()),
+                after,
+            ))
         }
         MergeKind::FastForward | MergeKind::MergeCommit => {
-            let new_head =
-                repo.execute_merge_branch(target).map_err(|e| format!("Merge failed: {}", e))?;
+            let new_head = repo
+                .execute_merge_branch(target)
+                .map_err(|e| format!("Merge failed: {}", e))?;
             eprintln!("[kagi] executed: merge {} -> {}", target, new_head.short());
 
             let after = verify_after_snapshot(repo_path, plan);
@@ -11950,9 +12625,10 @@ fn checkout_tracking_blocking(
     remote_branch: &str,
     local_branch: &str,
 ) -> Result<(String, StateSummary), String> {
-    let repo = kagi::git::Backend::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan)
+        .map_err(|e| format!("Preflight failed: {}", e))?;
 
     repo.execute_checkout_tracking_branch(remote_branch, local_branch)
         .map_err(|e| format!("Checkout tracking failed: {}", e))?;
@@ -11973,13 +12649,19 @@ fn cherry_pick_blocking(
     plan: &OperationPlan,
     commit_id: &CommitId,
 ) -> Result<(String, StateSummary), String> {
-    let repo = kagi::git::Backend::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan)
+        .map_err(|e| format!("Preflight failed: {}", e))?;
 
-    let new_id = repo.execute_cherry_pick(commit_id)
+    let new_id = repo
+        .execute_cherry_pick(commit_id)
         .map_err(|e| format!("Cherry-pick failed: {}", e))?;
-    eprintln!("[kagi] executed: cherry-pick {} -> {}", commit_id.short(), new_id.short());
+    eprintln!(
+        "[kagi] executed: cherry-pick {} -> {}",
+        commit_id.short(),
+        new_id.short()
+    );
 
     let after = verify_new_commit_snapshot(repo_path, plan, &new_id, "cherry-pick");
     Ok((format!("{} applied", commit_id.short()), after))
@@ -11992,13 +12674,19 @@ fn revert_blocking(
     plan: &OperationPlan,
     commit_id: &CommitId,
 ) -> Result<(String, StateSummary), String> {
-    let repo = kagi::git::Backend::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan)
+        .map_err(|e| format!("Preflight failed: {}", e))?;
 
-    let new_id =
-        repo.execute_revert(commit_id).map_err(|e| format!("Revert failed: {}", e))?;
-    eprintln!("[kagi] executed: revert {} -> {}", commit_id.short(), new_id.short());
+    let new_id = repo
+        .execute_revert(commit_id)
+        .map_err(|e| format!("Revert failed: {}", e))?;
+    eprintln!(
+        "[kagi] executed: revert {} -> {}",
+        commit_id.short(),
+        new_id.short()
+    );
 
     let after = verify_new_commit_snapshot(repo_path, plan, &new_id, "revert");
     Ok((format!("reverted {}", commit_id.short()), after))
@@ -12012,11 +12700,12 @@ fn commit_blocking(
     plan: &OperationPlan,
     message: &str,
 ) -> Result<(String, StateSummary), String> {
-    let repo = kagi::git::Backend::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e))?;
+    let repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
 
-    let new_id =
-        repo.execute_commit(message).map_err(|e| format!("Commit failed: {}", e))?;
+    let new_id = repo
+        .execute_commit(message)
+        .map_err(|e| format!("Commit failed: {}", e))?;
     eprintln!("[kagi] executed: commit {}", new_id.short());
 
     // Verify: re-snapshot, check HEAD is the new commit, unstaged remain.
@@ -12025,7 +12714,11 @@ fn commit_blocking(
             Ok(snap) => {
                 if let Head::Attached { target, branch } = &snap.head {
                     if *target == new_id.0 {
-                        eprintln!("[kagi] verified: commit HEAD={} on {}", new_id.short(), branch);
+                        eprintln!(
+                            "[kagi] verified: commit HEAD={} on {}",
+                            new_id.short(),
+                            branch
+                        );
                     } else {
                         eprintln!("[kagi] verify: HEAD mismatch after commit");
                     }
@@ -12033,11 +12726,19 @@ fn commit_blocking(
                 let is_dirty = snap.status.is_dirty();
                 eprintln!(
                     "[kagi] verified: working tree {} after commit",
-                    if is_dirty { "dirty (unstaged remain)" } else { "clean" }
+                    if is_dirty {
+                        "dirty (unstaged remain)"
+                    } else {
+                        "clean"
+                    }
                 );
                 StateSummary {
                     head: snap.head.display(),
-                    dirty: if is_dirty { "dirty".to_string() } else { "clean".to_string() },
+                    dirty: if is_dirty {
+                        "dirty".to_string()
+                    } else {
+                        "clean".to_string()
+                    },
                 }
             }
             Err(e) => {
@@ -12060,11 +12761,13 @@ fn stash_pop_blocking(
     plan: &OperationPlan,
     stash_index: usize,
 ) -> Result<(String, StateSummary), String> {
-    let mut repo = kagi::git::Backend::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let mut repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan)
+        .map_err(|e| format!("Preflight failed: {}", e))?;
 
-    repo.execute_stash_pop(stash_index).map_err(|e| format!("Pop failed: {}", e))?;
+    repo.execute_stash_pop(stash_index)
+        .map_err(|e| format!("Pop failed: {}", e))?;
     eprintln!("[kagi] executed: stash-pop index={}", stash_index);
 
     let after = StateSummary {
@@ -12083,10 +12786,11 @@ fn discard_blocking(
     plan: &OperationPlan,
     paths: &[String],
 ) -> Result<(String, StateSummary), String> {
-    let repo = kagi::git::Backend::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e))?;
+    let repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
 
-    let outcome = repo.execute_discard(plan, paths)
+    let outcome = repo
+        .execute_discard(plan, paths)
         .map_err(|e| format!("Discard failed: {}", e))?;
     let summary = outcome.oplog_summary();
     eprintln!("[kagi] executed: {}", summary);
@@ -12101,7 +12805,10 @@ fn discard_blocking(
                 .collect();
             let leftover = paths.iter().filter(|p| still.contains(*p)).count();
             if leftover == 0 {
-                eprintln!("[kagi] verified: {} target(s) left the unstaged set", paths.len());
+                eprintln!(
+                    "[kagi] verified: {} target(s) left the unstaged set",
+                    paths.len()
+                );
             } else {
                 eprintln!("[kagi] verify: {} target(s) still unstaged", leftover);
             }
@@ -12135,16 +12842,31 @@ fn amend_blocking(
     mode: AmendMode,
     message: &str,
 ) -> Result<(StateSummary, CommitId, CommitId), String> {
-    let repo = kagi::git::Backend::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan)
+        .map_err(|e| format!("Preflight failed: {}", e))?;
 
-    let msg_opt = if message.trim().is_empty() { None } else { Some(message) };
-    let outcome = repo.execute_amend(mode, msg_opt).map_err(|e| format!("Amend failed: {}", e))?;
-    eprintln!("[kagi] executed: amend {} -> {}", outcome.old.short(), outcome.new.short());
+    let msg_opt = if message.trim().is_empty() {
+        None
+    } else {
+        Some(message)
+    };
+    let outcome = repo
+        .execute_amend(mode, msg_opt)
+        .map_err(|e| format!("Amend failed: {}", e))?;
+    eprintln!(
+        "[kagi] executed: amend {} -> {}",
+        outcome.old.short(),
+        outcome.new.short()
+    );
 
     let after = StateSummary {
-        head: format!("branch @ {} (was {})", outcome.new.short(), outcome.old.short()),
+        head: format!(
+            "branch @ {} (was {})",
+            outcome.new.short(),
+            outcome.old.short()
+        ),
         dirty: "amended".to_string(),
     };
     Ok((after, outcome.old, outcome.new))
@@ -12157,9 +12879,10 @@ fn delete_branch_blocking(
     plan: &OperationPlan,
     branch_name: &str,
 ) -> Result<StateSummary, String> {
-    let repo = kagi::git::Backend::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan)
+        .map_err(|e| format!("Preflight failed: {}", e))?;
 
     repo.execute_delete_branch(plan, branch_name)
         .map_err(|e| format!("Delete failed: {}", e))?;
@@ -12175,16 +12898,23 @@ fn branch_plan_blocking(
     repo_path: &std::path::Path,
     modal: &BranchPlanModal,
 ) -> Result<StateSummary, String> {
-    let repo = kagi::git::Backend::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e))?;
+    let repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
     match modal.kind {
         BranchPlanKind::PullFfOnly => {
-            let outcome = repo.execute_pull_branch_ff(&modal.plan, &modal.branch_name)
+            let outcome = repo
+                .execute_pull_branch_ff(&modal.plan, &modal.branch_name)
                 .map_err(|e| format!("Pull failed: {}", e))?;
             let dirty = match outcome {
-                PullOutcome::UpToDate => format!("branch '{}' already up to date", modal.branch_name),
+                PullOutcome::UpToDate => {
+                    format!("branch '{}' already up to date", modal.branch_name)
+                }
                 PullOutcome::FastForward { to } => {
-                    format!("branch '{}' fast-forwarded to {}", modal.branch_name, to.short())
+                    format!(
+                        "branch '{}' fast-forwarded to {}",
+                        modal.branch_name,
+                        to.short()
+                    )
                 }
                 PullOutcome::Merged { .. } => "unexpected merge outcome".to_string(),
             };
@@ -12197,14 +12927,18 @@ fn branch_plan_blocking(
             let set_upstream = modal.kind == BranchPlanKind::PushSetUpstream;
             let outcome = repo
                 .execute_push_branch(&modal.plan, &modal.branch_name, set_upstream)
-            .map_err(|e| format!("Push failed: {}", e))?;
+                .map_err(|e| format!("Push failed: {}", e))?;
             Ok(StateSummary {
                 head: modal.plan.current.head.clone(),
                 dirty: format!(
                     "branch '{}' pushed {} commit(s){}",
                     modal.branch_name,
                     outcome.pushed,
-                    if outcome.set_upstream { " and upstream set" } else { "" }
+                    if outcome.set_upstream {
+                        " and upstream set"
+                    } else {
+                        ""
+                    }
                 ),
             })
         }
@@ -12217,8 +12951,8 @@ fn set_upstream_blocking(
     branch_name: &str,
     upstream: &str,
 ) -> Result<StateSummary, String> {
-    let repo = kagi::git::Backend::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e))?;
+    let repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
     repo.execute_set_upstream(plan, branch_name, upstream)
         .map_err(|e| format!("Set upstream failed: {}", e))?;
     Ok(StateSummary {
@@ -12233,8 +12967,8 @@ fn rename_branch_blocking(
     old_name: &str,
     new_name: &str,
 ) -> Result<StateSummary, String> {
-    let repo = kagi::git::Backend::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e))?;
+    let repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
     repo.execute_rename_branch(plan, old_name, new_name)
         .map_err(|e| format!("Rename failed: {}", e))?;
     Ok(StateSummary {
@@ -12253,9 +12987,10 @@ fn create_worktree_blocking(
     at: &CommitId,
     allow_existing_branch: bool,
 ) -> Result<StateSummary, String> {
-    let repo = kagi::git::Backend::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan)
+        .map_err(|e| format!("Preflight failed: {}", e))?;
 
     if allow_existing_branch {
         repo.execute_open_worktree_for_branch(branch_input, path_input)
@@ -12274,7 +13009,11 @@ fn create_worktree_blocking(
     // Verify: open the linked worktree and log its HEAD.
     let verify_path = {
         let path = std::path::PathBuf::from(path_input);
-        if path.is_absolute() { path } else { repo_path.join(path) }
+        if path.is_absolute() {
+            path
+        } else {
+            repo_path.join(path)
+        }
     };
     match kagi::git::Backend::open(&verify_path) {
         Ok(linked) => {
@@ -12304,7 +13043,12 @@ fn verify_new_commit_snapshot(
             Ok(snap) => {
                 if let Head::Attached { target, branch } = &snap.head {
                     if *target == new_id.0 {
-                        eprintln!("[kagi] verified: {} HEAD={} on {}", op, new_id.short(), branch);
+                        eprintln!(
+                            "[kagi] verified: {} HEAD={} on {}",
+                            op,
+                            new_id.short(),
+                            branch
+                        );
                     } else {
                         eprintln!(
                             "[kagi] verify: HEAD={} expected {}",
@@ -12315,12 +13059,20 @@ fn verify_new_commit_snapshot(
                     let is_clean = !snap.status.is_dirty();
                     eprintln!(
                         "[kagi] verified: working tree {}",
-                        if is_clean { "clean" } else { "dirty (unexpected)" }
+                        if is_clean {
+                            "clean"
+                        } else {
+                            "dirty (unexpected)"
+                        }
                     );
                 }
                 StateSummary {
                     head: snap.head.display(),
-                    dirty: if snap.status.is_dirty() { "dirty".to_string() } else { "clean".to_string() },
+                    dirty: if snap.status.is_dirty() {
+                        "dirty".to_string()
+                    } else {
+                        "clean".to_string()
+                    },
                 }
             }
             Err(e) => {
@@ -12372,665 +13124,27 @@ fn render_status_footer(status: FooterStatus) -> impl IntoElement {
         .child(text)
 }
 
-// ──────────────────────────────────────────────────────────────
-// Plan modal renderer (T013)
-// ──────────────────────────────────────────────────────────────
-
-/// Render the plan confirmation overlay.
-///
-/// Layout (absolute, full-screen):
-/// - Semi-transparent dark backdrop
-/// - Centred modal card:
-///   - Title
-///   - Current → Predicted state
-///   - Warnings (yellow) if any
-///   - Blockers (red) if any
-///   - Recovery text
-///   - Error message (if preflight/execute failed)
-///   - `[Cancel]` always present; `[Checkout]` only when no blockers
-fn render_plan_modal(modal: CheckoutPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let create_branch_target = match &modal.target {
-        CheckoutPlanTarget::Commit(commit_id) => Some(commit_id.clone()),
-        CheckoutPlanTarget::Branch(_) => None,
-    };
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.start_checkout(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(
-        modal.plan,
-        modal.error,
-        "Checkout",
-        cancel_handler,
-        confirm_handler,
-        create_branch_target,
-        cx,
-    )
-        .into_any_element()
-}
-
-/// Pull plan confirmation overlay (T-HT-003) — same card as the checkout
-/// plan modal, wired to `confirm_pull`.
-fn render_pull_modal(modal: PullPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_pull_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        // W3-NOTIFY: run on a background thread (start/finish toasts).
-        this.start_pull(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(modal.plan, modal.error, "Pull", cancel_handler, confirm_handler, None, cx)
-        .into_any_element()
-}
-
-/// Undo-commit confirmation overlay (T-HT-009).
-fn render_undo_modal(modal: UndoPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.cancel_undo_modal();
-        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.confirm_undo();
-        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
-        cx.notify();
-    });
-    render_plan_modal_card(modal.plan, modal.error, "Undo", cancel_handler, confirm_handler, None, cx)
-        .into_any_element()
-}
-
-/// Sequencer `<op> --continue` confirmation overlay (ADR-0068 /
-/// T-CONFLICT-FLOW-032).  Shown when Continue routes a rebase / cherry-pick /
-/// revert; confirming advances the sequencer.
-fn render_conflict_continue_modal(
-    modal: ConflictContinuePlanModal,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.cancel_conflict_continue();
-        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.confirm_conflict_continue(cx);
-        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
-        cx.notify();
-    });
-    render_plan_modal_card(
-        modal.plan,
-        modal.error,
-        Msg::ConflictContinue.t(),
-        cancel_handler,
-        confirm_handler,
-        None,
-        cx,
-    )
-    .into_any_element()
-}
-
-/// Amend confirmation overlay (T-COMMIT-011, ADR-0040 / 0023).
-///
-/// History-rewriting → **two-stage confirm**.  The first Confirm click arms the
-/// action (`confirm_armed` flips to true); the button then turns into an
-/// explicit, red final-confirm that lists what is lost (the old SHA).  No typed
-/// confirmation is required (ADR-0023).
-fn render_amend_modal(modal: AmendPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let armed = modal.confirm_armed;
-    let has_blockers = !modal.plan.blockers.is_empty();
-    let plan = modal.plan.clone();
-    let error = modal.error.clone();
-
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.cancel_amend_modal();
-        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        // First click arms; second click executes (handled in start_amend).
-        this.start_amend(cx);
-        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
-        cx.notify();
-    });
-
-    // Build the standard plan card body (title / current→predicted / warnings /
-    // blockers / recovery / error) and append a two-stage confirm row.
-    let mut card = div()
-        .w(theme::scaled_px(480.))
-        .bg(rgb(theme().modal))
-        .rounded_lg()
-        .p_4()
+/// W12-GCADOPT (§2.10): wrap a virtualized list in a relative flex column and
+/// overlay a `gpui_component::scroll::Scrollbar` driven by the list's existing
+/// `UniformListScrollHandle`.  The Scrollbar paints itself absolutely-positioned
+/// over the container (relative(1.) size), so this is layout-non-destructive —
+/// the inner `uniform_list` keeps its own `flex_1().min_h(0)` sizing.  Colours
+/// follow the gpui-component scrollbar theme fields, which
+/// `sync_gpui_component_theme` keeps in step with kagi's palette.
+fn with_vertical_scrollbar(
+    id: &'static str,
+    handle: &UniformListScrollHandle,
+    list: impl IntoElement,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .relative()
+        .flex_1()
+        .min_h(px(0.))
         .flex()
         .flex_col()
-        .gap_3()
-        .child(
-            div()
-                .text_color(rgb(theme().text_main))
-                .text_xl()
-                .child(SharedString::from(plan.title.clone())),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from("Current")))
-                .child(
-                    div().flex().flex_row().gap_2().text_sm()
-                        .child(div().text_color(rgb(theme().text_main)).child(SharedString::from(plan.current.head.clone())))
-                        .child(div().text_color(rgb(theme().text_sub)).child(SharedString::from(format!("[{}]", plan.current.dirty)))),
-                )
-                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from("\u{2192} Predicted")))
-                .child(
-                    div().flex().flex_row().gap_2().text_sm()
-                        .child(div().text_color(rgb(theme().text_main)).child(SharedString::from(plan.predicted.head.clone())))
-                        .child(div().text_color(rgb(theme().text_sub)).child(SharedString::from(format!("[{}]", plan.predicted.dirty)))),
-                ),
-        );
-
-    // Warnings.
-    if !plan.warnings.is_empty() {
-        let mut warn_col = div().flex().flex_col().gap_1();
-        for w in &plan.warnings {
-            warn_col = warn_col.child(
-                div().text_sm().text_color(rgb(theme().color_warning)).overflow_hidden()
-                    .child(SharedString::from(format!("\u{26a0} {}", w))),
-            );
-        }
-        card = card.child(warn_col);
-    }
-
-    // Staged files folded in (preview_files), if any.
-    if !plan.preview_files.is_empty() {
-        let total = plan.preview_files.len();
-        let mut col = div().flex().flex_col().gap_1().child(
-            div().text_sm().text_color(rgb(theme().text_label))
-                .child(SharedString::from(format!("Staged changes folded in ({})", total))),
-        );
-        for f in plan.preview_files.iter().take(10) {
-            col = col.child(
-                div().text_xs().text_color(rgb(theme().text_sub)).overflow_hidden()
-                    .child(SharedString::from(f.path.display().to_string())),
-            );
-        }
-        card = card.child(col);
-    }
-
-    // Blockers.
-    if has_blockers {
-        let mut block_col = div().flex().flex_col().gap_1();
-        for b in &plan.blockers {
-            block_col = block_col.child(
-                div().text_sm().text_color(rgb(theme().color_blocker)).overflow_hidden()
-                    .child(SharedString::from(format!("\u{2717} {}", b))),
-            );
-        }
-        card = card.child(block_col);
-    }
-
-    // Recovery.
-    card = card.child(
-        div().text_xs().text_color(rgb(theme().text_muted)).overflow_hidden()
-            .child(SharedString::from(plan.recovery.clone())),
-    );
-
-    // When armed: explicit "what is lost" second-stage notice (ADR-0023).
-    if armed && !has_blockers {
-        card = card.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div().text_sm().text_color(rgb(theme().color_blocker))
-                        .child(SharedString::from("\u{26a0} This rewrites history. Click \u{201c}Rewrite history\u{201d} to confirm.")),
-                )
-                .child(
-                    div().text_xs().text_color(rgb(theme().text_sub)).overflow_hidden()
-                        .child(SharedString::from(
-                            "The current commit's SHA will be replaced. The old commit becomes unreachable from the branch (recoverable via git reflog / reset --hard <old>).",
-                        )),
-                ),
-        );
-    }
-
-    // Error.
-    if let Some(err) = &error {
-        card = card.child(
-            div().text_sm().text_color(rgb(theme().color_blocker)).overflow_hidden().child(err.clone()),
-        );
-    }
-
-    // Buttons.
-    let mut button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
-        .child(
-            div()
-                .id("amend-cancel")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().surface))
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(theme().selected)))
-                .child(SharedString::from("Cancel")),
-        );
-
-    if !has_blockers {
-        // Stage 1 label = "Amend\u{2026}", stage 2 (armed) = red "Rewrite history".
-        let (label, bg) = if armed {
-            ("Rewrite history", theme().color_blocker)
-        } else {
-            ("Amend\u{2026}", theme().color_branch)
-        };
-        button_row = button_row.child(
-            div()
-                .id("amend-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(bg))
-                .text_sm()
-                .text_color(rgb(theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from(label)),
-        );
-    }
-
-    card = card.child(button_row);
-
-    // ── Full-screen overlay wrapper (matches render_plan_modal_card) ──
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .occlude()
-                .bg(rgb(theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(card),
-        )
-        .into_any_element()
-}
-
-/// Stash-pop confirmation overlay (T-HT-007).
-fn render_pop_modal(modal: PopPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.cancel_pop_modal();
-        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.start_pop(cx);
-        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
-        cx.notify();
-    });
-    render_plan_modal_card(modal.plan, modal.error, "Pop", cancel_handler, confirm_handler, None, cx)
-        .into_any_element()
-}
-
-/// Push plan confirmation overlay (T-HT-004) — same card as the pull
-/// plan modal, wired to `confirm_push`.
-fn render_push_modal(modal: PushPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_push_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        // W3-NOTIFY: run on a background thread (start/finish toasts).
-        this.start_push(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(modal.plan, modal.error, "Push", cancel_handler, confirm_handler, None, cx)
-        .into_any_element()
-}
-
-fn render_branch_plan_modal(modal: BranchPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let label = match modal.kind {
-        BranchPlanKind::PullFfOnly => "Pull",
-        BranchPlanKind::Push | BranchPlanKind::PushSetUpstream => "Push",
-    };
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.cancel_branch_plan_modal();
-        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.start_branch_plan(cx);
-        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
-        cx.notify();
-    });
-    render_plan_modal_card(modal.plan, modal.error, label, cancel_handler, confirm_handler, None, cx)
-        .into_any_element()
-}
-
-fn render_input_plan_modal(
-    title: String,
-    label: &'static str,
-    input_state: Option<Entity<InputState>>,
-    plan: Option<std::sync::Arc<OperationPlan>>,
-    validation: Option<BranchRenameValidation>,
-    error: Option<SharedString>,
-    confirm_label: &'static str,
-    cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-) -> gpui::AnyElement {
-    let has_blockers = plan.as_ref().map(|p| !p.blockers.is_empty()).unwrap_or(true);
-    let mut card = div()
-        .w(theme::scaled_px(480.))
-        .bg(rgb(theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(div().text_color(rgb(theme().text_main)).text_xl().child(SharedString::from(title)))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from(label)))
-                .children(input_state.as_ref().map(|st| Input::new(st).small())),
-        );
-
-    if let Some(BranchRenameValidation::Invalid(reason)) = validation {
-        // W29-I18N-WAVE2: localize the keyed branch-name reason.
-        card = card.child(
-            div().text_sm().text_color(rgb(theme().color_blocker)).overflow_hidden()
-                .child(SharedString::from(crate::ui::i18n::branch_name_error(&reason))),
-        );
-    }
-
-    if let Some(plan) = plan {
-        card = card.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from("Current")))
-                .child(div().text_sm().text_color(rgb(theme().text_main)).child(SharedString::from(plan.current.head.clone())))
-                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from("\u{2192} Predicted")))
-                .child(div().text_sm().text_color(rgb(theme().text_main)).child(SharedString::from(plan.predicted.head.clone()))),
-        );
-
-        if !plan.warnings.is_empty() {
-            let mut warn_col = div().flex().flex_col().gap_1();
-            for warning in &plan.warnings {
-                warn_col = warn_col.child(
-                    div().text_sm().text_color(rgb(theme().color_warning)).overflow_hidden()
-                        .child(SharedString::from(format!("\u{26a0} {}", warning))),
-                );
-            }
-            card = card.child(warn_col);
-        }
-        if !plan.blockers.is_empty() {
-            let mut block_col = div().flex().flex_col().gap_1();
-            for blocker in &plan.blockers {
-                block_col = block_col.child(
-                    div().text_sm().text_color(rgb(theme().color_blocker)).overflow_hidden()
-                        .child(SharedString::from(format!("\u{2717} {}", blocker))),
-                );
-            }
-            card = card.child(block_col);
-        }
-    }
-
-    if let Some(err) = error {
-        card = card.child(
-            div().text_sm().text_color(rgb(theme().color_blocker)).overflow_hidden().child(err),
-        );
-    }
-
-    let mut buttons = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
-        .child(
-            div()
-                .id("branch-input-cancel")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().surface))
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(theme().selected)))
-                .child(SharedString::from("Cancel")),
-        );
-    if !has_blockers {
-        buttons = buttons.child(
-            div()
-                .id("branch-input-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().color_branch))
-                .text_sm()
-                .text_color(rgb(theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from(confirm_label)),
-        );
-    }
-    card = card.child(buttons);
-
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .occlude()
-                .bg(rgb(theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(card),
-        )
-        .into_any_element()
-}
-
-fn render_set_upstream_modal(modal: SetUpstreamModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.cancel_set_upstream_modal();
-        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.start_set_upstream(cx);
-        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
-        cx.notify();
-    });
-    render_input_plan_modal(
-        format!("Set upstream for {}", modal.branch_name),
-        "Upstream",
-        modal.input_state,
-        modal.plan,
-        None,
-        modal.error,
-        "Set upstream",
-        cancel_handler,
-        confirm_handler,
-    )
-}
-
-fn render_rename_branch_modal(modal: RenameBranchModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.cancel_rename_branch_modal();
-        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.start_rename_branch(cx);
-        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
-        cx.notify();
-    });
-    render_input_plan_modal(
-        format!("Rename {}", modal.old_name),
-        "New branch name",
-        modal.input_state,
-        modal.plan,
-        Some(modal.validation),
-        modal.error,
-        "Rename",
-        cancel_handler,
-        confirm_handler,
-    )
-}
-
-fn render_merge_modal(modal: MergePlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_merge_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.start_merge(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    // W31-MERGE-INTO-CONFLICT: a conflict-producing merge gets a localized
-    // "resolve conflicts" confirm label and a prominent localized warning banner
-    // prepended to the plan's (English, git-layer) per-file warning.
-    let (confirm_label, plan): (&'static str, std::sync::Arc<OperationPlan>) =
-        if matches!(modal.kind, MergeKind::Conflicts(_)) {
-            let mut plan = (*modal.plan).clone();
-            plan.warnings
-                .insert(0, Msg::MergeConflictWarning.t().to_string());
-            (Msg::MergeAndResolveConflicts.t(), std::sync::Arc::new(plan))
-        } else {
-            ("Merge", modal.plan)
-        };
-    render_plan_modal_card(plan, modal.error, confirm_label, cancel_handler, confirm_handler, None, cx)
-        .into_any_element()
-}
-
-fn render_tracking_checkout_modal(
-    modal: TrackingCheckoutPlanModal,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_tracking_checkout_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.start_tracking_checkout(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(
-        modal.plan,
-        modal.error,
-        "Checkout",
-        cancel_handler,
-        confirm_handler,
-        None,
-        cx,
-    )
-        .into_any_element()
-}
-
-/// Delete-branch confirmation overlay (W2-DELETE).
-fn render_delete_branch_modal(
-    modal: DeleteBranchModal,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.cancel_delete_branch_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.start_delete_branch(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(
-        modal.plan,
-        modal.error,
-        "Delete",
-        cancel_handler,
-        confirm_handler,
-        None,
-        cx,
-    )
-    .into_any_element()
+        .child(list)
+        .child(Scrollbar::vertical(handle))
 }
 
 /// Unstaged file-row context menu (right-click). Single item: Discard.
@@ -13087,1839 +13201,6 @@ fn render_file_menu_overlay(
                 ),
         )
         .into_any_element()
-}
-
-/// Discard confirmation overlay (W17-DISCARD, ADR-0046).
-///
-/// Danger (red) card: target file list (scrollable), any skipped
-/// untracked/conflicted files, recovery note, Cancel + red Discard.
-/// ESC cancels. Both the backdrop AND the card call `.occlude()` to defeat the
-/// known click-through bug. The Discard button is hidden when there are blockers
-/// or zero targets.
-fn render_discard_modal(modal: DiscardModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let plan = modal.plan.clone();
-    let has_blockers = !plan.blockers.is_empty();
-    let target_count = modal.paths.len();
-    let can_discard = !has_blockers && target_count > 0;
-
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.cancel_discard_modal();
-        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.start_discard(cx);
-        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
-        cx.notify();
-    });
-    let esc_cancel = cx.listener(|this, e: &KeyDownEvent, window, cx| {
-        if e.keystroke.key == "escape" {
-            this.cancel_discard_modal();
-            if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
-            cx.stop_propagation();
-            cx.notify();
-        }
-    });
-
-    let title = if modal.is_all {
-        format!("Discard all changes ({})", target_count)
-    } else {
-        plan.title.clone()
-    };
-
-    // ── Target file list (scrollable) ───────────────────────
-    let mut file_list = div()
-        .id("discard-file-list")
-        .flex()
-        .flex_col()
-        .gap_px()
-        .max_h(theme::scaled_px(180.))
-        .overflow_y_scroll();
-    for p in &modal.paths {
-        let line: String = p.chars().take(80).collect();
-        file_list = file_list.child(
-            div()
-                .text_xs()
-                .text_color(rgb(theme().text_main))
-                .overflow_hidden()
-                .child(SharedString::from(line)),
-        );
-    }
-
-    // ── Card ─────────────────────────────────────────────────
-    let mut card = div()
-        .w(theme::scaled_px(480.))
-        .bg(rgb(theme().modal))
-        .border_1()
-        .border_color(rgb(theme().color_blocker))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(
-            div()
-                .text_color(rgb(theme().color_blocker))
-                .text_xl()
-                .child(SharedString::from(title)),
-        )
-        .child(
-            div()
-                .text_sm()
-                .text_color(rgb(theme().text_label))
-                .child(SharedString::from(format!("{} file(s) to discard:", target_count))),
-        )
-        .child(file_list);
-
-    // ── Skipped (untracked / conflicted) ────────────────────
-    if !modal.skipped.is_empty() {
-        let mut skip_col = div().flex().flex_col().gap_px().child(
-            div()
-                .text_sm()
-                .text_color(rgb(theme().text_label))
-                .child(SharedString::from(format!("Skipped ({}):", modal.skipped.len()))),
-        );
-        for p in modal.skipped.iter().take(20) {
-            let line: String = p.chars().take(80).collect();
-            skip_col = skip_col.child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .overflow_hidden()
-                    .child(SharedString::from(format!("\u{2014} {} (untracked/conflicted)", line))),
-            );
-        }
-        card = card.child(skip_col);
-    }
-
-    // ── Warnings / Blockers ─────────────────────────────────
-    if !plan.warnings.is_empty() {
-        let mut warn_col = div().flex().flex_col().gap_px();
-        for w in &plan.warnings {
-            warn_col = warn_col.child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme().color_warning))
-                    .overflow_hidden()
-                    .child(SharedString::from(format!("\u{26a0} {}", w))),
-            );
-        }
-        card = card.child(warn_col);
-    }
-    if has_blockers {
-        let mut block_col = div().flex().flex_col().gap_px();
-        for b in &plan.blockers {
-            block_col = block_col.child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme().color_blocker))
-                    .overflow_hidden()
-                    .child(SharedString::from(format!("\u{2717} {}", b))),
-            );
-        }
-        card = card.child(block_col);
-    }
-
-    // ── Recovery note ───────────────────────────────────────
-    card = card.child(
-        div()
-            .text_xs()
-            .text_color(rgb(theme().text_muted))
-            .overflow_hidden()
-            .child(SharedString::from(plan.recovery.clone())),
-    );
-
-    // ── Error (preflight / execute failure) ─────────────────
-    if let Some(err) = &modal.error {
-        card = card.child(
-            div()
-                .text_sm()
-                .text_color(rgb(theme().color_blocker))
-                .overflow_hidden()
-                .child(err.clone()),
-        );
-    }
-
-    // ── Buttons ─────────────────────────────────────────────
-    let mut button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
-        .child(
-            div()
-                .id("discard-cancel")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().surface))
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(theme().selected)))
-                .child(SharedString::from("Cancel")),
-        );
-    if can_discard {
-        button_row = button_row.child(
-            div()
-                .id("discard-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().color_blocker))
-                .text_sm()
-                .text_color(rgb(theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from("Discard")),
-        );
-    }
-    card = card.child(button_row);
-
-    // ── Full-screen overlay: backdrop + card, BOTH occluded ──
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .on_key_down(esc_cancel)
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .occlude()
-                .bg(rgb(theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                // ADR-0046 / W17: the card itself must also occlude, else clicks
-                // fall through to the UI beneath (known click-through bug).
-                .child(card.occlude()),
-        )
-        .into_any_element()
-}
-
-/// Revert confirmation overlay (T-CM-034).
-fn render_revert_modal(
-    modal: RevertModal,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.cancel_revert_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.start_revert(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(
-        modal.plan,
-        modal.error,
-        "Revert",
-        cancel_handler,
-        confirm_handler,
-        None,
-        cx,
-    )
-    .into_any_element()
-}
-
-/// Shared plan-confirmation card: title / current→predicted / warnings /
-/// blockers / recovery / error / Cancel + confirm buttons.  The confirm
-/// button is hidden whenever the plan has blockers.
-fn render_plan_modal_card(
-    plan: std::sync::Arc<OperationPlan>,
-    error: Option<SharedString>,
-    confirm_label: &'static str,
-    cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    create_branch_target: Option<CommitId>,
-    cx: &mut Context<KagiApp>,
-) -> impl IntoElement {
-    let has_blockers = !plan.blockers.is_empty();
-
-    // ── Build modal card ────────────────────────────────────
-    let mut card = div()
-        .w(theme::scaled_px(480.))
-        .bg(rgb(theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        // ── Title ─────────────────────────────────────────
-        .child(
-            div()
-                .text_color(rgb(theme().text_main))
-                .text_xl()
-                .child(SharedString::from(plan.title.clone())),
-        )
-        // ── Current → Predicted ───────────────────────────
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_label))
-                        .child(SharedString::from("Current")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_main))
-                                .child(SharedString::from(plan.current.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", plan.current.dirty))),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_label))
-                        .child(SharedString::from("\u{2192} Predicted")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_main))
-                                .child(SharedString::from(plan.predicted.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", plan.predicted.dirty))),
-                        ),
-                ),
-        );
-
-    // ── Warnings ─────────────────────────────────────────
-    if !plan.warnings.is_empty() {
-        let mut warn_col = div().flex().flex_col().gap_1();
-        for w in &plan.warnings {
-            warn_col = warn_col.child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme().color_warning))
-                    .overflow_hidden()
-                    .child(SharedString::from(format!("\u{26a0} {}", w))),
-            );
-        }
-        card = card.child(warn_col);
-    }
-
-    // ── Commits to push (T-HT-004) ────────────────────────
-    // Shown only when preview_commits is non-empty (push plans).
-    if !plan.preview_commits.is_empty() {
-        let total = plan.preview_commits.len();
-        let show_count = total.min(10);
-        let label = format!("Commits to push ({})", total);
-        let mut commit_col = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme().text_label))
-                    .child(SharedString::from(label)),
-            );
-        for entry in plan.preview_commits.iter().take(show_count) {
-            let line: String = entry.chars().take(72).collect();
-            commit_col = commit_col.child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme().text_sub))
-                    .overflow_hidden()
-                    .child(SharedString::from(line)),
-            );
-        }
-        if total > 10 {
-            commit_col = commit_col.child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(format!("\u{2026} and {} more", total - 10))),
-            );
-        }
-        card = card.child(commit_col);
-    }
-
-    // ── Blockers ──────────────────────────────────────────
-    if !plan.blockers.is_empty() {
-        let mut block_col = div().flex().flex_col().gap_1();
-        for b in &plan.blockers {
-            block_col = block_col.child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme().color_blocker))
-                    .overflow_hidden()
-                    .child(SharedString::from(format!("\u{2717} {}", b))),
-            );
-        }
-        card = card.child(block_col);
-    }
-
-    // ── Recovery ──────────────────────────────────────────
-    card = card.child(
-        div()
-            .text_xs()
-            .text_color(rgb(theme().text_muted))
-            .overflow_hidden()
-            .child(SharedString::from(plan.recovery.clone())),
-    );
-
-    // ── Error message (preflight / execute failure) ───────
-    if let Some(err) = &error {
-        card = card.child(
-            div()
-                .text_sm()
-                .text_color(rgb(theme().color_blocker))
-                .overflow_hidden()
-                .child(err.clone()),
-        );
-    }
-
-    // ── Buttons ───────────────────────────────────────────
-    let mut button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
-        // Cancel button (always present — safe default)
-        .child(
-            div()
-                .id("plan-cancel")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().surface))
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(theme().selected)))
-                .child(SharedString::from("Cancel")),
-        );
-
-    if let Some(commit_id) = create_branch_target {
-        let create_handler = cx.listener(move |this, _event: &gpui::ClickEvent, window, cx| {
-            this.cancel_modal();
-            this.open_create_branch_modal(commit_id.clone(), cx);
-            if let Some(fh) = this.root_focus.clone() {
-                window.focus(&fh);
-            }
-            cx.notify();
-        });
-        button_row = button_row.child(
-            div()
-                .id("plan-create-branch")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().surface))
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .on_click(create_handler)
-                .hover(|style| style.bg(rgb(theme().selected)))
-                .child(SharedString::from("Create branch here...")),
-        );
-    }
-
-    // Checkout button: only shown when there are no blockers.
-    if !has_blockers {
-        button_row = button_row.child(
-            div()
-                .id("plan-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().color_branch))
-                .text_sm()
-                .text_color(rgb(theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from(confirm_label)),
-        );
-    }
-
-    card = card.child(button_row);
-
-    // ── Full-screen overlay wrapper ─────────────────────────────────────
-    // Two layers: backdrop (semi-transparent) + centred card.
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        // Backdrop (dark, semi-transparent).
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                // Block mouse events from reaching the UI beneath the modal
-                // (user-reported click-through on the create-branch dialog).
-                .occlude()
-                .bg(rgb(theme().modal_overlay))
-                .opacity(0.65),
-        )
-        // Card centred on top of the backdrop.
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(card),
-        )
-
-}
-
-// ──────────────────────────────────────────────────────────────
-// Create-branch modal renderer (T014)
-// ──────────────────────────────────────────────────────────────
-
-/// W12-GCADOPT (§2.10): wrap a virtualized list in a relative flex column and
-/// overlay a `gpui_component::scroll::Scrollbar` driven by the list's existing
-/// `UniformListScrollHandle`.  The Scrollbar paints itself absolutely-positioned
-/// over the container (relative(1.) size), so this is layout-non-destructive —
-/// the inner `uniform_list` keeps its own `flex_1().min_h(0)` sizing.  Colours
-/// follow the gpui-component scrollbar theme fields, which
-/// `sync_gpui_component_theme` keeps in step with kagi's palette.
-fn with_vertical_scrollbar(
-    id: &'static str,
-    handle: &UniformListScrollHandle,
-    list: impl IntoElement,
-) -> impl IntoElement {
-    div()
-        .id(id)
-        .relative()
-        .flex_1()
-        .min_h(px(0.))
-        .flex()
-        .flex_col()
-        .child(list)
-        .child(Scrollbar::vertical(handle))
-}
-
-/// Render the create-branch confirmation overlay.
-///
-/// Layout (absolute, full-screen):
-/// - Semi-transparent dark backdrop
-/// - Centred modal card:
-///   - Title
-///   - Branch name text input (live KeyDown handler)
-///   - Live plan: Current → Predicted state
-///   - Blockers (red) if any
-///   - Error message (if preflight/execute failed)
-///   - `[Cancel]` always; `[Create]` only when no blockers and name is non-empty
-fn render_create_branch_modal(
-    modal: CreateBranchModal,
-    focus_handle: Option<FocusHandle>,
-    cx: &mut Context<KagiApp>,
-) -> impl IntoElement {
-    let plan = modal.plan.clone();
-    let has_blockers = plan.as_ref().map(|p| !p.blockers.is_empty()).unwrap_or(true);
-
-    // ── Cancel handler ──────────────────────────────────────
-    // T-BP-003: return focus to root_focus so cmd-j keeps working.
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_create_branch_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-
-    // ── Confirm handler (only created when no blockers) ─────
-    // T-BP-003: return focus to root_focus after confirm.
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.confirm_create_branch();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-
-    // W12-GCADOPT (§2.7): replace the old `[ ]`/`[x]` pseudo-checkbox text with a
-    // real `gpui_component::checkbox::Checkbox`.  Its `on_click` hands us the new
-    // checked state; we route it through the same toggle + replan logic via the
-    // KagiApp entity (Checkbox callbacks take `&mut App`, not `&mut Context`).
-    let app_entity = cx.entity();
-    let toggle_checkout = move |new_checked: &bool, _window: &mut Window, cx: &mut App| {
-        let new_checked = *new_checked;
-        app_entity.update(cx, |this, cx| {
-            if let Some(ref mut modal) = this.create_branch_modal {
-                modal.checkout_after = new_checked;
-                modal.error = None;
-            }
-            this.replan_create_branch();
-            cx.notify();
-        });
-    };
-
-    // ── Build modal card ────────────────────────────────────
-    let mut card = div()
-        .w(theme::scaled_px(480.))
-        .bg(rgb(theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        // ── Title ─────────────────────────────────────────
-        .child(
-            div()
-                .text_color(rgb(theme().text_main))
-                .text_xl()
-                .child(SharedString::from(format!(
-                    "Create branch @ {}  {}",
-                    modal.at.short(),
-                    modal.start_title
-                ))),
-        )
-        // ── Name input ────────────────────────────────────
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_label))
-                        .child(SharedString::from("Branch name")),
-                )
-                .children(modal.input_state.as_ref().map(|st| Input::new(st).small())),
-        )
-        .child(
-            div()
-                .px_2()
-                .py_1()
-                .child(
-                    Checkbox::new("create-branch-checkout-after")
-                        .label("Checkout after create")
-                        .checked(modal.checkout_after)
-                        .on_click(toggle_checkout),
-                ),
-        );
-
-    // ── Plan state (current → predicted) ─────────────────
-    if let Some(ref p) = plan {
-        card = card.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_label))
-                        .child(SharedString::from("Current")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_main))
-                                .child(SharedString::from(p.current.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", p.current.dirty))),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_label))
-                        .child(SharedString::from("\u{2192} Predicted")),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_muted))
-                        .child(SharedString::from(p.title.clone())),
-                ),
-        );
-
-        // ── Blockers (localized — W29-I18N-WAVE2) ─────────
-        if !p.blockers.is_empty() {
-            let lines: Vec<SharedString> = if modal.localized_blockers.is_empty() {
-                p.blockers.iter().map(|b| SharedString::from(b.clone())).collect()
-            } else {
-                modal.localized_blockers.clone()
-            };
-            let mut block_col = div().flex().flex_col().gap_1();
-            for b in lines {
-                block_col = block_col.child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().color_blocker))
-                        .overflow_hidden()
-                        .child(SharedString::from(format!("\u{2717} {}", b))),
-                );
-            }
-            card = card.child(block_col);
-        }
-
-        // ── Recovery ──────────────────────────────────────
-        card = card.child(
-            div()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .overflow_hidden()
-                .child(SharedString::from(p.recovery.clone())),
-        );
-    }
-
-    // ── Error message (preflight / execute failure) ───────
-    if let Some(ref err) = modal.error {
-        card = card.child(
-            div()
-                .text_sm()
-                .text_color(rgb(theme().color_blocker))
-                .overflow_hidden()
-                .child(err.clone()),
-        );
-    }
-
-    // ── Buttons ───────────────────────────────────────────
-    let mut button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
-        .child(
-            div()
-                .id("create-branch-cancel")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().surface))
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(theme().selected)))
-                .child(SharedString::from("Cancel")),
-        );
-
-    // Create button: only shown when there are no blockers.
-    if !has_blockers {
-        button_row = button_row.child(
-            div()
-                .id("create-branch-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().color_success))
-                .text_sm()
-                .text_color(rgb(theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from("Create")),
-        );
-    }
-
-    card = card.child(button_row);
-
-    // Real text inputs handle their own focus/keys now. Escape bubbles up
-    // from the focused input to this wrapper and cancels (user request).
-    let esc_cancel = cx.listener(|this, e: &KeyDownEvent, window, cx| {
-        if e.keystroke.key == "escape" {
-            this.cancel_create_branch_modal();
-            if let Some(fh) = this.root_focus.clone() {
-                window.focus(&fh);
-            }
-            cx.stop_propagation();
-            cx.notify();
-        }
-    });
-    let focusable_card = {
-        let base = div().on_key_down(esc_cancel);
-        if let Some(ref fh) = focus_handle {
-            base.track_focus(fh).child(card)
-        } else {
-            base.child(card)
-        }
-    };
-
-    // ── Full-screen overlay wrapper ─────────────────────────
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                // Block mouse events from reaching the UI beneath the modal
-                // (user-reported click-through on the create-branch dialog).
-                .occlude()
-                .bg(rgb(theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(focusable_card),
-        )
-}
-
-fn render_create_worktree_modal(
-    modal: CreateWorktreeModal,
-    focus_handle: Option<FocusHandle>,
-    cx: &mut Context<KagiApp>,
-) -> impl IntoElement {
-    let plan = modal.plan.clone();
-    let has_blockers = plan.as_ref().map(|p| !p.blockers.is_empty()).unwrap_or(true);
-
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_create_worktree_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.start_create_worktree(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-
-    let mut card = div()
-        .w(theme::scaled_px(540.))
-        .bg(rgb(theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(
-            div()
-                .text_color(rgb(theme().text_main))
-                .text_xl()
-                .child(SharedString::from(format!(
-                    "Create worktree @ {}  {}",
-                    modal.at.short(),
-                    modal.start_title
-                ))),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from("Branch name")))
-                .children(modal.branch_state.as_ref().map(|st| Input::new(st).small())),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from("Path")))
-                .children(modal.path_state.as_ref().map(|st| Input::new(st).small())),
-        );
-
-    if let Some(ref p) = plan {
-        card = card.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from("Current")))
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(div().text_color(rgb(theme().text_main)).child(SharedString::from(p.current.head.clone())))
-                        .child(div().text_color(rgb(theme().text_sub)).child(SharedString::from(format!("[{}]", p.current.dirty)))),
-                )
-                .child(div().text_sm().text_color(rgb(theme().text_label)).child(SharedString::from("\u{2192} Predicted")))
-                .child(div().text_sm().text_color(rgb(theme().text_muted)).child(SharedString::from(p.title.clone()))),
-        );
-
-        if !p.warnings.is_empty() {
-            let mut warn_col = div().flex().flex_col().gap_1();
-            for w in &p.warnings {
-                warn_col = warn_col.child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().color_warning))
-                        .overflow_hidden()
-                        .child(SharedString::from(format!("! {}", w))),
-                );
-            }
-            card = card.child(warn_col);
-        }
-
-        // ── Blockers (localized — W29-I18N-WAVE2) ─────────
-        if !p.blockers.is_empty() {
-            let lines: Vec<SharedString> = if modal.localized_blockers.is_empty() {
-                p.blockers.iter().map(|b| SharedString::from(b.clone())).collect()
-            } else {
-                modal.localized_blockers.clone()
-            };
-            let mut block_col = div().flex().flex_col().gap_1();
-            for b in lines {
-                block_col = block_col.child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().color_blocker))
-                        .overflow_hidden()
-                        .child(SharedString::from(format!("\u{2717} {}", b))),
-                );
-            }
-            card = card.child(block_col);
-        }
-
-        card = card.child(
-            div()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .overflow_hidden()
-                .child(SharedString::from(p.recovery.clone())),
-        );
-    }
-
-    if let Some(ref err) = modal.error {
-        card = card.child(
-            div()
-                .text_sm()
-                .text_color(rgb(theme().color_blocker))
-                .overflow_hidden()
-                .child(err.clone()),
-        );
-    }
-
-    let mut button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
-        .child(
-            div()
-                .id("create-worktree-cancel")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().surface))
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(theme().selected)))
-                .child(SharedString::from("Cancel")),
-        );
-    if !has_blockers {
-        button_row = button_row.child(
-            div()
-                .id("create-worktree-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().color_success))
-                .text_sm()
-                .text_color(rgb(theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from("Create")),
-        );
-    }
-    card = card.child(button_row);
-
-    let esc_cancel = cx.listener(|this, e: &KeyDownEvent, window, cx| {
-        if e.keystroke.key == "escape" {
-            this.cancel_create_worktree_modal();
-            if let Some(fh) = this.root_focus.clone() {
-                window.focus(&fh);
-            }
-            cx.stop_propagation();
-            cx.notify();
-        }
-    });
-    let focusable_card = {
-        let base = div().on_key_down(esc_cancel);
-        if let Some(ref fh) = focus_handle {
-            base.track_focus(fh).child(card)
-        } else {
-            base.child(card)
-        }
-    };
-
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                // Block mouse events from reaching the UI beneath the modal
-                // (user-reported click-through on the create-branch dialog).
-                .occlude()
-                .bg(rgb(theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(focusable_card),
-        )
-}
-
-// ──────────────────────────────────────────────────────────────
-// Stash push modal renderer (T015)
-// ──────────────────────────────────────────────────────────────
-
-/// Render the stash push confirmation overlay.
-///
-/// Layout (absolute, full-screen):
-/// - Semi-transparent dark backdrop
-/// - Centred modal card:
-///   - Title
-///   - Optional message text input (reuses T014 key-input pattern)
-///   - Live plan: Current → Predicted state
-///   - Warnings (yellow) if any
-///   - Blockers (red) if any
-///   - Error message (if execute failed)
-///   - `[Cancel]` always; `[Stash]` only when no blockers
-fn render_stash_push_modal(
-    modal: StashPushModal,
-    focus_handle: Option<FocusHandle>,
-    cx: &mut Context<KagiApp>,
-) -> impl IntoElement {
-    let plan = modal.plan.clone();
-    let has_blockers = plan.as_ref().map(|p| !p.blockers.is_empty()).unwrap_or(true);
-
-    // T-BP-003: return focus to root_focus on cancel/confirm.
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_stash_push_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.confirm_stash_push(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-
-
-    let mut card = div()
-        .w(theme::scaled_px(480.))
-        .bg(rgb(theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(
-            div()
-                .text_color(rgb(theme().text_main))
-                .text_xl()
-                .child(SharedString::from("Stash push — save local modifications")),
-        )
-        // ── Message input ──────────────────────────────────
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_label))
-                        .child(SharedString::from("Message (optional)")),
-                )
-                .children(modal.input_state.as_ref().map(|st| Input::new(st).small())),
-        );
-
-    // ── Plan state (current → predicted) ─────────────────
-    if let Some(ref p) = plan {
-        card = card.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_label))
-                        .child(SharedString::from("Current")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_main))
-                                .child(SharedString::from(p.current.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", p.current.dirty))),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_label))
-                        .child(SharedString::from("\u{2192} Predicted")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_main))
-                                .child(SharedString::from(p.predicted.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", p.predicted.dirty))),
-                        ),
-                ),
-        );
-
-        // ── Warnings ──────────────────────────────────────
-        if !p.warnings.is_empty() {
-            let mut warn_col = div().flex().flex_col().gap_1();
-            for w in &p.warnings {
-                warn_col = warn_col.child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().color_warning))
-                        .overflow_hidden()
-                        .child(SharedString::from(format!("\u{26a0} {}", w))),
-                );
-            }
-            card = card.child(warn_col);
-        }
-
-        // ── Blockers ──────────────────────────────────────
-        if !p.blockers.is_empty() {
-            let mut block_col = div().flex().flex_col().gap_1();
-            for b in &p.blockers {
-                block_col = block_col.child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().color_blocker))
-                        .overflow_hidden()
-                        .child(SharedString::from(format!("\u{2717} {}", b))),
-                );
-            }
-            card = card.child(block_col);
-        }
-
-        // ── Recovery ──────────────────────────────────────
-        card = card.child(
-            div()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .overflow_hidden()
-                .child(SharedString::from(p.recovery.clone())),
-        );
-    }
-
-    // ── Error message ──────────────────────────────────
-    if let Some(ref err) = modal.error {
-        card = card.child(
-            div()
-                .text_sm()
-                .text_color(rgb(theme().color_blocker))
-                .overflow_hidden()
-                .child(err.clone()),
-        );
-    }
-
-    // ── Buttons ───────────────────────────────────────────
-    let mut button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
-        .child(
-            div()
-                .id("stash-push-cancel")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().surface))
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(theme().selected)))
-                .child(SharedString::from("Cancel")),
-        );
-
-    if !has_blockers {
-        button_row = button_row.child(
-            div()
-                .id("stash-push-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().color_warning))
-                .text_sm()
-                .text_color(rgb(theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from("Stash")),
-        );
-    }
-
-    card = card.child(button_row);
-
-    let esc_cancel = cx.listener(|this, e: &KeyDownEvent, window, cx| {
-        if e.keystroke.key == "escape" {
-            this.cancel_stash_push_modal();
-            if let Some(fh) = this.root_focus.clone() {
-                window.focus(&fh);
-            }
-            cx.stop_propagation();
-            cx.notify();
-        }
-    });
-    let focusable_card = {
-        let base = div().on_key_down(esc_cancel);
-        if let Some(ref fh) = focus_handle {
-            base.track_focus(fh).child(card)
-        } else {
-            base.child(card)
-        }
-    };
-
-    // ── Full-screen overlay wrapper ─────────────────────────
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                // Block mouse events from reaching the UI beneath the modal
-                // (user-reported click-through on the create-branch dialog).
-                .occlude()
-                .bg(rgb(theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(focusable_card),
-        )
-}
-
-// ──────────────────────────────────────────────────────────────
-// Stash apply modal renderer (T015)
-// ──────────────────────────────────────────────────────────────
-
-/// Render the stash apply confirmation overlay.
-///
-/// Layout (absolute, full-screen):
-/// - Semi-transparent dark backdrop
-/// - Centred modal card:
-///   - Title (showing stash index)
-///   - Current → Predicted state
-///   - Blockers (red) if any
-///   - Recovery text
-///   - Error message (if execute failed)
-///   - `[Cancel]` always; `[Apply]` only when no blockers
-fn render_stash_apply_modal(
-    modal: StashApplyModal,
-    cx: &mut Context<KagiApp>,
-) -> impl IntoElement {
-    let plan = modal.plan.clone();
-    let has_blockers = !plan.blockers.is_empty();
-
-    // T-BP-003: return focus to root_focus on cancel/confirm.
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_stash_apply_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.confirm_stash_apply();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-
-    let mut card = div()
-        .w(theme::scaled_px(480.))
-        .bg(rgb(theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(
-            div()
-                .text_color(rgb(theme().text_main))
-                .text_xl()
-                .child(SharedString::from(plan.title.clone())),
-        )
-        // ── Current → Predicted ─────────────────────────────
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_label))
-                        .child(SharedString::from("Current")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_main))
-                                .child(SharedString::from(plan.current.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", plan.current.dirty))),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_label))
-                        .child(SharedString::from("\u{2192} Predicted")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_main))
-                                .child(SharedString::from(plan.predicted.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", plan.predicted.dirty))),
-                        ),
-                ),
-        );
-
-    // ── Blockers ──────────────────────────────────────────
-    if !plan.blockers.is_empty() {
-        let mut block_col = div().flex().flex_col().gap_1();
-        for b in &plan.blockers {
-            block_col = block_col.child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme().color_blocker))
-                    .overflow_hidden()
-                    .child(SharedString::from(format!("\u{2717} {}", b))),
-            );
-        }
-        card = card.child(block_col);
-    }
-
-    // ── Recovery ──────────────────────────────────────────
-    card = card.child(
-        div()
-            .text_xs()
-            .text_color(rgb(theme().text_muted))
-            .overflow_hidden()
-            .child(SharedString::from(plan.recovery.clone())),
-    );
-
-    // ── Error message ────────────────────────────────────
-    if let Some(ref err) = modal.error {
-        card = card.child(
-            div()
-                .text_sm()
-                .text_color(rgb(theme().color_blocker))
-                .overflow_hidden()
-                .child(err.clone()),
-        );
-    }
-
-    // ── Buttons ───────────────────────────────────────────
-    let mut button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
-        .child(
-            div()
-                .id("stash-apply-cancel")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().surface))
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(theme().selected)))
-                .child(SharedString::from("Cancel")),
-        );
-
-    if !has_blockers {
-        button_row = button_row.child(
-            div()
-                .id("stash-apply-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().color_success))
-                .text_sm()
-                .text_color(rgb(theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from("Apply")),
-        );
-    }
-
-    card = card.child(button_row);
-
-    // ── Full-screen overlay wrapper ─────────────────────────
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                // Block mouse events from reaching the UI beneath the modal
-                // (user-reported click-through on the create-branch dialog).
-                .occlude()
-                .bg(rgb(theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(card),
-        )
-}
-
-// ──────────────────────────────────────────────────────────────
-// Cherry-pick modal renderer (T016)
-// ──────────────────────────────────────────────────────────────
-
-/// Render the cherry-pick plan confirmation overlay.
-///
-/// Layout (absolute, full-screen):
-/// - Semi-transparent dark backdrop
-/// - Centred modal card:
-///   - Title (commit short sha + summary onto HEAD branch)
-///   - Current → Predicted state
-///   - Preview files section (file tree, reusing T018 build_file_tree)
-///   - Blockers (red) if any — includes conflict file names
-///   - Recovery text
-///   - Error message (if preflight/execute failed)
-///   - `[Cancel]` always; `[Cherry-pick]` only when no blockers
-fn render_cherry_pick_modal(
-    modal: CherryPickModal,
-    cx: &mut Context<KagiApp>,
-) -> impl IntoElement {
-    let plan = modal.plan.clone();
-    let has_blockers = !plan.blockers.is_empty();
-
-    // T-BP-003: return focus to root_focus on cancel/confirm.
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_cherry_pick_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.start_cherry_pick(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-
-    // Change-kind colours come from the active theme (W9-THEME).
-
-    // ── Build preview file tree rows ────────────────────────
-    let tree_rows = file_tree::build_file_tree(&plan.preview_files);
-    let tree_element_rows: Vec<_> = tree_rows.iter().map(|row| {
-        match row {
-            file_tree::TreeRow::Dir { depth, name } => {
-                let indent = (*depth as f32) * 12.0;
-                div()
-                    .id(SharedString::from(format!("cpk-dir-{}", name.as_ref())))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .pl(theme::scaled_px(indent))
-                    .mb_px()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(theme().change_dir))
-                            .child(name.clone()),
-                    )
-                    .into_any()
-            }
-            file_tree::TreeRow::File { depth, name, file_index, change } => {
-                let indent = (*depth as f32) * 12.0;
-                let (badge_char, badge_color) = match change {
-                    ChangeKind::Added      => ("A", theme().change_added),
-                    ChangeKind::Modified   => ("M", theme().change_modified),
-                    ChangeKind::Deleted    => ("D", theme().change_deleted),
-                    ChangeKind::Renamed { .. } => ("R", theme().change_renamed),
-                    ChangeKind::TypeChange => ("T", theme().change_typechange),
-                };
-                let _ = file_index; // not clickable in preview
-                div()
-                    .id(("cpk-file", *file_index))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_1()
-                    .pl(theme::scaled_px(indent))
-                    .mb_px()
-                    .child(
-                        div()
-                            .w(theme::scaled_px(14.))
-                            .flex_shrink_0()
-                            .text_sm()
-                            .text_color(rgb(badge_color))
-                            .child(SharedString::from(badge_char)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_sm()
-                            .text_color(rgb(theme().text_main))
-                            .overflow_hidden()
-                            .child(name.clone()),
-                    )
-                    .into_any()
-            }
-        }
-    }).collect();
-
-    // ── Build modal card ────────────────────────────────────
-    let mut card = div()
-        .w(theme::scaled_px(520.))
-        .bg(rgb(theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        // ── Title ─────────────────────────────────────────
-        .child(
-            div()
-                .text_color(rgb(theme().text_main))
-                .text_xl()
-                .child(SharedString::from(plan.title.clone())),
-        )
-        // ── Current → Predicted ───────────────────────────
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_label))
-                        .child(SharedString::from("Current")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_main))
-                                .child(SharedString::from(plan.current.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", plan.current.dirty))),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_label))
-                        .child(SharedString::from("\u{2192} Predicted")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_main))
-                                .child(SharedString::from(plan.predicted.head.clone())),
-                        ),
-                ),
-        );
-
-    // ── Preview files section ─────────────────────────────
-    if !plan.preview_files.is_empty() {
-        let mut preview_col = div()
-            .flex()
-            .flex_col()
-            .gap_px()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme().text_label))
-                    .mb_1()
-                    .child(SharedString::from(format!(
-                        "Preview ({} file{})",
-                        plan.preview_files.len(),
-                        if plan.preview_files.len() == 1 { "" } else { "s" }
-                    ))),
-            );
-        for row in tree_element_rows {
-            preview_col = preview_col.child(row);
-        }
-        card = card.child(preview_col);
-    }
-
-    // ── Warnings ──────────────────────────────────────────
-    if !plan.warnings.is_empty() {
-        let mut warn_col = div().flex().flex_col().gap_1();
-        for w in &plan.warnings {
-            warn_col = warn_col.child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme().color_warning))
-                    .overflow_hidden()
-                    .child(SharedString::from(format!("\u{26a0} {}", w))),
-            );
-        }
-        card = card.child(warn_col);
-    }
-
-    // ── Blockers ──────────────────────────────────────────
-    if !plan.blockers.is_empty() {
-        let mut block_col = div().flex().flex_col().gap_1();
-        for b in &plan.blockers {
-            block_col = block_col.child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme().color_blocker))
-                    .overflow_hidden()
-                    .child(SharedString::from(format!("\u{2717} {}", b))),
-            );
-        }
-        card = card.child(block_col);
-    }
-
-    // ── Recovery ──────────────────────────────────────────
-    card = card.child(
-        div()
-            .text_xs()
-            .text_color(rgb(theme().text_muted))
-            .overflow_hidden()
-            .child(SharedString::from(plan.recovery.clone())),
-    );
-
-    // ── Error message (preflight / execute failure) ───────
-    if let Some(ref err) = modal.error {
-        card = card.child(
-            div()
-                .text_sm()
-                .text_color(rgb(theme().color_blocker))
-                .overflow_hidden()
-                .child(err.clone()),
-        );
-    }
-
-    // ── Buttons ───────────────────────────────────────────
-    let mut button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
-        .child(
-            div()
-                .id("cherry-pick-cancel")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().surface))
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(theme().selected)))
-                .child(SharedString::from("Cancel")),
-        );
-
-    if !has_blockers {
-        button_row = button_row.child(
-            div()
-                .id("cherry-pick-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().accent)) // mauve accent
-                .text_sm()
-                .text_color(rgb(theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from("Cherry-pick")),
-        );
-    }
-
-    card = card.child(button_row);
-
-    // ── Full-screen overlay wrapper ─────────────────────────
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                // Block mouse events from reaching the UI beneath the modal
-                // (user-reported click-through on the create-branch dialog).
-                .occlude()
-                .bg(rgb(theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(card),
-        )
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -14989,11 +13270,15 @@ fn render_commit_panel(
 
     // ── View switch: segmented [List | Tree] (T-UI-002) ──────
     let list_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-        if let Some(panel) = this.commit_panel.as_mut() { panel.tree_view = false; }
+        if let Some(panel) = this.commit_panel.as_mut() {
+            panel.tree_view = false;
+        }
         cx.notify();
     });
     let tree_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-        if let Some(panel) = this.commit_panel.as_mut() { panel.tree_view = true; }
+        if let Some(panel) = this.commit_panel.as_mut() {
+            panel.tree_view = true;
+        }
         cx.notify();
     });
     let seg = |id: &'static str, label: &'static str, active: bool| {
@@ -15002,8 +13287,16 @@ fn render_commit_panel(
             .px_1p5()
             .py_px()
             .text_xs()
-            .bg(rgb(if active { theme().selected } else { theme().surface }))
-            .text_color(rgb(if active { theme().text_main } else { theme().text_muted }))
+            .bg(rgb(if active {
+                theme().selected
+            } else {
+                theme().surface
+            }))
+            .text_color(rgb(if active {
+                theme().text_main
+            } else {
+                theme().text_muted
+            }))
             .hover(|st| st.text_color(rgb(theme().text_main)).cursor_pointer())
             .child(SharedString::from(label))
     };
@@ -15088,9 +13381,7 @@ fn render_commit_panel(
         .child(toggle_btn);
 
     // Unstaged ファイル行コンテナ (スクロールボックス内に入る)
-    let mut unstaged_files = div()
-        .flex()
-        .flex_col();
+    let mut unstaged_files = div().flex().flex_col();
 
     if tree_view {
         // Tree view: use build_file_tree
@@ -15108,29 +13399,47 @@ fn render_commit_panel(
                             .child(name.clone()),
                     );
                 }
-                file_tree::TreeRow::File { depth, name, file_index, change } => {
+                file_tree::TreeRow::File {
+                    depth,
+                    name,
+                    file_index,
+                    change,
+                } => {
                     let indent = (*depth as f32) * 12.0;
                     let fi = *file_index;
                     // Look up the original path to check if conflicted
-                    let is_conflicted_file = panel.unstaged.get(fi)
+                    let is_conflicted_file = panel
+                        .unstaged
+                        .get(fi)
                         .map(|f| panel.is_conflicted(&f.path))
                         .unwrap_or(false);
                     let (badge, badge_color, _) = status_badge(change, is_conflicted_file);
                     let is_sel = selected_file == Some(CommitPanelFileRef::Unstaged { index: fi });
-                    let file_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                        this.select_commit_panel_file(CommitPanelFileRef::Unstaged { index: fi });
-                        cx.notify();
-                    });
-                    let stage_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                        this.do_stage_file(fi);
-                        cx.notify();
-                    });
-                    let row_bg = if is_conflicted_file { theme().diff_removed_bg } else if is_sel { theme().selected } else { theme().panel };
+                    let file_click =
+                        cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                            this.select_commit_panel_file(CommitPanelFileRef::Unstaged {
+                                index: fi,
+                            });
+                            cx.notify();
+                        });
+                    let stage_click =
+                        cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                            this.do_stage_file(fi);
+                            cx.notify();
+                        });
+                    let row_bg = if is_conflicted_file {
+                        theme().diff_removed_bg
+                    } else if is_sel {
+                        theme().selected
+                    } else {
+                        theme().panel
+                    };
                     let mut file_row = div()
                         .id(("cp-us-file", fi))
                         .when(
                             active_wip.as_ref().map_or(false, |(st, p)| {
-                                *st == false && panel.unstaged.get(fi).map_or(false, |f| &f.path == p)
+                                *st == false
+                                    && panel.unstaged.get(fi).map_or(false, |f| &f.path == p)
                             }),
                             |el| el.bg(rgb(theme().selected)),
                         )
@@ -15163,18 +13472,21 @@ fn render_commit_panel(
                         )
                         .child(diffstat_bar::diffstat_unit(
                             fi,
-                            panel.unstaged.get(fi)
+                            panel
+                                .unstaged
+                                .get(fi)
                                 .and_then(|f| kagi::git::find_stat(&panel.unstaged_stats, &f.path)),
                         ));
                     if !is_conflicted_file {
                         // W17-DISCARD: right-click on tracked rows opens the file
                         // context menu (Discard lives there, not as a per-row button).
                         if !matches!(change, ChangeKind::Added) {
-                            let menu_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
-                                this.file_menu = Some((fi, e.position));
-                                cx.stop_propagation();
-                                cx.notify();
-                            });
+                            let menu_click =
+                                cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
+                                    this.file_menu = Some((fi, e.position));
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                });
                             file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
                         }
                         file_row = file_row.child(
@@ -15212,7 +13524,9 @@ fn render_commit_panel(
     } else {
         // Flat view
         for (fi, f) in panel.unstaged.iter().enumerate() {
-            let name = f.path.file_name()
+            let name = f
+                .path
+                .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| f.path.to_string_lossy().into_owned());
             let is_conflicted_file = panel.is_conflicted(&f.path);
@@ -15229,15 +13543,21 @@ fn render_commit_panel(
                 cx.notify();
             });
             // Row background: conflicted files get red tint
-            let row_bg = if is_conflicted_file { theme().diff_removed_bg } else if is_sel { theme().selected } else { theme().panel };
+            let row_bg = if is_conflicted_file {
+                theme().diff_removed_bg
+            } else if is_sel {
+                theme().selected
+            } else {
+                theme().panel
+            };
             let mut file_row = div()
                 .id(("cp-us-flat-file", fi))
-                        .when(
-                            active_wip.as_ref().map_or(false, |(st, p)| {
-                                *st == false && panel.unstaged.get(fi).map_or(false, |f| &f.path == p)
-                            }),
-                            |el| el.bg(rgb(theme().selected)),
-                        )
+                .when(
+                    active_wip.as_ref().map_or(false, |(st, p)| {
+                        *st == false && panel.unstaged.get(fi).map_or(false, |f| &f.path == p)
+                    }),
+                    |el| el.bg(rgb(theme().selected)),
+                )
                 .flex()
                 .flex_row()
                 .items_center()
@@ -15273,11 +13593,12 @@ fn render_commit_panel(
                 // W17-DISCARD: right-click on tracked rows opens the file
                 // context menu (Discard lives there, not as a per-row button).
                 if !is_untracked_row {
-                    let menu_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
-                        this.file_menu = Some((fi, e.position));
-                        cx.stop_propagation();
-                        cx.notify();
-                    });
+                    let menu_click =
+                        cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
+                            this.file_menu = Some((fi, e.position));
+                            cx.stop_propagation();
+                            cx.notify();
+                        });
                     file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
                 }
                 file_row = file_row.child(
@@ -15351,9 +13672,7 @@ fn render_commit_panel(
         });
 
     // Staged ファイル行コンテナ (スクロールボックス内に入る)
-    let mut staged_files = div()
-        .flex()
-        .flex_col();
+    let mut staged_files = div().flex().flex_col();
 
     if tree_view {
         let tree_rows = file_tree::build_file_tree(&panel.staged);
@@ -15370,35 +13689,47 @@ fn render_commit_panel(
                             .child(name.clone()),
                     );
                 }
-                file_tree::TreeRow::File { depth, name, file_index, change } => {
+                file_tree::TreeRow::File {
+                    depth,
+                    name,
+                    file_index,
+                    change,
+                } => {
                     let indent = (*depth as f32) * 12.0;
                     let fi = *file_index;
                     let (badge, badge_color, _conflicted) = status_badge(change, false);
                     let is_sel = selected_file == Some(CommitPanelFileRef::Staged { index: fi });
-                    let file_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                        this.select_commit_panel_file(CommitPanelFileRef::Staged { index: fi });
-                        cx.notify();
-                    });
-                    let unstage_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                        this.do_unstage_file(fi);
-                        cx.notify();
-                    });
+                    let file_click =
+                        cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                            this.select_commit_panel_file(CommitPanelFileRef::Staged { index: fi });
+                            cx.notify();
+                        });
+                    let unstage_click =
+                        cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                            this.do_unstage_file(fi);
+                            cx.notify();
+                        });
                     staged_files = staged_files.child(
                         div()
                             .id(("cp-st-file", fi))
-                        .when(
-                            active_wip.as_ref().map_or(false, |(st, p)| {
-                                *st == true && panel.staged.get(fi).map_or(false, |f| &f.path == p)
-                            }),
-                            |el| el.bg(rgb(theme().selected)),
-                        )
+                            .when(
+                                active_wip.as_ref().map_or(false, |(st, p)| {
+                                    *st == true
+                                        && panel.staged.get(fi).map_or(false, |f| &f.path == p)
+                                }),
+                                |el| el.bg(rgb(theme().selected)),
+                            )
                             .flex()
                             .flex_row()
                             .items_center()
                             .pl(theme::scaled_px(8.0 + indent))
                             .pr(theme::scaled_px(2.0))
                             .py_px()
-                            .bg(rgb(if is_sel { theme().selected } else { theme().panel }))
+                            .bg(rgb(if is_sel {
+                                theme().selected
+                            } else {
+                                theme().panel
+                            }))
                             .hover(|s| s.bg(rgb(theme().surface)))
                             .on_click(file_click)
                             .child(
@@ -15421,8 +13752,9 @@ fn render_commit_panel(
                             )
                             .child(diffstat_bar::diffstat_unit(
                                 fi + 100_000,
-                                panel.staged.get(fi)
-                                    .and_then(|f| kagi::git::find_stat(&panel.staged_stats, &f.path)),
+                                panel.staged.get(fi).and_then(|f| {
+                                    kagi::git::find_stat(&panel.staged_stats, &f.path)
+                                }),
                             ))
                             .child(
                                 div()
@@ -15444,7 +13776,9 @@ fn render_commit_panel(
         }
     } else {
         for (fi, f) in panel.staged.iter().enumerate() {
-            let name = f.path.file_name()
+            let name = f
+                .path
+                .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| f.path.to_string_lossy().into_owned());
             let (badge, badge_color, _conflicted) = status_badge(&f.change, false);
@@ -15460,18 +13794,22 @@ fn render_commit_panel(
             staged_files = staged_files.child(
                 div()
                     .id(("cp-st-flat-file", fi))
-                        .when(
-                            active_wip.as_ref().map_or(false, |(st, p)| {
-                                *st == true && panel.staged.get(fi).map_or(false, |f| &f.path == p)
-                            }),
-                            |el| el.bg(rgb(theme().selected)),
-                        )
+                    .when(
+                        active_wip.as_ref().map_or(false, |(st, p)| {
+                            *st == true && panel.staged.get(fi).map_or(false, |f| &f.path == p)
+                        }),
+                        |el| el.bg(rgb(theme().selected)),
+                    )
                     .flex()
                     .flex_row()
                     .items_center()
                     .px_2()
                     .py_px()
-                    .bg(rgb(if is_sel { theme().selected } else { theme().panel }))
+                    .bg(rgb(if is_sel {
+                        theme().selected
+                    } else {
+                        theme().panel
+                    }))
                     .hover(|s| s.bg(rgb(theme().surface)))
                     .on_click(file_click)
                     .child(
@@ -15519,7 +13857,11 @@ fn render_commit_panel(
         let toggle_click = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
             this.toggle_commit_template_mode(window, cx);
         });
-        let label = if template_mode { "Plain message" } else { "Template fields" };
+        let label = if template_mode {
+            "Plain message"
+        } else {
+            "Template fields"
+        };
         div()
             .id("cp-template-toggle")
             .px_1p5()
@@ -15649,7 +13991,8 @@ fn render_commit_panel(
             .text_color(rgb(theme().bg_base))
             .on_click(commit_click)
             .hover(|s| s.opacity(0.85))
-            .child(SharedString::from(format!("Commit ({} file{})",
+            .child(SharedString::from(format!(
+                "Commit ({} file{})",
                 staged_count,
                 if staged_count == 1 { "" } else { "s" }
             )))
@@ -15720,8 +14063,13 @@ fn render_commit_panel(
             this.smart_commit.toggle_lang();
             cx.notify();
         });
-        let lang_btn = pill("cp-smart-lang", SharedString::from(lang_label), true, theme().text_main)
-            .on_click(lang_click);
+        let lang_btn = pill(
+            "cp-smart-lang",
+            SharedString::from(lang_label),
+            true,
+            theme().text_main,
+        )
+        .on_click(lang_click);
 
         // Style toggle (Conventional / Plain).
         let style_label = match smart.style {
@@ -15732,8 +14080,13 @@ fn render_commit_panel(
             this.smart_commit.toggle_style();
             cx.notify();
         });
-        let style_btn = pill("cp-smart-style", SharedString::from(style_label), true, theme().text_main)
-            .on_click(style_click);
+        let style_btn = pill(
+            "cp-smart-style",
+            SharedString::from(style_label),
+            true,
+            theme().text_main,
+        )
+        .on_click(style_click);
 
         let mut row = div()
             .flex()
@@ -15944,16 +14297,13 @@ fn render_commit_panel(
                         .flex_row()
                         .items_center()
                         .justify_between()
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(theme().text_label))
-                                .child(SharedString::from(if template_mode {
-                                    "Commit message (template)"
-                                } else {
-                                    "Commit message"
-                                })),
-                        )
+                        .child(div().text_xs().text_color(rgb(theme().text_label)).child(
+                            SharedString::from(if template_mode {
+                                "Commit message (template)"
+                            } else {
+                                "Commit message"
+                            }),
+                        ))
                         .child(mode_toggle),
                 )
                 .child(msg_input_wrapper)
@@ -16016,471 +14366,6 @@ fn render_commit_panel(
                         .hover(|st| st.bg(rgb(theme().selected)))
                         .child(SharedString::from("Amend last commit…"))
                 }),
-        )
-}
-
-// ──────────────────────────────────────────────────────────────
-// Commit Plan modal renderer (T025)
-// ──────────────────────────────────────────────────────────────
-
-/// Render the commit plan confirmation overlay.
-///
-/// Layout (absolute, full-screen):
-/// - Semi-transparent dark backdrop
-/// - Centred modal card:
-///   - Title
-///   - Preview files (staged files)
-///   - Warnings (unstaged remain)
-///   - Error message (if execute failed)
-///   - `[Cancel]` always; `[Commit]` when no blockers
-fn render_commit_plan_modal(
-    modal: CommitPlanModal,
-    cx: &mut Context<KagiApp>,
-) -> impl IntoElement {
-    let plan = modal.plan.clone();
-    let has_blockers = !plan.blockers.is_empty();
-
-    // T-BP-003: return focus to root_focus on cancel/confirm.
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_commit_plan_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.start_commit(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-
-    // ── Preview file tree ────────────────────────────────────
-    let tree_rows = file_tree::build_file_tree(&plan.preview_files);
-    let mut preview_col = div().flex().flex_col().gap_px()
-        .child(
-            div()
-                .text_sm()
-                .text_color(rgb(theme().text_label))
-                .mb_1()
-                .child(SharedString::from(format!(
-                    "Staging ({} file{})",
-                    plan.preview_files.len(),
-                    if plan.preview_files.len() == 1 { "" } else { "s" }
-                ))),
-        );
-
-    for row in &tree_rows {
-        match row {
-            file_tree::TreeRow::Dir { depth, name } => {
-                let indent = (*depth as f32) * 12.0;
-                preview_col = preview_col.child(
-                    div()
-                        .id(SharedString::from(format!("cpk-dir-{}", name.as_ref())))
-                        .pl(theme::scaled_px(indent))
-                        .text_xs()
-                        .text_color(rgb(theme().change_dir))
-                        .child(name.clone()),
-                );
-            }
-            file_tree::TreeRow::File { depth, name, file_index, change } => {
-                let indent = (*depth as f32) * 12.0;
-                let (badge, badge_color, _) = status_badge(change, false);
-                let _ = file_index;
-                preview_col = preview_col.child(
-                    div()
-                        .id(("cpk-file", *file_index))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_1()
-                        .pl(theme::scaled_px(indent))
-                        .child(
-                            div()
-                                .w(theme::scaled_px(14.))
-                                .flex_shrink_0()
-                                .text_xs()
-                                .text_color(rgb(badge_color))
-                                .child(SharedString::from(badge)),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_xs()
-                                .text_color(rgb(theme().text_main))
-                                .overflow_hidden()
-                                .child(name.clone()),
-                        ),
-                );
-            }
-        }
-    }
-
-    let mut card = div()
-        .w(theme::scaled_px(480.))
-        .bg(rgb(theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(
-            div()
-                .text_color(rgb(theme().text_main))
-                .text_xl()
-                .child(SharedString::from(plan.title.clone())),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_label))
-                        .child(SharedString::from("Current")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_main))
-                                .child(SharedString::from(plan.current.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", plan.current.dirty))),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_label))
-                        .child(SharedString::from("\u{2192} Predicted")),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_main))
-                        .child(SharedString::from(plan.predicted.head.clone())),
-                ),
-        )
-        // Preview files
-        .child(preview_col);
-
-    // Warnings
-    if !plan.warnings.is_empty() {
-        let mut warn_col = div().flex().flex_col().gap_1();
-        for w in &plan.warnings {
-            warn_col = warn_col.child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme().color_warning))
-                    .overflow_hidden()
-                    .child(SharedString::from(format!("\u{26a0} {}", w))),
-            );
-        }
-        card = card.child(warn_col);
-    }
-
-    // Blockers
-    if !plan.blockers.is_empty() {
-        let mut block_col = div().flex().flex_col().gap_1();
-        for b in &plan.blockers {
-            block_col = block_col.child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme().color_blocker))
-                    .overflow_hidden()
-                    .child(SharedString::from(format!("\u{2717} {}", b))),
-            );
-        }
-        card = card.child(block_col);
-    }
-
-    // Error
-    if let Some(ref err) = modal.error {
-        card = card.child(
-            div()
-                .text_sm()
-                .text_color(rgb(theme().color_blocker))
-                .overflow_hidden()
-                .child(err.clone()),
-        );
-    }
-
-    let mut button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
-        .child(
-            div()
-                .id("commit-plan-cancel")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().surface))
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(theme().selected)))
-                .child(SharedString::from("Cancel")),
-        );
-
-    if !has_blockers {
-        button_row = button_row.child(
-            div()
-                .id("commit-plan-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().color_branch))
-                .text_sm()
-                .text_color(rgb(theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from("Commit")),
-        );
-    }
-
-    card = card.child(button_row);
-
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                // Block mouse events from reaching the UI beneath the modal
-                // (user-reported click-through on the create-branch dialog).
-                .occlude()
-                .bg(rgb(theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(card),
-        )
-}
-
-// ──────────────────────────────────────────────────────────────
-// Smart Commit modal renderer (T-COMMIT-016, ADR-0044)
-// ──────────────────────────────────────────────────────────────
-
-/// Render the Smart Commit consent / model-picker overlay.
-///
-/// * `Consent` — the first-time opt-in dialog carrying the four mandated
-///   statements ([`smart_commit::CONSENT_LINES`]).  Confirm enables LLM
-///   generation and proceeds to model selection.
-/// * `ModelPicker` — choose one installed model; the choice is persisted.
-fn render_smart_commit_modal(
-    modal: smart_commit::SmartCommitModal,
-    cx: &mut Context<KagiApp>,
-) -> impl IntoElement {
-    let card = match modal {
-        smart_commit::SmartCommitModal::Consent => {
-            let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                this.cancel_smart_modal(cx);
-            });
-            let confirm = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                this.confirm_smart_consent(cx);
-            });
-            let mut lines_col = div().flex().flex_col().gap_1();
-            for line in smart_commit::CONSENT_LINES {
-                lines_col = lines_col.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_1()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(theme().color_branch))
-                                .child(SharedString::from("•")),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_main))
-                                .child(SharedString::from(line)),
-                        ),
-                );
-            }
-            div()
-                .w(theme::scaled_px(460.))
-                .bg(rgb(theme().modal))
-                .rounded_lg()
-                .p_4()
-                .flex()
-                .flex_col()
-                .gap_3()
-                .child(
-                    div()
-                        .text_xl()
-                        .text_color(rgb(theme().text_main))
-                        .child(SharedString::from("Enable Local LLM generation?")),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_sub))
-                        .child(SharedString::from(
-                            "Pressing Generate sends your staged diff to a local Ollama \
-                             model on this machine. Please review:",
-                        )),
-                )
-                .child(lines_col)
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .justify_end()
-                        .child(
-                            div()
-                                .id("smart-consent-cancel")
-                                .px_3()
-                                .py_1()
-                                .rounded_sm()
-                                .bg(rgb(theme().surface))
-                                .text_sm()
-                                .text_color(rgb(theme().text_main))
-                                .on_click(cancel)
-                                .hover(|s| s.bg(rgb(theme().selected)))
-                                .child(SharedString::from("Cancel")),
-                        )
-                        .child(
-                            div()
-                                .id("smart-consent-confirm")
-                                .px_3()
-                                .py_1()
-                                .rounded_sm()
-                                .bg(rgb(theme().color_success))
-                                .text_sm()
-                                .text_color(rgb(theme().bg_base))
-                                .on_click(confirm)
-                                .hover(|s| s.opacity(0.85))
-                                .child(SharedString::from("Enable & continue")),
-                        ),
-                )
-        }
-        smart_commit::SmartCommitModal::ModelPicker { models } => {
-            let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                this.cancel_smart_modal(cx);
-            });
-            let mut list = div().flex().flex_col().gap_1();
-            for (i, m) in models.iter().enumerate() {
-                let model_name = m.clone();
-                let pick = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
-                    this.choose_smart_model(model_name.clone(), window, cx);
-                });
-                list = list.child(
-                    div()
-                        .id(("smart-model", i))
-                        .px_3()
-                        .py_1()
-                        .rounded_sm()
-                        .bg(rgb(theme().surface))
-                        .text_sm()
-                        .text_color(rgb(theme().text_main))
-                        .on_click(pick)
-                        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
-                        .child(SharedString::from(m.clone())),
-                );
-            }
-            div()
-                .w(theme::scaled_px(420.))
-                .bg(rgb(theme().modal))
-                .rounded_lg()
-                .p_4()
-                .flex()
-                .flex_col()
-                .gap_3()
-                .child(
-                    div()
-                        .text_xl()
-                        .text_color(rgb(theme().text_main))
-                        .child(SharedString::from("Select a local model")),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_sub))
-                        .child(SharedString::from(
-                            "Choose which installed Ollama model to use. \
-                             Your choice is remembered.",
-                        )),
-                )
-                .child(list)
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .justify_end()
-                        .child(
-                            div()
-                                .id("smart-model-cancel")
-                                .px_3()
-                                .py_1()
-                                .rounded_sm()
-                                .bg(rgb(theme().surface))
-                                .text_sm()
-                                .text_color(rgb(theme().text_main))
-                                .on_click(cancel)
-                                .hover(|s| s.bg(rgb(theme().selected)))
-                                .child(SharedString::from("Cancel")),
-                        ),
-                )
-        }
-    };
-
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .occlude()
-                .bg(rgb(theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(card),
         )
 }
 
@@ -16555,7 +14440,7 @@ pub fn run_app(app_state: KagiApp) {
 /// window after the user closed it (the one-time init — gpui_component,
 /// keybindings, menus — stays in `run_app`).
 fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
-    use gpui::{Bounds, WindowBounds, WindowOptions, size};
+    use gpui::{size, Bounds, WindowBounds, WindowOptions};
 
     // KAGI_WINDOW=WxH (dev/testing only): override the initial window size
     // so layout behaviour at small sizes can be verified headlessly.
@@ -16568,58 +14453,58 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
         .unwrap_or((1440.0, 920.0));
     let bounds = Bounds::centered(None, size(px(win_w), px(win_h)), cx);
     cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |window, cx| {
-                // gpui-component widgets (Input etc.) require the window's
-                // first layer to be a `gpui_component::Root`; rendering
-                // KagiApp directly panics inside Root::read (user-reported
-                // crash when opening the commit panel).
-                let kagi: Entity<KagiApp> = cx.new(|cx| {
-                    // Root focus handle: without a focused element gpui never
-                    // dispatches key events, so cmd-j (and future shortcuts)
-                    // would silently do nothing.
-                    app_state.root_focus = Some(cx.focus_handle());
-                    app_state
-                });
-                if let Some(fh) = kagi.read(cx).root_focus.clone() {
-                    window.focus(&fh);
-                }
-                // Regression coverage for the Root::read crash: with
-                // KAGI_COMMIT_PANEL=1, open the panel through the real
-                // window-context path so the InputState + Input element
-                // actually render during headless verification (the
-                // pre-window env path in main.rs cannot create them).
-                if std::env::var("KAGI_COMMIT_PANEL").as_deref() == Ok("1") {
-                    kagi.update(cx, |app, cx| app.open_commit_panel(window, cx));
-                }
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            ..Default::default()
+        },
+        |window, cx| {
+            // gpui-component widgets (Input etc.) require the window's
+            // first layer to be a `gpui_component::Root`; rendering
+            // KagiApp directly panics inside Root::read (user-reported
+            // crash when opening the commit panel).
+            let kagi: Entity<KagiApp> = cx.new(|cx| {
+                // Root focus handle: without a focused element gpui never
+                // dispatches key events, so cmd-j (and future shortcuts)
+                // would silently do nothing.
+                app_state.root_focus = Some(cx.focus_handle());
+                app_state
+            });
+            if let Some(fh) = kagi.read(cx).root_focus.clone() {
+                window.focus(&fh);
+            }
+            // Regression coverage for the Root::read crash: with
+            // KAGI_COMMIT_PANEL=1, open the panel through the real
+            // window-context path so the InputState + Input element
+            // actually render during headless verification (the
+            // pre-window env path in main.rs cannot create them).
+            if std::env::var("KAGI_COMMIT_PANEL").as_deref() == Ok("1") {
+                kagi.update(cx, |app, cx| app.open_commit_panel(window, cx));
+            }
 
-                // The bottom panel now opens on the Terminal tab by default
-                // (user request) — start the shell as soon as a Window
-                // context exists. ensure_terminal is a no-op without a repo
-                // (welcome screen) and KAGI_TERMINAL=1 stays as an explicit
-                // headless trigger.
-                if std::env::var("KAGI_TERMINAL").as_deref() == Ok("1")
-                    || kagi.read(cx).bottom_panel_open
-                {
-                    kagi.update(cx, |app, cx| app.ensure_terminal(window, cx));
+            // The bottom panel now opens on the Terminal tab by default
+            // (user request) — start the shell as soon as a Window
+            // context exists. ensure_terminal is a no-op without a repo
+            // (welcome screen) and KAGI_TERMINAL=1 stays as an explicit
+            // headless trigger.
+            if std::env::var("KAGI_TERMINAL").as_deref() == Ok("1")
+                || kagi.read(cx).bottom_panel_open
+            {
+                kagi.update(cx, |app, cx| app.ensure_terminal(window, cx));
+            }
+
+            // W4-TABS / ADR-0027: arm the .git watcher for the initial tab
+            // (if any) using the generation scheme.  Subsequent switch/open/
+            // close re-arm it from within the entity context.
+            kagi.update(cx, |app, cx| {
+                if app.repo_path.is_some() {
+                    app.arm_watcher(cx);
                 }
+            });
 
-                // W4-TABS / ADR-0027: arm the .git watcher for the initial tab
-                // (if any) using the generation scheme.  Subsequent switch/open/
-                // close re-arm it from within the entity context.
-                kagi.update(cx, |app, cx| {
-                    if app.repo_path.is_some() {
-                        app.arm_watcher(cx);
-                    }
-                });
-
-                cx.new(|cx| gpui_component::Root::new(kagi, window, cx))
-            },
-        )
-        .unwrap();
+            cx.new(|cx| gpui_component::Root::new(kagi, window, cx))
+        },
+    )
+    .unwrap();
 }
 
 // ────────────────────────────────────────────────────────────
@@ -16642,11 +14527,7 @@ fn short_hash(text: &str) -> String {
 /// T-CONFLICT-UI-001: cheap FNV-1a content signature for the Conflict Editor's
 /// three panes, so the editors only re-`set_value` when something actually
 /// changes (avoids clobbering an in-progress manual edit every frame).
-fn conflict_content_sig(
-    path: &std::path::Path,
-    result: &str,
-    edit_mode: bool,
-) -> u64 {
+fn conflict_content_sig(path: &std::path::Path, result: &str, edit_mode: bool) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut mix = |bytes: &[u8]| {
         for byte in bytes {
@@ -16697,8 +14578,8 @@ mod conflict_editor_geometry_tests {
 
     #[test]
     fn split_ratio_uses_divider_center() {
-        let ratio = conflict_split_ratio_from_cursor(302.0, 100.0, 504.0, 4.0, 0.2, 0.8)
-            .expect("ratio");
+        let ratio =
+            conflict_split_ratio_from_cursor(302.0, 100.0, 504.0, 4.0, 0.2, 0.8).expect("ratio");
         assert!((ratio - 0.5).abs() < 0.0001);
     }
 

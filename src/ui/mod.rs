@@ -1601,27 +1601,26 @@ pub struct KagiApp {
     /// the per-hunk Conflict Editor, so the selected-hunk highlight tracks the
     /// hunk the user last interacted with / navigated to.
     pub conflict_selected_hunk: usize,
+    /// ADR-0070: shared A/B uniform-list scroll handle for synchronized vertical
+    /// scrolling in the Conflict Editor.
+    pub conflict_ab_scroll_handle: UniformListScrollHandle,
     /// T-CONFLICT-FLOW-032 (ADR-0068): sequencer `<op> --continue` confirmation
     /// modal, shown when Continue routes a rebase / cherry-pick / revert.
     pub conflict_continue_modal: Option<ConflictContinuePlanModal>,
 }
 
-/// T-CONFLICT-UI-001: the three `InputState` entities backing the Conflict
-/// Editor panes, plus the cache key (edited path + assembled-Result hash) used
-/// to detect when the A/B/Result text needs to be re-pushed into the editors.
+/// T-CONFLICT-UI-001: the Result `InputState` entity backing the Conflict
+/// Editor, plus the cache key (edited path + assembled Result hash) used to
+/// detect when the Result text needs to be re-pushed into the editor.
 ///
-/// A and B are read-only views of the current / incoming sides; `result` is
-/// read-only in Preview mode and editable in Edit mode (ADR-0069 / UX-015).
+/// A and B are row lists with checkboxes; `result` remains a CodeEditor
+/// InputState for Preview/Edit mode (ADR-0071 / UX-015).
 pub struct ConflictEditorInputs {
     /// The conflicting file these inputs are bound to.
     pub path: PathBuf,
-    /// A (Current side) read-only code editor.
-    pub current: Entity<InputState>,
-    /// B (Incoming side) read-only code editor.
-    pub incoming: Entity<InputState>,
     /// Result code editor (read-only in Preview, editable in Edit mode).
     pub result: Entity<InputState>,
-    /// Hash of the A/B/Result text last pushed, so we only `set_value` on change
+    /// Hash of the Result text last pushed, so we only `set_value` on change
     /// (avoids clobbering an in-progress manual edit every frame).
     pub content_sig: u64,
 }
@@ -1931,6 +1930,7 @@ impl KagiApp {
             conflict_ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             conflict_merge_commit_pending: false,
             conflict_selected_hunk: 0,
+            conflict_ab_scroll_handle: UniformListScrollHandle::new(),
             conflict_continue_modal: None,
         }
     }
@@ -2053,6 +2053,7 @@ impl KagiApp {
             conflict_ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             conflict_merge_commit_pending: false,
             conflict_selected_hunk: 0,
+            conflict_ab_scroll_handle: UniformListScrollHandle::new(),
             conflict_continue_modal: None,
         }
     }
@@ -2384,27 +2385,19 @@ impl KagiApp {
         self.conflict_selected_hunk = hunk_index;
     }
 
-    /// Apply a per-hunk choice in the editor: dispatch to the buffer's
-    /// [`ResolutionBuffer::apply_hunk_choice`], refresh the file status, autosave.
-    pub fn conflict_editor_apply_hunk(
+    fn conflict_editor_after_selection_change(
         &mut self,
         path: &std::path::Path,
-        hunk_index: usize,
-        choice: kagi::git::resolution::HunkChoice,
+        selected_hunk: Option<usize>,
     ) {
-        // Any hunk interaction disarms a pending "Reset all" confirmation and
-        // forces the Result editor to re-sync to the new assembled text, and
-        // tracks the focused hunk (selected-hunk highlight, UX-010/012).
         self.conflict_reset_all_armed = false;
-        self.conflict_selected_hunk = hunk_index;
+        if let Some(hunk) = selected_hunk {
+            self.conflict_selected_hunk = hunk;
+        }
         if let Some(i) = self.conflict_editor_inputs.as_mut() {
             i.content_sig = 0;
         }
         let Some(c) = self.conflict.as_mut() else { return };
-        if !c.buffer.apply_hunk_choice(path, hunk_index, choice) {
-            return;
-        }
-        // Refresh this file's status from the buffer (resolved / needs-review).
         let residue = c.buffer.files_with_marker_residue();
         if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
             f.status = if !c.buffer.has_resolution(path) {
@@ -2416,6 +2409,61 @@ impl KagiApp {
             };
         }
         let _ = c.buffer.autosave();
+    }
+
+    pub fn conflict_editor_set_file_side(
+        &mut self,
+        path: &std::path::Path,
+        side: kagi::git::resolution::SelectionSide,
+        taken: bool,
+    ) {
+        let Some(c) = self.conflict.as_mut() else { return };
+        if c.buffer.set_file_side_selection(path, side, taken) {
+            self.conflict_editor_after_selection_change(path, None);
+        }
+    }
+
+    pub fn conflict_editor_set_hunk_side(
+        &mut self,
+        path: &std::path::Path,
+        hunk_index: usize,
+        side: kagi::git::resolution::SelectionSide,
+        taken: bool,
+    ) {
+        let Some(c) = self.conflict.as_mut() else { return };
+        if c.buffer
+            .set_hunk_side_selection(path, hunk_index, side, taken)
+        {
+            self.conflict_editor_after_selection_change(path, Some(hunk_index));
+        }
+    }
+
+    pub fn conflict_editor_set_hunk_line(
+        &mut self,
+        path: &std::path::Path,
+        hunk_index: usize,
+        side: kagi::git::resolution::SelectionSide,
+        line_index: usize,
+        taken: bool,
+    ) {
+        let Some(c) = self.conflict.as_mut() else { return };
+        if c.buffer
+            .set_hunk_line_selection(path, hunk_index, side, line_index, taken)
+        {
+            self.conflict_editor_after_selection_change(path, Some(hunk_index));
+        }
+    }
+
+    pub fn conflict_editor_set_hunk_order(
+        &mut self,
+        path: &std::path::Path,
+        hunk_index: usize,
+        order: kagi::git::resolution::LineOrder,
+    ) {
+        let Some(c) = self.conflict.as_mut() else { return };
+        if c.buffer.set_hunk_line_order(path, hunk_index, order) {
+            self.conflict_editor_after_selection_change(path, Some(hunk_index));
+        }
     }
 
     /// T-CONFLICT-POLISH-042: "Reset all" is destructive (drops every hunk
@@ -4547,14 +4595,14 @@ impl KagiApp {
         self.sync_conflict_editor_inputs(window, cx);
     }
 
-    /// T-CONFLICT-UI-001: lazily create / refresh the three CodeEditor
-    /// `InputState`s backing the Conflict Editor panes (ADR-0069).
+    /// T-CONFLICT-UI-001: lazily create / refresh the Result CodeEditor
+    /// `InputState` backing the Conflict Editor (ADR-0071).
     ///
     /// `InputState` needs a `Window`, so this runs from `sync_modal_inputs`
-    /// (already on the window-context render path).  A and B are read-only views
-    /// of the current / incoming sides; `result` mirrors the assembled Result in
-    /// Preview mode and is the editable surface in Edit mode (UX-015).  The
-    /// text is only re-pushed when the file or the assembled content changes
+    /// (already on the window-context render path).  A and B are row lists;
+    /// `result` mirrors the assembled Result in Preview mode and is the
+    /// editable surface in Edit mode (UX-015).  The text is only re-pushed when
+    /// the file or the assembled content changes
     /// (tracked by `content_sig`) so an in-progress manual edit is never
     /// clobbered every frame.  When Edit mode is on we instead *pull* the
     /// Result editor's text into the buffer via `set_manual_text`.
@@ -4573,17 +4621,7 @@ impl KagiApp {
             return;
         };
 
-        // Assemble the A / B / Result text blocks (chars/line-safe joins).
-        let mut a_lines: Vec<String> = Vec::new();
-        let mut b_lines: Vec<String> = Vec::new();
-        for r in &model.regions {
-            if let kagi::git::resolution::Region::Hunk(h) = r {
-                a_lines.extend(h.current.iter().cloned());
-                b_lines.extend(h.incoming.iter().cloned());
-            }
-        }
-        let a_text = a_lines.join("\n");
-        let b_text = b_lines.join("\n");
+        // Assemble the Result text block (chars/line-safe join).
         let result_text = model.assembled_text();
         let edit_mode = self.conflict_result_editing;
 
@@ -4612,13 +4650,13 @@ impl KagiApp {
                             }
                         }
                     }
-                    // A/B never change while editing the Result; keep as-is.
+                    // A/B row lists never change while editing the Result; keep as-is.
                     return;
                 }
             }
         }
 
-        let sig = conflict_content_sig(&path, &a_text, &b_text, &result_text, edit_mode);
+        let sig = conflict_content_sig(&path, &result_text, edit_mode);
 
         // Reuse existing inputs if the path + content + mode are unchanged.
         if let Some(inputs) = self.conflict_editor_inputs.as_ref() {
@@ -4635,24 +4673,18 @@ impl KagiApp {
             .unwrap_or(true);
 
         if need_create {
-            let current = cx.new(|cx| InputState::new(window, cx).code_editor("text"));
-            let incoming = cx.new(|cx| InputState::new(window, cx).code_editor("text"));
             let result = cx.new(|cx| InputState::new(window, cx).code_editor("text"));
             self.conflict_editor_inputs = Some(ConflictEditorInputs {
                 path: path.clone(),
-                current,
-                incoming,
                 result,
                 content_sig: 0,
             });
         }
 
         if let Some(inputs) = self.conflict_editor_inputs.as_ref() {
-            let (cur, inc, res) =
-                (inputs.current.clone(), inputs.incoming.clone(), inputs.result.clone());
-            cur.update(cx, |s, cx| s.set_value(a_text.clone(), window, cx));
-            inc.update(cx, |s, cx| s.set_value(b_text.clone(), window, cx));
-            res.update(cx, |s, cx| s.set_value(result_text.clone(), window, cx));
+            inputs
+                .result
+                .update(cx, |s, cx| s.set_value(result_text.clone(), window, cx));
         }
         if let Some(inputs) = self.conflict_editor_inputs.as_mut() {
             inputs.content_sig = sig;
@@ -9211,11 +9243,10 @@ impl Render for KagiApp {
             inputs: self.conflict_editor_inputs.as_ref().map(|i| {
                 conflict_view::EditorInputs {
                     path: i.path.clone(),
-                    current: i.current.clone(),
-                    incoming: i.incoming.clone(),
                     result: i.result.clone(),
                 }
             }),
+            ab_scroll: self.conflict_ab_scroll_handle.clone(),
             result_editing: self.conflict_result_editing,
             reset_all_armed: self.conflict_reset_all_armed,
             ab_split: self.conflict_ab_split,
@@ -9382,15 +9413,19 @@ impl Render for KagiApp {
                 }
                 DividerKind::ConflictAB => {
                     // T-CONFLICT-UI-003: A|B vertical divider — ratio of the
-                    // measured A·B row width given to A.  Uses the canvas-measured
-                    // (left, right) bounds; no fallback is needed (the row is
-                    // always painted before a drag can start).
+                    // measured A·B row width given to A.  The cursor sits on
+                    // the divider center, while flex layout assigns the ratio
+                    // to the space excluding the scaled divider.
                     let cursor_x = f32::from(event.event.position.x);
                     let (left, right) = this.conflict_ab_geom.get();
-                    let span = right - left - CONFLICT_SPLIT_DIVIDER * z;
-                    if span > 1.0 {
-                        let ratio = ((cursor_x - left) / span)
-                            .clamp(CONFLICT_AB_MIN, CONFLICT_AB_MAX);
+                    if let Some(ratio) = conflict_split_ratio_from_cursor(
+                        cursor_x,
+                        left,
+                        right,
+                        CONFLICT_SPLIT_DIVIDER * z,
+                        CONFLICT_AB_MIN,
+                        CONFLICT_AB_MAX,
+                    ) {
                         if (ratio - this.conflict_ab_split).abs() > 0.001 {
                             this.conflict_ab_split = ratio;
                             cx.notify();
@@ -9400,12 +9435,19 @@ impl Render for KagiApp {
                 DividerKind::ConflictResult => {
                     // T-CONFLICT-UI-003: A·B / Result horizontal divider — ratio
                     // of the measured editor split region given to the A·B row.
+                    // The previous separate hunk-control strip is gone; chunk
+                    // controls live inside the A/B lists, so this measured
+                    // region now matches the rendered split exactly.
                     let cursor_y = f32::from(event.event.position.y);
                     let (top, bottom) = this.conflict_geom.get();
-                    let span = bottom - top - CONFLICT_SPLIT_DIVIDER * z;
-                    if span > 1.0 {
-                        let ratio = ((cursor_y - top) / span)
-                            .clamp(CONFLICT_RESULT_MIN, CONFLICT_RESULT_MAX);
+                    if let Some(ratio) = conflict_split_ratio_from_cursor(
+                        cursor_y,
+                        top,
+                        bottom,
+                        CONFLICT_SPLIT_DIVIDER * z,
+                        CONFLICT_RESULT_MIN,
+                        CONFLICT_RESULT_MAX,
+                    ) {
                         if (ratio - this.conflict_result_split).abs() > 0.001 {
                             this.conflict_result_split = ratio;
                             cx.notify();
@@ -16652,8 +16694,6 @@ fn short_hash(text: &str) -> String {
 /// changes (avoids clobbering an in-progress manual edit every frame).
 fn conflict_content_sig(
     path: &std::path::Path,
-    a: &str,
-    b: &str,
     result: &str,
     edit_mode: bool,
 ) -> u64 {
@@ -16668,11 +16708,24 @@ fn conflict_content_sig(
         h = h.wrapping_mul(0x0000_0100_0000_01B3);
     };
     mix(path.to_string_lossy().as_bytes());
-    mix(a.as_bytes());
-    mix(b.as_bytes());
     mix(result.as_bytes());
     mix(if edit_mode { b"edit" } else { b"preview" });
     h
+}
+
+fn conflict_split_ratio_from_cursor(
+    cursor: f32,
+    start: f32,
+    end: f32,
+    divider_size: f32,
+    min: f32,
+    max: f32,
+) -> Option<f32> {
+    let span = end - start - divider_size;
+    if span <= 1.0 {
+        return None;
+    }
+    Some(((cursor - start - divider_size / 2.0) / span).clamp(min, max))
 }
 
 /// Stable slug for a per-hunk choice, for the oplog action summary (T-035).
@@ -16685,5 +16738,33 @@ fn hunk_choice_slug(choice: &kagi::git::resolution::HunkChoice) -> &'static str 
         BothIncomingFirst => "both-if",
         Manual(_) => "manual",
         Unresolved => "unresolved",
+    }
+}
+
+#[cfg(test)]
+mod conflict_editor_geometry_tests {
+    use super::conflict_split_ratio_from_cursor;
+
+    #[test]
+    fn split_ratio_uses_divider_center() {
+        let ratio = conflict_split_ratio_from_cursor(302.0, 100.0, 504.0, 4.0, 0.2, 0.8)
+            .expect("ratio");
+        assert!((ratio - 0.5).abs() < 0.0001);
+    }
+
+    #[test]
+    fn split_ratio_clamps_and_rejects_bad_span() {
+        assert_eq!(
+            conflict_split_ratio_from_cursor(0.0, 100.0, 504.0, 4.0, 0.2, 0.8),
+            Some(0.2)
+        );
+        assert_eq!(
+            conflict_split_ratio_from_cursor(900.0, 100.0, 504.0, 4.0, 0.2, 0.8),
+            Some(0.8)
+        );
+        assert_eq!(
+            conflict_split_ratio_from_cursor(10.0, 0.0, 4.0, 4.0, 0.2, 0.8),
+            None
+        );
     }
 }

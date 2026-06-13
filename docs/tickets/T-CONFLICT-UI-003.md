@@ -15,3 +15,8 @@ A|B 比率、A・B/Result 比率の resize handle(W7 measured-bounds 方式)。b
 
 ## 実装メモ (done)
 A|B 比率(conflict_ab_split)と A·B/Result 比率(conflict_result_split)を W7 方式(measured-bounds canvas + Rc<Cell> + on_drag/DividerDrag + drag-move 絶対座標)で resize 可能に。DividerKind::ConflictAB / ConflictResult を追加。
+
+## 追記 (line-level rework done)
+A/B の hunk-control strip を廃止して chunk controls を row list 内へ移動したため、A·B/Result の
+measured split region と実描画が一致。drag ratio は scaled divider 幅を除いた span に対し、
+cursor を divider center として扱う helper に修正し、zoom 下の追従を unit test で固定。

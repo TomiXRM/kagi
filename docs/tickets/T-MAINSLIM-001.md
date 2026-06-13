@@ -37,4 +37,41 @@
 ログ文字列の変更 / env 挙動の変更 / headless 経路の削除(retire は別チケット)/ 移設ついでの挙動変更。
 
 ## Implementation memo
-(担当 agent が完了時に追記)
+
+- Status: done (branch `rearch/main-slim`, not merged — PM merges + smoke-tests).
+- 純粋な移設 (pure relocation): 文字列・env名・優先順位・順序を一字一句保持。
+
+### 移設内容
+新規 `src/headless.rs`(`mod headless;` を main.rs に追加)へ移動:
+- `record_headless_op`(`pub(crate)`)、`init_tab`(`pub(crate)`)、`run_headless_discard`(private)。
+- main() 内の全 `KAGI_*` 分岐ロジック(SELECT_FIRST / JUMP / CONTEXT_MENU / COMPARE_HEAD/WT /
+  OPEN_FIRST_FILE / PULL / PUSH / UNDO / POP / DISCARD(_ALL) / AMEND / DELETE_BRANCH /
+  PLAN_CHECKOUT / CHECKOUT_COMMIT / CREATE_BRANCH / PLAN_WORKTREE / STASH_PUSH/APPLY /
+  CHERRY_PICK / REVERT / COMMIT_PANEL(+STAGE/UNSTAGE/COMMIT_MSG)/ COMPACT / BOTTOM_PANEL /
+  TERMINAL / MENU_DUMP)を verbatim でコピー。
+
+### main() が呼ぶ単一エントリポイント
+- repo-path 起動経路: `pub fn run_repo_flow(app_state: KagiApp, repo_path: PathBuf, env_open_repo: Option<PathBuf>)`
+  — `app_state` を **所有**して全 KAGI_* フックを適用し、最後に `run_app(app_state)` を呼ぶ。
+  これにより元 main() にあった「途中の `run_app(app_state); return;` 早期終了経路」を完全保持。
+- no-arg(Welcome)経路: `pub fn run_welcome_hooks(welcome: &mut KagiApp, env_open_repo: &Option<PathBuf>)`
+  — `KAGI_OPEN_REPO`(init_tab)と `KAGI_MENU_DUMP` を適用。welcome 構築/session restore は main() に残置。
+- main() に残るもの: theme/zoom/compact/lang の env 初期化、usage/Welcome 構築、repo open + snapshot +
+  stderr 診断、初期 single-tab `app_state` 構築、headless 委譲(1 呼び出し)。
+
+### LOC
+- `src/main.rs`: 1461 → **149**(目標 <400 達成)。
+- `src/headless.rs`: **1363**(新規)。
+
+### 検証
+- `cargo build`: 0 warnings(unused import なし)。
+- `cargo test --workspace`: **666 passed; 0 failed**(全 KAGI_* binary-spawning 結合テスト含む:
+  revert/push/compare/undo_redo/branch_sync/conflicts 等が green → stderr 文字列 byte-identical を確認)。
+- `grep -rnE 'git2::|Repository::open' src/ui/` = 0(不変)。headless.rs の git2 は移設分のみ、新規ロジックなし。
+
+### 注意 / 違和感のあった点
+- 早期 `run_app(app_state); return;` を持つ KAGI_* 経路(PLAN_WORKTREE の不正 spec、STASH_PUSH/APPLY/
+  CHERRY_PICK/REVERT/COMMIT verify の repo open エラー等)が、`app_state` を所有する `run_repo_flow` 形に
+  したことで自然に保持できた。bool を返す形だと所有権の都合で早期 `run_app` を表現しづらかったため、
+  「app_state を渡して module 側で run_app まで責務を持つ」設計を採用(ティケット許容範囲)。
+- `CreateBranchModal` リテラルの既存インデント崩れ(`input_state: None,` の 1 行)は verbatim 維持。

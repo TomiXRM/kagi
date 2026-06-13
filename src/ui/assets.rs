@@ -30,6 +30,9 @@ const ASSETS: &[(&str, &[u8])] = &[
     ("icons/square-terminal.svg", include_bytes!("../../assets/icons/square-terminal.svg")),
     ("icons/menu.svg", include_bytes!("../../assets/icons/menu.svg")),
     ("icons/refresh-cw.svg", include_bytes!("../../assets/icons/refresh-cw.svg")),
+    // T-CONFLICT-POLISH-040/041: Conflict Editor toolbar icons.
+    ("icons/external-link.svg", include_bytes!("../../assets/icons/external-link.svg")),
+    ("icons/trash-2.svg", include_bytes!("../../assets/icons/trash-2.svg")),
 ];
 
 impl AssetSource for KagiAssets {

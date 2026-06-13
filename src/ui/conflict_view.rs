@@ -22,7 +22,10 @@
 //! Terminology (ADR-0058): every side label comes from `side_labels` — the words
 //! "ours"/"theirs" never appear in any user-facing string.
 
-use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
+use std::path::PathBuf;
+
+use gpui::{div, prelude::*, px, rgb, Context, Entity, SharedString, Window};
+use gpui_component::input::InputState;
 use gpui_component::tooltip::Tooltip;
 
 use kagi::git::conflicts::{ConflictKind, ConflictOp, ConflictStatus, SideLabels};
@@ -30,6 +33,42 @@ use kagi::git::conflicts::{ConflictKind, ConflictOp, ConflictStatus, SideLabels}
 use super::i18n::Msg;
 use super::theme::{self, theme};
 use super::KagiApp;
+
+/// T-CONFLICT-UI: the per-pane CodeEditor `InputState`s for the open file.
+/// Held on [`KagiApp`] (they need a `Window` to create) and passed into the
+/// render functions via [`EditorChrome`].
+#[derive(Clone)]
+pub struct EditorInputs {
+    /// The conflicting file these inputs are bound to.
+    pub path: PathBuf,
+    /// A (Current side) read-only editor.
+    pub current: Entity<InputState>,
+    /// B (Incoming side) read-only editor.
+    pub incoming: Entity<InputState>,
+    /// Result editor (read-only in Preview, editable in Edit).
+    pub result: Entity<InputState>,
+}
+
+/// T-CONFLICT-UI/UX: the Conflict Editor chrome the app threads into the render
+/// functions (the editors + split ratios + Result mode + resize geometry live
+/// on [`KagiApp`], not on the cloned [`ConflictMode`]).
+#[derive(Clone)]
+pub struct EditorChrome {
+    /// The three pane `InputState`s, when present for the edited content file.
+    pub inputs: Option<EditorInputs>,
+    /// Whether the Result pane is in Edit mode (UX-015).
+    pub result_editing: bool,
+    /// Whether the destructive "Reset all" is armed (POLISH-042).
+    pub reset_all_armed: bool,
+    /// A|B pane width split ratio (fraction given to A).
+    pub ab_split: f32,
+    /// A·B / Result vertical split ratio (fraction given to the A·B row).
+    pub result_split: f32,
+    /// Measured (top, bottom) screen-px bounds of the editor split region.
+    pub geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
+    /// Measured (left, right) screen-px bounds of the A·B row.
+    pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
+}
 
 /// In-memory Conflict Mode state held by [`KagiApp`].
 ///
@@ -55,8 +94,6 @@ pub struct ConflictMode {
     pub editing_file: Option<usize>,
     /// Whether the destructive Abort is armed (two-stage confirm, ADR-0067).
     pub abort_armed: bool,
-    /// Path/Tree toggle.  `false` = Path (MVP), `true` = Tree (placeholder).
-    pub tree_view: bool,
 }
 
 impl ConflictMode {
@@ -199,7 +236,6 @@ mod tests {
             selected_file: Some(0),
             editing_file: None,
             abort_armed: false,
-            tree_view: false,
         }
     }
 
@@ -390,17 +426,21 @@ pub fn render_banner(mode: &ConflictMode, _cx: &mut Context<KagiApp>) -> gpui::A
 /// Render the Conflict Mode main pane.  Center = per-file choose + Result
 /// preview (the W32 Conflict Editor lane replaces this center by reading
 /// `editing_file`); right = the Conflict Dashboard (ADR-0063).
-pub fn render_body(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    // GitKraken-style layout: the CENTER is the main A/B Conflict Editor (with
-    // the Result Preview below it), and the Conflict Dashboard is always on the
+pub fn render_body(
+    mode: &ConflictMode,
+    chrome: &EditorChrome,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    // GitKraken-style layout: the CENTER is the main 3-pane Conflict Editor
+    // (A | B on top, Result below), and the Conflict Dashboard is always on the
     // RIGHT (info + navigation + continue/abort/skip + escape hatch — no
-    // resolution actions live there).  For a content conflict we render the
-    // hunk-level side-by-side editor; binary / single-sided files (no hunk
-    // model) fall back to the simple choose surface.
+    // resolution actions live there, T-CONFLICT-DASH-020).  For a content
+    // conflict we render the hunk-level 3-pane editor; binary / single-sided
+    // files (no hunk model) fall back to the simple choose surface.
     let center = match mode.selected_file.and_then(|i| mode.session.files.get(i)) {
         Some(file) if file.kind == ConflictKind::Content => {
             let path = file.path.clone();
-            super::conflict_editor::render_editor(mode, &path, cx)
+            super::conflict_editor::render_editor(mode, chrome, &path, cx)
         }
         _ => render_center(mode, cx),
     };
@@ -432,7 +472,6 @@ fn render_dashboard(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::Any
         .child(dash_header(mode))
         .child(dash_role_badges(mode))
         .child(dash_counts(mode, cx))
-        .child(dash_view_toggle(mode, cx))
         .child(dash_actions(mode, cx))
         .child(dash_sections(mode, cx))
         .child(dash_escape_hatch(mode, cx))
@@ -605,64 +644,6 @@ where
         .hover(|s| s.bg(rgb(theme().selected)))
         .child(SharedString::from(label.to_string()))
         .on_click(handler)
-}
-
-/// Path / Tree toggle.  Path works (MVP); Tree is shown but disabled.
-fn dash_view_toggle(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let path_active = !mode.tree_view;
-    let path_click = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        if let Some(c) = this.conflict.as_mut() {
-            c.tree_view = false;
-        }
-        cx.notify();
-    });
-
-    div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(6.))
-        .border_b_1()
-        .border_color(rgb(theme().surface))
-        .child(
-            div()
-                .id("conflict-view-path")
-                .px(theme::scaled_px(8.))
-                .py(theme::scaled_px(3.))
-                .rounded_md()
-                .border_1()
-                .border_color(rgb(if path_active {
-                    theme().color_branch
-                } else {
-                    theme().surface
-                }))
-                .text_size(theme::scaled_px(11.))
-                .text_color(rgb(if path_active {
-                    theme().color_branch
-                } else {
-                    theme().text_sub
-                }))
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(theme().selected)))
-                .on_click(path_click)
-                .child(SharedString::from(Msg::ConflictViewPath.t())),
-        )
-        .child(
-            // Tree: disabled placeholder (v0.2) — muted, no handler, with tip.
-            div()
-                .id("conflict-view-tree")
-                .px(theme::scaled_px(8.))
-                .py(theme::scaled_px(3.))
-                .rounded_md()
-                .border_1()
-                .border_color(rgb(theme().text_muted))
-                .text_size(theme::scaled_px(11.))
-                .text_color(rgb(theme().text_muted))
-                .tooltip(|window, cx| Tooltip::new(Msg::ConflictTreeSoon.t()).build(window, cx))
-                .child(SharedString::from(Msg::ConflictViewTree.t())),
-        )
-        .into_any_element()
 }
 
 /// Action buttons: Abort (always, two-stage confirm), Continue (gated),

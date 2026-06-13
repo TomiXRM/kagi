@@ -38,7 +38,7 @@
 
 ## Implementation memo
 
-- Status: done (branch `rearch/main-slim`, not merged — PM merges + smoke-tests).
+- Status: done (PM merged + smoke-tested 2026-06-14)
 - 純粋な移設 (pure relocation): 文字列・env名・優先順位・順序を一字一句保持。
 
 ### 移設内容

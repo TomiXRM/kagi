@@ -9910,7 +9910,11 @@ fn render_rows(
                 // We use pl_3() normally and reduce the inner padding by 2px when
                 // selected to make room for the bar without changing total row width.
                 .when(is_selected, |el| {
-                    el.pl(px(10.))  // 12 - 2 = 10px to account for 2px bar
+                    // W28: non-selected rows use px_3 (0.75rem) which scales with
+                    // zoom; the selected row must match so the graph column origin
+                    // doesn't shift horizontally on selection. Left inset =
+                    // scaled px_3 minus the fixed 2px accent bar.
+                    el.pl(theme::scaled_px(12.) - px(2.))
                         .border_l_2()
                         .border_color(rgb(theme().color_branch))
                 })

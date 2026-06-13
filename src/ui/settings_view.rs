@@ -81,6 +81,8 @@ pub fn render_settings_overlay(app: Entity<KagiApp>, cx: &mut gpui::Context<Kagi
             eat(div())
                 .w(px(820.0))
                 .h(px(520.0))
+                .flex()
+                .flex_col()
                 .overflow_hidden()
                 .rounded(px(10.0))
                 .border_1()

@@ -168,3 +168,16 @@
 | T-DISCARD-002 | per-file ボタン + danger modal + async | 001 | done |
 | T-DISCARD-003 | Discard all(一覧 modal + skipped) | 002 | done |
 | T-DISCARD-004 | headless KAGI_DISCARD / KAGI_DISCARD_ALL | 001 | done |
+
+## Branch Context Menu(requirements-branch-context-menu.md / ADR-0049〜0055 / codex lanes)
+
+| 範囲 | チケット | status |
+|------|----------|--------|
+| 基盤 | T-BCM-001〜006 | todo |
+| Safe ops | T-BCM-010〜014 | todo |
+| Sync | T-BCM-020〜024 | todo |
+| Integrate | T-BCM-030〜034(032/063 は MVP 外) | todo |
+| Worktree | T-BCM-040〜043 | todo |
+| Manage | T-BCM-050〜054 | todo |
+| Remote | T-BCM-060〜063 | todo |
+| Tests | T-BCM-070〜073 | todo |

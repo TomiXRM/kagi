@@ -288,12 +288,16 @@ pub enum Msg {
     EditorSavedResolved,
     EditorNoTextMerge,
     // ── T-CONFLICT-UI/UX: 3-pane editor controls ──
-    EditorAccept,
-    EditorBothLabel,
     EditorResetAllConfirm,
     EditorPreviewMode,
     EditorEditMode,
     EditorEditingIndicator,
+    // ── T-CONFLICT-UX-010/012: per-hunk accept controls ──
+    EditorHunkLabel,
+    EditorAcceptCurrent,
+    EditorAcceptIncoming,
+    EditorHunkResolved,
+    EditorHunkUnresolved,
     // ── W33-CONFLICT-DASHBOARD: Right-panel dashboard + escape hatch ──
     ConflictDashHeader,
     ConflictRoleCurrent,
@@ -632,10 +636,6 @@ impl Msg {
             (En, EditorNoTextMerge) => "No text merge is available for this file (binary or single-sided). Use the conflict list to choose a side.",
             (Ja, EditorNoTextMerge) => "このファイルはテキストマージできません(binary / 片側のみ)。衝突一覧で側を選択してください。",
             // ── T-CONFLICT-UI/UX: 3-pane editor controls ──
-            (En, EditorAccept) => "accept",
-            (Ja, EditorAccept) => "採用",
-            (En, EditorBothLabel) => "Both:",
-            (Ja, EditorBothLabel) => "両方:",
             (En, EditorResetAllConfirm) => "Click again to reset all",
             (Ja, EditorResetAllConfirm) => "もう一度押すと全リセット",
             (En, EditorPreviewMode) => "Preview",
@@ -644,6 +644,17 @@ impl Msg {
             (Ja, EditorEditMode) => "編集",
             (En, EditorEditingIndicator) => "editing",
             (Ja, EditorEditingIndicator) => "編集中",
+            // ── T-CONFLICT-UX-010/012: per-hunk accept controls ──
+            (En, EditorHunkLabel) => "Hunk",
+            (Ja, EditorHunkLabel) => "Hunk",
+            (En, EditorAcceptCurrent) => "Accept current",
+            (Ja, EditorAcceptCurrent) => "現在の側を採用",
+            (En, EditorAcceptIncoming) => "Accept incoming",
+            (Ja, EditorAcceptIncoming) => "取り込む側を採用",
+            (En, EditorHunkResolved) => "resolved",
+            (Ja, EditorHunkResolved) => "解決済み",
+            (En, EditorHunkUnresolved) => "unresolved",
+            (Ja, EditorHunkUnresolved) => "未解決",
             // ── W33-CONFLICT-DASHBOARD ───────────────────────────────
             (En, ConflictDashHeader) => "Merge conflicts detected",
             (Ja, ConflictDashHeader) => "conflict が検出されました",

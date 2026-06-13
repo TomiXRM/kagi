@@ -36,7 +36,7 @@
 use gpui::{canvas, div, prelude::*, px, relative, rgb, Bounds, Context, Pixels, SharedString, Window};
 use gpui_component::input::Input;
 
-use kagi::git::resolution::{HunkChoice, Region};
+use kagi::git::resolution::{ConflictHunk, HunkChoice, Region};
 
 use super::conflict_view::ConflictMode;
 use super::conflict_view::EditorChrome;
@@ -44,58 +44,21 @@ use super::i18n::Msg;
 use super::theme::{self, theme};
 use super::{DividerDrag, DividerGhost, DividerKind, KagiApp};
 
-/// The aggregate accept state of a file's hunks, used to drive the header
-/// checkbox toggles (UX-010).  Computed from the per-hunk `HunkChoice`s.
-#[derive(Clone, Copy, PartialEq)]
-struct AcceptState {
-    /// Every hunk currently accepts the current side.
-    current: bool,
-    /// Every hunk currently accepts the incoming side.
-    incoming: bool,
-}
-
-/// Compute the file-level accept state from the hunk model.
-fn accept_state(mode: &ConflictMode, path: &std::path::Path) -> AcceptState {
-    let Some(model) = mode.buffer.hunk_model(path) else {
-        return AcceptState { current: false, incoming: false };
-    };
-    let hunks: Vec<&kagi::git::resolution::ConflictHunk> = model
-        .regions
-        .iter()
-        .filter_map(|r| match r {
-            Region::Hunk(h) => Some(h),
-            Region::Passthrough(_) => None,
+/// The conflict hunks of a file, in order (skipping passthrough regions) —
+/// owned clones so the per-hunk render closures don't borrow `mode`.
+fn file_hunks(mode: &ConflictMode, path: &std::path::Path) -> Vec<ConflictHunk> {
+    mode.buffer
+        .hunk_model(path)
+        .map(|m| {
+            m.regions
+                .iter()
+                .filter_map(|r| match r {
+                    Region::Hunk(h) => Some(h.clone()),
+                    Region::Passthrough(_) => None,
+                })
+                .collect()
         })
-        .collect();
-    if hunks.is_empty() {
-        return AcceptState { current: false, incoming: false };
-    }
-    let all_current = hunks.iter().all(|h| h.choice == HunkChoice::AcceptCurrent);
-    let all_incoming = hunks.iter().all(|h| h.choice == HunkChoice::AcceptIncoming);
-    let all_both = hunks.iter().all(|h| {
-        matches!(h.choice, HunkChoice::BothCurrentFirst | HunkChoice::BothIncomingFirst)
-    });
-    AcceptState {
-        current: all_current || all_both,
-        incoming: all_incoming || all_both,
-    }
-}
-
-/// Apply a `HunkChoice` to **every** hunk of the file (MVP file-level mapping of
-/// the header accept toggles / both-order buttons — UX-010/011/012).
-fn apply_all_hunks(
-    this: &mut KagiApp,
-    path: &std::path::Path,
-    choice: HunkChoice,
-) {
-    let n = this
-        .conflict
-        .as_ref()
-        .and_then(|c| c.buffer.hunk_model(path).map(|m| m.hunk_count()))
-        .unwrap_or(0);
-    for i in 0..n {
-        this.conflict_editor_apply_hunk(path, i, choice.clone());
-    }
+        .unwrap_or_default()
 }
 
 /// Render the full Conflict Editor, replacing the normal body while editing.
@@ -294,9 +257,9 @@ fn render_panes(
     let incoming_label =
         format!("{} — {}", Msg::EditorIncomingSide.t(), labels.incoming.name);
 
-    let accept = accept_state(mode, path);
-
     // ── A | B row (resizable A|B), measured for the vertical divider drag ──
+    // The pane headers no longer carry a file-level accept toggle (UX-010/012):
+    // accept is now per-hunk, in the scrollable hunk-control list below.
     let ab_geom = chrome.ab_geom.clone();
     let ab_measure = canvas(
         move |bounds: Bounds<Pixels>, _w, _cx| {
@@ -311,14 +274,7 @@ fn render_panes(
         "conflict-pane-a",
         current_label,
         theme().color_branch,
-        Some(accept_toggle(
-            "accept-a",
-            accept.current,
-            theme().color_branch,
-            path,
-            HunkChoice::AcceptCurrent,
-            cx,
-        )),
+        None,
         Input::new(&inputs.current)
             .disabled(true)
             .appearance(true)
@@ -331,14 +287,7 @@ fn render_panes(
         "conflict-pane-b",
         incoming_label,
         theme().color_remote,
-        Some(accept_toggle(
-            "accept-b",
-            accept.incoming,
-            theme().color_remote,
-            path,
-            HunkChoice::AcceptIncoming,
-            cx,
-        )),
+        None,
         Input::new(&inputs.incoming)
             .disabled(true)
             .appearance(true)
@@ -357,8 +306,8 @@ fn render_panes(
         .child(vertical_divider())
         .child(div().h_full().min_w(px(0.)).flex_1().child(b_pane));
 
-    // ── Both-order strip (between A·B and Result) — UX-011 ──
-    let both_strip = both_order_strip(accept, path, cx);
+    // ── Per-hunk accept controls (UX-010/012) — scrollable list of hunks ──
+    let hunk_strip = hunk_controls(mode, chrome, path, cx);
 
     // ── Result pane (resizable A·B / Result) ──
     let result_pane = render_result_pane(mode, chrome, path, cx);
@@ -381,10 +330,188 @@ fn render_panes(
         .size_full()
         .child(measure)
         .child(ab_row)
-        .child(both_strip)
+        .child(hunk_strip)
         .child(horizontal_divider())
         .child(result_pane)
         .into_any_element()
+}
+
+// ────────────────────────────────────────────────────────────
+// Per-hunk accept controls (UX-010/012) — replaces the file-level header
+// toggles + both-order strip with one A/B accept row per conflict hunk.
+// ────────────────────────────────────────────────────────────
+
+/// A scrollable list of per-hunk accept controls placed between the A·B row and
+/// the Result pane.  Each conflict hunk gets its own row with: a hunk number +
+/// status, "Accept current" / "Accept incoming" toggles, both-order toggles, and
+/// a "Reset" button — each acting on **that hunk only**.  The focused hunk
+/// (`chrome.selected_hunk`) is highlighted; clicking a row focuses it.
+fn hunk_controls(
+    mode: &ConflictMode,
+    chrome: &EditorChrome,
+    path: &std::path::Path,
+    cx: &mut Context<KagiApp>,
+) -> gpui::Stateful<gpui::Div> {
+    let hunks = file_hunks(mode, path);
+    let selected = chrome.selected_hunk;
+
+    let mut list = div()
+        .id("conflict-hunk-controls")
+        .flex()
+        .flex_col()
+        .w_full()
+        .max_h(theme::scaled_px(160.))
+        .overflow_y_scroll()
+        .bg(rgb(theme().surface))
+        .border_t_1()
+        .border_color(rgb(theme().surface));
+
+    for (i, h) in hunks.iter().enumerate() {
+        list = list.child(hunk_row(i, h, selected == i, path, cx));
+    }
+    list
+}
+
+/// One per-hunk control row (UX-010/012).
+fn hunk_row(
+    index: usize,
+    hunk: &ConflictHunk,
+    focused: bool,
+    path: &std::path::Path,
+    cx: &mut Context<KagiApp>,
+) -> gpui::Stateful<gpui::Div> {
+    let choice = hunk.choice.clone();
+    let is_current = choice == HunkChoice::AcceptCurrent;
+    let is_incoming = choice == HunkChoice::AcceptIncoming;
+    let is_both_cf = choice == HunkChoice::BothCurrentFirst;
+    let is_both_if = choice == HunkChoice::BothIncomingFirst;
+    let resolved = !matches!(choice, HunkChoice::Unresolved);
+
+    // Clicking the row focuses this hunk (selected-hunk highlight tracking).
+    let focus_click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_editor_select_hunk(index);
+        cx.notify();
+    });
+
+    // A toggle that applies `target` to THIS hunk, or resets it if already set.
+    let toggle = |id: &str, label: &str, active: bool, accent: u32, target: HunkChoice| {
+        let p = path.to_path_buf();
+        let t = target.clone();
+        let handler = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+            if active {
+                this.conflict_editor_apply_hunk(&p, index, HunkChoice::Unresolved);
+            } else {
+                this.conflict_editor_apply_hunk(&p, index, t.clone());
+            }
+            cx.notify();
+        });
+        hunk_toggle_button(id, index, label, active, accent, handler)
+    };
+
+    let (status_text, status_color) = if resolved {
+        (Msg::EditorHunkResolved.t(), theme().color_success)
+    } else {
+        (Msg::EditorHunkUnresolved.t(), theme().color_warning)
+    };
+
+    div()
+        .id(SharedString::from(format!("hunk-row-{}", index)))
+        .flex()
+        .flex_row()
+        .flex_wrap()
+        .items_center()
+        .gap_2()
+        .w_full()
+        .px(theme::scaled_px(10.))
+        .py(theme::scaled_px(5.))
+        .border_b_1()
+        .border_color(rgb(theme().bg_base))
+        .when(focused, |s| s.bg(rgb(theme().selected)))
+        .hover(|s| s.bg(rgb(theme().bg_row_alt)))
+        .on_click(focus_click)
+        .child(
+            div()
+                .min_w(theme::scaled_px(78.))
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .text_size(theme::scaled_px(11.))
+                        .text_color(rgb(theme().text_main))
+                        .child(SharedString::from(format!(
+                            "{} {}",
+                            Msg::EditorHunkLabel.t(),
+                            index + 1
+                        ))),
+                )
+                .child(
+                    div()
+                        .text_size(theme::scaled_px(9.))
+                        .text_color(rgb(status_color))
+                        .child(SharedString::from(status_text)),
+                ),
+        )
+        .child(toggle(
+            "hunk-cur",
+            Msg::EditorAcceptCurrent.t(),
+            is_current,
+            theme().color_branch,
+            HunkChoice::AcceptCurrent,
+        ))
+        .child(toggle(
+            "hunk-inc",
+            Msg::EditorAcceptIncoming.t(),
+            is_incoming,
+            theme().color_remote,
+            HunkChoice::AcceptIncoming,
+        ))
+        .child(toggle(
+            "hunk-both-cf",
+            Msg::EditorAcceptBothCurrentFirst.t(),
+            is_both_cf,
+            theme().color_success,
+            HunkChoice::BothCurrentFirst,
+        ))
+        .child(toggle(
+            "hunk-both-if",
+            Msg::EditorAcceptBothIncomingFirst.t(),
+            is_both_if,
+            theme().color_success,
+            HunkChoice::BothIncomingFirst,
+        ))
+}
+
+/// A per-hunk accept toggle button (active = checked glyph + accent fill).
+fn hunk_toggle_button<H>(
+    id: &str,
+    index: usize,
+    label: &str,
+    active: bool,
+    accent: u32,
+    handler: H,
+) -> gpui::Stateful<gpui::Div>
+where
+    H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+{
+    let glyph = if active { "\u{2611}" } else { "\u{2610}" }; // ☑ / ☐
+    div()
+        .id(SharedString::from(format!("{}-{}", id, index)))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .px(theme::scaled_px(6.))
+        .py(theme::scaled_px(2.))
+        .rounded_md()
+        .border_1()
+        .border_color(rgb(accent))
+        .text_size(theme::scaled_px(10.))
+        .text_color(rgb(accent))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(theme().selected)))
+        .child(SharedString::from(glyph))
+        .child(SharedString::from(label.to_string()))
+        .on_click(handler)
 }
 
 fn guidance_pane(msg: &str) -> gpui::AnyElement {
@@ -456,120 +583,6 @@ fn pane(
         )
 }
 
-/// A pane-header accept toggle (☑/☐) — UX-010.  Checking it accepts that side
-/// for every hunk of the file (MVP file-level mapping); unchecking resets.
-fn accept_toggle(
-    id: &'static str,
-    checked: bool,
-    accent: u32,
-    path: &std::path::Path,
-    choice: HunkChoice,
-    cx: &mut Context<KagiApp>,
-) -> gpui::Stateful<gpui::Div> {
-    let p = path.to_path_buf();
-    let handler = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        if checked {
-            // Already accepted → toggle off (reset all hunks to unresolved).
-            apply_all_hunks(this, &p, HunkChoice::Unresolved);
-        } else {
-            apply_all_hunks(this, &p, choice.clone());
-        }
-        cx.notify();
-    });
-    let glyph = if checked { "\u{2611}" } else { "\u{2610}" }; // ☑ / ☐
-    div()
-        .id(id)
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_1()
-        .px(theme::scaled_px(6.))
-        .py(theme::scaled_px(2.))
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(accent))
-        .text_size(theme::scaled_px(11.))
-        .text_color(rgb(accent))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().selected)))
-        .child(SharedString::from(glyph))
-        .child(SharedString::from(Msg::EditorAccept.t()))
-        .on_click(handler)
-}
-
-/// The both-order strip placed between the A·B row and the Result pane (UX-011).
-/// Highlights the active order when both sides are currently accepted.
-fn both_order_strip(
-    accept: AcceptState,
-    path: &std::path::Path,
-    cx: &mut Context<KagiApp>,
-) -> gpui::Div {
-    let both = accept.current && accept.incoming;
-
-    let p_cf = path.to_path_buf();
-    let cf = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        apply_all_hunks(this, &p_cf, HunkChoice::BothCurrentFirst);
-        cx.notify();
-    });
-    let p_if = path.to_path_buf();
-    let iff = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        apply_all_hunks(this, &p_if, HunkChoice::BothIncomingFirst);
-        cx.notify();
-    });
-
-    div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .w_full()
-        .px(theme::scaled_px(10.))
-        .py(theme::scaled_px(5.))
-        .bg(rgb(theme().surface))
-        .child(
-            div()
-                .text_size(theme::scaled_px(10.))
-                .text_color(rgb(theme().text_label))
-                .child(SharedString::from(Msg::EditorBothLabel.t())),
-        )
-        .child(both_button(
-            "both-cf",
-            Msg::EditorAcceptBothCurrentFirst.t(),
-            both,
-            cf,
-        ))
-        .child(both_button(
-            "both-if",
-            Msg::EditorAcceptBothIncomingFirst.t(),
-            false,
-            iff,
-        ))
-}
-
-fn both_button<H>(
-    id: &'static str,
-    label: &str,
-    active: bool,
-    handler: H,
-) -> gpui::Stateful<gpui::Div>
-where
-    H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-{
-    let accent = if active { theme().color_success } else { theme().text_sub };
-    div()
-        .id(id)
-        .px(theme::scaled_px(8.))
-        .py(theme::scaled_px(3.))
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(accent))
-        .text_size(theme::scaled_px(11.))
-        .text_color(rgb(accent))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().selected)))
-        .child(SharedString::from(label.to_string()))
-        .on_click(handler)
-}
 
 // ────────────────────────────────────────────────────────────
 // Result pane: Preview (read-only) / Edit (editable) — UX-015

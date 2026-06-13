@@ -14,4 +14,4 @@ hunk 単位(MVP)。data model は line 単位へ拡張可能に(v0.2 line accept
 - Plan 経由・in-memory・chars()・theme()・i18n Msg(ours/theirs 非表示)。own-code warning 0。
 
 ## 実装メモ (done)
-MVP は hunk 単位 model(HunkModel/HunkChoice)を file-level UI で操作。data model は hunk 配列 + Manual(line)拡張余地ありで line-level(v0.2)の布石を維持。
+hunk 単位 model(HunkModel/HunkChoice)を **per-hunk UI** で操作するよう更新(UX-010 参照)。各 hunk が独立の A/B トグルを持ち、1 hunk の変更が他 hunk に波及しない(test `per_hunk_accept_is_independent`: hunk0=current/hunk1=incoming を独立に設定し相互不干渉を確認)。data model は hunk 配列 + `HunkChoice::Manual(String)` で line-level(v0.2)の布石を維持。`apply_hunk_choice` が focused hunk(`conflict_selected_hunk`)も更新。

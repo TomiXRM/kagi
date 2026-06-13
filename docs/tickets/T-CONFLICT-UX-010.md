@@ -14,4 +14,4 @@
 - Plan 経由・in-memory・chars()・theme()・i18n Msg(ours/theirs 非表示)。own-code warning 0。
 
 ## 実装メモ (done)
-各 pane header に accept toggle(☑/☐ + "accept")。MVP は file-level マッピング(全 hunk に AcceptCurrent/Incoming を適用、解除で Unresolved)。accept_state() が全 hunk choice から集計。
+~~各 pane header に accept toggle(file-level)~~ → **per-hunk へ移行(UX-012)**。pane header の file-level toggle と both-order strip は撤去。代わりに A·B 行と Result の間に**スクロール可能な hunk control list**(`hunk_controls`/`hunk_row`)を置き、hunk ごとに ☑Accept current / ☑Accept incoming / ☑両方(cf/if)を独立トグル(再押しで Unresolved)。focused hunk は `conflict_selected_hunk`(EditorChrome 経由)で選択ハイライト、行クリックで focus 追従。orphan になった `accept_toggle`/`both_order_strip`/`both_button`/`Msg::EditorAccept`/`EditorBothLabel` は削除(own-code warning 0)。

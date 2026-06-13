@@ -51,6 +51,7 @@ pub enum BranchAction {
     Push,
     PushAndCreateUpstream,
     SetUpstream,
+    NoUpstreamInfo,
     FetchRemoteBranch,
     CreatePr,
     MergeIntoCurrent,
@@ -136,6 +137,12 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
         MenuGroup {
             title: Some("Sync"),
             items: vec![
+                item(
+                    BranchAction::NoUpstreamInfo,
+                    "No upstream set",
+                    no_upstream_info_state(ctx),
+                    false,
+                ),
                 item(BranchAction::Pull, pull_label(ctx), pull_state(ctx), false),
                 item(
                     BranchAction::PullFfOnly,
@@ -153,7 +160,7 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
                 item(
                     BranchAction::SetUpstream,
                     set_upstream_label(ctx),
-                    mutating_stub_state(ctx),
+                    set_upstream_state(ctx),
                     false,
                 ),
                 item(
@@ -519,14 +526,6 @@ fn disabled(reason: impl Into<SharedString>) -> ItemState {
     ItemState::Disabled(reason.into())
 }
 
-fn busy_or_stub(ctx: &BranchMenuContext) -> ItemState {
-    if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else {
-        disabled(Msg::BcmNotImplementedYet.t())
-    }
-}
-
 fn mutating_stub_state(ctx: &BranchMenuContext) -> ItemState {
     if ctx.busy {
         disabled(Msg::BcmBusy.t())
@@ -570,8 +569,12 @@ fn create_branch_state(ctx: &BranchMenuContext) -> ItemState {
 fn rename_state(ctx: &BranchMenuContext) -> ItemState {
     if matches!(ctx.kind, BranchKind::Remote) {
         ItemState::Hidden
+    } else if ctx.busy {
+        disabled(Msg::BcmBusy.t())
+    } else if ctx.detached_head {
+        disabled(Msg::BcmDetachedHead.t())
     } else {
-        busy_or_stub(ctx)
+        ItemState::Enabled
     }
 }
 
@@ -617,7 +620,7 @@ fn pull_state(ctx: &BranchMenuContext) -> ItemState {
     } else if ctx.behind == 0 {
         disabled(Msg::BcmNothingToPull.t())
     } else {
-        disabled(Msg::BcmNotImplementedYet.t())
+        ItemState::Enabled
     }
 }
 
@@ -633,7 +636,7 @@ fn push_state(ctx: &BranchMenuContext) -> ItemState {
     } else if ctx.ahead == 0 {
         disabled(Msg::BcmNothingToPush.t())
     } else {
-        disabled(Msg::BcmNotImplementedYet.t())
+        ItemState::Enabled
     }
 }
 
@@ -642,8 +645,30 @@ fn push_create_upstream_state(ctx: &BranchMenuContext) -> ItemState {
         ItemState::Hidden
     } else if ctx.busy {
         disabled(Msg::BcmBusy.t())
+    } else if ctx.detached_head {
+        disabled(Msg::BcmDetachedHead.t())
     } else {
-        disabled(Msg::BcmNotImplementedYet.t())
+        ItemState::Enabled
+    }
+}
+
+fn set_upstream_state(ctx: &BranchMenuContext) -> ItemState {
+    if matches!(ctx.kind, BranchKind::Remote) {
+        ItemState::Hidden
+    } else if ctx.busy {
+        disabled(Msg::BcmBusy.t())
+    } else if ctx.detached_head {
+        disabled(Msg::BcmDetachedHead.t())
+    } else {
+        ItemState::Enabled
+    }
+}
+
+fn no_upstream_info_state(ctx: &BranchMenuContext) -> ItemState {
+    if matches!(ctx.kind, BranchKind::Local) && !ctx.has_upstream {
+        disabled(Msg::BcmNoUpstream.t())
+    } else {
+        ItemState::Hidden
     }
 }
 
@@ -763,6 +788,10 @@ mod tests {
         let groups = branch_context_menu_items(&ctx());
 
         assert_enabled(&groups, BranchAction::Checkout);
+        assert_enabled(&groups, BranchAction::Pull);
+        assert_enabled(&groups, BranchAction::Push);
+        assert_enabled(&groups, BranchAction::SetUpstream);
+        assert_enabled(&groups, BranchAction::RenameBranch);
         assert_enabled(&groups, BranchAction::RevealHead);
         assert_enabled(&groups, BranchAction::CreateBranchFromHere);
         assert_enabled(&groups, BranchAction::DeleteBranch);
@@ -790,11 +819,8 @@ mod tests {
 
         assert_disabled_contains(&groups, BranchAction::Pull, "upstream");
         assert_hidden(&groups, BranchAction::Push);
-        assert_disabled_contains(
-            &groups,
-            BranchAction::PushAndCreateUpstream,
-            "not implemented",
-        );
+        assert_enabled(&groups, BranchAction::PushAndCreateUpstream);
+        assert_disabled_contains(&groups, BranchAction::NoUpstreamInfo, "upstream");
         assert_disabled_contains(&groups, BranchAction::CopyUpstreamName, "upstream");
     }
 
@@ -819,6 +845,8 @@ mod tests {
 
         assert_disabled_contains(&groups, BranchAction::Checkout, "not implemented");
         assert_hidden(&groups, BranchAction::DeleteBranch);
+        assert_hidden(&groups, BranchAction::RenameBranch);
+        assert_hidden(&groups, BranchAction::SetUpstream);
         assert_disabled_contains(&groups, BranchAction::DeleteRemoteBranch, "not implemented");
     }
 
@@ -830,9 +858,51 @@ mod tests {
 
         assert_disabled_contains(&groups, BranchAction::Checkout, "operation");
         assert_disabled_contains(&groups, BranchAction::CreateBranchFromHere, "operation");
+        assert_disabled_contains(&groups, BranchAction::Pull, "operation");
+        assert_disabled_contains(&groups, BranchAction::Push, "operation");
+        assert_disabled_contains(&groups, BranchAction::SetUpstream, "operation");
+        assert_disabled_contains(&groups, BranchAction::RenameBranch, "operation");
         assert_disabled_contains(&groups, BranchAction::DeleteBranch, "operation");
         assert_enabled(&groups, BranchAction::RevealHead);
         assert_enabled(&groups, BranchAction::CopyBranchName);
         assert_enabled(&groups, BranchAction::CopyHeadSha);
+    }
+
+    #[test]
+    fn upstream_zero_counts_are_noop_disabled() {
+        let mut c = ctx();
+        c.ahead = 0;
+        c.behind = 0;
+        let groups = branch_context_menu_items(&c);
+
+        assert_eq!(
+            item_for(&groups, BranchAction::Pull).label.as_ref(),
+            "Pull (up to date)"
+        );
+        assert_eq!(
+            item_for(&groups, BranchAction::Push).label.as_ref(),
+            "Push (up to date)"
+        );
+        assert_disabled_contains(&groups, BranchAction::Pull, "nothing");
+        assert_disabled_contains(&groups, BranchAction::Push, "nothing");
+    }
+
+    #[test]
+    fn remote_branch_sync_and_manage_availability() {
+        let mut c = ctx();
+        c.name = "origin/feature/x".to_string();
+        c.kind = BranchKind::Remote;
+        c.has_upstream = false;
+        c.upstream_name = None;
+        c.ahead = 0;
+        c.behind = 0;
+        let groups = branch_context_menu_items(&c);
+
+        assert_hidden(&groups, BranchAction::Push);
+        assert_hidden(&groups, BranchAction::PushAndCreateUpstream);
+        assert_hidden(&groups, BranchAction::SetUpstream);
+        assert_hidden(&groups, BranchAction::RenameBranch);
+        assert_hidden(&groups, BranchAction::DeleteBranch);
+        assert_disabled_contains(&groups, BranchAction::DeleteRemoteBranch, "not implemented");
     }
 }

@@ -146,6 +146,54 @@ impl OperationPlan {
     }
 }
 
+/// Result of pure branch rename input validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchRenameValidation {
+    Valid,
+    Invalid(String),
+}
+
+/// Validate a local branch rename target without touching repository state.
+///
+/// This intentionally accepts only `chars()`-level string checks here, then
+/// delegates full refname syntax to libgit2's reference validator. Callers pass
+/// `existing_branches` from a snapshot or test fixture so this remains a pure
+/// function.
+pub fn validate_branch_rename(
+    old_name: &str,
+    new_name: &str,
+    existing_branches: &[String],
+) -> BranchRenameValidation {
+    let trimmed = new_name.trim();
+    if trimmed.is_empty() {
+        return BranchRenameValidation::Invalid("Branch name is required.".to_string());
+    }
+    if trimmed != new_name {
+        return BranchRenameValidation::Invalid(
+            "Branch name must not start or end with whitespace.".to_string(),
+        );
+    }
+    if trimmed == old_name {
+        return BranchRenameValidation::Invalid("Branch already has that name.".to_string());
+    }
+    if existing_branches.iter().any(|name| name == trimmed) {
+        return BranchRenameValidation::Invalid(format!(
+            "Branch '{}' already exists.",
+            trimmed
+        ));
+    }
+
+    let full_ref = format!("refs/heads/{}", trimmed);
+    if !git2::Reference::is_valid_name(&full_ref) {
+        return BranchRenameValidation::Invalid(format!(
+            "'{}' is not a valid branch name.",
+            trimmed
+        ));
+    }
+
+    BranchRenameValidation::Valid
+}
+
 fn status_summary_display(status: &super::status::WorkingTreeStatus) -> String {
     let dirty_parts: Vec<String> = [
         (!status.staged.is_empty())
@@ -3649,6 +3697,617 @@ fn build_push_preview(
     }
 
     Ok(result)
+}
+
+fn short_oid_string(oid: git2::Oid) -> String {
+    oid.to_string().chars().take(8).collect()
+}
+
+fn local_branch_oid(repo: &Repository, branch_name: &str) -> Result<git2::Oid, GitError> {
+    repo.find_branch(branch_name, BranchType::Local)
+        .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", branch_name, e.message())))?
+        .get()
+        .target()
+        .ok_or_else(|| GitError::Other(format!("branch '{}' has no target OID", branch_name)))
+}
+
+fn choose_push_remote(repo: &Repository) -> Result<String, GitError> {
+    let remotes = repo
+        .remotes()
+        .map_err(|e| GitError::Other(format!("failed to list remotes: {}", e.message())))?;
+    let remote_names: Vec<String> = remotes
+        .iter()
+        .filter_map(|s| s.ok().flatten())
+        .map(|s| s.to_owned())
+        .collect();
+    if remote_names.is_empty() {
+        return Err(GitError::Other(
+            "No remote configured. Cannot push.".to_string(),
+        ));
+    }
+    if remote_names.iter().any(|r| r == "origin") {
+        Ok("origin".to_string())
+    } else {
+        Ok(remote_names[0].clone())
+    }
+}
+
+fn build_push_preview_for_oid(
+    repo: &Repository,
+    head_oid: git2::Oid,
+    upstream_oid: Option<git2::Oid>,
+) -> Result<Vec<String>, GitError> {
+    const MAX_PREVIEW: usize = 100;
+
+    let mut walk = repo
+        .revwalk()
+        .map_err(|e| GitError::Other(format!("revwalk init failed: {}", e.message())))?;
+    walk.push(head_oid)
+        .map_err(|e| GitError::Other(format!("revwalk push failed: {}", e.message())))?;
+    if let Some(upstream_oid) = upstream_oid {
+        let _ = walk.hide(upstream_oid);
+    }
+    walk.set_sorting(git2::Sort::TOPOLOGICAL)
+        .map_err(|e| GitError::Other(format!("revwalk sort failed: {}", e.message())))?;
+
+    let mut result = Vec::new();
+    for oid_result in walk {
+        if result.len() >= MAX_PREVIEW {
+            break;
+        }
+        let oid = oid_result
+            .map_err(|e| GitError::Other(format!("revwalk iter failed: {}", e.message())))?;
+        let commit = repo
+            .find_commit(oid)
+            .map_err(|e| GitError::Other(format!("commit lookup failed: {}", e.message())))?;
+        let short = short_oid_string(oid);
+        let summary: String = commit
+            .summary()
+            .ok()
+            .flatten()
+            .unwrap_or("(no message)")
+            .chars()
+            .take(72)
+            .collect();
+        result.push(format!("{}  {}", short, summary));
+    }
+    Ok(result)
+}
+
+/// Plan a fast-forward-only pull for a non-current local branch.
+///
+/// This is a ref-only operation: execution fetches the branch's upstream remote
+/// and advances `refs/heads/<branch>` only if the upstream tip is a descendant
+/// of the local branch tip. The working tree and HEAD are never changed.
+pub fn plan_pull_branch_ff(repo: &Repository, branch_name: &str) -> Result<OperationPlan, GitError> {
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+    let current = StateSummary {
+        head: head.display(),
+        dirty: status_summary_display(&status),
+    };
+    let mut warnings = Vec::new();
+    let mut blockers = Vec::new();
+
+    if !status.conflicted.is_empty() {
+        warnings.push(format!(
+            "Repository has {} conflicted file(s); this ref-only pull will not touch the working tree.",
+            status.conflicted.len()
+        ));
+    } else if status.is_dirty() {
+        warnings.push(
+            "Working tree is dirty; this ref-only pull will not touch the working tree.".to_string(),
+        );
+    }
+
+    let local_oid = match local_branch_oid(repo, branch_name) {
+        Ok(oid) => oid,
+        Err(e) => {
+            blockers.push(format!("{}", e));
+            git2::Oid::ZERO_SHA1
+        }
+    };
+
+    let (remote_name, upstream_oid, behind_count) =
+        match resolve_upstream_info(repo, branch_name) {
+            Ok((_, remote, behind)) => {
+                let oid = resolve_upstream_oid(repo, branch_name, &remote).ok();
+                (remote, oid, behind)
+            }
+            Err(e) => {
+                blockers.push(format!(
+                    "No upstream configured for branch '{}': {}.",
+                    branch_name, e
+                ));
+                (String::new(), None, 0)
+            }
+        };
+
+    if blockers.is_empty() {
+        if let Some(upstream_oid) = upstream_oid {
+            if local_oid == upstream_oid
+                || repo.graph_descendant_of(local_oid, upstream_oid).unwrap_or(false)
+            {
+                blockers.push(format!(
+                    "Branch '{}' is already up to date with its upstream.",
+                    branch_name
+                ));
+            } else if !repo.graph_descendant_of(upstream_oid, local_oid).unwrap_or(false) {
+                blockers.push(format!(
+                    "Branch '{}' cannot be fast-forwarded to its upstream; pull it while checked out to merge.",
+                    branch_name
+                ));
+            }
+        }
+    }
+
+    let predicted_head = if blockers.is_empty() {
+        format!(
+            "branch: {} -> {}",
+            branch_name,
+            upstream_oid
+                .map(short_oid_string)
+                .unwrap_or_else(|| "upstream tip after fetch".to_string())
+        )
+    } else {
+        current.head.clone()
+    };
+
+    Ok(OperationPlan {
+        title: format!(
+            "Pull '{}' from '{}' (ff-only, ref-only, {} behind)",
+            branch_name, remote_name, behind_count
+        ),
+        current,
+        predicted: StateSummary {
+            head: predicted_head,
+            dirty: "working tree unchanged".to_string(),
+        },
+        warnings,
+        blockers,
+        recovery: format!(
+            "This updates only refs/heads/{} after verifying a fast-forward. \
+             The working tree is not changed. If needed, restore the old tip with git branch -f {} <old-sha>.",
+            branch_name, branch_name
+        ),
+        head_at_plan: head,
+        stash_count_at_plan: 0,
+        preview_files: Vec::new(),
+        preview_commits: Vec::new(),
+        destructive: false,
+    })
+}
+
+pub fn execute_pull_branch_ff(
+    repo: &Repository,
+    repo_path: &Path,
+    plan: &OperationPlan,
+    branch_name: &str,
+) -> Result<PullOutcome, GitError> {
+    preflight_check(repo, plan)?;
+    let local_oid = local_branch_oid(repo, branch_name)?;
+    let (_, remote_name, _) = resolve_upstream_info(repo, branch_name)?;
+
+    let fetch_out = run_git(repo_path, &["fetch", &remote_name])
+        .map_err(|e| GitError::Other(format!("fetch failed: {}", e)))?;
+    if fetch_out.status != 0 {
+        return Err(GitError::Other(format!(
+            "fetch failed (exit {}): {}",
+            fetch_out.status,
+            fetch_out.stderr.trim()
+        )));
+    }
+
+    let upstream_oid = resolve_upstream_oid(repo, branch_name, &remote_name)?;
+    if local_oid == upstream_oid
+        || repo.graph_descendant_of(local_oid, upstream_oid).unwrap_or(false)
+    {
+        return Ok(PullOutcome::UpToDate);
+    }
+    if !repo.graph_descendant_of(upstream_oid, local_oid).unwrap_or(false) {
+        return Err(GitError::Other(format!(
+            "branch '{}' is not fast-forwardable to upstream",
+            branch_name
+        )));
+    }
+
+    let refname = format!("refs/heads/{}", branch_name);
+    repo.reference(
+        &refname,
+        upstream_oid,
+        true,
+        &format!("pull: fast-forward {} to {}", branch_name, short_oid_string(upstream_oid)),
+    )
+    .map_err(|e| GitError::Other(format!("branch ref update failed: {}", e.message())))?;
+
+    Ok(PullOutcome::FastForward {
+        to: CommitId(upstream_oid.to_string()),
+    })
+}
+
+/// Plan a push for a specified local branch. Unlike [`plan_push`], this does
+/// not require the branch to be checked out.
+pub fn plan_push_branch(
+    repo: &Repository,
+    branch_name: &str,
+    set_upstream: bool,
+) -> Result<OperationPlan, GitError> {
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+    let current = StateSummary {
+        head: head.display(),
+        dirty: status_summary_display(&status),
+    };
+    let mut blockers = Vec::new();
+    let warnings = vec!["Non-fast-forward pushes will fail; force is not used.".to_string()];
+
+    let local_oid = match local_branch_oid(repo, branch_name) {
+        Ok(oid) => oid,
+        Err(e) => {
+            blockers.push(format!("{}", e));
+            git2::Oid::ZERO_SHA1
+        }
+    };
+
+    let (remote_name, upstream_oid, has_upstream) = if set_upstream {
+        match choose_push_remote(repo) {
+            Ok(remote) => (remote, None, false),
+            Err(e) => {
+                blockers.push(format!("{}", e));
+                (String::new(), None, false)
+            }
+        }
+    } else {
+        match resolve_upstream_info(repo, branch_name) {
+            Ok((_, remote, _)) => {
+                let oid = resolve_upstream_oid(repo, branch_name, &remote).ok();
+                (remote, oid, true)
+            }
+            Err(e) => {
+                blockers.push(format!(
+                    "No upstream configured for branch '{}': {}.",
+                    branch_name, e
+                ));
+                (String::new(), None, false)
+            }
+        }
+    };
+
+    let ahead_count = if blockers.is_empty() {
+        if let Some(upstream_oid) = upstream_oid {
+            repo.graph_ahead_behind(local_oid, upstream_oid)
+                .map(|(ahead, _)| ahead)
+                .unwrap_or(0)
+        } else {
+            build_push_preview_for_oid(repo, local_oid, None)
+                .map(|commits| commits.len())
+                .unwrap_or(0)
+        }
+    } else {
+        0
+    };
+
+    if blockers.is_empty() && has_upstream && ahead_count == 0 {
+        blockers.push(format!(
+            "Branch '{}' is already up to date with its upstream; nothing to push.",
+            branch_name
+        ));
+    }
+
+    let preview_commits = if blockers.is_empty() {
+        build_push_preview_for_oid(repo, local_oid, upstream_oid).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let title = if set_upstream {
+        format!(
+            "Push '{}' to '{}/{}' (set upstream)",
+            branch_name, remote_name, branch_name
+        )
+    } else {
+        format!("Push '{}' to '{}'", branch_name, remote_name)
+    };
+
+    Ok(OperationPlan {
+        title,
+        current,
+        predicted: StateSummary {
+            head: format!("branch: {} (pushed {} commit(s))", branch_name, ahead_count),
+            dirty: "working tree unchanged".to_string(),
+        },
+        warnings,
+        blockers,
+        recovery: "Push sends commits to the remote and does not modify the working tree. If the push is rejected, fetch or pull first and re-plan.".to_string(),
+        head_at_plan: head,
+        stash_count_at_plan: 0,
+        preview_files: Vec::new(),
+        preview_commits,
+        destructive: false,
+    })
+}
+
+pub fn execute_push_branch(
+    repo: &Repository,
+    repo_path: &Path,
+    plan: &OperationPlan,
+    branch_name: &str,
+    set_upstream: bool,
+) -> Result<PushOutcome, GitError> {
+    preflight_check(repo, plan)?;
+    let local_oid = local_branch_oid(repo, branch_name)?;
+
+    let (remote_name, upstream_oid) = if set_upstream {
+        (choose_push_remote(repo)?, None)
+    } else {
+        let (_, remote, _) = resolve_upstream_info(repo, branch_name)?;
+        let upstream_oid = resolve_upstream_oid(repo, branch_name, &remote).ok();
+        (remote, upstream_oid)
+    };
+
+    let pushed = if let Some(upstream_oid) = upstream_oid {
+        repo.graph_ahead_behind(local_oid, upstream_oid)
+            .map(|(ahead, _)| ahead)
+            .unwrap_or(0)
+    } else {
+        build_push_preview_for_oid(repo, local_oid, None)
+            .map(|commits| commits.len())
+            .unwrap_or(0)
+    };
+
+    let args: Vec<&str> = if set_upstream {
+        vec!["push", "-u", &remote_name, branch_name]
+    } else {
+        vec!["push", &remote_name, branch_name]
+    };
+    let out = run_git(repo_path, &args)
+        .map_err(|e| GitError::Other(format!("push failed: {}", e)))?;
+    if out.status != 0 {
+        return Err(GitError::Other(format!(
+            "push failed (exit {}): {}",
+            out.status,
+            out.stderr.trim()
+        )));
+    }
+
+    Ok(PushOutcome {
+        pushed,
+        set_upstream,
+    })
+}
+
+pub fn plan_set_upstream(
+    repo: &Repository,
+    branch_name: &str,
+    upstream: &str,
+) -> Result<OperationPlan, GitError> {
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+    let current = StateSummary {
+        head: head.display(),
+        dirty: status_summary_display(&status),
+    };
+    let mut blockers = Vec::new();
+    let mut warnings = Vec::new();
+
+    if repo.find_branch(branch_name, BranchType::Local).is_err() {
+        blockers.push(format!("Branch '{}' does not exist.", branch_name));
+    }
+    if upstream.trim().is_empty() || upstream.trim() != upstream {
+        blockers.push("Upstream must be a remote branch name like origin/main.".to_string());
+    } else if repo.find_branch(upstream, BranchType::Remote).is_err() {
+        warnings.push(format!(
+            "Remote-tracking branch '{}' is not present locally; config can still be set.",
+            upstream
+        ));
+    }
+
+    Ok(OperationPlan {
+        title: format!("Set upstream of '{}' to '{}'", branch_name, upstream),
+        current,
+        predicted: StateSummary {
+            head: format!("branch: {} -> {}", branch_name, upstream),
+            dirty: "working tree unchanged".to_string(),
+        },
+        warnings,
+        blockers,
+        recovery: format!(
+            "This changes only branch.{}.remote and branch.{}.merge in git config. To undo, set the previous upstream again.",
+            branch_name, branch_name
+        ),
+        head_at_plan: head,
+        stash_count_at_plan: 0,
+        preview_files: Vec::new(),
+        preview_commits: Vec::new(),
+        destructive: false,
+    })
+}
+
+pub fn execute_set_upstream(
+    repo: &Repository,
+    plan: &OperationPlan,
+    branch_name: &str,
+    upstream: &str,
+) -> Result<(), GitError> {
+    preflight_check(repo, plan)?;
+    let mut branch = repo
+        .find_branch(branch_name, BranchType::Local)
+        .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", branch_name, e.message())))?;
+    branch
+        .set_upstream(Some(upstream))
+        .map_err(|e| GitError::Other(format!("set upstream failed: {}", e.message())))?;
+    Ok(())
+}
+
+fn local_branch_names(repo: &Repository) -> Result<Vec<String>, GitError> {
+    let mut names = Vec::new();
+    let branches = repo
+        .branches(Some(BranchType::Local))
+        .map_err(|e| GitError::Other(format!("branch iteration failed: {}", e.message())))?;
+    for branch_result in branches {
+        let (branch, _) = branch_result
+            .map_err(|e| GitError::Other(format!("branch iteration failed: {}", e.message())))?;
+        if let Ok(Some(name)) = branch.name() {
+            names.push(name.to_string());
+        }
+    }
+    Ok(names)
+}
+
+fn branch_config_entries(repo: &Repository, branch_name: &str) -> Vec<(String, String)> {
+    let prefix = format!("branch.{}.", branch_name);
+    let mut entries_out = Vec::new();
+    if let Ok(mut config) = repo.config() {
+        if let Ok(snap) = config.snapshot() {
+            if let Ok(mut entries) = snap.entries(None) {
+                while let Some(Ok(entry)) = entries.next() {
+                    let key = match entry.name() {
+                        Ok(k) if k.starts_with(&prefix) => k.to_string(),
+                        _ => continue,
+                    };
+                    let value = match entry.value() {
+                        Ok(v) => v.to_string(),
+                        Err(_) => continue,
+                    };
+                    let suffix: String = key.chars().skip(prefix.chars().count()).collect();
+                    if entries_out.iter().any(|(existing, _)| existing == &suffix) {
+                        continue;
+                    }
+                    entries_out.push((suffix, value));
+                }
+            }
+        }
+    }
+    entries_out
+}
+
+fn remove_branch_config_section(repo: &Repository, branch_name: &str) {
+    let prefix = format!("branch.{}.", branch_name);
+    if let Ok(mut config) = repo.config() {
+        let mut keys = Vec::new();
+        if let Ok(snap) = config.snapshot() {
+            if let Ok(mut entries) = snap.entries(None) {
+                while let Some(Ok(entry)) = entries.next() {
+                    if let Ok(k) = entry.name() {
+                        if k.starts_with(&prefix) && !keys.iter().any(|e| e == k) {
+                            keys.push(k.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        for key in keys {
+            if config.remove_multivar(&key, ".*").is_err() {
+                let _ = config.remove(&key);
+            }
+        }
+    }
+}
+
+pub fn plan_rename_branch(
+    repo: &Repository,
+    old_name: &str,
+    new_name: &str,
+) -> Result<OperationPlan, GitError> {
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+    let current = StateSummary {
+        head: head.display(),
+        dirty: status_summary_display(&status),
+    };
+    let mut blockers = Vec::new();
+    let mut warnings = Vec::new();
+
+    if repo.find_branch(old_name, BranchType::Local).is_err() {
+        blockers.push(format!("Branch '{}' does not exist.", old_name));
+    }
+    let existing = local_branch_names(repo)?;
+    if let BranchRenameValidation::Invalid(reason) =
+        validate_branch_rename(old_name, new_name, &existing)
+    {
+        blockers.push(reason);
+    }
+    if status.is_dirty() {
+        warnings.push(
+            "Working tree is dirty; branch rename is ref-only and will not touch files.".to_string(),
+        );
+    }
+    warnings.push(
+        "Remote branch names are not renamed automatically; only local branch config is carried over.".to_string(),
+    );
+
+    Ok(OperationPlan {
+        title: format!("Rename branch '{}' to '{}'", old_name, new_name),
+        current,
+        predicted: StateSummary {
+            head: match &head {
+                Head::Attached { branch, .. } if branch == old_name => {
+                    format!("branch: {}", new_name)
+                }
+                _ => head.display(),
+            },
+            dirty: "working tree unchanged".to_string(),
+        },
+        warnings,
+        blockers,
+        recovery: format!(
+            "This renames only the local ref. To undo: git branch -m {} {}",
+            new_name, old_name
+        ),
+        head_at_plan: head,
+        stash_count_at_plan: 0,
+        preview_files: Vec::new(),
+        preview_commits: Vec::new(),
+        destructive: false,
+    })
+}
+
+pub fn execute_rename_branch(
+    repo: &Repository,
+    plan: &OperationPlan,
+    old_name: &str,
+    new_name: &str,
+) -> Result<(), GitError> {
+    preflight_check(repo, plan)?;
+    let existing = local_branch_names(repo)?;
+    if let BranchRenameValidation::Invalid(reason) =
+        validate_branch_rename(old_name, new_name, &existing)
+    {
+        return Err(GitError::Other(reason));
+    }
+
+    let saved_config = branch_config_entries(repo, old_name);
+    let mut branch = repo
+        .find_branch(old_name, BranchType::Local)
+        .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", old_name, e.message())))?;
+    branch
+        .rename(new_name, false)
+        .map_err(|e| GitError::Other(format!("branch rename failed: {}", e.message())))?;
+
+    remove_branch_config_section(repo, old_name);
+    remove_branch_config_section(repo, new_name);
+    if let Ok(mut config) = repo.config() {
+        for (suffix, value) in saved_config {
+            let key = format!("branch.{}.{}", new_name, suffix);
+            config
+                .set_str(&key, &value)
+                .map_err(|e| GitError::Other(format!("config carry-over failed: {}", e.message())))?;
+        }
+    }
+
+    if repo.find_branch(new_name, BranchType::Local).is_err() {
+        return Err(GitError::Other(format!(
+            "branch '{}' was not found after rename",
+            new_name
+        )));
+    }
+    if repo.find_branch(old_name, BranchType::Local).is_ok() {
+        return Err(GitError::Other(format!(
+            "branch '{}' still exists after rename",
+            old_name
+        )));
+    }
+    Ok(())
 }
 
 

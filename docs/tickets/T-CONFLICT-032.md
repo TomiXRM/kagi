@@ -1,14 +1,15 @@
-# T-CONFLICT-032: rerere 相当の解決再利用
+# T-CONFLICT-032: Accept both を実装する
 
-- Status: todo(実装開始はユーザー go 後)
-- Phase: v1.0
-- 仕様の正: requirements-conflict-ux.md + ADR-0056〜0061 + research/conflict-ux-*.md
+- Status: todo(file 単位は W30 済)
+- Phase: P4 Actions
+- 仕様: requirements-conflict-ux.md(v2)+ ADR-0056〜0067
 
 ## スコープ
 
-設計 ADR から(libgit2 非対応のため自前)
+current→incoming / incoming→current の順指定
 
 ## 規約
 
-- plan→confirm→preflight→execute→verify→oplog。in-memory 主義(repo を汚さない)
-- chars() ベース・バイトスライス禁止。theme() 経由。i18n は Msg 経由。fixture のみで検証
+- Plan 経由(ADR-0067)。in-memory 主義(continue まで repo を汚さない)。
+- chars() のみ・バイトスライス禁止。theme()・i18n Msg(ADR-0048。ours/theirs は出さない)。
+- own-code warning 0。`cargo test --workspace` green。fixture のみ。

@@ -1,14 +1,15 @@
-# T-CONFLICT-002: RepoMode::Conflict と外部起因検出
+# T-CONFLICT-002: merge/rebase/cherry-pick/revert 状態を検出する
 
-- Status: todo(実装開始はユーザー go 後)
-- Phase: MVP
-- 仕様の正: requirements-conflict-ux.md + ADR-0056〜0061 + research/conflict-ux-*.md
+- Status: done(W26)
+- Phase: P1 State
+- 仕様: requirements-conflict-ux.md(v2)+ ADR-0056〜0067
 
 ## スコープ
 
-KagiApp に RepoMode。起動時 + watcher で検出して Mode 出入り(CLI 起因含む)。headless ログ `[kagi] conflict-mode: <op> N file(s)`
+Repository::state + state files。op + step/total + source ref
 
 ## 規約
 
-- plan→confirm→preflight→execute→verify→oplog。in-memory 主義(repo を汚さない)
-- chars() ベース・バイトスライス禁止。theme() 経由。i18n は Msg 経由。fixture のみで検証
+- Plan 経由(ADR-0067)。in-memory 主義(continue まで repo を汚さない)。
+- chars() のみ・バイトスライス禁止。theme()・i18n Msg(ADR-0048。ours/theirs は出さない)。
+- own-code warning 0。`cargo test --workspace` green。fixture のみ。

@@ -182,10 +182,16 @@
 | Remote | T-BCM-060〜063 | done(060/061/062; 063 MVP 外) |
 | Tests | T-BCM-070〜073 | done(073) |
 
-## Conflict Resolution UX(requirements-conflict-ux.md / ADR-0056〜0061。実装はユーザー go 待ち)
+## Conflict Resolution UX v2(requirements-conflict-ux.md / ADR-0056〜0067 / GitKraken 分解再設計)
+
+実装済み: W26(backend)/ W30(Mode + banner + file 単位 choose + preview)/ W31(予測 conflict merge 遷移)。
+残りは Dashboard 化 + hunk 単位 Conflict Editor + 安全強化。
 
 | Phase | チケット | status |
 |-------|----------|--------|
-| MVP | T-CONFLICT-001〜010 | todo |
-| v0.2 | T-CONFLICT-020〜025 | todo |
-| v1.0/later | T-CONFLICT-030〜033 | todo |
+| 1 Conflict State | T-CONFLICT-001〜005 | 大半 done(W26/W30)、type 細分は残 |
+| 2 Dashboard | T-CONFLICT-010〜015 | banner done、Dashboard/Resolved/Path・Tree は todo |
+| 3 Conflict Editor | T-CONFLICT-020〜025 | todo(hunk 単位 — 本体) |
+| 4 Resolution Actions | T-CONFLICT-030〜035 | file 単位 done、hunk + Save + log は todo |
+| 5 Continue/Abort/Skip | T-CONFLICT-040〜044 | continue/abort done、skip + 全 checklist は todo |
+| 6 Escape Hatch | T-CONFLICT-050〜052 | todo |

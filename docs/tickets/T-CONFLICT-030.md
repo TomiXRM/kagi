@@ -1,14 +1,15 @@
-# T-CONFLICT-030: rebase 多 step 進捗 UX
+# T-CONFLICT-030: Accept current を実装する
 
-- Status: todo(実装開始はユーザー go 後)
-- Phase: v1.0
-- 仕様の正: requirements-conflict-ux.md + ADR-0056〜0061 + research/conflict-ux-*.md
+- Status: todo
+- Phase: P4 Actions
+- 仕様: requirements-conflict-ux.md(v2)+ ADR-0056〜0067
 
 ## スコープ
 
-commit 2/5 表示、step ごとの skip、ORIG_HEAD 復帰
+hunk に current 側採用 → buffer 反映 → Result 即更新
 
 ## 規約
 
-- plan→confirm→preflight→execute→verify→oplog。in-memory 主義(repo を汚さない)
-- chars() ベース・バイトスライス禁止。theme() 経由。i18n は Msg 経由。fixture のみで検証
+- Plan 経由(ADR-0067)。in-memory 主義(continue まで repo を汚さない)。
+- chars() のみ・バイトスライス禁止。theme()・i18n Msg(ADR-0048。ours/theirs は出さない)。
+- own-code warning 0。`cargo test --workspace` green。fixture のみ。

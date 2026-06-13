@@ -1,12 +1,12 @@
-# T-CONFLICT-005: GitStateSnapshot に Conflict Mode を追加する
+# T-CONFLICT-040: Continue operation plan を実装する
 
-- Status: done(W30)
-- Phase: P1 State
+- Status: done(W26 merge continue、sequencer/checklist は本フェーズ)
+- Phase: P5 CAS
 - 仕様: requirements-conflict-ux.md(v2)+ ADR-0056〜0067
 
 ## スコープ
 
-RepoMode/Option<Session> をアプリ状態へ。起動/watcher/操作後に検出
+ADR-0067: index 反映 → marker 再検査 → merge commit / sequencer continue
 
 ## 規約
 

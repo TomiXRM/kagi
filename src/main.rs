@@ -213,6 +213,10 @@ fn main() {
     // `window.set_rem_size`.  Defaults to 1.0x.
     crate::ui::theme::init_zoom();
 
+    // T-SETTINGS-001: resolve the persisted compact-graph flag (settings.json
+    // "graph_compact") so new tabs/windows open in the user's chosen density.
+    crate::ui::theme::init_compact_graph();
+
     // W22-I18N / ADR-0048: resolve the UI language before anything renders.
     // Priority: KAGI_LANG env → settings.json "lang" → LANG/LC_ALL → English.
     crate::ui::i18n::init_lang();

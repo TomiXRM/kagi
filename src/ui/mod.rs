@@ -22,6 +22,7 @@ pub mod graph_view;
 pub mod i18n;
 pub mod inspector;
 pub mod modals;
+pub mod settings_view;
 pub mod sidebar;
 pub mod smart_commit;
 pub mod tabs;
@@ -1388,7 +1389,7 @@ impl KagiApp {
             inspector_tree_view: true,
             inspector_split: INSPECTOR_SPLIT_DEFAULT,
             inspector_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
-            graph_compact: false,
+            graph_compact: theme::compact_graph(),
             graph_scroll_x: 0.0,
             // W2-SIDEBAR
             remote_branches,
@@ -1511,7 +1512,7 @@ impl KagiApp {
             inspector_tree_view: true,
             inspector_split: INSPECTOR_SPLIT_DEFAULT,
             inspector_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
-            graph_compact: false,
+            graph_compact: theme::compact_graph(),
             graph_scroll_x: 0.0,
             // W2-SIDEBAR
             remote_branches: Vec::new(),
@@ -10007,6 +10008,8 @@ impl KagiApp {
         }
 
         let el = menu_act!(el, cmds::About, "app.about");
+        // T-SETTINGS-001: open Settings (menu item + cmd-,).
+        let el = menu_act!(el, cmds::OpenSettings, "app.settings");
         let el = menu_act!(el, cmds::Quit, "app.quit");
         let el = menu_act!(el, cmds::NewTab, "file.newTab");
         let el = menu_act!(el, cmds::CloseTab, "file.closeTab");
@@ -10507,6 +10510,30 @@ impl KagiApp {
                 .on_click(terminal_click),
             )
             .child(div().flex_1())
+            // ── RIGHT: Settings gear (T-SETTINGS-001 / ADR-0080) ──
+            // Opens the OpenLogi-style Settings overlay; also reachable via the
+            // kagi menu "Settings…" item and cmd-,.
+            .child({
+                let settings_click =
+                    cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
+                        this.menu_overlay = Some(commands::MenuOverlay::Settings);
+                        cx.notify();
+                    });
+                div()
+                    .id("tb-settings")
+                    .flex_shrink_0()
+                    .ml_1()
+                    .p_1()
+                    .rounded_md()
+                    .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
+                    .tooltip(|window, cx| Tooltip::new("Settings").build(window, cx))
+                    .on_click(settings_click)
+                    .child(
+                        gpui_component::Icon::new(gpui_component::IconName::Settings)
+                            .with_size(gpui_component::Size::Size(theme::scaled_px(18.0)))
+                            .text_color(rgb(theme().text_main)),
+                    )
+            })
     }
 
     /// Body slot — the main content area: sidebar | divider | commit list | optional panel.
@@ -10633,6 +10660,8 @@ impl KagiApp {
                 let is_compact = self.graph_compact;
                 let compact_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
                     this.graph_compact = !this.graph_compact;
+                    // T-SETTINGS-001: persist so the Settings window + restart agree.
+                    theme::set_compact_graph(this.graph_compact);
                     cx.notify();
                 });
                 div()

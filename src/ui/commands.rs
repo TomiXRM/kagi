@@ -54,6 +54,8 @@ actions!(
     [
         // kagi (app menu)
         About,
+        // T-SETTINGS-001 / ADR-0080: open the Settings window (also cmd-,).
+        OpenSettings,
         Quit,
         // File
         NewTab,
@@ -168,6 +170,7 @@ pub enum CommandState {
 /// `KAGI_MENU_DUMP` verifier and by keystroke lookup.
 pub const COMMANDS: &[Command] = &[
     Command { id: "app.about", label: "About kagi", keystroke: None, dangerous: false },
+    Command { id: "app.settings", label: "Settings…", keystroke: Some("cmd-,"), dangerous: false },
     Command { id: "app.quit", label: "Quit kagi", keystroke: Some("cmd-q"), dangerous: false },
 
     Command { id: "file.newTab", label: "New Tab", keystroke: Some("cmd-t"), dangerous: false },
@@ -255,6 +258,7 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
     match id {
         // ── Always available ────────────────────────────────────────────
         "app.about"
+        | "app.settings"
         | "app.quit"
         | "file.newTab"
         | "file.openRepository"
@@ -385,6 +389,8 @@ pub fn build_menus() -> Vec<Menu> {
             name: "kagi".into(),
             items: vec![
                 mi("app.about", About),
+                MenuItem::separator(),
+                mi("app.settings", OpenSettings),
                 MenuItem::separator(),
                 mi("app.quit", Quit),
             ],
@@ -581,6 +587,8 @@ actions!(kagi_edit, [EditCut, EditCopy, EditPaste, EditSelectAll, EditUndo, Edit
 pub fn register_keybindings(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-q", Quit, None),
+        // T-SETTINGS-001: cmd-, opens the Settings window (macOS convention).
+        KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("cmd-t", NewTab, None),
         KeyBinding::new("cmd-w", CloseTab, None),
         KeyBinding::new("cmd-shift-o", CloneRepository, None),
@@ -665,6 +673,9 @@ pub enum MenuOverlay {
         title: SharedString,
         lines: Vec<SharedString>,
     },
+    /// T-SETTINGS-001 / ADR-0080: the OpenLogi-style Settings window
+    /// (Appearance + Language pages). Hosted as an overlay (no sub-window yet).
+    Settings,
 }
 
 const GITHUB_URL: &str = "https://github.com/TomiXRM/kagi";
@@ -688,6 +699,11 @@ impl KagiApp {
         match id {
             // ── kagi ────────────────────────────────────────────────
             "app.about" => self.open_about_overlay(),
+            // T-SETTINGS-001: open the OpenLogi-style Settings overlay.
+            "app.settings" => {
+                self.menu_overlay = Some(MenuOverlay::Settings);
+                cx.notify();
+            }
             "app.quit" => cx.quit(),
 
             // ── File ────────────────────────────────────────────────
@@ -981,6 +997,12 @@ impl KagiApp {
                 Some(self.render_branch_picker(mode, branches, cx))
             }
             MenuOverlay::Info { title, lines } => Some(self.render_info_overlay(title, lines, cx)),
+            // T-SETTINGS-001: the OpenLogi-style Settings window (the field
+            // closures route apply/persist through the live `KagiApp` entity).
+            MenuOverlay::Settings => Some(super::settings_view::render_settings_overlay(
+                cx.entity(),
+                cx,
+            )),
         }
     }
 

@@ -21,7 +21,7 @@
 //! JSON, no serde — same approach as `oplog.rs`), honouring `KAGI_LOG_DIR`.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use gpui::{App, Hsla, hsla, rgb};
 
@@ -277,6 +277,39 @@ pub fn init_zoom() {
     eprintln!("[kagi] zoom: {:.2}x", zoom());
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// T-SETTINGS-001: compact-graph toggle (persisted, global — mirrors zoom).
+// ──────────────────────────────────────────────────────────────────────────
+//
+// `graph_compact` lives on `KagiApp` (read every render frame), but the
+// Settings window persists/restores it through `settings.json` like every other
+// preference.  We keep a process-global atomic so startup can seed the initial
+// value (read once when a `KagiApp` is constructed) without a serde layer.
+
+/// Active compact-graph flag (`false` = normal row height). Defaults to off.
+static GRAPH_COMPACT: AtomicBool = AtomicBool::new(false);
+
+/// The currently-active compact-graph flag (seeds new `KagiApp`s at startup).
+#[inline]
+pub fn compact_graph() -> bool {
+    GRAPH_COMPACT.load(Ordering::Relaxed)
+}
+
+/// Set + persist the compact-graph flag to `settings.json` (key `graph_compact`).
+pub fn set_compact_graph(on: bool) {
+    GRAPH_COMPACT.store(on, Ordering::Relaxed);
+    write_setting("graph_compact", Some(if on { "true" } else { "false" }));
+}
+
+/// Initialise the compact-graph flag at startup from `settings.json`
+/// (`"graph_compact"`, `"true"`/`"false"`). Missing/invalid → off.
+pub fn init_compact_graph() {
+    if let Some(raw) = read_setting("graph_compact") {
+        GRAPH_COMPACT.store(raw.trim() == "true", Ordering::Relaxed);
+    }
+    eprintln!("[kagi] graph_compact: {}", compact_graph());
+}
+
 /// Look up a theme index by slug.
 pub fn index_of(slug: &str) -> Option<usize> {
     THEMES.iter().position(|t| t.slug == slug)
@@ -394,10 +427,12 @@ fn settings_escape(s: &str) -> String {
 
 /// All known string-valued `settings.json` keys.  Listed so [`write_setting`]
 /// can round-trip every key it doesn't recognise as the current target.
-const SETTINGS_KEYS: [&str; 10] = [
+const SETTINGS_KEYS: [&str; 11] = [
     "theme",
     "lang",
     "ui_zoom",
+    // T-SETTINGS-001: compact commit-graph row height toggle.
+    "graph_compact",
     "smart_commit_llm_enabled",
     "smart_commit_model",
     "smart_commit_lang",
@@ -1161,6 +1196,25 @@ mod tests {
     #[test]
     fn ui_zoom_in_settings_keys() {
         assert!(SETTINGS_KEYS.contains(&"ui_zoom"));
+    }
+
+    // T-SETTINGS-001: the Settings window persists graph_compact through the same
+    // flat settings.json storage; the key must be registered so write_setting
+    // round-trips it (and never clobbers it when writing a sibling key).
+    #[test]
+    fn graph_compact_in_settings_keys() {
+        assert!(SETTINGS_KEYS.contains(&"graph_compact"));
+    }
+
+    // T-SETTINGS-001: the Settings Theme Select maps slug ↔ index purely; the
+    // round-trip must be lossless for every built-in theme (the Select renders
+    // by slug and reuses `set_active(slug)` / `active_index()` to apply).
+    #[test]
+    fn theme_slug_index_roundtrip() {
+        for (i, t) in THEMES.iter().enumerate() {
+            assert_eq!(index_of(t.slug), Some(i));
+            assert_eq!(THEMES[i].slug, t.slug);
+        }
     }
 
     #[test]

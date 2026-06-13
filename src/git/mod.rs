@@ -8,6 +8,7 @@
 //! Network transports (https/ssh) are not used in the MVP.
 
 mod checklist;
+pub mod backend;
 pub mod cli;
 pub mod conflicts;
 mod diff;
@@ -25,6 +26,8 @@ mod staging;
 mod status;
 mod trailers;
 
+#[allow(unused_imports)]
+pub use backend::Backend;
 #[allow(unused_imports)]
 pub use diff::{
     DiffLine, DiffLineKind, FileDiff, Hunk, commit_changed_files, commit_file_diff,

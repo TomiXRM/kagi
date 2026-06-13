@@ -12,7 +12,7 @@ Built with Rust + [GPUI](https://www.gpui.rs/) — the UI framework behind [Zed]
 ![Rust](https://img.shields.io/badge/built%20with-Rust-orange?logo=rust)
 ![GPUI](https://img.shields.io/badge/UI-GPUI-8A2BE2)
 [![Release](https://img.shields.io/github/v/release/TomiXRM/kagi?include_prereleases)](https://github.com/TomiXRM/kagi/releases)
-![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-green)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 <img src="docs/images/hero.png" width="850" alt="Kagi main window — commit graph, branch tree, inspector" />
 
@@ -127,5 +127,4 @@ Actively developed. Implemented: full commit-graph UX, branch/tag/stash/worktree
 
 ## 📄 License
 
-Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT License](LICENSE-MIT) at your option.
-The vendored terminal component (`vendor/gpui-terminal`) is likewise MIT OR Apache-2.0.
+[MIT](LICENSE). The vendored terminal component (`vendor/gpui-terminal`) is upstream-licensed MIT OR Apache-2.0 and is used here under MIT.

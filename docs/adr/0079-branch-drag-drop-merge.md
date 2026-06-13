@@ -6,14 +6,22 @@
 
 ## Decision
 
-Add a **drag-and-drop gesture** in the sidebar `BRANCH / TAG` area to *start* (not
-execute) a merge, GitKraken-style:
+Add a **drag-and-drop gesture** on local-branch labels to *start* (not execute) a
+merge, GitKraken-style.
 
-- A **local branch label** is draggable. During drag a ghost chip shows the dragged
-  branch name.
-- The **drop target (MVP)** is the **current (checked-out) branch** row. Dropping a
-  different local branch onto it opens the **existing `MergePlanModal`** for
-  "merge <dragged> into <current>" — i.e. `KagiApp::open_merge_modal(dragged)` →
+**Drag sources (both supported):**
+- **PRIMARY: the `BRANCH / TAG` ref-badge chips in the commit graph** (the labels to
+  the left of the GRAPH / MESSAGE columns — `render_badges_column`). Local-branch
+  badges (`BadgeKind::Branch`) are draggable; remote/tag badges are not.
+- ALSO: the local-branch labels in the sidebar branch-list pane (already shipped).
+
+Other rules:
+- During drag a ghost chip shows the dragged branch name.
+- The **drop target (MVP)** is the **current (checked-out) branch** — its
+  `BadgeKind::HeadBranch` chip in the graph, and the current-branch row in the
+  sidebar. Dropping a different local branch onto it opens the **existing
+  `MergePlanModal`** for "merge <dragged> into <current>" — i.e.
+  `KagiApp::start_merge_from_drag(dragged)` → `open_merge_modal(dragged)` →
   `Backend::plan_merge_branch(dragged)` (which already merges its argument into HEAD).
 - **Drop only triggers the plan/preview.** Nothing is executed until the user clicks
   the explicit confirm button (`Merge <source> into <target>`). Cancel = no-op.

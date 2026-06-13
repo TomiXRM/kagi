@@ -181,3 +181,11 @@
 | Manage | T-BCM-050〜054 | todo |
 | Remote | T-BCM-060〜063 | todo |
 | Tests | T-BCM-070〜073 | todo |
+
+## Conflict Resolution UX(requirements-conflict-ux.md / ADR-0056〜0061。実装はユーザー go 待ち)
+
+| Phase | チケット | status |
+|-------|----------|--------|
+| MVP | T-CONFLICT-001〜010 | todo |
+| v0.2 | T-CONFLICT-020〜025 | todo |
+| v1.0/later | T-CONFLICT-030〜033 | todo |

@@ -1,6 +1,6 @@
 # Requirements: Conflict Resolution UX(Conflict Mode)
 
-- Status: **Draft**(2026-06-13。課題設定・用語設計 = 確定 / サーベイ統合・ADR・ticket は調査3本の merge 後に確定)
+- Status: **Accepted(design)**(2026-06-13。サーベイ3本統合済み・ADR-0056〜0061・T-CONFLICT-* 起票済み。実装はユーザー go 待ち)
 - 調査: docs/research/conflict-ux-{gui-clients,editors,models}.md(Opus 3レーン、進行中)
 - 関連: ADR-0023(操作分類)、ADR-0046(backup思想)、ADR-0048(i18n)、ADR-0052(merge/rebase 方向)
 
@@ -86,6 +86,28 @@ struct ConflictSession {
 | **v0.2** | hunk 単位 choose + Result 手編集(3-way + Result view)/ blame-of-sides(原因 commit 表示)/ undo・redo / rename・delete / binary の明示 UI / 外部 tool・terminal 連携 |
 | **v1.0** | 作業順序の提案 / rebase 多 step 進捗 UX / rerere 相当の再利用 / 意味的衝突の警告(symbol 単位の入口) |
 | **later** | LLM 意図要約・解決案 / symbol 単位解決 / 自動解決ポリシー |
+
+## 4.5 サーベイ統合(確定した取り込み/不採用)
+
+**取り込む**(出典: conflict-ux-{gui-clients,editors,models}.md):
+- 実ブランチ名ラベル(Fork が最良。SourceTree の Mine/Theirs 反転バグ SRCTREE-1670 が反例)→ §2 確定
+- KDiff3 の安全機構: 全解決まで continue 無効 + 未解決数 + prev/next 未解決ナビ
+- JetBrains: non-conflicting 一括適用 / Accept 系キーボードショートカット
+- both 採用時の順序明示(Combination current-first / incoming-first)
+- 出所可視化(手編集箇所・行ごとの採用元、BC/KDiff3 流)
+- zdiff3 marker style で Base 文脈を表示(git2 MergeFileOptions::style_zdiff3)
+- ours/theirs の rebase 反転は `Repository::state()` を見て文脈名へ翻訳(モデル調査 §4)
+- jj から借りる: **部分解決を失わせない**(解決バッファ自動保存 + abort 時も oplog へ退避)
+- binary / rename-delete / modify-delete の専用 UI(全 GUI が弱い = 差別化点)
+
+**不採用**:
+- jj の first-class conflict(commit へ conflict 埋め込み)と fearless rebase — git 標準互換を壊す(Reject)
+- VSCode 型の view 強制切替 — 退路(inline marker 直接編集)を必ず残す
+- GitKraken 型の内蔵エディタ有料化文脈の UI 分断 / GitHub Desktop 型の外部任せ
+- AI 自動解決(later でも「提案まで」。自動適用はしない)
+
+**実装基盤(確定)**: git2 0.21 の `Index::conflicts()` / `Repository::state()` / `cleanup_state()` /
+`merge_commits`・`merge_trees`(無傷 dry-run)/ `MergeFileResult` — 3-way 解決 UI の基盤は揃っている。
 
 ## 5. 次のステップ
 

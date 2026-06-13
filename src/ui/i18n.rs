@@ -355,6 +355,31 @@ pub enum Msg {
     MergeAndResolveConflicts,
     /// Prominent warning shown on the merge modal when conflicts are predicted.
     MergeConflictWarning,
+
+    // ── T-SETTINGS-001 / ADR-0080: Settings window (prose localized; the
+    //    domain word "graph" stays English per ADR-0048) ──────────────────
+    /// Settings window title.
+    SettingsTitle,
+    /// Settings sidebar: Appearance page title.
+    SettingsAppearance,
+    /// Settings sidebar: Language page title.
+    SettingsLanguage,
+    /// Appearance → Theme row title.
+    SettingsTheme,
+    /// Appearance → Theme row description.
+    SettingsThemeDesc,
+    /// Appearance → UI Zoom row title.
+    SettingsZoom,
+    /// Appearance → UI Zoom row description.
+    SettingsZoomDesc,
+    /// Appearance → Compact graph row title.
+    SettingsCompact,
+    /// Appearance → Compact graph row description.
+    SettingsCompactDesc,
+    /// Language → Interface language row title.
+    SettingsInterfaceLang,
+    /// Language → Interface language row description.
+    SettingsInterfaceLangDesc,
 }
 
 impl Msg {
@@ -740,6 +765,35 @@ impl Msg {
             }
             (Ja, MergeConflictWarning) => {
                 "この merge は conflict を発生させます。conflict marker を残して Conflict Mode に入り、各ファイルを解決します(中止すれば merge 前の状態に戻せます)。"
+            }
+
+            // ── T-SETTINGS-001: Settings window ──────────────────────
+            (En, SettingsTitle) => "Settings",
+            (Ja, SettingsTitle) => "設定",
+            (En, SettingsAppearance) => "Appearance",
+            (Ja, SettingsAppearance) => "外観",
+            (En, SettingsLanguage) => "Language",
+            (Ja, SettingsLanguage) => "言語",
+            (En, SettingsTheme) => "Theme",
+            (Ja, SettingsTheme) => "テーマ",
+            (En, SettingsThemeDesc) => "Colour theme used across the whole app.",
+            (Ja, SettingsThemeDesc) => "アプリ全体で使用するカラーテーマ。",
+            (En, SettingsZoom) => "UI Zoom",
+            (Ja, SettingsZoom) => "UI ズーム",
+            (En, SettingsZoomDesc) => "Scale all text and layout (0.7×–1.5×).",
+            (Ja, SettingsZoomDesc) => "テキストとレイアウト全体を拡大縮小します(0.7×〜1.5×)。",
+            // "graph" is a domain word and stays English in both arms (ADR-0048).
+            (En, SettingsCompact) => "Compact graph",
+            (Ja, SettingsCompact) => "graph をコンパクト表示",
+            (En, SettingsCompactDesc) => "Use a tighter row height in the commit graph.",
+            (Ja, SettingsCompactDesc) => "commit graph の行の高さを詰めて表示します。",
+            (En, SettingsInterfaceLang) => "Interface language",
+            (Ja, SettingsInterfaceLang) => "表示言語",
+            (En, SettingsInterfaceLangDesc) => {
+                "Language for explanatory text (Git domain words stay English)."
+            }
+            (Ja, SettingsInterfaceLangDesc) => {
+                "説明文の言語(Git の用語は英語のままです)。"
             }
         }
     }

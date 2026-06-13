@@ -55,17 +55,17 @@ pub enum ItemState {
 }
 
 #[derive(Clone, Debug)]
-pub struct MenuItem {
-    pub action: CommitAction,
+pub struct MenuItem<A = CommitAction> {
+    pub action: A,
     pub label: SharedString,
     pub state: ItemState,
     pub dangerous: bool,
 }
 
 #[derive(Clone, Debug)]
-pub struct MenuGroup {
+pub struct MenuGroup<A = CommitAction> {
     pub title: Option<&'static str>,
-    pub items: Vec<MenuItem>,
+    pub items: Vec<MenuItem<A>>,
 }
 
 #[derive(Clone, Debug)]

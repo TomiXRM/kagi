@@ -1,6 +1,6 @@
 # T-BCM-013: Checkout branch の GitOperationPlan を実装する
 
-- Status: todo
+- Status: done
 - Group: Safe
 - 仕様の正: docs/requirements-branch-context-menu.md + ADR-0049〜0055
 
@@ -18,3 +18,8 @@
 - 操作 handler の二重実装禁止(ADR-0049)。fixture / tempdir のみで検証
 - 文字列は chars() ベース・バイトスライス禁止(split_at 含む)。色は theme() 経由
 - UI 説明文は i18n の Msg 経由(ADR-0048。ドメインワード・branch 名は英語のまま)
+
+## Implementation memo
+
+- local `Checkout` dispatches to the existing `open_plan_modal` checkout flow.
+- current branch and busy state are disabled in availability; remote checkout/tracking remains a disabled remote-op stub because this lane does not add git operations.

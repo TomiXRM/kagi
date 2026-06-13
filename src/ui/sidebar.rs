@@ -500,10 +500,18 @@ pub fn render_sidebar(
                 let left_pad = if indented { px(28.) } else { px(12.) };
 
                 if is_head {
+                    let branch_for_menu = branch_name.to_string();
                     let head_click = cx.listener(move |this: &mut KagiApp, _e: &gpui::ClickEvent, _w, cx| {
                         this.jump_to_branch(&branch_for_click);
                         cx.notify();
                     });
+                    let menu_click = cx.listener(
+                        move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
+                            this.open_local_branch_menu(branch_for_menu.clone(), event.position);
+                            cx.stop_propagation();
+                            cx.notify();
+                        },
+                    );
                     div()
                         .id(SharedString::from(format!("sidebar-branch-{}", branch_name)))
                         .flex()
@@ -517,6 +525,7 @@ pub fn render_sidebar(
                         .text_color(rgb(text_color))
                         .overflow_hidden()
                         .on_click(head_click)
+                        .on_mouse_down(gpui::MouseButton::Right, menu_click)
                         .hover(|style| style.bg(rgb(theme().surface)))
                         .tooltip(name_tooltip(full_name))
                         .child(div().flex_1().truncate().child(label))
@@ -534,6 +543,7 @@ pub fn render_sidebar(
                 } else {
                     let branch_for_dbl = branch_name.to_string();
                     let branch_for_delete = branch_name.to_string();
+                    let branch_for_menu = branch_name.to_string();
                     let click_handler = cx.listener(move |this: &mut KagiApp, event: &gpui::ClickEvent, _window, cx| {
                         if event.click_count() >= 2 {
                             this.open_plan_modal(branch_for_dbl.clone());
@@ -546,6 +556,13 @@ pub fn render_sidebar(
                         this.open_delete_branch_modal(branch_for_delete.clone());
                         cx.notify();
                     });
+                    let menu_click = cx.listener(
+                        move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
+                            this.open_local_branch_menu(branch_for_menu.clone(), event.position);
+                            cx.stop_propagation();
+                            cx.notify();
+                        },
+                    );
                     div()
                         .id(SharedString::from(format!("sidebar-branch-{}", branch_name)))
                         .flex()
@@ -559,6 +576,7 @@ pub fn render_sidebar(
                         .text_color(rgb(text_color))
                         .overflow_hidden()
                         .on_click(click_handler)
+                        .on_mouse_down(gpui::MouseButton::Right, menu_click)
                         .hover(|style| style.bg(rgb(theme().surface)))
                         .tooltip(name_tooltip(full_name))
                         .child(div().flex_1().truncate().child(label))
@@ -705,10 +723,23 @@ pub fn render_sidebar(
                     _ => px(44.),
                 };
                 if can_jump {
+                    let display_for_menu = display.to_string();
+                    let target_for_menu = rb_target.clone();
                     let click_handler = cx.listener(move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
                         this.jump_to_commit(&rb_target);
                         cx.notify();
                     });
+                    let menu_click = cx.listener(
+                        move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
+                            this.open_remote_branch_menu(
+                                display_for_menu.clone(),
+                                target_for_menu.clone(),
+                                event.position,
+                            );
+                            cx.stop_propagation();
+                            cx.notify();
+                        },
+                    );
                     div()
                         .id(SharedString::from(format!("sidebar-remote-{}", display)))
                         .flex()
@@ -722,11 +753,25 @@ pub fn render_sidebar(
                         .text_color(rgb(theme().color_remote))
                         .overflow_hidden()
                         .on_click(click_handler)
+                        .on_mouse_down(gpui::MouseButton::Right, menu_click)
                         .hover(|style| style.bg(rgb(theme().surface)))
                         .tooltip(name_tooltip(full_name))
                         .child(div().flex_1().truncate().child(label))
                         .into_any()
                 } else {
+                    let display_for_menu = display.to_string();
+                    let target_for_menu = rb_target.clone();
+                    let menu_click = cx.listener(
+                        move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
+                            this.open_remote_branch_menu(
+                                display_for_menu.clone(),
+                                target_for_menu.clone(),
+                                event.position,
+                            );
+                            cx.stop_propagation();
+                            cx.notify();
+                        },
+                    );
                     div()
                         .id(SharedString::from(format!("sidebar-remote-{}", display)))
                         .flex()
@@ -739,6 +784,7 @@ pub fn render_sidebar(
                         .text_sm()
                         .text_color(rgb(theme().color_remote))
                         .overflow_hidden()
+                        .on_mouse_down(gpui::MouseButton::Right, menu_click)
                         .tooltip(name_tooltip(full_name))
                         .child(div().flex_1().truncate().child(label))
                         .into_any()

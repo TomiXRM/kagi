@@ -7,6 +7,7 @@
 pub mod avatar;
 pub mod avatar_fetch;
 pub mod assets;
+pub mod branch_menu;
 pub mod commands;
 pub mod commit_list;
 pub mod commit_panel;
@@ -203,6 +204,9 @@ use kagi::git::{
 };
 use commit_panel::{CommitPanelState, CommitPanelFileRef, CommitPlanModal, status_badge};
 use commit_list::{BadgeKind, CommitRow, build_commit_rows};
+use branch_menu::{
+    BranchAction, BranchConflictMode, BranchKind, BranchMenuContext, BranchMenuState,
+};
 use context_menu::{CommitAction, CommitMenuState, MenuContext};
 use detail_panel::{CommitDetail, build_commit_details};
 use graph_view::graph_canvas;
@@ -1361,6 +1365,8 @@ pub struct KagiApp {
     pub discard_modal: Option<DiscardModal>,
     /// Commit row context menu state (right-click anchor + target row).
     pub commit_menu: Option<CommitMenuState>,
+    /// Branch sidebar context menu state (right-click anchor + target branch).
+    pub branch_menu: Option<BranchMenuState>,
     /// Unstaged file-row context menu (right-click): (unstaged index, anchor).
     /// Offers Discard for eligible (tracked, non-conflicted) rows.
     pub file_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
@@ -1671,6 +1677,7 @@ impl KagiApp {
             delete_branch_modal: None,
             discard_modal: None,
             commit_menu: None,
+            branch_menu: None,
             file_menu: None,
             // W5-MENU
             sidebar_visible: true,
@@ -1772,6 +1779,7 @@ impl KagiApp {
             delete_branch_modal: None,
             discard_modal: None,
             commit_menu: None,
+            branch_menu: None,
             file_menu: None,
             // W5-MENU
             sidebar_visible: true,
@@ -6585,6 +6593,162 @@ impl KagiApp {
         ))
     }
 
+    pub fn open_local_branch_menu(
+        &mut self,
+        branch_name: String,
+        position: gpui::Point<gpui::Pixels>,
+    ) {
+        let target = match self.branch_targets.get(&branch_name) {
+            Some(target) => target.clone(),
+            None => {
+                eprintln!("[kagi] branch-menu: local branch '{}' target not found", branch_name);
+                return;
+            }
+        };
+        self.commit_menu = None;
+        self.jump_to_branch(&branch_name);
+        self.branch_menu = Some(BranchMenuState {
+            name: branch_name.clone(),
+            target,
+            kind: BranchKind::Local,
+            position,
+        });
+        eprintln!("[kagi] branch-menu: open local {}", branch_name);
+    }
+
+    pub fn open_remote_branch_menu(
+        &mut self,
+        display_name: String,
+        target: CommitId,
+        position: gpui::Point<gpui::Pixels>,
+    ) {
+        self.commit_menu = None;
+        self.jump_to_commit(&target);
+        self.branch_menu = Some(BranchMenuState {
+            name: display_name.clone(),
+            target,
+            kind: BranchKind::Remote,
+            position,
+        });
+        eprintln!("[kagi] branch-menu: open remote {}", display_name);
+    }
+
+    fn branch_menu_context(&self, state: &BranchMenuState) -> BranchMenuContext {
+        let upstream = if matches!(state.kind, BranchKind::Local) {
+            self.branch_upstream_info.get(&state.name)
+        } else {
+            None
+        };
+        let is_current = matches!(state.kind, BranchKind::Local)
+            && self
+                .branches
+                .iter()
+                .any(|(name, current)| name == &state.name && *current);
+        let current_branch = self
+            .branches
+            .iter()
+            .find_map(|(name, current)| current.then(|| name.clone()));
+        BranchMenuContext {
+            name: state.name.clone(),
+            head_sha: state.target.0.clone(),
+            kind: state.kind.clone(),
+            is_current,
+            has_upstream: upstream.is_some(),
+            upstream_name: upstream.map(|u| u.remote_branch.clone()),
+            ahead: upstream.map(|u| u.ahead).unwrap_or(0),
+            behind: upstream.map(|u| u.behind).unwrap_or(0),
+            dirty: self.status_summary.is_dirty,
+            conflict_mode: if self.status_summary.conflict_count > 0 {
+                BranchConflictMode::Conflicted
+            } else {
+                BranchConflictMode::None
+            },
+            protected: branch_menu::is_protected_branch(&state.name),
+            checked_out_in_other_worktree: false,
+            merged_into_current: false,
+            is_pushed: upstream.is_some(),
+            detached_head: self.status_summary.is_detached,
+            busy: self.busy_op.is_some(),
+            current_branch,
+        }
+    }
+
+    fn render_branch_menu_overlay(
+        &self,
+        state: BranchMenuState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        let ctx = self.branch_menu_context(&state);
+        let groups = branch_menu::branch_context_menu_items(&ctx);
+        let header = branch_menu::header(&ctx);
+        Some(branch_menu::render_branch_menu_overlay(
+            state, header, groups, window, cx,
+        ))
+    }
+
+    pub fn dispatch_branch_action(
+        &mut self,
+        action: BranchAction,
+        state: BranchMenuState,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            BranchAction::CopyBranchName => {
+                branch_menu::copy_branch_name(self, state.name, cx);
+            }
+            BranchAction::CopyHeadSha => {
+                branch_menu::copy_head_sha(self, state.target.0, cx);
+            }
+            BranchAction::CopyUpstreamName => {
+                let upstream = self
+                    .branch_upstream_info
+                    .get(&state.name)
+                    .map(|u| u.remote_branch.clone());
+                if let Some(upstream) = upstream {
+                    branch_menu::copy_upstream_name(self, upstream, cx);
+                }
+            }
+            BranchAction::RevealHead => {
+                self.jump_to_commit(&state.target);
+            }
+            BranchAction::Checkout => {
+                if matches!(state.kind, BranchKind::Local) {
+                    self.open_plan_modal(state.name);
+                }
+            }
+            BranchAction::CreateBranchFromHere => {
+                self.open_create_branch_modal(state.target, cx);
+            }
+            BranchAction::DeleteBranch => {
+                if matches!(state.kind, BranchKind::Local) {
+                    self.open_delete_branch_modal(state.name);
+                }
+            }
+            BranchAction::OpenWorktreeFromBranch
+            | BranchAction::Pull
+            | BranchAction::PullFfOnly
+            | BranchAction::Push
+            | BranchAction::PushAndCreateUpstream
+            | BranchAction::SetUpstream
+            | BranchAction::FetchRemoteBranch
+            | BranchAction::CreatePr
+            | BranchAction::MergeIntoCurrent
+            | BranchAction::RebaseCurrentOnto
+            | BranchAction::CreateWorktreeFromHere
+            | BranchAction::CreateTagHere
+            | BranchAction::RenameBranch
+            | BranchAction::ResetCurrentToHead
+            | BranchAction::ForceWithLeasePush
+            | BranchAction::DeleteRemoteBranch => {
+                self.status_footer = FooterStatus::Idle(SharedString::from(
+                    Msg::BcmNotImplementedYet.t(),
+                ));
+            }
+        }
+    }
+
     pub fn dispatch_commit_action(
         &mut self,
         action: CommitAction,
@@ -6942,6 +7106,10 @@ impl Render for KagiApp {
             .commit_menu
             .clone()
             .and_then(|state| self.render_commit_menu_overlay(state, window, cx));
+        let branch_menu_overlay = self
+            .branch_menu
+            .clone()
+            .and_then(|state| self.render_branch_menu_overlay(state, window, cx));
         // T-HT-001: clone toolbar/summary state for header render.
         // W3-NOTIFY: while a background git op runs, disable every git button
         // so operations never overlap.
@@ -7095,6 +7263,9 @@ impl Render for KagiApp {
             if this.commit_menu.is_some() {
                 this.commit_menu = None;
                 cx.notify();
+            } else if this.branch_menu.is_some() {
+                this.branch_menu = None;
+                cx.notify();
             } else if this.main_diff.is_some() {
                 this.close_main_diff();
                 cx.notify();
@@ -7190,6 +7361,8 @@ impl Render for KagiApp {
             .children(self.render_bottom_panel_slot(bottom_panel_open, bottom_panel_height, bottom_tab, cx))
             // ── Commit context menu overlay (below modals) ─────
             .children(commit_menu_overlay)
+            // ── Branch context menu overlay (below modals) ─────
+            .children(branch_menu_overlay)
             // ── W5-MENU: menu-driven overlay (branch picker / About / shortcuts) ──
             .children(self.render_menu_overlay(cx))
             // ── Plan modal overlay (above everything) ──────

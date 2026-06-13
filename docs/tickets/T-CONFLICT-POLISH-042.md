@@ -1,6 +1,6 @@
 # T-CONFLICT-POLISH-042: dangerous reset に confirmation を追加する
 
-- Status: todo
+- Status: done
 - Group: Polish
 - 仕様: requirements-conflict-ux.md v2 + ADR-0068(flow)/ 0069(rendering = gpui-component CodeEditor)/ 0070(scroll)
 
@@ -12,3 +12,6 @@
 - Save/Continue/Commit/Abort は別物(ADR-0068)。解決は中央 editor、操作は dashboard/header。
 - A/B/Result は gpui-component InputState(CodeEditor)。Zed editor は流用しない(ADR-0069)。
 - Plan 経由・in-memory・chars()・theme()・i18n Msg(ours/theirs 非表示)。own-code warning 0。
+
+## 実装メモ (done)
+reset all を two-stage 確認(conflict_reset_all_armed、1回目で arm + blocker 色 + "Click again to reset all"、2回目で実行)。

@@ -38,6 +38,8 @@
 - i18n: 全 prose を Msg(en+ja)。ours/theirs は一切表示しない
 
 ### v0.2 以降(本フェーズ対象外)
+- **Folder/Tree grouping + search**(T-CONFLICT-DASH-021 で非機能 Path/Tree toggle を撤去済み。
+  conflicted file の folder grouping / tree view / path search は将来 dedicated ticket で再導入予定)
 - Tree view 実機能 / external tool の 3-side($LOCAL/$BASE/$REMOTE を個別ファイル materialize)/
   watcher での外部解決取り込み / Advanced "Mark all resolved" / Skip の multi-step sequencer drive
   (現状は現 step 破棄まで。次 pick への前進は dedicated sequence executor 待ち、continue の `Staged` 同様)

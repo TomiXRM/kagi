@@ -174,9 +174,17 @@ const ROW_H_FULL: f32 = graph_view::ROW_H;  // 29.0 (= 24 * 1.2)
 const ROW_H_COMPACT: f32 = 22.0;  // 18.0 * 1.2 (keeps compact:full ratio)
 
 /// Return the row height for the current compact mode setting.
+///
+/// W28: the result is **zoom-scaled** (`base * theme::zoom()`) so the commit-row
+/// container height grows/shrinks in lock-step with the rem-scaled row text and
+/// the graph canvas drawn inside it. The graph canvas reads its *measured*
+/// height (`bounds.size.height`) for vertical anchoring, so returning the
+/// scaled height here is what keeps the ● node centred and edges connecting
+/// row-to-row with zero drift at any zoom. Compact mode scales by the same
+/// factor (`ROW_H_COMPACT * zoom()`), preserving the compact:full ratio.
 #[inline]
 fn row_height(compact: bool) -> f32 {
-    if compact { ROW_H_COMPACT } else { ROW_H_FULL }
+    theme::scaled(if compact { ROW_H_COMPACT } else { ROW_H_FULL })
 }
 
 use kagi::git::{
@@ -3490,13 +3498,16 @@ impl KagiApp {
     fn scroll_graph_by(&mut self, delta: &gpui::ScrollDelta, cx: &mut Context<Self>) {
         let dx = match delta {
             gpui::ScrollDelta::Pixels(p) => f32::from(p.x),
-            gpui::ScrollDelta::Lines(l) => l.x * graph_view::LANE_W,
+            // W28: one "line" step = one zoom-scaled lane pitch.
+            gpui::ScrollDelta::Lines(l) => l.x * graph_view::lane_w(),
         };
         if dx.abs() < 0.01 {
             return;
         }
         let lane_count = self.rows.first().map(|r| r.lane_count).unwrap_or(0);
-        let max = (lane_count as f32 * graph_view::LANE_W - self.graph_col_w).max(0.0);
+        // W28: scroll content extent uses the scaled lane pitch so a fully
+        // zoomed graph can still be scrolled to reveal its rightmost lanes.
+        let max = (lane_count as f32 * graph_view::lane_w() - self.graph_col_w).max(0.0);
         let next = (self.graph_scroll_x - dx).clamp(0.0, max);
         if (next - self.graph_scroll_x).abs() > 0.1 {
             self.graph_scroll_x = next;
@@ -7850,7 +7861,8 @@ impl Render for KagiApp {
         // resizes.
         {
             let lane_count = self.rows.first().map(|r| r.lane_count).unwrap_or(0);
-            let max = (lane_count as f32 * graph_view::LANE_W - self.graph_col_w).max(0.0);
+            // W28: clamp against the scaled lane pitch (matches scroll_graph_by).
+            let max = (lane_count as f32 * graph_view::lane_w() - self.graph_col_w).max(0.0);
             if self.graph_scroll_x > max {
                 self.graph_scroll_x = max;
             }
@@ -8865,7 +8877,7 @@ impl KagiApp {
             .child(
                 div()
                     .id("divider-badge-col")
-                    .w(px(INNER_DIV_W))
+                    .w(theme::scaled_px(INNER_DIV_W))
                     .flex_shrink_0()
                     .h_full()
                     .bg(rgb(theme().panel))
@@ -8921,7 +8933,7 @@ impl KagiApp {
             .child(
                 div()
                     .id("divider-graph-col")
-                    .w(px(INNER_DIV_W))
+                    .w(theme::scaled_px(INNER_DIV_W))
                     .flex_shrink_0()
                     .h_full()
                     .bg(rgb(theme().panel))
@@ -8995,7 +9007,7 @@ impl KagiApp {
                                 )
                         })
                         // Inner divider spacer (badge|graph handle width)
-                        .child(div().w(px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
+                        .child(div().w(theme::scaled_px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
                             .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))))
                         // Graph column: hollow "not yet committed" node on
                         // lane 0 — visually continues the graph upward.
@@ -9006,17 +9018,20 @@ impl KagiApp {
                                 .flex()
                                 .items_center()
                                 .child(
+                                    // W28: centre the 9px hollow node on the
+                                    // (zoom-scaled) lane-0 centre so it lines up
+                                    // with the graph node drawn in rows below.
                                     div()
-                                        .ml(px(graph_view::LANE_W / 2.0 - 4.5))
-                                        .w(px(9.))
-                                        .h(px(9.))
+                                        .ml(theme::scaled_px(graph_view::LANE_W / 2.0 - 4.5))
+                                        .w(theme::scaled_px(9.))
+                                        .h(theme::scaled_px(9.))
                                         .rounded_full()
                                         .border_1()
                                         .border_color(rgb(theme().color_warning)),
                                 ),
                         )
                         // Inner divider spacer (graph|message handle width)
-                        .child(div().w(px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
+                        .child(div().w(theme::scaled_px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
                             .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))))
                         // Summary area: change counts, styled like a row message.
                         .child({
@@ -9879,7 +9894,7 @@ fn render_rows(
                 // ── Badges column: user-resizable width (T030) ──
                 .child(render_badges_column(&row.badges, badge_col_w))
                 // ── Inner divider spacer (badge|graph handle width) ──
-                .child(div().w(px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
+                .child(div().w(theme::scaled_px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
                     .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))))
                 // ── Graph lane area (T030) ────────────────────────
                 // Always render the graph column at graph_col_w width.
@@ -9912,17 +9927,19 @@ fn render_rows(
                         }),
                 )
                 // ── Inner divider spacer (graph|message handle width) ──
-                .child(div().w(px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
+                .child(div().w(theme::scaled_px(INNER_DIV_W)).flex_shrink_0().flex().justify_center()
                     .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))))
                 // ── Author avatar: 18px circle after graph ────────
                 // W11-AVATAR: when a GitHub avatar is resolved, show the image
                 // clipped to the circle; otherwise the initial-on-colour circle.
                 .child({
+                    // W28: avatar circle scales with zoom so it stays sized to
+                    // the (rem-scaled) row text and aligned with the graph node.
                     let circle = div()
-                        .w(px(18.))
-                        .h(px(18.))
+                        .w(theme::scaled_px(18.))
+                        .h(theme::scaled_px(18.))
                         .flex_shrink_0()
-                        .mr(px(4.))
+                        .mr(theme::scaled_px(4.))
                         .rounded_full()
                         .overflow_hidden();
                     match avatar_image {
@@ -9954,8 +9971,10 @@ fn render_rows(
                         .child(row.summary.clone()),
                 )
                 .child(
+                    // W28: author/date columns scale so the (rem-scaled) text
+                    // fits its box at any zoom.
                     div()
-                        .w(px(130.))
+                        .w(theme::scaled_px(130.))
                         .flex_shrink_0()
                         .text_color(rgb(theme().text_sub))
                         .truncate()
@@ -9963,7 +9982,7 @@ fn render_rows(
                 )
                 .child(
                     div()
-                        .w(px(72.))
+                        .w(theme::scaled_px(72.))
                         .flex_shrink_0()
                         .text_color(rgb(theme().text_muted))
                         .child(row.date.clone()),

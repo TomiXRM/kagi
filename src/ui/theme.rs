@@ -241,6 +241,19 @@ pub fn scaled_px(n: f32) -> gpui::Pixels {
     gpui::px(n * zoom())
 }
 
+/// W28: bare-`f32` sibling of [`scaled_px`] for coordinate math.
+///
+/// The commit-graph path-builder computes lane x-centres, node radii, corner
+/// radii and edge widths as plain `f32` before wrapping the final point in
+/// `px(..)`.  Routing those intermediate values through `scaled(..)` makes the
+/// graph geometry track the same `zoom()` factor as the (rem-scaled) row text,
+/// so the whole graph scales uniformly and stays aligned.  Identical to
+/// `scaled_px` except it returns the bare `f32` instead of `Pixels`.
+#[inline]
+pub fn scaled(n: f32) -> f32 {
+    n * zoom()
+}
+
 /// Set the active zoom factor (clamped) and persist it to `settings.json`.
 /// Returns the clamped value that is now active.
 pub fn set_zoom(z: f32) -> f32 {

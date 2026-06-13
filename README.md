@@ -108,7 +108,7 @@ The fixture includes branches, a merge, a remote (ahead/behind), tags, a stash, 
 bash scripts/make_icon.sh                 # rounded icon → assets/icon/ (icns + PNGs)
 cargo run -p xtask -- bundle-macos        # target/dist/Kagi.app (ad-hoc signed)
 cargo run -p xtask -- dmg-macos           # target/dist/Kagi-<version>-<arch>.dmg
-cargo run -p xtask -- bundle-linux        # target/dist/kagi-<version>-x86_64.tar.gz
+cargo run -p xtask -- bundle-linux        # target/dist/kagi-<version>-<arch>.tar.gz
 cargo run -p xtask -- bundle-appimage --bin target/release/kagi  # AppImage zip (needs appimagetool on Linux)
 ```
 

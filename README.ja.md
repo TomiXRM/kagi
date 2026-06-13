@@ -106,7 +106,7 @@ fixture には分岐・merge・remote(ahead/behind)・tag・stash・dirty workin
 bash scripts/make_icon.sh                 # 角丸アイコン → assets/icon/(icns + PNG)
 cargo run -p xtask -- bundle-macos        # target/dist/Kagi.app(ad-hoc 署名済)
 cargo run -p xtask -- dmg-macos           # target/dist/Kagi-<version>-<arch>.dmg
-cargo run -p xtask -- bundle-linux        # target/dist/kagi-<version>-x86_64.tar.gz
+cargo run -p xtask -- bundle-linux        # target/dist/kagi-<version>-<arch>.tar.gz
 cargo run -p xtask -- bundle-appimage --bin target/release/kagi  # AppImage zip(Linux では appimagetool が必要)
 ```
 

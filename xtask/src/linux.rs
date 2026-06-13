@@ -1,6 +1,6 @@
 //! Linux `tar.gz` packaging (ADR-0047).
 //!
-//! Layout (relative to the tarball root `kagi-<version>-x86_64/`):
+//! Layout (relative to the tarball root `kagi-<version>-<arch>/`):
 //!   bin/kagi
 //!   share/applications/kagi.desktop
 //!   share/icons/hicolor/512x512/apps/kagi.png
@@ -65,7 +65,10 @@ pub fn bundle(root: &Path, override_bin: Option<&str>) -> Result<(), String> {
     }
 
     let dist = root.join("target").join("dist");
-    let stem = format!("{BIN_NAME}-{version}-x86_64");
+    // AppImage-style arch names (x86_64 / aarch64); was hardcoded x86_64,
+    // which made the two Linux CI legs emit colliding artifact names.
+    let arch = util::host_arch_appimage();
+    let stem = format!("{BIN_NAME}-{version}-{arch}");
     let stage = dist.join(&stem);
     util::clean_dir(&stage)?;
 

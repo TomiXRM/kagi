@@ -21,7 +21,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     # Per-leg opt-in: the linux-arm64 leg sets continue-on-error so a missing
     # private-repo arm64 runner does not block the release (ADR-0047 追補).
-    continue-on-error: ${{ matrix.allow-failure || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -38,7 +37,6 @@ jobs:
             target: linux-arm64
             kind: linux
             arch: aarch64
-            allow-failure: true
     steps:
       - uses: actions/checkout@v4
 

@@ -40,6 +40,7 @@ use super::{
     BottomTab, FooterStatus, KagiApp, ToastKind, ToggleBottomPanel,
 };
 use super::context_menu::CommitAction;
+use super::i18n::{self, Lang, Msg};
 use super::theme::{self, theme};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -103,8 +104,20 @@ actions!(
         ThemeOneDark,
         ThemeOneLight,
         ThemeMonokai,
+        // View → Language (W22-I18N / ADR-0048): one action per UI language.
+        LangEnglish,
+        LangJapanese,
     ]
 );
+
+/// Map a language command id back to its [`Lang`].
+pub fn lang_for_command(id: &str) -> Option<Lang> {
+    match id {
+        "lang.english" => Some(Lang::En),
+        "lang.japanese" => Some(Lang::Ja),
+        _ => None,
+    }
+}
 
 /// Map a theme command id back to its theme slug.
 pub fn theme_slug_for_command(id: &str) -> Option<&'static str> {
@@ -208,6 +221,11 @@ pub const COMMANDS: &[Command] = &[
     Command { id: "theme.oneDark", label: "One Dark", keystroke: None, dangerous: false },
     Command { id: "theme.oneLight", label: "One Light", keystroke: None, dangerous: false },
     Command { id: "theme.monokai", label: "Monokai (Warm Hybrid)", keystroke: None, dangerous: false },
+
+    // View → Language (W22-I18N / ADR-0048). The live "✓ " active marker is
+    // applied in `lang_submenu`.
+    Command { id: "lang.english", label: "English", keystroke: None, dangerous: false },
+    Command { id: "lang.japanese", label: "日本語", keystroke: None, dangerous: false },
 ];
 
 /// Look up a command's metadata by id.
@@ -255,31 +273,34 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         | "theme.xcodeLight"
         | "theme.oneDark"
         | "theme.oneLight"
-        | "theme.monokai" => Enabled,
+        | "theme.monokai"
+        // Language switching is always available (W22-I18N).
+        | "lang.english"
+        | "lang.japanese" => Enabled,
 
         // ── Placeholders (feature not implemented; greyed with a reason) ──
-        "file.cloneRepository" => Disabled("clone は未実装です"),
+        "file.cloneRepository" => Disabled(Msg::CloneUnimplemented.t()),
         "view.zoomIn" | "view.zoomOut" | "view.zoomReset" => {
-            Disabled("zoom は未実装です")
+            Disabled(Msg::ZoomUnimplemented.t())
         }
-        "branch.rename" => Disabled("rename branch は未実装です"),
-        "window.new" => Disabled("複数ウィンドウは未対応です"),
+        "branch.rename" => Disabled(Msg::RenameBranchUnimplemented.t()),
+        "window.new" => Disabled(Msg::MultiWindowUnsupported.t()),
         // Reset stays disabled per ADR-0024 (no reset in MVP).
-        "commit.reset" => Disabled("reset は未実装です (ADR-0024)"),
+        "commit.reset" => Disabled(Msg::ResetUnimplemented.t()),
 
         // ── Repo required ────────────────────────────────────────────────
         "file.closeTab" => {
             if has_repo {
                 Enabled
             } else {
-                Disabled("開いているタブがありません")
+                Disabled(Msg::NoTabsOpen.t())
             }
         }
         "file.openInTerminal" | "file.refresh" | "repo.openInFinder" => {
             if has_repo {
                 Enabled
             } else {
-                Disabled("リポジトリが開かれていません")
+                Disabled(Msg::NoRepoOpen.t())
             }
         }
 
@@ -287,9 +308,9 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         "repo.fetch" | "repo.pull" | "repo.push" | "branch.new"
         | "branch.checkout" | "branch.delete" => {
             if !has_repo {
-                Disabled("リポジトリが開かれていません")
+                Disabled(Msg::NoRepoOpen.t())
             } else if busy {
-                Disabled("別の操作が実行中です")
+                Disabled(Msg::OpInProgress.t())
             } else {
                 Enabled
             }
@@ -303,11 +324,11 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         | "commit.revert"
         | "commit.compareWorkingTree" => {
             if !has_repo {
-                Disabled("リポジトリが開かれていません")
+                Disabled(Msg::NoRepoOpen.t())
             } else if !has_selection {
-                Disabled("commit が選択されていません")
+                Disabled(Msg::NoCommitSelected.t())
             } else if busy {
-                Disabled("別の操作が実行中です")
+                Disabled(Msg::OpInProgress.t())
             } else {
                 Enabled
             }
@@ -318,14 +339,14 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
             if has_repo {
                 Enabled
             } else {
-                Disabled("リポジトリが開かれていません")
+                Disabled(Msg::NoRepoOpen.t())
             }
         }
         "view.toggleDiffView" => {
             if diff_open {
                 Enabled
             } else {
-                Disabled("diff が開かれていません")
+                Disabled(Msg::DiffNotOpen.t())
             }
         }
 
@@ -411,6 +432,8 @@ pub fn build_menus() -> Vec<Menu> {
                 MenuItem::separator(),
                 // W9-THEME: Theme submenu (active item prefixed with "✓ ").
                 MenuItem::submenu(theme_submenu()),
+                // W22-I18N: Language submenu (active item prefixed with "✓ ").
+                MenuItem::submenu(lang_submenu()),
             ],
         },
         // ── Repository ───────────────────────────────────────────────
@@ -505,6 +528,34 @@ fn theme_submenu() -> Menu {
     }
     Menu {
         name: "Theme".into(),
+        items,
+    }
+}
+
+/// Build the View → Language submenu (W22-I18N / ADR-0048).
+///
+/// Two items (English / 日本語); the active language's label is prefixed with
+/// "✓ ".  Like the Theme submenu, the label changes on switch, so the menu bar
+/// must be rebuilt (`cx.set_menus`) on every language change.
+fn lang_submenu() -> Menu {
+    let active = i18n::lang();
+    let entries = [(Lang::En, "English"), (Lang::Ja, "日本語")];
+    let mut items: Vec<MenuItem> = Vec::with_capacity(entries.len());
+    for (l, name) in entries {
+        let label = if l == active {
+            format!("\u{2713} {}", name)
+        } else {
+            format!("   {}", name)
+        };
+        let label = SharedString::from(label);
+        let item = match l {
+            Lang::En => MenuItem::action(label, LangEnglish),
+            Lang::Ja => MenuItem::action(label, LangJapanese),
+        };
+        items.push(item);
+    }
+    Menu {
+        name: "Language".into(),
         items,
     }
 }
@@ -643,8 +694,8 @@ impl KagiApp {
             "file.openInTerminal" => self.menu_open_terminal(window, cx),
             "file.refresh" => {
                 self.reload();
-                self.status_footer = FooterStatus::Idle(SharedString::from("Refreshed"));
-                self.push_toast(ToastKind::Success, "Refreshed");
+                self.status_footer = FooterStatus::Idle(SharedString::from(Msg::Refreshed.t()));
+                self.push_toast(ToastKind::Success, Msg::Refreshed.t());
             }
 
             // ── View ────────────────────────────────────────────────
@@ -715,6 +766,13 @@ impl KagiApp {
                 }
             }
 
+            // ── View → Language (W22-I18N / ADR-0048) ───────────────
+            "lang.english" | "lang.japanese" => {
+                if let Some(l) = lang_for_command(id) {
+                    self.set_lang(l, cx);
+                }
+            }
+
             _ => {}
         }
         cx.notify();
@@ -751,6 +809,21 @@ impl KagiApp {
         }
 
         // Rebuild the menu bar (active marker moved).
+        cx.set_menus(build_menus());
+        cx.notify();
+    }
+
+    /// Switch the active UI language (W22-I18N / ADR-0048).
+    ///
+    /// 1. Update + persist the active language (`i18n::set_lang`).
+    /// 2. Rebuild the menu bar so the "✓ " active marker moves (the label
+    ///    changes, so `cx.set_menus` must be re-called — same as the theme
+    ///    submenu).
+    /// 3. `cx.notify()` so every prose render path (which reads `Msg::t()` /
+    ///    `lang()` live) repaints in the new language.
+    pub fn set_lang(&mut self, l: Lang, cx: &mut Context<Self>) {
+        i18n::set_lang(l);
+        eprintln!("[kagi] lang: {}", l.slug());
         cx.set_menus(build_menus());
         cx.notify();
     }
@@ -800,7 +873,7 @@ impl KagiApp {
         match std::process::Command::new("open").arg(&path).spawn() {
             Ok(_) => {
                 eprintln!("[kagi] menu: open-in-finder {}", path.display());
-                self.status_footer = FooterStatus::Idle(SharedString::from("Opened in Finder"));
+                self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpenedInFinder.t()));
             }
             Err(e) => {
                 self.status_footer =
@@ -925,7 +998,7 @@ impl KagiApp {
                     .px_3()
                     .py_2()
                     .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from("No local branches")),
+                    .child(SharedString::from(Msg::NoLocalBranches.t())),
             );
         }
 

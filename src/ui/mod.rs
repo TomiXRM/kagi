@@ -15,6 +15,7 @@ pub mod detail_panel;
 pub mod diffstat_bar;
 pub mod file_tree;
 pub mod graph_view;
+pub mod i18n;
 pub mod inspector;
 pub mod sidebar;
 pub mod smart_commit;
@@ -24,6 +25,7 @@ pub mod theme;
 pub mod watcher;
 
 use theme::theme;
+use i18n::Msg;
 
 use kagi::git::message_gen;
 
@@ -2449,7 +2451,7 @@ impl KagiApp {
         self.run_modal_replans();
         if self.busy_op.is_some() {
             self.status_footer =
-                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         let modal = match self.create_worktree_modal.clone() {
@@ -2479,8 +2481,8 @@ impl KagiApp {
 
         self.busy_op = Some("create-worktree");
         self.create_worktree_modal = None;
-        self.status_footer = FooterStatus::Busy(SharedString::from("create worktree 実行中…"));
-        self.push_toast(ToastKind::Info, "create-worktree: 開始しました");
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCreateWorktree.t()));
+        self.push_toast(ToastKind::Info, Msg::StartedCreateWorktree.t());
         eprintln!("[kagi] async: create-worktree started");
 
         let branch_input = modal.branch_input.clone();
@@ -2591,7 +2593,7 @@ impl KagiApp {
         self.run_modal_replans();
         if self.busy_op.is_some() {
             self.status_footer =
-                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         let modal = match self.stash_push_modal.clone() {
@@ -2624,8 +2626,8 @@ impl KagiApp {
         // so the UI stays responsive instead of appearing frozen.
         self.busy_op = Some("stash");
         self.stash_push_modal = None;
-        self.status_footer = FooterStatus::Busy(SharedString::from("stash 実行中…"));
-        self.push_toast(ToastKind::Info, "stash: 開始しました");
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStash.t()));
+        self.push_toast(ToastKind::Info, Msg::StartedStash.t());
         eprintln!("[kagi] async: stash-push started");
 
         let msg_opt = if modal.input.is_empty() { None } else { Some(modal.input.clone()) };
@@ -2899,7 +2901,7 @@ impl KagiApp {
         };
         if self.busy_op.is_some() {
             self.status_footer =
-                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         if !modal.plan.blockers.is_empty() {
@@ -2923,8 +2925,8 @@ impl KagiApp {
 
         self.busy_op = Some("cherry-pick");
         self.cherry_pick_modal = None;
-        self.status_footer = FooterStatus::Busy(SharedString::from("cherry-pick 実行中…"));
-        self.push_toast(ToastKind::Info, "cherry-pick: 開始しました");
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCherryPick.t()));
+        self.push_toast(ToastKind::Info, Msg::StartedCherryPick.t());
         eprintln!("[kagi] async: cherry-pick started");
 
         let plan = modal.plan.clone();
@@ -3026,7 +3028,7 @@ impl KagiApp {
         };
         if self.busy_op.is_some() {
             self.status_footer =
-                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         if !modal.plan.blockers.is_empty() {
@@ -3050,8 +3052,8 @@ impl KagiApp {
 
         self.busy_op = Some("revert");
         self.revert_modal = None;
-        self.status_footer = FooterStatus::Busy(SharedString::from("revert 実行中…"));
-        self.push_toast(ToastKind::Info, "revert: 開始しました");
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyRevert.t()));
+        self.push_toast(ToastKind::Info, Msg::StartedRevert.t());
         eprintln!("[kagi] async: revert started");
 
         let plan = modal.plan.clone();
@@ -3788,7 +3790,7 @@ impl KagiApp {
         };
         if self.busy_op.is_some() {
             self.status_footer =
-                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         // Enter-checkout on a dirty tree: stash the changes first (synchronous;
@@ -3825,8 +3827,8 @@ impl KagiApp {
 
         self.busy_op = Some("checkout");
         self.plan_modal = None;
-        self.status_footer = FooterStatus::Busy(SharedString::from("checkout 実行中…"));
-        self.push_toast(ToastKind::Info, "checkout: 開始しました");
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCheckout.t()));
+        self.push_toast(ToastKind::Info, Msg::StartedCheckout.t());
         eprintln!("[kagi] async: checkout started");
 
         let plan = modal.plan.clone();
@@ -3882,7 +3884,7 @@ impl KagiApp {
         // W3-NOTIFY: refuse while a background op runs.
         if self.busy_op.is_some() {
             self.status_footer =
-                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         let repo_path = match self.repo_path.clone() {
@@ -3979,7 +3981,7 @@ impl KagiApp {
     pub fn start_pull(&mut self, cx: &mut Context<Self>) {
         if self.busy_op.is_some() {
             self.status_footer = FooterStatus::Idle(SharedString::from(
-                "別の操作が実行中です",
+                Msg::OpInProgress.t(),
             ));
             return;
         }
@@ -4006,8 +4008,8 @@ impl KagiApp {
 
         self.busy_op = Some("pull");
         self.pull_modal = None;
-        self.status_footer = FooterStatus::Busy(SharedString::from("pull 実行中…"));
-        self.push_toast(ToastKind::Info, "pull: 開始しました");
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
+        self.push_toast(ToastKind::Info, Msg::StartedPull.t());
         eprintln!("[kagi] async: pull started");
 
         let plan = modal.plan.clone();
@@ -4064,7 +4066,7 @@ impl KagiApp {
         // W3-NOTIFY: refuse while a background op runs.
         if self.busy_op.is_some() {
             self.status_footer =
-                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         let repo_path = match self.repo_path.clone() {
@@ -4160,7 +4162,7 @@ impl KagiApp {
     pub fn start_push(&mut self, cx: &mut Context<Self>) {
         if self.busy_op.is_some() {
             self.status_footer = FooterStatus::Idle(SharedString::from(
-                "別の操作が実行中です",
+                Msg::OpInProgress.t(),
             ));
             return;
         }
@@ -4187,8 +4189,8 @@ impl KagiApp {
 
         self.busy_op = Some("push");
         self.push_modal = None;
-        self.status_footer = FooterStatus::Busy(SharedString::from("push 実行中…"));
-        self.push_toast(ToastKind::Info, "push: 開始しました");
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPush.t()));
+        self.push_toast(ToastKind::Info, Msg::StartedPush.t());
         eprintln!("[kagi] async: push started");
 
         let plan = modal.plan.clone();
@@ -4464,14 +4466,14 @@ impl KagiApp {
         // Armed → background execute. Refuse a concurrent background op.
         if self.busy_op.is_some() {
             self.status_footer =
-                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
 
         self.busy_op = Some("amend");
         self.amend_modal = None;
-        self.status_footer = FooterStatus::Busy(SharedString::from("amend 実行中…"));
-        self.push_toast(ToastKind::Info, "amend: 開始しました");
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyAmend.t()));
+        self.push_toast(ToastKind::Info, Msg::StartedAmend.t());
         eprintln!("[kagi] async: amend started");
 
         let plan = modal.plan.clone();
@@ -4592,7 +4594,7 @@ impl KagiApp {
         let modal = match self.pop_modal.clone() { Some(m) => m, None => return };
         if self.busy_op.is_some() {
             self.status_footer =
-                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
@@ -4607,8 +4609,8 @@ impl KagiApp {
 
         self.busy_op = Some("stash-pop");
         self.pop_modal = None;
-        self.status_footer = FooterStatus::Busy(SharedString::from("stash pop 実行中…"));
-        self.push_toast(ToastKind::Info, "stash pop: 開始しました");
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStashPop.t()));
+        self.push_toast(ToastKind::Info, Msg::StartedStashPop.t());
         eprintln!("[kagi] async: stash-pop started");
 
         let plan = modal.plan.clone();
@@ -4805,7 +4807,7 @@ impl KagiApp {
         };
         if self.busy_op.is_some() {
             self.status_footer =
-                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         let repo_path = match self.repo_path.clone() {
@@ -4830,8 +4832,8 @@ impl KagiApp {
 
         self.busy_op = Some("delete-branch");
         self.delete_branch_modal = None;
-        self.status_footer = FooterStatus::Busy(SharedString::from("delete branch 実行中…"));
-        self.push_toast(ToastKind::Info, "delete-branch: 開始しました");
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranch.t()));
+        self.push_toast(ToastKind::Info, Msg::StartedDeleteBranch.t());
         eprintln!("[kagi] async: delete-branch started");
 
         let plan = modal.plan.clone();
@@ -4993,7 +4995,7 @@ impl KagiApp {
         let modal = match self.discard_modal.clone() { Some(m) => m, None => return };
         if self.busy_op.is_some() {
             self.status_footer =
-                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
@@ -5012,8 +5014,8 @@ impl KagiApp {
 
         self.busy_op = Some("discard");
         self.discard_modal = None;
-        self.status_footer = FooterStatus::Busy(SharedString::from("discard 実行中…"));
-        self.push_toast(ToastKind::Info, "discard: 開始しました");
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDiscard.t()));
+        self.push_toast(ToastKind::Info, Msg::StartedDiscard.t());
         eprintln!("[kagi] async: discard started");
 
         let plan = modal.plan.clone();
@@ -5758,7 +5760,7 @@ impl KagiApp {
         };
         if self.busy_op.is_some() {
             self.status_footer =
-                FooterStatus::Idle(SharedString::from("別の操作が実行中です"));
+                FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         let commit_message: String = if self.commit_input.is_some() || self.commit_template_mode {
@@ -5776,8 +5778,8 @@ impl KagiApp {
         }
 
         self.busy_op = Some("commit");
-        self.status_footer = FooterStatus::Busy(SharedString::from("commit 実行中…"));
-        self.push_toast(ToastKind::Info, "commit: 開始しました");
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCommit.t()));
+        self.push_toast(ToastKind::Info, Msg::StartedCommit.t());
         eprintln!("[kagi] async: commit started");
 
         let bg_path = repo_path.clone();
@@ -6353,7 +6355,7 @@ impl KagiApp {
                     target.short()
                 );
                 self.status_footer = FooterStatus::Idle(SharedString::from(
-                    "local changes がありません",
+                    Msg::NoLocalChanges.t(),
                 ));
                 return;
             }
@@ -6662,7 +6664,7 @@ impl KagiApp {
             // this arm is defence in depth.
             CommitAction::ResetToCommit => {
                 self.status_footer = FooterStatus::Idle(SharedString::from(
-                    "Reset 未実装 (ADR-0024)",
+                    Msg::ResetUnimplemented.t(),
                 ));
                 eprintln!("[kagi] context-menu: stub Reset {}", target.short());
             }
@@ -6727,14 +6729,14 @@ impl KagiApp {
         }
         let Some(ix) = self.selected else {
             self.status_footer = FooterStatus::Idle(SharedString::from(
-                "Checkout: commit を選択してから Enter",
+                Msg::CheckoutSelectFirst.t(),
             ));
             return;
         };
         let Some(ctx_info) = self.menu_context(ix) else { return };
         if ctx_info.is_head {
             self.status_footer =
-                FooterStatus::Idle(SharedString::from("既に HEAD です"));
+                FooterStatus::Idle(SharedString::from(Msg::AlreadyHead.t()));
             return;
         }
         let Some(id) = self.commit_id_for_row(ix) else { return };
@@ -6756,10 +6758,7 @@ impl KagiApp {
                 m.stash_first = true;
                 // Surface it in the plan card's warnings.
                 let mut plan = (*m.plan).clone();
-                plan.warnings.insert(
-                    0,
-                    "Working tree が dirty です: 確定すると先に変更を stash します(stash@{0} に保存、`git stash pop` で復元)".to_string(),
-                );
+                plan.warnings.insert(0, Msg::DirtyStashFirst.t().to_string());
                 m.plan = std::sync::Arc::new(plan);
             }
         }
@@ -7347,6 +7346,9 @@ impl KagiApp {
         let el = menu_act!(el, cmds::ThemeOneDark, "theme.oneDark");
         let el = menu_act!(el, cmds::ThemeOneLight, "theme.oneLight");
         let el = menu_act!(el, cmds::ThemeMonokai, "theme.monokai");
+        // W22-I18N: language switch actions (always enabled).
+        let el = menu_act!(el, cmds::LangEnglish, "lang.english");
+        let el = menu_act!(el, cmds::LangJapanese, "lang.japanese");
         el
     }
 
@@ -7372,15 +7374,15 @@ impl KagiApp {
                 this.open_pull_modal();
             } else {
                 let reason = if this.busy_op.is_some() {
-                    "Pull: 別の操作が実行中です"
+                    Msg::PullBusy.t()
                 } else if this.status_summary.is_detached {
-                    "Pull: detached HEAD — branch に切り替えてください"
+                    Msg::PullDetached.t()
                 } else if this.status_summary.is_unborn {
-                    "Pull: no commits yet — upstream がありません"
+                    Msg::PullUnborn.t()
                 } else if this.status_summary.no_upstream {
-                    "Pull: upstream が設定されていません (no upstream)"
+                    Msg::PullNoUpstream.t()
                 } else {
-                    "Pull: nothing to pull (behind=0)"
+                    Msg::PullNothing.t()
                 };
                 this.status_footer = FooterStatus::Idle(SharedString::from(reason));
             }
@@ -7394,15 +7396,15 @@ impl KagiApp {
                 this.open_push_modal();
             } else {
                 let reason = if this.busy_op.is_some() {
-                    "Push: 別の操作が実行中です"
+                    Msg::PushBusy.t()
                 } else if this.status_summary.is_detached {
-                    "Push: detached HEAD — branch に切り替えてください"
+                    Msg::PushDetached.t()
                 } else if this.status_summary.is_unborn {
-                    "Push: no commits yet — upstream がありません"
+                    Msg::PushUnborn.t()
                 } else if this.status_summary.no_upstream && !this.status_summary.has_remote {
-                    "Push: no upstream and no remote configured"
+                    Msg::PushNoRemote.t()
                 } else {
-                    "Push: nothing to push (ahead=0)"
+                    Msg::PushNothing.t()
                 };
                 this.status_footer = FooterStatus::Idle(SharedString::from(reason));
             }
@@ -7432,7 +7434,7 @@ impl KagiApp {
                 this.open_stash_push_modal(cx);
             } else {
                 this.status_footer = FooterStatus::Idle(SharedString::from(
-                    "Stash: working tree is clean — nothing to stash",
+                    Msg::StashClean.t(),
                 ));
             }
             cx.notify();
@@ -7446,7 +7448,7 @@ impl KagiApp {
                 this.open_pop_modal(0);
             } else {
                 this.status_footer = FooterStatus::Idle(SharedString::from(
-                    "Pop: stash が空です",
+                    Msg::PopEmpty.t(),
                 ));
             }
             cx.notify();
@@ -7459,11 +7461,11 @@ impl KagiApp {
                 this.open_undo_modal();
             } else {
                 let reason = if this.status_summary.is_detached {
-                    "Undo: detached HEAD — undo できません"
+                    Msg::UndoDetached.t()
                 } else if this.status_summary.is_unborn {
-                    "Undo: no commits yet — undo できません"
+                    Msg::UndoUnborn.t()
                 } else {
-                    "Undo: ahead=0 — push 済みの commit はここでは undo できません"
+                    Msg::UndoAhead0.t()
                 };
                 this.status_footer = FooterStatus::Idle(SharedString::from(reason));
             }
@@ -7474,10 +7476,10 @@ impl KagiApp {
         let refresh_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
             this.refresh_spin_started = Some(Instant::now());
             this.reload();
-            this.status_footer = FooterStatus::Idle(SharedString::from("Refreshed"));
+            this.status_footer = FooterStatus::Idle(SharedString::from(Msg::Refreshed.t()));
             // W3-NOTIFY: explicit refresh gets a completion toast (the
             // watcher's automatic reloads stay silent to avoid spam).
-            this.push_toast(ToastKind::Success, "Refreshed");
+            this.push_toast(ToastKind::Success, Msg::Refreshed.t());
             cx.notify();
         });
 
@@ -8000,11 +8002,7 @@ impl KagiApp {
                                 .text_color(rgb(theme().text_muted))
                                 .overflow_hidden()
                                 .truncate()
-                                .child(SharedString::from(format!(
-                                    "// WIP — {} change{}(クリックで commit panel)",
-                                    total,
-                                    if total == 1 { "" } else { "s" }
-                                )))
+                                .child(SharedString::from(i18n::wip_row_note(total)))
                         }),
                 )
             })
@@ -8267,7 +8265,7 @@ impl KagiApp {
                 .justify_center()
                 .text_sm()
                 .text_color(rgb(theme().text_muted))
-                .child(SharedString::from("No operations yet"))
+                .child(SharedString::from(Msg::NoOperationsYet.t()))
                 .into_any();
         }
 
@@ -13122,9 +13120,8 @@ fn render_commit_panel(
                         div()
                             .text_xs()
                             .text_color(rgb(theme().color_warning))
-                            .child(SharedString::from(format!(
-                                "⚠ {} unstaged change(s) not included",
-                                unstaged_count
+                            .child(SharedString::from(i18n::unstaged_not_included(
+                                unstaged_count,
                             ))),
                     )
                 })
@@ -13151,7 +13148,7 @@ fn render_commit_panel(
                             (true, false) => AmendMode::MessageOnly,
                             (false, false) => {
                                 this.status_footer = FooterStatus::Idle(SharedString::from(
-                                    "Amend: メッセージを入力するか変更を stage してください",
+                                    Msg::AmendNeedMessageOrStaged.t(),
                                 ));
                                 cx.notify();
                                 return;

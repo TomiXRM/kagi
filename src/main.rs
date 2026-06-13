@@ -208,6 +208,10 @@ fn main() {
     // (Catppuccin Mocha).  Logs `[kagi] theme: <slug> dark=<bool>`.
     crate::ui::theme::init_active();
 
+    // W22-I18N / ADR-0048: resolve the UI language before anything renders.
+    // Priority: KAGI_LANG env → settings.json "lang" → LANG/LC_ALL → English.
+    crate::ui::i18n::init_lang();
+
     // W4-TABS: KAGI_OPEN_REPO=<path> opens a repo as a tab even when no CLI
     // arg is given (headless picker substitute, ADR-0027/0028).
     let env_open_repo = std::env::var("KAGI_OPEN_REPO").ok().map(PathBuf::from);

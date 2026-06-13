@@ -454,3 +454,117 @@ fn execute_continue_merge_creates_merge_commit() {
     let content = std::fs::read_to_string(dir.join("file.txt")).unwrap();
     assert!(content.contains("MAIN change") && content.contains("FEATURE change"));
 }
+
+// ────────────────────────────────────────────────────────────
+// W32-CONFLICT-EDITOR: hunk-level model over a real multi-hunk conflict
+// ────────────────────────────────────────────────────────────
+
+/// Build a repo whose `file.txt` conflicts in TWO separate places (top and
+/// bottom), with an unchanged middle, so the materialization has two hunks
+/// separated by passthrough context.
+fn two_hunk_conflict_repo() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir);
+
+    write_file(
+        dir,
+        "file.txt",
+        "top base\nmid 1\nmid 2\nmid 3\nbottom base\n",
+    );
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    git(dir, &["checkout", "-q", "-b", "feature"]);
+    write_file(
+        dir,
+        "file.txt",
+        "top FEATURE\nmid 1\nmid 2\nmid 3\nbottom FEATURE\n",
+    );
+    git(dir, &["commit", "-qam", "feature edits top+bottom"]);
+
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(
+        dir,
+        "file.txt",
+        "top MAIN\nmid 1\nmid 2\nmid 3\nbottom MAIN\n",
+    );
+    git(dir, &["commit", "-qam", "main edits top+bottom"]);
+
+    git_allow_fail(dir, &["merge", "feature"]);
+    tmp
+}
+
+#[test]
+fn hunk_model_splits_real_multi_hunk_conflict_and_assembles_marker_free() {
+    use kagi::git::resolution::HunkChoice;
+
+    let tmp = two_hunk_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    let path = Path::new("file.txt");
+
+    // Materialize zdiff3 markers and decompose into hunks.
+    let markers = buffer
+        .materialized_markers(&repo, path)
+        .expect("zdiff3 materialization");
+    assert!(buffer.ensure_hunks(path, &markers));
+    assert_eq!(buffer.hunk_count(path), 2, "two separate conflict hunks");
+
+    // Resolve hunk 0 → current, hunk 1 → incoming.
+    assert!(buffer.apply_hunk_choice(path, 0, HunkChoice::AcceptCurrent));
+    assert!(buffer.apply_hunk_choice(path, 1, HunkChoice::AcceptIncoming));
+    assert!(buffer.hunks_all_resolved(path));
+
+    let text = buffer.resolved_text(path).expect("resolved text");
+    // Current branch is `main` (we merged feature into main).
+    assert!(text.contains("top MAIN"), "hunk 0 accepted current: {:?}", text);
+    assert!(text.contains("bottom FEATURE"), "hunk 1 accepted incoming: {:?}", text);
+    // Passthrough context preserved.
+    assert!(text.contains("mid 2"));
+    // Fully resolved → no markers.
+    assert!(
+        !kagi::git::text_has_conflict_marker(&text),
+        "assembled Result must be marker-free: {:?}",
+        text
+    );
+
+    // Provenance over the assembled lines.
+    let prov = buffer.provenance(path).expect("provenance");
+    use kagi::git::LineOrigin::*;
+    assert!(prov.contains(&Current));
+    assert!(prov.contains(&Incoming));
+    assert!(prov.contains(&Context));
+}
+
+#[test]
+fn hunk_reset_keeps_marker_residue_and_blocks_continue() {
+    use kagi::git::resolution::HunkChoice;
+
+    let tmp = two_hunk_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    let path = Path::new("file.txt");
+    let markers = buffer.materialized_markers(&repo, path).unwrap();
+    buffer.ensure_hunks(path, &markers);
+
+    buffer.apply_hunk_choice(path, 0, HunkChoice::AcceptCurrent);
+    buffer.apply_hunk_choice(path, 1, HunkChoice::AcceptIncoming);
+    assert!(buffer.files_with_marker_residue().is_empty());
+
+    // Reset hunk 1 → it re-emits markers → residue → continue gate trips.
+    assert!(buffer.reset_hunk(path, 1));
+    assert!(!buffer.hunks_all_resolved(path));
+    assert_eq!(buffer.files_with_marker_residue(), vec![path.to_path_buf()]);
+
+    let session = detect_conflict_session(&repo).unwrap();
+    let plan = plan_conflict_continue(&repo, &session, &buffer).unwrap();
+    assert!(
+        !plan.blockers.is_empty(),
+        "marker residue from a reset hunk must block continue"
+    );
+}

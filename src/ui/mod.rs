@@ -11,6 +11,7 @@ pub mod branch_menu;
 pub mod commands;
 pub mod commit_list;
 pub mod conflict_view;
+pub mod conflict_editor;
 pub mod commit_panel;
 pub mod context_menu;
 pub mod detail_panel;
@@ -1523,6 +1524,15 @@ pub struct KagiApp {
     /// reload / tab switch invalidates it — mirrors `avatar_fetch_for`.  Holds
     /// the repo path whose conflict state has been detected this cycle.
     pub conflict_detected_for: Option<PathBuf>,
+    /// W32-CONFLICT-EDITOR: `Some(path)` while the dedicated hunk-level Conflict
+    /// Editor is open for that conflicting file.  `None` shows the Dashboard
+    /// (`conflict_view`, W33's lane).  Set/cleared only by the editor handlers
+    /// here; the editor reads the per-file [`HunkModel`] from `self.conflict`'s
+    /// buffer.
+    pub conflict_editing: Option<PathBuf>,
+    /// W32: last-saved resolved text per file, so a Save can log a before→after
+    /// file-content hash pair (T-035) without re-reading the working tree.
+    pub conflict_editing_before_text: HashMap<PathBuf, String>,
 }
 
 /// W6-TABSPEED: snapshot-derived **pure data** for one repository tab.
@@ -1819,6 +1829,8 @@ impl KagiApp {
             // W30-CONFLICT-UI
             conflict: None,
             conflict_detected_for: None,
+            conflict_editing: None,
+            conflict_editing_before_text: HashMap::new(),
         }
     }
 
@@ -1929,6 +1941,8 @@ impl KagiApp {
             // W30-CONFLICT-UI
             conflict: None,
             conflict_detected_for: None,
+            conflict_editing: None,
+            conflict_editing_before_text: HashMap::new(),
         }
     }
 
@@ -2131,6 +2145,7 @@ impl KagiApp {
                     eprintln!("[kagi] conflict-mode: cleared");
                 }
                 self.conflict = None;
+                self.conflict_editing = None;
                 return;
             }
         };
@@ -2179,6 +2194,13 @@ impl KagiApp {
             session.files.len()
         );
 
+        // W32: close the editor if the file being edited is no longer conflicted.
+        if let Some(editing) = self.conflict_editing.clone() {
+            if !session.files.iter().any(|f| f.path == editing) {
+                self.conflict_editing = None;
+            }
+        }
+
         self.conflict = Some(conflict_view::ConflictMode {
             session,
             buffer,
@@ -2187,12 +2209,231 @@ impl KagiApp {
         });
     }
 
-    /// Select a conflicting file (open its detail + Result preview).
-    pub fn conflict_select_file(&mut self, idx: usize) {
+    // ────────────────────────────────────────────────────────────
+    // W32-CONFLICT-EDITOR: hunk-level editor open/close + hunk dispatch
+    // ────────────────────────────────────────────────────────────
+
+    /// Open the dedicated Conflict Editor for the conflicting file at `path`.
+    ///
+    /// Builds (idempotently) the per-file [`HunkModel`] in the buffer from the
+    /// repository's zdiff3 materialization, then sets `conflict_editing`.  If the
+    /// file has no usable text merge (binary / single-sided) the editor still
+    /// opens and shows guidance (the hunk model is absent).  The repository is
+    /// opened read-only; nothing is written.
+    pub fn conflict_open_editor(&mut self, path: &std::path::Path) {
+        // Materialize the markers (needs the repo) and build the hunk model.
+        if let Some(repo_path) = self.repo_path.clone() {
+            if let Ok(repo) = git2::Repository::open(&repo_path) {
+                if let Some(c) = self.conflict.as_mut() {
+                    if let Some(markers) = c.buffer.materialized_markers(&repo, path) {
+                        c.buffer.ensure_hunks(path, &markers);
+                    }
+                }
+            }
+        }
+        // Keep the Dashboard selection in sync so back/forth is coherent.
         if let Some(c) = self.conflict.as_mut() {
-            if idx < c.session.files.len() {
+            if let Some(idx) = c.session.files.iter().position(|f| f.path == path) {
                 c.selected_file = Some(idx);
             }
+        }
+        self.conflict_editing = Some(path.to_path_buf());
+    }
+
+    /// Close the Conflict Editor, returning to the Dashboard.
+    pub fn conflict_close_editor(&mut self) {
+        self.conflict_editing = None;
+    }
+
+    /// Apply a per-hunk choice in the editor: dispatch to the buffer's
+    /// [`ResolutionBuffer::apply_hunk_choice`], refresh the file status, autosave.
+    pub fn conflict_editor_apply_hunk(
+        &mut self,
+        path: &std::path::Path,
+        hunk_index: usize,
+        choice: kagi::git::resolution::HunkChoice,
+    ) {
+        let Some(c) = self.conflict.as_mut() else { return };
+        if !c.buffer.apply_hunk_choice(path, hunk_index, choice) {
+            return;
+        }
+        // Refresh this file's status from the buffer (resolved / needs-review).
+        let residue = c.buffer.files_with_marker_residue();
+        if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
+            f.status = if !c.buffer.has_resolution(path) {
+                kagi::git::ConflictStatus::Unresolved
+            } else if residue.contains(&f.path) {
+                kagi::git::ConflictStatus::NeedsReview
+            } else {
+                kagi::git::ConflictStatus::Resolved
+            };
+        }
+        let _ = c.buffer.autosave();
+    }
+
+    /// Reset every hunk of `path` to unresolved (toolbar "Reset all").
+    pub fn conflict_editor_reset_all(&mut self, path: &std::path::Path) {
+        let Some(c) = self.conflict.as_mut() else { return };
+        let n = c.buffer.hunk_count(path);
+        for i in 0..n {
+            c.buffer.reset_hunk(path, i);
+        }
+        // Reset leaves marker residue → status becomes NeedsReview (still has a
+        // result draft, but unresolved markers remain).
+        let residue = c.buffer.files_with_marker_residue();
+        if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
+            f.status = if residue.contains(&f.path) {
+                kagi::git::ConflictStatus::NeedsReview
+            } else if c.buffer.has_resolution(path) {
+                kagi::git::ConflictStatus::Resolved
+            } else {
+                kagi::git::ConflictStatus::Unresolved
+            };
+        }
+        let _ = c.buffer.autosave();
+    }
+
+    /// Move the editor's view to the next (`dir > 0`) / previous (`dir < 0`)
+    /// **unresolved** hunk by selecting an adjacent still-conflicted file when the
+    /// current one is done.  MVP: hunks scroll within the file; this navigates the
+    /// file selection so prev/next always lands on work to do.
+    pub fn conflict_editor_nav_hunk(&mut self, dir: i32) {
+        // For MVP, prev/next reuse the Dashboard unresolved-file navigation and
+        // re-open the editor on the newly selected file.
+        self.conflict_nav_unresolved(dir);
+        if let Some(c) = self.conflict.as_ref() {
+            if let Some(idx) = c.selected_file {
+                if let Some(f) = c.session.files.get(idx) {
+                    let p = f.path.clone();
+                    self.conflict_open_editor(&p);
+                }
+            }
+        }
+    }
+
+    /// Entry point for "Open external tool" (ADR-0060 / ADR-0064 toolbar).  The
+    /// actual launch is W33's lane; here we only record the intent + toast so the
+    /// button is wired and discoverable.
+    pub fn conflict_editor_open_external(&mut self, path: &std::path::Path) {
+        eprintln!(
+            "[kagi] conflict-editor: external tool requested for {} (launch is W33)",
+            path.display()
+        );
+        self.push_toast(
+            ToastKind::Info,
+            SharedString::from(format!(
+                "External merge tool launch is not wired yet ({}).",
+                path.display()
+            )),
+        );
+    }
+
+    /// Save (T-034 / ADR-0066): persist the buffer (autosave), run the marker
+    /// check (a **warning**, not a hard block — Continue is the hard gate), mark
+    /// the file as a resolved candidate, and record the resolution action to the
+    /// operation log (T-035: session id + per-hunk actions + before/after hash).
+    ///
+    /// The index write happens only at Continue (elsewhere); Save is in-memory +
+    /// autosave only.
+    pub fn conflict_editor_save(&mut self, path: &std::path::Path) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let Some(c) = self.conflict.as_ref() else { return };
+
+        // Before/after hashes of the file's resolved text for the oplog.
+        let before_text = self
+            .conflict_editing_before_text
+            .get(path)
+            .cloned()
+            .unwrap_or_default();
+        let after_text = c.buffer.resolved_text(path).unwrap_or_default();
+        let before_hash = short_hash(&before_text);
+        let after_hash = short_hash(&after_text);
+
+        // Per-hunk action summary for the log.
+        let actions = c
+            .buffer
+            .hunk_model(path)
+            .map(|m| {
+                m.hunks()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, h)| format!("{}:{}", i, hunk_choice_slug(&h.choice)))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_default();
+        let session_slug = c.session.op.slug().to_string();
+
+        // Marker check: WARNING at Save (ADR-0066), never a block.
+        let has_markers = kagi::git::text_has_conflict_marker(&after_text);
+
+        // Persist the buffer (autosave) — in-memory first; no index write.
+        if let Some(c) = self.conflict.as_mut() {
+            let _ = c.buffer.autosave();
+            // Mark resolved-candidate status from the buffer.
+            let residue = c.buffer.files_with_marker_residue();
+            if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
+                f.status = if residue.contains(&f.path) {
+                    kagi::git::ConflictStatus::NeedsReview
+                } else if c.buffer.has_resolution(path) {
+                    kagi::git::ConflictStatus::Resolved
+                } else {
+                    kagi::git::ConflictStatus::Unresolved
+                };
+            }
+        }
+
+        // Record the resolution action to the operation log (T-035).  Reuse the
+        // existing oplog append; the per-hunk actions + hashes ride in the
+        // StateSummary fields so no new log file is invented.
+        let op_name = format!("conflict-save:{}", session_slug);
+        let before = StateSummary {
+            head: format!("session={} file={}", session_slug, path.display()),
+            dirty: format!("hunks=[{}] before={}", actions, before_hash),
+        };
+        let after = StateSummary {
+            head: format!("resolved-candidate before={} after={}", before_hash, after_hash),
+            dirty: if has_markers { "marker-residue".to_string() } else { "clean".to_string() },
+        };
+        self.record_op(&op_name, before, OpOutcome::Success { after }, &repo_path);
+
+        // Track the saved text as the new "before" for a subsequent save.
+        self.conflict_editing_before_text
+            .insert(path.to_path_buf(), after_text);
+
+        // User-facing feedback: warning on residue, success otherwise.
+        if has_markers {
+            self.push_toast(
+                ToastKind::Info,
+                SharedString::from(Msg::EditorMarkerWarning.t()),
+            );
+        } else {
+            self.push_toast(
+                ToastKind::Success,
+                SharedString::from(Msg::EditorSavedResolved.t()),
+            );
+        }
+    }
+
+    /// Select a conflicting file (open its detail + Result preview).
+    pub fn conflict_select_file(&mut self, idx: usize) {
+        let mut open_path: Option<PathBuf> = None;
+        if let Some(c) = self.conflict.as_mut() {
+            if let Some(f) = c.session.files.get(idx) {
+                c.selected_file = Some(idx);
+                // W32: activating a content conflict opens the dedicated
+                // hunk-level Conflict Editor (binary / single-sided files have no
+                // hunk model and stay on the Dashboard choose UI).
+                if f.kind == kagi::git::ConflictKind::Content {
+                    open_path = Some(f.path.clone());
+                }
+            }
+        }
+        if let Some(p) = open_path {
+            self.conflict_open_editor(&p);
         }
     }
 
@@ -8357,6 +8598,8 @@ impl Render for KagiApp {
         // W30-CONFLICT-UI: clone the Conflict Mode snapshot for render (free
         // functions in `conflict_view` render from this immutable copy).
         let conflict = self.conflict.clone();
+        // W32-CONFLICT-EDITOR: which conflicting file (if any) the editor is on.
+        let conflict_editing = self.conflict_editing.clone();
         let commit_menu_overlay = self
             .commit_menu
             .clone()
@@ -8626,8 +8869,15 @@ impl Render for KagiApp {
             .children(conflict.as_ref().map(|m| conflict_view::render_banner(m, cx)))
             // ── Body slot: in Conflict Mode the conflict resolution pane
             //    replaces the normal sidebar | list | panel body. ───
+            //    W32: with conflict_editing set, the dedicated hunk-level
+            //    Conflict Editor replaces the Dashboard body.
             .when_some(conflict.clone(), |el, m| {
-                el.child(conflict_view::render_body(&m, cx))
+                match conflict_editing.clone() {
+                    Some(editing) => {
+                        el.child(conflict_editor::render_editor(&m, &editing, cx))
+                    }
+                    None => el.child(conflict_view::render_body(&m, cx)),
+                }
             })
             .when(conflict.is_none(), |el| {
                 el.child(self.render_body(
@@ -15662,4 +15912,34 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
             },
         )
         .unwrap();
+}
+
+// ────────────────────────────────────────────────────────────
+// W32-CONFLICT-EDITOR: small helpers for the Save oplog record
+// ────────────────────────────────────────────────────────────
+
+/// A short stable content hash for the oplog before/after fields.  Reuses the
+/// crate's self-contained FNV-1a (no new deps); 16 lowercase hex chars.  This is
+/// a log fingerprint only (no security properties).  `chars()`-safe: hashes
+/// bytes of a `&str`, never byte-slices it.
+fn short_hash(text: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in text.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    format!("{:016x}", h)
+}
+
+/// Stable slug for a per-hunk choice, for the oplog action summary (T-035).
+fn hunk_choice_slug(choice: &kagi::git::resolution::HunkChoice) -> &'static str {
+    use kagi::git::resolution::HunkChoice::*;
+    match choice {
+        AcceptCurrent => "current",
+        AcceptIncoming => "incoming",
+        BothCurrentFirst => "both-cf",
+        BothIncomingFirst => "both-if",
+        Manual(_) => "manual",
+        Unresolved => "unresolved",
+    }
 }

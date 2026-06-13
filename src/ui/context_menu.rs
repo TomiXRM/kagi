@@ -12,6 +12,7 @@ use super::{
     commit_list::{BadgeKind, RefBadge},
     FooterStatus, KagiApp,
 };
+use super::i18n::Msg;
 use super::theme::theme;
 
 // W9-THEME: all colours come from `theme()` (see theme.rs).
@@ -486,13 +487,13 @@ fn disabled(reason: impl Into<SharedString>) -> ItemState {
 
 fn cherry_pick_state(ctx: &MenuContext) -> ItemState {
     if ctx.detached {
-        disabled("detached HEAD")
+        disabled(Msg::CmDetachedHead.t())
     } else if ctx.is_head {
-        disabled("HEAD と同一")
+        disabled(Msg::CmSameAsHead.t())
     } else if ctx.is_merge {
-        disabled("merge commit は MVP 対象外")
+        disabled(Msg::CmMergeUnsupported.t())
     } else if ctx.is_ancestor_of_head {
-        disabled("既に現在 branch に含まれています")
+        disabled(Msg::CmAlreadyInBranch.t())
     } else {
         ItemState::Enabled
     }
@@ -500,11 +501,11 @@ fn cherry_pick_state(ctx: &MenuContext) -> ItemState {
 
 fn revert_state(ctx: &MenuContext) -> ItemState {
     if ctx.detached {
-        disabled("detached HEAD")
+        disabled(Msg::CmDetachedHead.t())
     } else if ctx.is_merge {
-        disabled("merge commit は MVP 対象外")
+        disabled(Msg::CmMergeUnsupported.t())
     } else if !ctx.is_ancestor_of_head {
-        disabled("現在 branch に含まれない")
+        disabled(Msg::CmNotInBranch.t())
     } else {
         ItemState::Enabled
     }
@@ -512,7 +513,7 @@ fn revert_state(ctx: &MenuContext) -> ItemState {
 
 fn checkout_commit_state(ctx: &MenuContext) -> ItemState {
     if ctx.is_head {
-        disabled("既に HEAD")
+        disabled(Msg::CmAlreadyHead.t())
     } else {
         ItemState::Enabled
     }
@@ -530,7 +531,7 @@ fn checkout_commit_label(ctx: &MenuContext) -> &'static str {
 
 fn compare_head_state(ctx: &MenuContext) -> ItemState {
     if ctx.is_head {
-        disabled("同一")
+        disabled(Msg::CmIdentical.t())
     } else {
         ItemState::Enabled
     }
@@ -540,17 +541,17 @@ fn compare_working_tree_state(ctx: &MenuContext) -> ItemState {
     if ctx.has_local_changes {
         ItemState::Enabled
     } else {
-        disabled("local changes がありません")
+        disabled(Msg::CmNoLocalChanges.t())
     }
 }
 
 fn reset_state(ctx: &MenuContext) -> ItemState {
     if ctx.is_head {
-        disabled("不要(HEAD と同一)")
+        disabled(Msg::CmResetUnneeded.t())
     } else if ctx.detached {
-        disabled("現在 branch がありません")
+        disabled(Msg::CmNoCurrentBranch.t())
     } else {
-        disabled("MVP では reset は未実装")
+        disabled(Msg::CmResetUnimplemented.t())
     }
 }
 
@@ -632,7 +633,8 @@ mod tests {
         assert_disabled_contains(&groups, CommitAction::CherryPick, "HEAD");
         assert_enabled(&groups, CommitAction::Revert);
         assert_disabled_contains(&groups, CommitAction::CheckoutCommit, "HEAD");
-        assert_disabled_contains(&groups, CommitAction::CompareWithHead, "同一");
+        // i18n: default test language is En; assert the English Msg substring.
+        assert_disabled_contains(&groups, CommitAction::CompareWithHead, "identical");
         assert_enabled(&groups, CommitAction::CompareWithWorkingTree);
         assert_disabled_contains(&groups, CommitAction::ResetToCommit, "HEAD");
     }
@@ -643,7 +645,7 @@ mod tests {
         c.is_ancestor_of_head = true;
         let groups = build_commit_menu(&c);
 
-        assert_disabled_contains(&groups, CommitAction::CherryPick, "現在 branch に含まれています");
+        assert_disabled_contains(&groups, CommitAction::CherryPick, "already in the current branch");
         assert_enabled(&groups, CommitAction::Revert);
         assert_enabled(&groups, CommitAction::CheckoutCommit);
         assert_enabled(&groups, CommitAction::CompareWithHead);
@@ -659,7 +661,7 @@ mod tests {
         let groups = build_commit_menu(&ctx());
 
         assert_enabled(&groups, CommitAction::CherryPick);
-        assert_disabled_contains(&groups, CommitAction::Revert, "現在 branch");
+        assert_disabled_contains(&groups, CommitAction::Revert, "not in the current branch");
         assert_enabled(&groups, CommitAction::CheckoutCommit);
         assert_enabled(&groups, CommitAction::CompareWithHead);
     }

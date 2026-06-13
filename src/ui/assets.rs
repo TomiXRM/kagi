@@ -33,6 +33,8 @@ const ASSETS: &[(&str, &[u8])] = &[
     // T-CONFLICT-POLISH-040/041: Conflict Editor toolbar icons.
     ("icons/external-link.svg", include_bytes!("../../assets/icons/external-link.svg")),
     ("icons/trash-2.svg", include_bytes!("../../assets/icons/trash-2.svg")),
+    // T-SETTINGS-001: header Settings gear (gpui_component IconName::Settings).
+    ("icons/settings.svg", include_bytes!("../../assets/icons/settings.svg")),
 ];
 
 impl AssetSource for KagiAssets {

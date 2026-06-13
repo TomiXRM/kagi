@@ -8158,6 +8158,7 @@ impl KagiApp {
         };
         match repo.plan_commit(&msg) {
             Ok(plan) => {
+                let has_blockers = !plan.blockers.is_empty();
                 eprintln!(
                     "[kagi] plan: commit blockers={} warnings={}",
                     plan.blockers.len(),
@@ -8168,6 +8169,18 @@ impl KagiApp {
                         plan: std::sync::Arc::new(plan),
                         error: None,
                     });
+                }
+                // Smooth commit (user request): with no blockers, commit immediately
+                // instead of showing a "commit?" confirmation popup. The pre-commit
+                // checklist blockers (conflict markers / secrets / large binaries)
+                // still surface the modal as a safety net. `start_commit` captures the
+                // plan synchronously, so we can drop the modal right after to suppress
+                // the popup; success/failure shows in the status footer.
+                if !has_blockers {
+                    self.start_commit(cx);
+                    if let Some(ref mut panel) = self.commit_panel {
+                        panel.plan_modal = None;
+                    }
                 }
             }
             Err(e) => {
@@ -8289,9 +8302,16 @@ impl KagiApp {
                         );
                         if let Some(ref mut panel) = app.commit_panel {
                             if let Some(ref mut modal) = panel.plan_modal {
-                                modal.error = Some(SharedString::from(err_msg));
+                                modal.error = Some(SharedString::from(err_msg.clone()));
                             }
                         }
+                        // Surface commit failures in the status footer too, so the
+                        // error is visible even for the smooth (no-popup) commit path
+                        // where the plan modal isn't shown.
+                        app.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                            "commit failed: {}",
+                            err_msg
+                        )));
                     }
                 }
                 cx.notify();

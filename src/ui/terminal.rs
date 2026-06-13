@@ -257,7 +257,7 @@ pub fn build_terminal_view(
 ///
 /// Order: RobotoMono Nerd Font → JetBrainsMono Nerd Font → Hack Nerd Font →
 /// Menlo (always present on macOS).
-fn pick_font_family() -> String {
+pub(crate) fn pick_font_family() -> String {
     const CANDIDATES: &[(&str, &str)] = &[
         ("RobotoMonoNerdFont", "RobotoMono Nerd Font"),
         ("JetBrainsMonoNerdFont", "JetBrainsMono Nerd Font"),

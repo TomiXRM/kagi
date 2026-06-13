@@ -33,33 +33,22 @@
 //! "ours" / "theirs" never appear.  All prose is via [`Msg`] (en + ja).  Sizes
 //! go through [`theme::scaled_px`] so the editor respects zoom.
 
-use gpui::{canvas, div, prelude::*, px, relative, rgb, Bounds, Context, Pixels, SharedString, Window};
-use gpui_component::input::Input;
+use std::sync::Arc;
 
-use kagi::git::resolution::{ConflictHunk, HunkChoice, Region};
+use gpui::{
+    canvas, div, prelude::*, px, relative, rgb, uniform_list, AnyElement, Bounds, Context, Pixels,
+    SharedString, UniformListScrollHandle, Window,
+};
+use gpui_component::input::Input;
+use gpui_component::scroll::Scrollbar;
+
+use kagi::git::resolution::{LineOrder, Region, SelectionSide, TriState};
 
 use super::conflict_view::ConflictMode;
 use super::conflict_view::EditorChrome;
 use super::i18n::Msg;
 use super::theme::{self, theme};
-use super::{DividerDrag, DividerGhost, DividerKind, KagiApp};
-
-/// The conflict hunks of a file, in order (skipping passthrough regions) —
-/// owned clones so the per-hunk render closures don't borrow `mode`.
-fn file_hunks(mode: &ConflictMode, path: &std::path::Path) -> Vec<ConflictHunk> {
-    mode.buffer
-        .hunk_model(path)
-        .map(|m| {
-            m.regions
-                .iter()
-                .filter_map(|r| match r {
-                    Region::Hunk(h) => Some(h.clone()),
-                    Region::Passthrough(_) => None,
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
+use super::{terminal, DividerDrag, DividerGhost, DividerKind, KagiApp};
 
 /// Render the full Conflict Editor, replacing the normal body while editing.
 pub fn render_editor(
@@ -234,7 +223,7 @@ where
 }
 
 // ────────────────────────────────────────────────────────────
-// 3-pane body: (A | B) row  +  both-order strip  +  Result pane
+// 3-pane body: synchronized A/B row lists + Result pane
 // ────────────────────────────────────────────────────────────
 
 fn render_panes(
@@ -244,12 +233,12 @@ fn render_panes(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     // No hunk model (binary / single-sided) → guidance message.
-    let Some(inputs) = chrome.inputs.as_ref().filter(|i| i.path == path) else {
+    let Some(_inputs) = chrome.inputs.as_ref().filter(|i| i.path == path) else {
         return guidance_pane(Msg::EditorNoTextMerge.t());
     };
-    if mode.buffer.hunk_model(path).is_none() {
+    let Some(model) = mode.buffer.hunk_model(path) else {
         return guidance_pane(Msg::EditorNoTextMerge.t());
-    }
+    };
 
     let labels = mode.labels();
     let current_label =
@@ -258,8 +247,6 @@ fn render_panes(
         format!("{} — {}", Msg::EditorIncomingSide.t(), labels.incoming.name);
 
     // ── A | B row (resizable A|B), measured for the vertical divider drag ──
-    // The pane headers no longer carry a file-level accept toggle (UX-010/012):
-    // accept is now per-hunk, in the scrollable hunk-control list below.
     let ab_geom = chrome.ab_geom.clone();
     let ab_measure = canvas(
         move |bounds: Bounds<Pixels>, _w, _cx| {
@@ -270,16 +257,20 @@ fn render_panes(
     .absolute()
     .size_full();
 
+    let scroll = chrome.ab_scroll.clone();
     let a_pane = pane(
         "conflict-pane-a",
         current_label,
         theme().color_branch,
-        None,
-        Input::new(&inputs.current)
-            .disabled(true)
-            .appearance(true)
-            .bordered(false)
-            .h_full(),
+        Some(side_file_checkbox(path, model.file_side_state(SelectionSide::Current), SelectionSide::Current, cx)),
+        side_row_list(
+            path,
+            model,
+            SelectionSide::Current,
+            scroll.clone(),
+            chrome.selected_hunk,
+            cx,
+        ),
     )
     .child(ab_measure);
 
@@ -287,12 +278,15 @@ fn render_panes(
         "conflict-pane-b",
         incoming_label,
         theme().color_remote,
-        None,
-        Input::new(&inputs.incoming)
-            .disabled(true)
-            .appearance(true)
-            .bordered(false)
-            .h_full(),
+        Some(side_file_checkbox(path, model.file_side_state(SelectionSide::Incoming), SelectionSide::Incoming, cx)),
+        side_row_list(
+            path,
+            model,
+            SelectionSide::Incoming,
+            scroll,
+            chrome.selected_hunk,
+            cx,
+        ),
     );
 
     let ab_row = div()
@@ -305,9 +299,6 @@ fn render_panes(
         .child(div().h_full().min_w(px(0.)).w(relative(chrome.ab_split)).child(a_pane))
         .child(vertical_divider())
         .child(div().h_full().min_w(px(0.)).flex_1().child(b_pane));
-
-    // ── Per-hunk accept controls (UX-010/012) — scrollable list of hunks ──
-    let hunk_strip = hunk_controls(mode, chrome, path, cx);
 
     // ── Result pane (resizable A·B / Result) ──
     let result_pane = render_result_pane(mode, chrome, path, cx);
@@ -330,188 +321,377 @@ fn render_panes(
         .size_full()
         .child(measure)
         .child(ab_row)
-        .child(hunk_strip)
         .child(horizontal_divider())
         .child(result_pane)
         .into_any_element()
 }
 
 // ────────────────────────────────────────────────────────────
-// Per-hunk accept controls (UX-010/012) — replaces the file-level header
-// toggles + both-order strip with one A/B accept row per conflict hunk.
+// A/B row lists: file/chunk/line tri-state checkbox hierarchy (ADR-0071)
 // ────────────────────────────────────────────────────────────
 
-/// A scrollable list of per-hunk accept controls placed between the A·B row and
-/// the Result pane.  Each conflict hunk gets its own row with: a hunk number +
-/// status, "Accept current" / "Accept incoming" toggles, both-order toggles, and
-/// a "Reset" button — each acting on **that hunk only**.  The focused hunk
-/// (`chrome.selected_hunk`) is highlighted; clicking a row focuses it.
-fn hunk_controls(
-    mode: &ConflictMode,
-    chrome: &EditorChrome,
-    path: &std::path::Path,
-    cx: &mut Context<KagiApp>,
-) -> gpui::Stateful<gpui::Div> {
-    let hunks = file_hunks(mode, path);
-    let selected = chrome.selected_hunk;
-
-    let mut list = div()
-        .id("conflict-hunk-controls")
-        .flex()
-        .flex_col()
-        .w_full()
-        .max_h(theme::scaled_px(160.))
-        .overflow_y_scroll()
-        .bg(rgb(theme().surface))
-        .border_t_1()
-        .border_color(rgb(theme().surface));
-
-    for (i, h) in hunks.iter().enumerate() {
-        list = list.child(hunk_row(i, h, selected == i, path, cx));
-    }
-    list
+#[derive(Clone)]
+enum SideRow {
+    HunkHeader { hunk_index: usize, state: TriState, order: LineOrder },
+    Line {
+        hunk_index: usize,
+        line_index: usize,
+        line_no: usize,
+        text: String,
+        taken: bool,
+    },
 }
 
-/// One per-hunk control row (UX-010/012).
-fn hunk_row(
-    index: usize,
-    hunk: &ConflictHunk,
-    focused: bool,
+fn side_file_checkbox(
     path: &std::path::Path,
+    state: TriState,
+    side: SelectionSide,
     cx: &mut Context<KagiApp>,
 ) -> gpui::Stateful<gpui::Div> {
-    let choice = hunk.choice.clone();
-    let is_current = choice == HunkChoice::AcceptCurrent;
-    let is_incoming = choice == HunkChoice::AcceptIncoming;
-    let is_both_cf = choice == HunkChoice::BothCurrentFirst;
-    let is_both_if = choice == HunkChoice::BothIncomingFirst;
-    let resolved = !matches!(choice, HunkChoice::Unresolved);
-
-    // Clicking the row focuses this hunk (selected-hunk highlight tracking).
-    let focus_click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_editor_select_hunk(index);
+    let p = path.to_path_buf();
+    let next = state != TriState::All;
+    let handler = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_editor_set_file_side(&p, side, next);
         cx.notify();
     });
+    tri_checkbox(
+        format!("file-side-{:?}", side),
+        state,
+        theme().text_sub,
+        handler,
+    )
+}
 
-    // A toggle that applies `target` to THIS hunk, or resets it if already set.
-    let toggle = |id: &str, label: &str, active: bool, accent: u32, target: HunkChoice| {
-        let p = path.to_path_buf();
-        let t = target.clone();
-        let handler = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-            if active {
-                this.conflict_editor_apply_hunk(&p, index, HunkChoice::Unresolved);
-            } else {
-                this.conflict_editor_apply_hunk(&p, index, t.clone());
+fn build_side_rows(
+    model: &kagi::git::resolution::HunkModel,
+    side: SelectionSide,
+) -> Vec<SideRow> {
+    let mut rows = Vec::new();
+    let mut hunk_index = 0usize;
+    let mut line_no = 1usize;
+    for region in &model.regions {
+        if let Region::Hunk(hunk) = region {
+            let order = hunk
+                .line_select
+                .as_ref()
+                .map(|selection| selection.order)
+                .unwrap_or_else(|| match hunk.choice {
+                    kagi::git::resolution::HunkChoice::BothIncomingFirst => {
+                        LineOrder::IncomingFirst
+                    }
+                    _ => LineOrder::CurrentFirst,
+                });
+            rows.push(SideRow::HunkHeader {
+                hunk_index,
+                state: hunk.side_state(side),
+                order,
+            });
+            let (lines, taken) = match side {
+                SelectionSide::Current => (
+                    &hunk.current,
+                    hunk.line_select.as_ref().map(|s| s.current_taken.clone()),
+                ),
+                SelectionSide::Incoming => (
+                    &hunk.incoming,
+                    hunk.line_select.as_ref().map(|s| s.incoming_taken.clone()),
+                ),
+            };
+            for (line_index, text) in lines.iter().enumerate() {
+                let is_taken = taken
+                    .as_ref()
+                    .and_then(|values| values.get(line_index))
+                    .copied()
+                    .unwrap_or_else(|| hunk.side_state(side) == TriState::All);
+                rows.push(SideRow::Line {
+                    hunk_index,
+                    line_index,
+                    line_no,
+                    text: text.clone(),
+                    taken: is_taken,
+                });
+                line_no += 1;
             }
-            cx.notify();
-        });
-        hunk_toggle_button(id, index, label, active, accent, handler)
-    };
+            hunk_index += 1;
+        }
+    }
+    rows
+}
 
-    let (status_text, status_color) = if resolved {
-        (Msg::EditorHunkResolved.t(), theme().color_success)
-    } else {
-        (Msg::EditorHunkUnresolved.t(), theme().color_warning)
+fn side_row_list(
+    path: &std::path::Path,
+    model: &kagi::git::resolution::HunkModel,
+    side: SelectionSide,
+    scroll: UniformListScrollHandle,
+    selected_hunk: usize,
+    cx: &mut Context<KagiApp>,
+) -> gpui::Stateful<gpui::Div> {
+    let rows = Arc::new(build_side_rows(model, side));
+    let row_count = rows.len();
+    let rows_for_list = rows.clone();
+    let p = Arc::new(path.to_path_buf());
+    let (list_id, outer_id) = match side {
+        SelectionSide::Current => ("conflict-current-lines", "conflict-current-lines-scroll"),
+        SelectionSide::Incoming => ("conflict-incoming-lines", "conflict-incoming-lines-scroll"),
     };
 
     div()
-        .id(SharedString::from(format!("hunk-row-{}", index)))
+        .id(outer_id)
+        .relative()
+        .flex_1()
+        .min_h(px(0.))
+        .flex()
+        .flex_col()
+        .child(
+            uniform_list(
+                list_id,
+                row_count,
+                cx.processor(move |_this, range, _window, cx| {
+                    render_side_rows(&rows_for_list, p.clone(), side, selected_hunk, range, cx)
+                }),
+            )
+            .track_scroll(scroll.clone())
+            .flex_1()
+            .min_h(px(0.)),
+        )
+        .child(Scrollbar::vertical(&scroll))
+}
+
+fn render_side_rows(
+    rows: &[SideRow],
+    path: Arc<std::path::PathBuf>,
+    side: SelectionSide,
+    selected_hunk: usize,
+    range: std::ops::Range<usize>,
+    cx: &mut Context<KagiApp>,
+) -> Vec<AnyElement> {
+    range
+        .filter_map(|i| rows.get(i).map(|row| (i, row.clone())))
+        .map(|(i, row)| match row {
+            SideRow::HunkHeader { hunk_index, state, order } => {
+                render_hunk_header_row(
+                    i,
+                    path.clone(),
+                    hunk_index,
+                    state,
+                    order,
+                    side,
+                    selected_hunk,
+                    cx,
+                )
+            }
+            SideRow::Line { hunk_index, line_index, line_no, text, taken } => {
+                render_code_line_row(
+                    i,
+                    path.clone(),
+                    hunk_index,
+                    line_index,
+                    line_no,
+                    text,
+                    taken,
+                    side,
+                    selected_hunk,
+                    cx,
+                )
+            }
+        })
+        .collect()
+}
+
+fn render_hunk_header_row(
+    row_index: usize,
+    path: Arc<std::path::PathBuf>,
+    hunk_index: usize,
+    state: TriState,
+    order: LineOrder,
+    side: SelectionSide,
+    selected_hunk: usize,
+    cx: &mut Context<KagiApp>,
+) -> AnyElement {
+    let next = state != TriState::All;
+    let p = path.clone();
+    let toggle = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_editor_set_hunk_side(&p, hunk_index, side, next);
+        cx.notify();
+    });
+    let p_order = path;
+    let next_order = match order {
+        LineOrder::CurrentFirst => LineOrder::IncomingFirst,
+        LineOrder::IncomingFirst => LineOrder::CurrentFirst,
+    };
+    let order_click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_editor_set_hunk_order(&p_order, hunk_index, next_order);
+        cx.notify();
+    });
+    let focus_click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_editor_select_hunk(hunk_index);
+        cx.notify();
+    });
+    let order_label = match order {
+        LineOrder::CurrentFirst => Msg::EditorCurrentFirst.t(),
+        LineOrder::IncomingFirst => Msg::EditorIncomingFirst.t(),
+    };
+    div()
+        .id(SharedString::from(format!("side-hunk-{}", row_index)))
         .flex()
         .flex_row()
-        .flex_wrap()
         .items_center()
         .gap_2()
         .w_full()
-        .px(theme::scaled_px(10.))
-        .py(theme::scaled_px(5.))
+        .h(theme::scaled_px(28.))
+        .px(theme::scaled_px(8.))
         .border_b_1()
         .border_color(rgb(theme().bg_base))
-        .when(focused, |s| s.bg(rgb(theme().selected)))
-        .hover(|s| s.bg(rgb(theme().bg_row_alt)))
+        .bg(rgb(if selected_hunk == hunk_index { theme().selected } else { theme().surface }))
+        .hover(|s| s.bg(rgb(theme().selected)))
         .on_click(focus_click)
+        .child(tri_checkbox(
+            format!("hunk-side-{:?}-{}", side, hunk_index),
+            state,
+            theme().text_sub,
+            toggle,
+        ))
         .child(
             div()
-                .min_w(theme::scaled_px(78.))
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .text_size(theme::scaled_px(11.))
-                        .text_color(rgb(theme().text_main))
-                        .child(SharedString::from(format!(
-                            "{} {}",
-                            Msg::EditorHunkLabel.t(),
-                            index + 1
-                        ))),
-                )
-                .child(
-                    div()
-                        .text_size(theme::scaled_px(9.))
-                        .text_color(rgb(status_color))
-                        .child(SharedString::from(status_text)),
-                ),
+                .text_size(theme::scaled_px(10.))
+                .text_color(rgb(theme().text_label))
+                .child(SharedString::from(format!(
+                    "{} {}",
+                    Msg::EditorHunkLabel.t(),
+                    hunk_index + 1
+                ))),
         )
-        .child(toggle(
-            "hunk-cur",
-            Msg::EditorAcceptCurrent.t(),
-            is_current,
-            theme().color_branch,
-            HunkChoice::AcceptCurrent,
-        ))
-        .child(toggle(
-            "hunk-inc",
-            Msg::EditorAcceptIncoming.t(),
-            is_incoming,
-            theme().color_remote,
-            HunkChoice::AcceptIncoming,
-        ))
-        .child(toggle(
-            "hunk-both-cf",
-            Msg::EditorAcceptBothCurrentFirst.t(),
-            is_both_cf,
-            theme().color_success,
-            HunkChoice::BothCurrentFirst,
-        ))
-        .child(toggle(
-            "hunk-both-if",
-            Msg::EditorAcceptBothIncomingFirst.t(),
-            is_both_if,
-            theme().color_success,
-            HunkChoice::BothIncomingFirst,
-        ))
+        .child(
+            div()
+                .id(SharedString::from(format!("hunk-order-{}", row_index)))
+                .ml_auto()
+                .px(theme::scaled_px(6.))
+                .py(theme::scaled_px(1.))
+                .rounded_sm()
+                .border_1()
+                .border_color(rgb(theme().selected))
+                .text_size(theme::scaled_px(9.))
+                .text_color(rgb(theme().text_sub))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(theme().bg_row_alt)))
+                .child(SharedString::from(order_label))
+                .on_click(order_click),
+        )
+        .into_any_element()
 }
 
-/// A per-hunk accept toggle button (active = checked glyph + accent fill).
-fn hunk_toggle_button<H>(
-    id: &str,
-    index: usize,
-    label: &str,
-    active: bool,
+fn render_code_line_row(
+    row_index: usize,
+    path: Arc<std::path::PathBuf>,
+    hunk_index: usize,
+    line_index: usize,
+    line_no: usize,
+    text_value: String,
+    taken: bool,
+    side: SelectionSide,
+    selected_hunk: usize,
+    cx: &mut Context<KagiApp>,
+) -> AnyElement {
+    let p = path.clone();
+    let toggle = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_editor_set_hunk_line(&p, hunk_index, side, line_index, !taken);
+        cx.notify();
+    });
+    let focus_click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_editor_select_hunk(hunk_index);
+        cx.notify();
+    });
+    let accent = match side {
+        SelectionSide::Current => theme().color_branch,
+        SelectionSide::Incoming => theme().color_remote,
+    };
+    div()
+        .id(SharedString::from(format!("side-line-{}", row_index)))
+        .flex()
+        .flex_row()
+        .items_center()
+        .w_full()
+        .h(theme::scaled_px(24.))
+        .px(theme::scaled_px(8.))
+        .gap_2()
+        .border_b_1()
+        .border_color(rgb(theme().bg_base))
+        .bg(rgb(if selected_hunk == hunk_index { theme().bg_row_alt } else { theme().bg_base }))
+        .hover(|s| s.bg(rgb(theme().selected)))
+        .on_click(focus_click)
+        .child(line_checkbox(
+            taken,
+            accent,
+            format!("line-side-{:?}-{}-{}", side, hunk_index, line_index),
+            toggle,
+        ))
+        .child(
+            div()
+                .w(theme::scaled_px(42.))
+                .text_size(theme::scaled_px(11.))
+                .font_family(terminal::pick_font_family())
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(format!("{:>4}", line_no))),
+        )
+        .child(
+            div()
+                .min_w(px(0.))
+                .flex_1()
+                .text_size(theme::scaled_px(12.))
+                .font_family(terminal::pick_font_family())
+                .text_color(rgb(if taken { theme().text_main } else { theme().text_muted }))
+                .overflow_hidden()
+                .child(SharedString::from(text_value)),
+        )
+        .into_any_element()
+}
+
+fn tri_checkbox<H>(
+    id: impl Into<String>,
+    state: TriState,
     accent: u32,
     handler: H,
 ) -> gpui::Stateful<gpui::Div>
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    let glyph = if active { "\u{2611}" } else { "\u{2610}" }; // ☑ / ☐
+    let glyph = match state {
+        TriState::All => "\u{2611}",
+        TriState::Partial => "\u{2014}",
+        TriState::None => "\u{2610}",
+    };
     div()
-        .id(SharedString::from(format!("{}-{}", id, index)))
+        .id(SharedString::from(id.into()))
         .flex()
-        .flex_row()
         .items_center()
-        .gap_1()
-        .px(theme::scaled_px(6.))
-        .py(theme::scaled_px(2.))
-        .rounded_md()
+        .justify_center()
+        .w(theme::scaled_px(18.))
+        .h(theme::scaled_px(18.))
+        .rounded_sm()
         .border_1()
         .border_color(rgb(accent))
-        .text_size(theme::scaled_px(10.))
+        .text_size(theme::scaled_px(12.))
         .text_color(rgb(accent))
         .cursor_pointer()
         .hover(|s| s.bg(rgb(theme().selected)))
         .child(SharedString::from(glyph))
-        .child(SharedString::from(label.to_string()))
         .on_click(handler)
+}
+
+fn line_checkbox<H>(
+    taken: bool,
+    accent: u32,
+    id: impl Into<String>,
+    handler: H,
+) -> gpui::Stateful<gpui::Div>
+where
+    H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+{
+    tri_checkbox(
+        id,
+        if taken { TriState::All } else { TriState::None },
+        accent,
+        handler,
+    )
 }
 
 fn guidance_pane(msg: &str) -> gpui::AnyElement {

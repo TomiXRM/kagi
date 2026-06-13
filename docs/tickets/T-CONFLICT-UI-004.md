@@ -23,3 +23,8 @@ A/B/Result は gpui-component InputState code_editor("text") を使用。code_ed
 - InputState は内部で `ScrollHandle::new()` を生成するため、共有 ScrollHandle の注入も不可。
 
 → 真の A/B スクロール連動はこのバージョンでは fork なしには実現不可(vendor/Cargo.toml 変更は禁止)。ADR-0070 の「MVP で難しければ各独立に落としてよい(明記する)」に従い、**A/B は独立スクロールのまま**とする(fake しない)。将来 gpui-component が scroll offset API を公開するか upstream に PR が入れば連動を再検討。
+
+## 追記 (line-level rework done)
+ADR-0071 により A/B pane を `InputState` から `uniform_list` へ変更したため、上記 deferred は解消。
+A/B は共有 `UniformListScrollHandle` を `track_scroll` し、同じ vertical offset でスクロールする。
+Result pane は独立 scroll のまま。

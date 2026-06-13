@@ -24,7 +24,7 @@
 
 use std::path::PathBuf;
 
-use gpui::{div, prelude::*, px, rgb, Context, Entity, SharedString, Window};
+use gpui::{div, prelude::*, px, rgb, Context, Entity, SharedString, UniformListScrollHandle, Window};
 use gpui_component::input::InputState;
 use gpui_component::tooltip::Tooltip;
 
@@ -34,17 +34,13 @@ use super::i18n::Msg;
 use super::theme::{self, theme};
 use super::KagiApp;
 
-/// T-CONFLICT-UI: the per-pane CodeEditor `InputState`s for the open file.
+/// T-CONFLICT-UI: the per-pane editor state for the open file.
 /// Held on [`KagiApp`] (they need a `Window` to create) and passed into the
 /// render functions via [`EditorChrome`].
 #[derive(Clone)]
 pub struct EditorInputs {
     /// The conflicting file these inputs are bound to.
     pub path: PathBuf,
-    /// A (Current side) read-only editor.
-    pub current: Entity<InputState>,
-    /// B (Incoming side) read-only editor.
-    pub incoming: Entity<InputState>,
     /// Result editor (read-only in Preview, editable in Edit).
     pub result: Entity<InputState>,
 }
@@ -54,8 +50,10 @@ pub struct EditorInputs {
 /// on [`KagiApp`], not on the cloned [`ConflictMode`]).
 #[derive(Clone)]
 pub struct EditorChrome {
-    /// The three pane `InputState`s, when present for the edited content file.
+    /// The Result pane `InputState`, when present for the edited content file.
     pub inputs: Option<EditorInputs>,
+    /// Shared A/B row-list scroll handle; both panes track it for vertical sync.
+    pub ab_scroll: UniformListScrollHandle,
     /// Whether the Result pane is in Edit mode (UX-015).
     pub result_editing: bool,
     /// Whether the destructive "Reset all" is armed (POLISH-042).

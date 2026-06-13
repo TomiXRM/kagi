@@ -395,19 +395,24 @@ pub fn render_banner(mode: &ConflictMode, _cx: &mut Context<KagiApp>) -> gpui::A
         .border_b_1()
         .border_color(rgb(theme().color_warning))
         .child(
+            // operation summary + progress laid out horizontally (was stacked)
+            // to reduce the banner's height.
             div()
                 .flex()
-                .flex_col()
+                .flex_row()
+                .items_center()
                 .flex_grow()
-                .gap_1()
+                .gap_3()
                 .child(
                     div()
                         .text_size(theme::scaled_px(13.))
                         .text_color(rgb(theme().text_main))
+                        .overflow_hidden()
                         .child(SharedString::from(op_summary(mode))),
                 )
                 .child(
                     div()
+                        .flex_shrink_0()
                         .text_size(theme::scaled_px(11.))
                         .text_color(if mode.can_continue() {
                             rgb(theme().color_success)

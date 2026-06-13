@@ -569,11 +569,11 @@ impl Msg {
             (En, ConflictSkip) => "Skip",
             (Ja, ConflictSkip) => "スキップ",
             (En, ConflictResolved) => "resolved",
-            (Ja, ConflictResolved) => "解決済み",
+            (Ja, ConflictResolved) => "resolved",
             (En, ConflictUnresolved) => "unresolved",
-            (Ja, ConflictUnresolved) => "未解決",
+            (Ja, ConflictUnresolved) => "unresolved",
             (En, ConflictResolvedShort) => "resolved",
-            (Ja, ConflictResolvedShort) => "解決済み",
+            (Ja, ConflictResolvedShort) => "resolved",
             (En, ConflictNeedsReview) => "needs review",
             (Ja, ConflictNeedsReview) => "要確認",
             (En, ConflictKindContent) => "content",
@@ -585,7 +585,7 @@ impl Msg {
             (En, ConflictKindBinary) => "binary",
             (Ja, ConflictKindBinary) => "binary",
             (En, ConflictSelectFile) => "Select a conflicting file to resolve it",
-            (Ja, ConflictSelectFile) => "解決する衝突ファイルを選択してください",
+            (Ja, ConflictSelectFile) => "解決する conflict ファイルを選択してください",
             (En, ConflictKeepCurrent) => "Keep current",
             (Ja, ConflictKeepCurrent) => "現在の側を採用",
             (En, ConflictTakeIncoming) => "Take incoming",
@@ -604,7 +604,7 @@ impl Msg {
             (En, EditorIncomingSide) => "Incoming",
             (Ja, EditorIncomingSide) => "取り込む側",
             (En, EditorConflictNofM) => "conflict",
-            (Ja, EditorConflictNofM) => "衝突",
+            (Ja, EditorConflictNofM) => "conflict",
             (En, EditorPrevHunk) => "‹ Prev",
             (Ja, EditorPrevHunk) => "‹ 前へ",
             (En, EditorNextHunk) => "Next ›",
@@ -626,7 +626,7 @@ impl Msg {
             (En, EditorSavedResolved) => "Saved. File marked as a resolved candidate.",
             (Ja, EditorSavedResolved) => "保存しました。ファイルを resolved candidate にしました。",
             (En, EditorNoTextMerge) => "No text merge is available for this file (binary or single-sided). Use the conflict list to choose a side.",
-            (Ja, EditorNoTextMerge) => "このファイルはテキストマージできません(binary / 片側のみ)。衝突一覧で側を選択してください。",
+            (Ja, EditorNoTextMerge) => "このファイルはテキスト merge できません(binary / 片側のみ)。conflict 一覧で側を選択してください。",
             // ── T-CONFLICT-UI/UX: 3-pane editor controls ──
             (En, EditorResetAllConfirm) => "Click again to reset all",
             (Ja, EditorResetAllConfirm) => "もう一度押すと全リセット",
@@ -653,13 +653,13 @@ impl Msg {
             (En, ConflictGitTermHint) => "internal git stage",
             (Ja, ConflictGitTermHint) => "内部 git ステージ",
             (En, ConflictConflictedCount) => "conflicted",
-            (Ja, ConflictConflictedCount) => "未解決",
+            (Ja, ConflictConflictedCount) => "conflicted",
             (En, ConflictResolvedCount) => "resolved",
-            (Ja, ConflictResolvedCount) => "解決済み",
+            (Ja, ConflictResolvedCount) => "resolved",
             (En, ConflictSectionConflicted) => "Conflicted Files",
-            (Ja, ConflictSectionConflicted) => "未解決ファイル",
+            (Ja, ConflictSectionConflicted) => "Conflicted ファイル",
             (En, ConflictSectionResolved) => "Resolved Files",
-            (Ja, ConflictSectionResolved) => "解決済みファイル",
+            (Ja, ConflictSectionResolved) => "Resolved ファイル",
             (En, ConflictConfirmAbort) => "Click again to confirm abort",
             (Ja, ConflictConfirmAbort) => "もう一度押すと中止します",
             (En, ConflictConfirmAbortHint) => {
@@ -679,7 +679,7 @@ impl Msg {
             (En, ConflictOpenTerminal) => "Open terminal at repo root",
             (Ja, ConflictOpenTerminal) => "リポジトリのターミナルを開く",
             (En, ConflictCopyPath) => "Copy conflict file path",
-            (Ja, ConflictCopyPath) => "衝突ファイルのパスをコピー",
+            (Ja, ConflictCopyPath) => "conflict ファイルのパスをコピー",
             (En, ConflictCopyGitCommand) => "Copy git command",
             (Ja, ConflictCopyGitCommand) => "git コマンドをコピー",
             (En, ConflictBlockerUnresolved) => "Some files are still unresolved.",
@@ -734,12 +734,12 @@ impl Msg {
 
             // ── Merge-into-conflict (W31-MERGE-INTO-CONFLICT) ────────
             (En, MergeAndResolveConflicts) => "Merge and resolve conflicts",
-            (Ja, MergeAndResolveConflicts) => "マージして衝突を解決",
+            (Ja, MergeAndResolveConflicts) => "merge して conflict を解決",
             (En, MergeConflictWarning) => {
                 "This merge will produce conflicts. It will leave conflict markers and enter Conflict Mode, where you resolve each file (or abort to restore the pre-merge state)."
             }
             (Ja, MergeConflictWarning) => {
-                "このマージは衝突を発生させます。conflict marker を残して Conflict Mode に入り、各ファイルを解決します(中止すればマージ前の状態に戻せます)。"
+                "この merge は conflict を発生させます。conflict marker を残して Conflict Mode に入り、各ファイルを解決します(中止すれば merge 前の状態に戻せます)。"
             }
         }
     }
@@ -921,6 +921,26 @@ mod tests {
         // The toolbar guards keep the domain word "Pull" verbatim.
         assert!(Msg::PullDetached.t().starts_with("Pull:"));
         assert!(Msg::PushDetached.t().starts_with("Push:"));
+        // ADR-0048: conflict-domain words stay English even in Japanese
+        // (conflict / merge / resolved / unresolved are never translated).
+        assert_eq!(Msg::EditorConflictNofM.t(), "conflict");
+        assert_eq!(Msg::ConflictResolved.t(), "resolved");
+        assert_eq!(Msg::ConflictResolvedShort.t(), "resolved");
+        assert_eq!(Msg::ConflictUnresolved.t(), "unresolved");
+        assert_eq!(Msg::ConflictConflictedCount.t(), "conflicted");
+        assert_eq!(Msg::ConflictResolvedCount.t(), "resolved");
+        for m in [
+            Msg::ConflictSelectFile,
+            Msg::ConflictCopyPath,
+            Msg::ConflictSectionConflicted,
+            Msg::ConflictSectionResolved,
+            Msg::MergeAndResolveConflicts,
+            Msg::MergeConflictWarning,
+            Msg::EditorNoTextMerge,
+        ] {
+            assert!(!m.t().contains('衝'), "{:?} still contains 衝突", m);
+            assert!(!m.t().contains("マージ"), "{:?} still contains マージ", m);
+        }
         set_lang_no_persist(Lang::En);
     }
 

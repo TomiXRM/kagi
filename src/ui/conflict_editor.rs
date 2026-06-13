@@ -122,19 +122,24 @@ fn render_toolbar(
         .border_b_1()
         .border_color(rgb(theme().color_warning))
         .child(
+            // file name + conflict n/m laid out horizontally (was stacked).
             div()
                 .flex_grow()
                 .flex()
-                .flex_col()
+                .flex_row()
+                .items_center()
+                .gap_2()
                 .min_w(px(0.))
                 .child(
                     div()
                         .text_size(theme::scaled_px(12.))
                         .text_color(rgb(theme().text_main))
+                        .overflow_hidden()
                         .child(SharedString::from(path_str)),
                 )
                 .child(
                     div()
+                        .flex_shrink_0()
                         .text_size(theme::scaled_px(10.))
                         .text_color(rgb(theme().text_sub))
                         .child(SharedString::from(n_of_m)),

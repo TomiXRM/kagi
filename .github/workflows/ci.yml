@@ -1,0 +1,91 @@
+name: ci
+
+# ADR-0077 (v1.0 re-architecture): the project had NO test CI before this — only
+# release.yml. This workflow gates the re-architecture: `cargo test --workspace`
+# must stay green, and the ADR-0072/0078 invariant (the UI never calls git2) is
+# enforced by a grep gate. fmt/clippy and the Linux test leg are ADVISORY for now
+# (the v0.2.0 tree carries pre-existing fmt/clippy debt; making them blocking would
+# red the board on day one — they are tracked for cleanup in S7).
+
+on:
+  push:
+    branches: [main, re-architecture]
+  pull_request:
+    branches: [main, re-architecture]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ── BLOCKING: the UI must never call git2 directly (ADR-0072 / ADR-0078) ──────
+  invariant-ui-no-git2:
+    name: invariant — UI is git2-free
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert no git2 usage in src/ui
+        shell: bash
+        run: |
+          if grep -rnE 'git2::|Repository::open' src/ui/; then
+            echo "::error::src/ui must not use git2 directly — route through kagi::git::Backend (ADR-0078)."
+            exit 1
+          fi
+          echo "OK: src/ui has zero git2 usage."
+
+  # ── BLOCKING: full test suite on macOS (the validated dev platform) ──────────
+  test-macos:
+    name: test (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+  # ── ADVISORY: Linux test leg (gpui system deps; not yet validated headless) ──
+  test-linux:
+    name: test (Linux, advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install gpui system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev \
+            libx11-dev libxcb1-dev \
+            libfontconfig-dev libfreetype-dev \
+            libasound2-dev \
+            libvulkan-dev \
+            libzstd-dev
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+  # ── ADVISORY: fmt + clippy (pre-existing v0.2.0 debt; tracked for S7 cleanup) ─
+  lint:
+    name: fmt + clippy (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo fmt --check
+        run: cargo fmt --check
+      - name: Install gpui system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libx11-dev libxcb1-dev libfontconfig-dev libfreetype-dev \
+            libasound2-dev libvulkan-dev libzstd-dev
+      - name: cargo clippy --workspace
+        run: cargo clippy --workspace

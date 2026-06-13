@@ -1,12 +1,12 @@
-# T-CONFLICT-005: GitStateSnapshot に Conflict Mode を追加する
+# T-CONFLICT-034: Save resolution を実装する
 
-- Status: done(W30)
-- Phase: P1 State
+- Status: todo(buffer は W26)
+- Phase: P4 Actions
 - 仕様: requirements-conflict-ux.md(v2)+ ADR-0056〜0067
 
 ## スコープ
 
-RepoMode/Option<Session> をアプリ状態へ。起動/watcher/操作後に検出
+ADR-0066: marker 検査(Save=warning)+ buffer 永続化 + resolved candidate へ
 
 ## 規約
 

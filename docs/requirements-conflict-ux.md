@@ -1,117 +1,140 @@
-# Requirements: Conflict Resolution UX(Conflict Mode)
+# Requirements: Conflict Resolution UX(Conflict Mode)— v2
 
-- Status: **Accepted(design)**(2026-06-13。サーベイ3本統合済み・ADR-0056〜0061・T-CONFLICT-* 起票済み。実装はユーザー go 待ち)
-- 調査: docs/research/conflict-ux-{gui-clients,editors,models}.md(Opus 3レーン、進行中)
-- 関連: ADR-0023(操作分類)、ADR-0046(backup思想)、ADR-0048(i18n)、ADR-0052(merge/rebase 方向)
+- Status: **Accepted(design)**(2026-06-13。v1 を GitKraken UX 分解 + 詳細 MVP 仕様で刷新。
+  旧版は requirements-conflict-ux.v1.md)
+- 調査: docs/research/conflict-ux-{gui-clients,editors,models}.md
+- 設計 ADR: 0056(Mode state machine)/ 0057(resolution buffer & undo)/ 0058(用語)/
+  0059(view arch)/ 0060(外部ツール)/ 0061(LLM)/ **0062(session model)/ 0063(dashboard)/
+  0064(editor layout)/ 0065(file type)/ 0066(save & marker safety)/ 0067(continue/abort/skip safety)**
+- 実装状況: W26(backend: conflicts.rs/resolution.rs)+ W30(MVP UI: banner/file list/file 単位 choose/
+  Result preview)+ W31(予測 conflict merge → Conflict Mode 遷移)が **完了**。本書はそこから
+  GitKraken 同等の Dashboard + 専用 Conflict Editor(hunk 単位)+ 安全強化までの完全仕様。
 
-## 0. ゴール(ユーザー原文の要約)
+## 0. ゴール
 
-既存 merge UI の模倣ではなく、**「なぜ衝突したか」「どちらを選ぶべきか」「解消後に何が起きるか」を
-理解できる** UX。単なる ours/theirs/both 選択 UI は不十分。
-merge/rebase/cherry-pick/revert 中の状態を**アプリ全体の一級状態(Conflict Mode)**として扱う。
-AI/LLM 補助は later だが差し込める設計に(ローカル LLM は core feature になる予感 — ユーザー)。
+GitKraken の見た目をコピーするのではなく、その良い UX を分解して **より安全で分かりやすい
+Conflict Mode** として再設計する。核は「なぜ衝突したか/どちらを選ぶか/解消後に何が起きるか」を
+理解できること、そして**安全(repo を壊さない・常に abort で戻せる・marker 残存は実行不可)**。
 
-## 1. 課題設定(解くべき課題)
+## 1. GitKraken UX の分解(取り込む/変える/捨てる)
 
-ユーザー指定の 13 課題を、設計で答える 5 グループに整理する:
+| # | GitKraken の挙動 | kagi の方針 |
+|---|------------------|-------------|
+| 1 | graph 上で merge 失敗を明示 | **取り込む**: graph で対象 commit/HEAD を強調 + Mode 表示 |
+| 2 | 上部に警告 banner | **取り込む**: Conflict Banner(警告 icon + operation summary + count + Continue/Abort/Open Panel) |
+| 3 | 「何を何に」表示(`Merge branch 'test3' into text`) | **取り込む(必須)**: 方向を文言で(ADR-0058) |
+| 4 | Right Panel が Conflict Panel に切替 | **取り込む**: Right Panel = Conflict Dashboard(ADR-0063) |
+| 5 | `Merge conflicts detected` で Mode 明示 | **取り込む** |
+| 6 | current/incoming を badge 表示 | **取り込む**(役割+実名 badge) |
+| 7 | Conflicted / Resolved を分離 | **取り込む** |
+| 8 | conflict file list | **取り込む** |
+| 9 | Path / Tree 切替 | **取り込む**(MVP は Path、Tree は v0.2) |
+| 10 | 下部に commit message → merge commit まで同流れ | **取り込む**: continue で commit message 経由 |
+| 11 | `Abort Merge` 常時可視 | **取り込む(必須)** |
+| 12 | A/B 左右 + 下 Output | **取り込む**: Conflict Editor(ADR-0064) |
+| 13 | 各 side に checkbox | **変える**: checkbox は意味曖昧 → **文言が明確なボタン**(Accept current/incoming/both 順) |
+| 14 | 選択が Output に即反映 | **取り込む(必須)**: Result Preview 即時更新(ADR-0064) |
+| 15 | `conflict 1 of 1` | **取り込む**: hunk ナビ |
+| 16 | Auto-resolve with AI / external tool / Save / Close | AI は **MVP 外・差し込み口のみ**(ADR-0061)/ 外部ツール・Save は取り込む |
+| 17 | Reset で選択状態を戻す | **取り込む**: Reset hunk / Reset file |
+| 18 | Save で結果保存 | **取り込む**: Save resolution + marker 安全チェック(ADR-0066) |
+| 19 | 右上に外部ツール導線 | **取り込む**(ADR-0060) |
+| — | **`Mark All Resolved`** | **そのまま採用しない(危険)**: 代替は §2.3 |
 
-### A. 理解の課題 — 「なぜ衝突したか」が見えない
-- conflict の原因(両側で同じ行域を触った2つの**コミット系列**)が UI に出ない。
-  → 各 conflict hunk に「この側を最後に触った commit(sha + summary + author + 日時)」を表示する
-  **blame-of-sides**。どちらの変更が「何をしようとしていたか」を commit message で比較できるようにする
-- AI 生成コード時代は同一箇所に似た変更が入り**意味的衝突**が増える → テキスト一致でも
-  「両側が同じ関数を別方向に変えた」ことを警告できる単位(symbol 単位)が将来必要(v1.0+)
+## 2. 設計思想(ユーザー指定)
 
-### B. 用語の課題 — ours/theirs が操作で意味反転する
-- §2 用語設計で解決(ours/theirs を UI から排除)
+### 2.1 Conflict Mode はアプリ全体の Mode(ADR-0056)
+merge/rebase/cherry-pick/revert 中に conflict したら **Header / Commit Graph / Right Panel /
+Bottom Panel / Status Bar / Commit Panel / Operation Log** を Conflict Mode 用に変化させる。
 
-### C. 進行の課題 — どこまで終わったか・次に何をするか
-- 未解決/解決済み/確認待ちの**ファイル単位 + hunk 単位の進捗**を常時表示(N/M)
-- 大量 conflict の作業順序: 小さい/機械的に解けるものを先に提案(並べ替え)
-- marker 残存の検出(チェックリスト ADR-0043 の conflict marker 検出を解決完了判定に再利用)
-- continue / abort / skip を**Conflict Mode の常設バー**に集約(導線迷子を防ぐ)
+### 2.2 「何を何に入れて失敗したか」を必ず表示(ADR-0058)
+`Merging test3 into text` / `Rebasing feature/foo onto master` / `Cherry-picking abc123 onto master` /
+`Reverting commit abc123 on master`。UI は ours/theirs を前面に出さず **Current branch / Incoming
+branch / Commit being applied / Base / Result** で表示(内部は git の ours/theirs を扱う)。
 
-### D. 安全の課題 — 解決の取り消し・中断・再開
-- 解決操作(choose side / edit / accept-both)は**解決バッファ上の操作**で、execute まで repo を
-  汚さない(kagi の in-memory 主義の延長)。バッファは draft 同様**自動保存**され中断・再開可能
-- undo/redo は解決バッファのファイル単位履歴
-- abort は常に安全(開始前 snapshot へ。oplog に before/after)
-- 解決結果の **Result preview**(最終ファイル + 結果 diff)を continue 前に必ず見せる
+### 2.3 Conflict Dashboard を Right Panel に(ADR-0063)
+Merge conflicts detected / operation summary / current・incoming badge / conflicted・resolved count /
+Path・Tree toggle / Conflicted Files / Resolved Files / conflict type badge / Mark resolved・Reset /
+Continue・Abort・Skip。
+**`Mark All Resolved` は危険なので不採用**。代替: `Mark selected file resolved` /
+`Mark all clean files resolved`(= marker 無し & index resolved のものだけ)/ `Mark all resolved` は
+Advanced 扱いで marker 検出・unmerged index 確認後でなければ不許可。
 
-### E. 逃げ道の課題 — GUI で解けない時
-- 外部 merge tool 起動(設定で指定)と「terminal で続ける」導線を Conflict Mode から常時提供。
-  外部で解決された変化は watcher で取り込み、Mode の進捗に反映
+### 2.4 Conflict Editor を専用画面に(ADR-0064)
+A(current)/ B(incoming)左右 + 下 Result/Output。hunk ごとに Accept current / Accept incoming /
+Accept both(current→incoming / incoming→current)/ Edit result / Reset this hunk。
+**ボタン文言で意味を明示**(checkbox にしない)。Top Toolbar: file path / `conflict n of m` /
+prev / next / Open external tool / Reset / Save。
 
-## 2. 用語設計(確定)
+### 2.5 Result/Output を一級表示(ADR-0064)
+A/B 選択で Result Preview 即更新 / 由来 side 表示 / 未解決 hunk 明示 / marker 残存は保存不可 or 強警告 /
+Save 前に result diff 確認 / Save 後 file を resolved candidate に。
 
-**ours / theirs は UI に出さない。**全操作で「役割 + 実名」の2行ラベルに統一する:
+### 2.6 Continue / Abort / Skip / Mark resolved / Save は Plan 経由(ADR-0067)
+直接実行しない(GitOperationPlan / ConflictOperationPlan を生成)。Continue 前チェック:
+unresolved==0 / marker 無し / index resolved / binary 残無し / required file 削除無し /
+commit message 非空 / checklist blocker 無し。
 
-| 操作 | 左側(index stage 2 = ours) | 右側(stage 3 = theirs) |
-|------|------------------------------|--------------------------|
-| merge | **Current branch** `main` | **Merging in** `feature/x` |
-| rebase | **New base** `main`(注: git 内部では ours が逆転するが UI は役割で固定) | **Your commit being replayed** `abc123 "msg"` |
-| cherry-pick | **Current branch** `main` | **Commit being applied** `abc123 "msg"` |
-| revert | **Current branch** `main` | **Changes being undone**(revert of `abc123`) |
+### 2.7 Operation Log と Resolution Log を統合
+session id / operation kind / current・incoming / conflicted files / selected file /
+hunk ごとの resolution action / save 時刻 / continue・abort・skip / before-after hash / marker check。
 
-- 共通: **Base**(共通祖先)と **Result**(編集可能な解決結果)。3-way + Result の4役割
-- 各 hunk のボタン文言も役割で: 「Keep current (`main`)」「Take incoming (`feature/x`)」
-  「Keep both (current first)」等。**操作種別ごとにヘッダで「いま何の途中か」を常時表示**
-  (例: 「Rebasing `feature/x` onto `main` — commit 2/5」)
-- i18n: 役割語は Msg(ADR-0048)で en/ja、branch/commit 名は実名のまま
+## 3. kagi 独自の改善
 
-## 3. Conflict Mode(一級状態)の設計骨子
+### 3.1 Conflict Resolution Session(ADR-0062)
+conflict 発生〜continue/abort までを 1 session として扱う(id/operation/branches/files/counts/
+can_continue・abort・skip)。中断・再開で resolution buffer(ADR-0057)を失わない。
 
-```
-enum RepoMode { Normal, Conflict(ConflictSession) }
-struct ConflictSession {
-  op: Merge|Rebase{step,total}|CherryPick{..}|Revert{..},   // git_repository_state + state files
-  files: Vec<ConflictFile>,        // path, kind(content/rename-delete/modify-delete/binary), status
-  resolution: ResolutionBuffer,    // ファイルごとの Result 草稿 + undo 履歴(自動保存、~/.kagi/)
-}
-```
-- 検出: `git_repository_state()` + index conflict entries(stage 1/2/3)。外部(CLI)で発生した
-  conflict も起動時/ watcher で検出して Mode に入る(**アプリ全体が Mode を知る**: header バナー、
-  sidebar 進捗、graph の対象 commit 強調、危険操作の disabled — BCM の conflict_mode 入力と接続)
-- continue = 解決バッファを index/WT へ書き出し → marker 検査 → stage → 各操作の継続
-  (merge commit / rebase next / sequencer continue)。abort = 開始前状態へ(常時可能)。
-  すべて plan→confirm→…→oplog パイプライン上で
-- LLM 差し込み点(later): (a) hunk の「両側の意図」要約 (b) 解決案の提案(Result 草稿に挿入、
-  ADR-0044 と同じ opt-in / localhost / staged 同意モデル)— **解決の自動適用はしない**
+### 3.2 Conflict File Type を明示(ADR-0065)
+both modified / added by both / deleted by current / deleted by incoming / modified-delete /
+rename-delete / rename-rename / binary / submodule。**MVP は both modified 最優先**、その他は
+専用選択 UI or 外部ツールへ逃がす。
 
-## 4. フェーズ分け(案 — サーベイ統合後に確定)
+### 3.3 ours/theirs を UI から隠す(ADR-0058)
+Current branch / Incoming branch / Commit being applied / Result を優先。内部 git 用語は tooltip で補足。
 
-| フェーズ | 内容 |
-|----------|------|
-| **MVP** | Conflict Mode 検出 + 常設バナー(continue/abort 導線)/ conflict file list + 進捗 / 用語設計の適用 / ファイル単位 choose(current/incoming/both)+ marker 検査 / Result preview / abort 安全保証 / 解決バッファ自動保存 |
-| **v0.2** | hunk 単位 choose + Result 手編集(3-way + Result view)/ blame-of-sides(原因 commit 表示)/ undo・redo / rename・delete / binary の明示 UI / 外部 tool・terminal 連携 |
-| **v1.0** | 作業順序の提案 / rebase 多 step 進捗 UX / rerere 相当の再利用 / 意味的衝突の警告(symbol 単位の入口) |
-| **later** | LLM 意図要約・解決案 / symbol 単位解決 / 自動解決ポリシー |
+### 3.4 Save/Continue 前の安全チェック(ADR-0066)
+marker 残存(`<<<<<<<` `=======` `>>>>>>>`)/ unresolved index / empty result / binary 未解決 /
+deleted file 判断未了 を検査。**marker 残存は blocker**。
 
-## 4.5 サーベイ統合(確定した取り込み/不採用)
+### 3.5 外部ツールへの逃げ道(ADR-0060)
+Open in external merge tool / Open terminal at repo root / Copy conflict path / Copy git command。
 
-**取り込む**(出典: conflict-ux-{gui-clients,editors,models}.md):
-- 実ブランチ名ラベル(Fork が最良。SourceTree の Mine/Theirs 反転バグ SRCTREE-1670 が反例)→ §2 確定
-- KDiff3 の安全機構: 全解決まで continue 無効 + 未解決数 + prev/next 未解決ナビ
-- JetBrains: non-conflicting 一括適用 / Accept 系キーボードショートカット
-- both 採用時の順序明示(Combination current-first / incoming-first)
-- 出所可視化(手編集箇所・行ごとの採用元、BC/KDiff3 流)
-- zdiff3 marker style で Base 文脈を表示(git2 MergeFileOptions::style_zdiff3)
-- ours/theirs の rebase 反転は `Repository::state()` を見て文脈名へ翻訳(モデル調査 §4)
-- jj から借りる: **部分解決を失わせない**(解決バッファ自動保存 + abort 時も oplog へ退避)
-- binary / rename-delete / modify-delete の専用 UI(全 GUI が弱い = 差別化点)
+### 3.6 AI 補助は MVP 外・差し込み口のみ(ADR-0061)
+Explain conflict / Suggest resolution / Generate result / Risk summary / Test suggestion を将来差込。
+制約: AI が勝手に Save/Continue しない・必ず preview・ユーザー承認必須・送信内容は ADR 必須・
+local/remote LLM を区別。
 
-**不採用**:
-- jj の first-class conflict(commit へ conflict 埋め込み)と fearless rebase — git 標準互換を壊す(Reject)
-- VSCode 型の view 強制切替 — 退路(inline marker 直接編集)を必ず残す
-- GitKraken 型の内蔵エディタ有料化文脈の UI 分断 / GitHub Desktop 型の外部任せ
-- AI 自動解決(later でも「提案まで」。自動適用はしない)
+## 4. MVP 要件
 
-**実装基盤(確定)**: git2 0.21 の `Index::conflicts()` / `Repository::state()` / `cleanup_state()` /
-`merge_commits`・`merge_trees`(無傷 dry-run)/ `MergeFileResult` — 3-way 解決 UI の基盤は揃っている。
+- **検出**: merge/rebase/cherry-pick/revert 中、conflicted files、unmerged index、marker、
+  can_continue/abort/skip(W26 で大半実装済み)
+- **Banner**(画面上部): 警告 icon + operation summary + conflict count + current + incoming +
+  Continue / Abort / Open Conflict Panel。例 `Merge conflict detected: merging test3 into text — 1 file conflicted`
+- **Right Panel = Conflict Dashboard**: summary / current・incoming badge / Path・Tree / Conflicted /
+  Resolved / selected file preview / Abort / Continue / external tool(W30 はファイル単位までは実装、
+  Dashboard 化と Resolved セクションは本フェーズ)
+- **Conflict Editor**: A/B 左右 + Result preview / hunk ナビ / accept current・incoming・both /
+  reset hunk / save / external tool(**hunk 単位は本フェーズの新規**。W30 はファイル単位 choose のみ)
+- **Continue/Abort**: Continue は未解決/marker 残で disabled、Abort は確認あり(保存済み resolution が
+  消える可能性を表示)、Skip は rebase/cherry-pick のみ(merge は非表示)
 
-## 5. 次のステップ
+## 5. v0.2 以降
 
-1. 調査3本を merge → 各ツールの「取り込む/取り込まない」を本書 §1/§4 に反映
-2. ADR 起票(予定): Conflict Mode state machine / 解決バッファと undo / 用語(§2 を ADR 化)/
-   3-way+Result view アーキテクチャ / 外部 tool 連携 / LLM 差し込み点
-3. T-CONFLICT-* チケット分割(実装はユーザー go 後)
+Tree view / batch resolve / conflict minimap / syntax highlight / inline editor / hunk ごと undo /
+keyboard shortcuts / semantic section 検出 / function・symbol 単位ナビ / resolved result diff /
+external merge tool config / AI explain・propose / test command 統合。
+
+## 6. チケット体系(本書で再編)
+
+旧 T-CONFLICT-001..033(v1 設計)は本 Phase 体系に置換。W26/W30/W31 で満たされた項目は done 印。
+Phase 1 Conflict State(001-005)/ Phase 2 Dashboard(010-015)/ Phase 3 Editor(020-025)/
+Phase 4 Resolution Actions(030-035)/ Phase 5 Continue/Abort/Skip(040-044)/
+Phase 6 Escape Hatch(050-052)。詳細は docs/tickets/T-CONFLICT-*.md と INDEX。
+
+## 7. 完了条件(ユーザー指定)
+
+conflict 発生で全体が Conflict Mode へ / 何を何に merge/rebase/cherry-pick しているか分かる /
+file 一覧が見える / unresolved・resolved count / file 選択で Conflict Editor / A・B と Result preview /
+Accept で Result 更新 / Save resolution / marker 残存で Continue 不可 / Continue・Abort・Skip は Plan 経由 /
+Operation Log に解決操作 / 外部ツールへ逃げられる / AI は MVP 外だが拡張口がある。

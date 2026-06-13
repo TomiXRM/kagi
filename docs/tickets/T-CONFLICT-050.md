@@ -1,12 +1,12 @@
-# T-CONFLICT-005: GitStateSnapshot に Conflict Mode を追加する
+# T-CONFLICT-050: Open external merge tool を実装する
 
-- Status: done(W30)
-- Phase: P1 State
+- Status: todo
+- Phase: P6 Escape
 - 仕様: requirements-conflict-ux.md(v2)+ ADR-0056〜0067
 
 ## スコープ
 
-RepoMode/Option<Session> をアプリ状態へ。起動/watcher/操作後に検出
+ADR-0060: settings の mergetool 起動($LOCAL/$BASE/$REMOTE/$MERGED)
 
 ## 規約
 

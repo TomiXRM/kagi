@@ -1,12 +1,12 @@
-# T-CONFLICT-005: GitStateSnapshot に Conflict Mode を追加する
+# T-CONFLICT-035: Resolution action を Operation Log に記録する
 
-- Status: done(W30)
-- Phase: P1 State
+- Status: todo
+- Phase: P4 Actions
 - 仕様: requirements-conflict-ux.md(v2)+ ADR-0056〜0067
 
 ## スコープ
 
-RepoMode/Option<Session> をアプリ状態へ。起動/watcher/操作後に検出
+session id + hunk action + before/after hash + marker check(§2.7)
 
 ## 規約
 

@@ -1,12 +1,12 @@
-# T-CONFLICT-005: GitStateSnapshot に Conflict Mode を追加する
+# T-CONFLICT-044: unresolved/marker blocker を実装する
 
-- Status: done(W30)
-- Phase: P1 State
+- Status: done(W30、項目拡張は本フェーズ)
+- Phase: P5 CAS
 - 仕様: requirements-conflict-ux.md(v2)+ ADR-0056〜0067
 
 ## スコープ
 
-RepoMode/Option<Session> をアプリ状態へ。起動/watcher/操作後に検出
+Continue を disabled にする blocker 判定 + 理由表示
 
 ## 規約
 

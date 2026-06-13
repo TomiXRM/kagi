@@ -1,12 +1,12 @@
-# T-CONFLICT-005: GitStateSnapshot に Conflict Mode を追加する
+# T-CONFLICT-043: Continue 前 checklist を実装する
 
-- Status: done(W30)
-- Phase: P1 State
+- Status: todo(marker+unresolved は W30 済)
+- Phase: P5 CAS
 - 仕様: requirements-conflict-ux.md(v2)+ ADR-0056〜0067
 
 ## スコープ
 
-RepoMode/Option<Session> をアプリ状態へ。起動/watcher/操作後に検出
+ADR-0067 の全項目(unresolved/marker/index/binary/required/message/checklist)
 
 ## 規約
 

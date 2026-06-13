@@ -1,14 +1,15 @@
-# T-CONFLICT-003: Conflict Mode 常設バナー
+# T-CONFLICT-003: unmerged index entries から conflicted files を取得する
 
-- Status: todo(実装開始はユーザー go 後)
-- Phase: MVP
-- 仕様の正: requirements-conflict-ux.md + ADR-0056〜0061 + research/conflict-ux-*.md
+- Status: done(W26、type 細分は本フェーズ)
+- Phase: P1 State
+- 仕様: requirements-conflict-ux.md(v2)+ ADR-0056〜0067
 
 ## スコープ
 
-header 直下: op 名 + 進捗 N/M + Continue(全解決まで disabled)/ Abort / Skip(sequencer のみ)。用語は ADR-0058
+Index::conflicts、stage 1/2/3 から type 判定(ADR-0065)
 
 ## 規約
 
-- plan→confirm→preflight→execute→verify→oplog。in-memory 主義(repo を汚さない)
-- chars() ベース・バイトスライス禁止。theme() 経由。i18n は Msg 経由。fixture のみで検証
+- Plan 経由(ADR-0067)。in-memory 主義(continue まで repo を汚さない)。
+- chars() のみ・バイトスライス禁止。theme()・i18n Msg(ADR-0048。ours/theirs は出さない)。
+- own-code warning 0。`cargo test --workspace` green。fixture のみ。

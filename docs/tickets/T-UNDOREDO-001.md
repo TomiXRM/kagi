@@ -1,6 +1,6 @@
 # T-UNDOREDO-001: Operation Undo / Redo (after commit / merge), GitKraken-style
 
-- Status: todo
+- Status: done (PM accepted — GUI-verified 2026-06-14)
 - Group: 新機能 / operation history
 - 仕様の正: ADR-0081. Reuses oplog (ADR-0074), ORIG_HEAD/reflog, soft undo_commit (ADR-0041).
 
@@ -107,3 +107,11 @@ dirty working tree の変更を黙って捨てる。
   ただし「commit を undo」した場合、変更は index(staged)ではなく WT(unstaged)として現れる
   (`index.read_tree(target)` のため)。旧 `undo_commit`(ADR-0041、soft=staged 維持)とは差異あり。MVP では許容。
 - in-session のみ(終了で消える)。reflog が durable backstop。
+
+## PM acceptance (2026-06-14, GUI-verified with cliclick)
+Drove the full cycle in the running app on a fixture repo:
+- Drag-merged feature/two → main (confirmed). `history: record merge on 'main' b0bd2b2 → d3015d9`. Undo button enabled, Redo disabled.
+- **Undo** → preview modal "Undo merge on 'main' — d3015d96 → b0bd2b28" (safe mixed-reset, "uncommitted changes preserved", recovery recipe shows the merge SHA). Confirmed → HEAD b0bd2b2; **merge commit d3015d9 still in ODB + reflog (not destroyed)**; Redo enabled.
+- **Redo** → preview → confirmed → HEAD d3015d9 (merge restored, 2-parent).
+- redo-2.svg added so the Redo toolbar icon renders (was missing from the asset allowlist).
+- cargo test --workspace green (10 domain + 5 integration tests); src/ui git2-free.

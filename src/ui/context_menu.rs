@@ -13,7 +13,7 @@ use super::{
     FooterStatus, KagiApp,
 };
 use super::i18n::Msg;
-use super::theme::theme;
+use super::theme::{self, theme};
 
 // W9-THEME: all colours come from `theme()` (see theme.rs).
 
@@ -259,13 +259,19 @@ pub fn render_commit_menu_overlay(
                 .any(|item| item.state != ItemState::Hidden)
         })
         .count() as f32;
-    let menu_h = MENU_HEADER_H + visible_items * MENU_ROW_H + visible_groups * MENU_GROUP_H + 16.0;
+    // The menu box is rendered with `scaled_px`, so its on-screen footprint is
+    // `zoom()`-scaled. Off-screen clamping happens in raw window pixels (mouse
+    // position is unscaled), so scale the menu's width/height here to match.
+    let z = theme::zoom();
+    let menu_w = MENU_W * z;
+    let menu_h =
+        (MENU_HEADER_H + visible_items * MENU_ROW_H + visible_groups * MENU_GROUP_H + 16.0) * z;
     let viewport_w = f32::from(viewport.width);
     let viewport_h = f32::from(viewport.height);
     let raw_x = f32::from(state.position.x);
     let raw_y = f32::from(state.position.y);
-    let x = if raw_x + MENU_W + MENU_MARGIN > viewport_w {
-        (viewport_w - MENU_W - MENU_MARGIN).max(MENU_MARGIN)
+    let x = if raw_x + menu_w + MENU_MARGIN > viewport_w {
+        (viewport_w - menu_w - MENU_MARGIN).max(MENU_MARGIN)
     } else {
         raw_x.max(MENU_MARGIN)
     };
@@ -300,17 +306,17 @@ pub fn render_commit_menu_overlay(
         .absolute()
         .top(px(y))
         .left(px(x))
-        .w(px(MENU_W))
+        .w(theme::scaled_px(MENU_W))
         .max_h(px((viewport_h - MENU_MARGIN * 2.0).max(120.0)))
         .overflow_hidden()
-        .rounded(px(6.))
+        .rounded(theme::scaled_px(6.))
         .border_1()
         .border_color(rgb(theme().selected))
         .bg(rgb(theme().modal))
         .shadow_md()
         .child(
             div()
-                .h(px(MENU_HEADER_H))
+                .h(theme::scaled_px(MENU_HEADER_H))
                 .px_3()
                 .flex()
                 .flex_row()
@@ -339,7 +345,7 @@ pub fn render_commit_menu_overlay(
             };
             menu = menu.child(
                 div()
-                    .h(px(MENU_GROUP_H))
+                    .h(theme::scaled_px(MENU_GROUP_H))
                     .px_3()
                     .pt_1()
                     .text_xs()
@@ -444,7 +450,7 @@ fn render_menu_item(
             "commit-menu-item-{}-{}",
             group_ix, item_ix
         )))
-        .h(px(MENU_ROW_H))
+        .h(theme::scaled_px(MENU_ROW_H))
         .px_3()
         .flex()
         .flex_row()

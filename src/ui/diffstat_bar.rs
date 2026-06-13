@@ -20,12 +20,12 @@
 //! [`Tooltip`] (which requires the element carry an `.id`) shows
 //! `"N additions, M deletions"`.
 
-use gpui::{px, rgb, IntoElement, SharedString, Styled, ParentElement, InteractiveElement, StatefulInteractiveElement};
+use gpui::{rgb, IntoElement, SharedString, Styled, ParentElement, InteractiveElement, StatefulInteractiveElement};
 use gpui_component::tooltip::Tooltip;
 
 use kagi::git::{bar_segments, FileDiffStat};
 
-use super::theme::theme;
+use super::theme::{self, theme};
 
 /// Maximum number of bar segments (spec: 5–8). 5 keeps the unit compact.
 const MAX_SEGMENTS: usize = 5;
@@ -109,7 +109,7 @@ pub fn diffstat_unit(id_seed: usize, stat: Option<&FileDiffStat>) -> impl IntoEl
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(SEG_GAP))
+        .gap(theme::scaled_px(SEG_GAP))
         .flex_shrink_0();
 
     if total == 0 {
@@ -117,8 +117,8 @@ pub fn diffstat_unit(id_seed: usize, stat: Option<&FileDiffStat>) -> impl IntoEl
         for _ in 0..MAX_SEGMENTS {
             bar = bar.child(
                 gpui::div()
-                    .w(px(SEG_W))
-                    .h(px(SEG_H))
+                    .w(theme::scaled_px(SEG_W))
+                    .h(theme::scaled_px(SEG_H))
                     .rounded_sm()
                     .bg(rgb(t.surface)),
             );
@@ -127,8 +127,8 @@ pub fn diffstat_unit(id_seed: usize, stat: Option<&FileDiffStat>) -> impl IntoEl
         for _ in 0..green {
             bar = bar.child(
                 gpui::div()
-                    .w(px(SEG_W))
-                    .h(px(SEG_H))
+                    .w(theme::scaled_px(SEG_W))
+                    .h(theme::scaled_px(SEG_H))
                     .rounded_sm()
                     .bg(rgb(t.change_added)),
             );
@@ -136,8 +136,8 @@ pub fn diffstat_unit(id_seed: usize, stat: Option<&FileDiffStat>) -> impl IntoEl
         for _ in 0..red {
             bar = bar.child(
                 gpui::div()
-                    .w(px(SEG_W))
-                    .h(px(SEG_H))
+                    .w(theme::scaled_px(SEG_W))
+                    .h(theme::scaled_px(SEG_H))
                     .rounded_sm()
                     .bg(rgb(t.change_deleted)),
             );
@@ -146,8 +146,8 @@ pub fn diffstat_unit(id_seed: usize, stat: Option<&FileDiffStat>) -> impl IntoEl
         for _ in (green + red)..MAX_SEGMENTS {
             bar = bar.child(
                 gpui::div()
-                    .w(px(SEG_W))
-                    .h(px(SEG_H))
+                    .w(theme::scaled_px(SEG_W))
+                    .h(theme::scaled_px(SEG_H))
                     .rounded_sm()
                     .bg(rgb(t.surface)),
             );

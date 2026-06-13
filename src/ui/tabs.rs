@@ -21,14 +21,14 @@ use std::time::Duration;
 
 use gpui::{
     Context, PathPromptOptions, SharedString, Timer, Window,
-    div, prelude::*, px, rgb,
+    div, prelude::*, rgb,
 };
 use gpui_component::tooltip::Tooltip;
 
 use super::{
     KagiApp, ToastKind, FooterStatus,
 };
-use super::theme::theme;
+use super::theme::{self, theme};
 
 /// Lightweight descriptor for one open repository tab (ADR-0027).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -462,7 +462,7 @@ impl KagiApp {
             .flex_row()
             .items_center()
             .w_full()
-            .h(px(TAB_STRIP_H))
+            .h(theme::scaled_px(TAB_STRIP_H))
             .bg(rgb(theme().panel))
             .border_b_1()
             .border_color(rgb(theme().surface));
@@ -486,8 +486,8 @@ impl KagiApp {
 
             let close_btn = div()
                 .id(("tab-close", i))
-                .ml(px(4.))
-                .px(px(3.))
+                .ml(theme::scaled_px(4.))
+                .px(theme::scaled_px(3.))
                 .rounded_sm()
                 .text_color(rgb(theme().text_muted))
                 .hover(|s| s.bg(rgb(theme().surface)).text_color(rgb(theme().text_main)))
@@ -501,8 +501,8 @@ impl KagiApp {
                 .flex_row()
                 .items_center()
                 .h_full()
-                .min_w(px(TAB_MIN_W))
-                .max_w(px(TAB_MAX_W))
+                .min_w(theme::scaled_px(TAB_MIN_W))
+                .max_w(theme::scaled_px(TAB_MAX_W))
                 .px_2()
                 .gap_1()
                 .bg(rgb(bg))

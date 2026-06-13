@@ -3544,9 +3544,9 @@ impl KagiApp {
         }
         let mut stack = div()
             .absolute()
-            .bottom(px(34.))
-            .left(px(12.))
-            .w(px(460.))
+            .bottom(theme::scaled_px(34.))
+            .left(theme::scaled_px(12.))
+            .w(theme::scaled_px(460.))
             .flex()
             .flex_col()
             .gap_2();
@@ -3570,7 +3570,7 @@ impl KagiApp {
                     .gap_2()
                     .px_4()
                     .py_3()
-                    .rounded(px(8.))
+                    .rounded(theme::scaled_px(8.))
                     .bg(rgb(theme().panel))
                     .border_1()
                     .border_color(rgb(accent))
@@ -7981,19 +7981,26 @@ impl Render for KagiApp {
         let divider_drag_move = cx.listener(move |this, event: &gpui::DragMoveEvent<DividerDrag>, window, cx| {
             let drag = *event.drag(cx);
             let cursor_x = f32::from(event.event.position.x);
+            // W28: sidebar/panel widths are stored UNSCALED (logical px) but
+            // rendered via `scaled_px`, so the divider visually sits at
+            // `width * zoom`.  The cursor is in raw window px, so convert back
+            // to logical space (divide by zoom) before clamping/storing, and
+            // interpret the 4px divider's 2px half-offset in scaled space too.
+            let z = theme::zoom();
             match drag.kind {
                 DividerKind::Sidebar => {
-                    // Divider sits at x = sidebar_width; centre it on the cursor.
-                    let new_width = (cursor_x - 2.0).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+                    // Divider sits at x = sidebar_width * zoom; centre on cursor.
+                    let new_width = ((cursor_x - 2.0 * z) / z).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
                     if (new_width - this.sidebar_width).abs() > 0.5 {
                         this.sidebar_width = new_width;
                         cx.notify();
                     }
                 }
                 DividerKind::Panel => {
-                    // Divider sits at x = viewport_width - panel_width.
+                    // Divider sits at x = viewport_width - panel_width * zoom.
                     let viewport_w = f32::from(window.viewport_size().width);
-                    let new_width = (viewport_w - cursor_x - 2.0).clamp(PANEL_MIN, PANEL_MAX);
+                    let new_width =
+                        ((viewport_w - cursor_x - 2.0 * z) / z).clamp(PANEL_MIN, PANEL_MAX);
                     if (new_width - this.panel_width).abs() > 0.5 {
                         this.panel_width = new_width;
                         cx.notify();
@@ -8024,10 +8031,16 @@ impl Render for KagiApp {
                 DividerKind::BottomPanel => {
                     // T-BP-002: absolute-coordinate formula from ADR-0007:
                     //   height = viewport_h - cursor_y - status_bar_h(22) - 2
+                    // W28: the panel is rendered scaled, so the on-screen gap
+                    // between the cursor and the window bottom is the *scaled*
+                    // height; divide by zoom to recover the unscaled stored
+                    // value. The status bar (also scaled) and divider half are
+                    // scaled in screen space too.
                     let viewport_h = f32::from(window.viewport_size().height);
                     let cursor_y = f32::from(event.event.position.y);
-                    let max_h = viewport_h * BOTTOM_PANEL_MAX_FRAC;
-                    let new_h = (viewport_h - cursor_y - 22.0 - 2.0)
+                    // max fraction is a screen-space cap → convert to unscaled.
+                    let max_h = (viewport_h * BOTTOM_PANEL_MAX_FRAC) / z;
+                    let new_h = ((viewport_h - cursor_y - (22.0 + 2.0) * z) / z)
                         .clamp(BOTTOM_PANEL_MIN_H, max_h);
                     if (new_h - this.bottom_panel_height).abs() > 0.5 {
                         this.bottom_panel_height = new_h;
@@ -8044,19 +8057,26 @@ impl Render for KagiApp {
                     let cursor_y = f32::from(event.event.position.y);
                     let (geom_top, geom_bottom) = this.inspector_geom.get();
                     let (top, bottom) = if geom_bottom - geom_top > 1.0 {
+                        // Primary path: the canvas measured the real (already
+                        // scaled) region bounds in screen px — use as-is.
                         (geom_top, geom_bottom)
                     } else {
+                        // Transient fallback before first paint: the layout
+                        // chrome is rendered scaled, so scale the constant
+                        // offsets into screen space too.
                         let viewport_h = f32::from(window.viewport_size().height);
                         let bottom_taken = if this.bottom_panel_open {
                             STATUS_BAR_H + this.bottom_panel_height + BOTTOM_PANEL_DIVIDER_H
                         } else {
                             STATUS_BAR_H
                         };
-                        (INSPECTOR_TOP_OFFSET, viewport_h - bottom_taken)
+                        (INSPECTOR_TOP_OFFSET * z, viewport_h - bottom_taken * z)
                     };
                     // The divider itself occupies INSPECTOR_SPLIT_DIVIDER_H of
-                    // the region; the flex split applies to the remainder.
-                    let span = bottom - top - inspector::INSPECTOR_SPLIT_DIVIDER_H;
+                    // the region; the flex split applies to the remainder. The
+                    // span is in screen px (scaled), so scale the divider too.
+                    let span =
+                        bottom - top - inspector::INSPECTOR_SPLIT_DIVIDER_H * z;
                     if std::env::var("KAGI_DEBUG_SPLIT").as_deref() == Ok("1") {
                         eprintln!(
                             "[kagi] split-drag: cursor_y={:.1} top={:.1} bottom={:.1} split={:.3}",
@@ -8549,11 +8569,11 @@ impl KagiApp {
                 .flex()
                 .items_center()
                 .justify_center()
-                .w(px(22.0))
-                .h(px(22.0))
+                .w(theme::scaled_px(22.0))
+                .h(theme::scaled_px(22.0))
                 .child(
                     gpui_component::Icon::new(icon)
-                        .with_size(gpui_component::Size::Size(px(20.0)))
+                        .with_size(gpui_component::Size::Size(theme::scaled_px(20.0)))
                         .text_color(rgb(text_color)),
                 );
             if count > 0 {
@@ -8561,11 +8581,11 @@ impl KagiApp {
                 icon_cell = icon_cell.child(
                     div()
                         .absolute()
-                        .top(px(-2.0))
-                        .right(px(-2.0))
-                        .min_w(px(14.0))
-                        .h(px(14.0))
-                        .px(px(3.0))
+                        .top(theme::scaled_px(-2.0))
+                        .right(theme::scaled_px(-2.0))
+                        .min_w(theme::scaled_px(14.0))
+                        .h(theme::scaled_px(14.0))
+                        .px(theme::scaled_px(3.0))
                         .rounded_full()
                         .bg(rgb(chip_bg))
                         .flex()
@@ -8574,7 +8594,7 @@ impl KagiApp {
                         .text_color(rgb(chip_fg))
                         .text_size(px(9.0))
                         .font_weight(gpui::FontWeight::BOLD)
-                        .line_height(px(14.0))
+                        .line_height(theme::scaled_px(14.0))
                         .child(SharedString::from(chip_text)),
                 );
             }
@@ -8585,10 +8605,10 @@ impl KagiApp {
                 .flex_col()
                 .items_center()
                 .justify_center()
-                .gap(px(1.0))
-                .min_w(px(52.0))
+                .gap(theme::scaled_px(1.0))
+                .min_w(theme::scaled_px(52.0))
                 .px_1()
-                .py(px(2.0))
+                .py(theme::scaled_px(2.0))
                 .rounded_md()
                 .hover(|style| style.bg(rgb(theme().selected)))
                 .cursor(if enabled { gpui::CursorStyle::PointingHand } else { gpui::CursorStyle::Arrow })
@@ -8637,8 +8657,10 @@ impl KagiApp {
         // ── Vertical separator ──────────────────────────────────────────────
         let sep = || {
             div()
+                // 1px hairline kept literal (scaling a hairline blurs it);
+                // only the visible height tracks zoom.
                 .w(px(1.0))
-                .h(px(16.0))
+                .h(theme::scaled_px(16.0))
                 .bg(rgb(theme().text_muted))
                 .mx_1()
                 .flex_shrink_0()
@@ -8652,7 +8674,7 @@ impl KagiApp {
             .items_center()
             .w_full()
             .px_3()
-            .h(px(52.0))
+            .h(theme::scaled_px(52.0))
             .flex_shrink_0()
             .bg(rgb(theme().panel))
             .text_color(rgb(theme().text_sub))
@@ -8670,8 +8692,8 @@ impl KagiApp {
                 };
                 let icon = gpui::svg()
                     .path("icons/refresh-cw.svg")
-                    .w(px(16.0))
-                    .h(px(16.0))
+                    .w(theme::scaled_px(16.0))
+                    .h(theme::scaled_px(16.0))
                     .text_color(rgb(theme().text_main));
                 let icon: gpui::AnyElement = if spinning {
                     use gpui::AnimationExt as _;
@@ -8728,7 +8750,7 @@ impl KagiApp {
                 make_btn("tb-pull", "Pull", gpui_component::IconName::ArrowDown, toolbar.pull_on, toolbar.behind)
                     .on_click(pull_click),
             )
-            .child(div().w(px(2.0)))
+            .child(div().w(theme::scaled_px(2.0)))
             // Push (↑N chip when ahead>0)
             .child(
                 make_btn("tb-push", "Push", gpui_component::IconName::ArrowUp, toolbar.push_on, toolbar.ahead)
@@ -8740,13 +8762,13 @@ impl KagiApp {
                 make_btn("tb-branch", "Branch", gpui_component::IconName::Plus, true, 0)
                     .on_click(branch_click),
             )
-            .child(div().w(px(2.0)))
+            .child(div().w(theme::scaled_px(2.0)))
             // Stash
             .child(
                 make_btn("tb-stash", "Stash", gpui_component::IconName::Inbox, toolbar.stash_on, 0)
                     .on_click(stash_click),
             )
-            .child(div().w(px(2.0)))
+            .child(div().w(theme::scaled_px(2.0)))
             // Pop
             .child(
                 make_btn("tb-pop", "Pop", gpui_component::IconName::FolderOpen, toolbar.pop_on, 0)
@@ -8761,7 +8783,7 @@ impl KagiApp {
                     })
                     .on_click(undo_click),
             )
-            .child(div().w(px(2.0)))
+            .child(div().w(theme::scaled_px(2.0)))
             // Terminal (toggles bottom panel Terminal tab)
             .child(
                 make_btn("tb-terminal", "Terminal", gpui_component::IconName::SquareTerminal, terminal_on, 0)
@@ -8815,7 +8837,7 @@ impl KagiApp {
         // Build divider 1: sidebar | main.
         let divider1 = div()
             .id("divider-sidebar")
-            .w(px(4.))
+            .w(theme::scaled_px(4.))
             .flex_shrink_0()
             .h_full()
             .bg(rgb(theme().surface))
@@ -8844,7 +8866,7 @@ impl KagiApp {
             .items_center()
             .w_full()
             .px_3()
-            .h(px(COL_HEADER_H))
+            .h(theme::scaled_px(COL_HEADER_H))
             .flex_shrink_0()
             .bg(rgb(theme().panel))
             // Badge column label
@@ -9103,7 +9125,7 @@ impl KagiApp {
         // Build divider 2 (shared between both panel modes).
         let divider2 = div()
             .id("divider-panel")
-            .w(px(4.))
+            .w(theme::scaled_px(4.))
             .flex_shrink_0()
             .h_full()
             .bg(rgb(theme().surface))
@@ -9182,7 +9204,7 @@ impl KagiApp {
         let h_divider = div()
             .id("divider-bottom-panel")
             .w_full()
-            .h(px(BOTTOM_PANEL_DIVIDER_H))
+            .h(theme::scaled_px(BOTTOM_PANEL_DIVIDER_H))
             .flex_shrink_0()
             .bg(rgb(theme().surface))
             .hover(|style| style.bg(rgb(theme().color_branch)).cursor_row_resize())
@@ -9210,7 +9232,7 @@ impl KagiApp {
                 let bg_color = if is_active { theme().selected } else { theme().panel };
                 div()
                     .px_3()
-                    .h(px(BOTTOM_PANEL_TAB_H))
+                    .h(theme::scaled_px(BOTTOM_PANEL_TAB_H))
                     .flex()
                     .items_center()
                     .flex_shrink_0()
@@ -9256,6 +9278,10 @@ impl KagiApp {
         };
 
         // ── Panel container (height = fixed, flex_shrink_0) ──
+        // `height` is the unscaled, persisted body height; the whole container
+        // (body + divider + tab strip) is scaled at render so it tracks zoom.
+        // The BottomPanel drag math converts the raw cursor back to this
+        // unscaled space (see divider_drag_move).
         let panel_h = height + BOTTOM_PANEL_DIVIDER_H + BOTTOM_PANEL_TAB_H;
         Some(
             div()
@@ -9263,7 +9289,7 @@ impl KagiApp {
                 .flex()
                 .flex_col()
                 .w_full()
-                .h(px(panel_h))
+                .h(theme::scaled_px(panel_h))
                 .flex_shrink_0()
                 .child(h_divider)
                 .child(tab_bar)
@@ -9355,10 +9381,10 @@ impl KagiApp {
                                     .flex_row()
                                     .items_center()
                                     .px_3()
-                                    .h(px(22.))
+                                    .h(theme::scaled_px(22.))
                                     .child(
                                         div()
-                                            .w(px(60.))
+                                            .w(theme::scaled_px(60.))
                                             .flex_shrink_0()
                                             .text_xs()
                                             .text_color(rgb(theme().text_muted))
@@ -9366,9 +9392,9 @@ impl KagiApp {
                                     )
                                     .child(
                                         div()
-                                            .w(px(100.))
+                                            .w(theme::scaled_px(100.))
                                             .flex_shrink_0()
-                                            .ml(px(6.))
+                                            .ml(theme::scaled_px(6.))
                                             .text_xs()
                                             .text_color(rgb(theme().text_sub))
                                             .child(op_label),
@@ -9376,7 +9402,7 @@ impl KagiApp {
                                     .child(
                                         div()
                                             .flex_1()
-                                            .ml(px(6.))
+                                            .ml(theme::scaled_px(6.))
                                             .text_xs()
                                             .text_color(rgb(outcome_color))
                                             .truncate()
@@ -9551,7 +9577,7 @@ impl KagiApp {
         let dirty_chip = if summary.is_dirty {
             Some(
                 div()
-                    .ml(px(4.))
+                    .ml(theme::scaled_px(4.))
                     .text_color(rgb(theme().color_warning))
                     .flex_shrink_0()
                     .child(SharedString::from("\u{25cf}")), // ●
@@ -9564,7 +9590,7 @@ impl KagiApp {
         let staged_chip = if summary.staged > 0 {
             Some(
                 div()
-                    .ml(px(4.))
+                    .ml(theme::scaled_px(4.))
                     .text_color(rgb(theme().color_success))
                     .flex_shrink_0()
                     .child(SharedString::from(format!("+{}", summary.staged))),
@@ -9575,7 +9601,7 @@ impl KagiApp {
         let unstaged_chip = if summary.unstaged > 0 {
             Some(
                 div()
-                    .ml(px(4.))
+                    .ml(theme::scaled_px(4.))
                     .text_color(rgb(theme().color_warning))
                     .flex_shrink_0()
                     .child(SharedString::from(format!("~{}", summary.unstaged))),
@@ -9588,7 +9614,7 @@ impl KagiApp {
         let conflict_chip = if summary.conflict_count > 0 {
             Some(
                 div()
-                    .ml(px(4.))
+                    .ml(theme::scaled_px(4.))
                     .text_color(rgb(theme().color_blocker))
                     .flex_shrink_0()
                     .child(SharedString::from(format!("!{}", summary.conflict_count))),
@@ -9601,7 +9627,7 @@ impl KagiApp {
         let stash_chip = if summary.stash_count > 0 {
             Some(
                 div()
-                    .ml(px(4.))
+                    .ml(theme::scaled_px(4.))
                     .text_color(rgb(theme().text_sub))
                     .flex_shrink_0()
                     .child(SharedString::from(format!("\u{2691}{}", summary.stash_count))), // ⚑N
@@ -9614,7 +9640,7 @@ impl KagiApp {
         let upstream_name_chip = if !summary.upstream_name.is_empty() {
             Some(
                 div()
-                    .ml(px(6.))
+                    .ml(theme::scaled_px(6.))
                     .text_color(rgb(theme().text_muted))
                     .flex_shrink_0()
                     .child(SharedString::from(format!("\u{2192} {}", summary.upstream_name))), // → origin/main
@@ -9629,7 +9655,7 @@ impl KagiApp {
                 let label = format!("\u{2191}{} \u{2193}{}", a, b); // ↑A ↓B
                 Some(
                     div()
-                        .ml(px(6.))
+                        .ml(theme::scaled_px(6.))
                         .text_color(rgb(theme().text_sub))
                         .flex_shrink_0()
                         .child(SharedString::from(label)),
@@ -9637,7 +9663,7 @@ impl KagiApp {
             }
             _ if summary.no_upstream => Some(
                 div()
-                    .ml(px(6.))
+                    .ml(theme::scaled_px(6.))
                     .text_color(rgb(theme().text_muted))
                     .flex_shrink_0()
                     .child(SharedString::from("no upstream")),
@@ -9649,7 +9675,7 @@ impl KagiApp {
         let refresh_label = if summary.last_refresh_secs > 0 {
             Some(
                 div()
-                    .ml(px(6.))
+                    .ml(theme::scaled_px(6.))
                     .text_color(rgb(theme().text_muted))
                     .flex_shrink_0()
                     .child(SharedString::from(format_hms(summary.last_refresh_secs))),
@@ -9693,7 +9719,7 @@ impl KagiApp {
 
         let icon_terminal = div()
             .id("status-icon-terminal")
-            .ml(px(4.))
+            .ml(theme::scaled_px(4.))
             .px_1()
             .flex_shrink_0()
             .text_color(rgb(icon_terminal_color))
@@ -9707,7 +9733,7 @@ impl KagiApp {
 
         let icon_oplog = div()
             .id("status-icon-oplog")
-            .ml(px(2.))
+            .ml(theme::scaled_px(2.))
             .px_1()
             .flex_shrink_0()
             .text_color(rgb(icon_oplog_color))
@@ -9726,7 +9752,7 @@ impl KagiApp {
             .flex_row()
             .items_center()
             .w_full()
-            .h(px(22.))
+            .h(theme::scaled_px(STATUS_BAR_H))
             .flex_shrink_0()
             .px_2()
             .bg(rgb(theme().panel))
@@ -9775,7 +9801,7 @@ impl KagiApp {
         bar = bar.child(
             div()
                 .flex_1()
-                .ml(px(6.))
+                .ml(theme::scaled_px(6.))
                 .overflow_hidden()
                 .text_color(rgb(footer_color))
                 .child(footer_text),
@@ -10191,7 +10217,7 @@ fn render_main_diff_rows(
                     .child(
                         div()
                             .flex_shrink_0()
-                            .w(px(44.))
+                            .w(theme::scaled_px(44.))
                             .text_color(rgb(theme().text_muted))
                             .child(SharedString::from(old_str)),
                     )
@@ -10199,7 +10225,7 @@ fn render_main_diff_rows(
                     .child(
                         div()
                             .flex_shrink_0()
-                            .w(px(44.))
+                            .w(theme::scaled_px(44.))
                             .text_color(rgb(theme().text_muted))
                             .child(SharedString::from(new_str)),
                     )
@@ -10979,7 +11005,7 @@ fn render_status_footer(status: FooterStatus) -> impl IntoElement {
         .flex_row()
         .items_center()
         .w_full()
-        .h(px(22.))
+        .h(theme::scaled_px(22.))
         .flex_shrink_0()
         .px_3()
         .bg(rgb(theme().panel))
@@ -11101,7 +11127,7 @@ fn render_amend_modal(modal: AmendPlanModal, cx: &mut Context<KagiApp>) -> gpui:
     // Build the standard plan card body (title / current→predicted / warnings /
     // blockers / recovery / error) and append a two-stage confirm row.
     let mut card = div()
-        .w(px(480.))
+        .w(theme::scaled_px(480.))
         .bg(rgb(theme().modal))
         .rounded_lg()
         .p_4()
@@ -11351,7 +11377,7 @@ fn render_input_plan_modal(
 ) -> gpui::AnyElement {
     let has_blockers = plan.as_ref().map(|p| !p.blockers.is_empty()).unwrap_or(true);
     let mut card = div()
-        .w(px(480.))
+        .w(theme::scaled_px(480.))
         .bg(rgb(theme().modal))
         .rounded_lg()
         .p_4()
@@ -11648,12 +11674,12 @@ fn render_file_menu_overlay(
                 .shadow_lg()
                 // W27-UIPOLISH: compact (Zed-style) density — tighter vertical
                 // padding to match the commit/branch context menus.
-                .py(px(2.))
+                .py(theme::scaled_px(2.))
                 .child(
                     div()
                         .id(("file-menu-discard", fi))
                         .px_3()
-                        .py(px(3.))
+                        .py(theme::scaled_px(3.))
                         .text_sm()
                         .text_color(rgb(theme().color_blocker))
                         .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
@@ -11708,7 +11734,7 @@ fn render_discard_modal(modal: DiscardModal, cx: &mut Context<KagiApp>) -> gpui:
         .flex()
         .flex_col()
         .gap_px()
-        .max_h(px(180.))
+        .max_h(theme::scaled_px(180.))
         .overflow_y_scroll();
     for p in &modal.paths {
         let line: String = p.chars().take(80).collect();
@@ -11723,7 +11749,7 @@ fn render_discard_modal(modal: DiscardModal, cx: &mut Context<KagiApp>) -> gpui:
 
     // ── Card ─────────────────────────────────────────────────
     let mut card = div()
-        .w(px(480.))
+        .w(theme::scaled_px(480.))
         .bg(rgb(theme().modal))
         .border_1()
         .border_color(rgb(theme().color_blocker))
@@ -11932,7 +11958,7 @@ fn render_plan_modal_card(
 
     // ── Build modal card ────────────────────────────────────
     let mut card = div()
-        .w(px(480.))
+        .w(theme::scaled_px(480.))
         .bg(rgb(theme().modal))
         .rounded_lg()
         .p_4()
@@ -12272,7 +12298,7 @@ fn render_create_branch_modal(
 
     // ── Build modal card ────────────────────────────────────
     let mut card = div()
-        .w(px(480.))
+        .w(theme::scaled_px(480.))
         .bg(rgb(theme().modal))
         .rounded_lg()
         .p_4()
@@ -12512,7 +12538,7 @@ fn render_create_worktree_modal(
     });
 
     let mut card = div()
-        .w(px(540.))
+        .w(theme::scaled_px(540.))
         .bg(rgb(theme().modal))
         .rounded_lg()
         .p_4()
@@ -12741,7 +12767,7 @@ fn render_stash_push_modal(
 
 
     let mut card = div()
-        .w(px(480.))
+        .w(theme::scaled_px(480.))
         .bg(rgb(theme().modal))
         .rounded_lg()
         .p_4()
@@ -13004,7 +13030,7 @@ fn render_stash_apply_modal(
     });
 
     let mut card = div()
-        .w(px(480.))
+        .w(theme::scaled_px(480.))
         .bg(rgb(theme().modal))
         .rounded_lg()
         .p_4()
@@ -13229,7 +13255,7 @@ fn render_cherry_pick_modal(
                     .flex()
                     .flex_row()
                     .items_center()
-                    .pl(px(indent))
+                    .pl(theme::scaled_px(indent))
                     .mb_px()
                     .child(
                         div()
@@ -13255,11 +13281,11 @@ fn render_cherry_pick_modal(
                     .flex_row()
                     .items_center()
                     .gap_1()
-                    .pl(px(indent))
+                    .pl(theme::scaled_px(indent))
                     .mb_px()
                     .child(
                         div()
-                            .w(px(14.))
+                            .w(theme::scaled_px(14.))
                             .flex_shrink_0()
                             .text_sm()
                             .text_color(rgb(badge_color))
@@ -13280,7 +13306,7 @@ fn render_cherry_pick_modal(
 
     // ── Build modal card ────────────────────────────────────
     let mut card = div()
-        .w(px(520.))
+        .w(theme::scaled_px(520.))
         .bg(rgb(theme().modal))
         .rounded_lg()
         .p_4()
@@ -13666,7 +13692,7 @@ fn render_commit_panel(
                     unstaged_files = unstaged_files.child(
                         div()
                             .id(SharedString::from(format!("cp-us-dir-{}", name.as_ref())))
-                            .pl(px(8.0 + indent))
+                            .pl(theme::scaled_px(8.0 + indent))
                             .text_xs()
                             .text_color(rgb(theme().change_dir))
                             .child(name.clone()),
@@ -13701,15 +13727,15 @@ fn render_commit_panel(
                         .flex()
                         .flex_row()
                         .items_center()
-                        .pl(px(8.0 + indent))
-                        .pr(px(2.0))
+                        .pl(theme::scaled_px(8.0 + indent))
+                        .pr(theme::scaled_px(2.0))
                         .py_px()
                         .bg(rgb(row_bg))
                         .hover(|s| s.bg(rgb(theme().surface)))
                         .on_click(file_click)
                         .child(
                             div()
-                                .w(px(12.))
+                                .w(theme::scaled_px(12.))
                                 .flex_shrink_0()
                                 .text_xs()
                                 .text_color(rgb(badge_color))
@@ -13812,7 +13838,7 @@ fn render_commit_panel(
                 .on_click(file_click)
                 .child(
                     div()
-                        .w(px(12.))
+                        .w(theme::scaled_px(12.))
                         .flex_shrink_0()
                         .text_xs()
                         .text_color(rgb(badge_color))
@@ -13928,7 +13954,7 @@ fn render_commit_panel(
                     staged_files = staged_files.child(
                         div()
                             .id(SharedString::from(format!("cp-st-dir-{}", name.as_ref())))
-                            .pl(px(8.0 + indent))
+                            .pl(theme::scaled_px(8.0 + indent))
                             .text_xs()
                             .text_color(rgb(theme().change_dir))
                             .child(name.clone()),
@@ -13959,15 +13985,15 @@ fn render_commit_panel(
                             .flex()
                             .flex_row()
                             .items_center()
-                            .pl(px(8.0 + indent))
-                            .pr(px(2.0))
+                            .pl(theme::scaled_px(8.0 + indent))
+                            .pr(theme::scaled_px(2.0))
                             .py_px()
                             .bg(rgb(if is_sel { theme().selected } else { theme().panel }))
                             .hover(|s| s.bg(rgb(theme().surface)))
                             .on_click(file_click)
                             .child(
                                 div()
-                                    .w(px(12.))
+                                    .w(theme::scaled_px(12.))
                                     .flex_shrink_0()
                                     .text_xs()
                                     .text_color(rgb(badge_color))
@@ -14040,7 +14066,7 @@ fn render_commit_panel(
                     .on_click(file_click)
                     .child(
                         div()
-                            .w(px(12.))
+                            .w(theme::scaled_px(12.))
                             .flex_shrink_0()
                             .text_xs()
                             .text_color(rgb(badge_color))
@@ -14429,7 +14455,9 @@ fn render_commit_panel(
     // ── Assemble panel ───────────────────────────────────────
     // T-UI-003: diff ボックス廃止。Unstaged/Staged 箱が flex_1 で全体を占める(1:1)。
     div()
-        .w(px(panel_width))
+        // `panel_width` is the unscaled, persisted right-panel width; scale at
+        // render so it tracks zoom (the Panel divider drag uses the same space).
+        .w(theme::scaled_px(panel_width))
         .flex_shrink_0()
         .h_full()
         .flex()
@@ -14641,7 +14669,7 @@ fn render_commit_plan_modal(
                 preview_col = preview_col.child(
                     div()
                         .id(SharedString::from(format!("cpk-dir-{}", name.as_ref())))
-                        .pl(px(indent))
+                        .pl(theme::scaled_px(indent))
                         .text_xs()
                         .text_color(rgb(theme().change_dir))
                         .child(name.clone()),
@@ -14658,10 +14686,10 @@ fn render_commit_plan_modal(
                         .flex_row()
                         .items_center()
                         .gap_1()
-                        .pl(px(indent))
+                        .pl(theme::scaled_px(indent))
                         .child(
                             div()
-                                .w(px(14.))
+                                .w(theme::scaled_px(14.))
                                 .flex_shrink_0()
                                 .text_xs()
                                 .text_color(rgb(badge_color))
@@ -14681,7 +14709,7 @@ fn render_commit_plan_modal(
     }
 
     let mut card = div()
-        .w(px(480.))
+        .w(theme::scaled_px(480.))
         .bg(rgb(theme().modal))
         .rounded_lg()
         .p_4()
@@ -14890,7 +14918,7 @@ fn render_smart_commit_modal(
                 );
             }
             div()
-                .w(px(460.))
+                .w(theme::scaled_px(460.))
                 .bg(rgb(theme().modal))
                 .rounded_lg()
                 .p_4()
@@ -14972,7 +15000,7 @@ fn render_smart_commit_modal(
                 );
             }
             div()
-                .w(px(420.))
+                .w(theme::scaled_px(420.))
                 .bg(rgb(theme().modal))
                 .rounded_lg()
                 .p_4()

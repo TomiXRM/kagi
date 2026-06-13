@@ -271,6 +271,35 @@ pub enum Msg {
     ConflictResultPreview,
     ConflictPreviewHint,
     ConflictBinaryNoPreview,
+    // ── Branch-name / worktree-path validation (W29-I18N-WAVE2) ──────
+    // The keyed git-layer validation reasons (src/git/ops.rs). Domain words
+    // (branch / worktree / git ref / HEAD) and the user-entered name/path stay
+    // verbatim; only the surrounding prose is localized. Parameterized variants
+    // (carrying a name/path) use the `*_fmt` helpers below, not these arms.
+    /// create-branch: name is empty.
+    BranchNameEmpty,
+    /// rename-branch: name is required (blank).
+    BranchNameRequired,
+    /// rename-branch: leading/trailing whitespace.
+    BranchNameWhitespace,
+    /// rename-branch: new name equals the old name.
+    BranchNameSame,
+    /// worktree path is empty.
+    WorktreePathEmpty,
+
+    // ── Misc UI prose sweep (W29-I18N-WAVE2, task 3) ─────────────────
+    /// Inspector counts row when nothing changed in the commit.
+    NoFileChanges,
+    /// Inspector files list when the diff could not be computed.
+    DiffUnavailable,
+    /// Inspector co-author section caption.
+    CoAuthoredBy,
+    /// Footer idle status.
+    Ready,
+    /// Welcome screen help line.
+    NoRepositoryOpenWelcome,
+    /// Branch menu Sync item when no upstream is configured.
+    NoUpstreamSet,
 }
 
 impl Msg {
@@ -516,6 +545,35 @@ impl Msg {
             (Ja, ConflictPreviewHint) => "上のボタンで側を選ぶと解決後のファイルをプレビューします。",
             (En, ConflictBinaryNoPreview) => "Binary file — choose a side; no text preview is available.",
             (Ja, ConflictBinaryNoPreview) => "binary ファイル — 側を選択してください。テキストプレビューはありません。",
+            // ── Branch-name / worktree-path validation ───────────────
+            (En, BranchNameEmpty) => "Branch name must not be empty.",
+            (Ja, BranchNameEmpty) => "branch 名を入力してください。",
+            (En, BranchNameRequired) => "Branch name is required.",
+            (Ja, BranchNameRequired) => "branch 名を入力してください。",
+            (En, BranchNameWhitespace) => "Branch name must not start or end with whitespace.",
+            (Ja, BranchNameWhitespace) => "branch 名の先頭・末尾に空白は使えません。",
+            (En, BranchNameSame) => "Branch already has that name.",
+            (Ja, BranchNameSame) => "branch は既にその名前です。",
+            (En, WorktreePathEmpty) => "Worktree path must not be empty.",
+            (Ja, WorktreePathEmpty) => "worktree のパスを入力してください。",
+
+            // ── Misc UI prose sweep ──────────────────────────────────
+            (En, NoFileChanges) => "No file changes",
+            (Ja, NoFileChanges) => "ファイルの変更はありません",
+            (En, DiffUnavailable) => "(diff unavailable)",
+            (Ja, DiffUnavailable) => "(diff を取得できません)",
+            (En, CoAuthoredBy) => "Co-authored by",
+            (Ja, CoAuthoredBy) => "共同作成者",
+            (En, Ready) => "Ready",
+            (Ja, Ready) => "準備完了",
+            (En, NoRepositoryOpenWelcome) => {
+                "No repository open. Choose a directory to get started."
+            }
+            (Ja, NoRepositoryOpenWelcome) => {
+                "リポジトリが開かれていません。ディレクトリを選んで始めましょう。"
+            }
+            (En, NoUpstreamSet) => "No upstream set",
+            (Ja, NoUpstreamSet) => "upstream が設定されていません",
         }
     }
 }
@@ -541,6 +599,116 @@ pub fn unstaged_not_included(n: usize) -> String {
     match lang() {
         Lang::En => format!("⚠ {} unstaged change{} not included", n, plural),
         Lang::Ja => format!("⚠ unstaged な変更 {} 件は含まれません", n),
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// W29-I18N-WAVE2: keyed git-layer validation → localized text
+// ──────────────────────────────────────────────────────────────────────────
+
+/// "A branch named '<name>' already exists in this repository." (localized).
+/// The branch name stays verbatim per ADR-0048.
+pub fn branch_exists_fmt(name: &str) -> String {
+    match lang() {
+        Lang::En => format!("A branch named '{}' already exists in this repository.", name),
+        Lang::Ja => format!("branch '{}' は既に存在します。", name),
+    }
+}
+
+/// "Branch '<name>' already exists." (rename path, localized).
+pub fn branch_rename_exists_fmt(name: &str) -> String {
+    match lang() {
+        Lang::En => format!("Branch '{}' already exists.", name),
+        Lang::Ja => format!("branch '{}' は既に存在します。", name),
+    }
+}
+
+/// "Branch name '<name>' is not a valid git ref name …" (localized).
+pub fn branch_invalid_ref_fmt(name: &str) -> String {
+    match lang() {
+        Lang::En => format!(
+            "Branch name '{}' is not a valid git ref name \
+             (no spaces, '..', or other invalid characters).",
+            name
+        ),
+        Lang::Ja => format!(
+            "branch 名 '{}' は有効な git ref 名ではありません(空白・'..' などは使えません)。",
+            name
+        ),
+    }
+}
+
+/// "'<name>' is not a valid branch name." (rename path, localized).
+pub fn branch_rename_invalid_fmt(name: &str) -> String {
+    match lang() {
+        Lang::En => format!("'{}' is not a valid branch name.", name),
+        Lang::Ja => format!("'{}' は有効な branch 名ではありません。", name),
+    }
+}
+
+/// "Branch name '<name>' must not start with '-'." (localized).
+pub fn branch_leading_dash_fmt(name: &str) -> String {
+    match lang() {
+        Lang::En => format!("Branch name '{}' must not start with '-'.", name),
+        Lang::Ja => format!("branch 名 '{}' は '-' で始められません。", name),
+    }
+}
+
+/// "Worktree path '<path>' already exists." (localized). Path stays verbatim.
+pub fn worktree_exists_fmt(path: &str) -> String {
+    match lang() {
+        Lang::En => format!("Worktree path '{}' already exists.", path),
+        Lang::Ja => format!("worktree のパス '{}' は既に存在します。", path),
+    }
+}
+
+/// Map a keyed [`kagi::git::ops::BranchNameError`] to localized text.
+pub fn branch_name_error(e: &kagi::git::ops::BranchNameError) -> String {
+    use kagi::git::ops::BranchNameError::*;
+    match e {
+        EmptyCreate => Msg::BranchNameEmpty.t().to_string(),
+        Required => Msg::BranchNameRequired.t().to_string(),
+        Whitespace => Msg::BranchNameWhitespace.t().to_string(),
+        SameName => Msg::BranchNameSame.t().to_string(),
+        RenameExists(name) => branch_rename_exists_fmt(name),
+        RenameInvalid(name) => branch_rename_invalid_fmt(name),
+        CreateInvalidRef(name) => branch_invalid_ref_fmt(name),
+        CreateLeadingDash(name) => branch_leading_dash_fmt(name),
+        CreateExists(name) => branch_exists_fmt(name),
+    }
+}
+
+/// Inspector files-list truncation indicator: "… and N more".
+pub fn and_n_more(n: usize) -> String {
+    match lang() {
+        Lang::En => format!("\u{2026} and {} more", n),
+        Lang::Ja => format!("\u{2026} ほか {} 件", n),
+    }
+}
+
+/// Tab loading placeholder: "Loading <name>…". The repo/branch name stays
+/// verbatim per ADR-0048.
+pub fn loading_fmt(name: &str) -> String {
+    match lang() {
+        Lang::En => format!("Loading {}\u{2026}", name),
+        Lang::Ja => format!("{} を読み込み中\u{2026}", name),
+    }
+}
+
+/// Branch-menu copy toast: "Copied <value>". The copied value stays verbatim.
+pub fn copied_fmt(value: &str) -> String {
+    match lang() {
+        Lang::En => format!("Copied {}", value),
+        Lang::Ja => format!("{} をコピーしました", value),
+    }
+}
+
+/// Map a keyed [`kagi::git::ops::WorktreePathError`] to localized text.
+pub fn worktree_path_error(e: &kagi::git::ops::WorktreePathError) -> String {
+    use kagi::git::ops::WorktreePathError::*;
+    match e {
+        Empty => Msg::WorktreePathEmpty.t().to_string(),
+        Exists(path) => worktree_exists_fmt(path),
     }
 }
 
@@ -609,5 +777,61 @@ mod tests {
         std::env::set_var("KAGI_LANG", "en");
         assert_eq!(resolve_lang(), Lang::En);
         std::env::remove_var("KAGI_LANG");
+    }
+
+    // W29-I18N-WAVE2: the keyed git-layer validation errors must `Display` the
+    // exact English wording the git-layer tests pin, and the i18n mapping must
+    // switch with the active language.
+    #[test]
+    fn keyed_validation_display_is_exact_english() {
+        use kagi::git::ops::{BranchNameError as B, WorktreePathError as W};
+        assert_eq!(B::EmptyCreate.to_string(), "Branch name must not be empty.");
+        assert_eq!(B::Required.to_string(), "Branch name is required.");
+        assert_eq!(
+            B::Whitespace.to_string(),
+            "Branch name must not start or end with whitespace."
+        );
+        assert_eq!(B::SameName.to_string(), "Branch already has that name.");
+        assert_eq!(
+            B::RenameExists("x".into()).to_string(),
+            "Branch 'x' already exists."
+        );
+        assert_eq!(
+            B::RenameInvalid("x y".into()).to_string(),
+            "'x y' is not a valid branch name."
+        );
+        assert_eq!(
+            B::CreateInvalidRef("x y".into()).to_string(),
+            "Branch name 'x y' is not a valid git ref name \
+             (no spaces, '..', or other invalid characters)."
+        );
+        assert_eq!(
+            B::CreateLeadingDash("-x".into()).to_string(),
+            "Branch name '-x' must not start with '-'."
+        );
+        assert_eq!(
+            B::CreateExists("main".into()).to_string(),
+            "A branch named 'main' already exists in this repository."
+        );
+        assert_eq!(W::Empty.to_string(), "Worktree path must not be empty.");
+        assert_eq!(
+            W::Exists("/p".into()).to_string(),
+            "Worktree path '/p' already exists."
+        );
+    }
+
+    #[test]
+    fn keyed_validation_localizes() {
+        use kagi::git::ops::{BranchNameError as B, WorktreePathError as W};
+        let _g = LOCK.lock().unwrap();
+        set_lang_no_persist(Lang::En);
+        assert_eq!(branch_name_error(&B::EmptyCreate), "Branch name must not be empty.");
+        assert_eq!(worktree_path_error(&W::Empty), "Worktree path must not be empty.");
+        set_lang_no_persist(Lang::Ja);
+        // Localized — no longer the English sentence, and the name stays verbatim.
+        assert_ne!(branch_name_error(&B::EmptyCreate), "Branch name must not be empty.");
+        assert!(branch_name_error(&B::CreateExists("feat".into())).contains("feat"));
+        assert!(worktree_path_error(&W::Exists("/p".into())).contains("/p"));
+        set_lang_no_persist(Lang::En);
     }
 }

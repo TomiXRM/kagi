@@ -10,7 +10,7 @@ use kagi::git::CommitId;
 
 use super::{
     context_menu::{ItemState, MenuGroup, MenuItem},
-    i18n::Msg,
+    i18n::{self, Msg},
     theme::{self, theme},
     KagiApp,
 };
@@ -141,7 +141,7 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
             items: vec![
                 item(
                     BranchAction::NoUpstreamInfo,
-                    "No upstream set",
+                    Msg::NoUpstreamSet.t(),
                     no_upstream_info_state(ctx),
                     false,
                 ),
@@ -442,17 +442,17 @@ pub fn render_branch_menu_overlay(
 
 pub fn copy_branch_name(app: &mut KagiApp, name: String, cx: &mut Context<KagiApp>) {
     cx.write_to_clipboard(ClipboardItem::new_string(name.clone()));
-    app.push_toast(super::ToastKind::Info, format!("Copied {}", name));
+    app.push_toast(super::ToastKind::Info, i18n::copied_fmt(&name));
 }
 
 pub fn copy_head_sha(app: &mut KagiApp, sha: String, cx: &mut Context<KagiApp>) {
     cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()));
-    app.push_toast(super::ToastKind::Info, format!("Copied {}", sha));
+    app.push_toast(super::ToastKind::Info, i18n::copied_fmt(&sha));
 }
 
 pub fn copy_upstream_name(app: &mut KagiApp, upstream: String, cx: &mut Context<KagiApp>) {
     cx.write_to_clipboard(ClipboardItem::new_string(upstream.clone()));
-    app.push_toast(super::ToastKind::Info, format!("Copied {}", upstream));
+    app.push_toast(super::ToastKind::Info, i18n::copied_fmt(&upstream));
 }
 
 fn render_menu_item(

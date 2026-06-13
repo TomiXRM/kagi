@@ -30,6 +30,7 @@ use super::{
 
 // W9-THEME: all colours come from `theme()` (see theme.rs). No local palette.
 use super::theme::{self, theme};
+use super::i18n::{self, Msg};
 
 const MAX_FILES: usize = 100;
 const MAX_BADGE_CHARS: usize = 20;
@@ -311,7 +312,7 @@ pub fn render_inspector(
         if renamed > 0    { parts.push(format!("{} renamed", renamed)); }
         if typechange > 0 { parts.push(format!("{} type-change", typechange)); }
         let text = if parts.is_empty() {
-            SharedString::from("No file changes")
+            SharedString::from(Msg::NoFileChanges.t())
         } else {
             SharedString::from(parts.join("  \u{00B7}  "))
         };
@@ -377,7 +378,7 @@ pub fn render_inspector(
     if changed_files.is_none() {
         files_list = files_list.child(
             div().text_sm().text_color(rgb(theme().text_muted))
-                .child(SharedString::from("(diff unavailable)")),
+                .child(SharedString::from(Msg::DiffUnavailable.t())),
         );
     } else {
         for row in tree_element_rows {
@@ -386,7 +387,7 @@ pub fn render_inspector(
         if let Some(remaining) = truncated_count {
             files_list = files_list.child(
                 div().text_sm().text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(format!("\u{2026} and {} more", remaining))),
+                    .child(SharedString::from(i18n::and_n_more(remaining))),
             );
         }
     }
@@ -565,7 +566,7 @@ pub fn render_inspector(
             .child(
                 div()
                     .text_xs().text_color(rgb(theme().text_muted))
-                    .child(SharedString::from("Co-authored by")),
+                    .child(SharedString::from(Msg::CoAuthoredBy.t())),
             );
         for r in coauthor_rows {
             block = block.child(r);

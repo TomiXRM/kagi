@@ -29,6 +29,7 @@ use super::{
     KagiApp, ToastKind, FooterStatus,
 };
 use super::theme::{self, theme};
+use super::i18n::{self, Msg};
 
 /// Lightweight descriptor for one open repository tab (ADR-0027).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -133,9 +134,9 @@ impl KagiApp {
             self.apply_tab_view(view);
         } else {
             // First open: show a loading placeholder while we snapshot.
-            self.loading_tab = Some(SharedString::from(format!("Loading {}\u{2026}", tab.name)));
+            self.loading_tab = Some(SharedString::from(i18n::loading_fmt(&tab.name)));
             self.status_footer =
-                FooterStatus::Busy(SharedString::from(format!("Loading {}\u{2026}", tab.name)));
+                FooterStatus::Busy(SharedString::from(i18n::loading_fmt(&tab.name)));
         }
 
         // Re-arm the watcher for the new repo and repaint immediately so the
@@ -212,7 +213,7 @@ impl KagiApp {
                         app.loading_tab = None;
                         if matches!(app.status_footer, FooterStatus::Busy(_)) {
                             app.status_footer =
-                                FooterStatus::Idle(SharedString::from("Ready"));
+                                FooterStatus::Idle(SharedString::from(Msg::Ready.t()));
                         }
                         eprintln!("[kagi] tab-load: {} rows={}", name, rows);
                         cx.notify();
@@ -328,7 +329,7 @@ impl KagiApp {
         self.commit_panel_open = false;
         self.commit_panel = None;
         self.commit_input = None;
-        self.status_footer = FooterStatus::Idle(SharedString::from("Ready"));
+        self.status_footer = FooterStatus::Idle(SharedString::from(Msg::Ready.t()));
     }
 
     /// Emit the headless tabs log line required by ADR-0027:
@@ -584,9 +585,7 @@ impl KagiApp {
                 div()
                     .text_sm()
                     .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(
-                        "No repository open. Choose a directory to get started.",
-                    )),
+                    .child(SharedString::from(Msg::NoRepositoryOpenWelcome.t())),
             )
             .child(button)
             .into_any()

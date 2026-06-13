@@ -655,6 +655,7 @@ fn main() {
                                 checkout_after: false,
                                 plan: Some(std::sync::Arc::new(plan.clone())),
                                 error: None,
+                                localized_blockers: Vec::new(),
                             });
                         }
                         if auto_confirm {

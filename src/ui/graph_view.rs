@@ -33,13 +33,17 @@ use gpui::{
 
 use kagi::graph::{EdgeKind, GraphEdge};
 
-use crate::ui::theme::theme;
+use crate::ui::theme::{self, theme};
 
 // ──────────────────────────────────────────────────────────────
 // Layout constants
 // ──────────────────────────────────────────────────────────────
 
-/// Width of one lane column in pixels.
+/// Base (1.0× zoom) width of one lane column in pixels.
+///
+/// W28: this is the *unscaled* source of truth.  All live geometry and the
+/// column-width <-> lane-count conversions go through [`lane_w`] so lane spacing
+/// tracks `theme::zoom()` uniformly with the row text/height.
 pub const LANE_W: f32 = 14.0;
 /// Default maximum lanes to render when no explicit width is given.
 /// T030: this is no longer the hard upper bound; `graph_canvas` now takes a
@@ -56,6 +60,16 @@ const NODE_R: f32 = 4.0;
 const EDGE_W: f32 = 1.5;
 /// Desired corner radius in pixels (T020). Will be clamped per-edge.
 const CORNER_R: f32 = 6.0;
+
+/// W28: zoom-scaled lane width — `LANE_W * zoom()`.
+///
+/// Every lane-spacing computation (lane x-centres, column<->lane conversions,
+/// horizontal scroll steps) goes through here so the graph's horizontal pitch
+/// scales by the same factor as the row height and text.
+#[inline]
+pub fn lane_w() -> f32 {
+    theme::scaled(LANE_W)
+}
 
 // ──────────────────────────────────────────────────────────────
 // Lane colour palette (6 colours, Catppuccin-inspired)
@@ -76,18 +90,22 @@ fn lane_color(lane: usize) -> gpui::Hsla {
 /// T030: kept for reference; render_rows now uses `graph_col_w` directly.
 #[allow(dead_code)]
 pub fn graph_width(lane_count: usize) -> f32 {
-    (lane_count.min(MAX_LANES) as f32) * LANE_W
+    (lane_count.min(MAX_LANES) as f32) * lane_w()
 }
 
 /// Compute the pixel width for a given visible_lanes value (T030: column-resize aware).
 #[allow(dead_code)]
 pub fn graph_width_for_lanes(visible_lanes: usize) -> f32 {
-    (visible_lanes as f32) * LANE_W
+    (visible_lanes as f32) * lane_w()
 }
 
 /// Compute how many lanes fit in a given pixel width (T030).
+///
+/// W28: uses the zoom-scaled [`lane_w`] so the visible-lane count stays
+/// consistent with the actual on-screen lane pitch at any zoom — otherwise the
+/// canvas would clip a different number of lanes than it draws.
 pub fn lanes_for_width(width_px: f32) -> usize {
-    ((width_px / LANE_W).floor() as usize).max(0)
+    ((width_px / lane_w()).floor() as usize).max(0)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -116,7 +134,9 @@ fn draw_into_node(
     // Available vertical from y_top to mid_y.
     let avail_v = (mid_y - y_top).max(0.0);
     // Clamp R so curves fit within the available space.
-    let r = CORNER_R.min(dx / 2.0).min(avail_v / 2.0);
+    // W28: corner radius scales with zoom so the bend keeps its proportion to
+    // the (scaled) lane spacing and row height.
+    let r = theme::scaled(CORNER_R).min(dx / 2.0).min(avail_v / 2.0);
 
     if r < 0.5 || dx < 0.5 {
         // Fallback: draw a straight diagonal line (from == node or very close).
@@ -156,7 +176,8 @@ fn draw_out_of_node(
 ) {
     let dx = (x_to - x_node).abs();
     let avail_v = (y_bot - mid_y).max(0.0);
-    let r = CORNER_R.min(dx / 2.0).min(avail_v / 2.0);
+    // W28: corner radius scales with zoom (see `draw_into_node`).
+    let r = theme::scaled(CORNER_R).min(dx / 2.0).min(avail_v / 2.0);
 
     if r < 0.5 || dx < 0.5 {
         // Fallback: straight diagonal.
@@ -221,19 +242,27 @@ pub fn graph_canvas(
             let oy = f32::from(bounds.origin.y); // absolute top edge
             // Use the actual canvas height rather than the ROW_H constant so
             // edges always span the full row even if the row height changes.
+            // W28: use the measured row height for vertical anchoring. The row
+            // container height is itself `scaled_px(row_height)`, so `mid_y`
+            // (and thus the ● node centre + edge endpoints) tracks zoom with no
+            // extra scaling here — that is what keeps the node centred and the
+            // edges drift-free at any zoom.
             let row_h = f32::from(bounds.size.height);
-            let mid_y = oy + row_h / 2.0;
+            let mid_y = node_center_y(oy, row_h);
+
+            // W28: zoom-scaled lane pitch — read once so the closure reuses it.
+            let lw = lane_w();
 
             // Helper: x-centre of a lane in absolute coords (scroll-aware).
-            let lane_x = |lane: usize| -> f32 {
-                ox + (lane as f32) * LANE_W + LANE_W / 2.0 - scroll_x
-            };
+            // Shares `lane_center_x` with the unit tests so the drawn geometry
+            // and the asserted geometry are guaranteed identical.
+            let lane_x = |lane: usize| -> f32 { lane_center_x(ox, lane, scroll_x) };
 
             // Visible lane window for the current scroll offset.  The canvas
             // paints outside its bounds in BOTH directions, so clipping is
             // done by skipping lanes whose centre falls outside the window
             // (same technique as the original right-edge clip).
-            let lane_lo = (scroll_x / LANE_W).floor().max(0.0) as usize;
+            let lane_lo = (scroll_x / lw).floor().max(0.0) as usize;
             let clip = lane_lo + visible_lanes;
             let lane_in = |lane: usize| -> bool { lane >= lane_lo && lane < clip };
 
@@ -252,7 +281,7 @@ pub fn graph_canvas(
                     EdgeKind::Pass => lane_color(edge.from_lane),
                 };
 
-                let mut builder = PathBuilder::stroke(px(EDGE_W));
+                let mut builder = PathBuilder::stroke(theme::scaled_px(EDGE_W));
 
                 match edge.kind {
                     EdgeKind::Pass => {
@@ -302,7 +331,7 @@ pub fn graph_canvas(
                 // when there is meaningful horizontal distance.
                 if x_node > ox + 0.5 {
                     let color = lane_color(node_lane);
-                    let mut builder = PathBuilder::stroke(px(1.0));
+                    let mut builder = PathBuilder::stroke(theme::scaled_px(1.0));
                     builder.move_to(point(px(ox), px(mid_y)));
                     builder.line_to(point(px(x_node), px(mid_y)));
                     if let Ok(path) = builder.build() {
@@ -318,7 +347,10 @@ pub fn graph_canvas(
 
                 // W2-GRAPH: HEAD node gets a larger radius + outer ring.
                 // W2-GRAPH: merge node gets a double-circle (filled inner + stroked outer).
-                let base_r = NODE_R;
+                // W28: node radii scale with zoom so the ● keeps its size ratio
+                // to the (scaled) lane pitch and row height. `node_radius()` is
+                // the same helper the unit tests assert against.
+                let base_r = node_radius();
                 let head_r = base_r * 1.5; // 1.5× radius for HEAD
 
                 const SEGMENTS: usize = 12;
@@ -326,8 +358,8 @@ pub fn graph_canvas(
                 if is_head {
                     // HEAD: large filled circle + outer ring (same colour, slightly transparent).
                     // Outer ring (stroke).
-                    let ring_r = head_r + 1.5;
-                    let mut rb = PathBuilder::stroke(px(1.2));
+                    let ring_r = head_r + theme::scaled(1.5);
+                    let mut rb = PathBuilder::stroke(theme::scaled_px(1.2));
                     for i in 0..=SEGMENTS {
                         let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
                         let px_val = cx_abs + ring_r * angle.cos();
@@ -355,8 +387,8 @@ pub fn graph_canvas(
                 } else if is_merge {
                     // Merge: double circle — stroked outer ring + stroked inner circle.
                     // Outer ring.
-                    let outer_r = base_r + 2.5;
-                    let mut rb = PathBuilder::stroke(px(1.2));
+                    let outer_r = base_r + theme::scaled(2.5);
+                    let mut rb = PathBuilder::stroke(theme::scaled_px(1.2));
                     for i in 0..=SEGMENTS {
                         let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
                         let px_val = cx_abs + outer_r * angle.cos();
@@ -402,4 +434,119 @@ pub fn graph_canvas(
             }
         },
     )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Geometry helpers (extracted so they can be unit-tested without a Window)
+// ──────────────────────────────────────────────────────────────
+
+/// W28: x-centre of `lane` within a graph canvas whose left edge is `ox`,
+/// for the current zoom and horizontal `scroll_x`.  This is exactly the
+/// `lane_x` closure used inside [`graph_canvas`]'s paint pass, factored out so
+/// the zoom-scaling can be asserted directly.
+#[inline]
+pub fn lane_center_x(ox: f32, lane: usize, scroll_x: f32) -> f32 {
+    let lw = lane_w();
+    ox + (lane as f32) * lw + lw / 2.0 - scroll_x
+}
+
+/// W28: vertical centre of the node ● for a canvas of measured height `row_h`
+/// whose top edge is `oy`.  The node sits at the row's vertical midpoint; since
+/// `row_h` is itself the zoom-scaled row height, the ● centre scales with zoom
+/// automatically — this is why it stays centred at any zoom.
+#[inline]
+pub fn node_center_y(oy: f32, row_h: f32) -> f32 {
+    oy + row_h / 2.0
+}
+
+/// W28: the zoom-scaled node radius (`NODE_R * zoom()`).
+#[inline]
+pub fn node_radius() -> f32 {
+    theme::scaled(NODE_R)
+}
+
+// ──────────────────────────────────────────────────────────────
+// Tests
+// ──────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::theme;
+
+    /// Approximate float equality for geometry assertions.
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-3
+    }
+
+    /// W28 alignment gate. All zoom assertions live in ONE test so the global
+    /// `theme::set_zoom` atomic is driven serially (cargo runs separate `#[test]`
+    /// fns in parallel, which would race the shared zoom state). `KAGI_LOG_DIR`
+    /// is redirected to a tempdir so `set_zoom`'s settings.json write never
+    /// touches the developer's real `~/.kagi`.
+    #[test]
+    fn geometry_scales_uniformly_with_zoom() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("KAGI_LOG_DIR", tmp.path());
+
+        // Base (1.0×) reference values straight from the unscaled constants.
+        // ── 1.0× : everything equals the base constants ────────────
+        theme::set_zoom(1.0);
+        assert!(close(lane_w(), LANE_W), "lane_w @1.0 == LANE_W");
+        assert!(close(node_radius(), NODE_R), "node_radius @1.0 == NODE_R");
+        assert!(close(theme::scaled(EDGE_W), EDGE_W));
+        assert!(close(theme::scaled(CORNER_R), CORNER_R));
+        // Node centre x in lane 1 (ox = 0, no scroll): 1*14 + 7 = 21.
+        assert!(close(lane_center_x(0.0, 1, 0.0), LANE_W * 1.0 + LANE_W / 2.0));
+        // Node centre y for a 29px row: 0 + 29/2 = 14.5.
+        assert!(close(node_center_y(0.0, ROW_H), ROW_H / 2.0));
+
+        // ── 0.8× : every dimension shrinks by exactly 0.8 ──────────
+        theme::set_zoom(0.8);
+        let z = theme::zoom();
+        assert!(close(z, 0.8), "zoom set to 0.8");
+        assert!(close(lane_w(), LANE_W * 0.8), "lane pitch shrinks 0.8");
+        assert!(close(node_radius(), NODE_R * 0.8), "node radius shrinks 0.8");
+        assert!(close(theme::scaled(EDGE_W), EDGE_W * 0.8), "edge width shrinks 0.8");
+        assert!(close(theme::scaled(CORNER_R), CORNER_R * 0.8), "corner radius shrinks 0.8");
+        // Lane x-centre: lane*pitch + pitch/2, all scaled by 0.8.
+        let lw08 = LANE_W * 0.8;
+        assert!(close(lane_center_x(0.0, 2, 0.0), 2.0 * lw08 + lw08 / 2.0));
+        // The scaled row height is what the canvas measures; ● sits at its
+        // midpoint, so node_center_y of a 0.8-scaled row is 0.8 of the 1.0 one.
+        let row_h_08 = f32::from(theme::scaled_px(ROW_H));
+        assert!(close(node_center_y(0.0, row_h_08), ROW_H * 0.8 / 2.0));
+        // lanes_for_width must agree with the (shrunk) pitch: a 112px column
+        // fits 112 / (14*0.8) = 10 lanes (vs 8 at 1.0×).
+        assert_eq!(lanes_for_width(112.0), (112.0 / lw08).floor() as usize);
+
+        // ── 1.3× : every dimension grows by exactly 1.3 ────────────
+        theme::set_zoom(1.3);
+        let z = theme::zoom();
+        assert!(close(z, 1.3), "zoom set to 1.3");
+        assert!(close(lane_w(), LANE_W * 1.3), "lane pitch grows 1.3");
+        assert!(close(node_radius(), NODE_R * 1.3), "node radius grows 1.3");
+        assert!(close(theme::scaled(EDGE_W), EDGE_W * 1.3), "edge width grows 1.3");
+        let row_h_13 = f32::from(theme::scaled_px(ROW_H));
+        assert!(close(node_center_y(0.0, row_h_13), ROW_H * 1.3 / 2.0));
+        // A 112px column now fits fewer (wider) lanes.
+        let lw13 = LANE_W * 1.3;
+        assert_eq!(lanes_for_width(112.0), (112.0 / lw13).floor() as usize);
+
+        // ── Drift check: the node centre x is always at the lane's true
+        // horizontal pitch midpoint, so node↔edge endpoints share the SAME
+        // lane_x() and cannot drift apart at any zoom. Verify lane N's centre
+        // is exactly N pitches + half-pitch from the origin at 1.3×.
+        for lane in 0..6 {
+            let expect = (lane as f32) * lw13 + lw13 / 2.0;
+            assert!(
+                close(lane_center_x(0.0, lane, 0.0), expect),
+                "lane {lane} centre at 1.3x"
+            );
+        }
+
+        // Restore the default so other tests/suites see 1.0×.
+        theme::set_zoom(1.0);
+        std::env::remove_var("KAGI_LOG_DIR");
+    }
 }

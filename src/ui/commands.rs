@@ -30,7 +30,7 @@
 //! standard text-input behaviour of cmd-z/x/c/v/a is never overridden.
 
 use gpui::{
-    actions, div, prelude::*, px, rgb, App, Context, KeyBinding, Menu, MenuItem,
+    actions, div, prelude::*, rgb, App, Context, KeyBinding, Menu, MenuItem,
     MouseButton, OsAction, SharedString, Window,
 };
 
@@ -996,10 +996,10 @@ impl KagiApp {
         };
 
         let mut panel = div()
-            .w(px(360.0))
-            .max_h(px(420.0))
+            .w(theme::scaled_px(360.0))
+            .max_h(theme::scaled_px(420.0))
             .overflow_hidden()
-            .rounded(px(8.0))
+            .rounded(theme::scaled_px(8.0))
             .border_1()
             .border_color(rgb(theme().selected))
             .bg(rgb(theme().panel))
@@ -1040,7 +1040,7 @@ impl KagiApp {
                 div()
                     .id(("branch-pick", i))
                     .px_3()
-                    .py(px(6.0))
+                    .py(theme::scaled_px(6.0))
                     .text_sm()
                     .text_color(rgb(theme().text_sub))
                     .cursor_pointer()
@@ -1060,10 +1060,10 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let mut panel = div()
-            .w(px(420.0))
-            .max_h(px(480.0))
+            .w(theme::scaled_px(420.0))
+            .max_h(theme::scaled_px(480.0))
             .overflow_hidden()
-            .rounded(px(8.0))
+            .rounded(theme::scaled_px(8.0))
             .border_1()
             .border_color(rgb(theme().selected))
             .bg(rgb(theme().panel))
@@ -1082,7 +1082,7 @@ impl KagiApp {
             panel = panel.child(
                 div()
                     .px_4()
-                    .py(px(3.0))
+                    .py(theme::scaled_px(3.0))
                     .text_sm()
                     .text_color(rgb(theme().text_sub))
                     .child(line),

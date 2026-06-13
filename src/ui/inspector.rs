@@ -135,7 +135,7 @@ pub fn render_inspector(
                         div()
                             .id(SharedString::from(format!("tree-dir-{}", name.as_ref())))
                             .flex().flex_row().items_center()
-                            .pl(px(indent)).mb_px()
+                            .pl(theme::scaled_px(indent)).mb_px()
                             .flex_shrink_0()
                             .overflow_hidden()
                             .child(
@@ -158,12 +158,12 @@ pub fn render_inspector(
                         div()
                             .id(("file-row", fi))
                             .flex().flex_row().items_center().gap_1()
-                            .pl(px(indent)).mb_px()
+                            .pl(theme::scaled_px(indent)).mb_px()
                             .flex_shrink_0()
                             .when(active_file == Some(fi), |el| el.bg(rgb(theme().selected)).rounded_sm())
                             .on_click(click)
                             .child(
-                                div().w(px(14.)).flex_shrink_0()
+                                div().w(theme::scaled_px(14.)).flex_shrink_0()
                                     .text_sm().text_color(rgb(badge_color))
                                     .child(SharedString::from(badge_char)),
                             )
@@ -203,7 +203,7 @@ pub fn render_inspector(
                     .when(active_file == Some(fi), |el| el.bg(rgb(theme().selected)).rounded_sm())
                     .on_click(click)
                     .child(
-                        div().w(px(14.)).flex_shrink_0()
+                        div().w(theme::scaled_px(14.)).flex_shrink_0()
                             .text_sm().text_color(rgb(badge_color))
                             .child(SharedString::from(badge_char)),
                     )
@@ -420,7 +420,7 @@ pub fn render_inspector(
     let initial = SharedString::from(avatar_initial(&author_name));
     let avatar_el = {
         let circle = div()
-            .w(px(18.)).h(px(18.)).flex_shrink_0()
+            .w(theme::scaled_px(18.)).h(theme::scaled_px(18.)).flex_shrink_0()
             .rounded_full()
             .overflow_hidden();
         match avatar_images.get(&author_email).cloned() {
@@ -511,7 +511,7 @@ pub fn render_inspector(
             let ca_hsla = avatar_color(&ca.email);
             let ca_avatar = {
                 let circle = div()
-                    .w(px(16.)).h(px(16.)).flex_shrink_0()
+                    .w(theme::scaled_px(16.)).h(theme::scaled_px(16.)).flex_shrink_0()
                     .rounded_full()
                     .overflow_hidden();
                 match avatar_images.get(&ca.email).cloned() {
@@ -629,7 +629,7 @@ pub fn render_inspector(
     // ── InspectorSplit divider (absolute-coordinate ratio; see mod.rs) ────
     let split_divider = div()
         .id("inspector-split-divider")
-        .h(px(INSPECTOR_SPLIT_DIVIDER_H))
+        .h(theme::scaled_px(INSPECTOR_SPLIT_DIVIDER_H))
         .flex_shrink_0()
         .w_full()
         .bg(rgb(theme().surface))
@@ -684,7 +684,10 @@ pub fn render_inspector(
 
     // ── Outer panel: header │ split region ────────────────────────────────
     div()
-        .w(px(panel_width))
+        // `panel_width` is the unscaled, persisted inspector width; scale at
+        // render so it tracks zoom. The drag/resize math in mod.rs works in the
+        // same scaled space (see render_body resize handler).
+        .w(theme::scaled_px(panel_width))
         .flex_shrink_0()
         .h_full()
         .flex().flex_col()
@@ -745,8 +748,8 @@ fn action_button(
 ) -> impl IntoElement {
     div()
         .id(id)
-        .px(px(6.))
-        .py(px(2.))
+        .px(theme::scaled_px(6.))
+        .py(theme::scaled_px(2.))
         .rounded_sm()
         .bg(rgb(theme().surface))
         .text_xs()

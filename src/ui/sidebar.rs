@@ -19,7 +19,7 @@ use gpui_component::Sizable as _;
 use kagi::git::{CommitId, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
 
 use super::KagiApp;
-use super::theme::theme;
+use super::theme::{self, theme};
 
 // W9-THEME: all colours come from `theme()` (see theme.rs).
 
@@ -416,14 +416,14 @@ pub fn render_sidebar(
                 .hover(|s| s.bg(rgb(theme().surface)))
                 .child(
                     div()
-                        .h(px(22.))
+                        .h(theme::scaled_px(22.))
                         .flex()
                         .items_center()
                         .px_2()
                         .text_xs()
                         .text_color(rgb(theme().text_muted))
                         .bg(rgb(theme().bg_base))
-                        .rounded(px(4.))
+                        .rounded(theme::scaled_px(4.))
                         .child(SharedString::from("filter…")),
                 )
                 .into_any_element()
@@ -497,7 +497,7 @@ pub fn render_sidebar(
                 let branch_for_click = branch_name.to_string();
                 let full_name = SharedString::from(branch_name.to_string());
                 // Grouped leaves get extra left padding to read as a child.
-                let left_pad = if indented { px(28.) } else { px(12.) };
+                let left_pad = if indented { theme::scaled_px(28.) } else { theme::scaled_px(12.) };
 
                 if is_head {
                     let branch_for_menu = branch_name.to_string();
@@ -636,7 +636,7 @@ pub fn render_sidebar(
                                 .flex_row()
                                 .items_center()
                                 .flex_shrink_0()
-                                .pl(px(20.))
+                                .pl(theme::scaled_px(20.))
                                 .pr_3()
                                 .py_1()
                                 .text_sm()
@@ -718,9 +718,9 @@ pub fn render_sidebar(
                 let full_name = SharedString::from(display.to_string());
                 let label = SharedString::from(display_label.to_string());
                 let left_pad = match depth {
-                    0 => px(12.),
-                    1 => px(28.),
-                    _ => px(44.),
+                    0 => theme::scaled_px(12.),
+                    1 => theme::scaled_px(28.),
+                    _ => theme::scaled_px(44.),
                 };
                 if can_jump {
                     let display_for_menu = display.to_string();
@@ -838,7 +838,7 @@ pub fn render_sidebar(
                                 .flex_row()
                                 .items_center()
                                 .flex_shrink_0()
-                                .pl(px(20.))
+                                .pl(theme::scaled_px(20.))
                                 .pr_3()
                                 .py_1()
                                 .text_sm()
@@ -876,7 +876,7 @@ pub fn render_sidebar(
                                 .flex_row()
                                 .items_center()
                                 .flex_shrink_0()
-                                .pl(px(32.))
+                                .pl(theme::scaled_px(32.))
                                 .pr_3()
                                 .py_1()
                                 .text_sm()
@@ -1132,7 +1132,10 @@ pub fn render_sidebar(
 
     // ── Fixed-width outer shell ───────────────────────────────────
     div()
-        .w(px(width))
+        // `width` is the unscaled, persisted sidebar width; scale at render so
+        // it tracks zoom uniformly with the text. The resize/drag math in
+        // mod.rs interprets cursor deltas in the same scaled space.
+        .w(theme::scaled_px(width))
         .flex_shrink_0()
         .h_full()
         .flex()

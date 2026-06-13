@@ -128,6 +128,73 @@ impl gpui::Render for DividerGhost {
     }
 }
 
+// ── T-DNDMERGE-001 / ADR-0079: branch drag-and-drop merge ─────
+//
+// Dragging a LOCAL branch label in the sidebar and dropping it on the current
+// (checked-out) branch row starts a "merge dragged into current" preview.  The
+// drop is a TRIGGER ONLY: it dispatches to `KagiApp::start_merge_from_drag`,
+// which validates and delegates to the existing `open_merge_modal` pipeline.
+// No git is executed on drop (ADR-0079).
+
+/// Drag payload carrying the dragged local branch name.  Layer 1 (the view)
+/// emits this on `on_drag`; the current-branch drop zone consumes it via
+/// `on_drop::<BranchDrag>` and dispatches it to the action layer.
+#[derive(Clone, Debug)]
+pub struct BranchDrag {
+    /// The dragged local branch name (= merge *source*).
+    pub name: String,
+}
+
+/// Ghost chip rendered next to the cursor while a branch is being dragged, so
+/// the user can see which branch they are dragging (ADR-0079 acceptance: the
+/// dragged branch name is visible during the drag).
+pub struct BranchDragGhost {
+    pub name: SharedString,
+}
+impl gpui::Render for BranchDragGhost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
+        div()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(theme().modal))
+            .border_1()
+            .border_color(rgb(theme().color_branch))
+            .text_xs()
+            .text_color(rgb(theme().color_branch))
+            .child(self.name.clone())
+    }
+}
+
+/// Pure validation for [`KagiApp::start_merge_from_drag`] (ADR-0079 layer 2),
+/// extracted so the rejection rules can be unit-tested without a `Window`/`cx`.
+///
+/// `branches` is the local-branch list as held in `KagiApp::branches`
+/// (`(name, is_head)`).  Returns `Ok(())` when the drag may proceed to
+/// `open_merge_modal(source)`, or `Err(reason)` describing why it is rejected
+/// (same-branch / unknown branch / busy).  `plan_merge_branch` remains the
+/// authoritative guard for dirty-WT / ff / conflict prediction.
+fn validate_merge_from_drag(
+    source: &str,
+    branches: &[(String, bool)],
+    busy: bool,
+) -> Result<(), String> {
+    if busy {
+        return Err(Msg::OpInProgress.t().to_string());
+    }
+    // Source must be a real local branch.
+    let entry = branches.iter().find(|(n, _)| n == source);
+    let is_head = match entry {
+        Some((_, head)) => *head,
+        None => return Err(format!("Branch '{}' is not a local branch.", source)),
+    };
+    // Dropping a branch onto itself (it IS the current branch) is a no-op merge.
+    if is_head {
+        return Err(format!("Branch '{}' is already the current branch.", source));
+    }
+    Ok(())
+}
+
 // Sidebar / panel width limits.
 const SIDEBAR_MIN: f32 = 120.0;
 const SIDEBAR_MAX: f32 = 400.0;
@@ -5672,6 +5739,28 @@ impl KagiApp {
 
     pub fn cancel_merge_modal(&mut self) {
         self.merge_modal = None;
+    }
+
+    /// T-DNDMERGE-001 / ADR-0079 layer 2: the single entry point a branch
+    /// drag-and-drop dispatches to.  `source` is the dragged local branch (the
+    /// merge source = the branch merged INTO HEAD).  This validates the obvious
+    /// rejections (busy / not a local branch / dropping the current branch onto
+    /// itself) and, on success, delegates to the existing merge pipeline via
+    /// [`open_merge_modal`] — it never touches git directly (the safety
+    /// thesis: drop is a trigger; `plan_merge_branch` remains authoritative for
+    /// dirty-WT / ff / conflict prediction).
+    pub fn start_merge_from_drag(&mut self, source: String, cx: &mut Context<Self>) {
+        match validate_merge_from_drag(&source, &self.branches, self.busy_op.is_some()) {
+            Ok(()) => {
+                eprintln!("[kagi] drag-merge: start merge from drag — source={}", source);
+                self.open_merge_modal(source);
+            }
+            Err(reason) => {
+                eprintln!("[kagi] drag-merge: rejected — {}", reason);
+                self.status_footer = FooterStatus::Idle(SharedString::from(reason));
+            }
+        }
+        cx.notify();
     }
 
     pub fn start_merge(&mut self, cx: &mut Context<Self>) {
@@ -14207,5 +14296,61 @@ mod conflict_editor_geometry_tests {
             conflict_split_ratio_from_cursor(10.0, 0.0, 4.0, 4.0, 0.2, 0.8),
             None
         );
+    }
+}
+
+// ── T-DNDMERGE-001 / ADR-0079: drag-merge action validation ────
+#[cfg(test)]
+mod drag_merge_validation_tests {
+    use super::validate_merge_from_drag;
+
+    fn branches() -> Vec<(String, bool)> {
+        vec![
+            ("main".to_string(), true), // current (HEAD)
+            ("feature".to_string(), false),
+            ("topic/x".to_string(), false),
+        ]
+    }
+
+    #[test]
+    fn drag_merge_accepts_other_local_branch() {
+        assert_eq!(
+            validate_merge_from_drag("feature", &branches(), false),
+            Ok(())
+        );
+        assert_eq!(
+            validate_merge_from_drag("topic/x", &branches(), false),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn drag_merge_rejects_current_branch_onto_itself() {
+        let err = validate_merge_from_drag("main", &branches(), false)
+            .expect_err("dropping current branch onto itself must be rejected");
+        assert!(err.contains("main"), "reason should name the branch: {}", err);
+        assert!(
+            err.contains("current branch"),
+            "reason should explain same-branch rejection: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn drag_merge_rejects_unknown_branch() {
+        let err = validate_merge_from_drag("ghost", &branches(), false)
+            .expect_err("a non-existent local branch must be rejected");
+        assert!(
+            err.contains("not a local branch"),
+            "reason should explain unknown branch: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn drag_merge_rejects_when_busy() {
+        let err = validate_merge_from_drag("feature", &branches(), true)
+            .expect_err("a drag while another op is busy must be rejected");
+        assert!(!err.is_empty(), "busy rejection should carry a reason");
     }
 }

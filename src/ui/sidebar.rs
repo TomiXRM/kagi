@@ -18,7 +18,7 @@ use gpui_component::Sizable as _;
 
 use kagi::git::{CommitId, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
 
-use super::KagiApp;
+use super::{BranchDrag, BranchDragGhost, KagiApp};
 use super::theme::{self, theme};
 
 // W9-THEME: all colours come from `theme()` (see theme.rs).
@@ -512,6 +512,19 @@ pub fn render_sidebar(
                             cx.notify();
                         },
                     );
+                    // T-DNDMERGE-001 / ADR-0079 layer 1: the current-branch row
+                    // is the (MVP) drop target.  `drag_over::<BranchDrag>` shows
+                    // a valid-target highlight while a branch is dragged over it;
+                    // `on_drop::<BranchDrag>` dispatches the dragged branch to the
+                    // action layer (`start_merge_from_drag`) — it does NOT call
+                    // git.  Dropping the current branch onto itself is rejected by
+                    // the action; `plan_merge_branch` guards the rest.
+                    let drop_handler = cx.listener(
+                        move |this: &mut KagiApp, payload: &BranchDrag, _window, cx| {
+                            this.start_merge_from_drag(payload.name.clone(), cx);
+                            cx.notify();
+                        },
+                    );
                     div()
                         .id(SharedString::from(format!("sidebar-branch-{}", branch_name)))
                         .flex()
@@ -526,6 +539,12 @@ pub fn render_sidebar(
                         .overflow_hidden()
                         .on_click(head_click)
                         .on_mouse_down(gpui::MouseButton::Right, menu_click)
+                        .drag_over::<BranchDrag>(|style, _drag, _window, _cx| {
+                            style
+                                .bg(rgb(theme().selected))
+                                .border_color(rgb(theme().color_branch))
+                        })
+                        .on_drop::<BranchDrag>(drop_handler)
                         .hover(|style| style.bg(rgb(theme().surface)))
                         .tooltip(name_tooltip(full_name))
                         .child(div().flex_1().truncate().child(label))
@@ -563,6 +582,14 @@ pub fn render_sidebar(
                             cx.notify();
                         },
                     );
+                    // T-DNDMERGE-001 / ADR-0079 layer 1: non-current LOCAL branch
+                    // leaves are draggable (remote/tag/folder rows are NOT — they
+                    // are built by other row builders and get no `on_drag`).  The
+                    // drag carries a `BranchDrag { name }` payload and renders a
+                    // ghost chip with the branch name.  `on_drag` fires only after
+                    // a movement threshold, so click-to-jump / dblclick-checkout /
+                    // right-click menu keep working unchanged.
+                    let branch_for_drag = branch_name.to_string();
                     div()
                         .id(SharedString::from(format!("sidebar-branch-{}", branch_name)))
                         .flex()
@@ -577,6 +604,13 @@ pub fn render_sidebar(
                         .overflow_hidden()
                         .on_click(click_handler)
                         .on_mouse_down(gpui::MouseButton::Right, menu_click)
+                        .on_drag(
+                            BranchDrag { name: branch_for_drag.clone() },
+                            move |drag: &BranchDrag, _pos, _window, cx| {
+                                let name = SharedString::from(drag.name.clone());
+                                cx.new(|_| BranchDragGhost { name })
+                            },
+                        )
                         .hover(|style| style.bg(rgb(theme().surface)))
                         .tooltip(name_tooltip(full_name))
                         .child(div().flex_1().truncate().child(label))

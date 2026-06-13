@@ -18,14 +18,15 @@ internal re-architecture. See `docs/rearch/` for the architecture work and
   with current→predicted state, fast-forward vs merge-commit, conflict prediction) —
   nothing is merged until you confirm. Cancel leaves the repository untouched; on
   conflict it enters the existing Conflict Mode.
-- **Settings button + window** (ADR-0080, T-SETTINGS-001) — *in progress*. A gear
-  button in the window's top-right (also ⌘, / menu bar) opens an OpenLogi-style
-  settings view (left sidebar + pages): Appearance (theme, UI zoom, compact graph) and
-  Language (English / 日本語), applied live and persisted.
-- **Undo / Redo of operations** (ADR-0081, T-UNDOREDO-001) — *in progress*.
-  GitKraken-style undo/redo after commit/merge, implemented as safe, reflog-backed
-  branch-ref moves through the plan→confirm→preflight→execute→verify pipeline — no
-  commit is ever destroyed and `reset --hard` is never used.
+- **Settings button + window** (ADR-0080, T-SETTINGS-001). A gear button in the
+  window's top-right (also ⌘, / menu bar) opens a settings view (sections for
+  Appearance — theme, UI zoom, compact graph — and Language: English / 日本語),
+  applied live and persisted to `~/.kagi/settings.json`.
+- **Undo / Redo of operations** (ADR-0081, T-UNDOREDO-001). GitKraken-style
+  Undo/Redo toolbar buttons that work after commit and merge, implemented as safe,
+  reflog-backed branch-ref moves through the plan→confirm→preflight→execute→verify
+  pipeline — every move shows a preview first, no commit is ever destroyed, and
+  `reset --hard` is never used (undone commits stay recoverable via the reflog).
 
 ### Changed (internal — v1.0 re-architecture groundwork)
 - Extracted a pure **`kagi-domain`** crate (commit/graph/diff/conflict model, rules,

@@ -33,6 +33,10 @@ use super::KagiApp;
 /// Build the centred Settings overlay (panel over a click-to-dismiss scrim).
 pub fn render_settings_overlay(
     app: Entity<KagiApp>,
+    // Theme-dropdown expanded state. Passed in by the caller (which holds `&self`)
+    // — we must NOT `app.read(cx)` here because this renders *during* KagiApp's own
+    // update, which would panic ("cannot read … while it is already being updated").
+    theme_open: bool,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
     let dismiss = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
@@ -44,9 +48,6 @@ pub fn render_settings_overlay(
         this.menu_overlay = None;
         cx.notify();
     });
-
-    // Theme dropdown expanded state (rendered inline below the field).
-    let theme_open = app.read(cx).settings_theme_open;
 
     let panel = div()
         .w(px(640.0))

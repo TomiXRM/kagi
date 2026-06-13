@@ -1001,6 +1001,7 @@ impl KagiApp {
             // closures route apply/persist through the live `KagiApp` entity).
             MenuOverlay::Settings => Some(super::settings_view::render_settings_overlay(
                 cx.entity(),
+                self.settings_theme_open,
                 cx,
             )),
         }

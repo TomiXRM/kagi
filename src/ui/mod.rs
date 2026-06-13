@@ -153,16 +153,37 @@ pub struct BranchDragGhost {
 }
 impl gpui::Render for BranchDragGhost {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
+        // T-DNDMERGE-001: the ghost must look like the LIFTED branch badge so the
+        // chip "sticks" to the cursor (user request). Mirror the real branch
+        // badge chip rendered in `render_badges_column` for `BadgeKind::Branch`:
+        // same `badge_style(color_branch)` tint, `rounded_sm`, `px_1`, `text_sm`.
+        // gpui renders this ghost entity at the cursor automatically, so we only
+        // need it to LOOK like the lifted badge. Used by BOTH the graph-badge
+        // drag and the sidebar drag (kept consistent).
+        let (badge_bg, badge_border, badge_text) = theme::badge_style(theme().color_branch);
         div()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(rgb(theme().modal))
+            .px_1()
+            .rounded_sm()
+            .bg(gpui::rgba(badge_bg))
             .border_1()
-            .border_color(rgb(theme().color_branch))
-            .text_xs()
-            .text_color(rgb(theme().color_branch))
+            .border_color(gpui::rgba(badge_border))
+            .text_sm()
+            .text_color(rgb(badge_text))
             .child(self.name.clone())
+    }
+}
+
+/// T-DNDMERGE-001 / ADR-0079: pure helper that extracts the draggable branch
+/// name from a graph ref-badge for the `BranchDrag { name }` payload.
+///
+/// Only `BadgeKind::Branch` chips are draggable, and for that kind `label` IS
+/// the plain local-branch name (built by `commit_list::build_badge_map`).
+/// `HeadBranch` (label = `"<name> ✓"`, and it is the drop *target*, not a
+/// source), `Remote`, and `Tag` chips are NOT draggable → `None`.
+fn draggable_branch_name(badge: &commit_list::RefBadge) -> Option<String> {
+    match badge.kind {
+        BadgeKind::Branch => Some(badge.label.to_string()),
+        BadgeKind::HeadBranch | BadgeKind::Remote | BadgeKind::Tag => None,
     }
 }
 
@@ -11721,7 +11742,11 @@ fn render_rows(
                 .on_click(click_handler)
                 .on_mouse_down(MouseButton::Right, context_click_handler)
                 // ── Badges column: user-resizable width (T030) ──
-                .child(render_badges_column(&row.badges, badge_col_w))
+                // T-DNDMERGE-001: thread `cx` so each `BadgeKind::Branch` chip
+                // can be made draggable and the HeadBranch chip a drop target.
+                // Reborrow `cx` (the `.map()` closure already mutably borrows it
+                // for `cx.listener(...)` above) per row.
+                .child(render_badges_column(&row.badges, badge_col_w, &mut *cx))
                 // ── Inner divider spacer (badge|graph handle width) ──
                 .child(
                     div()
@@ -11977,7 +12002,11 @@ fn badge_priority(kind: &BadgeKind) -> u8 {
 /// (user request), `overflow_hidden`.  An empty badges list still occupies
 /// the full width so that all rows share the same graph start position
 /// (GitKraken layout, T021).  `badge_col_w` is the current column width.
-fn render_badges_column(badges: &[commit_list::RefBadge], badge_col_w: f32) -> impl IntoElement {
+fn render_badges_column(
+    badges: &[commit_list::RefBadge],
+    badge_col_w: f32,
+    cx: &mut Context<KagiApp>,
+) -> impl IntoElement {
     // Content is built to fit rather than relying on clipping:
     //   - left-aligned, so the highest-priority chip (leftmost) is always
     //     fully visible and overflow happens rightward — the direction
@@ -12020,6 +12049,10 @@ fn render_badges_column(badges: &[commit_list::RefBadge], badge_col_w: f32) -> i
         let is_primary = i == 0;
         let (badge_bg, badge_border, badge_text) = theme::badge_style(color);
         let chip = div()
+            // Stable element id so gpui interactivity (drag/drop) works. Keyed
+            // by row position + badge label so a row with multiple branch chips
+            // gets distinct ids (a commit can carry several branches).
+            .id(SharedString::from(format!("graph-badge-{i}-{}", badge.label)))
             .px_1()
             .rounded_sm()
             .bg(gpui::rgba(badge_bg))
@@ -12031,9 +12064,54 @@ fn render_badges_column(badges: &[commit_list::RefBadge], badge_col_w: f32) -> i
             // Secondary chips may shrink to fit; their text ellipsizes.
             .when(!is_primary, |c| c.min_w(px(20.)).truncate())
             .child(label);
+
+        // T-DNDMERGE-001 / ADR-0079: wire drag/drop onto the chip based on kind.
+        //   - `BadgeKind::Branch` → INDEPENDENTLY draggable, carrying ITS OWN
+        //     branch name (= the merge source) in `BranchDrag { name }`. Because
+        //     each visible branch chip carries its own name, dragging a specific
+        //     badge unambiguously selects that branch even when a commit has
+        //     several. Remote/Tag chips are NOT draggable.
+        //   - `BadgeKind::HeadBranch` (the current branch) → drop TARGET. It
+        //     shows a valid-target highlight via `.drag_over::<BranchDrag>` and
+        //     dispatches to `start_merge_from_drag` on drop. The drop is a
+        //     TRIGGER only — it never calls git from the view (same as sidebar).
+        let chip = match badge.kind {
+            BadgeKind::Branch => {
+                if let Some(name) = draggable_branch_name(badge) {
+                    chip.cursor_grab().on_drag(
+                        BranchDrag { name: name.clone() },
+                        move |drag: &BranchDrag, _pos, _window, cx| {
+                            let name = SharedString::from(drag.name.clone());
+                            cx.new(|_| BranchDragGhost { name })
+                        },
+                    )
+                } else {
+                    chip
+                }
+            }
+            BadgeKind::HeadBranch => {
+                let drop_handler = cx.listener(
+                    move |this: &mut KagiApp, payload: &BranchDrag, _window, cx| {
+                        this.start_merge_from_drag(payload.name.clone(), cx);
+                        cx.notify();
+                    },
+                );
+                chip.drag_over::<BranchDrag>(|style, _drag, _window, _cx| {
+                    style
+                        .bg(rgb(theme().selected))
+                        .border_color(rgb(theme().color_branch))
+                })
+                .on_drop::<BranchDrag>(drop_handler)
+            }
+            BadgeKind::Remote | BadgeKind::Tag => chip,
+        };
         inner = inner.child(chip);
 
         // "+N" chip directly after the primary chip (never clipped).
+        // TODO(T-DNDMERGE-001): badges hidden behind the "+N" overflow are not
+        // individually draggable yet (only the up-to-MAX_BADGES visible chips
+        // are). Redesigning the overflow into a draggable popover is out of
+        // scope for this lane.
         if is_primary && extra > 0 {
             inner = inner.child(
                 div()
@@ -14362,5 +14440,47 @@ mod drag_merge_validation_tests {
         let err = validate_merge_from_drag("feature", &branches(), true)
             .expect_err("a drag while another op is busy must be rejected");
         assert!(!err.is_empty(), "busy rejection should carry a reason");
+    }
+}
+
+// ── T-DNDMERGE-001: graph ref-badge → drag payload name extraction ──
+#[cfg(test)]
+mod draggable_branch_name_tests {
+    use super::draggable_branch_name;
+    use crate::ui::commit_list::{BadgeKind, RefBadge};
+
+    fn badge(kind: BadgeKind, label: &str) -> RefBadge {
+        RefBadge {
+            kind,
+            label: label.to_string().into(),
+        }
+    }
+
+    #[test]
+    fn branch_badge_yields_its_plain_name() {
+        assert_eq!(
+            draggable_branch_name(&badge(BadgeKind::Branch, "feature")),
+            Some("feature".to_string())
+        );
+        // A commit with several branches: each Branch chip carries its own name.
+        assert_eq!(
+            draggable_branch_name(&badge(BadgeKind::Branch, "topic/x")),
+            Some("topic/x".to_string())
+        );
+    }
+
+    #[test]
+    fn head_remote_tag_badges_are_not_draggable() {
+        // HeadBranch is the drop *target* (and its label carries the "✓"
+        // indicator), never a drag source.
+        assert_eq!(
+            draggable_branch_name(&badge(BadgeKind::HeadBranch, "main ✓")),
+            None
+        );
+        assert_eq!(
+            draggable_branch_name(&badge(BadgeKind::Remote, "origin/main")),
+            None
+        );
+        assert_eq!(draggable_branch_name(&badge(BadgeKind::Tag, "v0.1.0")), None);
     }
 }

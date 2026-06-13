@@ -35,6 +35,8 @@ const ASSETS: &[(&str, &[u8])] = &[
     ("icons/trash-2.svg", include_bytes!("../../assets/icons/trash-2.svg")),
     // T-SETTINGS-001: header Settings gear (gpui_component IconName::Settings).
     ("icons/settings.svg", include_bytes!("../../assets/icons/settings.svg")),
+    // T-UNDOREDO-001: toolbar Redo button (gpui_component IconName::Redo2).
+    ("icons/redo-2.svg", include_bytes!("../../assets/icons/redo-2.svg")),
 ];
 
 impl AssetSource for KagiAssets {

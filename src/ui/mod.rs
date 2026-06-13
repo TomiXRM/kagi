@@ -10,6 +10,7 @@ pub mod assets;
 pub mod branch_menu;
 pub mod commands;
 pub mod commit_list;
+pub mod conflict_view;
 pub mod commit_panel;
 pub mod context_menu;
 pub mod detail_panel;
@@ -1480,6 +1481,18 @@ pub struct KagiApp {
     /// re-hitting the network on every reload / render).  Holds the repo path
     /// whose avatars have been (or are being) resolved.
     pub avatar_fetch_for: Option<PathBuf>,
+    // ── W30-CONFLICT-UI: Conflict Mode (ADR-0056) ────────────────
+    /// `Some` while the repository is mid merge / rebase / cherry-pick / revert
+    /// with conflicts (Conflict Mode).  `None` in Normal mode.  Detected via
+    /// `detect_conflict_session` at startup, after the FS watcher fires, and
+    /// after any operation finishes (all funnel through `reload()` /
+    /// `detect_conflict_mode`).  The repository is untouched until Continue /
+    /// Abort execute through the existing plan pipeline.
+    pub conflict: Option<conflict_view::ConflictMode>,
+    /// Guard so render-time detection runs at most once per (repo_path) until a
+    /// reload / tab switch invalidates it — mirrors `avatar_fetch_for`.  Holds
+    /// the repo path whose conflict state has been detected this cycle.
+    pub conflict_detected_for: Option<PathBuf>,
 }
 
 /// W6-TABSPEED: snapshot-derived **pure data** for one repository tab.
@@ -1773,6 +1786,9 @@ impl KagiApp {
             // W11-AVATAR
             avatar_images: HashMap::new(),
             avatar_fetch_for: None,
+            // W30-CONFLICT-UI
+            conflict: None,
+            conflict_detected_for: None,
         }
     }
 
@@ -1880,6 +1896,9 @@ impl KagiApp {
             // W11-AVATAR
             avatar_images: HashMap::new(),
             avatar_fetch_for: None,
+            // W30-CONFLICT-UI
+            conflict: None,
+            conflict_detected_for: None,
         }
     }
 
@@ -1970,6 +1989,13 @@ impl KagiApp {
 
         // Fold the snapshot-derived data in (assignment only).
         self.apply_tab_view(view);
+
+        // W30-CONFLICT-UI / ADR-0056: re-detect Conflict Mode every reload so a
+        // conflict produced by the GUI's own operation OR by external CLI (the
+        // watcher path runs through reload) puts the app into / out of Conflict
+        // Mode.  Force re-detection by invalidating the render-time guard.
+        self.conflict_detected_for = None;
+        self.detect_conflict_mode();
     }
 
     /// W6-TABSPEED: assign a [`TabViewState`] into `self` (main thread, no I/O).
@@ -2033,6 +2059,320 @@ impl KagiApp {
 
         // Notify gpui that state has changed so the window repaints.
         cx.notify();
+    }
+
+    // ── W30-CONFLICT-UI: Conflict Mode (ADR-0056) ────────────────────────
+
+    /// Detect (or clear) Conflict Mode for the currently-open repository.
+    ///
+    /// Runs at most once per `repo_path` per cycle (the `conflict_detected_for`
+    /// guard, reset by `reload()` / tab switch / the watcher).  Opens the repo
+    /// read-only, calls `detect_conflict_session`, and on a hit builds a fresh
+    /// `ResolutionBuffer` from the index (preferring a previously autosaved
+    /// buffer so a partial resolution survives a restart), recomputes each
+    /// file's status from the buffer, and stores the `ConflictMode`.  On a miss
+    /// it clears `self.conflict`.  The repository is never mutated here.
+    pub fn detect_conflict_mode(&mut self) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => {
+                self.conflict = None;
+                return;
+            }
+        };
+        // Run-once guard per repo path.
+        if self.conflict_detected_for.as_deref() == Some(repo_path.as_path()) {
+            return;
+        }
+        self.conflict_detected_for = Some(repo_path.clone());
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(_) => {
+                self.conflict = None;
+                return;
+            }
+        };
+
+        let session = match kagi::git::detect_conflict_session(&repo) {
+            Some(s) => s,
+            None => {
+                if self.conflict.is_some() {
+                    eprintln!("[kagi] conflict-mode: cleared");
+                }
+                self.conflict = None;
+                return;
+            }
+        };
+
+        // Build / reload the resolution buffer.  A previously-autosaved buffer
+        // (e.g. from before a restart) is preferred so partial work survives;
+        // otherwise materialize a fresh buffer from the index conflicts.
+        let buffer = kagi::git::ResolutionBuffer::load(&repo_path)
+            .or_else(|| kagi::git::ResolutionBuffer::from_repo(&repo).ok())
+            .unwrap_or_else(|| kagi::git::ResolutionBuffer::new(&repo_path));
+
+        // Current branch short name (for the side_labels left role).
+        let current_branch = self.status_summary.branch.clone();
+
+        // Recompute per-file status from the buffer (detection seeds Unresolved).
+        let mut session = session;
+        let residue = buffer.files_with_marker_residue();
+        for f in &mut session.files {
+            if buffer.has_resolution(&f.path) {
+                f.status = if residue.contains(&f.path) {
+                    kagi::git::ConflictStatus::NeedsReview
+                } else {
+                    kagi::git::ConflictStatus::Resolved
+                };
+            } else {
+                f.status = kagi::git::ConflictStatus::Unresolved;
+            }
+        }
+
+        // Preserve the previously-selected file across re-detections; otherwise
+        // open the first unresolved file (KDiff3-style "land on work to do").
+        let prev_selected = self.conflict.as_ref().and_then(|c| c.selected_file);
+        let selected_file = prev_selected
+            .filter(|&i| i < session.files.len())
+            .or_else(|| {
+                session
+                    .files
+                    .iter()
+                    .position(|f| f.status == kagi::git::ConflictStatus::Unresolved)
+            })
+            .or_else(|| (!session.files.is_empty()).then_some(0));
+
+        eprintln!(
+            "[kagi] conflict-mode: {} {} file(s)",
+            session.op.slug(),
+            session.files.len()
+        );
+
+        self.conflict = Some(conflict_view::ConflictMode {
+            session,
+            buffer,
+            current_branch,
+            selected_file,
+        });
+    }
+
+    /// Select a conflicting file (open its detail + Result preview).
+    pub fn conflict_select_file(&mut self, idx: usize) {
+        if let Some(c) = self.conflict.as_mut() {
+            if idx < c.session.files.len() {
+                c.selected_file = Some(idx);
+            }
+        }
+    }
+
+    /// Move the selection to the previous (`dir < 0`) or next (`dir > 0`)
+    /// **unresolved** file, wrapping around (KDiff3-style nav).
+    pub fn conflict_nav_unresolved(&mut self, dir: i32) {
+        let Some(c) = self.conflict.as_mut() else { return };
+        let n = c.session.files.len();
+        if n == 0 {
+            return;
+        }
+        let start = c.selected_file.unwrap_or(0);
+        // Scan up to n positions in the requested direction for an unresolved file.
+        for step in 1..=n {
+            let i = if dir >= 0 {
+                (start + step) % n
+            } else {
+                (start + n - (step % n)) % n
+            };
+            if c.session.files[i].status == kagi::git::ConflictStatus::Unresolved {
+                c.selected_file = Some(i);
+                return;
+            }
+        }
+        // None unresolved — just step to the neighbour so nav still feels alive.
+        let i = if dir >= 0 { (start + 1) % n } else { (start + n - 1) % n };
+        c.selected_file = Some(i);
+    }
+
+    /// Apply a per-file side choice to the in-memory resolution buffer, then
+    /// recompute that file's status.  The repository is untouched (in-memory
+    /// first); the buffer is autosaved so the partial resolution survives.
+    pub fn conflict_apply_choice(
+        &mut self,
+        path: &std::path::Path,
+        choice: kagi::git::ResolutionChoice,
+    ) {
+        let Some(c) = self.conflict.as_mut() else { return };
+        match c.buffer.apply_choice(path, choice) {
+            Ok(()) => {
+                // Refresh status for this file from the buffer.
+                let residue = c.buffer.files_with_marker_residue();
+                if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
+                    f.status = if residue.contains(&f.path) {
+                        kagi::git::ConflictStatus::NeedsReview
+                    } else {
+                        kagi::git::ConflictStatus::Resolved
+                    };
+                }
+                // Autosave (ADR-0057): never lose a partial resolution.
+                let _ = c.buffer.autosave();
+                eprintln!(
+                    "[kagi] conflict-mode: choice {} for {}",
+                    match choice {
+                        kagi::git::ResolutionChoice::Current => "current",
+                        kagi::git::ResolutionChoice::Incoming => "incoming",
+                        kagi::git::ResolutionChoice::BothCurrentFirst => "both(current-first)",
+                        kagi::git::ResolutionChoice::BothIncomingFirst => "both(incoming-first)",
+                    },
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("[kagi] conflict-mode: choice failed for {}: {}", path.display(), e);
+                self.push_toast(ToastKind::Error, SharedString::from(format!("{}", e)));
+            }
+        }
+    }
+
+    /// Continue the in-progress operation through the existing plan pipeline:
+    /// `plan_conflict_continue` → gate on blockers → `execute_conflict_continue`
+    /// → oplog → re-detect mode.  Refuses (records `Refused`) if the plan has
+    /// blockers (unresolved files / marker residue).
+    pub fn conflict_continue(&mut self, cx: &mut Context<Self>) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let Some(mode) = self.conflict.clone() else { return };
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e.message())));
+                return;
+            }
+        };
+
+        let plan = match kagi::git::plan_conflict_continue(&repo, &mode.session, &mode.buffer) {
+            Ok(p) => p,
+            Err(e) => {
+                self.push_toast(ToastKind::Error, SharedString::from(format!("continue plan error: {}", e)));
+                return;
+            }
+        };
+        let op_name = format!("{}-continue", mode.session.op.slug());
+
+        if !plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: {} has blockers, not executing", op_name);
+            self.record_op(
+                &op_name,
+                plan.current.clone(),
+                OpOutcome::Refused { blockers: plan.blockers.clone() },
+                &repo_path,
+            );
+            cx.notify();
+            return;
+        }
+
+        match kagi::git::execute_conflict_continue(&repo, &mode.session, &mode.buffer) {
+            Ok(_outcome) => {
+                eprintln!("[kagi] executed: {}", op_name);
+                // Successful continue: drop the autosaved buffer.
+                let _ = kagi::git::ResolutionBuffer::clear(&repo_path);
+                let after = StateSummary {
+                    head: plan.predicted.head.clone(),
+                    dirty: "staged".to_string(),
+                };
+                self.record_op(
+                    &op_name,
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                );
+                self.reload();
+            }
+            Err(e) => {
+                let err_msg = format!("{}", e);
+                eprintln!("[kagi] {} failed: {}", op_name, err_msg);
+                self.record_op(
+                    &op_name,
+                    plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg },
+                    &repo_path,
+                );
+            }
+        }
+        cx.notify();
+    }
+
+    /// Abort the in-progress operation through the existing plan pipeline:
+    /// `plan_conflict_abort` → `execute_conflict_abort` → oplog → re-detect.
+    /// Abort is always available (no blockers); the partial resolution buffer is
+    /// preserved by the backend (ADR-0057).
+    pub fn conflict_abort(&mut self, cx: &mut Context<Self>) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let Some(mode) = self.conflict.clone() else { return };
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e.message())));
+                return;
+            }
+        };
+
+        let plan = match kagi::git::plan_conflict_abort(&repo, &mode.session) {
+            Ok(p) => p,
+            Err(e) => {
+                self.push_toast(ToastKind::Error, SharedString::from(format!("abort plan error: {}", e)));
+                return;
+            }
+        };
+        let op_name = format!("{}-abort", mode.session.op.slug());
+
+        match kagi::git::execute_conflict_abort(&repo, &mode.session, &mode.buffer) {
+            Ok(_outcome) => {
+                eprintln!("[kagi] executed: {}", op_name);
+                let after = StateSummary {
+                    head: plan.predicted.head.clone(),
+                    dirty: "clean".to_string(),
+                };
+                self.record_op(
+                    &op_name,
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                );
+                self.reload();
+            }
+            Err(e) => {
+                let err_msg = format!("{}", e);
+                eprintln!("[kagi] {} failed: {}", op_name, err_msg);
+                self.record_op(
+                    &op_name,
+                    plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg },
+                    &repo_path,
+                );
+            }
+        }
+        cx.notify();
+    }
+
+    /// Skip the current sequencer step (rebase / cherry-pick / revert).
+    ///
+    /// MVP: the W26 backend exposes only continue / abort, not a `--skip`
+    /// planner/executor (and this lane must not add git logic / touch
+    /// `ops.rs`).  The button is shown for sequencer ops per the spec; until the
+    /// skip backend lands (v0.2) it surfaces a clear "use the terminal" hint
+    /// rather than fabricating a half-implemented skip.
+    pub fn conflict_skip(&mut self, _cx: &mut Context<Self>) {
+        eprintln!("[kagi] conflict-mode: skip requested (deferred to v0.2)");
+        self.push_toast(
+            ToastKind::Info,
+            SharedString::from("Skip is not available yet — continue in the terminal (`git <op> --skip`)."),
+        );
     }
 
     /// W11-AVATAR (ADR-0037): start GitHub avatar resolution for the current
@@ -7828,6 +8168,12 @@ impl Render for KagiApp {
         // for non-GitHub repos / offline / already-started).
         self.ensure_avatars(cx);
 
+        // W30-CONFLICT-UI: detect Conflict Mode once per repo path (no-op when
+        // already detected this cycle).  Covers the startup / tab-switch
+        // instant-apply paths where `reload()` did not run; the watcher and
+        // post-operation paths force re-detection via `reload()`.
+        self.detect_conflict_mode();
+
         // W3-NOTIFY: drop expired toasts and keep the auto-dismiss ticker
         // alive while any remain.
         self.toasts.retain(|t| !t.expired());
@@ -7950,6 +8296,9 @@ impl Render for KagiApp {
         let cherry_pick_modal = self.cherry_pick_modal.clone();
         let revert_modal = self.revert_modal.clone();
         let status_footer = self.status_footer.clone();
+        // W30-CONFLICT-UI: clone the Conflict Mode snapshot for render (free
+        // functions in `conflict_view` render from this immutable copy).
+        let conflict = self.conflict.clone();
         let commit_menu_overlay = self
             .commit_menu
             .clone()
@@ -8215,18 +8564,26 @@ impl Render for KagiApp {
             // ── Header slot ──────────────────────────────────
             // ADR-0013: pass HEAD commit summary for Undo label (first row = HEAD).
             .child(self.render_header_slot(toolbar_state, status_summary, self.rows.first().map(|r| r.summary.to_string()), cx))
-            // ── Body slot: sidebar | list | optional panel ───
-            .child(self.render_body(
-                row_count, selected, detail, changed_files, changed_diffstat, selected_badges, inspector_tree_view,
-                main_diff, compare_view, main_diff_scroll_handle,
-                branches, remote_branches, tags, stashes, worktrees, branch_upstream_info,
-                sidebar_collapsed, branch_groups_collapsed, sidebar_filter,
-                is_dirty, sidebar_width, panel_width,
-                badge_col_w, graph_col_w, commit_scroll_handle,
-                commit_panel_open, commit_panel.clone(), commit_input.clone(),
-                commit_template_mode, commit_template_inputs.clone(),
-                cx,
-            ))
+            // ── W30-CONFLICT-UI: persistent conflict banner (under header) ──
+            .children(conflict.as_ref().map(|m| conflict_view::render_banner(m, cx)))
+            // ── Body slot: in Conflict Mode the conflict resolution pane
+            //    replaces the normal sidebar | list | panel body. ───
+            .when_some(conflict.clone(), |el, m| {
+                el.child(conflict_view::render_body(&m, cx))
+            })
+            .when(conflict.is_none(), |el| {
+                el.child(self.render_body(
+                    row_count, selected, detail, changed_files, changed_diffstat, selected_badges, inspector_tree_view,
+                    main_diff, compare_view, main_diff_scroll_handle,
+                    branches, remote_branches, tags, stashes, worktrees, branch_upstream_info,
+                    sidebar_collapsed, branch_groups_collapsed, sidebar_filter,
+                    is_dirty, sidebar_width, panel_width,
+                    badge_col_w, graph_col_w, commit_scroll_handle,
+                    commit_panel_open, commit_panel.clone(), commit_input.clone(),
+                    commit_template_mode, commit_template_inputs.clone(),
+                    cx,
+                ))
+            })
             // ── Bottom panel slot (T-BP-002) ─────────────────
             .children(self.render_bottom_panel_slot(bottom_panel_open, bottom_panel_height, bottom_tab, cx))
             // ── Commit context menu overlay (below modals) ─────

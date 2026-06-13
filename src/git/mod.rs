@@ -86,15 +86,17 @@ pub use checklist::{checklist, text_has_conflict_marker};
 #[allow(unused_imports)]
 pub use conflicts::{
     AbortOutcome, ConflictFile, ConflictKind, ConflictOp, ConflictSession, ConflictStatus,
-    ContinueBlocker, ContinueOutcome, SideLabel, SideLabels, SkipOutcome,
+    ContinueBlocker, ContinueOutcome, ContinueRoute, SaveOutcome, SideLabel, SideLabels, SkipOutcome,
     continue_blockers, detect_conflict_session, side_labels,
-    plan_conflict_continue, execute_conflict_continue,
+    plan_conflict_continue, plan_conflict_continue_route, execute_conflict_continue,
+    execute_conflict_save, execute_merge_commit,
     plan_conflict_abort, execute_conflict_abort,
     plan_conflict_skip, execute_conflict_skip,
 };
 #[allow(unused_imports)]
 pub use resolution::{
-    LineOrigin, ResolutionBuffer, ResolutionChoice, ResolvedLine,
+    ConflictHunk, HunkChoice, HunkModel, LineOrigin, Region, ResolutionBuffer, ResolutionChoice,
+    ResolvedLine,
 };
 #[allow(unused_imports)]
 pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};

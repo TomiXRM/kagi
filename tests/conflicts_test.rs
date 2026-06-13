@@ -16,6 +16,13 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
+/// Process-global serial guard for tests that mutate the `KAGI_LOG_DIR`
+/// environment variable (which `ResolutionBuffer` autosave reads).  `std::env`
+/// is process-global, so concurrent set/remove across parallel test threads
+/// races (the known flaky `abort_restores_pre_op_state_and_retains_buffer`).
+/// Every test that touches `KAGI_LOG_DIR` holds this lock for its duration.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 use kagi::git::{
     continue_blockers, detect_conflict_session, execute_conflict_abort, execute_conflict_skip,
     plan_conflict_abort, plan_conflict_continue, plan_conflict_skip, ConflictKind, ConflictOp,
@@ -297,6 +304,7 @@ fn buffer_choices_undo_and_provenance() {
 #[test]
 fn buffer_autosave_round_trip() {
     // Redirect autosave to a temp dir via KAGI_LOG_DIR.
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let log_tmp = TempDir::new().unwrap();
     std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
 
@@ -374,6 +382,7 @@ fn continue_blocked_until_resolved_and_marker_free() {
 
 #[test]
 fn abort_restores_pre_op_state_and_retains_buffer() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let log_tmp = TempDir::new().unwrap();
     std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
 
@@ -678,6 +687,7 @@ fn skip_is_rejected_for_merge() {
 
 #[test]
 fn skip_cherry_pick_drops_current_step() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let log_tmp = TempDir::new().unwrap();
     std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
 
@@ -715,4 +725,214 @@ fn skip_cherry_pick_drops_current_step() {
     assert!(outcome.buffer_preserved_at.is_some());
 
     std::env::remove_var("KAGI_LOG_DIR");
+}
+
+// ────────────────────────────────────────────────────────────
+// ADR-0068: Save / Continue / Commit responsibility split
+// (T-CONFLICT-FLOW-030/031/032, T-CONFLICT-UX-013/014)
+// ────────────────────────────────────────────────────────────
+
+/// Save resolution writes the working tree and STAGES the file: the index
+/// unmerged entries (stage 1/2/3) collapse to stage 0 (T-CONFLICT-UX-014).
+#[test]
+fn save_resolution_stages_file_to_stage_zero() {
+    use kagi::git::execute_conflict_save;
+
+    let tmp = merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let path = Path::new("file.txt");
+
+    // Index has the conflict (unmerged) before Save.
+    let index = repo.index().unwrap();
+    assert!(index.has_conflicts(), "index should be unmerged before Save");
+    drop(index);
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer.apply_choice(path, ResolutionChoice::Current).unwrap();
+
+    let outcome = execute_conflict_save(&repo, &buffer, path).expect("save");
+    assert_eq!(outcome.path, path.to_path_buf());
+
+    // After Save the index has no conflicts and the path is at stage 0.
+    let repo2 = Repository::open(dir).unwrap();
+    let index2 = repo2.index().unwrap();
+    assert!(!index2.has_conflicts(), "Save must collapse stages → stage 0");
+    let entry = index2.get_path(path, 0);
+    assert!(entry.is_some(), "path must be present at stage 0 after Save");
+
+    // The working tree holds the resolved (current) text, marker-free.
+    let wt = std::fs::read_to_string(dir.join("file.txt")).unwrap();
+    assert!(wt.contains("MAIN change"), "working tree has resolved text: {:?}", wt);
+    assert!(!kagi::git::text_has_conflict_marker(&wt));
+}
+
+/// Save refuses (blocks) when the resolved text still has conflict markers.
+#[test]
+fn save_resolution_blocks_on_marker_residue() {
+    use kagi::git::execute_conflict_save;
+
+    let tmp = merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let path = Path::new("file.txt");
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .set_manual_text(path, "<<<<<<< x\nMAIN\n=======\nFEATURE\n>>>>>>> y\n")
+        .unwrap();
+
+    assert!(
+        execute_conflict_save(&repo, &buffer, path).is_err(),
+        "Save must block while conflict markers remain"
+    );
+    // The index must still be unmerged (nothing staged on a blocked save).
+    let index = repo.index().unwrap();
+    assert!(index.has_conflicts(), "blocked Save must not stage the file");
+}
+
+/// merge Continue does NOT create a commit — it routes to the commit message
+/// panel (T-CONFLICT-FLOW-030).  HEAD is unchanged after routing.
+#[test]
+fn merge_continue_routes_to_commit_panel_without_committing() {
+    use kagi::git::{plan_conflict_continue_route, ContinueRoute};
+
+    let tmp = merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    let path = Path::new("file.txt");
+
+    let head_before = git_output(dir, &["rev-parse", "HEAD"]);
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer.apply_choice(path, ResolutionChoice::Current).unwrap();
+
+    let route = plan_conflict_continue_route(&repo, &session, &buffer, "main")
+        .expect("route");
+    match route {
+        ContinueRoute::MergeCommitPanel { message } => {
+            assert!(
+                message.to_lowercase().contains("merge"),
+                "merge message prefilled: {:?}",
+                message
+            );
+        }
+        other => panic!("merge must route to the commit panel, got {:?}", other),
+    }
+
+    // No commit was created by routing.
+    let head_after = git_output(dir, &["rev-parse", "HEAD"]);
+    assert_eq!(head_before, head_after, "routing must NOT create a commit");
+    // Still mid-merge (MERGE_HEAD present).
+    assert!(dir.join(".git").join("MERGE_HEAD").exists());
+}
+
+/// The merge commit, created from the commit-panel button, has TWO parents
+/// (HEAD + MERGE_HEAD) and cleans up the merge state (T-CONFLICT-FLOW-031).
+#[test]
+fn merge_commit_has_two_parents_and_cleans_state() {
+    use kagi::git::{execute_conflict_save, execute_merge_commit};
+
+    let tmp = merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let path = Path::new("file.txt");
+
+    // Save the resolution (stages the file).
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer.apply_choice(path, ResolutionChoice::Current).unwrap();
+    execute_conflict_save(&repo, &buffer, path).expect("save");
+
+    // Create the merge commit with the panel's edited message.
+    let repo2 = Repository::open(dir).unwrap();
+    let id = execute_merge_commit(&repo2, "Merge feature into main").expect("merge commit");
+
+    // Two parents, custom message, state cleaned.
+    let repo3 = Repository::open(dir).unwrap();
+    let oid = git2::Oid::from_str(&id.0).unwrap();
+    let commit = repo3.find_commit(oid).unwrap();
+    assert_eq!(commit.parent_count(), 2, "merge commit must have two parents");
+    assert_eq!(commit.message().unwrap().trim(), "Merge feature into main");
+    assert!(!dir.join(".git").join("MERGE_HEAD").exists(), "MERGE_HEAD cleaned");
+    assert!(detect_conflict_session(&repo3).is_none(), "no longer in conflict");
+}
+
+/// A sequencer (cherry-pick) Continue produces a `--continue` OperationPlan,
+/// not a merge-commit-panel route (T-CONFLICT-FLOW-032).
+#[test]
+fn sequencer_continue_produces_a_plan() {
+    use kagi::git::{plan_conflict_continue_route, ContinueRoute};
+
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let log_tmp = TempDir::new().unwrap();
+    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+
+    let tmp = cherry_pick_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    assert!(matches!(session.op, ConflictOp::CherryPick { .. }));
+    let path = Path::new("file.txt");
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer.apply_choice(path, ResolutionChoice::Incoming).unwrap();
+
+    let route = plan_conflict_continue_route(&repo, &session, &buffer, "main")
+        .expect("route");
+    match route {
+        ContinueRoute::SequencerPlan(plan) => {
+            assert!(plan.blockers.is_empty(), "resolved → no blockers");
+            assert!(plan.title.contains("cherry-pick"), "plan titled for the op: {}", plan.title);
+        }
+        other => panic!("sequencer must produce a plan, got {:?}", other),
+    }
+
+    std::env::remove_var("KAGI_LOG_DIR");
+}
+
+/// Per-hunk accept is independent: each hunk's choice can differ, and changing
+/// one hunk does not alter another (T-CONFLICT-UX-010/012).
+#[test]
+fn per_hunk_accept_is_independent() {
+    use kagi::git::resolution::{HunkChoice, Region};
+
+    let tmp = two_hunk_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let path = Path::new("file.txt");
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    let markers = buffer.materialized_markers(&repo, path).unwrap();
+    buffer.ensure_hunks(path, &markers);
+    assert_eq!(buffer.hunk_count(path), 2);
+
+    // Hunk 0 → current, hunk 1 left unresolved.
+    assert!(buffer.apply_hunk_choice(path, 0, HunkChoice::AcceptCurrent));
+    {
+        let model = buffer.hunk_model(path).unwrap();
+        let hunks: Vec<_> = model
+            .regions
+            .iter()
+            .filter_map(|r| match r {
+                Region::Hunk(h) => Some(h),
+                Region::Passthrough(_) => None,
+            })
+            .collect();
+        assert_eq!(hunks[0].choice, HunkChoice::AcceptCurrent);
+        assert_eq!(hunks[1].choice, HunkChoice::Unresolved, "hunk 1 untouched");
+    }
+
+    // Now hunk 1 → incoming; hunk 0 stays current (independent).
+    assert!(buffer.apply_hunk_choice(path, 1, HunkChoice::AcceptIncoming));
+    {
+        let model = buffer.hunk_model(path).unwrap();
+        let hunks: Vec<_> = model
+            .regions
+            .iter()
+            .filter_map(|r| match r {
+                Region::Hunk(h) => Some(h),
+                Region::Passthrough(_) => None,
+            })
+            .collect();
+        assert_eq!(hunks[0].choice, HunkChoice::AcceptCurrent, "hunk 0 unchanged");
+        assert_eq!(hunks[1].choice, HunkChoice::AcceptIncoming);
+    }
 }

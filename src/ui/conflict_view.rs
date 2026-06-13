@@ -64,6 +64,9 @@ pub struct EditorChrome {
     pub ab_split: f32,
     /// A·B / Result vertical split ratio (fraction given to the A·B row).
     pub result_split: f32,
+    /// T-CONFLICT-UX-010/012: index (among conflict hunks) of the focused hunk,
+    /// for the selected-hunk highlight in the per-hunk accept list.
+    pub selected_hunk: usize,
     /// Measured (top, bottom) screen-px bounds of the editor split region.
     pub geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     /// Measured (left, right) screen-px bounds of the A·B row.
@@ -652,8 +655,8 @@ fn dash_actions(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElem
     let can_continue = mode.can_continue();
     let is_sequencer = mode.session.op.is_sequencer();
 
-    let continue_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_continue(cx);
+    let continue_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.conflict_continue(window, cx);
         cx.notify();
     });
     let abort_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {

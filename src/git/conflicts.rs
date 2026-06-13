@@ -783,6 +783,36 @@ pub enum ContinueOutcome {
     Staged,
 }
 
+/// Where a [`plan_conflict_continue_route`] routes the Continue action
+/// (ADR-0068 — Save/Continue/Commit are distinct operations).
+///
+/// A **merge** does NOT commit on Continue: it transitions to the commit message
+/// panel pre-filled with a merge message, so the user edits it and presses the
+/// commit button (which calls [`execute_merge_commit`]).  A **sequencer**
+/// operation (rebase / cherry-pick / revert) produces a `--continue`
+/// [`OperationPlan`] shown in the confirmation modal before the sequencer runs.
+#[derive(Debug, Clone)]
+pub enum ContinueRoute {
+    /// Merge: open the commit message panel pre-filled with this merge message.
+    /// No commit is created yet.
+    MergeCommitPanel {
+        /// The pre-filled merge commit message ("Merge <incoming> into <current>").
+        message: String,
+    },
+    /// rebase / cherry-pick / revert: confirm this `<op> --continue` plan, then
+    /// continue the sequencer.
+    SequencerPlan(Box<OperationPlan>),
+}
+
+/// Outcome of saving a single file's resolution (ADR-0068 Save resolution).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaveOutcome {
+    /// The path that was written + staged (repository-relative).
+    pub path: PathBuf,
+    /// Short hash of the resolved text that was written (for the oplog).
+    pub after_short: String,
+}
+
 /// Outcome of an executed conflict abort.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AbortOutcome {
@@ -916,7 +946,7 @@ pub fn execute_conflict_continue(
 
     // 2. For a merge, create the merge commit and clear the state.
     if let ConflictOp::Merge { .. } = session.op {
-        let oid = create_merge_commit(repo, &mut index)?;
+        let oid = create_merge_commit(repo, &mut index, None)?;
         repo.cleanup_state()
             .map_err(|e| GitError::Other(format!("cleanup_state failed: {}", e.message())))?;
         return Ok(ContinueOutcome::Committed(oid));
@@ -928,11 +958,14 @@ pub fn execute_conflict_continue(
     Ok(ContinueOutcome::Staged)
 }
 
-/// Build a merge commit from the staged index with HEAD + MERGE_HEAD parents,
-/// preserving the merge message when present.
+/// Build a merge commit from the staged index with HEAD + MERGE_HEAD parents.
+///
+/// `message_override` (the commit panel's edited message) takes precedence;
+/// otherwise the `MERGE_MSG` file is used, falling back to a synthesized line.
 fn create_merge_commit(
     repo: &Repository,
     index: &mut git2::Index,
+    message_override: Option<&str>,
 ) -> Result<CommitId, GitError> {
     let tree_oid = index
         .write_tree_to(repo)
@@ -956,10 +989,11 @@ fn create_merge_commit(
         .find_commit(merge_head_oid)
         .map_err(|e| GitError::Other(format!("MERGE_HEAD commit lookup failed: {}", e.message())))?;
 
-    let message = std::fs::read_to_string(repo.path().join("MERGE_MSG"))
-        .unwrap_or_else(|_| {
-            format!("Merge commit {}", short_sha(&merge_head_oid.to_string()))
-        });
+    let message = match message_override {
+        Some(m) => m.to_string(),
+        None => std::fs::read_to_string(repo.path().join("MERGE_MSG"))
+            .unwrap_or_else(|_| format!("Merge commit {}", short_sha(&merge_head_oid.to_string()))),
+    };
 
     let sig = super::ops::build_signature(repo)?;
     let oid = repo
@@ -974,6 +1008,173 @@ fn create_merge_commit(
         .map_err(|e| GitError::Other(format!("merge commit failed: {}", e.message())))?;
 
     Ok(CommitId(oid.to_string()))
+}
+
+// ────────────────────────────────────────────────────────────
+// Save resolution (ADR-0068 — T-CONFLICT-UX-013/014)
+// ────────────────────────────────────────────────────────────
+
+/// Save a single file's resolution: write the resolved Result to the working
+/// tree, verify no conflict markers remain (a hard block), then **stage** the
+/// path so its unmerged index entries (stage 1/2/3) collapse to stage 0.
+///
+/// This is GitKraken's per-file Save → stage step (ADR-0068): it does NOT create
+/// any commit.  After it returns the index reports the path as resolved (stage 0)
+/// so external `git status` and the continue gate agree.
+///
+/// # Errors
+/// - the file has no resolution draft in the buffer,
+/// - the resolved text still contains conflict markers (marker-residue block),
+/// - any working-tree write / index operation fails.
+pub fn execute_conflict_save(
+    repo: &Repository,
+    buffer: &ResolutionBuffer,
+    path: &Path,
+) -> Result<SaveOutcome, GitError> {
+    let text = buffer.resolved_text(path).ok_or_else(|| {
+        GitError::Other(format!(
+            "no resolution to save for {} — choose a side or edit the result first",
+            path.display()
+        ))
+    })?;
+
+    // Marker-residue check: a Save that still has markers is blocked (ADR-0066 /
+    // ADR-0068).  Reuse the checklist detector so the gate and Save agree.
+    if super::checklist::text_has_conflict_marker(&text) {
+        return Err(GitError::Other(format!(
+            "Cannot save {}: conflict markers (<<<<<<< ======= >>>>>>>) remain. Remove them first.",
+            path.display()
+        )));
+    }
+
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?
+        .to_path_buf();
+
+    // 1. Materialize the resolved text to the working tree.
+    let abs = workdir.join(path);
+    if let Some(parent) = abs.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| GitError::Other(format!("mkdir {} failed: {}", parent.display(), e)))?;
+    }
+    std::fs::write(&abs, text.as_bytes())
+        .map_err(|e| GitError::Other(format!("write {} failed: {}", abs.display(), e)))?;
+
+    // 2. Stage the path: index.add_path collapses stage 1/2/3 → stage 0.
+    let mut index = repo
+        .index()
+        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+    index
+        .add_path(path)
+        .map_err(|e| GitError::Other(format!("stage {} failed: {}", path.display(), e.message())))?;
+    index
+        .write()
+        .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
+
+    Ok(SaveOutcome {
+        path: path.to_path_buf(),
+        after_short: short_text_hash(&text),
+    })
+}
+
+/// A short content hash of resolved text for the oplog (FNV-1a, 8 hex chars;
+/// `chars()`-safe — hashes the UTF-8 bytes, never byte-slices the string).
+fn short_text_hash(text: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in text.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{:08x}", (h & 0xffff_ffff) as u32)
+}
+
+// ────────────────────────────────────────────────────────────
+// Continue routing (ADR-0068 — T-CONFLICT-FLOW-030/031/032)
+// ────────────────────────────────────────────────────────────
+
+/// Decide how Continue should proceed once the gate is clear (ADR-0068).
+///
+/// Gates on the full [`continue_blockers`] checklist first (returns the first
+/// blocker as an error so the caller surfaces it).  Then:
+/// - **merge** → [`ContinueRoute::MergeCommitPanel`] with a pre-filled merge
+///   message (read from `MERGE_MSG`, else synthesized "Merge <incoming> into
+///   <current>").  **No commit is created here** — the commit panel's commit
+///   button calls [`execute_merge_commit`].
+/// - **rebase / cherry-pick / revert** → [`ContinueRoute::SequencerPlan`] wrapping
+///   the existing `<op> --continue` [`OperationPlan`] for the confirmation modal.
+///
+/// The repository is not modified.
+pub fn plan_conflict_continue_route(
+    repo: &Repository,
+    session: &ConflictSession,
+    buffer: &ResolutionBuffer,
+    current_branch: &str,
+) -> Result<ContinueRoute, GitError> {
+    // Hard gate: refuse to route while any blocker stands (ADR-0067).
+    let blockers = continue_blockers(repo, session, buffer);
+    if let Some(first) = blockers.first() {
+        return Err(GitError::Other(blocker_sentence(first)));
+    }
+
+    match &session.op {
+        ConflictOp::Merge { .. } => {
+            let message = prefilled_merge_message(repo, &session.op, current_branch);
+            Ok(ContinueRoute::MergeCommitPanel { message })
+        }
+        _ => {
+            let plan = plan_conflict_continue(repo, session, buffer)?;
+            Ok(ContinueRoute::SequencerPlan(Box::new(plan)))
+        }
+    }
+}
+
+/// The pre-filled merge commit message: `MERGE_MSG` (comment lines stripped) when
+/// it carries text, else a synthesized "Merge <incoming> into <current>" line
+/// using the ADR-0058 role labels (never ours/theirs).  `chars()`-safe joins.
+fn prefilled_merge_message(repo: &Repository, op: &ConflictOp, current_branch: &str) -> String {
+    if let Ok(raw) = std::fs::read_to_string(repo.path().join("MERGE_MSG")) {
+        let meaningful: String = raw
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !meaningful.trim().is_empty() {
+            return meaningful.trim_end().to_string();
+        }
+    }
+    let labels = side_labels(op, current_branch);
+    format!("Merge {} into {}", labels.incoming.name, labels.current.name)
+}
+
+/// Create the merge commit for the commit-panel Commit button (ADR-0068).
+///
+/// Stages no files (Save already staged them); writes the current index as the
+/// tree and commits with **two parents** (HEAD + MERGE_HEAD), then cleans up the
+/// merge state (`cleanup_state` removes MERGE_HEAD / MERGE_MSG).  Refuses if the
+/// index still has unmerged entries (a defensive re-check of the gate).
+///
+/// Returns the new merge commit's [`CommitId`].
+pub fn execute_merge_commit(repo: &Repository, message: &str) -> Result<CommitId, GitError> {
+    if message.trim().is_empty() {
+        return Err(GitError::Other(
+            "merge commit message must not be empty".to_string(),
+        ));
+    }
+
+    let mut index = repo
+        .index()
+        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+    if index.has_conflicts() {
+        return Err(GitError::Other(
+            "Refusing to create the merge commit: the index still has unmerged entries. Save every file first.".to_string(),
+        ));
+    }
+
+    let oid = create_merge_commit(repo, &mut index, Some(message))?;
+    repo.cleanup_state()
+        .map_err(|e| GitError::Other(format!("cleanup_state failed: {}", e.message())))?;
+    Ok(oid)
 }
 
 /// Plan an `abort`: describe restoring the pre-operation state and preserving

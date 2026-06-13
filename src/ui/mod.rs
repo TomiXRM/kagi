@@ -968,6 +968,18 @@ pub struct UndoPlanModal {
     pub error: Option<SharedString>,
 }
 
+/// State for a sequencer (rebase / cherry-pick / revert) conflict-continue
+/// confirmation (ADR-0068 / T-CONFLICT-FLOW-032).  A `git <op> --continue` plan
+/// shown before the sequencer is advanced.  Merge does NOT use this modal — it
+/// routes to the commit panel instead.
+#[derive(Clone)]
+pub struct ConflictContinuePlanModal {
+    /// The computed `<op> --continue` plan.
+    pub plan: std::sync::Arc<OperationPlan>,
+    /// Error message to show if execute failed (replaces the confirm button).
+    pub error: Option<SharedString>,
+}
+
 /// State for an in-progress amend confirmation (T-COMMIT-011, ADR-0040).
 ///
 /// Amend is history-rewriting (ADR-0023) so the modal requires a **two-stage
@@ -1579,6 +1591,19 @@ pub struct KagiApp {
     /// T-CONFLICT-UI-003: measured (left, right) screen-px bounds of the A·B
     /// row, for the vertical A|B divider drag.
     pub conflict_ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
+    /// T-CONFLICT-FLOW-030/031 (ADR-0068): when `true`, a merge has been
+    /// continued (every file saved + staged) and we are showing the commit
+    /// message panel pre-filled with the merge message.  MERGE_HEAD is still
+    /// present, so the commit panel's commit button creates the 2-parent merge
+    /// commit via `execute_merge_commit`.  Cleared on commit / abort / reload.
+    pub conflict_merge_commit_pending: bool,
+    /// T-CONFLICT-UX-010/012: index (among conflict hunks) of the focused hunk in
+    /// the per-hunk Conflict Editor, so the selected-hunk highlight tracks the
+    /// hunk the user last interacted with / navigated to.
+    pub conflict_selected_hunk: usize,
+    /// T-CONFLICT-FLOW-032 (ADR-0068): sequencer `<op> --continue` confirmation
+    /// modal, shown when Continue routes a rebase / cherry-pick / revert.
+    pub conflict_continue_modal: Option<ConflictContinuePlanModal>,
 }
 
 /// T-CONFLICT-UI-001: the three `InputState` entities backing the Conflict
@@ -1904,6 +1929,9 @@ impl KagiApp {
             conflict_result_split: CONFLICT_RESULT_DEFAULT,
             conflict_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             conflict_ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
+            conflict_merge_commit_pending: false,
+            conflict_selected_hunk: 0,
+            conflict_continue_modal: None,
         }
     }
 
@@ -2023,6 +2051,9 @@ impl KagiApp {
             conflict_result_split: CONFLICT_RESULT_DEFAULT,
             conflict_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             conflict_ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
+            conflict_merge_commit_pending: false,
+            conflict_selected_hunk: 0,
+            conflict_continue_modal: None,
         }
     }
 
@@ -2086,6 +2117,9 @@ impl KagiApp {
         self.stash_push_focus = None;
         self.cherry_pick_modal = None;
         self.revert_modal = None;
+        self.conflict_continue_modal = None;
+        // ADR-0068: a reload after commit / abort ends any continued-merge flow.
+        self.conflict_merge_commit_pending = false;
         self.commit_menu = None;
         self.file_menu = None;
         // T025/T026: reset commit panel and input so it reflects fresh status after reload.
@@ -2345,6 +2379,11 @@ impl KagiApp {
     }
 
 
+    /// T-CONFLICT-UX-010/012: set the focused hunk (selected-hunk highlight).
+    pub fn conflict_editor_select_hunk(&mut self, hunk_index: usize) {
+        self.conflict_selected_hunk = hunk_index;
+    }
+
     /// Apply a per-hunk choice in the editor: dispatch to the buffer's
     /// [`ResolutionBuffer::apply_hunk_choice`], refresh the file status, autosave.
     pub fn conflict_editor_apply_hunk(
@@ -2354,8 +2393,10 @@ impl KagiApp {
         choice: kagi::git::resolution::HunkChoice,
     ) {
         // Any hunk interaction disarms a pending "Reset all" confirmation and
-        // forces the Result editor to re-sync to the new assembled text.
+        // forces the Result editor to re-sync to the new assembled text, and
+        // tracks the focused hunk (selected-hunk highlight, UX-010/012).
         self.conflict_reset_all_armed = false;
+        self.conflict_selected_hunk = hunk_index;
         if let Some(i) = self.conflict_editor_inputs.as_mut() {
             i.content_sig = 0;
         }
@@ -2464,13 +2505,12 @@ impl KagiApp {
         );
     }
 
-    /// Save (T-034 / ADR-0066): persist the buffer (autosave), run the marker
-    /// check (a **warning**, not a hard block — Continue is the hard gate), mark
-    /// the file as a resolved candidate, and record the resolution action to the
-    /// operation log (T-035: session id + per-hunk actions + before/after hash).
-    ///
-    /// The index write happens only at Continue (elsewhere); Save is in-memory +
-    /// autosave only.
+    /// Save resolution (ADR-0068 / T-CONFLICT-UX-013/014): write the resolved
+    /// Result to the **working tree**, run the marker-residue check (markers
+    /// remaining BLOCK the save), then **stage** the file so its index unmerged
+    /// entries (stage 1/2/3) collapse to stage 0.  Moves the file into Resolved
+    /// Files, re-evaluates the continue gate, autosaves the buffer, and records
+    /// the resolution action to the operation log (T-035).  No commit is created.
     pub fn conflict_editor_save(&mut self, path: &std::path::Path) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
@@ -2502,55 +2542,71 @@ impl KagiApp {
             })
             .unwrap_or_default();
         let session_slug = c.session.op.slug().to_string();
-
-        // Marker check: WARNING at Save (ADR-0066), never a block.
-        let has_markers = kagi::git::text_has_conflict_marker(&after_text);
-
-        // Persist the buffer (autosave) — in-memory first; no index write.
-        if let Some(c) = self.conflict.as_mut() {
-            let _ = c.buffer.autosave();
-            // Mark resolved-candidate status from the buffer.
-            let residue = c.buffer.files_with_marker_residue();
-            if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
-                f.status = if residue.contains(&f.path) {
-                    kagi::git::ConflictStatus::NeedsReview
-                } else if c.buffer.has_resolution(path) {
-                    kagi::git::ConflictStatus::Resolved
-                } else {
-                    kagi::git::ConflictStatus::Unresolved
-                };
-            }
-        }
-
-        // Record the resolution action to the operation log (T-035).  Reuse the
-        // existing oplog append; the per-hunk actions + hashes ride in the
-        // StateSummary fields so no new log file is invented.
         let op_name = format!("conflict-save:{}", session_slug);
         let before = StateSummary {
             head: format!("session={} file={}", session_slug, path.display()),
             dirty: format!("hunks=[{}] before={}", actions, before_hash),
         };
-        let after = StateSummary {
-            head: format!("resolved-candidate before={} after={}", before_hash, after_hash),
-            dirty: if has_markers { "marker-residue".to_string() } else { "clean".to_string() },
+
+        // Open the repo and perform the real Save: WT write + marker block + stage
+        // (index unmerged → stage 0).  Marker residue is a HARD block here.
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.push_toast(
+                    ToastKind::Error,
+                    SharedString::from(format!("Repo open error: {}", e.message())),
+                );
+                return;
+            }
         };
-        self.record_op(&op_name, before, OpOutcome::Success { after }, &repo_path);
-
-        // Track the saved text as the new "before" for a subsequent save.
-        self.conflict_editing_before_text
-            .insert(path.to_path_buf(), after_text);
-
-        // User-facing feedback: warning on residue, success otherwise.
-        if has_markers {
-            self.push_toast(
-                ToastKind::Info,
-                SharedString::from(Msg::EditorMarkerWarning.t()),
-            );
-        } else {
-            self.push_toast(
-                ToastKind::Success,
-                SharedString::from(Msg::EditorSavedResolved.t()),
-            );
+        let buffer = match self.conflict.as_ref() {
+            Some(c) => c.buffer.clone(),
+            None => return,
+        };
+        match kagi::git::execute_conflict_save(&repo, &buffer, path) {
+            Ok(_outcome) => {
+                // Staged → mark the file Resolved and re-evaluate the gate.
+                if let Some(c) = self.conflict.as_mut() {
+                    let _ = c.buffer.autosave();
+                    let residue = c.buffer.files_with_marker_residue();
+                    if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
+                        f.status = if residue.contains(&f.path) {
+                            kagi::git::ConflictStatus::NeedsReview
+                        } else {
+                            kagi::git::ConflictStatus::Resolved
+                        };
+                    }
+                }
+                let after = StateSummary {
+                    head: format!("staged (stage 0) before={} after={}", before_hash, after_hash),
+                    dirty: "clean".to_string(),
+                };
+                self.record_op(&op_name, before, OpOutcome::Success { after }, &repo_path);
+                self.conflict_editing_before_text
+                    .insert(path.to_path_buf(), after_text);
+                // Re-detect so the staged file leaves the conflicted index set.
+                self.conflict_detected_for = None;
+                self.detect_conflict_mode();
+                self.push_toast(
+                    ToastKind::Success,
+                    SharedString::from(Msg::EditorSavedResolved.t()),
+                );
+            }
+            Err(e) => {
+                // Marker residue / write failure: hard block (ADR-0068).
+                let err_msg = format!("{}", e);
+                self.record_op(
+                    &op_name,
+                    before,
+                    OpOutcome::Refused { blockers: vec![err_msg] },
+                    &repo_path,
+                );
+                self.push_toast(
+                    ToastKind::Error,
+                    SharedString::from(Msg::EditorMarkerWarning.t()),
+                );
+            }
         }
     }
 
@@ -2639,11 +2695,17 @@ impl KagiApp {
         }
     }
 
-    /// Continue the in-progress operation through the existing plan pipeline:
-    /// `plan_conflict_continue` → gate on blockers → `execute_conflict_continue`
-    /// → oplog → re-detect mode.  Refuses (records `Refused`) if the plan has
-    /// blockers (unresolved files / marker residue).
-    pub fn conflict_continue(&mut self, cx: &mut Context<Self>) {
+    /// Continue the in-progress operation (ADR-0068 routing — T-CONFLICT-FLOW-030/
+    /// 032).  Gates through `plan_conflict_continue_route`, then:
+    ///
+    /// - **merge** → transition to the commit message panel pre-filled with the
+    ///   merge message (`conflict_merge_commit_pending = true`).  **No commit is
+    ///   created here** — the commit panel's commit button calls
+    ///   `start_merge_commit`, which creates the 2-parent merge commit.
+    /// - **rebase / cherry-pick / revert** → open the `<op> --continue`
+    ///   confirmation modal (`conflict_continue_modal`); the sequencer runs only
+    ///   when the user confirms (`confirm_conflict_continue`).
+    pub fn conflict_continue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -2658,48 +2720,94 @@ impl KagiApp {
             }
         };
 
-        let plan = match kagi::git::plan_conflict_continue(&repo, &mode.session, &mode.buffer) {
-            Ok(p) => p,
+        let op_name = format!("{}-continue", mode.session.op.slug());
+        let route = match kagi::git::plan_conflict_continue_route(
+            &repo,
+            &mode.session,
+            &mode.buffer,
+            &mode.current_branch,
+        ) {
+            Ok(r) => r,
             Err(e) => {
-                self.push_toast(ToastKind::Error, SharedString::from(format!("continue plan error: {}", e)));
+                eprintln!("[kagi] refused: {} blocked: {}", op_name, e);
+                // Surface the specific (localized) blocking reason (ADR-0067).
+                if let Some(first) =
+                    kagi::git::continue_blockers(&repo, &mode.session, &mode.buffer).first()
+                {
+                    self.push_toast(ToastKind::Error, conflict_view::blocker_msg(first).t());
+                } else {
+                    self.push_toast(ToastKind::Error, SharedString::from(format!("{}", e)));
+                }
+                self.record_op(
+                    &op_name,
+                    StateSummary { head: format!("op={}", mode.session.op.slug()), dirty: "blocked".to_string() },
+                    OpOutcome::Refused { blockers: vec![format!("{}", e)] },
+                    &repo_path,
+                );
+                cx.notify();
+                return;
+            }
+        };
+
+        match route {
+            kagi::git::ContinueRoute::MergeCommitPanel { message } => {
+                // Transition to the commit message panel pre-filled with the merge
+                // message.  MERGE_HEAD stays present so the commit becomes a merge
+                // commit.  No commit is created here (ADR-0068).
+                eprintln!("[kagi] {}: routing to commit message panel (merge)", op_name);
+                self.open_commit_panel(window, cx);
+                self.commit_template_mode = false;
+                if let Some(input) = self.commit_input.clone() {
+                    input.update(cx, |state, cx| state.set_value(message.clone(), window, cx));
+                }
+                if let Some(panel) = self.commit_panel.as_mut() {
+                    panel.commit_msg = message.clone();
+                }
+                self.conflict_merge_commit_pending = true;
+            }
+            kagi::git::ContinueRoute::SequencerPlan(plan) => {
+                // Confirmation modal before advancing the sequencer.
+                eprintln!("[kagi] {}: opening continue confirmation (sequencer)", op_name);
+                self.conflict_continue_modal = Some(ConflictContinuePlanModal {
+                    plan: std::sync::Arc::new(*plan),
+                    error: None,
+                });
+            }
+        }
+        cx.notify();
+    }
+
+    /// Confirm the sequencer `<op> --continue` plan (T-CONFLICT-FLOW-032): run
+    /// `execute_conflict_continue` (which stages the resolution and advances the
+    /// sequencer), record the oplog, drop the autosaved buffer, and reload.
+    pub fn confirm_conflict_continue(&mut self, cx: &mut Context<Self>) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let Some(mode) = self.conflict.clone() else { return };
+        let Some(modal) = self.conflict_continue_modal.clone() else { return };
+        let plan = modal.plan;
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e.message())));
                 return;
             }
         };
         let op_name = format!("{}-continue", mode.session.op.slug());
 
-        if !plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: {} has blockers, not executing", op_name);
-            // Surface the specific (localized) blocking reason (ADR-0067).
-            if let Some(first) = kagi::git::continue_blockers(&repo, &mode.session, &mode.buffer)
-                .first()
-            {
-                self.push_toast(ToastKind::Error, conflict_view::blocker_msg(first).t());
-            }
-            self.record_op(
-                &op_name,
-                plan.current.clone(),
-                OpOutcome::Refused { blockers: plan.blockers.clone() },
-                &repo_path,
-            );
-            cx.notify();
-            return;
-        }
-
         match kagi::git::execute_conflict_continue(&repo, &mode.session, &mode.buffer) {
             Ok(_outcome) => {
                 eprintln!("[kagi] executed: {}", op_name);
-                // Successful continue: drop the autosaved buffer.
                 let _ = kagi::git::ResolutionBuffer::clear(&repo_path);
                 let after = StateSummary {
                     head: plan.predicted.head.clone(),
                     dirty: "staged".to_string(),
                 };
-                self.record_op(
-                    &op_name,
-                    plan.current.clone(),
-                    OpOutcome::Success { after },
-                    &repo_path,
-                );
+                self.record_op(&op_name, plan.current.clone(), OpOutcome::Success { after }, &repo_path);
+                self.conflict_continue_modal = None;
                 self.reload();
             }
             Err(e) => {
@@ -2708,12 +2816,20 @@ impl KagiApp {
                 self.record_op(
                     &op_name,
                     plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg },
+                    OpOutcome::Failed { error: err_msg.clone() },
                     &repo_path,
                 );
+                if let Some(modal) = self.conflict_continue_modal.as_mut() {
+                    modal.error = Some(SharedString::from(err_msg));
+                }
             }
         }
         cx.notify();
+    }
+
+    /// Cancel the sequencer continue confirmation modal.
+    pub fn cancel_conflict_continue(&mut self) {
+        self.conflict_continue_modal = None;
     }
 
     /// Abort the in-progress operation through the existing plan pipeline:
@@ -7596,6 +7712,16 @@ impl KagiApp {
             return;
         }
 
+        // ADR-0068 (T-CONFLICT-FLOW-031): a merge that was continued routes the
+        // commit button here with MERGE_HEAD still present.  Create the 2-parent
+        // merge commit (HEAD + MERGE_HEAD) + cleanup_state instead of a plain
+        // single-parent commit.  This is synchronous (cheap; no tree rebuild on a
+        // worker) so the conflict-mode transition stays simple.
+        if self.conflict_merge_commit_pending {
+            self.finish_merge_commit(&commit_message, &plan, cx);
+            return;
+        }
+
         self.busy_op = Some("commit");
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCommit.t()));
         self.push_toast(ToastKind::Info, Msg::StartedCommit.t());
@@ -7639,6 +7765,62 @@ impl KagiApp {
             });
         })
         .detach();
+        cx.notify();
+    }
+
+    /// Create the 2-parent merge commit for the continued-merge flow (ADR-0068 /
+    /// T-CONFLICT-FLOW-031): `execute_merge_commit` (HEAD + MERGE_HEAD parents +
+    /// cleanup_state), then drop the resolution buffer, clear the merge-pending /
+    /// commit-panel state, oplog, and reload (which clears Conflict Mode).
+    fn finish_merge_commit(
+        &mut self,
+        message: &str,
+        plan: &std::sync::Arc<OperationPlan>,
+        cx: &mut Context<Self>,
+    ) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e.message())));
+                return;
+            }
+        };
+        match kagi::git::execute_merge_commit(&repo, message) {
+            Ok(id) => {
+                eprintln!("[kagi] executed: merge commit {}", id.short());
+                let _ = kagi::git::ResolutionBuffer::clear(&repo_path);
+                let branch = self.status_summary.branch.clone();
+                let _ = kagi::git::clear_draft(&repo_path, &branch);
+                self.last_draft_value = String::new();
+                let after = StateSummary {
+                    head: format!("branch: {} (merge commit {})", branch, id.short()),
+                    dirty: "clean".to_string(),
+                };
+                self.record_op("merge-commit", plan.current.clone(), OpOutcome::Success { after }, &repo_path);
+                // Leave the merge-commit / commit-panel state and re-detect so
+                // Conflict Mode clears (MERGE_HEAD is gone after cleanup_state).
+                self.conflict_merge_commit_pending = false;
+                self.commit_panel_open = false;
+                if let Some(panel) = self.commit_panel.as_mut() {
+                    panel.plan_modal = None;
+                }
+                self.reload();
+            }
+            Err(e) => {
+                let err_msg = format!("{}", e);
+                eprintln!("[kagi] merge commit failed: {}", err_msg);
+                self.record_op("merge-commit", plan.current.clone(), OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
+                if let Some(panel) = self.commit_panel.as_mut() {
+                    if let Some(modal) = panel.plan_modal.as_mut() {
+                        modal.error = Some(SharedString::from(err_msg));
+                    }
+                }
+            }
+        }
         cx.notify();
     }
 
@@ -9013,10 +9195,16 @@ impl Render for KagiApp {
         let stash_apply_modal = self.stash_apply_modal.clone();
         let cherry_pick_modal = self.cherry_pick_modal.clone();
         let revert_modal = self.revert_modal.clone();
+        let conflict_continue_modal = self.conflict_continue_modal.clone();
         let status_footer = self.status_footer.clone();
         // W30-CONFLICT-UI: clone the Conflict Mode snapshot for render (free
         // functions in `conflict_view` render from this immutable copy).
         let conflict = self.conflict.clone();
+        // T-CONFLICT-FLOW-030: while a continued merge waits for its commit
+        // message, show the normal body (commit panel) instead of the conflict
+        // resolution body (ADR-0068). Conflict Mode is still active (MERGE_HEAD
+        // present) but the editor is hidden behind the commit message panel.
+        let conflict_merge_pending = self.conflict_merge_commit_pending;
         // T-CONFLICT-UI: chrome the 3-pane Conflict Editor needs from the app
         // (the editors live on `self`, not on the cloned `ConflictMode`).
         let conflict_chrome = conflict_view::EditorChrome {
@@ -9032,6 +9220,7 @@ impl Render for KagiApp {
             reset_all_armed: self.conflict_reset_all_armed,
             ab_split: self.conflict_ab_split,
             result_split: self.conflict_result_split,
+            selected_hunk: self.conflict_selected_hunk,
             geom: self.conflict_geom.clone(),
             ab_geom: self.conflict_ab_geom.clone(),
         };
@@ -9338,10 +9527,11 @@ impl Render for KagiApp {
             //    replaces the normal sidebar | list | panel body. The center is
             //    the A/B hunk editor + Result Preview; the right is always the
             //    Conflict Dashboard (GitKraken-style — see render_body).
-            .when_some(conflict.clone(), |el, m| {
+            .when(conflict.is_some() && !conflict_merge_pending, |el| {
+                let m = conflict.clone().unwrap();
                 el.child(conflict_view::render_body(&m, &conflict_chrome, cx))
             })
-            .when(conflict.is_none(), |el| {
+            .when(conflict.is_none() || conflict_merge_pending, |el| {
                 el.child(self.render_body(
                     row_count, selected, detail, changed_files, changed_diffstat, selected_badges, inspector_tree_view,
                     main_diff, compare_view, main_diff_scroll_handle,
@@ -9373,6 +9563,10 @@ impl Render for KagiApp {
             // ── Undo / Pop plan modal overlays ───────────────
             .when_some(undo_modal, |el, modal| {
                 el.child(render_undo_modal(modal, cx))
+            })
+            // ── Sequencer conflict-continue confirmation (ADR-0068) ──
+            .when_some(conflict_continue_modal, |el, modal| {
+                el.child(render_conflict_continue_modal(modal, cx))
             })
             .when_some(amend_modal, |el, modal| {
                 el.child(render_amend_modal(modal, cx))
@@ -12269,6 +12463,35 @@ fn render_undo_modal(modal: UndoPlanModal, cx: &mut Context<KagiApp>) -> gpui::A
     });
     render_plan_modal_card(modal.plan, modal.error, "Undo", cancel_handler, confirm_handler, None, cx)
         .into_any_element()
+}
+
+/// Sequencer `<op> --continue` confirmation overlay (ADR-0068 /
+/// T-CONFLICT-FLOW-032).  Shown when Continue routes a rebase / cherry-pick /
+/// revert; confirming advances the sequencer.
+fn render_conflict_continue_modal(
+    modal: ConflictContinuePlanModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.cancel_conflict_continue();
+        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.confirm_conflict_continue(cx);
+        if let Some(fh) = this.root_focus.clone() { window.focus(&fh); }
+        cx.notify();
+    });
+    render_plan_modal_card(
+        modal.plan,
+        modal.error,
+        Msg::ConflictContinue.t(),
+        cancel_handler,
+        confirm_handler,
+        None,
+        cx,
+    )
+    .into_any_element()
 }
 
 /// Amend confirmation overlay (T-COMMIT-011, ADR-0040 / 0023).

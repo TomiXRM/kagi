@@ -565,6 +565,211 @@ fn commit_display(sha: &Option<String>, summary: &Option<String>) -> String {
 }
 
 // ────────────────────────────────────────────────────────────
+// Continue gate (T-043 / T-044, ADR-0067) — structured blockers
+// ────────────────────────────────────────────────────────────
+
+/// A specific reason the Continue action is blocked (ADR-0067 checklist).
+///
+/// Each variant maps 1:1 to a checklist item so the UI can surface the exact
+/// blocking reason next to the disabled Continue button.  The words
+/// "ours"/"theirs" never appear (ADR-0058); file paths are carried verbatim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContinueBlocker {
+    /// One or more detected files have no resolution draft in the buffer.
+    UnresolvedFiles(Vec<String>),
+    /// One or more resolved buffer texts still contain conflict markers.
+    MarkerResidue(Vec<String>),
+    /// The git index still has unmerged entries not tracked by the session.
+    IndexUnmerged(Vec<String>),
+    /// One or more binary conflicts are still unresolved (no side chosen).
+    BinaryUnresolved(Vec<String>),
+    /// A modify/delete or rename/delete file's keep-or-delete decision is still
+    /// undecided (no resolution draft chosen for it).
+    DeletionUndecided(Vec<String>),
+    /// A merge commit is required but its message is empty.
+    EmptyMergeMessage,
+    /// The commit checklist (ADR-0043) reports a hard blocker.
+    ChecklistBlocker(String),
+}
+
+impl ContinueBlocker {
+    /// Stable identifier for tests / logging (never user-facing prose).
+    pub fn code(&self) -> &'static str {
+        match self {
+            ContinueBlocker::UnresolvedFiles(_) => "unresolved-files",
+            ContinueBlocker::MarkerResidue(_) => "marker-residue",
+            ContinueBlocker::IndexUnmerged(_) => "index-unmerged",
+            ContinueBlocker::BinaryUnresolved(_) => "binary-unresolved",
+            ContinueBlocker::DeletionUndecided(_) => "deletion-undecided",
+            ContinueBlocker::EmptyMergeMessage => "empty-merge-message",
+            ContinueBlocker::ChecklistBlocker(_) => "checklist-blocker",
+        }
+    }
+}
+
+/// Compute the full ADR-0067 continue checklist for a session, returning every
+/// blocking reason (empty == Continue is allowed).
+///
+/// This is the single source of truth shared by [`plan_conflict_continue`] (for
+/// the plan modal's `blockers`) and the UI's Continue gate (which surfaces the
+/// specific reason).  It strengthens the original unresolved + marker check
+/// with: index has no untracked unmerged entries, no unresolved binary
+/// conflict, no undecided required-file deletion, and a non-empty merge message
+/// when a merge commit is needed.
+///
+/// The repository is read but never mutated.
+pub fn continue_blockers(
+    repo: &Repository,
+    session: &ConflictSession,
+    buffer: &ResolutionBuffer,
+) -> Vec<ContinueBlocker> {
+    let mut out: Vec<ContinueBlocker> = Vec::new();
+
+    // 1. Every detected file must have a resolution draft.
+    let unresolved: Vec<String> = session
+        .files
+        .iter()
+        .filter(|f| !buffer.has_resolution(&f.path))
+        .map(|f| f.path.to_string_lossy().into_owned())
+        .collect();
+    if !unresolved.is_empty() {
+        out.push(ContinueBlocker::UnresolvedFiles(unresolved));
+    }
+
+    // 2. No marker residue in any resolved buffer text.
+    let residue: Vec<String> = buffer
+        .files_with_marker_residue()
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    if !residue.is_empty() {
+        out.push(ContinueBlocker::MarkerResidue(residue));
+    }
+
+    // 3. Binary conflicts must have an explicit side chosen (no text merge).
+    let binary_unresolved: Vec<String> = session
+        .files
+        .iter()
+        .filter(|f| f.kind == ConflictKind::Binary && !buffer.has_resolution(&f.path))
+        .map(|f| f.path.to_string_lossy().into_owned())
+        .collect();
+    if !binary_unresolved.is_empty() {
+        out.push(ContinueBlocker::BinaryUnresolved(binary_unresolved));
+    }
+
+    // 4. Modify/delete + rename/delete files need an explicit keep-or-delete
+    //    decision (a chosen resolution draft).
+    let deletion_undecided: Vec<String> = session
+        .files
+        .iter()
+        .filter(|f| {
+            matches!(f.kind, ConflictKind::ModifyDelete | ConflictKind::RenameDelete)
+                && !buffer.has_resolution(&f.path)
+        })
+        .map(|f| f.path.to_string_lossy().into_owned())
+        .collect();
+    if !deletion_undecided.is_empty() {
+        out.push(ContinueBlocker::DeletionUndecided(deletion_undecided));
+    }
+
+    // 5. The index must hold no unmerged entry that the session does not know
+    //    about.  execute_continue stages the session's own files (collapsing
+    //    their stages), but an unmerged path outside the session means a
+    //    re-scan is needed before continuing.
+    if let Ok(index) = repo.index() {
+        if let Ok(conflicts) = index.conflicts() {
+            let session_paths: std::collections::BTreeSet<PathBuf> =
+                session.files.iter().map(|f| f.path.clone()).collect();
+            let mut untracked_unmerged: Vec<String> = Vec::new();
+            for entry in conflicts.flatten() {
+                if let Some(path) = conflict_path_local(&entry) {
+                    if !session_paths.contains(&path) {
+                        untracked_unmerged.push(path.to_string_lossy().into_owned());
+                    }
+                }
+            }
+            if !untracked_unmerged.is_empty() {
+                out.push(ContinueBlocker::IndexUnmerged(untracked_unmerged));
+            }
+        }
+    }
+
+    // 6. Merge commit needs a non-empty message (merge only — sequencer ops
+    //    reuse the picked commit's message, so this gate is merge-specific).
+    if let ConflictOp::Merge { .. } = session.op {
+        if merge_message_is_empty(repo) {
+            out.push(ContinueBlocker::EmptyMergeMessage);
+        }
+    }
+
+    out
+}
+
+/// Extract a conflict's path from whichever index stage entry is present
+/// (local copy; the detection path has its own private `conflict_path`).
+fn conflict_path_local(conflict: &git2::IndexConflict) -> Option<PathBuf> {
+    let bytes = conflict
+        .our
+        .as_ref()
+        .or(conflict.their.as_ref())
+        .or(conflict.ancestor.as_ref())
+        .map(|e| e.path.clone())?;
+    Some(bytes_to_pathbuf(&bytes))
+}
+
+/// Whether the merge message (`MERGE_MSG`, comment lines stripped) is empty.
+///
+/// Git writes a default merge message to `MERGE_MSG`; an empty / comment-only
+/// file means the user (or a `--no-commit` flow) left no message, which blocks
+/// the merge commit.  A missing file is treated as **not empty** because
+/// [`create_merge_commit`] synthesizes a default summary in that case.
+fn merge_message_is_empty(repo: &Repository) -> bool {
+    let raw = match std::fs::read_to_string(repo.path().join("MERGE_MSG")) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let meaningful = raw
+        .lines()
+        .filter(|l| !l.trim_start().starts_with('#'))
+        .any(|l| !l.trim().is_empty());
+    !meaningful
+}
+
+/// Render a [`ContinueBlocker`] as an English sentence for the plan modal.
+///
+/// The UI lane localizes the *category* via `Msg`; this prose is the backend's
+/// plan-modal default (matching the original `plan_conflict_continue` strings).
+fn blocker_sentence(b: &ContinueBlocker) -> String {
+    match b {
+        ContinueBlocker::UnresolvedFiles(files) => format!(
+            "{} file(s) still unresolved: {}. Resolve every file before continuing.",
+            files.len(),
+            files.join(", ")
+        ),
+        ContinueBlocker::MarkerResidue(files) => format!(
+            "Conflict marker(s) remain in: {}. Remove all <<<<<<< ======= >>>>>>> markers before continuing.",
+            files.join(", ")
+        ),
+        ContinueBlocker::IndexUnmerged(files) => format!(
+            "The index still has unmerged entries not tracked by this session: {}. Re-scan the repository.",
+            files.join(", ")
+        ),
+        ContinueBlocker::BinaryUnresolved(files) => format!(
+            "Binary conflict(s) still need a side chosen: {}.",
+            files.join(", ")
+        ),
+        ContinueBlocker::DeletionUndecided(files) => format!(
+            "Keep-or-delete decision still pending for: {}.",
+            files.join(", ")
+        ),
+        ContinueBlocker::EmptyMergeMessage => {
+            "The merge commit message is empty. Provide a commit message before continuing.".to_string()
+        }
+        ContinueBlocker::ChecklistBlocker(msg) => msg.clone(),
+    }
+}
+
+// ────────────────────────────────────────────────────────────
 // continue / abort (T-CONFLICT-008, backend half)
 // ────────────────────────────────────────────────────────────
 
@@ -607,38 +812,15 @@ pub fn plan_conflict_continue(
     let head = resolve_head(repo)?;
     let current = current_state_summary(repo)?;
 
-    let mut blockers: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    // Gate 1: every detected file must have a resolution draft in the buffer.
-    let mut unresolved: Vec<String> = Vec::new();
-    for file in &session.files {
-        if !buffer.has_resolution(&file.path) {
-            unresolved.push(file.path.to_string_lossy().into_owned());
-        }
-    }
-    if !unresolved.is_empty() {
-        blockers.push(format!(
-            "{} file(s) still unresolved: {}. Resolve every file before continuing.",
-            unresolved.len(),
-            unresolved.join(", ")
-        ));
-    }
+    // The full ADR-0067 checklist (T-043/044): unresolved + marker residue +
+    // index unmerged + binary unresolved + undecided deletion + empty merge
+    // message.  Each structured blocker is rendered to plan-modal prose here.
+    let structured = continue_blockers(repo, session, buffer);
+    let blockers: Vec<String> = structured.iter().map(blocker_sentence).collect();
 
-    // Gate 2: marker residue in any resolved buffer text (KDiff3-style safety).
-    let residue = buffer.files_with_marker_residue();
-    if !residue.is_empty() {
-        let names: Vec<String> = residue
-            .iter()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect();
-        blockers.push(format!(
-            "Conflict marker(s) remain in: {}. Remove all <<<<<<< ======= >>>>>>> markers before continuing.",
-            names.join(", ")
-        ));
-    }
-
-    if session.files.is_empty() && unresolved.is_empty() {
+    if session.files.is_empty() && structured.is_empty() {
         warnings.push(
             "No conflicting files detected; continue will finish the operation as-is.".to_string(),
         );
@@ -947,6 +1129,161 @@ pub fn execute_conflict_abort(
     })
 }
 
+// ────────────────────────────────────────────────────────────
+// Skip (T-042, ADR-0067) — sequencer-only
+// ────────────────────────────────────────────────────────────
+
+/// Outcome of an executed sequencer skip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkipOutcome {
+    /// Sha HEAD points at after dropping the skipped step's changes.
+    pub head: Option<String>,
+    /// Path the resolution buffer was preserved at, if a buffer was saved.
+    pub buffer_preserved_at: Option<PathBuf>,
+}
+
+/// Plan a `skip` of the current sequencer step (rebase / cherry-pick / revert).
+///
+/// **Merge has no skip** — a plain merge is a single step, so this errors for
+/// [`ConflictOp::Merge`] (the UI hides the button for merge; this is the
+/// backend guard).  Skip discards the current pick's changes and advances the
+/// sequencer (ADR-0067).  Plan-based: the repository is not modified here.
+pub fn plan_conflict_skip(
+    repo: &Repository,
+    session: &ConflictSession,
+) -> Result<OperationPlan, GitError> {
+    if !session.op.is_sequencer() {
+        return Err(GitError::Other(
+            "skip is only available for rebase / cherry-pick / revert (a merge has no skip)."
+                .to_string(),
+        ));
+    }
+
+    let head = resolve_head(repo)?;
+    let current = current_state_summary(repo)?;
+
+    let warnings = vec![
+        "Skip discards the current step's changes (the conflicting pick is dropped, not committed). Your partial resolution is preserved in the autosave directory.".to_string(),
+    ];
+    let recovery = format!(
+        "Skip drops the current {} step. The reflog still records every HEAD movement, and the pre-operation HEAD is in ORIG_HEAD if you need to abort entirely.",
+        session.op.slug()
+    );
+
+    Ok(OperationPlan {
+        title: format!("Skip {} step", session.op.slug()),
+        current,
+        predicted: StateSummary {
+            head: head_display(&head),
+            dirty: "current step dropped".to_string(),
+        },
+        warnings,
+        blockers: Vec::new(),
+        recovery,
+        head_at_plan: head,
+        stash_count_at_plan: 0,
+        preview_files: Vec::new(),
+        preview_commits: Vec::new(),
+        destructive: false,
+    })
+}
+
+/// Execute a `skip` of the current sequencer step.
+///
+/// Discards the conflicting step's changes safely (no `reset --hard`, no
+/// `clean`): the conflicting paths are restored to HEAD's tree content (or
+/// removed if absent in HEAD), the index conflict stages are dropped by reading
+/// HEAD's tree, and the current-step sequencer metadata is cleared via
+/// `cleanup_state`.  The resolution buffer is preserved first (ADR-0057).
+///
+/// Driving a multi-step sequence forward to the *next* pick is deferred to the
+/// dedicated sequence executor (mirroring `execute_conflict_continue`'s
+/// `Staged` deferral); this backend half guarantees the current step is dropped
+/// safely and the index/working tree are left clean.
+pub fn execute_conflict_skip(
+    repo: &Repository,
+    session: &ConflictSession,
+    buffer: &ResolutionBuffer,
+) -> Result<SkipOutcome, GitError> {
+    if !session.op.is_sequencer() {
+        return Err(GitError::Other(
+            "skip is only available for sequencer operations.".to_string(),
+        ));
+    }
+
+    // 1. Preserve the buffer first (never lose partial work).
+    let buffer_preserved_at = buffer.autosave().ok();
+
+    // 2. HEAD's tree is the "drop to" state for the current step's conflicts.
+    let head_commit = repo
+        .head()
+        .ok()
+        .and_then(|h| h.target())
+        .and_then(|oid| repo.find_commit(oid).ok());
+    let head_sha = head_commit.as_ref().map(|c| c.id().to_string());
+
+    if let Some(commit) = &head_commit {
+        let tree = commit
+            .tree()
+            .map_err(|e| GitError::Other(format!("HEAD tree lookup failed: {}", e.message())))?;
+        let workdir = repo
+            .workdir()
+            .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?
+            .to_path_buf();
+
+        // Drop the conflict stages from the index by reading HEAD's tree.
+        {
+            let mut index = repo
+                .index()
+                .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+            index
+                .read_tree(&tree)
+                .map_err(|e| GitError::Other(format!("index.read_tree failed: {}", e.message())))?;
+            index
+                .write()
+                .map_err(|e| GitError::Other(format!("index.write failed: {}", e.message())))?;
+        }
+
+        // Restore each conflicting path to HEAD's content (or remove it).
+        for file in &session.files {
+            let abs = workdir.join(&file.path);
+            match tree.get_path(&file.path) {
+                Ok(entry) => {
+                    if let Ok(blob) = repo.find_blob(entry.id()) {
+                        if let Some(parent) = abs.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        std::fs::write(&abs, blob.content()).map_err(|e| {
+                            GitError::Other(format!("restore {} failed: {}", abs.display(), e))
+                        })?;
+                    }
+                }
+                Err(_) => {
+                    let _ = std::fs::remove_file(&abs);
+                }
+            }
+        }
+    }
+
+    // 3. Clear the current-step sequencer metadata.
+    repo.cleanup_state()
+        .map_err(|e| GitError::Other(format!("cleanup_state failed: {}", e.message())))?;
+
+    Ok(SkipOutcome {
+        head: head_sha,
+        buffer_preserved_at,
+    })
+}
+
+/// Display string for a [`Head`] (mirrors `current_state_summary`'s head line).
+fn head_display(head: &Head) -> String {
+    match head {
+        Head::Attached { branch, .. } => format!("branch: {}", branch),
+        Head::Detached { target } => format!("detached: {}", short_sha(target)),
+        Head::Unborn { branch } => format!("unborn ({})", branch),
+    }
+}
+
 /// Read `ORIG_HEAD` as a 40-char sha string, if present.
 fn read_orig_head(repo: &Repository) -> Option<String> {
     let raw = std::fs::read_to_string(repo.path().join("ORIG_HEAD")).ok()?;
@@ -976,13 +1313,8 @@ fn current_state_summary(repo: &Repository) -> Result<StateSummary, GitError> {
     } else {
         dirty_parts.join(", ")
     };
-    let head_display = match &head {
-        Head::Attached { branch, .. } => format!("branch: {}", branch),
-        Head::Detached { target } => format!("detached: {}", short_sha(target)),
-        Head::Unborn { branch } => format!("unborn ({})", branch),
-    };
     Ok(StateSummary {
-        head: head_display,
+        head: head_display(&head),
         dirty,
     })
 }

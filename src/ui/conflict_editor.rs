@@ -294,14 +294,24 @@ fn render_panes(
         .flex()
         .flex_row()
         .w_full()
-        .h(relative(chrome.result_split))
+        .flex_basis(relative(chrome.result_split))
+        .flex_shrink()
         .min_h(theme::scaled_px(80.))
         .child(div().h_full().min_w(px(0.)).w(relative(chrome.ab_split)).child(a_pane))
         .child(vertical_divider())
         .child(div().h_full().min_w(px(0.)).flex_1().child(b_pane));
 
     // ── Result pane (resizable A·B / Result) ──
-    let result_pane = render_result_pane(mode, chrome, path, cx);
+    // flex_basis(relative) split like the inspector (NOT h(relative)) so the
+    // child uniform_lists get a definite height and actually render their rows.
+    let result_frac = (1.0 - chrome.result_split).max(0.05);
+    let result_pane = div()
+        .flex()
+        .flex_col()
+        .min_h(px(0.))
+        .flex_basis(relative(result_frac))
+        .flex_shrink()
+        .child(render_result_pane(mode, chrome, path, cx));
 
     // The split region is measured for the horizontal divider drag.
     let geom = chrome.geom.clone();
@@ -757,7 +767,12 @@ fn pane(
         .bg(rgb(theme().bg_base))
         .child(header)
         .child(
+            // Must be a flex container so the editor's `flex_1` resolves to a
+            // definite height — otherwise the inner uniform_list measures 0 and
+            // renders no rows (the A/B line lists came up blank).
             div()
+                .flex()
+                .flex_col()
                 .flex_grow()
                 .w_full()
                 .min_h(px(0.))

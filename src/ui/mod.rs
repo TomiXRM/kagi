@@ -37,7 +37,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, Context, Entity, FocusHandle, KeyDownEvent, KeyBinding, MouseButton, SharedString, Window,
+    App, ClipboardItem, Context, Entity, FocusHandle, KeyDownEvent, KeyBinding, MouseButton,
+    SharedString, Window,
     UniformListScrollHandle, ScrollStrategy,
     actions, div, prelude::*, px, rgb, uniform_list,
 };
@@ -2200,12 +2201,19 @@ impl KagiApp {
                 self.conflict_editing = None;
             }
         }
+        // W33: preserve the dashboard editing-file index + view toggle across re-detection.
+        let prev_editing = self.conflict.as_ref().and_then(|c| c.editing_file);
+        let editing_file = prev_editing.filter(|&i| i < session.files.len());
+        let tree_view = self.conflict.as_ref().map(|c| c.tree_view).unwrap_or(false);
 
         self.conflict = Some(conflict_view::ConflictMode {
             session,
             buffer,
             current_branch,
             selected_file,
+            editing_file,
+            abort_armed: false,
+            tree_view,
         });
     }
 
@@ -2235,6 +2243,7 @@ impl KagiApp {
         if let Some(c) = self.conflict.as_mut() {
             if let Some(idx) = c.session.files.iter().position(|f| f.path == path) {
                 c.selected_file = Some(idx);
+                c.editing_file = Some(idx);
             }
         }
         self.conflict_editing = Some(path.to_path_buf());
@@ -2533,6 +2542,12 @@ impl KagiApp {
 
         if !plan.blockers.is_empty() {
             eprintln!("[kagi] refused: {} has blockers, not executing", op_name);
+            // Surface the specific (localized) blocking reason (ADR-0067).
+            if let Some(first) = kagi::git::continue_blockers(&repo, &mode.session, &mode.buffer)
+                .first()
+            {
+                self.push_toast(ToastKind::Error, conflict_view::blocker_msg(first).t());
+            }
             self.record_op(
                 &op_name,
                 plan.current.clone(),
@@ -2631,19 +2646,207 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Skip the current sequencer step (rebase / cherry-pick / revert).
-    ///
-    /// MVP: the W26 backend exposes only continue / abort, not a `--skip`
-    /// planner/executor (and this lane must not add git logic / touch
-    /// `ops.rs`).  The button is shown for sequencer ops per the spec; until the
-    /// skip backend lands (v0.2) it surfaces a clear "use the terminal" hint
-    /// rather than fabricating a half-implemented skip.
-    pub fn conflict_skip(&mut self, _cx: &mut Context<Self>) {
-        eprintln!("[kagi] conflict-mode: skip requested (deferred to v0.2)");
-        self.push_toast(
-            ToastKind::Info,
-            SharedString::from("Skip is not available yet — continue in the terminal (`git <op> --skip`)."),
-        );
+    /// Two-stage Abort (ADR-0067): the first click arms the confirm, the second
+    /// executes.  Surfaces the "saved resolution may be lost" warning in the UI
+    /// (the dashboard shows the hint while armed).
+    pub fn conflict_abort_request(&mut self, cx: &mut Context<Self>) {
+        let armed = self.conflict.as_ref().map(|c| c.abort_armed).unwrap_or(false);
+        if !armed {
+            if let Some(c) = self.conflict.as_mut() {
+                c.abort_armed = true;
+            }
+            eprintln!("[kagi] conflict-mode: abort armed (second confirm required)");
+            return;
+        }
+        // Armed → execute (conflict_abort re-detects and rebuilds the mode).
+        self.conflict_abort(cx);
+    }
+
+    /// Skip the current sequencer step (rebase / cherry-pick / revert) through
+    /// the plan pipeline (T-042, ADR-0067): `plan_conflict_skip` → execute →
+    /// oplog → re-detect.  Merge has no skip (the button is hidden for merge;
+    /// the backend `plan_conflict_skip` also errors for merge as a guard).
+    pub fn conflict_skip(&mut self, cx: &mut Context<Self>) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let Some(mode) = self.conflict.clone() else { return };
+
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e.message())));
+                return;
+            }
+        };
+
+        let plan = match kagi::git::plan_conflict_skip(&repo, &mode.session) {
+            Ok(p) => p,
+            Err(e) => {
+                self.push_toast(ToastKind::Error, SharedString::from(format!("skip plan error: {}", e)));
+                return;
+            }
+        };
+        let op_name = format!("{}-skip", mode.session.op.slug());
+
+        match kagi::git::execute_conflict_skip(&repo, &mode.session, &mode.buffer) {
+            Ok(_outcome) => {
+                eprintln!("[kagi] executed: {}", op_name);
+                let after = StateSummary {
+                    head: plan.predicted.head.clone(),
+                    dirty: "current step dropped".to_string(),
+                };
+                self.record_op(
+                    &op_name,
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                );
+                self.reload();
+            }
+            Err(e) => {
+                let err_msg = format!("{}", e);
+                eprintln!("[kagi] {} failed: {}", op_name, err_msg);
+                self.record_op(
+                    &op_name,
+                    plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg },
+                    &repo_path,
+                );
+            }
+        }
+        cx.notify();
+    }
+
+    /// Mark the selected file resolved (ADR-0063): only allowed when the file
+    /// has a clean resolution draft (no marker residue).  Plan-based — the
+    /// resolution is already in the buffer; this just refreshes status (the
+    /// continue plan writes the index).  No direct index writes from the UI.
+    pub fn conflict_mark_selected_resolved(&mut self) {
+        let Some(c) = self.conflict.as_mut() else { return };
+        if !c.selected_is_mark_resolvable() {
+            return;
+        }
+        let residue = c.buffer.files_with_marker_residue();
+        if let Some(idx) = c.selected_file {
+            if let Some(f) = c.session.files.get_mut(idx) {
+                f.status = if residue.contains(&f.path) {
+                    kagi::git::ConflictStatus::NeedsReview
+                } else {
+                    kagi::git::ConflictStatus::Resolved
+                };
+            }
+        }
+        let _ = c.buffer.autosave();
+    }
+
+    /// Mark all clean files resolved (ADR-0063): files with no marker residue
+    /// AND a resolution draft.  Never a blanket "Mark all resolved" (Advanced).
+    pub fn conflict_mark_all_clean_resolved(&mut self) {
+        let Some(c) = self.conflict.as_mut() else { return };
+        let clean = c.clean_resolvable_files();
+        for f in c.session.files.iter_mut() {
+            if clean.contains(&f.path) {
+                f.status = kagi::git::ConflictStatus::Resolved;
+            }
+        }
+        let _ = c.buffer.autosave();
+    }
+
+
+    /// Open the configured external merge tool for the selected conflict file
+    /// (ADR-0060 / T-050).  Reads `settings.json` `"mergetool"` and substitutes
+    /// `$LOCAL` / `$BASE` / `$REMOTE` / `$MERGED`.  If unset, shows how to
+    /// configure it (we do NOT invent a default tool).  No plan needed
+    /// (read-only launch); a note is recorded to the oplog footer via the toast.
+    pub fn conflict_open_external_tool(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
+        let Some(c) = self.conflict.as_ref() else { return };
+        let Some(idx) = c.selected_file else { return };
+        let Some(file) = c.session.files.get(idx) else { return };
+
+        let template = match theme::read_setting("mergetool") {
+            Some(t) if !t.trim().is_empty() => t,
+            _ => {
+                self.push_toast(ToastKind::Info, Msg::ConflictExternalToolUnset.t());
+                return;
+            }
+        };
+
+        let workdir = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let merged = workdir.join(&file.path);
+        let merged_str = merged.to_string_lossy().into_owned();
+        // $LOCAL/$BASE/$REMOTE are the current/base/incoming versions; in the
+        // in-memory MVP we point every side at the conflicted working-tree file
+        // (which contains the markers) so external tools that re-parse markers
+        // (e.g. `code --wait`, `vimdiff $MERGED`) work.  Tools needing distinct
+        // side files are a v0.2 enhancement (materialize the three sides first).
+        let cmd = template
+            .replace("$LOCAL", &merged_str)
+            .replace("$BASE", &merged_str)
+            .replace("$REMOTE", &merged_str)
+            .replace("$MERGED", &merged_str);
+
+        eprintln!("[kagi] conflict-mode: launch external tool: {}", cmd);
+        match std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&cmd)
+            .current_dir(&workdir)
+            .spawn()
+        {
+            Ok(_) => self.push_toast(
+                ToastKind::Info,
+                SharedString::from(format!("{}: {}", Msg::ConflictExternalTool.t(), merged_str)),
+            ),
+            Err(e) => self.push_toast(
+                ToastKind::Error,
+                SharedString::from(format!("external tool failed: {}", e)),
+            ),
+        }
+    }
+
+    /// Open the integrated terminal at the repository root (ADR-0060 / T-051).
+    pub fn conflict_open_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.bottom_panel_open = true;
+        self.bottom_tab = BottomTab::Terminal;
+        self.ensure_terminal(window, cx);
+    }
+
+    /// Copy the selected conflict file's absolute path to the clipboard
+    /// (ADR-0060 / T-052).
+    pub fn conflict_copy_path(&mut self, cx: &mut Context<Self>) {
+        let Some(c) = self.conflict.as_ref() else { return };
+        let Some(idx) = c.selected_file else { return };
+        let Some(file) = c.session.files.get(idx) else { return };
+        let abs = match self.repo_path.clone() {
+            Some(p) => p.join(&file.path).to_string_lossy().into_owned(),
+            None => file.path.to_string_lossy().into_owned(),
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(abs.clone()));
+        self.push_toast(ToastKind::Success, SharedString::from(abs));
+    }
+
+    /// Copy the git command suggestion for the current operation + intent
+    /// (ADR-0060 / T-052), e.g. `git merge --continue` / `git rebase --abort` /
+    /// `git rebase --skip`.
+    pub fn conflict_copy_git_command(&mut self, cx: &mut Context<Self>) {
+        let Some(c) = self.conflict.as_ref() else { return };
+        let slug = c.session.op.slug();
+        let is_sequencer = c.session.op.is_sequencer();
+        // Offer the most useful command for the current state: continue when the
+        // gate is open, otherwise abort; sequencer ops also note --skip.
+        let cmd = if c.can_continue() {
+            format!("git {} --continue", slug)
+        } else if is_sequencer {
+            format!("git {} --skip   # or: git {} --abort", slug, slug)
+        } else {
+            format!("git {} --abort", slug)
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(cmd.clone()));
+        self.push_toast(ToastKind::Success, SharedString::from(cmd));
     }
 
     /// W11-AVATAR (ADR-0037): start GitHub avatar resolution for the current

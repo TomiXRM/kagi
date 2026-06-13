@@ -1,5 +1,5 @@
-//! W30-CONFLICT-UI: Conflict Mode UI — persistent banner, conflict file list,
-//! per-file choose buttons, and Result preview.
+//! W30/W33-CONFLICT-UI: Conflict Mode UI — persistent banner + Conflict
+//! Dashboard (right panel) + per-file choose / preview center.
 //!
 //! This module is the **UI half** of the conflict feature.  All git logic lives
 //! in the `kagi::git::conflicts` / `resolution` backend (W26): this file only
@@ -7,24 +7,23 @@
 //! handlers (which in turn call the backend `plan_*` / `ResolutionBuffer` API).
 //! No `git2` calls happen here.
 //!
-//! # MVP scope (this lane)
+//! # W33 scope (this lane)
 //!
-//! - Banner under the header: operation name + `N/M resolved` progress + Continue
-//!   (disabled until every file is resolved AND there is no marker residue),
-//!   Abort, and Skip (sequencer ops only).
-//! - File list with unresolved / resolved / needs-review status, a `ConflictKind`
-//!   tag, and prev/next unresolved navigation.
-//! - Per-file choose buttons (file granularity): Keep current / Take incoming /
-//!   Keep both (current first).  Binary files: choose-only, no preview.
-//! - Result preview: the resolved file's text in a simple scroll box.
-//!
-//! Deferred to v0.2 (NOT here): 3-pane editor, hunk-level choose, manual text
-//! editing in-app, blame-of-sides, undo/redo UI, external tool launch.
+//! - **Conflict Dashboard** (ADR-0063): the right panel in Conflict Mode.  Op
+//!   header + direction summary + Current/Incoming role+name badges +
+//!   conflicted/resolved counts + Path/Tree toggle (Tree disabled placeholder) +
+//!   two sections (Conflicted / Resolved) each with a `ConflictKind` badge +
+//!   action buttons (Abort with two-stage confirm, Continue gated, Skip for
+//!   sequencer ops only, external-tool) + Mark-resolved options + escape hatch
+//!   (open terminal, copy path, copy git command).
+//! - Activating a Conflicted row sets `editing_file` (W32's Conflict Editor lane
+//!   reads it); this lane does not implement the editor.
 //!
 //! Terminology (ADR-0058): every side label comes from `side_labels` — the words
-//! "ours"/"theirs" never appear.
+//! "ours"/"theirs" never appear in any user-facing string.
 
 use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
+use gpui_component::tooltip::Tooltip;
 
 use kagi::git::conflicts::{ConflictKind, ConflictOp, ConflictStatus, SideLabels};
 
@@ -35,8 +34,8 @@ use super::KagiApp;
 /// In-memory Conflict Mode state held by [`KagiApp`].
 ///
 /// Pure UI-side data: the `ConflictSession` describes the in-progress operation
-/// + files; the `ResolutionBuffer` holds the in-memory Result drafts (the
-/// repository is untouched until Continue/Abort execute through the plan
+/// and its files; the `ResolutionBuffer` holds the in-memory Result drafts (the
+/// repository is untouched until Continue/Abort/Skip execute through the plan
 /// pipeline).  `current_branch` is captured once at detection time for the
 /// `side_labels` left role.
 #[derive(Clone)]
@@ -50,6 +49,14 @@ pub struct ConflictMode {
     pub current_branch: String,
     /// Index into `session.files` of the file whose detail/preview is open.
     pub selected_file: Option<usize>,
+    /// Index into `session.files` of the file currently open in the Conflict
+    /// Editor (W32 lane reads/owns this; the dashboard only *sets* it when a
+    /// Conflicted row is activated).  `None` when no editor file is open.
+    pub editing_file: Option<usize>,
+    /// Whether the destructive Abort is armed (two-stage confirm, ADR-0067).
+    pub abort_armed: bool,
+    /// Path/Tree toggle.  `false` = Path (MVP), `true` = Tree (placeholder).
+    pub tree_view: bool,
 }
 
 impl ConflictMode {
@@ -62,14 +69,83 @@ impl ConflictMode {
             .count()
     }
 
-    /// Whether Continue is allowed: every file resolved AND no marker residue.
+    /// Number of files still unresolved.
+    pub fn conflicted_count(&self) -> usize {
+        self.session
+            .files
+            .iter()
+            .filter(|f| f.status == ConflictStatus::Unresolved)
+            .count()
+    }
+
+    /// Whether Continue is allowed from the UI's point of view: every file has
+    /// a clean resolution (no marker residue), every binary has a side chosen,
+    /// and every keep-or-delete decision is made.  This mirrors the buffer-only
+    /// subset of `kagi::git::continue_blockers`; the repo-bound checks (index
+    /// unmerged / empty merge message) are enforced at execute time in mod.rs.
     pub fn can_continue(&self) -> bool {
-        let all_resolved = self
+        self.continue_blocker().is_none()
+    }
+
+    /// The first UI-visible Continue blocker, or `None` when Continue is allowed.
+    /// Returns a localized `Msg` describing the specific blocking reason
+    /// (ADR-0067 — surface the specific reason in the UI).
+    pub fn continue_blocker(&self) -> Option<Msg> {
+        // 1. Any file without a resolution draft.
+        if self
             .session
             .files
             .iter()
-            .all(|f| self.buffer.has_resolution(&f.path));
-        all_resolved && self.buffer.files_with_marker_residue().is_empty()
+            .any(|f| !self.buffer.has_resolution(&f.path))
+        {
+            // Distinguish binary / deletion for a more specific message.
+            if self.session.files.iter().any(|f| {
+                f.kind == ConflictKind::Binary && !self.buffer.has_resolution(&f.path)
+            }) {
+                return Some(Msg::ConflictBlockerBinary);
+            }
+            if self.session.files.iter().any(|f| {
+                matches!(f.kind, ConflictKind::ModifyDelete | ConflictKind::RenameDelete)
+                    && !self.buffer.has_resolution(&f.path)
+            }) {
+                return Some(Msg::ConflictBlockerDeletion);
+            }
+            return Some(Msg::ConflictBlockerUnresolved);
+        }
+        // 2. Marker residue in any resolved buffer text.
+        if !self.buffer.files_with_marker_residue().is_empty() {
+            return Some(Msg::ConflictBlockerMarker);
+        }
+        None
+    }
+
+    /// Paths eligible for "Mark all clean files resolved": files with no marker
+    /// residue AND a resolvable resolution draft (ADR-0063).  We approximate
+    /// "index-resolvable" with "has a clean buffer resolution" — the plan
+    /// pipeline re-checks the live index before writing.
+    pub fn clean_resolvable_files(&self) -> Vec<std::path::PathBuf> {
+        let residue = self.buffer.files_with_marker_residue();
+        self.session
+            .files
+            .iter()
+            .filter(|f| {
+                self.buffer.has_resolution(&f.path) && !residue.contains(&f.path)
+            })
+            .map(|f| f.path.clone())
+            .collect()
+    }
+
+    /// Whether the selected file is currently mark-resolvable (clean, resolved
+    /// draft, no marker residue).
+    pub fn selected_is_mark_resolvable(&self) -> bool {
+        let Some(idx) = self.selected_file else {
+            return false;
+        };
+        let Some(f) = self.session.files.get(idx) else {
+            return false;
+        };
+        self.buffer.has_resolution(&f.path)
+            && !self.buffer.files_with_marker_residue().contains(&f.path)
     }
 
     /// The role labels for the current operation (ADR-0058, never ours/theirs).
@@ -145,6 +221,9 @@ mod tests {
             buffer,
             current_branch: branch.to_string(),
             selected_file: Some(0),
+            editing_file: None,
+            abort_armed: false,
+            tree_view: false,
         }
     }
 
@@ -156,7 +235,9 @@ mod tests {
         // Detected: one unresolved content conflict → continue is blocked.
         assert_eq!(mode.session.total_count(), 1);
         assert_eq!(mode.resolved_count(), 0);
+        assert_eq!(mode.conflicted_count(), 1);
         assert!(!mode.can_continue(), "gate must block while unresolved");
+        assert_eq!(mode.continue_blocker(), Some(Msg::ConflictBlockerUnresolved));
 
         // Apply a side choice → resolved, no marker residue → gate opens.
         let path = mode.session.files[0].path.clone();
@@ -173,6 +254,7 @@ mod tests {
 
         assert_eq!(mode.resolved_count(), 1);
         assert!(mode.can_continue(), "gate must open once all files resolved");
+        assert_eq!(mode.continue_blocker(), None);
     }
 
     #[test]
@@ -190,18 +272,31 @@ mod tests {
             !mode.can_continue(),
             "marker residue must keep the continue gate closed"
         );
+        assert_eq!(mode.continue_blocker(), Some(Msg::ConflictBlockerMarker));
+    }
+
+    #[test]
+    fn clean_resolvable_tracks_clean_files() {
+        let td = merge_conflict_repo();
+        let mut mode = detect(td.path(), "main");
+        assert!(mode.clean_resolvable_files().is_empty());
+        let path = mode.session.files[0].path.clone();
+        mode.buffer
+            .apply_choice(&path, kagi::git::ResolutionChoice::Current)
+            .unwrap();
+        assert_eq!(mode.clean_resolvable_files(), vec![path]);
     }
 
     #[test]
     fn heading_uses_roles_not_ours_theirs() {
         let td = merge_conflict_repo();
         let mode = detect(td.path(), "main");
-        let heading = op_heading(&mode);
+        let heading = op_summary(&mode);
         let lower = heading.to_lowercase();
         assert!(!lower.contains("ours"), "heading leaked 'ours': {}", heading);
         assert!(!lower.contains("theirs"), "heading leaked 'theirs': {}", heading);
-        // Merge heading names the current branch verbatim.
-        assert!(heading.contains("main"), "heading should name current branch: {}", heading);
+        // Merge summary names the current branch verbatim.
+        assert!(heading.contains("main"), "summary should name current branch: {}", heading);
     }
 }
 
@@ -209,12 +304,10 @@ mod tests {
 // Small localized helpers
 // ────────────────────────────────────────────────────────────
 
-/// One-line "what is in progress" heading for the banner.
-///
-/// For rebase this reads "Rebasing <commit> onto <base> — commit step/total"
-/// per §2; other ops name the operation + the role's real name.  Branch / commit
-/// names are verbatim (not translated).
-fn op_heading(mode: &ConflictMode) -> String {
+/// One-line "what is being merged into what" summary, using ADR-0058 direction
+/// wording (Merging X into Y / Rebasing X onto Y / Cherry-picking abc onto Y /
+/// Reverting abc on Y).  Never says ours/theirs.  Branch / commit names verbatim.
+fn op_summary(mode: &ConflictMode) -> String {
     let labels = mode.labels();
     match &mode.session.op {
         ConflictOp::Rebase { step, total, .. } => format!(
@@ -228,17 +321,42 @@ fn op_heading(mode: &ConflictMode) -> String {
             total
         ),
         ConflictOp::Merge { .. } => format!(
-            "{}: {} ← {}",
+            "{} {} {} {}",
             Msg::ConflictMerging.t(),
-            labels.current.name,
-            labels.incoming.name
+            labels.incoming.name,
+            Msg::ConflictOnto.t(),
+            labels.current.name
         ),
-        ConflictOp::CherryPick { .. } => {
-            format!("{}: {}", Msg::ConflictCherryPicking.t(), labels.incoming.name)
-        }
-        ConflictOp::Revert { .. } => {
-            format!("{}: {}", Msg::ConflictReverting.t(), labels.incoming.name)
-        }
+        ConflictOp::CherryPick { .. } => format!(
+            "{} {} {} {}",
+            Msg::ConflictCherryPicking.t(),
+            labels.incoming.name,
+            Msg::ConflictOnto.t(),
+            labels.current.name
+        ),
+        ConflictOp::Revert { .. } => format!(
+            "{} {} {} {}",
+            Msg::ConflictReverting.t(),
+            labels.incoming.name,
+            Msg::ConflictOnto.t(),
+            labels.current.name
+        ),
+    }
+}
+
+/// Map a backend [`kagi::git::ContinueBlocker`] to its localized UI message
+/// (ADR-0067 — surface the specific blocking reason).  Used by `conflict_continue`
+/// when the plan pipeline refuses, so the toast names the precise reason.
+pub fn blocker_msg(b: &kagi::git::ContinueBlocker) -> Msg {
+    use kagi::git::ContinueBlocker as B;
+    match b {
+        B::UnresolvedFiles(_) => Msg::ConflictBlockerUnresolved,
+        B::MarkerResidue(_) => Msg::ConflictBlockerMarker,
+        B::BinaryUnresolved(_) => Msg::ConflictBlockerBinary,
+        B::DeletionUndecided(_) => Msg::ConflictBlockerDeletion,
+        B::IndexUnmerged(_) => Msg::ConflictBlockerIndex,
+        B::EmptyMergeMessage => Msg::ConflictBlockerMessage,
+        B::ChecklistBlocker(_) => Msg::ConflictBlockerChecklist,
     }
 }
 
@@ -257,40 +375,10 @@ fn kind_tag(kind: ConflictKind) -> &'static str {
 // ────────────────────────────────────────────────────────────
 
 /// Render the persistent conflict banner shown directly under the header.
-pub fn render_banner(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+pub fn render_banner(mode: &ConflictMode, _cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let total = mode.session.total_count();
     let resolved = mode.resolved_count();
-    let can_continue = mode.can_continue();
-    let is_sequencer = mode.session.op.is_sequencer();
-
-    let heading = op_heading(mode);
     let progress = format!("{} {}/{}", Msg::ConflictResolved.t(), resolved, total);
-
-    let continue_handler = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-        this.conflict_continue(cx);
-        cx.notify();
-    });
-    let abort_handler = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-        this.conflict_abort(cx);
-        cx.notify();
-    });
-
-    let continue_btn = banner_button(
-        Msg::ConflictContinue.t(),
-        theme().color_success,
-        can_continue,
-        if can_continue {
-            Some(continue_handler)
-        } else {
-            None
-        },
-    );
-    let abort_btn = banner_button(
-        Msg::ConflictAbort.t(),
-        theme().color_blocker,
-        true,
-        Some(abort_handler),
-    );
 
     div()
         .id("conflict-banner")
@@ -314,12 +402,12 @@ pub fn render_banner(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::An
                     div()
                         .text_size(theme::scaled_px(13.))
                         .text_color(rgb(theme().text_main))
-                        .child(SharedString::from(heading)),
+                        .child(SharedString::from(op_summary(mode))),
                 )
                 .child(
                     div()
                         .text_size(theme::scaled_px(11.))
-                        .text_color(if can_continue {
+                        .text_color(if mode.can_continue() {
                             rgb(theme().color_success)
                         } else {
                             rgb(theme().text_sub)
@@ -327,26 +415,611 @@ pub fn render_banner(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::An
                         .child(SharedString::from(progress)),
                 ),
         )
-        .child(continue_btn)
-        .when(is_sequencer, |el| {
-            let skip_handler = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                this.conflict_skip(cx);
-                cx.notify();
-            });
-            el.child(banner_button(
-                Msg::ConflictSkip.t(),
-                theme().color_warning,
-                true,
-                Some(skip_handler),
-            ))
-        })
-        .child(abort_btn)
         .into_any_element()
 }
 
-/// A small banner button.  `enabled == false` renders muted and attaches no
-/// click handler (the Continue gate).
-fn banner_button<H>(
+// ────────────────────────────────────────────────────────────
+// Body: center (file preview / choose) | right (Conflict Dashboard)
+// ────────────────────────────────────────────────────────────
+
+/// Render the Conflict Mode main pane.  Center = per-file choose + Result
+/// preview (the W32 Conflict Editor lane replaces this center by reading
+/// `editing_file`); right = the Conflict Dashboard (ADR-0063).
+pub fn render_body(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    div()
+        .flex()
+        .flex_row()
+        .size_full()
+        .bg(rgb(theme().bg_base))
+        .child(render_center(mode, cx))
+        .child(render_dashboard(mode, cx))
+        .into_any_element()
+}
+
+// ────────────────────────────────────────────────────────────
+// Right panel: Conflict Dashboard (ADR-0063)
+// ────────────────────────────────────────────────────────────
+
+fn render_dashboard(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    div()
+        .id("conflict-dashboard")
+        .flex()
+        .flex_col()
+        .w(theme::scaled_px(340.))
+        .h_full()
+        .border_l_1()
+        .border_color(rgb(theme().surface))
+        .bg(rgb(theme().sidebar))
+        .overflow_y_scroll()
+        .child(dash_header(mode))
+        .child(dash_role_badges(mode))
+        .child(dash_counts(mode, cx))
+        .child(dash_view_toggle(mode, cx))
+        .child(dash_actions(mode, cx))
+        .child(dash_mark_resolved(mode, cx))
+        .child(dash_sections(mode, cx))
+        .child(dash_escape_hatch(mode, cx))
+        .into_any_element()
+}
+
+/// Header: operation-specific "Merge conflicts detected" + direction summary.
+fn dash_header(mode: &ConflictMode) -> gpui::AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .px(theme::scaled_px(12.))
+        .py(theme::scaled_px(10.))
+        .border_b_1()
+        .border_color(rgb(theme().surface))
+        .child(
+            div()
+                .text_size(theme::scaled_px(14.))
+                .text_color(rgb(theme().text_main))
+                .child(SharedString::from(Msg::ConflictDashHeader.t())),
+        )
+        .child(
+            div()
+                .text_size(theme::scaled_px(11.))
+                .text_color(rgb(theme().text_sub))
+                .child(SharedString::from(op_summary(mode))),
+        )
+        .into_any_element()
+}
+
+/// Current / Incoming role + real-name badges (tooltip notes the git stage).
+fn dash_role_badges(mode: &ConflictMode) -> gpui::AnyElement {
+    let labels = mode.labels();
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .px(theme::scaled_px(12.))
+        .py(theme::scaled_px(8.))
+        .border_b_1()
+        .border_color(rgb(theme().surface))
+        .child(role_badge(
+            Msg::ConflictRoleCurrent.t(),
+            &labels.current.role,
+            &labels.current.name,
+            theme().color_branch,
+        ))
+        .child(role_badge(
+            Msg::ConflictRoleIncoming.t(),
+            &labels.incoming.role,
+            &labels.incoming.name,
+            theme().color_remote,
+        ))
+        .into_any_element()
+}
+
+/// A single role badge: side tag + role word + real name. The git-stage hint is
+/// attached as a tooltip (ADR-0058 — internal term only in tooltip).
+fn role_badge(side: &str, role: &str, name: &str, accent: u32) -> gpui::AnyElement {
+    div()
+        .id(SharedString::from(format!("conflict-role-{}", side)))
+        .flex()
+        .flex_col()
+        .gap_1()
+        .px(theme::scaled_px(8.))
+        .py(theme::scaled_px(5.))
+        .rounded_md()
+        .border_1()
+        .border_color(rgb(accent))
+        .tooltip(move |window, cx| {
+            Tooltip::new(Msg::ConflictGitTermHint.t()).build(window, cx)
+        })
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .text_size(theme::scaled_px(10.))
+                        .text_color(rgb(accent))
+                        .child(SharedString::from(side.to_string())),
+                )
+                .child(
+                    div()
+                        .text_size(theme::scaled_px(10.))
+                        .text_color(rgb(theme().text_sub))
+                        .child(SharedString::from(role.to_string())),
+                ),
+        )
+        .child(
+            div()
+                .text_size(theme::scaled_px(12.))
+                .text_color(rgb(theme().text_main))
+                .child(SharedString::from(name.to_string())),
+        )
+        .into_any_element()
+}
+
+/// Conflicted count / resolved count line, with prev/next unresolved nav.
+fn dash_counts(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let conflicted = mode.conflicted_count();
+    let resolved = mode.resolved_count();
+
+    let prev = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_nav_unresolved(-1);
+        cx.notify();
+    });
+    let next = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_nav_unresolved(1);
+        cx.notify();
+    });
+
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_4()
+        .px(theme::scaled_px(12.))
+        .py(theme::scaled_px(8.))
+        .border_b_1()
+        .border_color(rgb(theme().surface))
+        .child(
+            div()
+                .text_size(theme::scaled_px(11.))
+                .text_color(rgb(if conflicted == 0 {
+                    theme().text_sub
+                } else {
+                    theme().color_blocker
+                }))
+                .child(SharedString::from(format!(
+                    "{} {}",
+                    conflicted,
+                    Msg::ConflictConflictedCount.t()
+                ))),
+        )
+        .child(
+            div()
+                .flex_grow()
+                .text_size(theme::scaled_px(11.))
+                .text_color(rgb(theme().color_success))
+                .child(SharedString::from(format!(
+                    "{} {}",
+                    resolved,
+                    Msg::ConflictResolvedCount.t()
+                ))),
+        )
+        .child(nav_button("‹", prev))
+        .child(nav_button("›", next))
+        .into_any_element()
+}
+
+/// Small prev/next unresolved-file nav button.
+fn nav_button<H>(label: &str, handler: H) -> gpui::Stateful<gpui::Div>
+where
+    H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+{
+    div()
+        .id(SharedString::from(format!("conflict-nav-{}", label)))
+        .px(theme::scaled_px(6.))
+        .py(theme::scaled_px(2.))
+        .rounded_md()
+        .border_1()
+        .border_color(rgb(theme().surface))
+        .text_size(theme::scaled_px(12.))
+        .text_color(rgb(theme().text_sub))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(theme().selected)))
+        .child(SharedString::from(label.to_string()))
+        .on_click(handler)
+}
+
+/// Path / Tree toggle.  Path works (MVP); Tree is shown but disabled.
+fn dash_view_toggle(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let path_active = !mode.tree_view;
+    let path_click = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+        if let Some(c) = this.conflict.as_mut() {
+            c.tree_view = false;
+        }
+        cx.notify();
+    });
+
+    div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .px(theme::scaled_px(12.))
+        .py(theme::scaled_px(6.))
+        .border_b_1()
+        .border_color(rgb(theme().surface))
+        .child(
+            div()
+                .id("conflict-view-path")
+                .px(theme::scaled_px(8.))
+                .py(theme::scaled_px(3.))
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(if path_active {
+                    theme().color_branch
+                } else {
+                    theme().surface
+                }))
+                .text_size(theme::scaled_px(11.))
+                .text_color(rgb(if path_active {
+                    theme().color_branch
+                } else {
+                    theme().text_sub
+                }))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(theme().selected)))
+                .on_click(path_click)
+                .child(SharedString::from(Msg::ConflictViewPath.t())),
+        )
+        .child(
+            // Tree: disabled placeholder (v0.2) — muted, no handler, with tip.
+            div()
+                .id("conflict-view-tree")
+                .px(theme::scaled_px(8.))
+                .py(theme::scaled_px(3.))
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(theme().text_muted))
+                .text_size(theme::scaled_px(11.))
+                .text_color(rgb(theme().text_muted))
+                .tooltip(|window, cx| Tooltip::new(Msg::ConflictTreeSoon.t()).build(window, cx))
+                .child(SharedString::from(Msg::ConflictViewTree.t())),
+        )
+        .into_any_element()
+}
+
+/// Action buttons: Abort (always, two-stage confirm), Continue (gated),
+/// Skip (sequencer ops only), external tool.
+fn dash_actions(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let can_continue = mode.can_continue();
+    let is_sequencer = mode.session.op.is_sequencer();
+
+    let continue_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_continue(cx);
+        cx.notify();
+    });
+    let abort_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_abort_request(cx);
+        cx.notify();
+    });
+
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .px(theme::scaled_px(12.))
+        .py(theme::scaled_px(8.))
+        .border_b_1()
+        .border_color(rgb(theme().surface));
+
+    // Continue (gated) + the specific blocking reason / ready note.
+    let mut row = div().flex().flex_row().flex_wrap().gap_2();
+    row = row.child(action_button(
+        Msg::ConflictContinue.t(),
+        theme().color_success,
+        can_continue,
+        if can_continue {
+            Some(continue_handler)
+        } else {
+            None
+        },
+    ));
+
+    // Skip — sequencer ops only (hidden for merge).
+    if is_sequencer {
+        let skip_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+            this.conflict_skip(cx);
+            cx.notify();
+        });
+        row = row.child(action_button(
+            Msg::ConflictSkip.t(),
+            theme().color_warning,
+            true,
+            Some(skip_handler),
+        ));
+    }
+
+    // Abort — always available; two-stage confirm (armed colour swaps).
+    let abort_label = if mode.abort_armed {
+        Msg::ConflictConfirmAbort.t()
+    } else {
+        Msg::ConflictAbort.t()
+    };
+    row = row.child(action_button(
+        abort_label,
+        theme().color_blocker,
+        true,
+        Some(abort_handler),
+    ));
+
+    col = col.child(row);
+
+    // Continue gate reason / ready note.
+    let (note, note_color) = match mode.continue_blocker() {
+        Some(msg) => (msg.t(), theme().color_blocker),
+        None => (Msg::ConflictContinueReady.t(), theme().color_success),
+    };
+    col = col.child(
+        div()
+            .text_size(theme::scaled_px(10.))
+            .text_color(rgb(note_color))
+            .child(SharedString::from(note)),
+    );
+
+    if mode.abort_armed {
+        col = col.child(
+            div()
+                .text_size(theme::scaled_px(10.))
+                .text_color(rgb(theme().color_warning))
+                .child(SharedString::from(Msg::ConflictConfirmAbortHint.t())),
+        );
+    }
+
+    col.into_any_element()
+}
+
+/// Mark-resolved options (ADR-0063): selected file + all clean files.  No
+/// blanket "Mark all resolved" (Advanced-only, omitted in MVP).
+fn dash_mark_resolved(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let sel_ok = mode.selected_is_mark_resolvable();
+    let any_clean = !mode.clean_resolvable_files().is_empty();
+
+    let sel_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_mark_selected_resolved();
+        cx.notify();
+    });
+    let all_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_mark_all_clean_resolved();
+        cx.notify();
+    });
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .px(theme::scaled_px(12.))
+        .py(theme::scaled_px(8.))
+        .border_b_1()
+        .border_color(rgb(theme().surface))
+        .child(action_button(
+            Msg::ConflictMarkSelectedResolved.t(),
+            theme().color_branch,
+            sel_ok,
+            if sel_ok { Some(sel_handler) } else { None },
+        ))
+        .child(action_button(
+            Msg::ConflictMarkAllCleanResolved.t(),
+            theme().color_branch,
+            any_clean,
+            if any_clean { Some(all_handler) } else { None },
+        ))
+        .into_any_element()
+}
+
+/// Two sections: Conflicted Files and Resolved Files, each row with a kind badge.
+fn dash_sections(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let conflicted: Vec<usize> = mode
+        .session
+        .files
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.status == ConflictStatus::Unresolved)
+        .map(|(i, _)| i)
+        .collect();
+    let resolved: Vec<usize> = mode
+        .session
+        .files
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.status != ConflictStatus::Unresolved)
+        .map(|(i, _)| i)
+        .collect();
+
+    div()
+        .flex()
+        .flex_col()
+        .child(section(
+            mode,
+            Msg::ConflictSectionConflicted.t(),
+            &conflicted,
+            Msg::ConflictNoConflictedFiles.t(),
+            true,
+            cx,
+        ))
+        .child(section(
+            mode,
+            Msg::ConflictSectionResolved.t(),
+            &resolved,
+            Msg::ConflictNoResolvedFiles.t(),
+            false,
+            cx,
+        ))
+        .into_any_element()
+}
+
+/// A labelled section listing the given file indices.  `is_conflicted` rows are
+/// "activatable": clicking sets the editing-file state (W32 opens the editor).
+fn section(
+    mode: &ConflictMode,
+    title: &str,
+    indices: &[usize],
+    empty_msg: &str,
+    _is_conflicted: bool,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .px(theme::scaled_px(12.))
+                .py(theme::scaled_px(6.))
+                .text_size(theme::scaled_px(10.))
+                .text_color(rgb(theme().text_label))
+                .child(SharedString::from(format!("{} ({})", title, indices.len()))),
+        );
+
+    if indices.is_empty() {
+        col = col.child(
+            div()
+                .px(theme::scaled_px(12.))
+                .py(theme::scaled_px(4.))
+                .text_size(theme::scaled_px(11.))
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(empty_msg.to_string())),
+        );
+        return col.into_any_element();
+    }
+
+    for &idx in indices {
+        let file = &mode.session.files[idx];
+        let selected = mode.selected_file == Some(idx);
+        let path_str = file.path.to_string_lossy().into_owned();
+        let kind = file.kind;
+        let (status_color, status_text) = match file.status {
+            ConflictStatus::Unresolved => (theme().color_blocker, Msg::ConflictUnresolved.t()),
+            ConflictStatus::Resolved => (theme().color_success, Msg::ConflictResolvedShort.t()),
+            ConflictStatus::NeedsReview => (theme().color_warning, Msg::ConflictNeedsReview.t()),
+        };
+
+        // Row click → select; for content conflicts conflict_select_file also
+        // opens the hunk-level Conflict Editor (W32). Resolved rows just preview.
+        let row_click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+            this.conflict_select_file(idx);
+            cx.notify();
+        });
+
+        col = col.child(
+            div()
+                .id(SharedString::from(format!("conflict-row-{}", idx)))
+                .flex()
+                .flex_col()
+                .gap_1()
+                .px(theme::scaled_px(12.))
+                .py(theme::scaled_px(6.))
+                .cursor_pointer()
+                .when(selected, |s| s.bg(rgb(theme().selected)))
+                .hover(|s| s.bg(rgb(theme().bg_row_alt)))
+                .on_click(row_click)
+                .child(
+                    div()
+                        .text_size(theme::scaled_px(12.))
+                        .text_color(rgb(theme().text_main))
+                        .child(SharedString::from(path_str)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_size(theme::scaled_px(10.))
+                                .text_color(rgb(status_color))
+                                .child(SharedString::from(status_text)),
+                        )
+                        .child(kind_badge(kind)),
+                ),
+        );
+    }
+
+    col.into_any_element()
+}
+
+/// A conflict-type badge (ADR-0065): both modified / rename-delete / etc.
+fn kind_badge(kind: ConflictKind) -> gpui::AnyElement {
+    div()
+        .px(theme::scaled_px(5.))
+        .py(px(1.))
+        .rounded_md()
+        .border_1()
+        .border_color(rgb(theme().text_muted))
+        .text_size(theme::scaled_px(9.))
+        .text_color(rgb(theme().text_muted))
+        .child(SharedString::from(kind_tag(kind)))
+        .into_any_element()
+}
+
+/// Escape hatch (ADR-0060 / T-050..052): external tool, terminal, copy path,
+/// copy git command.
+fn dash_escape_hatch(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let ext_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.conflict_open_external_tool(window, cx);
+        cx.notify();
+    });
+    let term_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.conflict_open_terminal(window, cx);
+        cx.notify();
+    });
+    let copy_path_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_copy_path(cx);
+        cx.notify();
+    });
+    let copy_cmd_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_copy_git_command(cx);
+        cx.notify();
+    });
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .px(theme::scaled_px(12.))
+        .py(theme::scaled_px(8.))
+        .child(action_button(
+            Msg::ConflictExternalTool.t(),
+            theme().text_sub,
+            true,
+            Some(ext_handler),
+        ))
+        .child(action_button(
+            Msg::ConflictOpenTerminal.t(),
+            theme().text_sub,
+            true,
+            Some(term_handler),
+        ))
+        .child(action_button(
+            Msg::ConflictCopyPath.t(),
+            theme().text_sub,
+            mode.selected_file.is_some(),
+            if mode.selected_file.is_some() {
+                Some(copy_path_handler)
+            } else {
+                None
+            },
+        ))
+        .child(action_button(
+            Msg::ConflictCopyGitCommand.t(),
+            theme().text_sub,
+            true,
+            Some(copy_cmd_handler),
+        ))
+        .into_any_element()
+}
+
+/// A dashboard action button.  `enabled == false` renders muted and attaches no
+/// click handler (e.g. the Continue gate).
+fn action_button<H>(
     label: &str,
     accent: u32,
     enabled: bool,
@@ -357,7 +1030,7 @@ where
 {
     let label = label.to_string();
     let mut btn = div()
-        .id(SharedString::from(format!("conflict-btn-{}", label)))
+        .id(SharedString::from(format!("conflict-act-{}", label)))
         .px(theme::scaled_px(10.))
         .py(theme::scaled_px(4.))
         .rounded_md()
@@ -383,152 +1056,21 @@ where
 }
 
 // ────────────────────────────────────────────────────────────
-// Full Conflict Mode body (file list + choose + preview)
+// Center pane: per-file choose + Result preview (W30; W32 supersedes)
 // ────────────────────────────────────────────────────────────
 
-/// Render the Conflict Mode main pane: a file list on the left, the selected
-/// file's choose buttons + Result preview on the right.  Replaces the normal
-/// commit-graph body while a conflict session is active.
-pub fn render_body(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    div()
-        .flex()
-        .flex_row()
-        .size_full()
-        .bg(rgb(theme().bg_base))
-        .child(render_file_list(mode, cx))
-        .child(render_detail(mode, cx))
-        .into_any_element()
-}
-
-/// The left file list with status + kind tag + prev/next unresolved nav.
-fn render_file_list(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let prev_handler = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-        this.conflict_nav_unresolved(-1);
-        cx.notify();
-    });
-    let next_handler = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-        this.conflict_nav_unresolved(1);
-        cx.notify();
-    });
-
-    let mut list = div()
-        .id("conflict-file-list")
-        .flex()
-        .flex_col()
-        .w(theme::scaled_px(320.))
-        .h_full()
-        .border_r_1()
-        .border_color(rgb(theme().surface))
-        .bg(rgb(theme().sidebar))
-        .overflow_y_scroll();
-
-    // Prev/next unresolved navigation header (KDiff3 style).
-    list = list.child(
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_2()
-            .px(theme::scaled_px(10.))
-            .py(theme::scaled_px(6.))
-            .border_b_1()
-            .border_color(rgb(theme().surface))
-            .child(
-                div()
-                    .flex_grow()
-                    .text_size(theme::scaled_px(11.))
-                    .text_color(rgb(theme().text_label))
-                    .child(SharedString::from(Msg::ConflictFiles.t())),
-            )
-            .child(nav_button("‹", prev_handler))
-            .child(nav_button("›", next_handler)),
-    );
-
-    for (idx, file) in mode.session.files.iter().enumerate() {
-        let selected = mode.selected_file == Some(idx);
-        let (status_color, status_text) = match file.status {
-            ConflictStatus::Unresolved => (theme().color_blocker, Msg::ConflictUnresolved.t()),
-            ConflictStatus::Resolved => (theme().color_success, Msg::ConflictResolvedShort.t()),
-            ConflictStatus::NeedsReview => (theme().color_warning, Msg::ConflictNeedsReview.t()),
-        };
-        let path_str = file.path.to_string_lossy().into_owned();
-        let kind = file.kind;
-
-        let row_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-            this.conflict_select_file(idx);
-            cx.notify();
-        });
-
-        list = list.child(
-            div()
-                .id(SharedString::from(format!("conflict-file-{}", idx)))
-                .flex()
-                .flex_col()
-                .gap_1()
-                .px(theme::scaled_px(10.))
-                .py(theme::scaled_px(6.))
-                .cursor_pointer()
-                .when(selected, |s| s.bg(rgb(theme().selected)))
-                .hover(|s| s.bg(rgb(theme().bg_row_alt)))
-                .on_click(row_click)
-                .child(
-                    div()
-                        .text_size(theme::scaled_px(12.))
-                        .text_color(rgb(theme().text_main))
-                        .child(SharedString::from(path_str)),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_size(theme::scaled_px(10.))
-                                .text_color(rgb(status_color))
-                                .child(SharedString::from(status_text)),
-                        )
-                        .child(
-                            div()
-                                .text_size(theme::scaled_px(10.))
-                                .text_color(rgb(theme().text_muted))
-                                .child(SharedString::from(kind_tag(kind))),
-                        ),
-                ),
-        );
-    }
-
-    list.into_any_element()
-}
-
-fn nav_button<H>(label: &str, handler: H) -> gpui::Stateful<gpui::Div>
-where
-    H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-{
-    div()
-        .id(SharedString::from(format!("conflict-nav-{}", label)))
-        .px(theme::scaled_px(6.))
-        .py(theme::scaled_px(2.))
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(theme().surface))
-        .text_size(theme::scaled_px(12.))
-        .text_color(rgb(theme().text_sub))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().selected)))
-        .child(SharedString::from(label.to_string()))
-        .on_click(handler)
-}
-
-/// The right detail pane: choose buttons + Result preview for the selected file.
-fn render_detail(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+/// The center pane: the selected file's choose buttons + Result preview.  When
+/// the W32 Conflict Editor lands it renders here for `editing_file`; until then
+/// this MVP keeps the file-granularity choose + preview.
+fn render_center(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let Some(idx) = mode.selected_file else {
         return div()
             .flex()
             .flex_col()
             .items_center()
             .justify_center()
-            .size_full()
+            .flex_grow()
+            .h_full()
             .child(
                 div()
                     .text_size(theme::scaled_px(13.))
@@ -538,31 +1080,30 @@ fn render_detail(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyEle
             .into_any_element();
     };
     let Some(file) = mode.session.files.get(idx) else {
-        return div().size_full().into_any_element();
+        return div().flex_grow().h_full().into_any_element();
     };
 
     let labels = mode.labels();
     let is_binary = file.kind == ConflictKind::Binary;
     let path = file.path.clone();
 
-    // Choose buttons (file granularity).  Labels embed the role's real name.
     let keep_current_label = format!("{} ({})", Msg::ConflictKeepCurrent.t(), labels.current.name);
     let take_incoming_label =
         format!("{} ({})", Msg::ConflictTakeIncoming.t(), labels.incoming.name);
     let keep_both_label = Msg::ConflictKeepBoth.t().to_string();
 
     let p1 = path.clone();
-    let keep_current = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
+    let keep_current = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
         this.conflict_apply_choice(&p1, kagi::git::resolution::ResolutionChoice::Current);
         cx.notify();
     });
     let p2 = path.clone();
-    let take_incoming = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
+    let take_incoming = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
         this.conflict_apply_choice(&p2, kagi::git::resolution::ResolutionChoice::Incoming);
         cx.notify();
     });
     let p3 = path.clone();
-    let keep_both = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
+    let keep_both = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
         this.conflict_apply_choice(
             &p3,
             kagi::git::resolution::ResolutionChoice::BothCurrentFirst,
@@ -582,7 +1123,6 @@ fn render_detail(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyEle
         .child(choose_button(keep_current_label, theme().color_branch, keep_current))
         .child(choose_button(take_incoming_label, theme().color_remote, take_incoming));
 
-    // "Keep both" needs both sides present; only offer it for content conflicts.
     if !is_binary && file.kind == ConflictKind::Content {
         choose_row = choose_row.child(choose_button(keep_both_label, theme().text_sub, keep_both));
     }
@@ -592,7 +1132,8 @@ fn render_detail(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyEle
     div()
         .flex()
         .flex_col()
-        .size_full()
+        .flex_grow()
+        .h_full()
         .child(choose_row)
         .child(preview)
         .into_any_element()

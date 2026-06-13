@@ -17,9 +17,9 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi::git::{
-    detect_conflict_session, execute_conflict_abort, plan_conflict_abort,
-    plan_conflict_continue, ConflictKind, ConflictOp, LineOrigin, ResolutionBuffer,
-    ResolutionChoice,
+    continue_blockers, detect_conflict_session, execute_conflict_abort, execute_conflict_skip,
+    plan_conflict_abort, plan_conflict_continue, plan_conflict_skip, ConflictKind, ConflictOp,
+    LineOrigin, ResolutionBuffer, ResolutionChoice,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -567,4 +567,152 @@ fn hunk_reset_keeps_marker_residue_and_blocks_continue() {
         !plan.blockers.is_empty(),
         "marker residue from a reset hunk must block continue"
     );
+}
+
+// ────────────────────────────────────────────────────────────
+// T-043 / 044: strengthened continue gate (structured blockers)
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn continue_gate_reports_specific_blocker_codes() {
+    let tmp = merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+
+    // Empty buffer → unresolved-files blocker code is present.
+    let empty = ResolutionBuffer::new(tmp.path());
+    let blockers = continue_blockers(&repo, &session, &empty);
+    assert!(
+        blockers.iter().any(|b| b.code() == "unresolved-files"),
+        "expected unresolved-files code, got {:?}",
+        blockers.iter().map(|b| b.code()).collect::<Vec<_>>()
+    );
+
+    // Clean resolution → no blockers, Continue allowed.
+    let mut clean = ResolutionBuffer::from_repo(&repo).unwrap();
+    clean
+        .apply_choice(Path::new("file.txt"), ResolutionChoice::Current)
+        .unwrap();
+    assert!(
+        continue_blockers(&repo, &session, &clean).is_empty(),
+        "clean resolution should clear every blocker"
+    );
+}
+
+#[test]
+fn continue_gate_flags_unresolved_binary_conflict() {
+    let tmp = binary_merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    assert_eq!(session.files[0].kind, ConflictKind::Binary);
+
+    // Binary file unresolved → both unresolved-files AND binary-unresolved.
+    let empty = ResolutionBuffer::new(tmp.path());
+    let codes: Vec<&str> = continue_blockers(&repo, &session, &empty)
+        .iter()
+        .map(|b| b.code())
+        .collect();
+    assert!(codes.contains(&"binary-unresolved"), "got {:?}", codes);
+}
+
+// ────────────────────────────────────────────────────────────
+// T-042: sequencer skip (rebase / cherry-pick / revert only)
+// ────────────────────────────────────────────────────────────
+
+/// Build a repo mid cherry-pick conflict and return (TempDir, side_sha).
+fn cherry_pick_conflict_repo() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir);
+
+    write_file(dir, "file.txt", "base\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    git(dir, &["checkout", "-q", "-b", "side"]);
+    write_file(dir, "file.txt", "SIDE\n");
+    git(dir, &["commit", "-qam", "side change"]);
+    let side_sha = git_output(dir, &["rev-parse", "HEAD"]);
+
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "file.txt", "MAIN\n");
+    git(dir, &["commit", "-qam", "main change"]);
+
+    git_allow_fail(dir, &["cherry-pick", &side_sha]);
+    tmp
+}
+
+/// Build a binary merge conflict repo (both sides change a binary blob).
+fn binary_merge_conflict_repo() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir);
+
+    write_binary(dir, "blob.bin", &[0u8, 1, 2, 3, 0, 4, 5]);
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    git(dir, &["checkout", "-q", "-b", "feature"]);
+    write_binary(dir, "blob.bin", &[0u8, 9, 9, 9, 0, 9, 9]);
+    git(dir, &["commit", "-qam", "feature blob"]);
+
+    git(dir, &["checkout", "-q", "main"]);
+    write_binary(dir, "blob.bin", &[0u8, 7, 7, 7, 0, 7, 7]);
+    git(dir, &["commit", "-qam", "main blob"]);
+
+    git_allow_fail(dir, &["merge", "feature"]);
+    tmp
+}
+
+#[test]
+fn skip_is_rejected_for_merge() {
+    let tmp = merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    assert!(matches!(session.op, ConflictOp::Merge { .. }));
+    assert!(
+        plan_conflict_skip(&repo, &session).is_err(),
+        "merge has no skip — plan must error"
+    );
+}
+
+#[test]
+fn skip_cherry_pick_drops_current_step() {
+    let log_tmp = TempDir::new().unwrap();
+    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+
+    let tmp = cherry_pick_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    assert!(matches!(session.op, ConflictOp::CherryPick { .. }));
+
+    // Plan is always available (no blockers).
+    let plan = plan_conflict_skip(&repo, &session).expect("skip plan");
+    assert!(plan.blockers.is_empty());
+
+    // Partial resolution so the buffer is preserved.
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(Path::new("file.txt"), ResolutionChoice::Incoming)
+        .unwrap();
+
+    let head_before = git_output(dir, &["rev-parse", "HEAD"]);
+    let outcome = execute_conflict_skip(&repo, &session, &buffer).expect("skip exec");
+
+    // HEAD unchanged (the conflicting pick was dropped, not committed).
+    assert_eq!(outcome.head.as_deref(), Some(head_before.as_str()));
+
+    // No longer mid cherry-pick, working tree restored to HEAD ("MAIN").
+    assert!(!dir.join(".git").join("CHERRY_PICK_HEAD").exists());
+    let repo2 = Repository::open(dir).unwrap();
+    assert!(detect_conflict_session(&repo2).is_none());
+    let content = std::fs::read_to_string(dir.join("file.txt")).unwrap();
+    assert!(content.contains("MAIN"), "step changes dropped, got {:?}", content);
+    assert!(!content.contains("<<<<<<<"), "no markers should remain");
+
+    // Buffer preserved.
+    assert!(outcome.buffer_preserved_at.is_some());
+
+    std::env::remove_var("KAGI_LOG_DIR");
 }

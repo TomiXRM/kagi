@@ -61,7 +61,9 @@ Grab the latest build from [**GitHub Releases**](https://github.com/TomiXRM/kagi
 | OS | Asset |
 |----|-------|
 | macOS (Apple Silicon) | `Kagi-<version>-arm64.dmg` |
-| Linux (x86_64) | `kagi-<version>-x86_64.tar.gz` (binary + `.desktop` + icon) |
+| Linux (x86_64 / arm64) | `kagi-<version>-<arch>.tar.gz` (binary + `.desktop` + icon), or the AppImage zip `kagi_Linux-AppImage_<arch>.zip` |
+
+For the AppImage: `unzip kagi_Linux-AppImage_<arch>.zip && bash scripts/install_linux_desktop.sh` registers it under `~/.local` (icon + `.desktop` entry, fully offline).
 
 ### ⚠️ macOS: first launch on an unsigned build
 
@@ -107,9 +109,10 @@ bash scripts/make_icon.sh                 # rounded icon → assets/icon/ (icns 
 cargo run -p xtask -- bundle-macos        # target/dist/Kagi.app (ad-hoc signed)
 cargo run -p xtask -- dmg-macos           # target/dist/Kagi-<version>-<arch>.dmg
 cargo run -p xtask -- bundle-linux        # target/dist/kagi-<version>-x86_64.tar.gz
+cargo run -p xtask -- bundle-appimage --bin target/release/kagi  # AppImage zip (needs appimagetool on Linux)
 ```
 
-Tagging `v*` runs the [release workflow](.github/workflows/release.yml): macOS arm64 + Linux builds, checksums, and a draft GitHub release.
+Tagging `v*` runs the [release workflow](.github/workflows/release.yml): macOS arm64 + Linux x86_64/arm64 builds (tar.gz + AppImage zip), checksums, and a draft GitHub release.
 
 ## 🧑‍💻 Development
 

@@ -1,6 +1,6 @@
 # T-BCM-073: merge/rebase 文言の direction test を作る
 
-- Status: todo
+- Status: done
 - Group: Tests
 - 仕様の正: docs/requirements-branch-context-menu.md + ADR-0049〜0055
 
@@ -18,3 +18,8 @@
 - 操作 handler の二重実装禁止(ADR-0049)。fixture / tempdir のみで検証
 - 文字列は chars() ベース・バイトスライス禁止(split_at 含む)。色は theme() 経由
 - UI 説明文は i18n の Msg 経由(ADR-0048。ドメインワード・branch 名は英語のまま)
+
+## 実装メモ(Codex / w25-bcm-int)
+
+- `src/ui/branch_menu.rs` unit test で `Merge <target> into <current>` / `Rebase <current> onto <target>` の label を固定。
+- Rebase は MVP 外の disabled stub のまま。

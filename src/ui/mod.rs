@@ -186,6 +186,7 @@ use kagi::git::{
         execute_checkout, execute_checkout_commit, execute_create_branch,
         plan_checkout, plan_checkout_commit, plan_create_branch_with_checkout, preflight_check,
         execute_create_worktree, plan_create_worktree,
+        execute_open_worktree_for_branch, plan_open_worktree_for_branch,
         plan_stash_push, execute_stash_push,
         plan_stash_apply, execute_stash_apply,
         plan_pull, execute_pull, PullOutcome,
@@ -195,6 +196,9 @@ use kagi::git::{
         plan_push, execute_push,
         preflight_check_stash,
         plan_cherry_pick, execute_cherry_pick,
+        default_tracking_branch_name,
+        execute_checkout_tracking_branch, execute_merge_branch,
+        plan_checkout_tracking_branch, plan_merge_branch,
         plan_revert, execute_revert,
         plan_delete_branch, execute_delete_branch,
         plan_discard, execute_discard,
@@ -967,6 +971,24 @@ pub struct PushPlanModal {
     pub error: Option<SharedString>,
 }
 
+/// State for an in-progress branch merge confirmation (T-BCM-030).
+#[derive(Clone)]
+pub struct MergePlanModal {
+    pub target: String,
+    pub plan: std::sync::Arc<OperationPlan>,
+    pub error: Option<SharedString>,
+}
+
+/// State for creating a local tracking branch from a remote branch and checking
+/// it out as one operation (T-BCM-061).
+#[derive(Clone)]
+pub struct TrackingCheckoutPlanModal {
+    pub remote_branch: String,
+    pub local_branch: String,
+    pub plan: std::sync::Arc<OperationPlan>,
+    pub error: Option<SharedString>,
+}
+
 // ──────────────────────────────────────────────────────────────
 // CreateBranchModal — state for the create-branch overlay (T014)
 // ──────────────────────────────────────────────────────────────
@@ -1017,6 +1039,9 @@ pub struct CreateWorktreeModal {
     pub path_state: Option<Entity<InputState>>,
     /// True once the user has manually edited the path.
     pub path_touched: bool,
+    /// True when this modal attaches an existing local branch to a worktree
+    /// instead of creating a new branch first.
+    pub allow_existing_branch: bool,
     /// Which field receives key input (legacy hand-rolled input era; the
     /// real `InputState`s manage their own focus now).
     #[allow(dead_code)]
@@ -1187,6 +1212,10 @@ pub struct KagiApp {
     pub pop_modal: Option<PopPlanModal>,
     /// When `Some`, the push plan confirmation modal is visible (T-HT-004).
     pub push_modal: Option<PushPlanModal>,
+    /// When `Some`, the merge plan confirmation modal is visible.
+    pub merge_modal: Option<MergePlanModal>,
+    /// When `Some`, the remote tracking checkout plan modal is visible.
+    pub tracking_checkout_modal: Option<TrackingCheckoutPlanModal>,
     /// When `Some`, the create-branch modal is visible.
     pub create_branch_modal: Option<CreateBranchModal>,
     /// When `Some`, the create-worktree modal is visible.
@@ -1613,6 +1642,8 @@ impl KagiApp {
             amend_modal: None,
             pop_modal: None,
             push_modal: None,
+            merge_modal: None,
+            tracking_checkout_modal: None,
             create_branch_modal: None,
             create_worktree_modal: None,
             modal_focus: None,
@@ -1715,6 +1746,8 @@ impl KagiApp {
             amend_modal: None,
             pop_modal: None,
             push_modal: None,
+            merge_modal: None,
+            tracking_checkout_modal: None,
             create_branch_modal: None,
             create_worktree_modal: None,
             modal_focus: None,
@@ -2361,12 +2394,27 @@ impl KagiApp {
     // ── Create-worktree modal (T-CM-023) ─────────────────────
 
     pub fn open_create_worktree_modal(&mut self, at: CommitId, cx: &mut Context<Self>) {
+        self.open_create_worktree_modal_prefilled(at, String::new(), false, cx);
+    }
+
+    pub fn open_create_worktree_modal_prefilled(
+        &mut self,
+        at: CommitId,
+        branch_prefill: String,
+        allow_existing_branch: bool,
+        cx: &mut Context<Self>,
+    ) {
         if self.modal_focus.is_none() {
             self.modal_focus = Some(cx.focus_handle());
         }
         let start_title = self.commit_title_for(&at);
-        let branch_input = String::new();
-        let path_input = self.default_worktree_path("new-branch");
+        let branch_input = branch_prefill;
+        let default_branch = if branch_input.is_empty() {
+            "new-branch"
+        } else {
+            branch_input.as_str()
+        };
+        let path_input = self.default_worktree_path(default_branch);
         self.create_worktree_modal = Some(CreateWorktreeModal {
             at,
             start_title,
@@ -2375,6 +2423,7 @@ impl KagiApp {
             path_input,
             path_state: None, // lazy (render)
             path_touched: false,
+            allow_existing_branch,
             active_field: WorktreeModalField::Branch,
             plan: None,
             error: None,
@@ -2414,8 +2463,13 @@ impl KagiApp {
     }
 
     fn replan_create_worktree(&mut self) {
-        let (at, branch, path) = match self.create_worktree_modal.as_ref() {
-            Some(m) => (m.at.clone(), m.branch_input.clone(), m.path_input.clone()),
+        let (at, branch, path, allow_existing_branch) = match self.create_worktree_modal.as_ref() {
+            Some(m) => (
+                m.at.clone(),
+                m.branch_input.clone(),
+                m.path_input.clone(),
+                m.allow_existing_branch,
+            ),
             None => return,
         };
         let repo_path = match self.repo_path.clone() {
@@ -2429,7 +2483,12 @@ impl KagiApp {
                 return;
             }
         };
-        match plan_create_worktree(&repo, &branch, &path, &at) {
+        let plan_result = if allow_existing_branch {
+            plan_open_worktree_for_branch(&repo, &branch, &path)
+        } else {
+            plan_create_worktree(&repo, &branch, &path, &at)
+        };
+        match plan_result {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: create-worktree '{}' path='{}' blockers={} warnings={}",
@@ -2496,10 +2555,18 @@ impl KagiApp {
         let branch_input = modal.branch_input.clone();
         let path_input = modal.path_input.clone();
         let at = modal.at.clone();
+        let allow_existing_branch = modal.allow_existing_branch;
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let task = cx.background_spawn(async move {
-            create_worktree_blocking(&bg_path, &bg_plan, &branch_input, &path_input, &at)
+            create_worktree_blocking(
+                &bg_path,
+                &bg_plan,
+                &branch_input,
+                &path_input,
+                &at,
+                allow_existing_branch,
+            )
         });
         cx.spawn(async move |this, acx| {
             let result = task.await;
@@ -4246,6 +4313,252 @@ impl KagiApp {
                 );
             }
         }
+    }
+
+    // ── T-BCM-030/T-BCM-061: Branch menu plans ───────────────
+
+    pub fn open_merge_modal(&mut self, target: String) {
+        if self.busy_op.is_some() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "merge: repo open error: {}",
+                    e.message()
+                )));
+                return;
+            }
+        };
+        match plan_merge_branch(&repo, &target) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: merge {} blockers={} warnings={} preview_files={}",
+                    target,
+                    plan.blockers.len(),
+                    plan.warnings.len(),
+                    plan.preview_files.len()
+                );
+                self.merge_modal = Some(MergePlanModal {
+                    target,
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("merge plan error: {}", e)));
+            }
+        }
+    }
+
+    pub fn cancel_merge_modal(&mut self) {
+        self.merge_modal = None;
+    }
+
+    pub fn start_merge(&mut self, cx: &mut Context<Self>) {
+        if self.busy_op.is_some() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
+        let modal = match self.merge_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        if !modal.plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: merge plan has blockers, not executing");
+            self.record_op(
+                "merge",
+                modal.plan.current.clone(),
+                OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                &repo_path,
+            );
+            self.merge_modal = None;
+            cx.notify();
+            return;
+        }
+
+        self.busy_op = Some("merge");
+        self.merge_modal = None;
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyMerge.t()));
+        self.push_toast(ToastKind::Info, Msg::StartedMerge.t());
+        eprintln!("[kagi] async: merge started");
+
+        let plan = modal.plan.clone();
+        let target = modal.target.clone();
+        let bg_path = repo_path.clone();
+        let task = cx.background_spawn(async move { merge_blocking(&bg_path, &plan, &target) });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok((summary, after)) => {
+                        eprintln!("[kagi] async: merge finished — {}", summary);
+                        app.record_op(
+                            "merge",
+                            modal.plan.current.clone(),
+                            OpOutcome::Success { after },
+                            &repo_path,
+                        );
+                        app.reload();
+                    }
+                    Err(err_msg) => {
+                        eprintln!("[kagi] async: merge failed — {}", err_msg);
+                        app.record_op(
+                            "merge",
+                            modal.plan.current.clone(),
+                            OpOutcome::Failed { error: err_msg.clone() },
+                            &repo_path,
+                        );
+                        app.merge_modal = Some(MergePlanModal {
+                            target: modal.target.clone(),
+                            plan: modal.plan.clone(),
+                            error: Some(SharedString::from(err_msg)),
+                        });
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub fn open_tracking_checkout_modal(&mut self, remote_branch: String) {
+        if self.busy_op.is_some() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "checkout tracking: repo open error: {}",
+                    e.message()
+                )));
+                return;
+            }
+        };
+        let local_branch = default_tracking_branch_name(&remote_branch);
+        match plan_checkout_tracking_branch(&repo, &remote_branch, &local_branch) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: checkout-tracking {} -> {} blockers={} warnings={}",
+                    remote_branch,
+                    local_branch,
+                    plan.blockers.len(),
+                    plan.warnings.len()
+                );
+                self.tracking_checkout_modal = Some(TrackingCheckoutPlanModal {
+                    remote_branch,
+                    local_branch,
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "checkout tracking plan error: {}",
+                    e
+                )));
+            }
+        }
+    }
+
+    pub fn cancel_tracking_checkout_modal(&mut self) {
+        self.tracking_checkout_modal = None;
+    }
+
+    pub fn start_tracking_checkout(&mut self, cx: &mut Context<Self>) {
+        if self.busy_op.is_some() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
+        let modal = match self.tracking_checkout_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        if !modal.plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: checkout-tracking plan has blockers, not executing");
+            self.record_op(
+                "checkout-tracking",
+                modal.plan.current.clone(),
+                OpOutcome::Refused { blockers: modal.plan.blockers.clone() },
+                &repo_path,
+            );
+            self.tracking_checkout_modal = None;
+            cx.notify();
+            return;
+        }
+
+        self.busy_op = Some("checkout");
+        self.tracking_checkout_modal = None;
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCheckout.t()));
+        self.push_toast(ToastKind::Info, Msg::StartedCheckout.t());
+        eprintln!("[kagi] async: checkout-tracking started");
+
+        let plan = modal.plan.clone();
+        let remote_branch = modal.remote_branch.clone();
+        let local_branch = modal.local_branch.clone();
+        let bg_path = repo_path.clone();
+        let task = cx.background_spawn(async move {
+            checkout_tracking_blocking(&bg_path, &plan, &remote_branch, &local_branch)
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok((summary, after)) => {
+                        eprintln!("[kagi] async: checkout-tracking finished — {}", summary);
+                        app.record_op(
+                            "checkout-tracking",
+                            modal.plan.current.clone(),
+                            OpOutcome::Success { after },
+                            &repo_path,
+                        );
+                        app.reload();
+                    }
+                    Err(err_msg) => {
+                        eprintln!("[kagi] async: checkout-tracking failed — {}", err_msg);
+                        app.record_op(
+                            "checkout-tracking",
+                            modal.plan.current.clone(),
+                            OpOutcome::Failed { error: err_msg.clone() },
+                            &repo_path,
+                        );
+                        app.tracking_checkout_modal = Some(TrackingCheckoutPlanModal {
+                            remote_branch: modal.remote_branch.clone(),
+                            local_branch: modal.local_branch.clone(),
+                            plan: modal.plan.clone(),
+                            error: Some(SharedString::from(err_msg)),
+                        });
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     // ── T-HT-009: Undo Commit / T-HT-007: Stash Pop ──────────
@@ -6648,6 +6961,14 @@ impl KagiApp {
             .branches
             .iter()
             .find_map(|(name, current)| current.then(|| name.clone()));
+        let checked_out_worktree_path = if matches!(state.kind, BranchKind::Local) {
+            self.worktrees
+                .iter()
+                .find(|wt| wt.branch.as_deref() == Some(state.name.as_str()))
+                .map(|wt| wt.path.display().to_string())
+        } else {
+            None
+        };
         BranchMenuContext {
             name: state.name.clone(),
             head_sha: state.target.0.clone(),
@@ -6664,7 +6985,8 @@ impl KagiApp {
                 BranchConflictMode::None
             },
             protected: branch_menu::is_protected_branch(&state.name),
-            checked_out_in_other_worktree: false,
+            checked_out_in_other_worktree: checked_out_worktree_path.is_some(),
+            checked_out_worktree_path,
             merged_into_current: false,
             is_pushed: upstream.is_some(),
             detached_head: self.status_summary.is_detached,
@@ -6716,6 +7038,8 @@ impl KagiApp {
             BranchAction::Checkout => {
                 if matches!(state.kind, BranchKind::Local) {
                     self.open_plan_modal(state.name);
+                } else {
+                    self.open_tracking_checkout_modal(state.name);
                 }
             }
             BranchAction::CreateBranchFromHere => {
@@ -6726,17 +7050,46 @@ impl KagiApp {
                     self.open_delete_branch_modal(state.name);
                 }
             }
-            BranchAction::OpenWorktreeFromBranch
-            | BranchAction::Pull
+            BranchAction::OpenWorktreeFromBranch => {
+                let existing_path = self
+                    .worktrees
+                    .iter()
+                    .find(|wt| wt.branch.as_deref() == Some(state.name.as_str()))
+                    .map(|wt| wt.path.display().to_string());
+                if let Some(path) = existing_path {
+                    self.status_footer = FooterStatus::Idle(SharedString::from(format!(
+                        "worktree already exists: {}",
+                        path
+                    )));
+                    self.push_toast(ToastKind::Info, format!("Worktree: {}", path));
+                } else if matches!(state.kind, BranchKind::Local) {
+                    self.open_create_worktree_modal_prefilled(
+                        state.target,
+                        state.name,
+                        true,
+                        cx,
+                    );
+                }
+            }
+            BranchAction::MergeIntoCurrent => {
+                self.open_merge_modal(state.name);
+            }
+            BranchAction::CreateWorktreeFromHere => {
+                self.open_create_worktree_modal_prefilled(
+                    state.target,
+                    state.name,
+                    false,
+                    cx,
+                );
+            }
+            BranchAction::Pull
             | BranchAction::PullFfOnly
             | BranchAction::Push
             | BranchAction::PushAndCreateUpstream
             | BranchAction::SetUpstream
             | BranchAction::FetchRemoteBranch
             | BranchAction::CreatePr
-            | BranchAction::MergeIntoCurrent
             | BranchAction::RebaseCurrentOnto
-            | BranchAction::CreateWorktreeFromHere
             | BranchAction::CreateTagHere
             | BranchAction::RenameBranch
             | BranchAction::ResetCurrentToHead
@@ -6873,6 +7226,8 @@ impl KagiApp {
         if self.plan_modal.is_some()
             || self.pull_modal.is_some()
             || self.push_modal.is_some()
+            || self.merge_modal.is_some()
+            || self.tracking_checkout_modal.is_some()
             || self.undo_modal.is_some()
             || self.amend_modal.is_some()
             || self.pop_modal.is_some()
@@ -7090,6 +7445,8 @@ impl Render for KagiApp {
         let amend_modal = self.amend_modal.clone();
         let pop_modal = self.pop_modal.clone();
         let push_modal = self.push_modal.clone();
+        let merge_modal = self.merge_modal.clone();
+        let tracking_checkout_modal = self.tracking_checkout_modal.clone();
         let create_branch_modal = self.create_branch_modal.clone();
         let create_worktree_modal = self.create_worktree_modal.clone();
         let delete_branch_modal = self.delete_branch_modal.clone();
@@ -7386,6 +7743,12 @@ impl Render for KagiApp {
             // ── Push plan modal overlay (T-HT-004) ──────────
             .when_some(push_modal, |el, modal| {
                 el.child(render_push_modal(modal, cx))
+            })
+            .when_some(merge_modal, |el, modal| {
+                el.child(render_merge_modal(modal, cx))
+            })
+            .when_some(tracking_checkout_modal, |el, modal| {
+                el.child(render_tracking_checkout_modal(modal, cx))
             })
             // ── Create-branch modal overlay (above everything) ──
             .when_some(create_branch_modal, |el, modal| {
@@ -9684,6 +10047,46 @@ fn checkout_blocking(
     Ok((summary, after))
 }
 
+fn merge_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    target: &str,
+) -> Result<(String, StateSummary), String> {
+    let repo = git2::Repository::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+
+    let new_head =
+        execute_merge_branch(&repo, target).map_err(|e| format!("Merge failed: {}", e))?;
+    eprintln!("[kagi] executed: merge {} -> {}", target, new_head.short());
+
+    let after = verify_after_snapshot(repo_path, plan);
+    eprintln!("[kagi] verified: merge after = {}", after.head);
+    Ok((format!("merge {}", target), after))
+}
+
+fn checkout_tracking_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    remote_branch: &str,
+    local_branch: &str,
+) -> Result<(String, StateSummary), String> {
+    let repo = git2::Repository::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+
+    execute_checkout_tracking_branch(&repo, remote_branch, local_branch)
+        .map_err(|e| format!("Checkout tracking failed: {}", e))?;
+    eprintln!(
+        "[kagi] executed: checkout-tracking {} -> {}",
+        remote_branch, local_branch
+    );
+
+    let after = verify_after_snapshot(repo_path, plan);
+    eprintln!("[kagi] verified: checkout-tracking after = {}", after.head);
+    Ok((format!("checkout {}", local_branch), after))
+}
+
 /// Blocking part of cherry-pick (in-memory index merge → commit → safe
 /// checkout_head). Scales with the diff size.
 fn cherry_pick_blocking(
@@ -9897,13 +10300,19 @@ fn create_worktree_blocking(
     branch_input: &str,
     path_input: &str,
     at: &CommitId,
+    allow_existing_branch: bool,
 ) -> Result<StateSummary, String> {
     let repo = git2::Repository::open(repo_path)
         .map_err(|e| format!("Repo open error: {}", e.message()))?;
     preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
 
-    execute_create_worktree(&repo, branch_input, path_input, at)
-        .map_err(|e| format!("Create worktree failed: {}", e))?;
+    if allow_existing_branch {
+        execute_open_worktree_for_branch(&repo, branch_input, path_input)
+            .map_err(|e| format!("Open worktree failed: {}", e))?;
+    } else {
+        execute_create_worktree(&repo, branch_input, path_input, at)
+            .map_err(|e| format!("Create worktree failed: {}", e))?;
+    }
     eprintln!(
         "[kagi] executed: create-worktree '{}' path='{}' @ {}",
         branch_input,
@@ -10342,6 +10751,55 @@ fn render_push_modal(modal: PushPlanModal, cx: &mut Context<KagiApp>) -> gpui::A
         cx.notify();
     });
     render_plan_modal_card(modal.plan, modal.error, "Push", cancel_handler, confirm_handler, None, cx)
+        .into_any_element()
+}
+
+fn render_merge_modal(modal: MergePlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+        this.cancel_merge_modal();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+        this.start_merge(cx);
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    render_plan_modal_card(modal.plan, modal.error, "Merge", cancel_handler, confirm_handler, None, cx)
+        .into_any_element()
+}
+
+fn render_tracking_checkout_modal(
+    modal: TrackingCheckoutPlanModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+        this.cancel_tracking_checkout_modal();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+        this.start_tracking_checkout(cx);
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    render_plan_modal_card(
+        modal.plan,
+        modal.error,
+        "Checkout",
+        cancel_handler,
+        confirm_handler,
+        None,
+        cx,
+    )
         .into_any_element()
 }
 

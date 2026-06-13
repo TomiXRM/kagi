@@ -82,6 +82,7 @@ pub struct BranchMenuContext {
     pub conflict_mode: BranchConflictMode,
     pub protected: bool,
     pub checked_out_in_other_worktree: bool,
+    pub checked_out_worktree_path: Option<String>,
     pub merged_into_current: bool,
     pub is_pushed: bool,
     pub detached_head: bool,
@@ -122,7 +123,7 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
                 item(
                     BranchAction::OpenWorktreeFromBranch,
                     "Open worktree from branch...",
-                    mutating_stub_state(ctx),
+                    open_worktree_state(ctx),
                     false,
                 ),
                 item(
@@ -176,13 +177,13 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
                 item(
                     BranchAction::MergeIntoCurrent,
                     merge_label,
-                    mutating_stub_state(ctx),
+                    merge_state(ctx),
                     false,
                 ),
                 item(
                     BranchAction::RebaseCurrentOnto,
                     rebase_label,
-                    mutating_stub_state(ctx),
+                    rebase_state(ctx),
                     false,
                 ),
             ],
@@ -199,7 +200,7 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
                 item(
                     BranchAction::CreateWorktreeFromHere,
                     "Create worktree from here...",
-                    mutating_stub_state(ctx),
+                    create_worktree_state(ctx),
                     false,
                 ),
                 item(
@@ -548,12 +549,26 @@ fn remote_stub_state(ctx: &BranchMenuContext) -> ItemState {
 fn checkout_state(ctx: &BranchMenuContext) -> ItemState {
     if ctx.busy {
         disabled(Msg::BcmBusy.t())
-    } else if matches!(ctx.kind, BranchKind::Remote) {
-        disabled(Msg::BcmNotImplementedYet.t())
+    } else if matches!(ctx.conflict_mode, BranchConflictMode::Conflicted) {
+        disabled(Msg::BcmConflictMode.t())
     } else if ctx.is_current {
         disabled(Msg::BcmCurrentBranch.t())
     } else if ctx.checked_out_in_other_worktree {
-        disabled(Msg::BcmCheckedOutElsewhere.t())
+        let path = ctx
+            .checked_out_worktree_path
+            .as_deref()
+            .unwrap_or("another worktree");
+        disabled(format!("{}: {}", Msg::BcmCheckedOutElsewhere.t(), path))
+    } else {
+        ItemState::Enabled
+    }
+}
+
+fn open_worktree_state(ctx: &BranchMenuContext) -> ItemState {
+    if matches!(ctx.kind, BranchKind::Remote) {
+        disabled(Msg::BcmNotImplementedYet.t())
+    } else if ctx.busy {
+        disabled(Msg::BcmBusy.t())
     } else {
         ItemState::Enabled
     }
@@ -564,6 +579,40 @@ fn create_branch_state(ctx: &BranchMenuContext) -> ItemState {
         disabled(Msg::BcmBusy.t())
     } else {
         ItemState::Enabled
+    }
+}
+
+fn create_worktree_state(ctx: &BranchMenuContext) -> ItemState {
+    if ctx.busy {
+        disabled(Msg::BcmBusy.t())
+    } else {
+        ItemState::Enabled
+    }
+}
+
+fn merge_state(ctx: &BranchMenuContext) -> ItemState {
+    if ctx.busy {
+        disabled(Msg::BcmBusy.t())
+    } else if ctx.detached_head {
+        disabled(Msg::BcmDetachedHead.t())
+    } else if matches!(ctx.conflict_mode, BranchConflictMode::Conflicted) {
+        disabled(Msg::BcmConflictMode.t())
+    } else if ctx.is_current {
+        disabled(Msg::BcmCurrentBranch.t())
+    } else {
+        ItemState::Enabled
+    }
+}
+
+fn rebase_state(ctx: &BranchMenuContext) -> ItemState {
+    if ctx.busy {
+        disabled(Msg::BcmBusy.t())
+    } else if ctx.detached_head {
+        disabled(Msg::BcmDetachedHead.t())
+    } else if matches!(ctx.conflict_mode, BranchConflictMode::Conflicted) {
+        disabled(Msg::BcmConflictMode.t())
+    } else {
+        disabled(Msg::BcmNotImplementedYet.t())
     }
 }
 
@@ -711,6 +760,7 @@ mod tests {
             conflict_mode: BranchConflictMode::None,
             protected: false,
             checked_out_in_other_worktree: false,
+            checked_out_worktree_path: None,
             merged_into_current: true,
             is_pushed: true,
             detached_head: false,
@@ -769,6 +819,7 @@ mod tests {
         assert_enabled(&groups, BranchAction::CopyBranchName);
         assert_enabled(&groups, BranchAction::CopyHeadSha);
         assert_enabled(&groups, BranchAction::CopyUpstreamName);
+        assert_enabled(&groups, BranchAction::MergeIntoCurrent);
         assert_eq!(
             item_for(&groups, BranchAction::Pull).label.as_ref(),
             "Pull ↓3"
@@ -817,7 +868,8 @@ mod tests {
         c.upstream_name = None;
         let groups = branch_context_menu_items(&c);
 
-        assert_disabled_contains(&groups, BranchAction::Checkout, "not implemented");
+        assert_enabled(&groups, BranchAction::Checkout);
+        assert_enabled(&groups, BranchAction::MergeIntoCurrent);
         assert_hidden(&groups, BranchAction::DeleteBranch);
         assert_disabled_contains(&groups, BranchAction::DeleteRemoteBranch, "not implemented");
     }
@@ -834,5 +886,29 @@ mod tests {
         assert_enabled(&groups, BranchAction::RevealHead);
         assert_enabled(&groups, BranchAction::CopyBranchName);
         assert_enabled(&groups, BranchAction::CopyHeadSha);
+    }
+
+    #[test]
+    fn merge_and_rebase_labels_include_direction() {
+        let groups = branch_context_menu_items(&ctx());
+
+        assert_eq!(
+            item_for(&groups, BranchAction::MergeIntoCurrent).label.as_ref(),
+            "Merge feature/x into main"
+        );
+        assert_eq!(
+            item_for(&groups, BranchAction::RebaseCurrentOnto).label.as_ref(),
+            "Rebase main onto feature/x"
+        );
+    }
+
+    #[test]
+    fn conflict_mode_disables_integrate_items() {
+        let mut c = ctx();
+        c.conflict_mode = BranchConflictMode::Conflicted;
+        let groups = branch_context_menu_items(&c);
+
+        assert_disabled_contains(&groups, BranchAction::MergeIntoCurrent, "conflicts");
+        assert_disabled_contains(&groups, BranchAction::RebaseCurrentOnto, "conflicts");
     }
 }

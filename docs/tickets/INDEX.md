@@ -176,11 +176,11 @@
 | 基盤 | T-BCM-001〜006 | todo |
 | Safe ops | T-BCM-010〜014 | todo |
 | Sync | T-BCM-020〜024 | todo |
-| Integrate | T-BCM-030〜034(032/063 は MVP 外) | todo |
-| Worktree | T-BCM-040〜043 | todo |
+| Integrate | T-BCM-030〜034(032/063 は MVP 外) | done(030/033/034; 032 MVP 外) |
+| Worktree | T-BCM-040〜043 | done(041/042/043; 040 ADR 済み) |
 | Manage | T-BCM-050〜054 | todo |
-| Remote | T-BCM-060〜063 | todo |
-| Tests | T-BCM-070〜073 | todo |
+| Remote | T-BCM-060〜063 | done(060/061/062; 063 MVP 外) |
+| Tests | T-BCM-070〜073 | done(073) |
 
 ## Conflict Resolution UX(requirements-conflict-ux.md / ADR-0056〜0061。実装はユーザー go 待ち)
 

@@ -284,9 +284,11 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<Worktree>, GitError> {
     };
 
     let mut worktrees = Vec::new();
+    let main_branch = worktree_branch_name(&main_path);
     worktrees.push(Worktree {
         name: "main".to_string(),
         path: main_path.clone(),
+        branch: main_branch,
         is_current: current_path == main_path,
         is_main: true,
     });
@@ -303,10 +305,12 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<Worktree>, GitError> {
             Err(_) => continue,
         };
         let path = wt.path().to_path_buf();
+        let branch = worktree_branch_name(&path);
         worktrees.push(Worktree {
             name: name.to_string(),
             is_current: path == current_path,
             path,
+            branch,
             is_main: false,
         });
     }
@@ -318,4 +322,10 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<Worktree>, GitError> {
             .then(a.name.cmp(&b.name))
     });
     Ok(worktrees)
+}
+
+fn worktree_branch_name(path: &std::path::Path) -> Option<String> {
+    let repo = Repository::open(path).ok()?;
+    let head = repo.head().ok()?;
+    head.shorthand().ok().map(str::to_string)
 }

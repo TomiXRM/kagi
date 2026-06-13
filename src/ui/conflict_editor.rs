@@ -451,6 +451,7 @@ fn side_row_list(
         .min_h(px(0.))
         .flex()
         .flex_col()
+        .overflow_x_scroll()
         .child(
             uniform_list(
                 list_id,
@@ -621,7 +622,7 @@ fn render_code_line_row(
         .flex()
         .flex_row()
         .items_center()
-        .w_full()
+        .min_w(relative(1.0))
         .h(theme::scaled_px(17.))
         .px(theme::scaled_px(4.))
         .gap_1()
@@ -645,13 +646,12 @@ fn render_code_line_row(
         )
         .child(
             div()
-                .min_w(px(0.))
-                .flex_1()
+                .flex_shrink_0()
+                .whitespace_nowrap()
                 .text_size(theme::scaled_px(12.))
                 .line_height(theme::scaled_px(17.))
                 .font_family(terminal::pick_font_family())
                 .text_color(rgb(if taken { theme().text_main } else { theme().text_muted }))
-                .overflow_hidden()
                 .child(SharedString::from(text_value)),
         )
         .into_any_element()
@@ -880,7 +880,18 @@ fn render_result_pane(
         .border_color(rgb(theme().surface))
         .bg(rgb(theme().bg_base))
         .child(header)
-        .child(div().flex_grow().w_full().min_h(px(0.)).child(editor))
+        .child(
+            // Match the A/B line-row code font: same size (12px) + terminal
+            // family, inherited by the Result InputState (user request to align
+            // Preview / A·B editor text sizes).
+            div()
+                .flex_grow()
+                .w_full()
+                .min_h(px(0.))
+                .text_size(theme::scaled_px(12.))
+                .font_family(terminal::pick_font_family())
+                .child(editor),
+        )
         .into_any_element()
 }
 

@@ -1,6 +1,6 @@
 # T-SETTINGS-001: Settings button (top-right) + Settings window (OpenLogi-style)
 
-- Status: in-review (実装完了、PM GUI 確認待ち / branch `rearch/settings-window`)
+- Status: done (PM accepted — GUI-verified 2026-06-14)
 - Group: 新機能 / settings
 - 仕様の正: ADR-0080. Reference impl: OpenLogi `crates/openlogi-gui/src/windows/settings.rs`.
 
@@ -116,3 +116,17 @@ set クロージャは `&mut App` を受け取るので `Entity<KagiApp>`(`cx.en
 - 不確実点:`gpui_component::setting` の `Settings` は `RenderOnce`(child として追加で OK、build 時 `Window` 不要)。
   内部 search box の placeholder は `rust_i18n::t!` だが未ロードでもキー文字列を返すだけで panic しない(GUI で要目視)。
   number stepper の見た目/Select の開閉は headless では確認不可 → PM GUI 確認対象。
+
+## PM acceptance (2026-06-14, GUI-verified with cliclick)
+- ✅ ⌘, (and the top-right gear) opens the Settings window — OpenLogi-style left sidebar
+  (Appearance / Language) + pages.
+- ✅ Appearance page renders Theme (dropdown, 6 themes), UI Zoom (stepper), Compact graph
+  (switch). **Bug found + fixed by PM:** the overlay panel needed `.flex().flex_col()`
+  or the page's virtualized list rendered empty (see fix commit).
+- ✅ Live-apply verified: selecting "One Light" recolored the entire app immediately and
+  persisted `theme: one-light` to ~/.kagi/settings.json (restored to catppuccin-mocha after).
+- ✅ `cargo test --workspace` green; `grep git2 src/ui` = 0.
+- Known polish (fast-follow): in dark themes the SettingItem field titles render
+  low-contrast (descriptions/controls are fine; light themes fine). Root cause not
+  obvious (Label uses theme.foreground which the bridge maps to text_main); does not
+  block the feature. Screens: /tmp/kagi_settings_fixed_panel.png, /tmp/kagi_theme_applied.png.

@@ -1,6 +1,6 @@
 # T-DNDMERGE-001: Drag-and-drop branch merge (start merge by dragging a branch label)
 
-- Status: todo
+- Status: done (PM accepted — GUI-verified 2026-06-14)
 - Group: 新機能 / sidebar + merge
 - 仕様の正: ADR-0079 + this ticket. Reuses the existing merge pipeline
   (`open_merge_modal` → `Backend::plan_merge_branch` → `MergePlanModal` →
@@ -119,3 +119,16 @@ title を大きく表示)。confirm ボタンは既存どおり `Merge`(conflict
 `src/ui/mod.rs`(BranchDrag / BranchDragGhost / validate_merge_from_drag /
 start_merge_from_drag + unit tests)、`src/ui/sidebar.rs`(drag/drop 配線 + import)、
 `tests/drag_merge_test.rs`(新規)、本ファイル。i18n は既存 `Msg::OpInProgress` を流用。
+
+## PM acceptance (2026-06-14, GUI-verified with cliclick)
+
+Drove the real gesture: dragged `feature/two` onto the current branch `main` in the
+running app.
+- ✅ Drag started a merge (`[kagi] drag-merge: start merge from drag — source=feature/two`);
+  drop opened the merge preview dialog — NOT executed.
+- ✅ Dialog title + button both explicit: **"Merge feature/two into main"** (Cancel + the
+  named confirm button; no vague OK/Apply).
+- ✅ Plan showed current→predicted state, dirty-WT warnings, merge-commit kind, 0 blockers.
+- ✅ Drop did not execute: HEAD unchanged (3adca07), no `MERGE_HEAD`.
+- ✅ Cancel closed the dialog with repository state unchanged.
+Screens: /tmp/kagi_dnd_post2.png (dialog), /tmp/kagi_dnd_cancel3.png (after cancel).

@@ -205,3 +205,11 @@
 | Dashboard 限定 | T-CONFLICT-DASH-020〜023 | todo |
 | Flow(Save/Continue/Commit 分離) | T-CONFLICT-FLOW-030〜033 | todo |
 | Polish(icon/confirm/highlight) | T-CONFLICT-POLISH-040〜043 | todo |
+
+## Conflict line-level resolution(ADR-0071、flow レーン merge 後に実装)
+
+| ID | 内容 | status |
+|----|------|--------|
+| T-CONFLICT-LINE-001 | line 単位採用モデル(resolution.rs) | todo |
+| T-CONFLICT-LINE-002 | A/B を行リスト+左チェックボックス化 | todo |
+| T-CONFLICT-LINE-003 | file/chunk/line tri-state UI | todo |

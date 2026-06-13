@@ -99,6 +99,19 @@ cargo run --release -- /path/to/your/repo
 - First build takes a few minutes (gpui / libgit2); afterwards it's seconds
 - Bare repositories are not supported (point it at a normal repo with a working tree)
 
+### Install the `kagi` command
+
+Install the binary onto your `PATH` so you can open any repo from the terminal:
+
+```sh
+cargo install --path .          # installs `kagi` to ~/.cargo/bin
+kagi /path/to/your/repo         # open Kagi on that repo
+kagi                            # no arg → Welcome screen
+```
+
+The binary embeds all its assets, so it is self-contained (no asset directory to
+ship alongside it).
+
 ### Try it without touching your repos
 
 ```sh

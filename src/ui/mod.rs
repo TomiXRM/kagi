@@ -15,6 +15,7 @@ pub mod conflict_editor;
 pub mod conflict_view;
 pub mod context_menu;
 pub mod detail_panel;
+pub mod diff_view;
 pub mod diffstat_bar;
 pub mod file_tree;
 pub mod graph_view;
@@ -29,6 +30,7 @@ pub mod theme;
 pub mod watcher;
 
 use i18n::Msg;
+pub use diff_view::*;
 pub use modals::*;
 use theme::theme;
 
@@ -232,7 +234,7 @@ use kagi::git::{
         default_tracking_branch_name, validate_branch_rename, AmendMode, MergeKind, OperationPlan,
         PullOutcome, StateSummary,
     },
-    ChangeKind, CommitId, DiffLineKind, FileDiff, FileDiffStat, FileStatus, Head, RemoteBranch,
+    ChangeKind, CommitId, DiffLineKind, FileDiffStat, FileStatus, Head, RemoteBranch,
     RepoSnapshot, Stash, Tag, UpstreamInfo, Worktree,
 };
 
@@ -675,276 +677,6 @@ impl Toast {
 const TOASTS_MAX: usize = 4;
 
 // ──────────────────────────────────────────────────────────────
-// FileDiffView — pre-rendered diff rows for the diff panel
-// ──────────────────────────────────────────────────────────────
-
-/// A single displayable row in the diff viewer.
-#[derive(Clone)]
-pub enum DiffRow {
-    /// A hunk header line (`@@ -a,b +c,d @@`).
-    HunkHeader(SharedString),
-    /// A content line (context / added / removed).
-    Line {
-        kind: DiffLineKind,
-        /// The line content as a displayable string (with leading sigil stripped).
-        text: SharedString,
-        /// Old-side line number (None for Added lines).
-        old_lineno: Option<u32>,
-        /// New-side line number (None for Removed lines).
-        new_lineno: Option<u32>,
-        /// T-UI-004: Pre-computed syntax highlight spans (byte ranges + styles).
-        /// Empty when the file type is unknown or highlighting failed.
-        highlights: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>,
-    },
-    /// Placeholder shown for binary files.
-    Binary,
-}
-
-/// Pre-computed state for the diff view panel.
-#[derive(Clone)]
-pub struct FileDiffView {
-    /// Display name of the file (path component).
-    pub file_name: SharedString,
-    /// All displayable rows: hunk headers + content lines.
-    pub rows: Vec<DiffRow>,
-    /// Row index into the commit's changed-files list (reserved for future
-    /// navigation: e.g. "previous / next file" buttons in the diff panel).
-    #[allow(dead_code)]
-    pub file_index: usize,
-}
-
-impl FileDiffView {
-    /// Build a [`FileDiffView`] from a [`FileDiff`] result.
-    pub fn from_file_diff(file_diff: &FileDiff, file_index: usize) -> Self {
-        let path = file_diff.new_path.as_ref().or(file_diff.old_path.as_ref());
-        let file_name = SharedString::from(
-            path.map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-        );
-
-        let mut rows: Vec<DiffRow> = Vec::new();
-
-        if file_diff.is_binary {
-            rows.push(DiffRow::Binary);
-        } else {
-            for hunk in &file_diff.hunks {
-                // Build hunk header string.
-                let (os, oc) = hunk.old_range;
-                let (ns, nc) = hunk.new_range;
-                let header = SharedString::from(format!("@@ -{},{} +{},{} @@", os, oc, ns, nc));
-                rows.push(DiffRow::HunkHeader(header));
-
-                for line in &hunk.lines {
-                    // Strip the trailing newline for display (keep content clean).
-                    let raw = line.content.trim_end_matches('\n').trim_end_matches('\r');
-                    // Add leading sigil for clarity.
-                    let text = match line.kind {
-                        DiffLineKind::Added => SharedString::from(format!("+{}", raw)),
-                        DiffLineKind::Removed => SharedString::from(format!("-{}", raw)),
-                        DiffLineKind::Context => SharedString::from(format!(" {}", raw)),
-                    };
-                    rows.push(DiffRow::Line {
-                        kind: line.kind.clone(),
-                        text,
-                        old_lineno: line.old_lineno,
-                        new_lineno: line.new_lineno,
-                        highlights: vec![],
-                    });
-                }
-            }
-        }
-
-        FileDiffView {
-            file_name,
-            rows,
-            file_index,
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────
-// T-UI-003: MainDiffView — full-width main pane diff state
-// ──────────────────────────────────────────────────────────────
-
-/// Where the diff was opened from (used for re-load and navigation).
-#[derive(Clone)]
-pub enum MainDiffSource {
-    /// Opened from the commit detail panel (changed-files list).
-    Commit { row_index: usize, file_index: usize },
-    /// Opened from the compare changed-files list.
-    Compare {
-        base: CommitId,
-        target: CompareTarget,
-        file_index: usize,
-    },
-    /// Opened from the Commit Panel — unstaged file.
-    Unstaged { path: PathBuf },
-    /// Opened from the Commit Panel — staged file.
-    Staged { path: PathBuf },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CompareTarget {
-    Head,
-    WorkingTree,
-}
-
-#[derive(Clone, Debug)]
-pub struct CompareView {
-    pub base: CommitId,
-    pub target: CompareTarget,
-    pub files: Vec<FileStatus>,
-    pub title: SharedString,
-}
-
-/// State for the full-width main pane diff view (T-UI-003).
-#[derive(Clone)]
-pub struct MainDiffView {
-    /// Display title: file path.
-    pub title: SharedString,
-    /// Stats string: "+N −M".
-    pub stats: SharedString,
-    /// All displayable rows (hunk headers + content lines).
-    pub rows: Vec<DiffRow>,
-    /// Where this diff was opened from (for re-load / back navigation).
-    #[allow(dead_code)]
-    pub source: MainDiffSource,
-}
-
-// ──────────────────────────────────────────────────────────────
-// T-UI-004: Syntax highlighting for diff rows
-// ──────────────────────────────────────────────────────────────
-
-/// Map a file extension to a language name understood by `gpui_component`'s
-/// `LanguageRegistry`.  Returns `None` for unknown extensions.
-fn lang_for_ext(ext: &str) -> Option<&'static str> {
-    match ext.to_ascii_lowercase().as_str() {
-        "rs" => Some("rust"),
-        "py" => Some("python"),
-        "js" | "jsx" => Some("javascript"),
-        "ts" => Some("typescript"),
-        "tsx" => Some("tsx"),
-        "json" | "jsonc" => Some("json"),
-        "toml" => Some("toml"),
-        "yaml" | "yml" => Some("yaml"),
-        "md" | "mdx" => Some("markdown"),
-        "sh" | "bash" => Some("bash"),
-        "c" => Some("c"),
-        "cpp" | "cc" | "cxx" => Some("cpp"),
-        "h" | "hpp" => Some("cpp"),
-        "css" | "scss" => Some("css"),
-        "html" | "htm" => Some("html"),
-        "go" => Some("go"),
-        "java" => Some("java"),
-        "rb" => Some("ruby"),
-        "zig" => Some("zig"),
-        "sql" => Some("sql"),
-        "swift" => Some("swift"),
-        _ => None,
-    }
-}
-
-/// T-UI-004: Apply syntax highlighting to a slice of `DiffRow`s in-place.
-///
-/// The file path's extension is used to select the language. If the language
-/// is unknown or highlighting fails, rows are left with empty highlight spans
-/// (plain-colour fallback).  Never panics.
-///
-/// Returns the language name that was used (or "none").
-fn highlight_diff_rows(rows: &mut Vec<DiffRow>, file_path: &std::path::Path) -> &'static str {
-    use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};
-    use gpui_component::Rope;
-
-    // Determine language from extension.
-    let lang = file_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .and_then(lang_for_ext);
-
-    let lang = match lang {
-        Some(l) => l,
-        None => return "none",
-    };
-
-    // Build the full source text for the "new" side of the diff by concatenating
-    // all Line rows.  We use a one-pass approach:
-    //   1. Collect (text_without_sigil, byte_start_in_rope) for each Line row.
-    //   2. Feed the combined text to the highlighter.
-    //   3. Distribute the resulting (byte_range, style) spans back to each row,
-    //      offsetting by byte_start_in_rope.
-    //
-    // The sigil (+/-/ ) at position 0 of each `text` is kept in the display string
-    // but excluded from the highlighted region — highlights start at byte 1.
-
-    let mut line_offsets: Vec<(usize, usize)> = Vec::new(); // (row_index, rope_byte_start)
-    let mut combined = String::new();
-
-    for (i, row) in rows.iter().enumerate() {
-        if let DiffRow::Line { text, .. } = row {
-            let t = text.as_ref();
-            let start = combined.len();
-            // Skip the leading sigil ('+', '-', ' ') for parsing purposes.
-            // The highlight byte ranges will be relative to `combined`, which
-            // starts after the sigil.
-            let content = if t.len() > 0 { &t[1..] } else { "" };
-            combined.push_str(content);
-            combined.push('\n');
-            line_offsets.push((i, start));
-        }
-    }
-
-    if combined.is_empty() {
-        return lang;
-    }
-
-    // Build highlighter and parse the combined source.
-    let mut highlighter = SyntaxHighlighter::new(lang);
-    let rope = Rope::from_str(&combined);
-    highlighter.update(None, &rope);
-
-    // Use a syntax-highlight theme matching the active UI theme's brightness
-    // (W9-THEME): dark themes → default_dark, light themes → default_light.
-    let hl_theme = if theme::theme().dark {
-        HighlightTheme::default_dark()
-    } else {
-        HighlightTheme::default_light()
-    };
-    let all_styles = highlighter.styles(&(0..combined.len()), &hl_theme);
-
-    // Distribute styles back to rows.
-    // For each row we know: rope_byte_start (start of content inside `combined`,
-    // i.e. after the sigil) and rope_byte_end = start_of_next_row - 1 (the \n).
-    for k in 0..line_offsets.len() {
-        let (row_i, rope_start) = line_offsets[k];
-        let rope_end = if k + 1 < line_offsets.len() {
-            line_offsets[k + 1].1
-        } else {
-            combined.len()
-        };
-        // The content slice is rope_start..rope_end (excludes the trailing \n).
-        let content_end = rope_end.saturating_sub(1); // strip the \n
-
-        // Collect highlight spans that overlap [rope_start, content_end).
-        let mut row_highlights: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> = Vec::new();
-        for (range, style) in &all_styles {
-            let clipped_start = range.start.max(rope_start);
-            let clipped_end = range.end.min(content_end);
-            if clipped_start >= clipped_end {
-                continue;
-            }
-            // Translate back to row-local byte offsets (offset by 1 for the sigil).
-            let local_start = 1 + (clipped_start - rope_start);
-            let local_end = 1 + (clipped_end - rope_start);
-            row_highlights.push((local_start..local_end, *style));
-        }
-
-        if let DiffRow::Line { highlights, .. } = &mut rows[row_i] {
-            *highlights = row_highlights;
-        }
-    }
-
-    lang
-}
 
 /// W29-I18N-WAVE2: build the localized blocker list for an [`OperationPlan`].
 ///

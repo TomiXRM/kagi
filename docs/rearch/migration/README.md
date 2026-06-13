@@ -13,16 +13,30 @@ note why any destructive change was made.
 
 ## Steps
 
-- [ ] **S1 — Workspace skeleton.** Create `crates/{kagi-domain,kagi-git,kagi-app,kagi-ui,kagi}` + `kagi-test-fixtures`. Move the existing bin into `crates/kagi`. Keep code shape; use `pub use` bridges. Compiles + tests green.
-- [ ] **S2 — Extract `kagi-domain`.** Move already-pure modules (graph, diff/diffstat models, resolution, templates, checklist, message-gen rules, status/refs models, plan types, settings/i18n). Re-point tests. Unlocks the test pyramid base.
-- [ ] **S3 — Extract `kagi-git`.** `GitBackend` trait + `Operation` enum; split `ops.rs` per-op; stand up the per-session worker thread; git2 adapter behavior-identical (move verbatim, refactor second). CLI adapter for network.
+- [x] **S1 — Workspace skeleton.** Added `crates/kagi-domain` as a workspace member + dep of root `kagi`. (Full crate fan-out — kagi-git/app/ui/bin split — deferred until S3b/S4/S5 when the layers actually separate; root `kagi` crate stays the bin/ui host for now via bridges.)
+- [x] **S2 — Extract `kagi-domain`.** Done in 4 batches (S2a–S2d), all green:
+  - S2a: `commit`, `graph`. S2b: `refs`, `message_template`, `trailers`.
+  - S2c (Codex): split `status`, `diffstat`, `diff`, `checklist` (model→domain, git2→backend).
+  - S2d (Codex): split `resolution` (conflict model), `message_gen` (rule-based + parsers).
+  - kagi-domain = 3,418 LOC, 11 modules, zero git2/gpui. Old `kagi::git::*` paths preserved via per-module re-export shims in `src/git/`.
+- [ ] **S3 — Extract `kagi-git`.** Sub-steps:
+  - [ ] S3a — move pure plan/error types (`Head`, `GitError`, `OperationPlan`, `StateSummary`, validation enums, pure outcome types) from `ops.rs`/`git/mod.rs` to domain (bridges).
+  - [ ] S3b — `GitBackend` trait + `Operation` enum; split `ops.rs` per-op; per-session worker thread; git2 adapter behavior-identical; CLI adapter for network. *(Gated with S5: needs the OperationController as the UI's call path.)*
 - [ ] **S4 — De-leak the UI.** Route every `Repository::open`/`git2::` site in the view through `OperationController`/`GitBackend`. Add CI grep gate. *(Candidate for Codex GPT-5.5 high/xhigh, batched per feature area.)*
 - [ ] **S5 — Introduce `kagi-app`.** `AppState`/`RepoSession`/`OperationController`; collapse active-vs-cache; `Selection` enum; `RepoMode`.
 - [ ] **S6 — Split the view.** Carve `ui/mod.rs` into per-feature components + view-models; collapse modals into `ActiveModal`.
 - [ ] **S7 — Retire `KAGI_*`, add `ci.yml`, update README for v1.0.**
 
 ## Deviations / decisions log
-- (none yet)
+- **2026-06-14:** S1 scoped down — instead of creating all 5 crates up front (a big
+  churn with no immediate payoff), only `kagi-domain` was carved now. The remaining
+  crate boundaries (kagi-git/app/ui/bin) are introduced when the code actually
+  separates at S3b/S4/S5, to avoid a long red window. The git2-confinement invariant
+  is still the end goal; it becomes enforceable once the UI is de-leaked (S4).
+- **2026-06-14:** S2c/S2d delegated to Codex (gpt-5.5, high reasoning) per the
+  Codex-for-complex-implementation directive. Each batch reviewed + re-tested by
+  Claude before commit. Pattern: precise per-module brief, hard green/no-API-change
+  constraints, Codex iterates cargo itself, Claude verifies invariants + commits.
 
 ## Tooling note
 Heavy mechanical-but-intricate extraction (S4, parts of S3/S6) may be delegated to

@@ -74,26 +74,21 @@
 use std::path::{Component, Path, PathBuf};
 
 use git2::{BranchType, Repository, StashFlags, WorktreeAddOptions};
+use kagi_domain::head::Head;
 
-use super::{GitError, Head, resolve_head, status::{working_tree_status, ChangeKind, FileStatus}};
-use super::log::CommitId;
 use super::cli::run_git;
+use super::log::CommitId;
+use super::{GitError, resolve_head, status::{working_tree_status, ChangeKind, FileStatus}};
+
+pub use kagi_domain::plan::{
+    AmendMode, AmendOutcome, BranchNameError, BranchRenameValidation, DiscardBackup,
+    DiscardOutcome, FetchOutcome, MergeKind, PullOutcome, PushOutcome, StateSummary,
+    UndoOutcome, WorktreePathError, WorktreeValidationError,
+};
 
 // ────────────────────────────────────────────────────────────
 // Public types
 // ────────────────────────────────────────────────────────────
-
-/// One-line summary of repository state for display in the plan modal.
-///
-/// Example: `head = "branch: main"`, `dirty = "1 modified, 1 untracked"`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StateSummary {
-    /// Description of HEAD, e.g. `"branch: main"` or `"detached: a1b2c3d4"`.
-    pub head: String,
-    /// Description of working-tree cleanliness, e.g. `"clean"` or
-    /// `"1 staged, 2 modified, 3 untracked"`.
-    pub dirty: String,
-}
 
 /// A complete plan describing what an operation will do, including
 /// any blockers that prevent execution and warnings that should be surfaced.
@@ -144,103 +139,6 @@ impl OperationPlan {
     pub fn stash_count_at_plan(&self) -> usize {
         self.stash_count_at_plan
     }
-}
-
-/// Keyed, user-facing reason why a branch name is rejected (W29-I18N-WAVE2).
-///
-/// This is the **localization key** for branch-name validation messages. The
-/// UI maps each variant to a localized [`crate::ui::i18n::Msg`]; the [`Display`]
-/// impl here returns the **exact current English wording** so the existing tests
-/// that pin those strings (and the English-only `OperationPlan::blockers`) keep
-/// passing unchanged.
-///
-/// Variants are split by call site because the create-branch and rename-branch
-/// paths historically used different wording for the same condition (e.g.
-/// "Branch name must not be empty." vs "Branch name is required.").
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BranchNameError {
-    /// create-branch: name is empty. → "Branch name must not be empty."
-    EmptyCreate,
-    /// rename-branch: name is empty/blank. → "Branch name is required."
-    Required,
-    /// rename-branch: leading/trailing whitespace.
-    Whitespace,
-    /// rename-branch: new name equals the old name.
-    SameName,
-    /// rename-branch: a branch with this name already exists.
-    RenameExists(String),
-    /// rename-branch: not a valid git ref name.
-    RenameInvalid(String),
-    /// create-branch: not a valid git ref name.
-    CreateInvalidRef(String),
-    /// create-branch: name starts with `-`.
-    CreateLeadingDash(String),
-    /// create-branch: a branch with this name already exists.
-    CreateExists(String),
-}
-
-impl std::fmt::Display for BranchNameError {
-    /// **Exact current English wording** — do NOT change without updating the
-    /// tests that pin these strings (they substring-match these).
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BranchNameError::EmptyCreate => write!(f, "Branch name must not be empty."),
-            BranchNameError::Required => write!(f, "Branch name is required."),
-            BranchNameError::Whitespace => {
-                write!(f, "Branch name must not start or end with whitespace.")
-            }
-            BranchNameError::SameName => write!(f, "Branch already has that name."),
-            BranchNameError::RenameExists(name) => write!(f, "Branch '{}' already exists.", name),
-            BranchNameError::RenameInvalid(name) => {
-                write!(f, "'{}' is not a valid branch name.", name)
-            }
-            BranchNameError::CreateInvalidRef(name) => write!(
-                f,
-                "Branch name '{}' is not a valid git ref name \
-                 (no spaces, '..', or other invalid characters).",
-                name
-            ),
-            BranchNameError::CreateLeadingDash(name) => {
-                write!(f, "Branch name '{}' must not start with '-'.", name)
-            }
-            BranchNameError::CreateExists(name) => {
-                write!(f, "A branch named '{}' already exists in this repository.", name)
-            }
-        }
-    }
-}
-
-/// Keyed, user-facing reason why a worktree path is rejected (W29-I18N-WAVE2).
-///
-/// Only the two reasons the ticket localizes are keyed here (empty / already
-/// exists); the remaining worktree-path reasons stay English-only via
-/// [`OperationPlan::blockers`]. [`Display`] returns the exact current English.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WorktreePathError {
-    /// Path was empty.
-    Empty,
-    /// The target path already exists (carries the display path).
-    Exists(String),
-}
-
-impl std::fmt::Display for WorktreePathError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            WorktreePathError::Empty => write!(f, "Worktree path must not be empty."),
-            WorktreePathError::Exists(path) => {
-                write!(f, "Worktree path '{}' already exists.", path)
-            }
-        }
-    }
-}
-
-/// Result of pure branch rename input validation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BranchRenameValidation {
-    Valid,
-    /// Rejected — carries the keyed reason. Use `reason.to_string()` for the
-    /// English text (tests) or map it to a localized message in the UI.
-    Invalid(BranchNameError),
 }
 
 /// Validate a local branch rename target without touching repository state.
@@ -636,16 +534,16 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
 /// substantiate.
 fn predict_checkout_commit_conflict(
     repo: &Repository,
-    head: &super::Head,
+    head: &Head,
     target_oid: git2::Oid,
     status: &super::status::WorkingTreeStatus,
 ) -> Option<String> {
     // Resolve the current HEAD tree (the baseline the checkout diffs against).
     let head_oid = match head {
-        super::Head::Attached { target, .. } | super::Head::Detached { target } => {
+        Head::Attached { target, .. } | Head::Detached { target } => {
             git2::Oid::from_str(target).ok()?
         }
-        super::Head::Unborn { .. } => return None,
+        Head::Unborn { .. } => return None,
     };
     let head_tree = repo.find_commit(head_oid).ok()?.tree().ok()?;
     let target_tree = repo.find_commit(target_oid).ok()?.tree().ok()?;
@@ -915,26 +813,6 @@ fn normalize_path(path: &Path) -> PathBuf {
         }
     }
     out
-}
-
-/// A worktree-path validation failure: either a **keyed** reason the UI can
-/// localize (W29-I18N-WAVE2) or a plain English-only `Other` reason that stays
-/// untranslated for now. `to_string()` yields the exact English wording.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WorktreeValidationError {
-    /// One of the two reasons the ticket localizes (empty / already exists).
-    Keyed(WorktreePathError),
-    /// Any other reason — stays English-only.
-    Other(String),
-}
-
-impl std::fmt::Display for WorktreeValidationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            WorktreeValidationError::Keyed(e) => write!(f, "{}", e),
-            WorktreeValidationError::Other(s) => write!(f, "{}", s),
-        }
-    }
 }
 
 /// Validate and normalize a worktree path entered by the user.
@@ -1852,15 +1730,15 @@ fn stash_drop_internal(repo: &mut Repository, index: usize) -> Result<(), GitErr
 /// Returns `Some(blocker_message)` if a conflict is predicted, `None` if clean.
 fn predict_stash_pop_conflict(
     repo: &Repository,
-    head: &super::Head,
+    head: &Head,
     stash_oid: git2::Oid,
 ) -> Option<String> {
     // Resolve HEAD OID.
     let head_oid = match head {
-        super::Head::Attached { target, .. } | super::Head::Detached { target } => {
+        Head::Attached { target, .. } | Head::Detached { target } => {
             git2::Oid::from_str(target).ok()?
         }
-        super::Head::Unborn { .. } => return None,
+        Head::Unborn { .. } => return None,
     };
 
     let head_commit = repo.find_commit(head_oid).ok()?;
@@ -2667,24 +2545,6 @@ pub fn execute_cherry_pick(repo: &Repository, id: &CommitId) -> Result<CommitId,
 // ────────────────────────────────────────────────────────────
 // plan_merge_branch / execute_merge_branch  (T-BCM-030 / W31-MERGE-INTO-CONFLICT)
 // ────────────────────────────────────────────────────────────
-
-/// What a planned merge will actually do once executed.
-///
-/// W31-MERGE-INTO-CONFLICT: a predicted conflict is **no longer a blocker**.
-/// Instead the plan carries this kind so the UI can warn + confirm and then
-/// drive the real merge into Conflict Mode. The signal lives here (not on
-/// [`OperationPlan`], which has ~33 struct literals that must stay untouched).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MergeKind {
-    /// HEAD is an ancestor of target: the branch ref simply fast-forwards.
-    FastForward,
-    /// Diverged but mergeable: a merge commit is created.
-    MergeCommit,
-    /// Diverged and the in-memory merge predicts conflicts in these file(s).
-    /// Executing performs the real merge, leaving conflict markers + index
-    /// stages + `MERGE_HEAD` for Conflict Mode to resolve or abort.
-    Conflicts(Vec<String>),
-}
 
 /// Analyse whether merging `target` into the current branch is safe, returning
 /// the [`OperationPlan`] paired with the [`MergeKind`] it will perform.
@@ -3551,25 +3411,6 @@ pub fn execute_revert(repo: &Repository, id: &CommitId) -> Result<CommitId, GitE
 // PullOutcome  (T-HT-003)
 // ────────────────────────────────────────────────────────────
 
-/// The outcome of a successful [`execute_pull`] call.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PullOutcome {
-    /// The local branch was already at or ahead of the upstream tip.
-    UpToDate,
-    /// The upstream was a direct ancestor of HEAD — branch ref advanced via
-    /// fast-forward; no merge commit created.
-    FastForward {
-        /// The new HEAD commit SHA (the upstream tip).
-        to: CommitId,
-    },
-    /// A true merge was performed (in-memory index, no MERGING state).
-    /// A merge commit with two parents was created.
-    Merged {
-        /// The new merge-commit SHA.
-        commit: CommitId,
-    },
-}
-
 // ────────────────────────────────────────────────────────────
 // plan_pull  (T-HT-003)
 // ────────────────────────────────────────────────────────────
@@ -3957,14 +3798,6 @@ pub fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOutcome, 
 // Fetch (W5-MENU) — download remote objects, never merge
 // ────────────────────────────────────────────────────────────
 
-/// Result of a fetch: which remote was fetched.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FetchOutcome {
-    /// The remote name that was fetched (e.g. "origin"), or "--all" when every
-    /// remote was fetched because no single upstream could be resolved.
-    pub remote: String,
-}
-
 /// Run `git fetch` for the repository at `repo_path`.
 ///
 /// This is **fetch-only**: it downloads remote objects and updates the
@@ -4164,17 +3997,6 @@ fn predict_merge_conflict(
 // ────────────────────────────────────────────────────────────
 // PushOutcome  (T-HT-004)
 // ────────────────────────────────────────────────────────────
-
-/// The outcome of a successful [`execute_push`] call.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PushOutcome {
-    /// Number of commits that were in the push plan (approximate; taken from
-    /// the `preview_commits` count at plan time).
-    pub pushed: usize,
-    /// Whether `--set-upstream` (`-u`) was passed (i.e. the branch had no
-    /// upstream configured before the push).
-    pub set_upstream: bool,
-}
 
 // ────────────────────────────────────────────────────────────
 // plan_push  (T-HT-004)
@@ -5196,19 +5018,6 @@ pub fn execute_rename_branch(
 // UndoOutcome  (T-HT-009)
 // ────────────────────────────────────────────────────────────
 
-/// The outcome of a successful [`execute_undo_commit`] call.
-///
-/// Carries both the commit that was undone and the new HEAD (the parent).
-/// The undone commit's SHA is stored so the user can recover it via
-/// `git reset --soft <undone>`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UndoOutcome {
-    /// The commit that was taken off the branch tip (the one that was undone).
-    pub undone: CommitId,
-    /// The new branch tip — the parent commit HEAD now points to.
-    pub now_at: CommitId,
-}
-
 // ────────────────────────────────────────────────────────────
 // plan_undo_commit  (T-HT-009)
 // ────────────────────────────────────────────────────────────
@@ -5551,56 +5360,6 @@ pub fn execute_undo_commit(repo: &Repository) -> Result<UndoOutcome, GitError> {
 // ────────────────────────────────────────────────────────────
 // Amend  (T-COMMIT-010, ADR-0040 — MVP: unpushed only)
 // ────────────────────────────────────────────────────────────
-
-/// Which parts of the HEAD commit an amend should rewrite (ADR-0040).
-///
-/// All three modes produce a **new commit** with a **new SHA** and move the
-/// branch ref to it; the original commit becomes unreachable but is still
-/// recoverable via the reflog / oplog.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AmendMode {
-    /// Replace only the commit message; the tree is the old HEAD tree.
-    MessageOnly,
-    /// Fold the current staged changes into the old HEAD tree; message kept.
-    Staged,
-    /// Fold staged changes **and** replace the message.
-    Both,
-}
-
-impl AmendMode {
-    /// Parse the `KAGI_AMEND=<mode>` headless value (`message` / `staged` / `both`).
-    pub fn from_env_str(s: &str) -> Option<AmendMode> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "message" | "message-only" | "messageonly" | "msg" => Some(AmendMode::MessageOnly),
-            "staged" => Some(AmendMode::Staged),
-            "both" => Some(AmendMode::Both),
-            _ => None,
-        }
-    }
-
-    /// Whether this mode folds the staged index into the new tree.
-    fn includes_staged(self) -> bool {
-        matches!(self, AmendMode::Staged | AmendMode::Both)
-    }
-
-    /// Whether this mode replaces the commit message.
-    fn replaces_message(self) -> bool {
-        matches!(self, AmendMode::MessageOnly | AmendMode::Both)
-    }
-}
-
-/// The outcome of a successful [`execute_amend`] call.
-///
-/// Carries both the SHA of the commit that was amended (now unreachable) and
-/// the SHA of the new commit the branch now points at.  The old SHA is recorded
-/// in the oplog before execution so the user can recover via the reflog.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AmendOutcome {
-    /// The commit that was amended (the old HEAD — now unreachable from the branch).
-    pub old: CommitId,
-    /// The new branch tip created by the amend.
-    pub new: CommitId,
-}
 
 /// Analyse whether amending the current HEAD commit is safe and return an
 /// [`OperationPlan`] (ADR-0040, MVP = **unpushed only**).
@@ -6278,47 +6037,6 @@ pub fn execute_delete_branch(
 // ────────────────────────────────────────────────────────────
 // discard (W17-DISCARD, ADR-0046) — backup-then-discard
 // ────────────────────────────────────────────────────────────
-
-/// One backed-up working-tree file recorded before a discard: the repository
-/// path and the ODB blob SHA holding its **pre-discard** working-tree content.
-///
-/// This is the recovery handle mandated by ADR-0046: `git cat-file -p <blob>`
-/// returns the exact bytes that were in the working tree before the discard,
-/// for as long as the oplog references the blob (kagi never runs `gc`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DiscardBackup {
-    /// Repository-relative path that was discarded.
-    pub path: String,
-    /// ODB blob SHA (40-hex) holding the pre-discard working-tree content.
-    pub blob: String,
-}
-
-/// Outcome of [`execute_discard`]: the backup blobs written before discarding.
-///
-/// `backups` is non-empty on success and is the path→blob-SHA list that the
-/// caller records in the oplog (`op="discard"`).
-#[derive(Debug, Clone)]
-pub struct DiscardOutcome {
-    /// One entry per discarded file, in plan order.
-    pub backups: Vec<DiscardBackup>,
-}
-
-impl DiscardOutcome {
-    /// Render the path→blob backup list as a single oplog-friendly summary line,
-    /// e.g. `"discarded 2 file(s); backup: a.txt=<sha>, b.txt=<sha>"`.
-    pub fn oplog_summary(&self) -> String {
-        let pairs: Vec<String> = self
-            .backups
-            .iter()
-            .map(|b| format!("{}={}", b.path, b.blob))
-            .collect();
-        format!(
-            "discarded {} file(s); backup: {}",
-            self.backups.len(),
-            pairs.join(", ")
-        )
-    }
-}
 
 /// Normalise a user/UI-supplied path to the repository-relative, forward-slash
 /// form that git status reports, so plan/execute and status comparisons line up.

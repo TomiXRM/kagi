@@ -9,8 +9,12 @@
 //! `kagi::git` / `kagi::graph` paths continue to work through re-export bridges
 //! during the migration.
 
+pub mod checklist;
 pub mod commit;
+pub mod diff;
+pub mod diffstat;
 pub mod graph;
 pub mod message_template;
 pub mod refs;
+pub mod status;
 pub mod trailers;

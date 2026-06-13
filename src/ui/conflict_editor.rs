@@ -570,7 +570,9 @@ fn pane(
         .size_full()
         .min_w(px(0.))
         .border_1()
-        .border_color(rgb(theme().surface))
+        // UI-002: clearer pane border — `selected` reads against the darker
+        // editor bg, unlike `surface` which nearly matches it.
+        .border_color(rgb(theme().selected))
         // Editor background a touch darker than the surrounding chrome (UI-002).
         .bg(rgb(theme().bg_base))
         .child(header)
@@ -725,7 +727,7 @@ fn vertical_divider() -> gpui::Stateful<gpui::Div> {
         .id("conflict-divider-ab")
         .w(theme::scaled_px(4.))
         .h_full()
-        .bg(rgb(theme().surface))
+        .bg(rgb(theme().selected))
         .cursor_col_resize()
         .hover(|s| s.bg(rgb(theme().color_branch)))
         .on_drag(DividerDrag { kind: DividerKind::ConflictAB }, |_, _, _, cx| {
@@ -740,7 +742,7 @@ fn horizontal_divider() -> gpui::Stateful<gpui::Div> {
         .id("conflict-divider-result")
         .w_full()
         .h(theme::scaled_px(4.))
-        .bg(rgb(theme().surface))
+        .bg(rgb(theme().selected))
         .cursor_row_resize()
         .hover(|s| s.bg(rgb(theme().color_branch)))
         .on_drag(DividerDrag { kind: DividerKind::ConflictResult }, |_, _, _, cx| {

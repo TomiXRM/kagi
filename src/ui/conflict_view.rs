@@ -447,10 +447,14 @@ pub fn render_body(
         }
         _ => render_center(mode, cx),
     };
+    // flex_1 + min_h(0) (NOT size_full): in the root flex_col the conflict body
+    // must share height with the bottom panel + status bar, not take 100% and
+    // push the terminal off-screen (user-reported terminal-position bug).
     div()
         .flex()
         .flex_row()
-        .size_full()
+        .flex_1()
+        .min_h(px(0.))
         .bg(rgb(theme().bg_base))
         .child(center)
         .child(render_dashboard(mode, cx))

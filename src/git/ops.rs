@@ -146,11 +146,101 @@ impl OperationPlan {
     }
 }
 
+/// Keyed, user-facing reason why a branch name is rejected (W29-I18N-WAVE2).
+///
+/// This is the **localization key** for branch-name validation messages. The
+/// UI maps each variant to a localized [`crate::ui::i18n::Msg`]; the [`Display`]
+/// impl here returns the **exact current English wording** so the existing tests
+/// that pin those strings (and the English-only `OperationPlan::blockers`) keep
+/// passing unchanged.
+///
+/// Variants are split by call site because the create-branch and rename-branch
+/// paths historically used different wording for the same condition (e.g.
+/// "Branch name must not be empty." vs "Branch name is required.").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchNameError {
+    /// create-branch: name is empty. → "Branch name must not be empty."
+    EmptyCreate,
+    /// rename-branch: name is empty/blank. → "Branch name is required."
+    Required,
+    /// rename-branch: leading/trailing whitespace.
+    Whitespace,
+    /// rename-branch: new name equals the old name.
+    SameName,
+    /// rename-branch: a branch with this name already exists.
+    RenameExists(String),
+    /// rename-branch: not a valid git ref name.
+    RenameInvalid(String),
+    /// create-branch: not a valid git ref name.
+    CreateInvalidRef(String),
+    /// create-branch: name starts with `-`.
+    CreateLeadingDash(String),
+    /// create-branch: a branch with this name already exists.
+    CreateExists(String),
+}
+
+impl std::fmt::Display for BranchNameError {
+    /// **Exact current English wording** — do NOT change without updating the
+    /// tests that pin these strings (they substring-match these).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BranchNameError::EmptyCreate => write!(f, "Branch name must not be empty."),
+            BranchNameError::Required => write!(f, "Branch name is required."),
+            BranchNameError::Whitespace => {
+                write!(f, "Branch name must not start or end with whitespace.")
+            }
+            BranchNameError::SameName => write!(f, "Branch already has that name."),
+            BranchNameError::RenameExists(name) => write!(f, "Branch '{}' already exists.", name),
+            BranchNameError::RenameInvalid(name) => {
+                write!(f, "'{}' is not a valid branch name.", name)
+            }
+            BranchNameError::CreateInvalidRef(name) => write!(
+                f,
+                "Branch name '{}' is not a valid git ref name \
+                 (no spaces, '..', or other invalid characters).",
+                name
+            ),
+            BranchNameError::CreateLeadingDash(name) => {
+                write!(f, "Branch name '{}' must not start with '-'.", name)
+            }
+            BranchNameError::CreateExists(name) => {
+                write!(f, "A branch named '{}' already exists in this repository.", name)
+            }
+        }
+    }
+}
+
+/// Keyed, user-facing reason why a worktree path is rejected (W29-I18N-WAVE2).
+///
+/// Only the two reasons the ticket localizes are keyed here (empty / already
+/// exists); the remaining worktree-path reasons stay English-only via
+/// [`OperationPlan::blockers`]. [`Display`] returns the exact current English.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorktreePathError {
+    /// Path was empty.
+    Empty,
+    /// The target path already exists (carries the display path).
+    Exists(String),
+}
+
+impl std::fmt::Display for WorktreePathError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WorktreePathError::Empty => write!(f, "Worktree path must not be empty."),
+            WorktreePathError::Exists(path) => {
+                write!(f, "Worktree path '{}' already exists.", path)
+            }
+        }
+    }
+}
+
 /// Result of pure branch rename input validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BranchRenameValidation {
     Valid,
-    Invalid(String),
+    /// Rejected — carries the keyed reason. Use `reason.to_string()` for the
+    /// English text (tests) or map it to a localized message in the UI.
+    Invalid(BranchNameError),
 }
 
 /// Validate a local branch rename target without touching repository state.
@@ -166,29 +256,21 @@ pub fn validate_branch_rename(
 ) -> BranchRenameValidation {
     let trimmed = new_name.trim();
     if trimmed.is_empty() {
-        return BranchRenameValidation::Invalid("Branch name is required.".to_string());
+        return BranchRenameValidation::Invalid(BranchNameError::Required);
     }
     if trimmed != new_name {
-        return BranchRenameValidation::Invalid(
-            "Branch name must not start or end with whitespace.".to_string(),
-        );
+        return BranchRenameValidation::Invalid(BranchNameError::Whitespace);
     }
     if trimmed == old_name {
-        return BranchRenameValidation::Invalid("Branch already has that name.".to_string());
+        return BranchRenameValidation::Invalid(BranchNameError::SameName);
     }
     if existing_branches.iter().any(|name| name == trimmed) {
-        return BranchRenameValidation::Invalid(format!(
-            "Branch '{}' already exists.",
-            trimmed
-        ));
+        return BranchRenameValidation::Invalid(BranchNameError::RenameExists(trimmed.to_string()));
     }
 
     let full_ref = format!("refs/heads/{}", trimmed);
     if !git2::Reference::is_valid_name(&full_ref) {
-        return BranchRenameValidation::Invalid(format!(
-            "'{}' is not a valid branch name.",
-            trimmed
-        ));
+        return BranchRenameValidation::Invalid(BranchNameError::RenameInvalid(trimmed.to_string()));
     }
 
     BranchRenameValidation::Valid
@@ -637,6 +719,40 @@ pub fn execute_checkout_commit(repo: &Repository, id: &CommitId) -> Result<(), G
 // plan_create_branch
 // ────────────────────────────────────────────────────────────
 
+/// Compute the keyed branch-name validation errors for the **create-branch**
+/// path (W29-I18N-WAVE2), in the same order the legacy code pushed them.
+///
+/// This is the single source of truth for the create-branch name reasons: the
+/// plan builder maps each error through [`BranchNameError::Display`] into the
+/// English-only `blockers` Vec (preserving the pinned wording), and the UI maps
+/// the same errors to localized messages. The commit-existence blocker is *not*
+/// keyed here (it stays English-only in the plan).
+pub fn create_branch_name_errors(repo: &Repository, name: &str) -> Vec<BranchNameError> {
+    let mut errs: Vec<BranchNameError> = Vec::new();
+
+    if name.is_empty() {
+        errs.push(BranchNameError::EmptyCreate);
+    }
+
+    // Invalid name (use git2 ref validation on the full ref path).
+    if !name.is_empty() && !git2::Reference::is_valid_name(&format!("refs/heads/{}", name)) {
+        errs.push(BranchNameError::CreateInvalidRef(name.to_string()));
+    }
+
+    // Leading `-` is rejected explicitly: although git2 considers it a valid ref
+    // name, it is ambiguous on the command line (may be interpreted as a flag).
+    if !name.is_empty() && name.starts_with('-') {
+        errs.push(BranchNameError::CreateLeadingDash(name.to_string()));
+    }
+
+    // Already-exists check.
+    if !name.is_empty() && repo.find_branch(name, BranchType::Local).is_ok() {
+        errs.push(BranchNameError::CreateExists(name.to_string()));
+    }
+
+    errs
+}
+
 /// Analyse whether creating a new local branch at `at` is safe and return an
 /// [`OperationPlan`].
 ///
@@ -692,40 +808,13 @@ pub fn plan_create_branch(
     };
 
     // ── 3. Check blockers ────────────────────────────────────
-    let mut blockers: Vec<String> = Vec::new();
-
-    // Empty name.
-    if name.is_empty() {
-        blockers.push("Branch name must not be empty.".to_string());
-    }
-
-    // Invalid name (use git2 ref validation on the full ref path).
-    if !name.is_empty()
-        && !git2::Reference::is_valid_name(&format!("refs/heads/{}", name))
-    {
-        blockers.push(format!(
-            "Branch name '{}' is not a valid git ref name \
-             (no spaces, '..', or other invalid characters).",
-            name
-        ));
-    }
-
-    // Leading `-` is rejected explicitly: although git2 considers it a valid ref name,
-    // it is ambiguous on the command line (may be interpreted as a flag).
-    if !name.is_empty() && name.starts_with('-') {
-        blockers.push(format!(
-            "Branch name '{}' must not start with '-'.",
-            name
-        ));
-    }
-
-    // Already-exists check.
-    if !name.is_empty() && repo.find_branch(name, BranchType::Local).is_ok() {
-        blockers.push(format!(
-            "A branch named '{}' already exists in this repository.",
-            name
-        ));
-    }
+    // The branch-name reasons are computed as keyed errors (W29-I18N-WAVE2) so
+    // the UI can localize them; their `Display` is pushed verbatim into the
+    // English-only `blockers` Vec that the tests pin.
+    let mut blockers: Vec<String> = create_branch_name_errors(repo, name)
+        .iter()
+        .map(|e| e.to_string())
+        .collect();
 
     // Commit existence check.
     let oid = git2::Oid::from_str(&at.0)
@@ -828,22 +917,55 @@ fn normalize_path(path: &Path) -> PathBuf {
     out
 }
 
+/// A worktree-path validation failure: either a **keyed** reason the UI can
+/// localize (W29-I18N-WAVE2) or a plain English-only `Other` reason that stays
+/// untranslated for now. `to_string()` yields the exact English wording.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorktreeValidationError {
+    /// One of the two reasons the ticket localizes (empty / already exists).
+    Keyed(WorktreePathError),
+    /// Any other reason — stays English-only.
+    Other(String),
+}
+
+impl std::fmt::Display for WorktreeValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WorktreeValidationError::Keyed(e) => write!(f, "{}", e),
+            WorktreeValidationError::Other(s) => write!(f, "{}", s),
+        }
+    }
+}
+
 /// Validate and normalize a worktree path entered by the user.
 ///
 /// Relative paths are interpreted relative to `repo_root`.  The target path
 /// itself must not already exist, but its parent must exist so validation works
 /// for the normal `../repo-worktrees/new-branch` case.
+///
+/// Returns the English-only error string (back-compat shim over
+/// [`validate_worktree_path_keyed`]).
 pub fn validate_worktree_path(
     repo_root: &Path,
     input: impl AsRef<Path>,
 ) -> Result<PathBuf, String> {
+    validate_worktree_path_keyed(repo_root, input).map_err(|e| e.to_string())
+}
+
+/// Like [`validate_worktree_path`] but returns a [`WorktreeValidationError`] so
+/// the UI can localize the two keyed reasons (empty / already exists).
+pub fn validate_worktree_path_keyed(
+    repo_root: &Path,
+    input: impl AsRef<Path>,
+) -> Result<PathBuf, WorktreeValidationError> {
+    use WorktreeValidationError::{Keyed, Other};
     let input = input.as_ref();
     if input.as_os_str().is_empty() {
-        return Err("Worktree path must not be empty.".to_string());
+        return Err(Keyed(WorktreePathError::Empty));
     }
 
     let repo_root = std::fs::canonicalize(repo_root)
-        .map_err(|e| format!("Repository root is not accessible: {}", e))?;
+        .map_err(|e| Other(format!("Repository root is not accessible: {}", e)))?;
     let candidate = if input.is_absolute() {
         input.to_path_buf()
     } else {
@@ -852,34 +974,33 @@ pub fn validate_worktree_path(
     let candidate = normalize_path(&candidate);
 
     if candidate.exists() {
-        return Err(format!(
-            "Worktree path '{}' already exists.",
-            candidate.display()
-        ));
+        return Err(Keyed(WorktreePathError::Exists(
+            candidate.display().to_string(),
+        )));
     }
 
     let parent = candidate
         .parent()
-        .ok_or_else(|| "Worktree path must have a parent directory.".to_string())?;
+        .ok_or_else(|| Other("Worktree path must have a parent directory.".to_string()))?;
     if !parent.exists() {
-        return Err(format!(
+        return Err(Other(format!(
             "Parent directory '{}' does not exist.",
             parent.display()
-        ));
+        )));
     }
 
     let parent = std::fs::canonicalize(parent)
-        .map_err(|e| format!("Parent directory is not accessible: {}", e))?;
+        .map_err(|e| Other(format!("Parent directory is not accessible: {}", e)))?;
     let filename = candidate
         .file_name()
-        .ok_or_else(|| "Worktree path must name a directory.".to_string())?;
+        .ok_or_else(|| Other("Worktree path must name a directory.".to_string()))?;
     let candidate_real_parent = normalize_path(&parent.join(filename));
 
     if candidate_real_parent == repo_root || candidate_real_parent.starts_with(&repo_root) {
-        return Err(format!(
+        return Err(Other(format!(
             "Worktree path '{}' must be outside the repository.",
             candidate_real_parent.display()
-        ));
+        )));
     }
 
     Ok(candidate_real_parent)
@@ -4861,7 +4982,7 @@ pub fn plan_rename_branch(
     if let BranchRenameValidation::Invalid(reason) =
         validate_branch_rename(old_name, new_name, &existing)
     {
-        blockers.push(reason);
+        blockers.push(reason.to_string());
     }
     if status.is_dirty() {
         warnings.push(
@@ -4909,7 +5030,7 @@ pub fn execute_rename_branch(
     if let BranchRenameValidation::Invalid(reason) =
         validate_branch_rename(old_name, new_name, &existing)
     {
-        return Err(GitError::Other(reason));
+        return Err(GitError::Other(reason.to_string()));
     }
 
     let saved_config = branch_config_entries(repo, old_name);

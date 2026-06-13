@@ -1001,6 +1001,27 @@ pub struct TrackingCheckoutPlanModal {
     pub error: Option<SharedString>,
 }
 
+/// W29-I18N-WAVE2: build the localized blocker list for an [`OperationPlan`].
+///
+/// `blockers` is the English-only list from the plan (preserved for the
+/// execute-guard and tests). `keyed` yields `(english, localized)` pairs for the
+/// in-scope validation reasons. Each blocker whose text matches a keyed
+/// `english` is shown in its `localized` form; every other blocker passes
+/// through verbatim. Order follows `blockers`.
+fn localize_plan_blockers(
+    blockers: &[String],
+    keyed: impl Iterator<Item = (String, String)>,
+) -> Vec<SharedString> {
+    let map: std::collections::HashMap<String, String> = keyed.collect();
+    blockers
+        .iter()
+        .map(|b| match map.get(b) {
+            Some(localized) => SharedString::from(localized.clone()),
+            None => SharedString::from(b.clone()),
+        })
+        .collect()
+}
+
 // ──────────────────────────────────────────────────────────────
 // CreateBranchModal — state for the create-branch overlay (T014)
 // ──────────────────────────────────────────────────────────────
@@ -1025,6 +1046,11 @@ pub struct CreateBranchModal {
     pub plan: Option<std::sync::Arc<OperationPlan>>,
     /// Error message to show if execute or preflight failed.
     pub error: Option<SharedString>,
+    /// Localized blocker texts for display (W29-I18N-WAVE2). The keyed
+    /// branch-name reasons are localized; non-keyed plan blockers pass through
+    /// in English. Recomputed each replan. The execute-guard still uses
+    /// `plan.blockers` (English) so behaviour is unchanged.
+    pub localized_blockers: Vec<SharedString>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1062,6 +1088,10 @@ pub struct CreateWorktreeModal {
     pub plan: Option<std::sync::Arc<OperationPlan>>,
     /// Error message to show if execute or preflight failed.
     pub error: Option<SharedString>,
+    /// Localized blocker texts for display (W29-I18N-WAVE2). The keyed
+    /// branch-name and worktree-path reasons are localized; non-keyed plan
+    /// blockers pass through in English. Recomputed each replan.
+    pub localized_blockers: Vec<SharedString>,
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -2205,6 +2235,7 @@ impl KagiApp {
             checkout_after: false,
             plan: None,
             error: None,
+            localized_blockers: Vec::new(),
         });
         // Re-plan immediately (empty name → blocker).
         self.replan_create_branch();
@@ -2256,8 +2287,16 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
+                // W29-I18N-WAVE2: localize the keyed branch-name reasons; any
+                // non-keyed plan blocker (commit-existence, checkout-after) is
+                // passed through in English.
+                let keyed = kagi::git::ops::create_branch_name_errors(&repo, &name);
+                let localized = localize_plan_blockers(&plan.blockers, keyed.iter().map(|e| {
+                    (e.to_string(), crate::ui::i18n::branch_name_error(e))
+                }));
                 if let Some(ref mut modal) = self.create_branch_modal {
                     modal.plan = Some(std::sync::Arc::new(plan));
+                    modal.localized_blockers = localized;
                 }
             }
             Err(e) => {
@@ -2485,6 +2524,7 @@ impl KagiApp {
             active_field: WorktreeModalField::Branch,
             plan: None,
             error: None,
+            localized_blockers: Vec::new(),
         });
         self.replan_create_worktree();
     }
@@ -2555,8 +2595,26 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
+                // W29-I18N-WAVE2: localize the keyed branch-name reasons (only
+                // when creating a new branch) and the keyed worktree-path reasons
+                // (empty / already exists). Other blockers stay English.
+                let mut keyed: Vec<(String, String)> = Vec::new();
+                if !allow_existing_branch {
+                    for e in kagi::git::ops::create_branch_name_errors(&repo, &branch) {
+                        keyed.push((e.to_string(), crate::ui::i18n::branch_name_error(&e)));
+                    }
+                }
+                if let Some(repo_root) = repo.workdir() {
+                    if let Err(kagi::git::ops::WorktreeValidationError::Keyed(e)) =
+                        kagi::git::ops::validate_worktree_path_keyed(repo_root, &path)
+                    {
+                        keyed.push((e.to_string(), crate::ui::i18n::worktree_path_error(&e)));
+                    }
+                }
+                let localized = localize_plan_blockers(&plan.blockers, keyed.into_iter());
                 if let Some(ref mut modal) = self.create_worktree_modal {
                     modal.plan = Some(std::sync::Arc::new(plan));
+                    modal.localized_blockers = localized;
                 }
             }
             Err(e) => {
@@ -11416,9 +11474,10 @@ fn render_input_plan_modal(
         );
 
     if let Some(BranchRenameValidation::Invalid(reason)) = validation {
+        // W29-I18N-WAVE2: localize the keyed branch-name reason.
         card = card.child(
             div().text_sm().text_color(rgb(theme().color_blocker)).overflow_hidden()
-                .child(SharedString::from(reason)),
+                .child(SharedString::from(crate::ui::i18n::branch_name_error(&reason))),
         );
     }
 
@@ -12407,10 +12466,15 @@ fn render_create_branch_modal(
                 ),
         );
 
-        // ── Blockers ──────────────────────────────────────
+        // ── Blockers (localized — W29-I18N-WAVE2) ─────────
         if !p.blockers.is_empty() {
+            let lines: Vec<SharedString> = if modal.localized_blockers.is_empty() {
+                p.blockers.iter().map(|b| SharedString::from(b.clone())).collect()
+            } else {
+                modal.localized_blockers.clone()
+            };
             let mut block_col = div().flex().flex_col().gap_1();
-            for b in &p.blockers {
+            for b in lines {
                 block_col = block_col.child(
                     div()
                         .text_sm()
@@ -12627,9 +12691,15 @@ fn render_create_worktree_modal(
             card = card.child(warn_col);
         }
 
+        // ── Blockers (localized — W29-I18N-WAVE2) ─────────
         if !p.blockers.is_empty() {
+            let lines: Vec<SharedString> = if modal.localized_blockers.is_empty() {
+                p.blockers.iter().map(|b| SharedString::from(b.clone())).collect()
+            } else {
+                modal.localized_blockers.clone()
+            };
             let mut block_col = div().flex().flex_col().gap_1();
-            for b in &p.blockers {
+            for b in lines {
                 block_col = block_col.child(
                     div()
                         .text_sm()

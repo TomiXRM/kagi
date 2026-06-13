@@ -468,7 +468,7 @@ fn render_dashboard(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::Any
         .id("conflict-dashboard")
         .flex()
         .flex_col()
-        .w(theme::scaled_px(340.))
+        .w(theme::scaled_px(238.))
         .h_full()
         .border_l_1()
         .border_color(rgb(theme().surface))

@@ -9587,7 +9587,12 @@ impl Render for KagiApp {
                 ))
             })
             // ── Bottom panel slot (T-BP-002) ─────────────────
-            .children(self.render_bottom_panel_slot(bottom_panel_open, bottom_panel_height, bottom_tab, cx))
+            // Hidden on the conflict-resolution screen (user request): the
+            // 3-pane editor + dashboard own the whole body there. The terminal
+            // returns once the conflict is resolved / the commit panel shows.
+            .when(!(conflict.is_some() && !conflict_merge_pending), |el| {
+                el.children(self.render_bottom_panel_slot(bottom_panel_open, bottom_panel_height, bottom_tab, cx))
+            })
             // ── Commit context menu overlay (below modals) ─────
             .children(commit_menu_overlay)
             // ── Branch context menu overlay (below modals) ─────

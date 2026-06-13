@@ -199,9 +199,20 @@ pub enum Msg {
     PushNothing,
     StashClean,
     PopEmpty,
-    UndoDetached,
-    UndoUnborn,
-    UndoAhead0,
+    // Legacy undo-commit disabled-reason strings (UndoDetached / UndoUnborn /
+    // UndoAhead0) were removed when the toolbar Undo button was generalised to
+    // operation-history undo (T-UNDOREDO-001); the headless undo-commit path in
+    // main.rs no longer surfaces a disabled reason.
+
+    // ── Operation Undo / Redo (T-UNDOREDO-001, ADR-0081) ────────────
+    /// Toolbar "Undo" button label (domain word — English in both langs).
+    Undo,
+    /// Toolbar "Redo" button label (domain word — English in both langs).
+    Redo,
+    /// Footer / tooltip shown when there is nothing to undo.
+    NothingToUndo,
+    /// Footer / tooltip shown when there is nothing to redo.
+    NothingToRedo,
 
     // ── Checkout / compare prose & recovery ─────────────────────────
     CheckoutSelectFirst,
@@ -495,12 +506,13 @@ impl Msg {
             (Ja, StashClean) => "Stash: working tree is clean — nothing to stash",
             (En, PopEmpty) => "Pop: stash is empty",
             (Ja, PopEmpty) => "Pop: stash が空です",
-            (En, UndoDetached) => "Undo: detached HEAD — cannot undo",
-            (Ja, UndoDetached) => "Undo: detached HEAD — undo できません",
-            (En, UndoUnborn) => "Undo: no commits yet — cannot undo",
-            (Ja, UndoUnborn) => "Undo: no commits yet — undo できません",
-            (En, UndoAhead0) => "Undo: ahead=0 — pushed commits cannot be undone here",
-            (Ja, UndoAhead0) => "Undo: ahead=0 — push 済みの commit はここでは undo できません",
+            // ── Operation Undo / Redo (ADR-0081; domain words English) ──
+            (En, Undo) | (Ja, Undo) => "Undo",
+            (En, Redo) | (Ja, Redo) => "Redo",
+            (En, NothingToUndo) => "nothing to undo",
+            (Ja, NothingToUndo) => "undo する操作がありません",
+            (En, NothingToRedo) => "nothing to redo",
+            (Ja, NothingToRedo) => "redo する操作がありません",
 
             // ── Checkout / compare prose ────────────────────────────
             (En, CheckoutSelectFirst) => "Checkout: select a commit, then press Enter",

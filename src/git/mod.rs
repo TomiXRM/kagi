@@ -79,6 +79,7 @@ pub use ops::{
     plan_set_upstream, execute_set_upstream,
     plan_rename_branch, execute_rename_branch, validate_branch_rename, BranchRenameValidation,
     plan_undo_commit, execute_undo_commit, UndoOutcome,
+    plan_undo, plan_redo, execute_undo, execute_redo, HistoryMoveOutcome,
     plan_amend, execute_amend, AmendMode, AmendOutcome,
     plan_delete_branch, execute_delete_branch,
     plan_discard, execute_discard, DiscardBackup, DiscardOutcome,
@@ -127,6 +128,8 @@ use git2::Repository;
 // ────────────────────────────────────────────────────────────
 
 pub use kagi_domain::head::Head;
+#[allow(unused_imports)]
+pub use kagi_domain::history::{HistoryEntry, OperationHistory, OperationKind};
 
 /// Basic information about an opened repository.
 #[derive(Debug, Clone)]

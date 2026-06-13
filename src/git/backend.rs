@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use git2::Repository;
+use kagi_domain::history::HistoryEntry;
 use kagi_domain::operation::{Operation, OperationOutcome};
 
 use super::{
@@ -757,6 +758,54 @@ impl Backend {
 
     pub fn execute_undo_commit(&self) -> Result<UndoOutcome, GitError> {
         ops::execute_undo_commit(&self.repo)
+    }
+
+    // ── Operation Undo / Redo (T-UNDOREDO-001, ADR-0081) ──────
+
+    /// Plan an undo of a recorded ref-moving operation (move `branch` from
+    /// `after` back to `before`).
+    pub fn plan_undo(
+        &self,
+        entry: &HistoryEntry,
+    ) -> Result<OperationPlan, GitError> {
+        ops::plan_undo(
+            &self.repo,
+            entry.kind.slug(),
+            &entry.branch,
+            &entry.before,
+            &entry.after,
+        )
+    }
+
+    /// Plan a redo of a recorded ref-moving operation (move `branch` from
+    /// `before` forward to `after`).
+    pub fn plan_redo(
+        &self,
+        entry: &HistoryEntry,
+    ) -> Result<OperationPlan, GitError> {
+        ops::plan_redo(
+            &self.repo,
+            entry.kind.slug(),
+            &entry.branch,
+            &entry.before,
+            &entry.after,
+        )
+    }
+
+    /// Execute an undo: safe ref move of `branch` from `after` to `before`.
+    pub fn execute_undo(
+        &self,
+        entry: &HistoryEntry,
+    ) -> Result<ops::HistoryMoveOutcome, GitError> {
+        ops::execute_undo(&self.repo, &entry.branch, &entry.before, &entry.after)
+    }
+
+    /// Execute a redo: safe ref move of `branch` from `before` to `after`.
+    pub fn execute_redo(
+        &self,
+        entry: &HistoryEntry,
+    ) -> Result<ops::HistoryMoveOutcome, GitError> {
+        ops::execute_redo(&self.repo, &entry.branch, &entry.before, &entry.after)
     }
 
     pub fn plan_amend(

@@ -6273,3 +6273,364 @@ pub fn execute_discard(
 
     Ok(DiscardOutcome { backups })
 }
+
+// ────────────────────────────────────────────────────────────
+// Operation Undo / Redo  (T-UNDOREDO-001, ADR-0081)
+// ────────────────────────────────────────────────────────────
+//
+// GitKraken-style Undo/Redo of ref-moving operations (commit, merge, …).
+// Both directions reduce to a SAFE branch-ref move between two SHAs that stay
+// reachable via the reflog/ODB — no commit is ever destroyed, and `reset
+// --hard`/clean/force are never used (ADR-0023).
+//
+//   undo:  move `entry.branch` from `entry.after`  back to `entry.before`
+//   redo:  move `entry.branch` from `entry.before` forward to `entry.after`
+//
+// The move is a MIXED-style reset: update the branch ref via libgit2
+// `reference(...)`, then point the index at the target commit's tree
+// (`index.read_tree`) WITHOUT touching the working tree. Any uncommitted
+// working-tree edits survive unchanged. For merge-commit undo this still holds
+// — the merge commit remains in the reflog, and the working tree is left as the
+// user left it.
+
+/// The outcome of an undo/redo ref move.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryMoveOutcome {
+    /// The branch whose ref was moved.
+    pub branch: String,
+    /// The SHA the branch pointed at before the move.
+    pub from: CommitId,
+    /// The SHA the branch points at after the move (the target).
+    pub to: CommitId,
+}
+
+/// Build a `current` [`StateSummary`] plus the dirty parts for plan rendering.
+fn undo_redo_state(repo: &Repository) -> Result<(StateSummary, Vec<String>), GitError> {
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+    let dirty_parts: Vec<String> = [
+        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let dirty = if dirty_parts.is_empty() {
+        "clean".to_string()
+    } else {
+        dirty_parts.join(", ")
+    };
+    Ok((
+        StateSummary {
+            head: head.display(),
+            dirty,
+        },
+        dirty_parts,
+    ))
+}
+
+/// Shared planner for undo/redo: plan a move of `branch` from `from` → `to`.
+///
+/// `label` is a human verb ("Undo"/"Redo"); `kind_slug` is the operation kind.
+/// Blockers are raised when the move cannot be performed safely:
+/// - the branch is not the current HEAD branch (MVP: only the checked-out branch),
+/// - the branch ref is no longer at `from` (stale entry — external change),
+/// - the target `to` is unknown / unreachable in the ODB,
+/// - the repo is mid-conflict.
+///
+/// A WARNING (not a blocker) is surfaced when the working tree is dirty: those
+/// changes are preserved (mixed reset) but the user should know the move happens
+/// underneath them.
+fn plan_history_move(
+    repo: &Repository,
+    label: &str,
+    kind_slug: &str,
+    branch: &str,
+    from: &CommitId,
+    to: &CommitId,
+) -> Result<OperationPlan, GitError> {
+    let head = resolve_head(repo)?;
+    let (current, _dirty_parts) = undo_redo_state(repo)?;
+    let status = working_tree_status(repo)?;
+
+    let mut blockers: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Only support the currently checked-out branch in MVP (the ref move must
+    // not strand a different branch's working tree).
+    match &head {
+        Head::Attached { branch: cur, .. } if cur == branch => {}
+        Head::Attached { branch: cur, .. } => {
+            blockers.push(format!(
+                "Operation was on branch '{}', but the current branch is '{}'. \
+                 Switch back to '{}' to {} it.",
+                branch,
+                cur,
+                branch,
+                label.to_lowercase()
+            ));
+        }
+        _ => {
+            blockers.push(format!(
+                "HEAD is not on a branch. {} requires the operation's branch to be checked out.",
+                label
+            ));
+        }
+    }
+
+    if !status.conflicted.is_empty() {
+        blockers.push(format!(
+            "Repository has {} conflicted file(s). Resolve conflicts before {}.",
+            status.conflicted.len(),
+            label.to_lowercase()
+        ));
+    }
+
+    // Stale check: branch must currently be at `from`.
+    let from_oid = git2::Oid::from_str(&from.0)
+        .map_err(|e| GitError::Other(format!("bad 'from' SHA {}: {}", from.0, e.message())))?;
+    let to_oid = git2::Oid::from_str(&to.0)
+        .map_err(|e| GitError::Other(format!("bad 'to' SHA {}: {}", to.0, e.message())))?;
+
+    if let Ok(branch_ref) = repo.find_branch(branch, BranchType::Local) {
+        match branch_ref.get().target() {
+            Some(cur_oid) if cur_oid == from_oid => {}
+            Some(cur_oid) => {
+                blockers.push(format!(
+                    "Branch '{}' has moved since this operation (now at {}, expected {}). \
+                     This history entry is stale and will be skipped.",
+                    branch,
+                    &cur_oid.to_string()[..8],
+                    &from_oid.to_string()[..8],
+                ));
+            }
+            None => blockers.push(format!("Branch '{}' has no target commit.", branch)),
+        }
+    } else {
+        blockers.push(format!("Branch '{}' no longer exists.", branch));
+    }
+
+    // Target must be reachable in the ODB.
+    if repo.find_commit(to_oid).is_err() {
+        blockers.push(format!(
+            "Target commit {} is no longer reachable in the object store. \
+             This history entry is stale and will be skipped.",
+            &to_oid.to_string()[..8],
+        ));
+    }
+
+    // Dirty working tree → preserved, but warn.
+    if !status.staged.is_empty() || !status.unstaged.is_empty() {
+        warnings.push(
+            "You have uncommitted changes. They will be preserved in the working tree; \
+             only the branch ref and index move."
+                .to_string(),
+        );
+    }
+
+    let from_short = from.short();
+    let to_short = to.short();
+
+    let predicted = StateSummary {
+        head: match &head {
+            Head::Attached { branch: b, .. } => format!("branch: {} (at {})", b, to_short),
+            other => other.display(),
+        },
+        dirty: format!(
+            "index reset to {} (working-tree changes preserved)",
+            to_short
+        ),
+    };
+
+    let recovery = format!(
+        "{} moves branch '{}' from {} to {} via a safe ref move (no reset --hard, no clean). \
+         The {} commit is NOT deleted — it stays in the object store and reflog:\n  git reflog\n\
+         To restore manually:\n  git update-ref refs/heads/{} {}",
+        label, branch, from_short, to_short, kind_slug, branch, from.0
+    );
+
+    Ok(OperationPlan {
+        title: format!(
+            "{} {} on '{}' — {} → {}",
+            label, kind_slug, branch, from_short, to_short
+        ),
+        current,
+        predicted,
+        warnings,
+        blockers,
+        recovery,
+        head_at_plan: head,
+        stash_count_at_plan: 0,
+        preview_files: Vec::new(),
+        preview_commits: Vec::new(),
+        destructive: false,
+    })
+}
+
+/// Plan an **undo** of a recorded operation: move `branch` back from `after`
+/// to `before`. See [`plan_history_move`].
+pub fn plan_undo(
+    repo: &Repository,
+    kind_slug: &str,
+    branch: &str,
+    before: &CommitId,
+    after: &CommitId,
+) -> Result<OperationPlan, GitError> {
+    plan_history_move(repo, "Undo", kind_slug, branch, after, before)
+}
+
+/// Plan a **redo** of a recorded operation: move `branch` forward from
+/// `before` to `after`. See [`plan_history_move`].
+pub fn plan_redo(
+    repo: &Repository,
+    kind_slug: &str,
+    branch: &str,
+    before: &CommitId,
+    after: &CommitId,
+) -> Result<OperationPlan, GitError> {
+    plan_history_move(repo, "Redo", kind_slug, branch, before, after)
+}
+
+/// Perform the safe ref move shared by undo and redo.
+///
+/// PREFLIGHT: re-verifies `branch` is the current HEAD branch, is still at
+/// `from`, and `to` is reachable — stale entries are rejected with a clear
+/// message rather than corrupting state.
+///
+/// MOVE (mixed/soft, never `--hard`):
+/// 1. `repo.reference(refs/heads/<branch>, to, true, msg)` — move the branch ref.
+/// 2. `index.read_tree(to_tree)` + `index.write()` — reconcile the index to the
+///    target tree. The working tree is **never** written to, so uncommitted
+///    edits are preserved.
+///
+/// VERIFY: HEAD now resolves to `to`.
+fn execute_history_move(
+    repo: &Repository,
+    label: &str,
+    branch: &str,
+    from: &CommitId,
+    to: &CommitId,
+) -> Result<HistoryMoveOutcome, GitError> {
+    let from_oid = git2::Oid::from_str(&from.0)
+        .map_err(|e| GitError::Other(format!("bad 'from' SHA {}: {}", from.0, e.message())))?;
+    let to_oid = git2::Oid::from_str(&to.0)
+        .map_err(|e| GitError::Other(format!("bad 'to' SHA {}: {}", to.0, e.message())))?;
+
+    // ── PREFLIGHT ────────────────────────────────────────────
+    let head_ref = repo
+        .head()
+        .map_err(|e| GitError::Other(format!("HEAD lookup failed: {}", e.message())))?;
+    if !head_ref.is_branch() {
+        return Err(GitError::Other(format!(
+            "HEAD is not on a branch. {} requires the operation's branch to be checked out.",
+            label
+        )));
+    }
+    let head_branch = head_ref
+        .shorthand()
+        .ok()
+        .ok_or_else(|| GitError::Other("HEAD has no branch name".to_string()))?;
+    if head_branch != branch {
+        return Err(GitError::Other(format!(
+            "Stale history entry: operation was on '{}', current branch is '{}'. Skipped.",
+            branch, head_branch
+        )));
+    }
+
+    let branch_ref = repo.find_branch(branch, BranchType::Local).map_err(|e| {
+        GitError::Other(format!("branch '{}' not found: {}", branch, e.message()))
+    })?;
+    let cur_oid = branch_ref
+        .get()
+        .target()
+        .ok_or_else(|| GitError::Other(format!("branch '{}' has no target", branch)))?;
+    if cur_oid != from_oid {
+        return Err(GitError::Other(format!(
+            "Stale history entry: branch '{}' is at {} but expected {}. Skipped.",
+            branch,
+            &cur_oid.to_string()[..8],
+            &from_oid.to_string()[..8],
+        )));
+    }
+
+    let to_commit = repo.find_commit(to_oid).map_err(|e| {
+        GitError::Other(format!(
+            "Stale history entry: target {} unreachable: {}",
+            &to_oid.to_string()[..8],
+            e.message()
+        ))
+    })?;
+    let to_tree = to_commit
+        .tree()
+        .map_err(|e| GitError::Other(format!("target tree lookup failed: {}", e.message())))?;
+
+    // ── MOVE: branch ref (mixed/soft — never --hard) ─────────
+    let branch_refname = format!("refs/heads/{}", branch);
+    let log_msg = format!(
+        "{}: move {} from {} to {}",
+        label.to_lowercase(),
+        branch,
+        &from_oid.to_string()[..8],
+        &to_oid.to_string()[..8],
+    );
+    repo.reference(&branch_refname, to_oid, true, &log_msg)
+        .map_err(|e| {
+            GitError::Other(format!("branch ref move ({}) failed: {}", label, e.message()))
+        })?;
+
+    // ── MOVE: index → target tree (working tree untouched) ───
+    {
+        let mut index = repo
+            .index()
+            .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+        index
+            .read_tree(&to_tree)
+            .map_err(|e| GitError::Other(format!("index.read_tree failed: {}", e.message())))?;
+        index
+            .write()
+            .map_err(|e| GitError::Other(format!("index.write failed: {}", e.message())))?;
+    }
+
+    // ── VERIFY: HEAD resolves to the target ──────────────────
+    let new_head = repo
+        .head()
+        .ok()
+        .and_then(|h| h.target())
+        .ok_or_else(|| GitError::Other("HEAD lookup after move failed".to_string()))?;
+    if new_head != to_oid {
+        return Err(GitError::Other(format!(
+            "{} verify failed: HEAD is {} but expected {}.",
+            label,
+            &new_head.to_string()[..8],
+            &to_oid.to_string()[..8],
+        )));
+    }
+
+    Ok(HistoryMoveOutcome {
+        branch: branch.to_string(),
+        from: from.clone(),
+        to: to.clone(),
+    })
+}
+
+/// Execute an **undo**: move `branch` back from `after` to `before`.
+pub fn execute_undo(
+    repo: &Repository,
+    branch: &str,
+    before: &CommitId,
+    after: &CommitId,
+) -> Result<HistoryMoveOutcome, GitError> {
+    execute_history_move(repo, "Undo", branch, after, before)
+}
+
+/// Execute a **redo**: move `branch` forward from `before` to `after`.
+pub fn execute_redo(
+    repo: &Repository,
+    branch: &str,
+    before: &CommitId,
+    after: &CommitId,
+) -> Result<HistoryMoveOutcome, GitError> {
+    execute_history_move(repo, "Redo", branch, before, after)
+}

@@ -255,6 +255,9 @@ fn render_panes(
     let ab_geom = chrome.ab_geom.clone();
     let ab_measure = canvas(
         move |bounds: Bounds<Pixels>, _w, _cx| {
+            if std::env::var("KAGI_DEBUG_SPLIT").as_deref() == Ok("1") {
+                eprintln!("[kagi] ab_geom left={:.1} right={:.1} width={:.1}", f32::from(bounds.origin.x), f32::from(bounds.origin.x + bounds.size.width), f32::from(bounds.size.width));
+            }
             ab_geom.set((f32::from(bounds.origin.x), f32::from(bounds.origin.x + bounds.size.width)));
         },
         |_, _, _, _| {},
@@ -276,8 +279,7 @@ fn render_panes(
             chrome.selected_hunk,
             cx,
         ),
-    )
-    .child(ab_measure);
+    );
 
     let b_pane = pane(
         "conflict-pane-b",
@@ -302,6 +304,10 @@ fn render_panes(
         .flex_basis(relative(chrome.result_split))
         .flex_shrink()
         .min_h(theme::scaled_px(80.))
+        // Measure the FULL A·B row width (not just the A pane) so the divider
+        // drag maps the cursor against the whole span — measuring inside A would
+        // shrink the span and feed back on itself, making resize unusable.
+        .child(ab_measure)
         .child(div().h_full().min_w(px(0.)).w(relative(chrome.ab_split)).child(a_pane))
         .child(vertical_divider())
         .child(div().h_full().min_w(px(0.)).flex_1().child(b_pane));

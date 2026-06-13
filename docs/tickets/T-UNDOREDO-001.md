@@ -46,4 +46,64 @@ hard reset で undo / コミット破棄 / drop 即実行(preview を飛ばす)/
 dirty working tree の変更を黙って捨てる。
 
 ## Implementation memo
-(担当 agent が完了時に追記)
+
+実装ブランチ: `rearch/undo-redo`（`re-architecture` ベース）。4 層で実装、UI から git 直書きなし
+（`grep -rnE 'git2::|Repository::open' src/ui` = 0）。
+
+### 1. domain — `crates/kagi-domain/src/history.rs`(+ `lib.rs` に `pub mod history;`)
+- `OperationKind`(Commit/Merge/CherryPick/Revert/Amend/UndoCommit、`slug()` 付き)。
+- `HistoryEntry { kind, branch: String, before: CommitId, after: CommitId, summary: String }`。
+- `OperationHistory { entries, cursor }`：`record`(redo tail を truncate)、`can_undo/can_redo`、
+  `peek_undo/peek_redo`、`undo()`/`redo()`(cursor を前後)。純粋・git2/gpui 非依存。
+- 単体テスト 10 本（new/record/undo→redo round-trip/LIFO/truncate/peek 不変/全 undo→全 redo/slug）。
+
+### 2. git-backend — `src/git/ops.rs`(+ `backend.rs` ラッパ、`mod.rs` 再公開)
+- `plan_undo`/`plan_redo`(共通 `plan_history_move`)→ `OperationPlan`(現 HEAD→target、preview、
+  blockers/warnings)。blocker: branch が current HEAD でない / branch が `from` にない(stale) /
+  target が ODB に無い(stale) / conflict 中。dirty WT は **warning**(保全して続行)。
+- `execute_undo`/`execute_redo`(共通 `execute_history_move`)：
+  PREFLIGHT で branch=current・branch が `from`・target 到達可能を再確認 → stale は明示エラーで skip。
+  **safe ref move**: `repo.reference(refs/heads/<branch>, to, true, msg)` でブランチ ref を移動 →
+  `index.read_tree(to_tree)` + `index.write()` で index のみ target tree に整合(**working tree は一切触らない**)→
+  HEAD==target を verify。`reset --hard`/clean/force は不使用。`HistoryMoveOutcome { branch, from, to }` を返す。
+- undo=branch を after→before、redo=before→after。merge commit の undo も同じ ref move で安全
+  (merge commit は reflog/ODB に残存、WT もユーザーの状態のまま)。
+
+### 3. app — `src/ui/mod.rs`
+- `KagiApp` に `operation_history: OperationHistory` と `history_modal: Option<HistoryPlanModal>`(両 constructor で初期化)。
+- `record_history(kind, branch, before, after, summary)`(before==after / branch 空 は no-op)。
+- ref-move 成功ハンドラで記録：commit / merge(clean 時のみ、conflict は before==after で no-op) /
+  cherry-pick / revert は background 完了時に `head_branch_and_sha()` で before(spawn 前)・after(完了時)を取得して記録。
+  amend は `outcome.old→new`、undo-commit は `outcome.undone→now_at` を記録。
+  `head_branch_and_sha()` は `Backend` 経由(UI に git2 無し)。
+- `open_history_undo_modal`/`open_history_redo_modal`/`open_history_modal`/`confirm_history`:
+  plan→preflight→execute→cursor 前後(execute 成功後にのみ undo()/redo())→oplog 記録(`undo-<kind>`/`redo-<kind>`)→reload。
+
+### 4. ui — toolbar / modal
+- toolbar の Undo ボタンを operation-history undo に一般化(enable=`can_undo()`、click→`open_history_undo_modal`)、
+  **Redo ボタンを追加**(`IconName::Redo2`、enable=`can_redo()`)。tooltip は `peek_undo/peek_redo` の summary。
+- `HistoryPlanModal` + `render_history_modal`(`render_plan_modal_card` 再利用、confirm=`confirm_history`)を
+  既存モーダルオーバーレイ群に組み込み。Enter ガードにも追加。
+- i18n: `Msg::{Undo, Redo, NothingToUndo, NothingToRedo}`。`Undo`/`Redo` は ADR-0048 のドメイン語として
+  両言語英語。旧 undo-commit の disabled 理由文字列(UndoDetached/UndoUnborn/UndoAhead0)は generalize で不要になり削除。
+
+### tests
+- domain: `crates/kagi-domain/src/history.rs` 内 10 本。
+- integration: `tests/undo_redo_test.rs` 5 本 —
+  `commit_undo_then_redo`(HEAD が parent→forward、commit は reflog/ODB に残存) /
+  `merge_undo_then_redo`(merge commit を undo→pre-merge、merge commit は残存→redo で再適用) /
+  `undo_preserves_working_tree_changes`(未コミット編集が保全) /
+  `plan_undo_stale_entry_is_blocked`(branch 移動後は plan blocker + execute エラー) /
+  `undo_redo_pipeline_via_domain_history`(domain OperationHistory + Backend を連結)。
+- `cargo test --workspace`: 全パス(0 failures)。`grep -rnE 'git2::|Repository::open' src/ui` = 0。
+  注: `tests/i18n_test.rs` は実 GUI バイナリを 4 つ並列起動する smoke test で、ウィンドウ生成競合により
+  並列フル実行時に稀に flaky(単独/再実行では green)。本変更とは無関係。
+
+### 不確実点 / レビュー要点
+- **merge commit の undo の安全性**: ref move + `index.read_tree` のみで HEAD を 2-parent merge commit から
+  pre-merge へ戻す。merge commit は reflog/ODB に残るので破壊なし。WT は触らないので merge で生成された
+  作業ツリー変更は残る（index は pre-merge tree に整合）。integration test で検証済み。
+- **working-tree 保全**: mixed 相当(ref+index のみ移動、WT 不変)。`git reset --hard`/clean は不使用。
+  ただし「commit を undo」した場合、変更は index(staged)ではなく WT(unstaged)として現れる
+  (`index.read_tree(target)` のため)。旧 `undo_commit`(ADR-0041、soft=staged 維持)とは差異あり。MVP では許容。
+- in-session のみ(終了で消える)。reflog が durable backstop。

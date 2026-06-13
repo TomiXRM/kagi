@@ -56,6 +56,21 @@ pub struct UndoPlanModal {
     pub error: Option<SharedString>,
 }
 
+/// State for an in-progress operation-history Undo/Redo confirmation
+/// (T-UNDOREDO-001, ADR-0081). Carries the previewed plan plus the
+/// [`HistoryEntry`] being moved and whether the move is an undo or a redo.
+#[derive(Clone)]
+pub struct HistoryPlanModal {
+    /// The computed undo/redo plan (current → target, blockers, warnings).
+    pub plan: std::sync::Arc<OperationPlan>,
+    /// The history entry this modal acts on.
+    pub entry: kagi::git::HistoryEntry,
+    /// `true` for an undo move, `false` for a redo move.
+    pub is_undo: bool,
+    /// Error message to show if execute or preflight failed.
+    pub error: Option<SharedString>,
+}
+
 /// State for a sequencer (rebase / cherry-pick / revert) conflict-continue
 /// confirmation (ADR-0068 / T-CONFLICT-FLOW-032).  A `git <op> --continue` plan
 /// shown before the sequencer is advanced.  Merge does NOT use this modal — it
@@ -451,6 +466,44 @@ pub(crate) fn render_undo_modal(
         modal.plan,
         modal.error,
         "Undo",
+        cancel_handler,
+        confirm_handler,
+        None,
+        cx,
+    )
+    .into_any_element()
+}
+
+/// Operation-history Undo / Redo confirmation overlay (T-UNDOREDO-001,
+/// ADR-0081). Confirming runs the safe ref move through the standard pipeline
+/// and advances/retreats the history cursor.
+pub(crate) fn render_history_modal(
+    modal: HistoryPlanModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.history_modal = None;
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.confirm_history();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    let confirm_label = if modal.is_undo {
+        Msg::Undo.t()
+    } else {
+        Msg::Redo.t()
+    };
+    render_plan_modal_card(
+        modal.plan,
+        modal.error,
+        confirm_label,
         cancel_handler,
         confirm_handler,
         None,

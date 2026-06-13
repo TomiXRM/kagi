@@ -939,6 +939,15 @@ pub struct KagiApp {
     pub oplog_scroll_handle: UniformListScrollHandle,
     /// Which row index (0 = newest) is currently expanded; None = none.
     pub oplog_expanded: Option<usize>,
+    // ── T-UNDOREDO-001 / ADR-0081: Operation Undo / Redo history ──
+    /// In-session undo/redo stack of ref-moving operations (commit, merge,
+    /// cherry-pick, revert, amend, undo-commit). Entries record the branch and
+    /// the before/after commit SHAs; undo/redo move the branch ref between them
+    /// via the safe pipeline. Lost on quit (reflog is the durable backstop).
+    pub operation_history: kagi::git::OperationHistory,
+    /// Set while an Undo/Redo plan modal is open; carries the entry being
+    /// previewed and whether it is an undo (`true`) or redo (`false`).
+    pub history_modal: Option<HistoryPlanModal>,
     // ── T-BP-007 / W4-TABS: Terminal sessions ────────────────────
     /// Terminal sessions keyed by repository path so each tab keeps its own
     /// live PTY across tab switches (W4-TABS / ADR-0027).  A session is created
@@ -1382,6 +1391,8 @@ impl KagiApp {
             op_entries,
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
+            operation_history: kagi::git::OperationHistory::new(),
+            history_modal: None,
             terminal_sessions: HashMap::new(),
             tabs: Vec::new(),
             active_tab: 0,
@@ -1505,6 +1516,8 @@ impl KagiApp {
             op_entries: VecDeque::new(),
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
+            operation_history: kagi::git::OperationHistory::new(),
+            history_modal: None,
             terminal_sessions: HashMap::new(),
             tabs: Vec::new(),
             active_tab: 0,
@@ -3818,6 +3831,8 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_commit = commit_id.clone();
+        // T-UNDOREDO-001: capture the branch + tip BEFORE the op (main thread).
+        let history_before = self.head_branch_and_sha();
         let task = cx
             .background_spawn(async move { cherry_pick_blocking(&bg_path, &bg_plan, &bg_commit) });
         cx.spawn(async move |this, acx| {
@@ -3833,6 +3848,17 @@ impl KagiApp {
                             OpOutcome::Success { after },
                             &repo_path,
                         );
+                        if let (Some((branch, before)), Some((_, after_sha))) =
+                            (history_before.clone(), app.head_branch_and_sha())
+                        {
+                            app.record_history(
+                                kagi::git::OperationKind::CherryPick,
+                                &branch,
+                                before,
+                                after_sha,
+                                format!("cherry-pick {}", commit_id.short()),
+                            );
+                        }
                         app.reload();
                     }
                     Err(err_msg) => {
@@ -3947,6 +3973,8 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_commit = commit_id.clone();
+        // T-UNDOREDO-001: capture the branch + tip BEFORE the op (main thread).
+        let history_before = self.head_branch_and_sha();
         let task =
             cx.background_spawn(async move { revert_blocking(&bg_path, &bg_plan, &bg_commit) });
         cx.spawn(async move |this, acx| {
@@ -3962,6 +3990,17 @@ impl KagiApp {
                             OpOutcome::Success { after },
                             &repo_path,
                         );
+                        if let (Some((branch, before)), Some((_, after_sha))) =
+                            (history_before.clone(), app.head_branch_and_sha())
+                        {
+                            app.record_history(
+                                kagi::git::OperationKind::Revert,
+                                &branch,
+                                before,
+                                after_sha,
+                                format!("revert {}", commit_id.short()),
+                            );
+                        }
                         app.reload();
                     }
                     Err(err_msg) => {
@@ -4472,6 +4511,19 @@ impl KagiApp {
             );
         }
         Some(stack.into_any())
+    }
+
+    /// Read the current HEAD branch name + commit SHA from the open repo.
+    /// Returns `None` for detached/unborn HEAD or any open/read failure — used
+    /// to capture before/after snapshots for the operation-history recording
+    /// (T-UNDOREDO-001). The view never holds git2 directly: this goes through
+    /// the `kagi::git::Backend`.
+    fn head_branch_and_sha(&self) -> Option<(String, kagi::git::CommitId)> {
+        let repo_path = self.repo_path.clone()?;
+        let backend = kagi::git::Backend::open(&repo_path).ok()?;
+        let branch = backend.head_shorthand()?;
+        let sha = backend.head_commit_id()?;
+        Some((branch, sha))
     }
 
     fn record_op(
@@ -5832,6 +5884,9 @@ impl KagiApp {
         let target = modal.target.clone();
         let kind = modal.kind.clone();
         let bg_path = repo_path.clone();
+        let history_target = modal.target.clone();
+        // T-UNDOREDO-001: capture the branch + tip BEFORE the merge (main thread).
+        let history_before = self.head_branch_and_sha();
         let task =
             cx.background_spawn(async move { merge_blocking(&bg_path, &plan, &target, &kind) });
         cx.spawn(async move |this, acx| {
@@ -5847,6 +5902,21 @@ impl KagiApp {
                             OpOutcome::Success { after },
                             &repo_path,
                         );
+                        // Record for undo/redo only when the merge actually moved
+                        // the branch ref (clean merge / fast-forward). A merge
+                        // left in conflict has not moved HEAD, so before==after
+                        // and record_history is a no-op.
+                        if let (Some((branch, before)), Some((_, after_sha))) =
+                            (history_before.clone(), app.head_branch_and_sha())
+                        {
+                            app.record_history(
+                                kagi::git::OperationKind::Merge,
+                                &branch,
+                                before,
+                                after_sha,
+                                format!("merge {}", history_target),
+                            );
+                        }
                         // reload() resets the conflict-mode detection guard and
                         // re-runs detect_conflict_mode(); a merge that left
                         // conflict markers (MergeKind::Conflicts) therefore enters
@@ -6125,6 +6195,18 @@ impl KagiApp {
                     OpOutcome::Success { after },
                     &repo_path,
                 );
+                // T-UNDOREDO-001: record so the undo-commit itself is redoable
+                // (entry.before = undone commit, entry.after = parent). An undo
+                // of THIS entry re-applies the commit; a redo undoes it again.
+                if let Some((branch, _)) = self.head_branch_and_sha() {
+                    self.record_history(
+                        kagi::git::OperationKind::UndoCommit,
+                        &branch,
+                        outcome.undone.clone(),
+                        outcome.now_at.clone(),
+                        format!("undo-commit {}", outcome.undone.short()),
+                    );
+                }
                 self.status_footer = FooterStatus::Success(SharedString::from(format!(
                     "undo: {} (restore: git reset --soft {})",
                     outcome.undone.short(),
@@ -6145,6 +6227,241 @@ impl KagiApp {
                 self.undo_modal = Some(UndoPlanModal {
                     plan: modal.plan.clone(),
                     error: Some(SharedString::from(err_msg)),
+                });
+            }
+        }
+    }
+
+    // ── Operation Undo / Redo (T-UNDOREDO-001, ADR-0081) ─────
+
+    /// Record a successful ref-moving operation into the in-session
+    /// [`OperationHistory`]. `before`/`after` are the branch tip SHAs around the
+    /// operation; recording truncates any redo tail (standard undo-stack).
+    ///
+    /// No-op when the SHAs are identical (e.g. a no-op fast-forward) or when the
+    /// branch name is empty (detached HEAD ops are not undoable in MVP).
+    pub fn record_history(
+        &mut self,
+        kind: kagi::git::OperationKind,
+        branch: &str,
+        before: kagi::git::CommitId,
+        after: kagi::git::CommitId,
+        summary: impl Into<String>,
+    ) {
+        if branch.is_empty() || before == after {
+            return;
+        }
+        let summary = summary.into();
+        eprintln!(
+            "[kagi] history: record {} on '{}' {} → {}",
+            kind.slug(),
+            branch,
+            before.short(),
+            after.short()
+        );
+        self.operation_history.record(kagi::git::HistoryEntry {
+            kind,
+            branch: branch.to_string(),
+            before,
+            after,
+            summary,
+        });
+    }
+
+    /// Open the Undo plan modal for the entry at the history cursor (the most
+    /// recent applied operation). Builds a [`Backend::plan_undo`] preview.
+    pub fn open_history_undo_modal(&mut self) {
+        let entry = match self.operation_history.peek_undo().cloned() {
+            Some(e) => e,
+            None => {
+                self.status_footer =
+                    FooterStatus::Idle(SharedString::from(Msg::NothingToUndo.t()));
+                return;
+            }
+        };
+        self.open_history_modal(entry, true);
+    }
+
+    /// Open the Redo plan modal for the entry just past the cursor.
+    pub fn open_history_redo_modal(&mut self) {
+        let entry = match self.operation_history.peek_redo().cloned() {
+            Some(e) => e,
+            None => {
+                self.status_footer =
+                    FooterStatus::Idle(SharedString::from(Msg::NothingToRedo.t()));
+                return;
+            }
+        };
+        self.open_history_modal(entry, false);
+    }
+
+    /// Shared: build an undo/redo plan for `entry` and show the preview modal.
+    fn open_history_modal(&mut self, entry: kagi::git::HistoryEntry, is_undo: bool) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo = match kagi::git::Backend::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "{}: repo open error: {}",
+                    if is_undo { "undo" } else { "redo" },
+                    e
+                )));
+                return;
+            }
+        };
+        let plan_res = if is_undo {
+            repo.plan_undo(&entry)
+        } else {
+            repo.plan_redo(&entry)
+        };
+        match plan_res {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: {} {} blockers={} warnings={}",
+                    if is_undo { "undo" } else { "redo" },
+                    entry.kind.slug(),
+                    plan.blockers.len(),
+                    plan.warnings.len()
+                );
+                self.history_modal = Some(HistoryPlanModal {
+                    plan: std::sync::Arc::new(plan),
+                    entry,
+                    is_undo,
+                    error: None,
+                });
+            }
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "{}: plan error: {}",
+                    if is_undo { "undo" } else { "redo" },
+                    e
+                )));
+            }
+        }
+    }
+
+    /// Confirm the open Undo/Redo modal: run preflight + execute via the safe
+    /// pipeline, advance/retreat the history cursor, record in the oplog, and
+    /// reload. On a stale entry (preflight failure) the entry is left in place
+    /// and the error is surfaced.
+    pub fn confirm_history(&mut self) {
+        let modal = match self.history_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let op_name = if modal.is_undo {
+            format!("undo-{}", modal.entry.kind.slug())
+        } else {
+            format!("redo-{}", modal.entry.kind.slug())
+        };
+
+        if !modal.plan.blockers.is_empty() {
+            self.record_op(
+                &op_name,
+                modal.plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
+                &repo_path,
+            );
+            self.history_modal = None;
+            return;
+        }
+
+        let repo = match kagi::git::Backend::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                let err_msg = format!("Repo open error: {}", e);
+                self.record_op(
+                    &op_name,
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                );
+                self.history_modal = Some(HistoryPlanModal {
+                    error: Some(SharedString::from(err_msg)),
+                    ..modal
+                });
+                return;
+            }
+        };
+
+        if let Err(e) = repo.preflight_check(&modal.plan) {
+            let err_msg = format!("Preflight failed: {}", e);
+            self.record_op(
+                &op_name,
+                modal.plan.current.clone(),
+                OpOutcome::Failed {
+                    error: err_msg.clone(),
+                },
+                &repo_path,
+            );
+            self.history_modal = Some(HistoryPlanModal {
+                error: Some(SharedString::from(err_msg)),
+                ..modal
+            });
+            return;
+        }
+
+        let exec_res = if modal.is_undo {
+            repo.execute_undo(&modal.entry)
+        } else {
+            repo.execute_redo(&modal.entry)
+        };
+
+        match exec_res {
+            Ok(outcome) => {
+                // Advance/retreat the cursor only after the ref move succeeds.
+                if modal.is_undo {
+                    self.operation_history.undo();
+                } else {
+                    self.operation_history.redo();
+                }
+                self.history_modal = None;
+                let after = StateSummary {
+                    head: format!("branch '{}' @ {}", outcome.branch, outcome.to.short()),
+                    dirty: "index reset to target (working tree preserved)".to_string(),
+                };
+                self.record_op(
+                    &op_name,
+                    modal.plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                );
+                self.status_footer = FooterStatus::Success(SharedString::from(format!(
+                    "{}: {} → {} (recover: git reflog)",
+                    op_name,
+                    outcome.from.short(),
+                    outcome.to.short()
+                )));
+                self.reload();
+            }
+            Err(e) => {
+                let err_msg = format!(
+                    "{} failed: {}",
+                    if modal.is_undo { "Undo" } else { "Redo" },
+                    e
+                );
+                self.record_op(
+                    &op_name,
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                );
+                self.history_modal = Some(HistoryPlanModal {
+                    error: Some(SharedString::from(err_msg)),
+                    ..modal
                 });
             }
         }
@@ -6327,6 +6644,17 @@ impl KagiApp {
                     OpOutcome::Success { after },
                     &repo_path,
                 );
+                // T-UNDOREDO-001: undo of an amend moves the branch from the new
+                // commit back to the pre-amend commit (still in the reflog).
+                if let Some((branch, _)) = self.head_branch_and_sha() {
+                    self.record_history(
+                        kagi::git::OperationKind::Amend,
+                        &branch,
+                        outcome.old.clone(),
+                        outcome.new.clone(),
+                        format!("amend {} → {}", outcome.old.short(), outcome.new.short()),
+                    );
+                }
                 self.status_footer = FooterStatus::Success(SharedString::from(format!(
                     "amend: {} → {} (restore: git reset --hard {})",
                     outcome.old.short(),
@@ -7907,6 +8235,10 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_msg = commit_message.clone();
+        // T-UNDOREDO-001: capture branch + tip BEFORE the commit (main thread).
+        let history_before = self.head_branch_and_sha();
+        let history_summary_line: String =
+            commit_message.lines().next().unwrap_or("").chars().take(72).collect();
         let task = cx.background_spawn(async move { commit_blocking(&bg_path, &bg_plan, &bg_msg) });
         cx.spawn(async move |this, acx| {
             let result = task.await;
@@ -7927,6 +8259,22 @@ impl KagiApp {
                             OpOutcome::Success { after },
                             &repo_path,
                         );
+                        if let (Some((hbranch, before)), Some((_, after_sha))) =
+                            (history_before.clone(), app.head_branch_and_sha())
+                        {
+                            let summary = format!(
+                                "commit {} '{}'",
+                                after_sha.short(),
+                                history_summary_line
+                            );
+                            app.record_history(
+                                kagi::git::OperationKind::Commit,
+                                &hbranch,
+                                before,
+                                after_sha,
+                                summary,
+                            );
+                        }
                         app.reload();
                     }
                     Err(err_msg) => {
@@ -9209,6 +9557,7 @@ impl KagiApp {
             || self.merge_modal.is_some()
             || self.tracking_checkout_modal.is_some()
             || self.undo_modal.is_some()
+            || self.history_modal.is_some()
             || self.amend_modal.is_some()
             || self.pop_modal.is_some()
             || self.create_branch_modal.is_some()
@@ -9443,6 +9792,7 @@ impl Render for KagiApp {
         let plan_modal = self.plan_modal.clone();
         let pull_modal = self.pull_modal.clone();
         let undo_modal = self.undo_modal.clone();
+        let history_modal = self.history_modal.clone();
         let amend_modal = self.amend_modal.clone();
         let pop_modal = self.pop_modal.clone();
         let push_modal = self.push_modal.clone();
@@ -9887,6 +10237,10 @@ impl Render for KagiApp {
             .when_some(undo_modal, |el, modal| {
                 el.child(render_undo_modal(modal, cx))
             })
+            // ── Operation Undo / Redo modal (T-UNDOREDO-001) ──
+            .when_some(history_modal, |el, modal| {
+                el.child(render_history_modal(modal, cx))
+            })
             // ── Sequencer conflict-continue confirmation (ADR-0068) ──
             .when_some(conflict_continue_modal, |el, modal| {
                 el.child(render_conflict_continue_modal(modal, cx))
@@ -10164,20 +10518,28 @@ impl KagiApp {
             cx.notify();
         });
 
-        // Undo (not implemented yet — footer notice only).
-        let undo_on = toolbar.undo_on;
+        // Undo — operation-history undo (T-UNDOREDO-001, ADR-0081). Enabled per
+        // the in-session history cursor (can_undo). Click opens the undo plan
+        // modal (preview → confirm runs the safe ref move).
+        let undo_on = self.operation_history.can_undo();
         let undo_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-            if undo_on {
-                this.open_undo_modal();
+            if this.operation_history.can_undo() {
+                this.open_history_undo_modal();
             } else {
-                let reason = if this.status_summary.is_detached {
-                    Msg::UndoDetached.t()
-                } else if this.status_summary.is_unborn {
-                    Msg::UndoUnborn.t()
-                } else {
-                    Msg::UndoAhead0.t()
-                };
-                this.status_footer = FooterStatus::Idle(SharedString::from(reason));
+                this.status_footer =
+                    FooterStatus::Idle(SharedString::from(Msg::NothingToUndo.t()));
+            }
+            cx.notify();
+        });
+
+        // Redo — operation-history redo. Enabled per can_redo().
+        let redo_on = self.operation_history.can_redo();
+        let redo_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+            if this.operation_history.can_redo() {
+                this.open_history_redo_modal();
+            } else {
+                this.status_footer =
+                    FooterStatus::Idle(SharedString::from(Msg::NothingToRedo.t()));
             }
             cx.notify();
         });
@@ -10299,17 +10661,20 @@ impl KagiApp {
                 )
         };
 
-        // ── Undo tooltip: target HEAD commit summary (ADR-0013) ─────────────
-        // Label stays the fixed "Undo"; the (possibly long) commit summary is
-        // surfaced on hover instead of being truncated into the label.
-        let undo_tooltip_text: Option<SharedString> = if toolbar.undo_on {
-            undo_summary
-                .as_ref()
-                .filter(|s| !s.is_empty())
-                .map(|s| SharedString::from(format!("Undo: \u{201c}{}\u{201d}", s)))
-        } else {
-            None
-        };
+        // ── Undo / Redo tooltips: previewed operation summary (ADR-0081) ────
+        // Labels stay the fixed "Undo"/"Redo"; the (possibly long) operation
+        // summary is surfaced on hover. Sourced from the operation-history
+        // cursor (peek_undo / peek_redo). `undo_summary` (legacy undo-commit
+        // tooltip) is no longer used now that the button is generalised.
+        let _ = &undo_summary;
+        let undo_tooltip_text: Option<SharedString> = self
+            .operation_history
+            .peek_undo()
+            .map(|e| SharedString::from(format!("Undo: {}", e.summary)));
+        let redo_tooltip_text: Option<SharedString> = self
+            .operation_history
+            .peek_redo()
+            .map(|e| SharedString::from(format!("Redo: {}", e.summary)));
 
         // ── Left label: branch info (ADR-0013) ─────────────────────────────
         // Format: `branch → upstream ↑A ↓B`  or state labels when detached/unborn.
@@ -10483,19 +10848,34 @@ impl KagiApp {
                 .on_click(pop_click),
             )
             .child(sep())
-            // Undo — fixed "Undo" label; target commit summary in tooltip.
+            // Undo — operation-history undo (T-UNDOREDO-001). Label fixed; the
+            // previewed operation summary is shown in the tooltip.
             .child(
                 make_btn(
                     "tb-undo",
-                    "Undo",
+                    Msg::Undo.t(),
                     gpui_component::IconName::Undo2,
-                    toolbar.undo_on,
+                    undo_on,
                     0,
                 )
                 .when_some(undo_tooltip_text, |btn, text| {
                     btn.tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
                 })
                 .on_click(undo_click),
+            )
+            // Redo — operation-history redo (T-UNDOREDO-001).
+            .child(
+                make_btn(
+                    "tb-redo",
+                    Msg::Redo.t(),
+                    gpui_component::IconName::Redo2,
+                    redo_on,
+                    0,
+                )
+                .when_some(redo_tooltip_text, |btn, text| {
+                    btn.tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
+                })
+                .on_click(redo_click),
             )
             .child(div().w(theme::scaled_px(2.0)))
             // Terminal (toggles bottom panel Terminal tab)

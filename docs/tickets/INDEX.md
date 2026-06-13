@@ -195,3 +195,13 @@
 | 4 Resolution Actions | T-CONFLICT-030〜035 | file 単位 done、hunk + Save + log は todo |
 | 5 Continue/Abort/Skip | T-CONFLICT-040〜044 | continue/abort done、skip + 全 checklist は todo |
 | 6 Escape Hatch | T-CONFLICT-050〜052 | todo |
+
+## Conflict UX GitKraken 寄せ改修(ADR-0068〜0070 / 2026-06-13)
+
+| Group | チケット | status |
+|-------|----------|--------|
+| Layout(3-pane editor) | T-CONFLICT-UI-001〜005 | todo |
+| Actions(accept/save) | T-CONFLICT-UX-010〜015 | todo |
+| Dashboard 限定 | T-CONFLICT-DASH-020〜023 | todo |
+| Flow(Save/Continue/Commit 分離) | T-CONFLICT-FLOW-030〜033 | todo |
+| Polish(icon/confirm/highlight) | T-CONFLICT-POLISH-040〜043 | todo |

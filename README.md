@@ -32,10 +32,13 @@ Kagi shows you **exactly what will happen before any Git operation runs** — an
 - ✅ **Commit suite** — pre-commit checklist (conflict markers / secrets / large binaries), draft autosave per branch, structured message templates (`type(scope): summary` + Test/Risk), amend with SHA-change preview
 - 🤖 **Smart commit messages** — rule-based generation always available; **local Ollama LLM strictly opt-in** (staged diff only, localhost only, explicit consent dialog)
 - 🧪 **Dry-run before danger** — cherry-pick / revert / checkout conflicts are predicted with libgit2 *in-memory* merges, without touching your working tree
+- ⚔️ **Conflict resolution** — when merge / rebase / cherry-pick / revert conflict, Kagi enters **Conflict Mode**: a GitKraken-style 3-pane editor with file / chunk / **line-level** accept checkboxes, live Result preview/edit, a conflict dashboard, and Save→stage / Continue flow — or abort to restore the pre-operation state
 - 🗑️ **Backup-then-discard** — discarding unstaged changes first snapshots the file content into the object database and records it in the operation log, so it is always recoverable
 - 🪄 **Async everything** — checkout, commit, stash, pull/push, cherry-pick… all run off the UI thread with busy indicators; the window never freezes
 - 🖥️ **Integrated terminal** — with selection, ⌘C/⌘V, and theme-matched colors
 - 🎨 **6 color themes** — Catppuccin, Xcode dark/light, One dark/light, Monokai vivid
+- 🌐 **English / Japanese UI** — explanatory prose is localized while Git domain words (Commit, Push, Pull, merge, conflict, branch…) stay English in both languages
+- 🔍 **Uniform UI zoom** — header, panels, modals, inspector, menus, and the commit graph all scale together
 - 🗂️ **Repo tabs**, branch-prefix tree sidebar (`feat/…`, grouped remotes), operation log, and a native menu bar
 
 <div align="center">
@@ -51,6 +54,7 @@ This is the core of Kagi, not an afterthought:
 | You always see the outcome first | Every operation shows a plan modal: current state → predicted state, warnings, blockers, and a recovery recipe. With blockers present, the execute button doesn't even render |
 | No destructive commands exist | `git push --force`, `reset --hard`, and `git clean` are **not implemented anywhere** in the codebase |
 | Conflicts predicted, not discovered | In-memory merge dry-runs — your working tree is untouched when a conflict is foreseen |
+| Conflicts are recoverable, not a trap | Entering Conflict Mode is always reversible — abort restores the exact pre-operation state, and in-progress resolutions are autosaved |
 | Nothing is silently lost | Stash before checkout, ODB blob backups before discard, and an append-only operation log (`~/.kagi/operations.jsonl`) with before/after states |
 | Ref moves are last | Operations write the working tree first and move refs last, so a mid-operation failure leaves HEAD where it was |
 
@@ -117,7 +121,7 @@ Tagging `v*` runs the [release workflow](.github/workflows/release.yml): macOS a
 ## 🧑‍💻 Development
 
 ```sh
-cargo test --workspace    # 28+ integration suites + unit tests
+cargo test --workspace    # 36 integration suites + unit tests
 ```
 
 - Design docs: [docs/requirements.md](docs/requirements.md) · [docs/architecture.md](docs/architecture.md) · [ADRs](docs/adr/)
@@ -126,7 +130,7 @@ cargo test --workspace    # 28+ integration suites + unit tests
 
 ## 🗺️ Status
 
-Actively developed. Implemented: full commit-graph UX, branch/tag/stash/worktree management, staging + commit suite, cherry-pick / revert / amend / discard with dry-run safety, repo tabs, themes, integrated terminal, GitHub avatars, distribution pipeline. Roadmap lives in [docs/requirements.md](docs/requirements.md) and the ticket index.
+Actively developed. Implemented: full commit-graph UX, branch/tag/stash/worktree management, staging + commit suite, cherry-pick / revert / amend / discard with dry-run safety, **conflict resolution (Conflict Mode + line-level 3-pane editor + merge-into-conflict)**, repo tabs, themes, **English/Japanese UI**, uniform UI zoom, integrated terminal, GitHub avatars, distribution pipeline. Roadmap lives in [docs/requirements.md](docs/requirements.md) and the ticket index.
 
 ## 📄 License
 

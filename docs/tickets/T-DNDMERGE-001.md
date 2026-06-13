@@ -167,3 +167,19 @@ running app.
 - ✅ Drop did not execute: HEAD unchanged (3adca07), no `MERGE_HEAD`.
 - ✅ Cancel closed the dialog with repository state unchanged.
 Screens: /tmp/kagi_dnd_post2.png (dialog), /tmp/kagi_dnd_cancel3.png (after cancel).
+
+## PM acceptance — graph BRANCH/TAG badges (2026-06-14, GUI-verified with cliclick)
+
+User clarification: the primary drag source is the in-graph BRANCH/TAG ref-badges
+(left of GRAPH/MESSAGE), and a commit may carry multiple branches, and the dragged
+label should follow the cursor. Implemented (per-badge drag with own branch name;
+HeadBranch badge as drop target; ghost styled as a badge chip) and GUI-verified:
+- ✅ Dragged the in-graph `feature/two` badge onto the `main ✓` badge →
+  `[kagi] drag-merge: start merge from drag — source=feature/two` → merge plan
+  ("Merge feature/two into main", +1 merge commit, dirty-WT warnings). NOT executed.
+- ✅ Repo untouched on drop (HEAD f2aef4a, no MERGE_HEAD).
+- ✅ Each branch badge is independently draggable (multiple-branches-per-commit handled).
+- ✅ Sidebar drag still works (both sources supported).
+- Known limitation: badges hidden behind the `+N` overflow chip aren't individually
+  draggable yet (TODO in render_badges_column).
+Screen: /tmp/kagi_gb_post3.png (dialog from graph-badge drag).

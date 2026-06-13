@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use git2::Repository;
 
 use super::{
-    conflicts, diff, diffstat, ops, resolution::ResolutionBuffer, resolve_head, snapshot, staging,
-    status, AmendMode, AmendOutcome, BranchRenameValidation, CommitId, CommitPreview,
+    conflicts, diff, diffstat, message_gen, ops, resolution::ResolutionBuffer, resolve_head,
+    snapshot, staging, status, AmendMode, AmendOutcome, BranchRenameValidation, CommitId,
+    CommitPreview,
     DiscardOutcome, FetchOutcome, FileDiff, FileDiffStat, FileStatus, GitError, Head, MergeKind,
     OperationPlan, PullOutcome, PushOutcome, RepoSnapshot, UndoOutcome, WorkingTreeStatus,
 };
@@ -63,6 +64,13 @@ impl Backend {
             .map(|oid| CommitId(oid.to_string()))
     }
 
+    pub fn head_shorthand(&self) -> Option<String> {
+        self.repo
+            .head()
+            .ok()
+            .and_then(|head| head.shorthand().ok().map(str::to_string))
+    }
+
     pub fn is_ancestor_of_head(&self, target: &CommitId) -> Result<bool, GitError> {
         let head_oid = self
             .repo
@@ -81,6 +89,34 @@ impl Backend {
 
     pub fn workdir(&self) -> Option<PathBuf> {
         self.repo.workdir().map(Path::to_path_buf)
+    }
+
+    pub fn remote_urls(&self) -> Result<Vec<String>, GitError> {
+        let remotes = self
+            .repo
+            .remotes()
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        let mut urls = Vec::new();
+        for name in remotes.iter().flatten().flatten() {
+            if let Ok(remote) = self.repo.find_remote(name) {
+                if let Ok(url) = remote.url() {
+                    urls.push(url.to_string());
+                }
+            }
+        }
+        Ok(urls)
+    }
+
+    pub fn local_branch_exists(&self, name: &str) -> bool {
+        self.repo.find_branch(name, git2::BranchType::Local).is_ok()
+    }
+
+    pub fn collect_staged_files(&self) -> Vec<FileStatus> {
+        message_gen::collect_staged_files(&self.repo)
+    }
+
+    pub fn collect_staged_diff(&self) -> String {
+        message_gen::collect_staged_diff(&self.repo)
     }
 
     pub fn stash_count(&mut self) -> Result<usize, GitError> {

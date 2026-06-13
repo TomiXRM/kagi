@@ -140,18 +140,13 @@ pub fn github_owner_repo(remote_url: &str) -> Option<(String, String)> {
 
 /// Resolve the first GitHub `(owner, repo)` from a repository's remotes.
 ///
-/// Opens the repo read-only via git2 and inspects every remote's fetch URL.
+/// Opens the repo read-only through the backend and inspects every remote's fetch URL.
 /// Returns `None` if the repo can't be opened or no remote points at GitHub.
-/// This is the only place that touches git2 from the avatar lane and is purely
-/// read-only (`Repository::open` + `remotes`/`find_remote`).
 pub fn repo_github_coords(repo_path: &std::path::Path) -> Option<(String, String)> {
-    let repo = git2::Repository::open(repo_path).ok()?;
-    let remotes = repo.remotes().ok()?;
-    for name in remotes.iter().flatten().flatten() {
-        if let Ok(remote) = repo.find_remote(name) {
-            if let Some(coords) = remote.url().ok().and_then(github_owner_repo) {
-                return Some(coords);
-            }
+    let backend = kagi::git::Backend::open(repo_path).ok()?;
+    for url in backend.remote_urls().ok()? {
+        if let Some(coords) = github_owner_repo(&url) {
+            return Some(coords);
         }
     }
     None

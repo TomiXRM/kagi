@@ -212,33 +212,12 @@ fn row_height(compact: bool) -> f32 {
 use kagi::git::{
     ChangeKind, CommitId, FileDiff, DiffLineKind, FileDiffStat, FileStatus, Head, RemoteBranch, RepoSnapshot, Stash, Tag, UpstreamInfo, Worktree,
     ops::{
-        OperationPlan, StateSummary,
-        execute_checkout, execute_checkout_commit, execute_create_branch,
-        plan_checkout, plan_checkout_commit, plan_create_branch_with_checkout, preflight_check,
-        execute_create_worktree, plan_create_worktree,
-        execute_open_worktree_for_branch, plan_open_worktree_for_branch,
-        plan_stash_push, execute_stash_push,
-        plan_stash_apply, execute_stash_apply,
-        plan_pull, execute_pull, PullOutcome,
-        plan_pull_branch_ff, execute_pull_branch_ff,
-        plan_undo_commit, execute_undo_commit,
-        plan_amend, execute_amend, AmendMode,
-        plan_stash_pop, execute_stash_pop,
-        plan_push, execute_push,
-        plan_push_branch, execute_push_branch,
-        plan_set_upstream, execute_set_upstream,
-        plan_rename_branch, execute_rename_branch, validate_branch_rename, BranchRenameValidation,
-        preflight_check_stash,
-        plan_cherry_pick, execute_cherry_pick,
+        OperationPlan, StateSummary, PullOutcome, AmendMode,
+        validate_branch_rename, BranchRenameValidation,
         default_tracking_branch_name,
-        execute_checkout_tracking_branch, execute_merge_branch, execute_merge_into_conflict,
-        plan_checkout_tracking_branch, plan_merge_branch, MergeKind,
-        plan_revert, execute_revert,
-        plan_delete_branch, execute_delete_branch,
-        plan_discard, execute_discard,
+        MergeKind,
     },
     oplog::{OpLogEntry, OpOutcome, append_oplog, read_oplog_tail},
-    stage_file, unstage_file, plan_commit, execute_commit,
 };
 use commit_panel::{CommitPanelState, CommitPanelFileRef, CommitPlanModal, status_badge};
 use commit_list::{BadgeKind, CommitRow, build_commit_rows};
@@ -1496,7 +1475,7 @@ pub struct KagiApp {
     pub draft_save_gen: u64,
     /// Debounce generation for modal live re-planning. Each input change
     /// bumps it; a 250ms timer task re-plans only if no newer change arrived.
-    /// Per-keystroke synchronous re-planning (Repository::open + plan build,
+    /// Per-keystroke synchronous re-planning (backend open + plan build,
     /// the stash modal even scans status) was the user-reported input lag.
     pub modal_replan_gen: u64,
     /// Name of the git operation currently running on a background thread
@@ -2069,14 +2048,14 @@ impl KagiApp {
         };
 
         // Re-open and snapshot.
-        let mut repo = match git2::Repository::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] reload: repo open error: {}", e.message());
+                eprintln!("[kagi] reload: repo open error: {}", e);
                 return;
             }
         };
-        let snap = match kagi::git::snapshot(&mut repo, 10_000) {
+        let snap = match repo.snapshot(10_000) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[kagi] reload: snapshot error: {}", e);
@@ -2245,7 +2224,7 @@ impl KagiApp {
         }
         self.conflict_detected_for = Some(repo_path.clone());
 
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(_) => {
                 self.conflict = None;
@@ -2253,7 +2232,7 @@ impl KagiApp {
             }
         };
 
-        let session = match kagi::git::detect_conflict_session(&repo) {
+        let session = match repo.detect_conflict_session() {
             Some(s) => s,
             None => {
                 if self.conflict.is_some() {
@@ -2269,7 +2248,7 @@ impl KagiApp {
         // (e.g. from before a restart) is preferred so partial work survives;
         // otherwise materialize a fresh buffer from the index conflicts.
         let buffer = kagi::git::ResolutionBuffer::load(&repo_path)
-            .or_else(|| kagi::git::ResolutionBuffer::from_repo(&repo).ok())
+            .or_else(|| repo.resolution_buffer_from_repo().ok())
             .unwrap_or_else(|| kagi::git::ResolutionBuffer::new(&repo_path));
 
         // Current branch short name (for the side_labels left role).
@@ -2337,7 +2316,7 @@ impl KagiApp {
                 if let Some(f) = c.session.files.get(idx) {
                     if f.kind == kagi::git::ConflictKind::Content {
                         let path = f.path.clone();
-                        if let Some(markers) = c.buffer.materialized_markers(&repo, &path) {
+                        if let Some(markers) = repo.materialized_markers(&c.buffer, &path) {
                             c.buffer.ensure_hunks(&path, &markers);
                         }
                         self.conflict_editing = Some(path);
@@ -2361,9 +2340,9 @@ impl KagiApp {
     pub fn conflict_open_editor(&mut self, path: &std::path::Path) {
         // Materialize the markers (needs the repo) and build the hunk model.
         if let Some(repo_path) = self.repo_path.clone() {
-            if let Ok(repo) = git2::Repository::open(&repo_path) {
+            if let Ok(repo) = kagi::git::Backend::open(&repo_path) {
                 if let Some(c) = self.conflict.as_mut() {
-                    if let Some(markers) = c.buffer.materialized_markers(&repo, path) {
+                    if let Some(markers) = repo.materialized_markers(&c.buffer, path) {
                         c.buffer.ensure_hunks(path, &markers);
                     }
                 }
@@ -2598,12 +2577,12 @@ impl KagiApp {
 
         // Open the repo and perform the real Save: WT write + marker block + stage
         // (index unmerged → stage 0).  Marker residue is a HARD block here.
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("Repo open error: {}", e.message())),
+                    SharedString::from(format!("Repo open error: {}", e)),
                 );
                 return;
             }
@@ -2612,7 +2591,7 @@ impl KagiApp {
             Some(c) => c.buffer.clone(),
             None => return,
         };
-        match kagi::git::execute_conflict_save(&repo, &buffer, path) {
+        match repo.execute_conflict_save(&buffer, path) {
             Ok(_outcome) => {
                 // Staged → mark the file Resolved and re-evaluate the gate.
                 if let Some(c) = self.conflict.as_mut() {
@@ -2760,17 +2739,16 @@ impl KagiApp {
         };
         let Some(mode) = self.conflict.clone() else { return };
 
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e.message())));
+                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e)));
                 return;
             }
         };
 
         let op_name = format!("{}-continue", mode.session.op.slug());
-        let route = match kagi::git::plan_conflict_continue_route(
-            &repo,
+        let route = match repo.plan_conflict_continue_route(
             &mode.session,
             &mode.buffer,
             &mode.current_branch,
@@ -2780,7 +2758,7 @@ impl KagiApp {
                 eprintln!("[kagi] refused: {} blocked: {}", op_name, e);
                 // Surface the specific (localized) blocking reason (ADR-0067).
                 if let Some(first) =
-                    kagi::git::continue_blockers(&repo, &mode.session, &mode.buffer).first()
+                    repo.continue_blockers(&mode.session, &mode.buffer).first()
                 {
                     self.push_toast(ToastKind::Error, conflict_view::blocker_msg(first).t());
                 } else {
@@ -2837,16 +2815,16 @@ impl KagiApp {
         let Some(modal) = self.conflict_continue_modal.clone() else { return };
         let plan = modal.plan;
 
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e.message())));
+                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e)));
                 return;
             }
         };
         let op_name = format!("{}-continue", mode.session.op.slug());
 
-        match kagi::git::execute_conflict_continue(&repo, &mode.session, &mode.buffer) {
+        match repo.execute_conflict_continue(&mode.session, &mode.buffer) {
             Ok(_outcome) => {
                 eprintln!("[kagi] executed: {}", op_name);
                 let _ = kagi::git::ResolutionBuffer::clear(&repo_path);
@@ -2891,15 +2869,15 @@ impl KagiApp {
         };
         let Some(mode) = self.conflict.clone() else { return };
 
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e.message())));
+                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e)));
                 return;
             }
         };
 
-        let plan = match kagi::git::plan_conflict_abort(&repo, &mode.session) {
+        let plan = match repo.plan_conflict_abort(&mode.session) {
             Ok(p) => p,
             Err(e) => {
                 self.push_toast(ToastKind::Error, SharedString::from(format!("abort plan error: {}", e)));
@@ -2908,7 +2886,7 @@ impl KagiApp {
         };
         let op_name = format!("{}-abort", mode.session.op.slug());
 
-        match kagi::git::execute_conflict_abort(&repo, &mode.session, &mode.buffer) {
+        match repo.execute_conflict_abort(&mode.session, &mode.buffer) {
             Ok(_outcome) => {
                 eprintln!("[kagi] executed: {}", op_name);
                 let after = StateSummary {
@@ -2964,15 +2942,15 @@ impl KagiApp {
         };
         let Some(mode) = self.conflict.clone() else { return };
 
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e.message())));
+                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e)));
                 return;
             }
         };
 
-        let plan = match kagi::git::plan_conflict_skip(&repo, &mode.session) {
+        let plan = match repo.plan_conflict_skip(&mode.session) {
             Ok(p) => p,
             Err(e) => {
                 self.push_toast(ToastKind::Error, SharedString::from(format!("skip plan error: {}", e)));
@@ -2981,7 +2959,7 @@ impl KagiApp {
         };
         let op_name = format!("{}-skip", mode.session.op.slug());
 
-        match kagi::git::execute_conflict_skip(&repo, &mode.session, &mode.buffer) {
+        match repo.execute_conflict_skip(&mode.session, &mode.buffer) {
             Ok(_outcome) => {
                 eprintln!("[kagi] executed: {}", op_name);
                 let after = StateSummary {
@@ -3183,15 +3161,15 @@ impl KagiApp {
             }
         };
 
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] plan: repo open error: {}", e.message());
+                eprintln!("[kagi] plan: repo open error: {}", e);
                 return;
             }
         };
 
-        match plan_checkout(&repo, &branch) {
+        match repo.plan_checkout(&branch) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: checkout {} blockers={} warnings={}",
@@ -3222,15 +3200,15 @@ impl KagiApp {
             }
         };
 
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] checkout-commit plan: repo open error: {}", e.message());
+                eprintln!("[kagi] checkout-commit plan: repo open error: {}", e);
                 return;
             }
         };
 
-        match plan_checkout_commit(&repo, &commit_id) {
+        match repo.plan_checkout_commit(&commit_id) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: checkout-commit {} blockers={} warnings={}",
@@ -3312,14 +3290,14 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] replan_create_branch: repo open error: {}", e.message());
+                eprintln!("[kagi] replan_create_branch: repo open error: {}", e);
                 return;
             }
         };
-        match plan_create_branch_with_checkout(&repo, &name, &at, checkout_after) {
+        match repo.plan_create_branch_with_checkout(&name, &at, checkout_after) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: create-branch '{}' checkout_after={} blockers={} warnings={}",
@@ -3331,7 +3309,7 @@ impl KagiApp {
                 // W29-I18N-WAVE2: localize the keyed branch-name reasons; any
                 // non-keyed plan blocker (commit-existence, checkout-after) is
                 // passed through in English.
-                let keyed = kagi::git::ops::create_branch_name_errors(&repo, &name);
+                let keyed = repo.create_branch_name_errors(&name);
                 let localized = localize_plan_blockers(&plan.blockers, keyed.iter().map(|e| {
                     (e.to_string(), crate::ui::i18n::branch_name_error(e))
                 }));
@@ -3379,10 +3357,10 @@ impl KagiApp {
             None => return,
         };
 
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                let err_msg = format!("Repo open error: {}", e.message());
+                let err_msg = format!("Repo open error: {}", e);
                 self.record_op(
                     "create-branch",
                     plan.current.clone(),
@@ -3397,7 +3375,7 @@ impl KagiApp {
         };
 
         // Preflight check (re-use checkout preflight: verifies HEAD unchanged).
-        if let Err(e) = preflight_check(&repo, &plan) {
+        if let Err(e) = repo.preflight_check(&plan) {
             let err_msg = format!("Preflight failed: {}", e);
             self.record_op(
                 "create-branch",
@@ -3412,7 +3390,7 @@ impl KagiApp {
         }
 
         // Execute create-branch.
-        if let Err(e) = execute_create_branch(&repo, &modal.input, &modal.at) {
+        if let Err(e) = repo.execute_create_branch(&modal.input, &modal.at) {
             let err_msg = format!("Create branch failed: {}", e);
             self.record_op(
                 "create-branch",
@@ -3429,17 +3407,15 @@ impl KagiApp {
         eprintln!("[kagi] executed: create-branch '{}' @ {}", modal.input, modal.at.short());
 
         // Verify: confirm the branch now exists.
-        let repo2 = match git2::Repository::open(&repo_path) {
+        let repo2 = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] verify: repo open error: {}", e.message());
+                eprintln!("[kagi] verify: repo open error: {}", e);
                 self.reload();
                 return;
             }
         };
-        let branch_exists = repo2
-            .find_branch(&modal.input, git2::BranchType::Local)
-            .is_ok();
+        let branch_exists = repo2.local_branch_exists(&modal.input);
         if branch_exists {
             eprintln!("[kagi] verified: branch '{}' exists", modal.input);
         } else {
@@ -3460,7 +3436,7 @@ impl KagiApp {
         );
 
         if modal.checkout_after {
-            let checkout_plan = match plan_checkout(&repo2, &modal.input) {
+            let checkout_plan = match repo2.plan_checkout(&modal.input) {
                 Ok(plan) => plan,
                 Err(e) => {
                     let err_msg = format!("Checkout plan failed after branch creation: {}", e);
@@ -3490,7 +3466,7 @@ impl KagiApp {
                 }
                 return;
             }
-            if let Err(e) = preflight_check(&repo2, &checkout_plan) {
+            if let Err(e) = repo2.preflight_check(&checkout_plan) {
                 let err_msg = format!("Checkout preflight failed: {}", e);
                 self.record_op(
                     "checkout",
@@ -3503,7 +3479,7 @@ impl KagiApp {
                 }
                 return;
             }
-            if let Err(e) = execute_checkout(&repo2, &modal.input) {
+            if let Err(e) = repo2.execute_checkout(&modal.input) {
                 let err_msg = format!("Checkout failed: {}", e);
                 self.record_op(
                     "checkout",
@@ -3615,17 +3591,17 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] replan_create_worktree: repo open error: {}", e.message());
+                eprintln!("[kagi] replan_create_worktree: repo open error: {}", e);
                 return;
             }
         };
         let plan_result = if allow_existing_branch {
-            plan_open_worktree_for_branch(&repo, &branch, &path)
+            repo.plan_open_worktree_for_branch(&branch, &path)
         } else {
-            plan_create_worktree(&repo, &branch, &path, &at)
+            repo.plan_create_worktree(&branch, &path, &at)
         };
         match plan_result {
             Ok(plan) => {
@@ -3641,16 +3617,14 @@ impl KagiApp {
                 // (empty / already exists). Other blockers stay English.
                 let mut keyed: Vec<(String, String)> = Vec::new();
                 if !allow_existing_branch {
-                    for e in kagi::git::ops::create_branch_name_errors(&repo, &branch) {
+                    for e in repo.create_branch_name_errors(&branch) {
                         keyed.push((e.to_string(), crate::ui::i18n::branch_name_error(&e)));
                     }
                 }
-                if let Some(repo_root) = repo.workdir() {
-                    if let Err(kagi::git::ops::WorktreeValidationError::Keyed(e)) =
-                        kagi::git::ops::validate_worktree_path_keyed(repo_root, &path)
-                    {
-                        keyed.push((e.to_string(), crate::ui::i18n::worktree_path_error(&e)));
-                    }
+                if let Err(kagi::git::ops::WorktreeValidationError::Keyed(e)) =
+                    repo.validate_worktree_path_keyed(&path)
+                {
+                    keyed.push((e.to_string(), crate::ui::i18n::worktree_path_error(&e)));
                 }
                 let localized = localize_plan_blockers(&plan.blockers, keyed.into_iter());
                 if let Some(ref mut modal) = self.create_worktree_modal {
@@ -3791,15 +3765,15 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let mut repo = match git2::Repository::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] replan_stash_push: repo open error: {}", e.message());
+                eprintln!("[kagi] replan_stash_push: repo open error: {}", e);
                 return;
             }
         };
         let msg_opt = if message_str.is_empty() { None } else { Some(message_str.as_str()) };
-        match plan_stash_push(&mut repo, msg_opt, true) {
+        match repo.plan_stash_push(msg_opt, true) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: stash-push blockers={} warnings={}",
@@ -3918,15 +3892,15 @@ impl KagiApp {
             }
         };
 
-        let mut repo = match git2::Repository::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] plan: stash-apply repo open error: {}", e.message());
+                eprintln!("[kagi] plan: stash-apply repo open error: {}", e);
                 return;
             }
         };
 
-        match plan_stash_apply(&mut repo, index) {
+        match repo.plan_stash_apply(index) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: stash-apply index={} blockers={} warnings={}",
@@ -3979,10 +3953,10 @@ impl KagiApp {
             None => return,
         };
 
-        let mut repo = match git2::Repository::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                let err_msg = format!("Repo open error: {}", e.message());
+                let err_msg = format!("Repo open error: {}", e);
                 self.record_op(
                     "stash-apply",
                     plan.current.clone(),
@@ -3997,7 +3971,7 @@ impl KagiApp {
         };
 
         // Preflight check (HEAD + stash count).
-        if let Err(e) = preflight_check_stash(&mut repo, &plan, plan.stash_count_at_plan()) {
+        if let Err(e) = repo.preflight_check_stash(&plan, plan.stash_count_at_plan()) {
             let err_msg = format!("Preflight failed: {}", e);
             self.record_op(
                 "stash-apply",
@@ -4012,7 +3986,7 @@ impl KagiApp {
         }
 
         // Execute stash apply (apply only — no pop, no drop).
-        if let Err(e) = execute_stash_apply(&mut repo, modal.index) {
+        if let Err(e) = repo.execute_stash_apply(modal.index) {
             let err_msg = format!("Stash apply failed: {}", e);
             self.record_op(
                 "stash-apply",
@@ -4029,15 +4003,15 @@ impl KagiApp {
         eprintln!("[kagi] executed: stash-apply index={}", modal.index);
 
         // Verify: check working tree is dirty and stash entry still exists.
-        let mut repo2 = match git2::Repository::open(&repo_path) {
+        let mut repo2 = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] verify: repo open error: {}", e.message());
+                eprintln!("[kagi] verify: repo open error: {}", e);
                 self.reload();
                 return;
             }
         };
-        let after_summary = match kagi::git::snapshot(&mut repo2, 10_000) {
+        let after_summary = match repo2.snapshot(10_000) {
             Ok(snap) => {
                 let is_dirty = snap.status.is_dirty();
                 let stash_count = snap.stashes.len();
@@ -4091,15 +4065,15 @@ impl KagiApp {
             }
         };
 
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] cherry-pick plan: repo open error: {}", e.message());
+                eprintln!("[kagi] cherry-pick plan: repo open error: {}", e);
                 return;
             }
         };
 
-        match plan_cherry_pick(&repo, &commit_id) {
+        match repo.plan_cherry_pick(&commit_id) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: cherry-pick {} blockers={} preview_files={}",
@@ -4218,15 +4192,15 @@ impl KagiApp {
             }
         };
 
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] revert plan: repo open error: {}", e.message());
+                eprintln!("[kagi] revert plan: repo open error: {}", e);
                 return;
             }
         };
 
-        match plan_revert(&repo, &commit_id) {
+        match repo.plan_revert(&commit_id) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: revert {} blockers={} preview_files={}",
@@ -4946,17 +4920,17 @@ impl KagiApp {
             Some(p) => p,
             None => return false,
         };
-        let mut repo = match git2::Repository::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 if let Some(m) = self.plan_modal.as_mut() {
-                    m.error = Some(SharedString::from(format!("stash: repo open error: {}", e.message())));
+                    m.error = Some(SharedString::from(format!("stash: repo open error: {}", e)));
                 }
                 return false;
             }
         };
         let msg = "kagi: auto-stash before checkout";
-        let plan = match plan_stash_push(&mut repo, Some(msg), true) {
+        let plan = match repo.plan_stash_push(Some(msg), true) {
             Ok(p) => p,
             Err(e) => {
                 if let Some(m) = self.plan_modal.as_mut() {
@@ -4981,7 +4955,7 @@ impl KagiApp {
             }
             return false;
         }
-        match execute_stash_push(&mut repo, Some(msg), true) {
+        match repo.execute_stash_push(Some(msg), true) {
             Ok(()) => {
                 eprintln!("[kagi] executed: auto-stash before checkout");
                 self.record_op(
@@ -5048,10 +5022,10 @@ impl KagiApp {
             CheckoutPlanTarget::Commit(_) => "checkout-commit",
         };
 
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                let err_msg = format!("Repo open error: {}", e.message());
+                let err_msg = format!("Repo open error: {}", e);
                 self.record_op(
                     op_name,
                     modal.plan.current.clone(),
@@ -5069,7 +5043,7 @@ impl KagiApp {
         };
 
         // Preflight check.
-        if let Err(e) = preflight_check(&repo, &modal.plan) {
+        if let Err(e) = repo.preflight_check(&modal.plan) {
             let err_msg = format!("Preflight failed: {}", e);
             self.record_op(
                 op_name,
@@ -5088,8 +5062,8 @@ impl KagiApp {
 
         // Execute checkout (safe mode only).
         let execute_result = match &modal.target {
-            CheckoutPlanTarget::Branch(branch) => execute_checkout(&repo, branch),
-            CheckoutPlanTarget::Commit(commit_id) => execute_checkout_commit(&repo, commit_id),
+            CheckoutPlanTarget::Branch(branch) => repo.execute_checkout(branch),
+            CheckoutPlanTarget::Commit(commit_id) => repo.execute_checkout_commit(commit_id),
         };
         if let Err(e) = execute_result {
             let err_msg = format!("Checkout failed: {}", e);
@@ -5116,15 +5090,15 @@ impl KagiApp {
         }
 
         // Verify: re-snapshot and confirm HEAD.
-        let mut repo2 = match git2::Repository::open(&repo_path) {
+        let mut repo2 = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] verify: repo open error: {}", e.message());
+                eprintln!("[kagi] verify: repo open error: {}", e);
                 self.reload();
                 return;
             }
         };
-        let after_summary = match kagi::git::snapshot(&mut repo2, 10_000) {
+        let after_summary = match repo2.snapshot(10_000) {
             Ok(snap) => {
                 match (&modal.target, &snap.head) {
                     (
@@ -5277,15 +5251,15 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("pull: repo open error: {}", e.message())));
+                    FooterStatus::Failed(SharedString::from(format!("pull: repo open error: {}", e)));
                 return;
             }
         };
-        match plan_pull(&repo) {
+        match repo.plan_pull() {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: pull blockers={} warnings={}",
@@ -5459,15 +5433,15 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("push: repo open error: {}", e.message())));
+                    FooterStatus::Failed(SharedString::from(format!("push: repo open error: {}", e)));
                 return;
             }
         };
-        match plan_push(&repo) {
+        match repo.plan_push() {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: push blockers={} warnings={} preview_commits={}",
@@ -5632,19 +5606,19 @@ impl KagiApp {
             return;
         }
         let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(
-                    format!("branch operation: repo open error: {}", e.message()),
+                    format!("branch operation: repo open error: {}", e),
                 ));
                 return;
             }
         };
         let plan_result = match kind {
-            BranchPlanKind::PullFfOnly => plan_pull_branch_ff(&repo, &branch_name),
-            BranchPlanKind::Push => plan_push_branch(&repo, &branch_name, false),
-            BranchPlanKind::PushSetUpstream => plan_push_branch(&repo, &branch_name, true),
+            BranchPlanKind::PullFfOnly => repo.plan_pull_branch_ff(&branch_name),
+            BranchPlanKind::Push => repo.plan_push_branch(&branch_name, false),
+            BranchPlanKind::PushSetUpstream => repo.plan_push_branch(&branch_name, true),
         };
         match plan_result {
             Ok(plan) => {
@@ -5765,8 +5739,8 @@ impl KagiApp {
             None => return,
         };
         let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
-        let repo = match git2::Repository::open(&repo_path) { Ok(r) => r, Err(_) => return };
-        match plan_set_upstream(&repo, &branch_name, &input) {
+        let repo = match kagi::git::Backend::open(&repo_path) { Ok(r) => r, Err(_) => return };
+        match repo.plan_set_upstream(&branch_name, &input) {
             Ok(plan) => {
                 if let Some(m) = self.set_upstream_modal.as_mut() {
                     m.plan = Some(std::sync::Arc::new(plan));
@@ -5871,8 +5845,8 @@ impl KagiApp {
         let existing: Vec<String> = self.branches.iter().map(|(name, _)| name.clone()).collect();
         let validation = validate_branch_rename(&old_name, &input, &existing);
         let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
-        let repo = match git2::Repository::open(&repo_path) { Ok(r) => r, Err(_) => return };
-        match plan_rename_branch(&repo, &old_name, &input) {
+        let repo = match kagi::git::Backend::open(&repo_path) { Ok(r) => r, Err(_) => return };
+        match repo.plan_rename_branch(&old_name, &input) {
             Ok(plan) => {
                 if let Some(m) = self.rename_branch_modal.as_mut() {
                     m.validation = validation;
@@ -5964,17 +5938,17 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(format!(
                     "merge: repo open error: {}",
-                    e.message()
+                    e
                 )));
                 return;
             }
         };
-        match plan_merge_branch(&repo, &target) {
+        match repo.plan_merge_branch(&target) {
             Ok((plan, kind)) => {
                 eprintln!(
                     "[kagi] plan: merge {} blockers={} warnings={} preview_files={} kind={:?}",
@@ -6090,18 +6064,18 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(format!(
                     "checkout tracking: repo open error: {}",
-                    e.message()
+                    e
                 )));
                 return;
             }
         };
         let local_branch = default_tracking_branch_name(&remote_branch);
-        match plan_checkout_tracking_branch(&repo, &remote_branch, &local_branch) {
+        match repo.plan_checkout_tracking_branch(&remote_branch, &local_branch) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: checkout-tracking {} -> {} blockers={} warnings={}",
@@ -6212,14 +6186,14 @@ impl KagiApp {
     /// Build an undo-commit plan and open the confirmation modal.
     pub fn open_undo_modal(&mut self) {
         let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!("undo: repo open error: {}", e.message())));
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!("undo: repo open error: {}", e)));
                 return;
             }
         };
-        match plan_undo_commit(&repo) {
+        match repo.plan_undo_commit() {
             Ok(plan) => {
                 eprintln!("[kagi] plan: undo blockers={} warnings={}", plan.blockers.len(), plan.warnings.len());
                 self.undo_modal = Some(UndoPlanModal { plan: std::sync::Arc::new(plan), error: None });
@@ -6242,24 +6216,24 @@ impl KagiApp {
                 OpOutcome::Refused { blockers: modal.plan.blockers.clone() }, &repo_path);
             return;
         }
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                let err_msg = format!("Repo open error: {}", e.message());
+                let err_msg = format!("Repo open error: {}", e);
                 self.record_op("undo-commit", modal.plan.current.clone(),
                     OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
                 self.undo_modal = Some(UndoPlanModal { plan: modal.plan.clone(), error: Some(SharedString::from(err_msg)) });
                 return;
             }
         };
-        if let Err(e) = preflight_check(&repo, &modal.plan) {
+        if let Err(e) = repo.preflight_check(&modal.plan) {
             let err_msg = format!("Preflight failed: {}", e);
             self.record_op("undo-commit", modal.plan.current.clone(),
                 OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
             self.undo_modal = Some(UndoPlanModal { plan: modal.plan.clone(), error: Some(SharedString::from(err_msg)) });
             return;
         }
-        match execute_undo_commit(&repo) {
+        match repo.execute_undo_commit() {
             Ok(outcome) => {
                 eprintln!("[kagi] executed: undo {} -> now at {}", outcome.undone.short(), outcome.now_at.short());
                 self.undo_modal = None;
@@ -6306,16 +6280,16 @@ impl KagiApp {
     /// Used by the headless `KAGI_AMEND` path and by [`open_amend_modal`].
     pub fn open_amend_modal_with_message(&mut self, mode: AmendMode, message: String) {
         let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(
-                    format!("amend: repo open error: {}", e.message())));
+                    format!("amend: repo open error: {}", e)));
                 return;
             }
         };
         let msg_opt = if message.trim().is_empty() { None } else { Some(message.as_str()) };
-        match plan_amend(&repo, mode, msg_opt) {
+        match repo.plan_amend(mode, msg_opt) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: amend mode={:?} blockers={} warnings={} destructive={}",
@@ -6361,17 +6335,17 @@ impl KagiApp {
         }
 
         // ── Armed: proceed to preflight → execute ────────────
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                let err_msg = format!("Repo open error: {}", e.message());
+                let err_msg = format!("Repo open error: {}", e);
                 self.record_op("amend", modal.plan.current.clone(),
                     OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
                 self.amend_modal = Some(AmendPlanModal { error: Some(SharedString::from(err_msg)), ..modal });
                 return;
             }
         };
-        if let Err(e) = preflight_check(&repo, &modal.plan) {
+        if let Err(e) = repo.preflight_check(&modal.plan) {
             let err_msg = format!("Preflight failed: {}", e);
             self.record_op("amend", modal.plan.current.clone(),
                 OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
@@ -6383,7 +6357,7 @@ impl KagiApp {
         // `record_op` writes the before-state; the success record below captures
         // the new HEAD so the旧→新 transition is fully logged.
         let msg_opt = if modal.message.trim().is_empty() { None } else { Some(modal.message.as_str()) };
-        match execute_amend(&repo, modal.mode, msg_opt) {
+        match repo.execute_amend(modal.mode, msg_opt) {
             Ok(outcome) => {
                 eprintln!("[kagi] executed: amend {} -> {}", outcome.old.short(), outcome.new.short());
                 self.amend_modal = None;
@@ -6489,14 +6463,14 @@ impl KagiApp {
     /// Build a stash-pop plan and open the confirmation modal.
     pub fn open_pop_modal(&mut self, index: usize) {
         let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
-        let mut repo = match git2::Repository::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!("pop: repo open error: {}", e.message())));
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!("pop: repo open error: {}", e)));
                 return;
             }
         };
-        match plan_stash_pop(&mut repo, index) {
+        match repo.plan_stash_pop(index) {
             Ok(plan) => {
                 eprintln!("[kagi] plan: stash-pop index={} blockers={} warnings={}", index, plan.blockers.len(), plan.warnings.len());
                 self.pop_modal = Some(PopPlanModal { plan: std::sync::Arc::new(plan), error: None, stash_index: index });
@@ -6519,24 +6493,24 @@ impl KagiApp {
                 OpOutcome::Refused { blockers: modal.plan.blockers.clone() }, &repo_path);
             return;
         }
-        let mut repo = match git2::Repository::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                let err_msg = format!("Repo open error: {}", e.message());
+                let err_msg = format!("Repo open error: {}", e);
                 self.record_op("stash-pop", modal.plan.current.clone(),
                     OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
                 self.pop_modal = Some(PopPlanModal { plan: modal.plan.clone(), error: Some(SharedString::from(err_msg)), stash_index: modal.stash_index });
                 return;
             }
         };
-        if let Err(e) = preflight_check(&repo, &modal.plan) {
+        if let Err(e) = repo.preflight_check(&modal.plan) {
             let err_msg = format!("Preflight failed: {}", e);
             self.record_op("stash-pop", modal.plan.current.clone(),
                 OpOutcome::Failed { error: err_msg.clone() }, &repo_path);
             self.pop_modal = Some(PopPlanModal { plan: modal.plan.clone(), error: Some(SharedString::from(err_msg)), stash_index: modal.stash_index });
             return;
         }
-        match execute_stash_pop(&mut repo, modal.stash_index) {
+        match repo.execute_stash_pop(modal.stash_index) {
             Ok(()) => {
                 eprintln!("[kagi] executed: stash-pop index={}", modal.stash_index);
                 self.pop_modal = None;
@@ -6630,16 +6604,16 @@ impl KagiApp {
                 return;
             }
         };
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(
-                    format!("delete-branch: repo open error: {}", e.message()),
+                    format!("delete-branch: repo open error: {}", e),
                 ));
                 return;
             }
         };
-        match plan_delete_branch(&repo, &branch_name) {
+        match repo.plan_delete_branch(&branch_name) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: delete-branch {} blockers={}",
@@ -6691,10 +6665,10 @@ impl KagiApp {
             return;
         }
 
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                let err_msg = format!("Repo open error: {}", e.message());
+                let err_msg = format!("Repo open error: {}", e);
                 self.record_op(
                     "delete-branch",
                     modal.plan.current.clone(),
@@ -6710,7 +6684,7 @@ impl KagiApp {
             }
         };
 
-        if let Err(e) = kagi::git::ops::preflight_check(&repo, &modal.plan) {
+        if let Err(e) = repo.preflight_check(&modal.plan) {
             let err_msg = format!("Preflight failed: {}", e);
             self.record_op(
                 "delete-branch",
@@ -6726,7 +6700,7 @@ impl KagiApp {
             return;
         }
 
-        match execute_delete_branch(&repo, &modal.plan, &modal.branch_name) {
+        match repo.execute_delete_branch(&modal.plan, &modal.branch_name) {
             Ok(()) => {
                 eprintln!("[kagi] executed: delete-branch {}", modal.branch_name);
                 self.delete_branch_modal = None;
@@ -6890,17 +6864,17 @@ impl KagiApp {
             Some(f) => f.path.to_string_lossy().replace('\\', "/"),
             None => return,
         };
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "discard: repo open error: {}", e.message()
+                    "discard: repo open error: {}", e
                 )));
                 return;
             }
         };
         let paths = vec![path];
-        match plan_discard(&repo, &paths) {
+        match repo.plan_discard(&paths) {
             Ok(plan) => {
                 eprintln!("[kagi] plan: discard 1 target blockers={}", plan.blockers.len());
                 self.discard_modal = Some(DiscardModal {
@@ -6923,16 +6897,16 @@ impl KagiApp {
     pub fn open_discard_all_modal(&mut self) {
         let repo_path = match self.repo_path.clone() { Some(p) => p, None => return };
         let (eligible, skipped) = self.discard_partition();
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "discard: repo open error: {}", e.message()
+                    "discard: repo open error: {}", e
                 )));
                 return;
             }
         };
-        match plan_discard(&repo, &eligible) {
+        match repo.plan_discard(&eligible) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: discard-all {} target(s) blockers={} skipped={}",
@@ -7333,11 +7307,11 @@ impl KagiApp {
     /// overwrite only when empty).
     pub fn smart_suggest(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repo_path) = self.repo_path.clone() else { return };
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(_) => return,
         };
-        let files = message_gen::collect_staged_files(&repo);
+        let files = repo.collect_staged_files();
         let gi = message_gen::GenInput {
             diff: String::new(),
             lang: self.smart_commit.lang,
@@ -7454,12 +7428,12 @@ impl KagiApp {
         cx.notify();
 
         let task = cx.background_spawn(async move {
-            let repo = match git2::Repository::open(&repo_path) {
+            let repo = match kagi::git::Backend::open(&repo_path) {
                 Ok(r) => r,
                 Err(_) => return None,
             };
-            let files = message_gen::collect_staged_files(&repo);
-            let diff = message_gen::collect_staged_diff(&repo);
+            let files = repo.collect_staged_files();
+            let diff = repo.collect_staged_diff();
             let gi = message_gen::GenInput { diff, lang, style };
             // LLM first; on Err fall back to the rule-based draft (quietly).
             let backend = message_gen::MessageBackend::Ollama { host, model };
@@ -7523,8 +7497,8 @@ impl KagiApp {
             None => return,
         };
         if paths.is_empty() { return; }
-        let repo = match git2::Repository::open(&repo_path) { Ok(r) => r, Err(_) => return };
-        match kagi::git::stage_files(&repo, &paths) {
+        let repo = match kagi::git::Backend::open(&repo_path) { Ok(r) => r, Err(_) => return };
+        match repo.stage_files(&paths) {
             Ok(n) => {
                 eprintln!("[kagi] staged-all: {} file(s)", n);
                 if let Some(panel) = self.commit_panel.as_mut() {
@@ -7545,8 +7519,8 @@ impl KagiApp {
             None => return,
         };
         if paths.is_empty() { return; }
-        let repo = match git2::Repository::open(&repo_path) { Ok(r) => r, Err(_) => return };
-        match kagi::git::unstage_files(&repo, &paths) {
+        let repo = match kagi::git::Backend::open(&repo_path) { Ok(r) => r, Err(_) => return };
+        match repo.unstage_files(&paths) {
             Ok(n) => {
                 eprintln!("[kagi] unstaged-all: {} file(s)", n);
                 if let Some(panel) = self.commit_panel.as_mut() {
@@ -7568,14 +7542,14 @@ impl KagiApp {
             Some(f) => f.path.clone(),
             None => return,
         };
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] stage_file: repo open error: {}", e.message());
+                eprintln!("[kagi] stage_file: repo open error: {}", e);
                 return;
             }
         };
-        if let Err(e) = stage_file(&repo, &path) {
+        if let Err(e) = repo.stage_file(&path) {
             eprintln!("[kagi] stage_file error: {}", e);
         } else {
             eprintln!("[kagi] staged: {}", path.display());
@@ -7602,14 +7576,14 @@ impl KagiApp {
             Some(f) => f.path.clone(),
             None => return,
         };
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] unstage_file: repo open error: {}", e.message());
+                eprintln!("[kagi] unstage_file: repo open error: {}", e);
                 return;
             }
         };
-        if let Err(e) = unstage_file(&repo, &path) {
+        if let Err(e) = repo.unstage_file(&path) {
             eprintln!("[kagi] unstage_file error: {}", e);
         } else {
             eprintln!("[kagi] unstaged: {}", path.display());
@@ -7682,14 +7656,14 @@ impl KagiApp {
         if msg.trim().is_empty() {
             return;
         }
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] plan_commit: repo open error: {}", e.message());
+                eprintln!("[kagi] plan_commit: repo open error: {}", e);
                 return;
             }
         };
-        match plan_commit(&repo, &msg) {
+        match repo.plan_commit(&msg) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: commit blockers={} warnings={}",
@@ -7814,14 +7788,14 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e.message())));
+                self.push_toast(ToastKind::Error, SharedString::from(format!("Repo open error: {}", e)));
                 return;
             }
         };
-        match kagi::git::execute_merge_commit(&repo, message) {
+        match repo.execute_merge_commit(message) {
             Ok(id) => {
                 eprintln!("[kagi] executed: merge commit {}", id.short());
                 let _ = kagi::git::ResolutionBuffer::clear(&repo_path);
@@ -8012,7 +7986,7 @@ impl KagiApp {
     }
 
     pub fn open_main_diff_commit(&mut self, file_index: usize) {
-        use kagi::git::{CommitId, commit_file_diff};
+        use kagi::git::CommitId;
 
         let selected = match self.selected {
             Some(s) => s,
@@ -8038,12 +8012,12 @@ impl KagiApp {
         let id = CommitId(detail.full_sha.as_ref().to_string());
         let path = file_status.path.clone();
 
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(_) => return,
         };
 
-        match commit_file_diff(&repo, &id, &path) {
+        match repo.commit_file_diff(&id, &path) {
             Ok(file_diff) => {
                 // Count added / removed lines for the log.
                 let added: usize = file_diff
@@ -8093,8 +8067,6 @@ impl KagiApp {
     }
 
     pub fn open_main_diff_compare(&mut self, file_index: usize) {
-        use kagi::git::{compare_commit_to_workdir_file_diff, compare_file_diff};
-
         let repo_path = match self.repo_path.as_ref() {
             Some(p) => p.clone(),
             None => return,
@@ -8109,20 +8081,20 @@ impl KagiApp {
         };
         let path = file_status.path.clone();
 
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(_) => return,
         };
 
         let file_diff_result = match view.target {
             CompareTarget::Head => {
-                let head = match repo.head().ok().and_then(|h| h.target()) {
-                    Some(oid) => CommitId(oid.to_string()),
+                let head = match repo.head_commit_id() {
+                    Some(id) => id,
                     None => return,
                 };
-                compare_file_diff(&repo, &view.base, &head, &path)
+                repo.compare_file_diff(&view.base, &head, &path)
             }
-            CompareTarget::WorkingTree => compare_commit_to_workdir_file_diff(&repo, &view.base, &path),
+            CompareTarget::WorkingTree => repo.compare_commit_to_workdir_file_diff(&view.base, &path),
         };
 
         match file_diff_result {
@@ -8177,8 +8149,6 @@ impl KagiApp {
 
     /// T-UI-003: Open the diff for a Commit Panel file in the full-width main pane.
     pub fn open_main_diff_wip(&mut self, file_ref: commit_panel::CommitPanelFileRef) {
-        use kagi::git::{unstaged_file_diff, staged_file_diff};
-
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -8205,15 +8175,15 @@ impl KagiApp {
             }
         };
 
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(_) => return,
         };
 
         let file_diff_result = if is_staged {
-            staged_file_diff(&repo, &path)
+            repo.staged_file_diff(&path)
         } else {
-            unstaged_file_diff(&repo, &path)
+            repo.unstaged_file_diff(&path)
         };
 
         match file_diff_result {
@@ -8256,27 +8226,27 @@ impl KagiApp {
     /// Fetch changed files for the commit at `index`.  Returns `None` on
     /// failure (so the UI can show "(diff unavailable)").
     fn fetch_changed_files(&self, index: usize) -> Option<Vec<FileStatus>> {
-        use kagi::git::{CommitId, commit_changed_files};
+        use kagi::git::CommitId;
 
         let repo_path = self.repo_path.as_ref()?;
         let detail = self.details.get(index)?;
         let id = CommitId(detail.full_sha.as_ref().to_string());
 
-        let repo = git2::Repository::open(repo_path).ok()?;
-        commit_changed_files(&repo, &id).ok()
+        let repo = kagi::git::Backend::open(repo_path).ok()?;
+        repo.commit_changed_files(&id).ok()
     }
 
     /// W16-DIFFSTAT: aggregate per-file additions/deletions for the commit at
     /// `index`.  Returns `None` on failure (the UI simply omits the bar).
     fn fetch_diffstat(&self, index: usize) -> Option<Vec<FileDiffStat>> {
-        use kagi::git::{CommitId, commit_diffstat};
+        use kagi::git::CommitId;
 
         let repo_path = self.repo_path.as_ref()?;
         let detail = self.details.get(index)?;
         let id = CommitId(detail.full_sha.as_ref().to_string());
 
-        let repo = git2::Repository::open(repo_path).ok()?;
-        commit_diffstat(&repo, &id).ok()
+        let repo = kagi::git::Backend::open(repo_path).ok()?;
+        repo.commit_diffstat(&id).ok()
     }
 
     pub fn close_compare_view(&mut self) {
@@ -8304,8 +8274,6 @@ impl KagiApp {
     }
 
     pub fn open_compare_with_head(&mut self, target: CommitId) {
-        use kagi::git::compare_commits;
-
         let row_index = match self.row_for_commit_id(&target) {
             Some(ix) => ix,
             None => return,
@@ -8318,22 +8286,22 @@ impl KagiApp {
             Some(p) => p.clone(),
             None => return,
         };
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] compare: repo open error: {}", e.message());
+                eprintln!("[kagi] compare: repo open error: {}", e);
                 return;
             }
         };
-        let head = match repo.head().ok().and_then(|h| h.target()) {
-            Some(oid) => CommitId(oid.to_string()),
+        let head = match repo.head_commit_id() {
+            Some(id) => id,
             None => {
                 eprintln!("[kagi] compare: HEAD unavailable");
                 return;
             }
         };
 
-        match compare_commits(&repo, &target, &head) {
+        match repo.compare_commits(&target, &head) {
             Ok(files) => {
                 let title = SharedString::from(format!("{} \u{2194} HEAD", target.short()));
                 eprintln!(
@@ -8360,8 +8328,6 @@ impl KagiApp {
     }
 
     pub fn open_compare_with_working_tree(&mut self, target: CommitId) {
-        use kagi::git::{compare_commit_to_workdir, working_tree_status};
-
         let row_index = match self.row_for_commit_id(&target) {
             Some(ix) => ix,
             None => return,
@@ -8374,14 +8340,14 @@ impl KagiApp {
             Some(p) => p.clone(),
             None => return,
         };
-        let repo = match git2::Repository::open(&repo_path) {
+        let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] compare: repo open error: {}", e.message());
+                eprintln!("[kagi] compare: repo open error: {}", e);
                 return;
             }
         };
-        match working_tree_status(&repo) {
+        match repo.working_tree_status() {
             Ok(status) if !status.is_dirty() => {
                 eprintln!(
                     "[kagi] compare: {} <-> working tree disabled(local changes がありません)",
@@ -8399,7 +8365,7 @@ impl KagiApp {
             _ => {}
         }
 
-        match compare_commit_to_workdir(&repo, &target) {
+        match repo.compare_commit_to_workdir(&target) {
             Ok(files) => {
                 let title = SharedString::from(format!(
                     "{} \u{2194} working tree (staged+unstaged)",
@@ -8569,17 +8535,8 @@ impl KagiApp {
         } else {
             self.repo_path
                 .as_ref()
-                .and_then(|repo_path| git2::Repository::open(repo_path).ok())
-                .and_then(|repo| {
-                    let head_oid = repo.head().ok()?.target()?;
-                    let target_oid = git2::Oid::from_str(&target.0).ok()?;
-                    Some(
-                        head_oid == target_oid
-                            || repo
-                                .graph_descendant_of(head_oid, target_oid)
-                                .unwrap_or(false),
-                    )
-                })
+                .and_then(|repo_path| kagi::git::Backend::open(repo_path).ok())
+                .and_then(|repo| repo.is_ancestor_of_head(&target).ok())
                 .unwrap_or(false)
         };
 
@@ -10528,9 +10485,9 @@ impl KagiApp {
                 // branch / author) from the current repo.  Pure read; falls back
                 // to None (preview hidden) if the repo cannot be opened.
                 let preview = self.repo_path.as_ref().and_then(|p| {
-                    git2::Repository::open(p)
+                    kagi::git::Backend::open(p)
                         .ok()
-                        .and_then(|repo| kagi::git::commit_preview(&repo).ok())
+                        .and_then(|repo| repo.commit_preview().ok())
                 });
                 body_row = body_row
                     .child(divider2)
@@ -11764,11 +11721,11 @@ fn stash_push_blocking(
     message: Option<String>,
 ) -> Result<(String, StateSummary), String> {
     let t0 = Instant::now();
-    let mut repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e.message()))?;
-    preflight_check_stash(&mut repo, plan, plan.stash_count_at_plan())
+    let mut repo = kagi::git::Backend::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check_stash(plan, plan.stash_count_at_plan())
         .map_err(|e| format!("Preflight failed: {}", e))?;
-    execute_stash_push(&mut repo, message.as_deref(), true)
+    repo.execute_stash_push(message.as_deref(), true)
         .map_err(|e| format!("Stash push failed: {}", e))?;
     let t_stash = t0.elapsed();
     eprintln!("[kagi] executed: stash-push message={:?}", message.unwrap_or_default());
@@ -11778,18 +11735,14 @@ fn stash_push_blocking(
     // doubled the wall-clock (user asked why stash took ~10s). Status + a
     // stash-count check are enough to confirm the operation took effect.
     let t1 = Instant::now();
-    let after = match kagi::git::working_tree_status(&repo) {
+    let after = match repo.working_tree_status() {
         Ok(status) => {
             if !status.is_dirty() {
                 eprintln!("[kagi] verified: working tree clean after stash-push");
             } else {
                 eprintln!("[kagi] verify: working tree NOT clean after stash-push");
             }
-            let mut count = 0usize;
-            let _ = repo.stash_foreach(|_, _, _| {
-                count += 1;
-                true
-            });
+            let count = repo.stash_count().unwrap_or(0);
             eprintln!("[kagi] verified: stash count={}", count);
             // resolve_head is crate-private; the predicted head from the
             // plan is accurate here (stash does not move HEAD).
@@ -11815,11 +11768,11 @@ fn pull_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
 ) -> Result<(String, StateSummary), String> {
-    let repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e.message()))?;
-    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo = kagi::git::Backend::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
 
-    let outcome = execute_pull(&repo, repo_path).map_err(|e| format!("Pull failed: {}", e))?;
+    let outcome = repo.execute_pull().map_err(|e| format!("Pull failed: {}", e))?;
     let summary = match &outcome {
         PullOutcome::UpToDate => "already up to date".to_string(),
         PullOutcome::FastForward { to } => format!("fast-forward to {}", to.short()),
@@ -11839,11 +11792,11 @@ fn push_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
 ) -> Result<(String, StateSummary), String> {
-    let repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e.message()))?;
-    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo = kagi::git::Backend::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
 
-    let outcome = execute_push(&repo, repo_path).map_err(|e| format!("Push failed: {}", e))?;
+    let outcome = repo.execute_push().map_err(|e| format!("Push failed: {}", e))?;
     let summary = if outcome.set_upstream {
         format!("pushed {} commit(s), set upstream", outcome.pushed)
     } else {
@@ -11859,8 +11812,8 @@ fn push_blocking(
 /// Re-snapshot the repo for the verified after-state; falls back to the
 /// plan's prediction when the snapshot fails (non-fatal).
 fn verify_after_snapshot(repo_path: &std::path::Path, plan: &OperationPlan) -> StateSummary {
-    match git2::Repository::open(repo_path) {
-        Ok(mut repo2) => match kagi::git::snapshot(&mut repo2, 10_000) {
+    match kagi::git::Backend::open(repo_path) {
+        Ok(mut repo2) => match repo2.snapshot(10_000) {
             Ok(snap) => StateSummary {
                 head: snap.head.display(),
                 dirty: if snap.status.is_dirty() {
@@ -11892,13 +11845,13 @@ fn checkout_blocking(
     plan: &OperationPlan,
     target: &CheckoutPlanTarget,
 ) -> Result<(String, StateSummary), String> {
-    let repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e.message()))?;
-    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo = kagi::git::Backend::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
 
     let execute_result = match target {
-        CheckoutPlanTarget::Branch(branch) => execute_checkout(&repo, branch),
-        CheckoutPlanTarget::Commit(commit_id) => execute_checkout_commit(&repo, commit_id),
+        CheckoutPlanTarget::Branch(branch) => repo.execute_checkout(branch),
+        CheckoutPlanTarget::Commit(commit_id) => repo.execute_checkout_commit(commit_id),
     };
     execute_result.map_err(|e| format!("Checkout failed: {}", e))?;
 
@@ -11914,8 +11867,8 @@ fn checkout_blocking(
     };
 
     // Verify: re-snapshot and confirm HEAD.
-    let after = match git2::Repository::open(repo_path) {
-        Ok(mut repo2) => match kagi::git::snapshot(&mut repo2, 10_000) {
+    let after = match kagi::git::Backend::open(repo_path) {
+        Ok(mut repo2) => match repo2.snapshot(10_000) {
             Ok(snap) => {
                 match (target, &snap.head) {
                     (
@@ -11947,7 +11900,7 @@ fn checkout_blocking(
             }
         },
         Err(e) => {
-            eprintln!("[kagi] verify: repo open error: {}", e.message());
+            eprintln!("[kagi] verify: repo open error: {}", e);
             plan.predicted.clone()
         }
     };
@@ -11960,16 +11913,16 @@ fn merge_blocking(
     target: &str,
     kind: &MergeKind,
 ) -> Result<(String, StateSummary), String> {
-    let repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e.message()))?;
-    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo = kagi::git::Backend::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
 
     match kind {
         MergeKind::Conflicts(_) => {
             // W31: perform the real conflicting merge — leaves markers + index
             // stages + MERGE_HEAD. No commit is created; Conflict Mode takes over
             // on the subsequent reload.
-            let files = execute_merge_into_conflict(&repo, target)
+            let files = repo.execute_merge_into_conflict(target)
                 .map_err(|e| format!("Merge failed: {}", e))?;
             eprintln!(
                 "[kagi] executed: merge-into-conflict {} -> {} conflict(s)",
@@ -11981,7 +11934,7 @@ fn merge_blocking(
         }
         MergeKind::FastForward | MergeKind::MergeCommit => {
             let new_head =
-                execute_merge_branch(&repo, target).map_err(|e| format!("Merge failed: {}", e))?;
+                repo.execute_merge_branch(target).map_err(|e| format!("Merge failed: {}", e))?;
             eprintln!("[kagi] executed: merge {} -> {}", target, new_head.short());
 
             let after = verify_after_snapshot(repo_path, plan);
@@ -11997,11 +11950,11 @@ fn checkout_tracking_blocking(
     remote_branch: &str,
     local_branch: &str,
 ) -> Result<(String, StateSummary), String> {
-    let repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e.message()))?;
-    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo = kagi::git::Backend::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
 
-    execute_checkout_tracking_branch(&repo, remote_branch, local_branch)
+    repo.execute_checkout_tracking_branch(remote_branch, local_branch)
         .map_err(|e| format!("Checkout tracking failed: {}", e))?;
     eprintln!(
         "[kagi] executed: checkout-tracking {} -> {}",
@@ -12020,11 +11973,11 @@ fn cherry_pick_blocking(
     plan: &OperationPlan,
     commit_id: &CommitId,
 ) -> Result<(String, StateSummary), String> {
-    let repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e.message()))?;
-    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo = kagi::git::Backend::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
 
-    let new_id = execute_cherry_pick(&repo, commit_id)
+    let new_id = repo.execute_cherry_pick(commit_id)
         .map_err(|e| format!("Cherry-pick failed: {}", e))?;
     eprintln!("[kagi] executed: cherry-pick {} -> {}", commit_id.short(), new_id.short());
 
@@ -12039,12 +11992,12 @@ fn revert_blocking(
     plan: &OperationPlan,
     commit_id: &CommitId,
 ) -> Result<(String, StateSummary), String> {
-    let repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e.message()))?;
-    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo = kagi::git::Backend::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
 
     let new_id =
-        execute_revert(&repo, commit_id).map_err(|e| format!("Revert failed: {}", e))?;
+        repo.execute_revert(commit_id).map_err(|e| format!("Revert failed: {}", e))?;
     eprintln!("[kagi] executed: revert {} -> {}", commit_id.short(), new_id.short());
 
     let after = verify_new_commit_snapshot(repo_path, plan, &new_id, "revert");
@@ -12059,16 +12012,16 @@ fn commit_blocking(
     plan: &OperationPlan,
     message: &str,
 ) -> Result<(String, StateSummary), String> {
-    let repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    let repo = kagi::git::Backend::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e))?;
 
     let new_id =
-        execute_commit(&repo, message).map_err(|e| format!("Commit failed: {}", e))?;
+        repo.execute_commit(message).map_err(|e| format!("Commit failed: {}", e))?;
     eprintln!("[kagi] executed: commit {}", new_id.short());
 
     // Verify: re-snapshot, check HEAD is the new commit, unstaged remain.
-    let after = match git2::Repository::open(repo_path) {
-        Ok(mut repo2) => match kagi::git::snapshot(&mut repo2, 10_000) {
+    let after = match kagi::git::Backend::open(repo_path) {
+        Ok(mut repo2) => match repo2.snapshot(10_000) {
             Ok(snap) => {
                 if let Head::Attached { target, branch } = &snap.head {
                     if *target == new_id.0 {
@@ -12093,7 +12046,7 @@ fn commit_blocking(
             }
         },
         Err(e) => {
-            eprintln!("[kagi] verify: repo open error: {}", e.message());
+            eprintln!("[kagi] verify: repo open error: {}", e);
             plan.predicted.clone()
         }
     };
@@ -12107,11 +12060,11 @@ fn stash_pop_blocking(
     plan: &OperationPlan,
     stash_index: usize,
 ) -> Result<(String, StateSummary), String> {
-    let mut repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e.message()))?;
-    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let mut repo = kagi::git::Backend::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
 
-    execute_stash_pop(&mut repo, stash_index).map_err(|e| format!("Pop failed: {}", e))?;
+    repo.execute_stash_pop(stash_index).map_err(|e| format!("Pop failed: {}", e))?;
     eprintln!("[kagi] executed: stash-pop index={}", stash_index);
 
     let after = StateSummary {
@@ -12130,16 +12083,16 @@ fn discard_blocking(
     plan: &OperationPlan,
     paths: &[String],
 ) -> Result<(String, StateSummary), String> {
-    let repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    let repo = kagi::git::Backend::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e))?;
 
-    let outcome = execute_discard(&repo, plan, paths)
+    let outcome = repo.execute_discard(plan, paths)
         .map_err(|e| format!("Discard failed: {}", e))?;
     let summary = outcome.oplog_summary();
     eprintln!("[kagi] executed: {}", summary);
 
     // Verify: re-read status; targets must have left the unstaged set.
-    let dirty = match kagi::git::working_tree_status(&repo) {
+    let dirty = match repo.working_tree_status() {
         Ok(status) => {
             let still: std::collections::HashSet<String> = status
                 .unstaged
@@ -12182,12 +12135,12 @@ fn amend_blocking(
     mode: AmendMode,
     message: &str,
 ) -> Result<(StateSummary, CommitId, CommitId), String> {
-    let repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e.message()))?;
-    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo = kagi::git::Backend::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
 
     let msg_opt = if message.trim().is_empty() { None } else { Some(message) };
-    let outcome = execute_amend(&repo, mode, msg_opt).map_err(|e| format!("Amend failed: {}", e))?;
+    let outcome = repo.execute_amend(mode, msg_opt).map_err(|e| format!("Amend failed: {}", e))?;
     eprintln!("[kagi] executed: amend {} -> {}", outcome.old.short(), outcome.new.short());
 
     let after = StateSummary {
@@ -12204,11 +12157,11 @@ fn delete_branch_blocking(
     plan: &OperationPlan,
     branch_name: &str,
 ) -> Result<StateSummary, String> {
-    let repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e.message()))?;
-    kagi::git::ops::preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo = kagi::git::Backend::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
 
-    execute_delete_branch(&repo, plan, branch_name)
+    repo.execute_delete_branch(plan, branch_name)
         .map_err(|e| format!("Delete failed: {}", e))?;
     eprintln!("[kagi] executed: delete-branch {}", branch_name);
 
@@ -12222,11 +12175,11 @@ fn branch_plan_blocking(
     repo_path: &std::path::Path,
     modal: &BranchPlanModal,
 ) -> Result<StateSummary, String> {
-    let repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e.message()))?;
+    let repo = kagi::git::Backend::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e))?;
     match modal.kind {
         BranchPlanKind::PullFfOnly => {
-            let outcome = execute_pull_branch_ff(&repo, repo_path, &modal.plan, &modal.branch_name)
+            let outcome = repo.execute_pull_branch_ff(&modal.plan, &modal.branch_name)
                 .map_err(|e| format!("Pull failed: {}", e))?;
             let dirty = match outcome {
                 PullOutcome::UpToDate => format!("branch '{}' already up to date", modal.branch_name),
@@ -12242,13 +12195,8 @@ fn branch_plan_blocking(
         }
         BranchPlanKind::Push | BranchPlanKind::PushSetUpstream => {
             let set_upstream = modal.kind == BranchPlanKind::PushSetUpstream;
-            let outcome = execute_push_branch(
-                &repo,
-                repo_path,
-                &modal.plan,
-                &modal.branch_name,
-                set_upstream,
-            )
+            let outcome = repo
+                .execute_push_branch(&modal.plan, &modal.branch_name, set_upstream)
             .map_err(|e| format!("Push failed: {}", e))?;
             Ok(StateSummary {
                 head: modal.plan.current.head.clone(),
@@ -12269,9 +12217,9 @@ fn set_upstream_blocking(
     branch_name: &str,
     upstream: &str,
 ) -> Result<StateSummary, String> {
-    let repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e.message()))?;
-    execute_set_upstream(&repo, plan, branch_name, upstream)
+    let repo = kagi::git::Backend::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e))?;
+    repo.execute_set_upstream(plan, branch_name, upstream)
         .map_err(|e| format!("Set upstream failed: {}", e))?;
     Ok(StateSummary {
         head: plan.current.head.clone(),
@@ -12285,9 +12233,9 @@ fn rename_branch_blocking(
     old_name: &str,
     new_name: &str,
 ) -> Result<StateSummary, String> {
-    let repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e.message()))?;
-    execute_rename_branch(&repo, plan, old_name, new_name)
+    let repo = kagi::git::Backend::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e))?;
+    repo.execute_rename_branch(plan, old_name, new_name)
         .map_err(|e| format!("Rename failed: {}", e))?;
     Ok(StateSummary {
         head: plan.predicted.head.clone(),
@@ -12305,15 +12253,15 @@ fn create_worktree_blocking(
     at: &CommitId,
     allow_existing_branch: bool,
 ) -> Result<StateSummary, String> {
-    let repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Repo open error: {}", e.message()))?;
-    preflight_check(&repo, plan).map_err(|e| format!("Preflight failed: {}", e))?;
+    let repo = kagi::git::Backend::open(repo_path)
+        .map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan).map_err(|e| format!("Preflight failed: {}", e))?;
 
     if allow_existing_branch {
-        execute_open_worktree_for_branch(&repo, branch_input, path_input)
+        repo.execute_open_worktree_for_branch(branch_input, path_input)
             .map_err(|e| format!("Open worktree failed: {}", e))?;
     } else {
-        execute_create_worktree(&repo, branch_input, path_input, at)
+        repo.execute_create_worktree(branch_input, path_input, at)
             .map_err(|e| format!("Create worktree failed: {}", e))?;
     }
     eprintln!(
@@ -12328,19 +12276,16 @@ fn create_worktree_blocking(
         let path = std::path::PathBuf::from(path_input);
         if path.is_absolute() { path } else { repo_path.join(path) }
     };
-    match git2::Repository::open(&verify_path) {
+    match kagi::git::Backend::open(&verify_path) {
         Ok(linked) => {
-            let head = linked
-                .head()
-                .ok()
-                .and_then(|h| h.shorthand().ok().map(|s| s.to_string()));
+            let head = linked.head_shorthand();
             eprintln!(
                 "[kagi] verified: worktree '{}' HEAD={}",
                 verify_path.display(),
                 head.unwrap_or_else(|| "?".to_string())
             );
         }
-        Err(e) => eprintln!("[kagi] verify: worktree open error: {}", e.message()),
+        Err(e) => eprintln!("[kagi] verify: worktree open error: {}", e),
     }
 
     Ok(plan.predicted.clone())
@@ -12354,8 +12299,8 @@ fn verify_new_commit_snapshot(
     new_id: &CommitId,
     op: &str,
 ) -> StateSummary {
-    match git2::Repository::open(repo_path) {
-        Ok(mut repo2) => match kagi::git::snapshot(&mut repo2, 10_000) {
+    match kagi::git::Backend::open(repo_path) {
+        Ok(mut repo2) => match repo2.snapshot(10_000) {
             Ok(snap) => {
                 if let Head::Attached { target, branch } = &snap.head {
                     if *target == new_id.0 {
@@ -12384,7 +12329,7 @@ fn verify_new_commit_snapshot(
             }
         },
         Err(e) => {
-            eprintln!("[kagi] verify: repo open error: {}", e.message());
+            eprintln!("[kagi] verify: repo open error: {}", e);
             plan.predicted.clone()
         }
     }

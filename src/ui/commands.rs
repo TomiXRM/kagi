@@ -911,18 +911,18 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match git2::Repository::open(&repo_path) {
+        let backend = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(format!(
                     "fetch: repo open error: {}",
-                    e.message()
+                    e
                 )));
                 return;
             }
         };
         eprintln!("[kagi] menu: fetch start");
-        match kagi::git::fetch_remote(&repo, &repo_path) {
+        match backend.fetch_remote() {
             Ok(outcome) => {
                 eprintln!("[kagi] menu: fetch ok remote={}", outcome.remote);
                 self.reload();

@@ -187,9 +187,10 @@ impl KagiApp {
         let bg_path = path.clone();
         let bg_name = name.clone();
         let task = cx.background_spawn(async move {
-            let mut repo = git2::Repository::open(&bg_path)
-                .map_err(|e| format!("repo open error: {}", e.message()))?;
-            let snap = kagi::git::snapshot(&mut repo, 10_000)
+            let mut backend = kagi::git::Backend::open(&bg_path)
+                .map_err(|e| format!("repo open error: {}", e))?;
+            let snap = backend
+                .snapshot(10_000)
                 .map_err(|e| format!("snapshot error: {e}"))?;
             let repo_name = bg_path
                 .file_name()

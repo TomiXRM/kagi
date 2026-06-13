@@ -215,9 +215,9 @@ mod tests {
 
     /// Build a ConflictMode from a repo path, mirroring `detect_conflict_mode`.
     fn detect(repo_path: &std::path::Path, branch: &str) -> ConflictMode {
-        let repo = git2::Repository::open(repo_path).unwrap();
-        let mut session = kagi::git::detect_conflict_session(&repo).expect("conflict session");
-        let buffer = kagi::git::ResolutionBuffer::from_repo(&repo).unwrap();
+        let backend = kagi::git::Backend::open(repo_path).unwrap();
+        let mut session = backend.detect_conflict_session().expect("conflict session");
+        let buffer = backend.resolution_buffer_from_repo().unwrap();
         let residue = buffer.files_with_marker_residue();
         for f in &mut session.files {
             f.status = if buffer.has_resolution(&f.path) {

@@ -13,9 +13,7 @@ use std::path::PathBuf;
 
 use gpui::SharedString;
 
-use kagi::git::{
-    ChangeKind, FileDiffStat, FileStatus,
-};
+use kagi::git::{Backend, ChangeKind, FileDiffStat, FileStatus};
 
 // ──────────────────────────────────────────────────────────────
 // CommitPanelFileRef — which file is selected in the panel
@@ -98,15 +96,14 @@ impl CommitPanelState {
 
     /// Reload unstaged/staged lists from the repository.
     pub fn reload_status(&mut self, repo_path: &PathBuf) {
-        use kagi::git::{staged_diffstat, unstaged_diffstat, working_tree_status};
-        let repo = match git2::Repository::open(repo_path) {
+        let backend = match Backend::open(repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] commit_panel: repo open error: {}", e.message());
+                eprintln!("[kagi] commit_panel: repo open error: {}", e);
                 return;
             }
         };
-        match working_tree_status(&repo) {
+        match backend.working_tree_status() {
             Ok(status) => {
                 // Track conflicted paths for UI (these cannot be staged).
                 self.conflicted_paths = status.conflicted.iter().cloned().collect();
@@ -131,8 +128,8 @@ impl CommitPanelState {
                 self.staged = status.staged;
                 // W16-DIFFSTAT: aggregate additions/deletions for both sides.
                 // Best-effort: on error leave the lists empty (bar omitted).
-                self.unstaged_stats = unstaged_diffstat(&repo).unwrap_or_default();
-                self.staged_stats = staged_diffstat(&repo).unwrap_or_default();
+                self.unstaged_stats = backend.unstaged_diffstat().unwrap_or_default();
+                self.staged_stats = backend.staged_diffstat().unwrap_or_default();
                 // Clear selection on status change.
                 self.selected_file = None;
             }

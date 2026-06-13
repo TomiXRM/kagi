@@ -123,30 +123,6 @@ impl ConflictMode {
     /// residue AND a resolvable resolution draft (ADR-0063).  We approximate
     /// "index-resolvable" with "has a clean buffer resolution" — the plan
     /// pipeline re-checks the live index before writing.
-    pub fn clean_resolvable_files(&self) -> Vec<std::path::PathBuf> {
-        let residue = self.buffer.files_with_marker_residue();
-        self.session
-            .files
-            .iter()
-            .filter(|f| {
-                self.buffer.has_resolution(&f.path) && !residue.contains(&f.path)
-            })
-            .map(|f| f.path.clone())
-            .collect()
-    }
-
-    /// Whether the selected file is currently mark-resolvable (clean, resolved
-    /// draft, no marker residue).
-    pub fn selected_is_mark_resolvable(&self) -> bool {
-        let Some(idx) = self.selected_file else {
-            return false;
-        };
-        let Some(f) = self.session.files.get(idx) else {
-            return false;
-        };
-        self.buffer.has_resolution(&f.path)
-            && !self.buffer.files_with_marker_residue().contains(&f.path)
-    }
 
     /// The role labels for the current operation (ADR-0058, never ours/theirs).
     pub fn labels(&self) -> SideLabels {
@@ -275,17 +251,6 @@ mod tests {
         assert_eq!(mode.continue_blocker(), Some(Msg::ConflictBlockerMarker));
     }
 
-    #[test]
-    fn clean_resolvable_tracks_clean_files() {
-        let td = merge_conflict_repo();
-        let mut mode = detect(td.path(), "main");
-        assert!(mode.clean_resolvable_files().is_empty());
-        let path = mode.session.files[0].path.clone();
-        mode.buffer
-            .apply_choice(&path, kagi::git::ResolutionChoice::Current)
-            .unwrap();
-        assert_eq!(mode.clean_resolvable_files(), vec![path]);
-    }
 
     #[test]
     fn heading_uses_roles_not_ours_theirs() {
@@ -426,12 +391,25 @@ pub fn render_banner(mode: &ConflictMode, _cx: &mut Context<KagiApp>) -> gpui::A
 /// preview (the W32 Conflict Editor lane replaces this center by reading
 /// `editing_file`); right = the Conflict Dashboard (ADR-0063).
 pub fn render_body(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    // GitKraken-style layout: the CENTER is the main A/B Conflict Editor (with
+    // the Result Preview below it), and the Conflict Dashboard is always on the
+    // RIGHT (info + navigation + continue/abort/skip + escape hatch — no
+    // resolution actions live there).  For a content conflict we render the
+    // hunk-level side-by-side editor; binary / single-sided files (no hunk
+    // model) fall back to the simple choose surface.
+    let center = match mode.selected_file.and_then(|i| mode.session.files.get(i)) {
+        Some(file) if file.kind == ConflictKind::Content => {
+            let path = file.path.clone();
+            super::conflict_editor::render_editor(mode, &path, cx)
+        }
+        _ => render_center(mode, cx),
+    };
     div()
         .flex()
         .flex_row()
         .size_full()
         .bg(rgb(theme().bg_base))
-        .child(render_center(mode, cx))
+        .child(center)
         .child(render_dashboard(mode, cx))
         .into_any_element()
 }
@@ -456,7 +434,6 @@ fn render_dashboard(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::Any
         .child(dash_counts(mode, cx))
         .child(dash_view_toggle(mode, cx))
         .child(dash_actions(mode, cx))
-        .child(dash_mark_resolved(mode, cx))
         .child(dash_sections(mode, cx))
         .child(dash_escape_hatch(mode, cx))
         .into_any_element()
@@ -778,43 +755,6 @@ fn dash_actions(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElem
     col.into_any_element()
 }
 
-/// Mark-resolved options (ADR-0063): selected file + all clean files.  No
-/// blanket "Mark all resolved" (Advanced-only, omitted in MVP).
-fn dash_mark_resolved(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let sel_ok = mode.selected_is_mark_resolvable();
-    let any_clean = !mode.clean_resolvable_files().is_empty();
-
-    let sel_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_mark_selected_resolved();
-        cx.notify();
-    });
-    let all_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_mark_all_clean_resolved();
-        cx.notify();
-    });
-
-    div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(8.))
-        .border_b_1()
-        .border_color(rgb(theme().surface))
-        .child(action_button(
-            Msg::ConflictMarkSelectedResolved.t(),
-            theme().color_branch,
-            sel_ok,
-            if sel_ok { Some(sel_handler) } else { None },
-        ))
-        .child(action_button(
-            Msg::ConflictMarkAllCleanResolved.t(),
-            theme().color_branch,
-            any_clean,
-            if any_clean { Some(all_handler) } else { None },
-        ))
-        .into_any_element()
-}
 
 /// Two sections: Conflicted Files and Resolved Files, each row with a kind badge.
 fn dash_sections(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {

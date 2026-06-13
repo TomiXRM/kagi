@@ -2219,6 +2219,24 @@ impl KagiApp {
             abort_armed: false,
             tree_view,
         });
+
+        // The center A/B editor renders from the hunk model, which needs the
+        // repo to materialize zdiff3 markers. With auto-selection the user never
+        // clicked, so build the hunk model for the selected content file here
+        // (otherwise the editor shows the "no hunk model" fallback message).
+        if let Some(c) = self.conflict.as_mut() {
+            if let Some(idx) = c.selected_file {
+                if let Some(f) = c.session.files.get(idx) {
+                    if f.kind == kagi::git::ConflictKind::Content {
+                        let path = f.path.clone();
+                        if let Some(markers) = c.buffer.materialized_markers(&repo, &path) {
+                            c.buffer.ensure_hunks(&path, &markers);
+                        }
+                        self.conflict_editing = Some(path);
+                    }
+                }
+            }
+        }
     }
 
     // ────────────────────────────────────────────────────────────
@@ -2253,10 +2271,6 @@ impl KagiApp {
         self.conflict_editing = Some(path.to_path_buf());
     }
 
-    /// Close the Conflict Editor, returning to the Dashboard.
-    pub fn conflict_close_editor(&mut self) {
-        self.conflict_editing = None;
-    }
 
     /// Apply a per-hunk choice in the editor: dispatch to the buffer's
     /// [`ResolutionBuffer::apply_hunk_choice`], refresh the file status, autosave.
@@ -2723,40 +2737,6 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Mark the selected file resolved (ADR-0063): only allowed when the file
-    /// has a clean resolution draft (no marker residue).  Plan-based — the
-    /// resolution is already in the buffer; this just refreshes status (the
-    /// continue plan writes the index).  No direct index writes from the UI.
-    pub fn conflict_mark_selected_resolved(&mut self) {
-        let Some(c) = self.conflict.as_mut() else { return };
-        if !c.selected_is_mark_resolvable() {
-            return;
-        }
-        let residue = c.buffer.files_with_marker_residue();
-        if let Some(idx) = c.selected_file {
-            if let Some(f) = c.session.files.get_mut(idx) {
-                f.status = if residue.contains(&f.path) {
-                    kagi::git::ConflictStatus::NeedsReview
-                } else {
-                    kagi::git::ConflictStatus::Resolved
-                };
-            }
-        }
-        let _ = c.buffer.autosave();
-    }
-
-    /// Mark all clean files resolved (ADR-0063): files with no marker residue
-    /// AND a resolution draft.  Never a blanket "Mark all resolved" (Advanced).
-    pub fn conflict_mark_all_clean_resolved(&mut self) {
-        let Some(c) = self.conflict.as_mut() else { return };
-        let clean = c.clean_resolvable_files();
-        for f in c.session.files.iter_mut() {
-            if clean.contains(&f.path) {
-                f.status = kagi::git::ConflictStatus::Resolved;
-            }
-        }
-        let _ = c.buffer.autosave();
-    }
 
 
     /// Open the configured external merge tool for the selected conflict file
@@ -8813,8 +8793,6 @@ impl Render for KagiApp {
         // W30-CONFLICT-UI: clone the Conflict Mode snapshot for render (free
         // functions in `conflict_view` render from this immutable copy).
         let conflict = self.conflict.clone();
-        // W32-CONFLICT-EDITOR: which conflicting file (if any) the editor is on.
-        let conflict_editing = self.conflict_editing.clone();
         let commit_menu_overlay = self
             .commit_menu
             .clone()
@@ -9083,16 +9061,11 @@ impl Render for KagiApp {
             // ── W30-CONFLICT-UI: persistent conflict banner (under header) ──
             .children(conflict.as_ref().map(|m| conflict_view::render_banner(m, cx)))
             // ── Body slot: in Conflict Mode the conflict resolution pane
-            //    replaces the normal sidebar | list | panel body. ───
-            //    W32: with conflict_editing set, the dedicated hunk-level
-            //    Conflict Editor replaces the Dashboard body.
+            //    replaces the normal sidebar | list | panel body. The center is
+            //    the A/B hunk editor + Result Preview; the right is always the
+            //    Conflict Dashboard (GitKraken-style — see render_body).
             .when_some(conflict.clone(), |el, m| {
-                match conflict_editing.clone() {
-                    Some(editing) => {
-                        el.child(conflict_editor::render_editor(&m, &editing, cx))
-                    }
-                    None => el.child(conflict_view::render_body(&m, cx)),
-                }
+                el.child(conflict_view::render_body(&m, cx))
             })
             .when(conflict.is_none(), |el| {
                 el.child(self.render_body(

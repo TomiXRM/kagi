@@ -43,10 +43,14 @@ pub fn render_editor(
     path: &std::path::Path,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    // Embedded as the CENTER main area; the right Conflict Dashboard is always
+    // rendered alongside, so flex within the row instead of taking the window.
     div()
         .flex()
         .flex_col()
-        .size_full()
+        .flex_grow()
+        .h_full()
+        .min_w(px(0.))
         .bg(rgb(theme().bg_base))
         .child(render_toolbar(mode, path, cx))
         .child(render_split(mode, path, cx))
@@ -71,10 +75,6 @@ fn render_toolbar(
         .unwrap_or(0);
     let n_of_m = format!("{} {}/{}", Msg::EditorConflictNofM.t(), resolved, total);
 
-    let back = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_close_editor();
-        cx.notify();
-    });
     let prev = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
         this.conflict_editor_nav_hunk(-1);
         cx.notify();
@@ -111,7 +111,6 @@ fn render_toolbar(
         .bg(rgb(theme().surface))
         .border_b_1()
         .border_color(rgb(theme().color_warning))
-        .child(tool_button("editor-back", Msg::EditorBackToList.t(), theme().text_sub, back))
         .child(
             div()
                 .flex_grow()

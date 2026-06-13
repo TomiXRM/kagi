@@ -861,13 +861,72 @@ fn render_result_pane(
             save,
         ));
 
-    // Body: read-only in Preview, editable in Edit (same InputState; the app's
-    // sync pass pulls edits into the buffer via set_manual_text).
-    let editor = Input::new(&inputs.result)
-        .disabled(!editing)
-        .appearance(true)
-        .bordered(false)
-        .h_full();
+    // Body: Preview renders custom monospace rows that exactly match the A/B
+    // line lists (12px + terminal font); Edit uses the InputState so the text is
+    // editable. (The InputState reads window.text_style at prepaint, which the
+    // parent div's text-style cascade does NOT reach, so its font/size can't be
+    // matched to the A/B rows — hence the custom Preview rendering.)
+    let preview_body: gpui::AnyElement = if editing {
+        div()
+            .flex_grow()
+            .w_full()
+            .min_h(px(0.))
+            .child(
+                Input::new(&inputs.result)
+                    .disabled(false)
+                    .appearance(true)
+                    .bordered(false)
+                    .h_full(),
+            )
+            .into_any_element()
+    } else {
+        let text = mode
+            .buffer
+            .hunk_model(path)
+            .map(|m| m.assembled_text())
+            .unwrap_or_default();
+        let mut col = div()
+            .id("conflict-result-preview")
+            .flex()
+            .flex_col()
+            .flex_grow()
+            .min_h(px(0.))
+            .w_full()
+            .overflow_scroll();
+        for (i, line) in text.lines().enumerate() {
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .min_w(relative(1.0))
+                    .h(theme::scaled_px(17.))
+                    .px(theme::scaled_px(4.))
+                    .gap_1()
+                    .child(
+                        div()
+                            .w(theme::scaled_px(42.))
+                            .flex_shrink_0()
+                            .text_size(theme::scaled_px(11.))
+                            .line_height(theme::scaled_px(17.))
+                            .font_family(terminal::pick_font_family())
+                            .text_color(rgb(theme().text_muted))
+                            .child(SharedString::from(format!("{:>4}", i + 1))),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .whitespace_nowrap()
+                            .text_size(theme::scaled_px(12.))
+                            .line_height(theme::scaled_px(17.))
+                            .font_family(terminal::pick_font_family())
+                            .text_color(rgb(theme().text_main))
+                            .child(SharedString::from(line.to_string())),
+                    ),
+            );
+        }
+        col.into_any_element()
+    };
 
     div()
         .id("conflict-pane-result")
@@ -880,18 +939,7 @@ fn render_result_pane(
         .border_color(rgb(theme().surface))
         .bg(rgb(theme().bg_base))
         .child(header)
-        .child(
-            // Match the A/B line-row code font: same size (12px) + terminal
-            // family, inherited by the Result InputState (user request to align
-            // Preview / A·B editor text sizes).
-            div()
-                .flex_grow()
-                .w_full()
-                .min_h(px(0.))
-                .text_size(theme::scaled_px(12.))
-                .font_family(terminal::pick_font_family())
-                .child(editor),
-        )
+        .child(preview_body)
         .into_any_element()
 }
 

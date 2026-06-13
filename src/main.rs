@@ -208,6 +208,11 @@ fn main() {
     // (Catppuccin Mocha).  Logs `[kagi] theme: <slug> dark=<bool>`.
     crate::ui::theme::init_active();
 
+    // W27-UIPOLISH: resolve the persisted UI zoom factor (settings.json
+    // "ui_zoom", stored as permille) before the first render applies it via
+    // `window.set_rem_size`.  Defaults to 1.0x.
+    crate::ui::theme::init_zoom();
+
     // W22-I18N / ADR-0048: resolve the UI language before anything renders.
     // Priority: KAGI_LANG env → settings.json "lang" → LANG/LC_ALL → English.
     crate::ui::i18n::init_lang();

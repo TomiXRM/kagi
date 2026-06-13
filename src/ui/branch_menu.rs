@@ -17,9 +17,10 @@ use super::{
 
 const MENU_W: f32 = 300.0;
 const MENU_MARGIN: f32 = 8.0;
-const MENU_ROW_H: f32 = 28.0;
-const MENU_HEADER_H: f32 = 36.0;
-const MENU_GROUP_H: f32 = 22.0;
+// W27-UIPOLISH: Zed-style compact density (kept in sync with context_menu.rs).
+const MENU_ROW_H: f32 = 24.0;
+const MENU_HEADER_H: f32 = 30.0;
+const MENU_GROUP_H: f32 = 18.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BranchKind {
@@ -398,7 +399,7 @@ pub fn render_branch_menu_overlay(
                 div()
                     .h(px(MENU_GROUP_H))
                     .px_3()
-                    .pt_2()
+                    .pt_1()
                     .text_xs()
                     .text_color(rgb(title_color))
                     .child(SharedString::from(title)),

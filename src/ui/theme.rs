@@ -222,6 +222,25 @@ pub fn rem_size_px() -> f32 {
     BASE_REM_PX * zoom()
 }
 
+/// W27/W28: scale a fixed layout dimension by the active UI zoom.
+///
+/// gpui 0.2.2 has no global element-scale transform, and `rem_size` scaling
+/// only affects rem-based **text**.  Literal `px(..)` layout dimensions (row
+/// heights, panel widths, paddings, graph node/lane geometry) stay fixed unless
+/// routed through here, which causes text↔layout drift on zoom — most visibly
+/// the commit graph misaligning with its (rem-scaled) text rows.  Wrapping a
+/// layout constant as `scaled_px(N)` makes it track the same `zoom()` factor as
+/// the text, so the whole UI scales uniformly.
+///
+/// Use for **layout** dimensions, not for text sizes (text already scales via
+/// rem).  `scaled_px(0.0)` and hairline `1.0` borders are returned unscaled-ish
+/// by nature of multiplication; callers that want crisp 1px borders may keep a
+/// literal `px(1.)`.
+#[inline]
+pub fn scaled_px(n: f32) -> gpui::Pixels {
+    gpui::px(n * zoom())
+}
+
 /// Set the active zoom factor (clamped) and persist it to `settings.json`.
 /// Returns the clamped value that is now active.
 pub fn set_zoom(z: f32) -> f32 {

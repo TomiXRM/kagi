@@ -11639,7 +11639,7 @@ fn render_file_menu_overlay(
                 .absolute()
                 .left(pos.x)
                 .top(pos.y)
-                .w(px(180.))
+                .w(theme::scaled_px(180.))
                 .occlude()
                 .bg(rgb(theme().panel))
                 .border_1()

@@ -777,6 +777,10 @@ pub fn render_sidebar(
                 let can_jump = commit_row_index.contains_key(&rb_target);
                 let full_name = SharedString::from(display.to_string());
                 let label = SharedString::from(display_label.to_string());
+                // T-DNDMERGE-001: remote branches are draggable merge sources too
+                // (drop onto the current branch to merge the upstream-only branch
+                // directly via its `remote/name` ref).
+                let drag_name = display.to_string();
                 let left_pad = match depth {
                     0 => theme::scaled_px(12.),
                     1 => theme::scaled_px(28.),
@@ -816,6 +820,16 @@ pub fn render_sidebar(
                         .overflow_hidden()
                         .on_click(click_handler)
                         .on_mouse_down(gpui::MouseButton::Right, menu_click)
+                        .cursor_grab()
+                        .on_drag(
+                            BranchDrag {
+                                name: drag_name.clone(),
+                            },
+                            move |drag: &BranchDrag, _pos, _window, cx| {
+                                let name = SharedString::from(drag.name.clone());
+                                cx.new(|_| BranchDragGhost { name })
+                            },
+                        )
                         .hover(|style| style.bg(rgb(theme().surface)))
                         .tooltip(name_tooltip(full_name))
                         .child(div().flex_1().truncate().child(label))
@@ -847,6 +861,17 @@ pub fn render_sidebar(
                         .text_color(rgb(theme().color_remote))
                         .overflow_hidden()
                         .on_mouse_down(gpui::MouseButton::Right, menu_click)
+                        .cursor_grab()
+                        .on_drag(
+                            BranchDrag {
+                                name: drag_name.clone(),
+                            },
+                            move |drag: &BranchDrag, _pos, _window, cx| {
+                                let name = SharedString::from(drag.name.clone());
+                                cx.new(|_| BranchDragGhost { name })
+                            },
+                        )
+                        .hover(|style| style.bg(rgb(theme().surface)))
                         .tooltip(name_tooltip(full_name))
                         .child(div().flex_1().truncate().child(label))
                         .into_any()

@@ -177,14 +177,16 @@ impl gpui::Render for BranchDragGhost {
 /// T-DNDMERGE-001 / ADR-0079: pure helper that extracts the draggable branch
 /// name from a graph ref-badge for the `BranchDrag { name }` payload.
 ///
-/// Only `BadgeKind::Branch` chips are draggable, and for that kind `label` IS
-/// the plain local-branch name (built by `commit_list::build_badge_map`).
-/// `HeadBranch` (label = `"<name> ✓"`, and it is the drop *target*, not a
-/// source), `Remote`, and `Tag` chips are NOT draggable → `None`.
+/// `BadgeKind::Branch` (label IS the plain local-branch name) and
+/// `BadgeKind::Remote` (label IS the full `remote/name` ref) are both draggable
+/// merge sources — a remote chip lets an upstream-only branch be merged
+/// directly via its remote-tracking ref (resolved by the merge backend), with
+/// no local branch required. `HeadBranch` (label = `"<name> ✓"`, and it is the
+/// drop *target*, not a source) and `Tag` chips are NOT draggable → `None`.
 fn draggable_branch_name(badge: &commit_list::RefBadge) -> Option<String> {
     match badge.kind {
-        BadgeKind::Branch => Some(badge.label.to_string()),
-        BadgeKind::HeadBranch | BadgeKind::Remote | BadgeKind::Tag => None,
+        BadgeKind::Branch | BadgeKind::Remote => Some(badge.label.to_string()),
+        BadgeKind::HeadBranch | BadgeKind::Tag => None,
     }
 }
 
@@ -192,32 +194,37 @@ fn draggable_branch_name(badge: &commit_list::RefBadge) -> Option<String> {
 /// extracted so the rejection rules can be unit-tested without a `Window`/`cx`.
 ///
 /// `branches` is the local-branch list as held in `KagiApp::branches`
-/// (`(name, is_head)`).  Returns `Ok(())` when the drag may proceed to
-/// `open_merge_modal(source)`, or `Err(reason)` describing why it is rejected
-/// (same-branch / unknown branch / busy).  `plan_merge_branch` remains the
-/// authoritative guard for dirty-WT / ff / conflict prediction.
+/// (`(name, is_head)`); `remotes` is the list of remote-tracking ref names
+/// (`"origin/feature"`, from `KagiApp::remote_branches`).  Returns `Ok(())` when
+/// the drag may proceed to `open_merge_modal(source)`, or `Err(reason)`
+/// describing why it is rejected (same-branch / unknown branch / busy).
+/// `plan_merge_branch` remains the authoritative guard for dirty-WT / ff /
+/// conflict prediction.
 fn validate_merge_from_drag(
     source: &str,
     branches: &[(String, bool)],
+    remotes: &[String],
     busy: bool,
 ) -> Result<(), String> {
     if busy {
         return Err(Msg::OpInProgress.t().to_string());
     }
-    // Source must be a real local branch.
-    let entry = branches.iter().find(|(n, _)| n == source);
-    let is_head = match entry {
-        Some((_, head)) => *head,
-        None => return Err(format!("Branch '{}' is not a local branch.", source)),
-    };
-    // Dropping a branch onto itself (it IS the current branch) is a no-op merge.
-    if is_head {
-        return Err(format!(
-            "Branch '{}' is already the current branch.",
-            source
-        ));
+    // A local branch (but not the current one — that's a no-op merge).
+    if let Some((_, is_head)) = branches.iter().find(|(n, _)| n == source) {
+        if *is_head {
+            return Err(format!(
+                "Branch '{}' is already the current branch.",
+                source
+            ));
+        }
+        return Ok(());
     }
-    Ok(())
+    // Or a remote-tracking branch: an upstream-only branch is merged directly
+    // via its remote ref (no local branch needed). It can never be HEAD.
+    if remotes.iter().any(|n| n == source) {
+        return Ok(());
+    }
+    Err(format!("Branch '{}' is not a branch.", source))
 }
 
 // Sidebar / panel width limits.
@@ -6080,15 +6087,23 @@ impl KagiApp {
     }
 
     /// T-DNDMERGE-001 / ADR-0079 layer 2: the single entry point a branch
-    /// drag-and-drop dispatches to.  `source` is the dragged local branch (the
-    /// merge source = the branch merged INTO HEAD).  This validates the obvious
-    /// rejections (busy / not a local branch / dropping the current branch onto
-    /// itself) and, on success, delegates to the existing merge pipeline via
+    /// drag-and-drop dispatches to.  `source` is the dragged branch (the merge
+    /// source = the branch merged INTO HEAD) — a local branch name, or a
+    /// remote-tracking ref like `origin/feature` for an upstream-only branch,
+    /// which the planner resolves directly (no local branch is created).  This
+    /// validates the obvious rejections (busy / not a branch / dropping the
+    /// current branch onto itself) and, on success, delegates to the merge
+    /// pipeline via
     /// [`open_merge_modal`] — it never touches git directly (the safety
     /// thesis: drop is a trigger; `plan_merge_branch` remains authoritative for
     /// dirty-WT / ff / conflict prediction).
     pub fn start_merge_from_drag(&mut self, source: String, cx: &mut Context<Self>) {
-        match validate_merge_from_drag(&source, &self.branches, self.busy_op.is_some()) {
+        let remotes: Vec<String> = self
+            .remote_branches
+            .iter()
+            .map(|rb| format!("{}/{}", rb.remote, rb.name))
+            .collect();
+        match validate_merge_from_drag(&source, &self.branches, &remotes, self.busy_op.is_some()) {
             Ok(()) => {
                 eprintln!(
                     "[kagi] drag-merge: start merge from drag — source={}",
@@ -12952,17 +12967,19 @@ fn render_badges_column(
             .child(label);
 
         // T-DNDMERGE-001 / ADR-0079: wire drag/drop onto the chip based on kind.
-        //   - `BadgeKind::Branch` → INDEPENDENTLY draggable, carrying ITS OWN
-        //     branch name (= the merge source) in `BranchDrag { name }`. Because
-        //     each visible branch chip carries its own name, dragging a specific
-        //     badge unambiguously selects that branch even when a commit has
-        //     several. Remote/Tag chips are NOT draggable.
+        //   - `BadgeKind::Branch` / `BadgeKind::Remote` → INDEPENDENTLY draggable,
+        //     carrying ITS OWN name (= the merge source) in `BranchDrag { name }`.
+        //     For a remote chip the name is the full `remote/name` ref, so an
+        //     upstream-only branch can be merged directly. Each visible chip
+        //     carries its own name, so dragging a specific badge unambiguously
+        //     selects that branch even when a commit has several. Tag chips are
+        //     NOT draggable.
         //   - `BadgeKind::HeadBranch` (the current branch) → drop TARGET. It
         //     shows a valid-target highlight via `.drag_over::<BranchDrag>` and
         //     dispatches to `start_merge_from_drag` on drop. The drop is a
         //     TRIGGER only — it never calls git from the view (same as sidebar).
         let chip = match badge.kind {
-            BadgeKind::Branch => {
+            BadgeKind::Branch | BadgeKind::Remote => {
                 if let Some(name) = draggable_branch_name(badge) {
                     chip.cursor_grab().on_drag(
                         BranchDrag { name: name.clone() },
@@ -12989,7 +13006,7 @@ fn render_badges_column(
                 })
                 .on_drop::<BranchDrag>(drop_handler)
             }
-            BadgeKind::Remote | BadgeKind::Tag => chip,
+            BadgeKind::Tag => chip,
         };
         inner = inner.child(chip);
 
@@ -15448,21 +15465,35 @@ mod drag_merge_validation_tests {
         ]
     }
 
+    fn remotes() -> Vec<String> {
+        vec!["origin/main".to_string(), "origin/feature".to_string()]
+    }
+
     #[test]
     fn drag_merge_accepts_other_local_branch() {
         assert_eq!(
-            validate_merge_from_drag("feature", &branches(), false),
+            validate_merge_from_drag("feature", &branches(), &remotes(), false),
             Ok(())
         );
         assert_eq!(
-            validate_merge_from_drag("topic/x", &branches(), false),
+            validate_merge_from_drag("topic/x", &branches(), &remotes(), false),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn drag_merge_accepts_remote_only_branch() {
+        // An upstream-only branch (a remote ref with no local counterpart) is a
+        // valid merge source — merged directly via its remote-tracking ref.
+        assert_eq!(
+            validate_merge_from_drag("origin/feature", &branches(), &remotes(), false),
             Ok(())
         );
     }
 
     #[test]
     fn drag_merge_rejects_current_branch_onto_itself() {
-        let err = validate_merge_from_drag("main", &branches(), false)
+        let err = validate_merge_from_drag("main", &branches(), &remotes(), false)
             .expect_err("dropping current branch onto itself must be rejected");
         assert!(
             err.contains("main"),
@@ -15478,10 +15509,10 @@ mod drag_merge_validation_tests {
 
     #[test]
     fn drag_merge_rejects_unknown_branch() {
-        let err = validate_merge_from_drag("ghost", &branches(), false)
-            .expect_err("a non-existent local branch must be rejected");
+        let err = validate_merge_from_drag("ghost", &branches(), &remotes(), false)
+            .expect_err("a non-existent branch must be rejected");
         assert!(
-            err.contains("not a local branch"),
+            err.contains("not a branch"),
             "reason should explain unknown branch: {}",
             err
         );
@@ -15489,7 +15520,7 @@ mod drag_merge_validation_tests {
 
     #[test]
     fn drag_merge_rejects_when_busy() {
-        let err = validate_merge_from_drag("feature", &branches(), true)
+        let err = validate_merge_from_drag("feature", &branches(), &remotes(), true)
             .expect_err("a drag while another op is busy must be rejected");
         assert!(!err.is_empty(), "busy rejection should carry a reason");
     }
@@ -15522,15 +15553,21 @@ mod draggable_branch_name_tests {
     }
 
     #[test]
-    fn head_remote_tag_badges_are_not_draggable() {
+    fn remote_badge_yields_its_full_ref() {
+        // A remote-tracking chip is a draggable merge source: its label is the
+        // full `remote/name` ref, resolved directly by the merge backend.
+        assert_eq!(
+            draggable_branch_name(&badge(BadgeKind::Remote, "origin/feature")),
+            Some("origin/feature".to_string())
+        );
+    }
+
+    #[test]
+    fn head_and_tag_badges_are_not_draggable() {
         // HeadBranch is the drop *target* (and its label carries the "✓"
-        // indicator), never a drag source.
+        // indicator), never a drag source. Tags are not merge sources here.
         assert_eq!(
             draggable_branch_name(&badge(BadgeKind::HeadBranch, "main ✓")),
-            None
-        );
-        assert_eq!(
-            draggable_branch_name(&badge(BadgeKind::Remote, "origin/main")),
             None
         );
         assert_eq!(

@@ -11091,14 +11091,18 @@ impl KagiApp {
                             .child(icon)
                     })
                     // ── repo name + branch/upstream/ahead-behind ──
+                    // Both shrink + truncate (min_w_0, not flex_shrink_0) so a long
+                    // repo/branch label clips with an ellipsis instead of running
+                    // under the centre Pull/Push/Branch cluster (user report).
                     .child(
                         div()
                             .text_sm()
                             .text_color(rgb(theme().text_main))
                             .font_weight(gpui::FontWeight::BOLD)
                             .mr_1()
-                            .flex_shrink_0()
+                            .min_w_0()
                             .overflow_hidden()
+                            .truncate()
                             .child(SharedString::from(summary.repo_name.clone())),
                     )
                     .child(
@@ -11106,8 +11110,9 @@ impl KagiApp {
                             .text_sm()
                             .text_color(rgb(theme().text_sub))
                             .mr_2()
-                            .flex_shrink_0()
+                            .min_w_0()
                             .overflow_hidden()
+                            .truncate()
                             .child(SharedString::from(branch_label)),
                     ),
             ) // ── end LEFT column ──

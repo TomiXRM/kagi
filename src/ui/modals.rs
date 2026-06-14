@@ -3597,7 +3597,7 @@ pub(crate) fn render_update_modal(
     let skip = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
         this.skip_this_update(cx);
     });
-    let open_page = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+    let open_page = cx.listener(|this, _e: &gpui::ClickEvent, _w, _cx| {
         this.open_release_page();
     });
 

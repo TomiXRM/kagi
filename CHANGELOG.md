@@ -3,6 +3,23 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.4] — 2026-06-14
+
+### Added
+- **In-app auto-update** (ADR-0082). On startup Kagi checks GitHub Releases in the
+  background (best-effort, silent on failure, opt-out via Settings) and shows an
+  **"↑ Update vX.Y.Z"** chip in the header when a newer release exists. Clicking it
+  opens a modal with the current → latest versions, the platform asset, and the
+  **release notes rendered as Markdown**. "Update now" downloads the asset,
+  **verifies its SHA-256** against the release checksums, swaps it into the running
+  install atomically, and relaunches — or "Skip this version" / "Release page" /
+  "Later". Checking is opt-in and silent; installing is always confirmed and
+  checksum-verified, writes atomically, and runs no destructive command.
+  - Linux installs cleanly; **macOS/Windows are unsigned**, so the OS still warns
+    on the relaunched build until code signing lands (ADR-0038 Phase 2). The macOS
+    path is verified end-to-end; Linux/Windows install paths are implemented but not
+    yet runtime-verified by the maintainers.
+
 ## [0.3.3] — 2026-06-14
 
 ### Added

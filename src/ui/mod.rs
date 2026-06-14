@@ -10570,7 +10570,7 @@ impl Render for KagiApp {
                     None
                 },
                 |el, (plan, installing, status)| {
-                    el.child(render_update_modal(plan, installing, status, cx))
+                    el.child(render_update_modal(plan, installing, status, window, cx))
                 },
             )
             // ── Status bar slot (T017) — last operation result ─

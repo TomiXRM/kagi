@@ -3584,6 +3584,7 @@ pub(crate) fn render_update_modal(
     plan: kagi_domain::update::UpdatePlan,
     installing: bool,
     status: Option<SharedString>,
+    window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
@@ -3664,7 +3665,7 @@ pub(crate) fn render_update_modal(
                     ))),
             );
 
-    // Release notes (scrollable).
+    // Release notes — rendered as Markdown (gpui-component TextView), scrollable.
     if !plan.notes.trim().is_empty() {
         card = card.child(
             div()
@@ -3674,9 +3675,13 @@ pub(crate) fn render_update_modal(
                 .p_2()
                 .rounded_md()
                 .bg(rgb(current_theme().bg_base))
-                .text_xs()
                 .text_color(rgb(current_theme().text_main))
-                .child(SharedString::from(plan.notes.clone())),
+                .child(gpui_component::text::TextView::markdown(
+                    "update-notes-md",
+                    SharedString::from(plan.notes.clone()),
+                    window,
+                    cx,
+                )),
         );
     }
 

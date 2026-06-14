@@ -382,21 +382,37 @@ impl KagiApp {
                     break;
                 }
 
-                let got_signal = rx.try_recv().is_ok();
-                if !got_signal {
-                    continue;
+                use super::watcher::WatchEvent;
+                let mut saw_git = false;
+                let mut saw_worktree = false;
+                match rx.try_recv() {
+                    Ok(WatchEvent::Git) => saw_git = true,
+                    Ok(WatchEvent::WorkTree) => saw_worktree = true,
+                    Err(_) => continue,
                 }
 
-                // Debounce, then drain any extra signals.
+                // Debounce, then drain + coalesce any extra signals.
                 Timer::after(super::watcher::DEBOUNCE).await;
-                while rx.try_recv().is_ok() {}
+                while let Ok(ev) = rx.try_recv() {
+                    match ev {
+                        WatchEvent::Git => saw_git = true,
+                        WatchEvent::WorkTree => saw_worktree = true,
+                    }
+                }
 
                 // Re-check generation after the debounce window — a switch may
-                // have happened while we slept.
+                // have happened while we slept. A git change re-snapshots the
+                // graph (full reload); a working-tree-only change does a cheap,
+                // background status check that reloads only if WIP actually changed.
                 let result = acx.update(|cx| {
                     weak.update(cx, |app, cx| {
-                        if app.watcher_generation == generation {
+                        if app.watcher_generation != generation {
+                            return;
+                        }
+                        if saw_git {
                             app.reload_external(cx);
+                        } else if saw_worktree {
+                            app.refresh_working_tree_external(cx);
                         }
                     })
                 });

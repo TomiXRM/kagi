@@ -1156,6 +1156,11 @@ pub struct KagiApp {
     pub update_installing: bool,
     /// Progress / error line shown in the update modal.
     pub update_status: Option<SharedString>,
+    /// Last loaded working-tree status, used by the FS watcher's working-tree
+    /// path to skip a refresh when nothing the parent repo cares about changed
+    /// (e.g. churn inside a nested worktree, which `working_tree_status` treats as
+    /// opaque). Set on every `reload`.
+    pub last_working_status: Option<kagi::git::WorkingTreeStatus>,
     /// T-CONFLICT-UX-010/012: index (among conflict hunks) of the focused hunk in
     /// the per-hunk Conflict Editor, so the selected-hunk highlight tracks the
     /// hunk the user last interacted with / navigated to.
@@ -1492,6 +1497,7 @@ impl KagiApp {
             update_modal_open: false,
             update_installing: false,
             update_status: None,
+            last_working_status: None,
             conflict_selected_hunk: 0,
             conflict_ab_scroll_handle: UniformListScrollHandle::new(),
             conflict_continue_modal: None,
@@ -1626,6 +1632,7 @@ impl KagiApp {
             update_modal_open: false,
             update_installing: false,
             update_status: None,
+            last_working_status: None,
             conflict_selected_hunk: 0,
             conflict_ab_scroll_handle: UniformListScrollHandle::new(),
             conflict_continue_modal: None,
@@ -1731,6 +1738,9 @@ impl KagiApp {
         // Fold the snapshot-derived data in (assignment only).
         self.apply_tab_view(view);
 
+        // Baseline for the FS watcher's working-tree path (skip-if-unchanged).
+        self.last_working_status = Some(snap.status.clone());
+
         // W30-CONFLICT-UI / ADR-0056: re-detect Conflict Mode every reload so a
         // conflict produced by the GUI's own operation OR by external CLI (the
         // watcher path runs through reload) puts the app into / out of Conflict
@@ -1826,6 +1836,58 @@ impl KagiApp {
 
         // Notify gpui that state has changed so the window repaints.
         cx.notify();
+    }
+
+    /// Working-tree change refresh (FS watcher, [`watcher::WatchEvent::WorkTree`]).
+    ///
+    /// Files changed on disk outside `.git` — so the WIP / working-tree status may
+    /// have changed, but the commit graph did not. Computes the new status on a
+    /// **background thread** and only does a (full) refresh if it actually differs
+    /// from [`Self::last_working_status`]. This makes churn that doesn't affect the
+    /// parent repo's status (e.g. writes inside a nested worktree, which
+    /// `working_tree_status` treats as opaque) a cheap no-op — no UI-thread work,
+    /// no reload storm — while real edits/adds/deletes update the WIP promptly.
+    pub fn refresh_working_tree_external(&mut self, cx: &mut Context<Self>) {
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        let bg_path = repo_path.clone();
+        let task = cx.background_spawn(async move {
+            kagi::git::Backend::open(&bg_path)
+                .ok()
+                .and_then(|b| b.working_tree_status().ok())
+        });
+        cx.spawn(async move |this, acx| {
+            let new_status = task.await;
+            let _ = this.update(acx, |app, cx| {
+                let Some(new_status) = new_status else {
+                    return;
+                };
+                if app.last_working_status.as_ref() == Some(&new_status) {
+                    return; // working-tree status unchanged → nothing to do.
+                }
+                eprintln!("[kagi] watcher: working-tree changed — refreshing WIP");
+                // In-place WIP/status update — do NOT full-reload (that re-snapshots
+                // the graph and closes the commit panel). Branch / ahead-behind are
+                // unchanged by a working-tree edit, so only the dirty/count fields
+                // and the commit panel's file lists need refreshing.
+                app.status_summary.is_dirty = new_status.is_dirty();
+                app.status_summary.staged = new_status.staged.len();
+                app.status_summary.unstaged = new_status.unstaged.len();
+                app.is_dirty = new_status.is_dirty();
+                app.last_working_status = Some(new_status);
+                // Refresh the open commit panel's lists in place (keeps it open).
+                if app.commit_panel.is_some() {
+                    if let Some(rp) = app.repo_path.clone() {
+                        if let Some(panel) = app.commit_panel.as_mut() {
+                            panel.reload_status(&rp);
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     // ── W30-CONFLICT-UI: Conflict Mode (ADR-0056) ────────────────────────

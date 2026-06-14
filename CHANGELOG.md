@@ -3,6 +3,36 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.5] — 2026-06-15
+
+### Performance
+- **Commit panel no longer janks the whole UI.** It used to run a full
+  `working_tree_status` every render frame (for the staged preview) and read every
+  untracked file for a diffstat — so opening it on a large repo dropped the app to
+  ~6fps and a bulk untracked drop (e.g. 300 images) froze it. Now the preview is
+  cached, untracked files are not diffstatted, and the file lists are **virtualized**
+  (`uniform_list`, O(visible) per frame) — scrolling stays smooth with hundreds of
+  changes.
+
+### Added
+- **WIP auto-refreshes on working-tree changes**, not only on git operations: the
+  watcher now watches the working tree and refreshes the WIP / commit panel when
+  files change on disk (background status check; a no-op when nothing the repo
+  cares about changed, so a busy nested worktree doesn't cause reload storms).
+- **Persisted commit-list column widths** (BRANCH/TAG, GRAPH) — your resize sticks
+  across restarts.
+
+### Fixed
+- Watcher no longer reloads this view on **sibling worktree / submodule** git
+  activity (`.git/worktrees/…`, `.git/modules/…`) — fixes the reload storm from an
+  active Claude Code worktree.
+- Nested git worktrees/repos are no longer listed as a giant "untracked" entry in
+  the commit panel.
+- Header: a long repo/branch label no longer overlaps the Pull/Push/Branch
+  buttons — the repo name now sits above a smaller current-branch line, each
+  truncating with an ellipsis.
+- Commit panel: the per-file Stage button is right-aligned again.
+
 ## [0.3.4] — 2026-06-14
 
 ### Added

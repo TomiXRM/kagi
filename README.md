@@ -24,6 +24,8 @@ Built with Rust + [GPUI](https://www.gpui.rs/) — the UI framework behind [Zed]
 
 Kagi shows you **exactly what will happen before any Git operation runs** — and is engineered so that it *cannot* destroy your repository. Every write operation goes through a `plan → confirm → preflight → execute → verify` pipeline, and the dangerous commands simply don't exist in the codebase.
 
+> **⬇️ Download:** prebuilt apps for **macOS, Linux, and Windows** are on the [**Releases page**](https://github.com/TomiXRM/kagi/releases) — see [Install](#-install) below. From v0.3.4 on, Kagi can also check for and install updates from within the app.
+
 ## ✨ Features
 
 - 🌳 **Commit graph first** — GitKraken-style lanes, ref badges, HEAD ring, merge nodes, WIP row, virtualized for 10k+ commits

@@ -11634,6 +11634,7 @@ impl KagiApp {
                     .track_scroll(commit_scroll_handle)
                     .flex_1()
                     .min_h(px(0.)),
+                    true,
                 )
             });
 
@@ -12075,7 +12076,7 @@ impl KagiApp {
         .min_h(px(0.))
         .bg(rgb(theme().panel));
 
-        with_vertical_scrollbar("oplog-list-scroll", &scrollbar_handle, oplog_list)
+        with_vertical_scrollbar("oplog-list-scroll", &scrollbar_handle, oplog_list, true)
             .into_any_element()
     }
 
@@ -12785,6 +12786,7 @@ fn render_main_diff_view(
                 .track_scroll(scroll_handle)
                 .flex_1()
                 .min_h(px(0.)),
+                true,
             )
         })
 }
@@ -13730,20 +13732,29 @@ fn render_status_footer(status: FooterStatus) -> impl IntoElement {
 /// the inner `uniform_list` keeps its own `flex_1().min_h(0)` sizing.  Colours
 /// follow the gpui-component scrollbar theme fields, which
 /// `sync_gpui_component_theme` keeps in step with kagi's palette.
+/// `show_bar` controls whether the overlay scrollbar is rendered. `false` hides
+/// it entirely (the list still scrolls via wheel/trackpad) — used for the commit
+/// stage/unstage lists, which the user wants free of a visible scrollbar. When
+/// `true` the bar follows the theme default (`cx.theme().scrollbar_show`, which
+/// honours the macOS "show scroll bars" setting).
 fn with_vertical_scrollbar(
     id: &'static str,
     handle: &UniformListScrollHandle,
     list: impl IntoElement,
+    show_bar: bool,
 ) -> impl IntoElement {
-    div()
+    let mut container = div()
         .id(id)
         .relative()
         .flex_1()
         .min_h(px(0.))
         .flex()
         .flex_col()
-        .child(list)
-        .child(Scrollbar::vertical(handle))
+        .child(list);
+    if show_bar {
+        container = container.child(Scrollbar::vertical(handle));
+    }
+    container
 }
 
 /// Unstaged file-row context menu (right-click). Single item: Discard.
@@ -14945,6 +14956,7 @@ fn render_commit_panel(
                                 .track_scroll(unstaged_scroll_handle)
                                 .flex_1()
                                 .min_h(px(0.)),
+                                false,
                             )
                         }),
                 )
@@ -14993,6 +15005,7 @@ fn render_commit_panel(
                                 .track_scroll(staged_scroll_handle)
                                 .flex_1()
                                 .min_h(px(0.)),
+                                false,
                             )
                         }),
                 ),
@@ -15140,6 +15153,18 @@ pub fn run_app(app_state: KagiApp) {
             KeyBinding::new("up", DiffPrevFile, Some("!Terminal")),
             KeyBinding::new("down", DiffNextFile, Some("!Terminal")),
         ]);
+        // Ctrl+A = Select All in text inputs. gpui-component binds ctrl-a to
+        // *both* SelectAll and MoveHome (emacs-style) in the "Input" context,
+        // and the later (MoveHome) wins — so on this platform Ctrl+A jumped to
+        // line start instead of selecting all. Re-bind it to SelectAll here
+        // (registered after gpui_component::init, so it takes precedence).
+        // cmd-a (SelectAll) and double-click word-select already work natively.
+        cx.bind_keys([KeyBinding::new(
+            "ctrl-a",
+            gpui_component::input::SelectAll,
+            Some("Input"),
+        )]);
+
         // NOTE: a KeyBinding::new("enter", …) here never dispatched (the
         // Return key's key_char "\n" path); Enter is handled as a raw key
         // on the root element instead — see render().

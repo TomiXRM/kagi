@@ -278,6 +278,22 @@ pub fn init_zoom() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Commit-list column widths (BRANCH/TAG + GRAPH) — persisted across restarts.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Persist one commit-list column width (logical px, rounded) to `settings.json`.
+/// `key` is `"badge_col_w"` or `"graph_col_w"`. Called from the resize-drag
+/// handler; the final drag move writes the final value (settings.json is tiny).
+pub fn set_col_width(key: &str, w: f32) {
+    write_setting(key, Some(&format!("{}", w.round() as i64)));
+}
+
+/// Read a persisted column width (logical px) from `settings.json`, if present.
+pub fn read_col_width(key: &str) -> Option<f32> {
+    read_setting(key).and_then(|s| s.trim().parse::<f32>().ok())
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // T-SETTINGS-001: compact-graph toggle (persisted, global — mirrors zoom).
 // ──────────────────────────────────────────────────────────────────────────
 //
@@ -427,7 +443,7 @@ fn settings_escape(s: &str) -> String {
 
 /// All known string-valued `settings.json` keys.  Listed so [`write_setting`]
 /// can round-trip every key it doesn't recognise as the current target.
-const SETTINGS_KEYS: [&str; 13] = [
+const SETTINGS_KEYS: [&str; 15] = [
     "theme",
     "lang",
     "ui_zoom",
@@ -446,6 +462,9 @@ const SETTINGS_KEYS: [&str; 13] = [
     // ADR-0082 auto-update: startup-check toggle + skipped-version tag.
     "update_auto_check",
     "update_skipped",
+    // Commit-list column widths (BRANCH/TAG, GRAPH), persisted on resize.
+    "badge_col_w",
+    "graph_col_w",
 ];
 
 /// Persist the theme slug to `settings.json` (preserving other keys).

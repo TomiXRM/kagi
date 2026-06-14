@@ -1409,8 +1409,12 @@ impl KagiApp {
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
             sidebar_width: SIDEBAR_DEFAULT,
             panel_width: PANEL_DEFAULT,
-            badge_col_w: BADGE_COL_DEFAULT,
-            graph_col_w: GRAPH_COL_DEFAULT,
+            badge_col_w: theme::read_col_width("badge_col_w")
+                .map(|w| w.clamp(BADGE_COL_MIN, BADGE_COL_MAX))
+                .unwrap_or(BADGE_COL_DEFAULT),
+            graph_col_w: theme::read_col_width("graph_col_w")
+                .map(|w| w.clamp(GRAPH_COL_MIN, GRAPH_COL_MAX))
+                .unwrap_or(GRAPH_COL_DEFAULT),
             bottom_panel_open: true, // user request: terminal visible by default
             bottom_panel_height: BOTTOM_PANEL_H_UNSET,
             bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
@@ -1544,8 +1548,12 @@ impl KagiApp {
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
             sidebar_width: SIDEBAR_DEFAULT,
             panel_width: PANEL_DEFAULT,
-            badge_col_w: BADGE_COL_DEFAULT,
-            graph_col_w: GRAPH_COL_DEFAULT,
+            badge_col_w: theme::read_col_width("badge_col_w")
+                .map(|w| w.clamp(BADGE_COL_MIN, BADGE_COL_MAX))
+                .unwrap_or(BADGE_COL_DEFAULT),
+            graph_col_w: theme::read_col_width("graph_col_w")
+                .map(|w| w.clamp(GRAPH_COL_MIN, GRAPH_COL_MAX))
+                .unwrap_or(GRAPH_COL_DEFAULT),
             bottom_panel_open: true, // user request: terminal visible by default
             bottom_panel_height: BOTTOM_PANEL_H_UNSET,
             bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
@@ -10221,6 +10229,7 @@ impl Render for KagiApp {
                             .clamp(BADGE_COL_MIN, BADGE_COL_MAX);
                         if (new_w - this.badge_col_w).abs() > 0.5 {
                             this.badge_col_w = new_w;
+                            theme::set_col_width("badge_col_w", new_w);
                             cx.notify();
                         }
                     }
@@ -10233,6 +10242,7 @@ impl Render for KagiApp {
                             .clamp(GRAPH_COL_MIN, GRAPH_COL_MAX);
                         if (new_w - this.graph_col_w).abs() > 0.5 {
                             this.graph_col_w = new_w;
+                            theme::set_col_width("graph_col_w", new_w);
                             cx.notify();
                         }
                     }

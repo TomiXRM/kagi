@@ -38,9 +38,16 @@ const RELEVANT_NAMES: &[&str] = &[
     "REBASE_HEAD",
 ];
 
-/// Component name to *skip* entirely — changes inside `objects/` are irrelevant
-/// (pack files, loose objects) and can be extremely frequent.
-const SKIP_COMPONENT: &str = "objects";
+/// Component names that mark a subtree to *skip* entirely:
+/// - `objects/` — pack/loose objects, extremely frequent and irrelevant.
+/// - `worktrees/` — the gitdirs of **other** linked worktrees. Each contains its
+///   own `HEAD`/`index`/`refs`/`logs`, so without this an active sibling worktree
+///   (e.g. a Claude Code worktree under `.claude/worktrees/…`) would fire a reload
+///   of *this* view on every git op it does — a storm of full UI-thread reloads.
+/// - `modules/` — submodule gitdirs, same problem (`.git/modules/<name>/HEAD…`).
+/// The current repo's own HEAD/index/refs live at the top of `.git`, never under
+/// these subtrees, so skipping them loses no real reactivity for this view.
+const SKIP_COMPONENTS: &[&str] = &["objects", "worktrees", "modules"];
 
 /// Returns `true` if the event path is relevant to the display state.
 fn is_relevant_event(event: &Event) -> bool {
@@ -56,19 +63,15 @@ fn is_relevant_event(event: &Event) -> bool {
 }
 
 fn path_is_relevant(p: &Path) -> bool {
-    let mut skip = false;
     for component in p.components() {
         let s = component.as_os_str().to_string_lossy();
-        if s == SKIP_COMPONENT {
-            skip = true;
-        }
-        if skip {
+        // A skipped subtree short-circuits before any RELEVANT_NAMES match deeper
+        // in the path (e.g. `.git/worktrees/x/HEAD` is skipped, not matched on HEAD).
+        if SKIP_COMPONENTS.contains(&s.as_ref()) {
             return false;
         }
-        for name in RELEVANT_NAMES {
-            if s == *name {
-                return true;
-            }
+        if RELEVANT_NAMES.contains(&s.as_ref()) {
+            return true;
         }
     }
     false
@@ -133,3 +136,46 @@ pub fn start_git_watcher(repo_root: &PathBuf) -> Option<(mpsc::Receiver<()>, Rec
 
 /// Minimum idle time between consecutive reloads (debounce window).
 pub const DEBOUNCE: Duration = Duration::from_millis(500);
+
+#[cfg(test)]
+mod tests {
+    use super::path_is_relevant;
+    use std::path::Path;
+
+    #[test]
+    fn main_repo_state_is_relevant() {
+        for p in [
+            ".git/HEAD",
+            ".git/index",
+            ".git/refs/heads/main",
+            ".git/packed-refs",
+            ".git/ORIG_HEAD",
+            ".git/MERGE_HEAD",
+        ] {
+            assert!(path_is_relevant(Path::new(p)), "{p} should be relevant");
+        }
+    }
+
+    #[test]
+    fn objects_are_skipped() {
+        assert!(!path_is_relevant(Path::new(".git/objects/ab/cdef")));
+        assert!(!path_is_relevant(Path::new(".git/objects/pack/pack-1.idx")));
+    }
+
+    #[test]
+    fn sibling_worktree_and_submodule_gitdirs_are_skipped() {
+        // Regression: an active sibling worktree / submodule writing its own
+        // HEAD/index/refs must NOT fire a reload of this view (component match on
+        // HEAD/index/refs deeper in the path is short-circuited by the skip).
+        for p in [
+            ".git/worktrees/charming-archimedes-98a4d8/HEAD",
+            ".git/worktrees/charming-archimedes-98a4d8/index",
+            ".git/worktrees/some-wt/refs/bisect/bad",
+            ".git/worktrees/some-wt/logs/HEAD",
+            ".git/modules/vendor/HEAD",
+            ".git/modules/vendor/index",
+        ] {
+            assert!(!path_is_relevant(Path::new(p)), "{p} should be skipped");
+        }
+    }
+}

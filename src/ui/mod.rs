@@ -13921,6 +13921,7 @@ fn render_unstaged_flat_row(
         file_row = file_row.child(
             div()
                 .id(("cp-us-flat-stage-btn", fi))
+                .ml_2()
                 .px_1()
                 .py_px()
                 .rounded_sm()
@@ -13936,6 +13937,7 @@ fn render_unstaged_flat_row(
         file_row = file_row.child(
             div()
                 .id(("cp-us-flat-conflict-badge", fi))
+                .ml_2()
                 .px_1()
                 .py_px()
                 .rounded_sm()
@@ -14058,6 +14060,7 @@ fn render_unstaged_tree_row(
                 file_row = file_row.child(
                     div()
                         .id(("cp-us-stage-btn", fi))
+                        .ml_2()
                         .px_1()
                         .py_px()
                         .rounded_sm()
@@ -14073,6 +14076,7 @@ fn render_unstaged_tree_row(
                 file_row = file_row.child(
                     div()
                         .id(("cp-us-conflict-badge", fi))
+                        .ml_2()
                         .px_1()
                         .py_px()
                         .rounded_sm()
@@ -14158,6 +14162,7 @@ fn render_staged_flat_row(
             .child(
                 div()
                     .id(("cp-st-flat-unstage-btn", fi))
+                    .ml_2()
                     .px_1()
                     .py_px()
                     .rounded_sm()
@@ -14263,6 +14268,7 @@ fn render_staged_tree_row(
                     .child(
                         div()
                             .id(("cp-st-unstage-btn", fi))
+                            .ml_2()
                             .px_1()
                             .py_px()
                             .rounded_sm()

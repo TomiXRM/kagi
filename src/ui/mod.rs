@@ -7571,9 +7571,10 @@ impl KagiApp {
         if let Some(panel) = self.commit_panel.as_ref() {
             for f in &panel.unstaged {
                 let rel = f.path.to_string_lossy().replace('\\', "/");
-                // Conflicted rows, and untracked rows (surfaced in the panel as
-                // `Added` entries in the unstaged section), are not discardable.
-                if panel.is_conflicted(&f.path) || matches!(f.change, ChangeKind::Added) {
+                // Conflicted rows are not discardable. Untracked rows (surfaced as
+                // `Added` entries) ARE discardable — they are deleted from disk
+                // after an ODB backup (ADR-0083).
+                if panel.is_conflicted(&f.path) {
                     skipped.push(rel);
                 } else {
                     eligible.push(rel);
@@ -7584,8 +7585,9 @@ impl KagiApp {
     }
 
     /// Open the discard modal for a single unstaged row (by its index in the
-    /// commit panel's `unstaged` vector). Untracked / conflicted rows are not
-    /// offered a Discard button, so this is only called for eligible rows.
+    /// commit panel's `unstaged` vector). Conflicted rows are not offered a
+    /// Discard menu; untracked rows are (they are deleted after an ODB backup,
+    /// ADR-0083).
     pub fn open_discard_modal_for_index(&mut self, index: usize) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
@@ -13977,8 +13979,6 @@ fn render_unstaged_flat_row(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| f.path.to_string_lossy().into_owned());
     let is_conflicted_file = panel.is_conflicted(&f.path);
-    // W17-DISCARD: untracked rows are surfaced as `Added`; not discardable.
-    let is_untracked_row = matches!(f.change, ChangeKind::Added);
     let (badge, badge_color, _) = status_badge(&f.change, is_conflicted_file);
     let is_sel = selected_file == Some(CommitPanelFileRef::Unstaged { index: fi });
     let stat = panel.unstaged_stat(&f.path).cloned();
@@ -14035,16 +14035,15 @@ fn render_unstaged_flat_row(
         .child(diffstat_bar::diffstat_unit(fi, stat.as_ref()));
     // Stage button only for non-conflicted files
     if !is_conflicted_file {
-        // W17-DISCARD: right-click on tracked rows opens the file
-        // context menu (Discard lives there, not as a per-row button).
-        if !is_untracked_row {
-            let menu_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
-                this.file_menu = Some((fi, e.position));
-                cx.stop_propagation();
-                cx.notify();
-            });
-            file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
-        }
+        // W17-DISCARD / ADR-0083: right-click opens the file context menu
+        // (Discard lives there). Tracked rows are restored from the index;
+        // untracked rows are deleted (after an ODB backup).
+        let menu_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
+            this.file_menu = Some((fi, e.position));
+            cx.stop_propagation();
+            cx.notify();
+        });
+        file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
         file_row = file_row.child(
             div()
                 .id(("cp-us-flat-stage-btn", fi))
@@ -14173,17 +14172,15 @@ fn render_unstaged_tree_row(
                 )
                 .child(diffstat_bar::diffstat_unit(fi, stat.as_ref()));
             if !is_conflicted_file {
-                // W17-DISCARD: right-click on tracked rows opens the file
-                // context menu (Discard lives there, not as a per-row button).
-                if !matches!(change, ChangeKind::Added) {
-                    let menu_click =
-                        cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
-                            this.file_menu = Some((fi, e.position));
-                            cx.stop_propagation();
-                            cx.notify();
-                        });
-                    file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
-                }
+                // W17-DISCARD / ADR-0083: right-click opens the file context menu
+                // (Discard lives there). Untracked rows are discardable too —
+                // deleted from disk after an ODB backup.
+                let menu_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
+                    this.file_menu = Some((fi, e.position));
+                    cx.stop_propagation();
+                    cx.notify();
+                });
+                file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
                 file_row = file_row.child(
                     div()
                         .id(("cp-us-stage-btn", fi))

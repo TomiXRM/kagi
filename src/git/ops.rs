@@ -6260,6 +6260,9 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
         blockers.push("Nothing to discard: no files selected.".to_string());
     }
 
+    // Count untracked targets — they are discarded by DELETING the file (after
+    // an ODB backup), not by restoring from the index (ADR-0083).
+    let mut untracked_targets = 0usize;
     for rel in &rels {
         if conflicted_set.contains(rel) {
             blockers.push(format!(
@@ -6267,10 +6270,7 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
                 rel
             ));
         } else if untracked_set.contains(rel) {
-            blockers.push(format!(
-                "'{}' is untracked. Untracked files are not deleted by kagi.",
-                rel
-            ));
+            untracked_targets += 1;
         } else if !unstaged_set.contains(rel) {
             blockers.push(format!("'{}' has no unstaged changes to discard.", rel));
         }
@@ -6280,7 +6280,7 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
     let predicted = StateSummary {
         head: head.display(),
         dirty: if blockers.is_empty() {
-            format!("{} file(s) restored from index", target_count)
+            format!("{} file(s) discarded", target_count)
         } else {
             dirty_display
         },
@@ -6295,17 +6295,20 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
         format!("Discard changes to {} file(s)", target_count)
     };
 
-    let recovery = "This permanently discards your unstaged changes to the selected \
-        file(s). A backup blob of each file's current content is recorded in the \
-        oplog (op=\"discard\"); recover with `git cat-file -p <blob-sha>`."
+    let recovery = "This discards your unstaged changes to the selected file(s): \
+        tracked files are restored from the index, untracked files are deleted from \
+        disk. Either way a backup blob of each file's current content is recorded in \
+        the oplog (op=\"discard\") first; recover with `git cat-file -p <blob-sha>`."
         .to_string();
 
-    // Surface untracked-in-tree as an informational warning (the UI already
-    // excludes them; this keeps the plan honest if called directly).
-    if !status.untracked.is_empty() {
+    // ADR-0083: untracked targets are DELETED (after an ODB backup). Surface this
+    // as a warning so the confirm step is explicit about the irreversible-looking
+    // (but recoverable) deletion.
+    if untracked_targets > 0 {
         warnings.push(format!(
-            "{} untracked file(s) are not affected (untracked files are not deleted by kagi).",
-            status.untracked.len()
+            "{} untracked file(s) will be deleted from disk (backed up to the oplog first; \
+             recover with `git cat-file -p <blob-sha>`).",
+            untracked_targets
         ));
     }
 
@@ -6329,15 +6332,16 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
 /// 1. **backup** — write each target's CURRENT working-tree content into the ODB
 ///    via `repo.blob()`, collecting `path → blob SHA`. If **any** backup fails,
 ///    the whole discard is aborted (no working-tree change is made).
-/// 2. **checkout_index** — restore the working tree from the index for the target
-///    paths only, with `force()` (`git checkout -- <path>` semantics). The index
-///    and refs are never touched (`update_index(false)`).
-/// 3. **verify** — re-read status and confirm each target left the unstaged set.
+/// 2. **apply** — *tracked* targets are restored from the index with
+///    `checkout_index` + `force()` (`git checkout -- <path>` semantics); *untracked*
+///    targets are DELETED from disk (ADR-0083 — recoverable via the step-1 backup,
+///    so this is not `git clean`). The index and refs are never touched.
+/// 3. **verify** — re-read status and confirm each target left the unstaged set
+///    (tracked) or is gone from disk (untracked).
 ///
 /// Returns the [`DiscardOutcome`] (the path→blob backup list) so the caller can
 /// record it in the oplog as the recovery handle. The caller MUST have rejected
-/// untracked / conflicted targets at plan time (this function backs up and
-/// restores exactly the paths it is given).
+/// conflicted targets at plan time.
 pub fn execute_discard(
     repo: &Repository,
     plan: &OperationPlan,
@@ -6361,6 +6365,15 @@ pub fn execute_discard(
     if rels.is_empty() {
         return Err(GitError::Other("discard: no target paths".to_string()));
     }
+
+    // Classify targets up front: untracked targets are deleted, tracked targets
+    // are restored from the index (ADR-0083).
+    let status_before = working_tree_status(repo)?;
+    let untracked_set: std::collections::HashSet<String> = status_before
+        .untracked
+        .iter()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .collect();
 
     // ── 1. BACKUP — write each target's current WT content to the ODB. ──
     // Any failure aborts the whole discard BEFORE the working tree is touched.
@@ -6392,32 +6405,66 @@ pub fn execute_discard(
         });
     }
 
-    // ── 2. checkout_index with path filter + force (restore WT from index). ──
-    // update_index(false): the index (staged changes) is NEVER modified.
-    let mut cb = git2::build::CheckoutBuilder::new();
-    cb.force();
-    cb.update_index(false);
-    cb.disable_pathspec_match(true);
-    for rel in &rels {
-        cb.path(rel.as_str());
-    }
-    repo.checkout_index(None, Some(&mut cb))
-        .map_err(|e| GitError::Other(format!("discard: checkout_index failed: {}", e.message())))?;
+    // Partition into tracked (restore from index) vs untracked (delete).
+    let (untracked_rels, tracked_rels): (Vec<&String>, Vec<&String>) =
+        rels.iter().partition(|r| untracked_set.contains(*r));
 
-    // ── 3. VERIFY — targets must have left the unstaged set. ──
+    // ── 2a. checkout_index with path filter + force (restore WT from index). ──
+    // update_index(false): the index (staged changes) is NEVER modified.
+    if !tracked_rels.is_empty() {
+        let mut cb = git2::build::CheckoutBuilder::new();
+        cb.force();
+        cb.update_index(false);
+        cb.disable_pathspec_match(true);
+        for rel in &tracked_rels {
+            cb.path(rel.as_str());
+        }
+        repo.checkout_index(None, Some(&mut cb)).map_err(|e| {
+            GitError::Other(format!("discard: checkout_index failed: {}", e.message()))
+        })?;
+    }
+
+    // ── 2b. DELETE untracked targets (ADR-0083; content backed up in step 1). ──
+    for rel in &untracked_rels {
+        let abs = workdir.join(rel);
+        match std::fs::remove_file(&abs) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(GitError::Other(format!(
+                    "discard: failed to delete untracked file '{}': {}",
+                    rel, e
+                )));
+            }
+        }
+    }
+
+    // ── 3. VERIFY — tracked targets left the unstaged set; untracked are gone. ──
     let status = working_tree_status(repo)?;
     let still_unstaged: std::collections::HashSet<String> = status
         .unstaged
         .iter()
         .map(|f| f.path.to_string_lossy().replace('\\', "/"))
         .collect();
-    let leftover: Vec<&String> = rels
+    let still_untracked: std::collections::HashSet<String> = status
+        .untracked
         .iter()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .collect();
+    let mut leftover: Vec<&String> = tracked_rels
+        .iter()
+        .copied()
         .filter(|r| still_unstaged.contains(*r))
         .collect();
+    leftover.extend(
+        untracked_rels
+            .iter()
+            .copied()
+            .filter(|r| still_untracked.contains(*r)),
+    );
     if !leftover.is_empty() {
         return Err(GitError::Other(format!(
-            "discard verify failed: {} target(s) still unstaged: {}",
+            "discard verify failed: {} target(s) not discarded: {}",
             leftover.len(),
             leftover
                 .iter()

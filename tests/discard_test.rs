@@ -212,11 +212,11 @@ fn discard_leaves_staged_content_unchanged() {
 }
 
 // ────────────────────────────────────────────────────────────
-// TC-DISCARD-4: untracked target → blocker, no WT change
+// TC-DISCARD-4: untracked target → file deleted, content backed up (ADR-0083)
 // ────────────────────────────────────────────────────────────
 
 #[test]
-fn discard_untracked_is_blocked() {
+fn discard_untracked_deletes_file_and_backs_it_up() {
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
     let repo = Repository::open(&d).unwrap();
@@ -225,23 +225,46 @@ fn discard_untracked_is_blocked() {
 
     let paths = vec!["newfile.txt".to_string()];
     let plan = plan_discard(&repo, &paths).expect("plan");
+    // No longer a blocker — untracked discard is allowed (warns instead).
     assert!(
-        !plan.blockers.is_empty(),
-        "untracked discard must be blocked"
+        plan.blockers.is_empty(),
+        "untracked discard must not be blocked: {:?}",
+        plan.blockers
     );
     assert!(
-        plan.blockers
-            .iter()
-            .any(|b| b.contains("untracked") || b.contains("Untracked")),
-        "blocker should mention untracked: {:?}",
-        plan.blockers
+        plan.warnings.iter().any(|w| w.contains("deleted")),
+        "plan should warn the file will be deleted: {:?}",
+        plan.warnings
     );
 
-    // execute refuses a blocked plan and does not touch the WT.
-    let err = execute_discard(&repo, &plan, &paths).unwrap_err();
-    assert!(format!("{}", err).contains("blocker"), "err: {}", err);
-    assert!(d.join("newfile.txt").exists(), "untracked file must remain");
-    assert_eq!(read_file(&d, "newfile.txt"), "untracked body\n");
+    let outcome = execute_discard(&repo, &plan, &paths).expect("execute");
+
+    // The untracked file is gone from disk …
+    assert!(
+        !d.join("newfile.txt").exists(),
+        "untracked file must be deleted"
+    );
+    // … and no longer reported as untracked.
+    let status = working_tree_status(&repo).expect("status");
+    assert!(
+        !status
+            .untracked
+            .iter()
+            .any(|p| p.to_string_lossy() == "newfile.txt"),
+        "file must leave the untracked set"
+    );
+
+    // The content is recoverable from the ODB via the backup blob SHA.
+    let backup = outcome
+        .backups
+        .iter()
+        .find(|b| b.path == "newfile.txt")
+        .expect("a backup for the deleted file");
+    let restored = git_out(&d, &["cat-file", "-p", &backup.blob]);
+    assert_eq!(
+        restored, "untracked body\n",
+        "backup blob must hold the deleted file's content"
+    );
 }
 
 // ────────────────────────────────────────────────────────────

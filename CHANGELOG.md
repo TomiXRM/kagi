@@ -3,6 +3,26 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.2] — 2026-06-14
+
+### Added
+- **Windows build** (x86_64), experimental / best-effort. Releases now ship
+  `kagi-<version>-x86_64-windows.zip` (a self-contained `kagi.exe` — assets are
+  embedded). The terminal uses `cmd.exe` and settings/avatars/oplog resolve under
+  `%USERPROFILE%`. Built and packaged by CI; not yet runtime-verified by the
+  maintainers, and unsigned (SmartScreen warns on first launch).
+
+### Fixed
+- **Conflict editor, mismatched-length sides.** Scrolling the longer of the two
+  panes was clamped to the shorter side's line count (the panes share one scroll
+  handle but had unequal row counts); each hunk now blank-pads the shorter side so
+  both panes have equal height.
+- **Conflict editor, missing context.** The A/B panes skipped non-conflicting
+  context lines, so the Merged Result Preview contained lines that were invisible
+  in the editor (reading as code at "unexpected positions"). Context lines now
+  render on both panes (muted, with real per-side line numbers) and stay aligned,
+  so each pane shows the full file and the preview is traceable to what's on screen.
+
 ## [0.3.1] — 2026-06-14
 
 ### Fixed

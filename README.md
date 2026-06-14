@@ -70,6 +70,7 @@ Grab the latest build from [**GitHub Releases**](https://github.com/TomiXRM/kagi
 |----|-------|
 | macOS (Apple Silicon) | `Kagi-<version>-arm64.dmg` |
 | Linux (x86_64 / arm64) | `kagi-<version>-<arch>.tar.gz` (binary + `.desktop` + icon), or the AppImage zip `kagi_Linux-AppImage_<arch>.zip` |
+| Windows (x86_64) | `kagi-<version>-x86_64-windows.zip` — extract and run `kagi.exe` (self-contained; assets are embedded) |
 
 For the AppImage: `unzip kagi_Linux-AppImage_<arch>.zip && bash scripts/install_linux_desktop.sh` registers it under `~/.local` (icon + `.desktop` entry, fully offline).
 
@@ -85,6 +86,10 @@ Kagi is **not yet notarized by Apple** (ad-hoc signature only — no Apple Devel
    ```
 
 Signing + notarization (ADR-0038 Phase 2) is planned once an Apple Developer Program membership is in place.
+
+### ⚠️ Windows: first launch & status
+
+The Windows build is **experimental / best-effort** (built and packaged by CI, not yet runtime-verified by the maintainers — please report issues). It is unsigned, so SmartScreen will warn on first launch: click **More info → Run anyway**. A normal `git` install on `PATH` is recommended (Kagi shells out to `git` and opens an integrated terminal).
 
 ## 🛠️ Build from source
 

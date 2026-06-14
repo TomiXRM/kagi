@@ -3,7 +3,7 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
-## [0.3.2] — 2026-06-14
+## [0.3.3] — 2026-06-14
 
 ### Added
 - **Windows build** (x86_64), experimental / best-effort. Releases now ship

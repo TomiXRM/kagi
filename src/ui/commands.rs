@@ -29,12 +29,18 @@
 //! Edit-menu items use `MenuItem::os_action` (no global `KeyBinding`) so the
 //! standard text-input behaviour of cmd-z/x/c/v/a is never overridden.
 
+use std::time::{Duration, Instant};
+
 use gpui::{
     actions, div, prelude::*, rgb, App, Context, KeyBinding, Menu, MenuItem, MouseButton, OsAction,
     SharedString, Window,
 };
 
 use kagi::git::CommitId;
+
+/// Interval between background auto-fetches (when the `auto_fetch` setting is on
+/// and a repo is open). Kept conservative to avoid hammering the remote.
+const AUTO_FETCH_INTERVAL_SECS: u64 = 180;
 
 use super::context_menu::CommitAction;
 use super::i18n::{self, Lang, Msg};
@@ -953,6 +959,9 @@ impl KagiApp {
                 self.reload();
                 self.status_footer = FooterStatus::Idle(SharedString::from(Msg::Refreshed.t()));
                 self.push_toast(ToastKind::Success, Msg::Refreshed.t());
+                // Also fetch the remote (quiet) so changes pushed elsewhere show
+                // up — success reloads the graph, failure is silent.
+                self.fetch_async(true, cx);
             }
 
             // ── View ────────────────────────────────────────────────
@@ -1152,39 +1161,101 @@ impl KagiApp {
 
     /// Fetch the current repo's remote (fetch-only; never merges — W5-MENU).
     /// Runs synchronously via the CLI wrapper, then reloads + toasts.
-    fn menu_fetch(&mut self, _cx: &mut Context<Self>) {
+    fn menu_fetch(&mut self, cx: &mut Context<Self>) {
+        self.fetch_async(false, cx);
+    }
+
+    /// Background fetch of the upstream remote, then reload on success. Runs the
+    /// network `git fetch` off the UI thread (`background_spawn`) and applies the
+    /// result on the main thread. `silent` suppresses the success/failure toast +
+    /// footer (used by auto-fetch) — the commit graph still updates on success via
+    /// `reload()` (and the FS watcher would catch the ref change anyway). Never
+    /// stacks: a no-op while another fetch is in flight or an operation is busy.
+    pub fn fetch_async(&mut self, silent: bool, cx: &mut Context<Self>) {
+        if self.fetch_in_flight || self.busy_op.is_some() {
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let backend = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "fetch: repo open error: {}",
-                    e
-                )));
-                return;
-            }
-        };
-        eprintln!("[kagi] menu: fetch start");
-        match backend.fetch_remote() {
-            Ok(outcome) => {
-                eprintln!("[kagi] menu: fetch ok remote={}", outcome.remote);
-                self.reload();
-                self.status_footer = FooterStatus::Success(SharedString::from(format!(
-                    "Fetched {}",
-                    outcome.remote
-                )));
-                self.push_toast(ToastKind::Success, format!("Fetched {}", outcome.remote));
-            }
-            Err(e) => {
-                eprintln!("[kagi] menu: fetch failed: {}", e);
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("Fetch failed: {e}")));
-                self.push_toast(ToastKind::Error, format!("Fetch failed: {e}"));
-            }
+        self.fetch_in_flight = true;
+        if !silent {
+            self.refresh_spin_started = Some(Instant::now());
+            eprintln!("[kagi] fetch: start");
         }
+        let task = cx.background_spawn(async move {
+            let backend = kagi::git::Backend::open(&repo_path)
+                .map_err(|e| format!("repo open error: {e}"))?;
+            backend.fetch_remote().map_err(|e| format!("{e}"))
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.fetch_in_flight = false;
+                match result {
+                    Ok(outcome) => {
+                        app.reload();
+                        if silent {
+                            eprintln!("[kagi] auto-fetch: ok remote={}", outcome.remote);
+                        } else {
+                            app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                                "Fetched {}",
+                                outcome.remote
+                            )));
+                            app.push_toast(
+                                ToastKind::Success,
+                                format!("Fetched {}", outcome.remote),
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        if silent {
+                            eprintln!("[kagi] auto-fetch: failed (silent): {e}");
+                        } else {
+                            app.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                                "Fetch failed: {e}"
+                            )));
+                            app.push_toast(ToastKind::Error, format!("Fetch failed: {e}"));
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Lazily spawn the periodic background auto-fetch ticker (called from
+    /// `render`). Runs only while the `auto_fetch` setting is on and a repo is
+    /// open. Each interval it triggers a silent `fetch_async` (itself a no-op when
+    /// busy / offline / already fetching); the task exits if auto-fetch is turned
+    /// off. Mirrors the toast ticker's lazy-spawn pattern.
+    pub fn ensure_auto_fetch_ticker(&mut self, cx: &mut Context<Self>) {
+        if self.auto_fetch_ticker_alive || !theme::auto_fetch() || self.repo_path.is_none() {
+            return;
+        }
+        self.auto_fetch_ticker_alive = true;
+        eprintln!(
+            "[kagi] auto-fetch: ticker start ({}s)",
+            AUTO_FETCH_INTERVAL_SECS
+        );
+        cx.spawn(async move |this, acx| loop {
+            gpui::Timer::after(Duration::from_secs(AUTO_FETCH_INTERVAL_SECS)).await;
+            let keep = this.update(acx, |app, cx| {
+                if !theme::auto_fetch() {
+                    app.auto_fetch_ticker_alive = false;
+                    return false;
+                }
+                app.fetch_async(true, cx);
+                true
+            });
+            match keep {
+                Ok(true) => {}
+                Ok(false) | Err(_) => break,
+            }
+        })
+        .detach();
     }
 
     /// Open the branch picker overlay listing local branches.

@@ -496,12 +496,18 @@ impl StatusBarSummary {
         let behind = self.behind.unwrap_or(0);
         let ahead = self.ahead.unwrap_or(0);
 
-        // ADR-0013: Pull disabled if no upstream OR behind=0 (nothing to pull).
-        let pull_on = !no_upstream && behind > 0;
-        // Push: enabled when (upstream && ahead>0) OR (no-upstream && attached && remote exists).
-        // Dirty WT is irrelevant — push never changes local state.
-        let push_on =
-            (!no_upstream && ahead > 0) || (self.no_upstream && !not_attached && self.has_remote);
+        // Pull: enabled whenever the current branch has an upstream (attached,
+        // born). We intentionally do NOT require behind>0: the behind count is
+        // only as fresh as the last fetch, so gating on a stale behind==0 would
+        // wrongly disable Pull right after the upstream advanced (the GitHub-merge
+        // catch-22). Pull fetches first anyway, so a truly up-to-date pull is a
+        // harmless no-op.
+        let pull_on = !no_upstream;
+        // Push: enabled whenever a remote exists and HEAD is an attached, born
+        // branch. Like Pull we don't require ahead>0 (stale until fetch); pushing
+        // with nothing ahead is a harmless no-op. Dirty WT is irrelevant — push
+        // never changes local state.
+        let push_on = !not_attached && self.has_remote;
         let stash_on = self.is_dirty; // Stash: disabled if working tree is clean
         let pop_on = self.stash_count > 0; // Pop: disabled if no stashes
         let undo_on = !not_attached && ahead > 0; // disabled if detached/unborn or ahead=0
@@ -596,13 +602,21 @@ mod toolbar_tests {
     }
 
     /// State 1: clean branch, behind=0, ahead=0 (e.g. fixture main when in sync).
+    /// Pull/Push stay ENABLED: ahead/behind are only as fresh as the last fetch,
+    /// so gating on them caused the "can't pull after a GitHub merge" catch-22.
+    /// They no-op when the branch is genuinely in sync.
     #[test]
     fn toolbar_clean_behind0() {
         let s = make_summary(0, 0, false, 0);
         let t = s.toolbar_state();
-        // ADR-0013: Pull disabled when behind=0.
-        assert!(!t.pull_on, "pull must be off when behind=0");
-        assert!(!t.push_on, "push must be off when ahead=0");
+        assert!(
+            t.pull_on,
+            "pull stays on with an upstream (counts may be stale)"
+        );
+        assert!(
+            t.push_on,
+            "push stays on with a remote (counts may be stale)"
+        );
         assert!(!t.stash_on, "stash must be off when clean");
         assert!(!t.pop_on, "pop must be off when no stash");
         assert!(!t.undo_on, "undo must be off when ahead=0");
@@ -651,18 +665,23 @@ mod toolbar_tests {
         assert!(!t.undo_on, "undo must be off on detached HEAD");
     }
 
-    /// ADR-0013: fixture main (ahead=1, behind=0) → pull must be off.
+    /// fixture main (ahead=1, behind=0): Pull is now ENABLED — it is no longer
+    /// gated on behind>0 (it would be stale until a fetch anyway).
     #[test]
-    fn toolbar_fixture_main_behind0_pull_off() {
+    fn toolbar_fixture_main_behind0_pull_on() {
         // This mirrors the fixture repo: main is 1 ahead, 0 behind.
         let s = make_summary(1, 0, false, 0);
         let t = s.toolbar_state();
-        assert!(!t.pull_on, "fixture main (behind=0) must have pull=off");
+        assert!(
+            t.pull_on,
+            "pull stays on with an upstream even when behind=0"
+        );
         assert!(t.push_on, "fixture main (ahead=1) must have push=on");
         assert!(t.undo_on, "fixture main (ahead=1) must have undo=on");
     }
 
-    /// ADR-0013: feature/two (ahead=0, behind=1) → pull must be on, push must be off.
+    /// feature/two (ahead=0, behind=1): Pull on; Push is now also ENABLED — it
+    /// is no longer gated on ahead>0 (pushing nothing is a harmless no-op).
     #[test]
     fn toolbar_feature_two_behind1_pull_on() {
         // Mirrors fixture feature/two: 0 ahead, 1 behind.
@@ -670,8 +689,8 @@ mod toolbar_tests {
         let t = s.toolbar_state();
         assert!(t.pull_on, "feature/two (behind=1) must have pull=on");
         assert!(
-            !t.push_on,
-            "feature/two (ahead=0) must have push=off (no upstream-new branch)"
+            t.push_on,
+            "push stays on with a remote (ahead=0 no longer disables)"
         );
         assert!(!t.undo_on, "feature/two (ahead=0) must have undo=off");
     }
@@ -1046,6 +1065,12 @@ pub struct KagiApp {
     pub next_toast_id: u64,
     /// True while the 500ms auto-dismiss ticker task is alive.
     pub toast_ticker_alive: bool,
+    /// True while a background fetch is in flight (refresh / auto-fetch),
+    /// so we never stack concurrent fetches.
+    pub fetch_in_flight: bool,
+    /// True while the periodic background auto-fetch ticker task is alive
+    /// (spawned lazily from render; see `ensure_auto_fetch_ticker`).
+    pub auto_fetch_ticker_alive: bool,
     /// When `Some`, the refresh icon spins (set on click; cleared after one
     /// full rotation in render).
     pub refresh_spin_started: Option<Instant>,
@@ -1484,6 +1509,8 @@ impl KagiApp {
             toasts: Vec::new(),
             next_toast_id: 0,
             toast_ticker_alive: false,
+            fetch_in_flight: false,
+            auto_fetch_ticker_alive: false,
             busy_op: None,
             modal_replan_gen: 0,
             last_draft_value: String::new(),
@@ -1623,6 +1650,8 @@ impl KagiApp {
             toasts: Vec::new(),
             next_toast_id: 0,
             toast_ticker_alive: false,
+            fetch_in_flight: false,
+            auto_fetch_ticker_alive: false,
             busy_op: None,
             modal_replan_gen: 0,
             last_draft_value: String::new(),
@@ -10090,6 +10119,10 @@ impl Render for KagiApp {
         // removes it once it has animated out (see start_toast_exit).
         self.ensure_toast_ticker(cx);
 
+        // Background auto-fetch ticker (periodic `git fetch` so the graph and
+        // ahead/behind stay fresh). Lazily spawned; no-op when off / no repo.
+        self.ensure_auto_fetch_ticker(cx);
+
         // Modal text inputs: lazy-create + sync (needs Window).
         self.sync_modal_inputs(window, cx);
 
@@ -10961,11 +10994,16 @@ impl KagiApp {
         // Refresh — always enabled.
         let refresh_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
             this.refresh_spin_started = Some(Instant::now());
+            // Re-read local .git immediately (instant feedback) …
             this.reload();
             this.status_footer = FooterStatus::Idle(SharedString::from(Msg::Refreshed.t()));
             // W3-NOTIFY: explicit refresh gets a completion toast (the
             // watcher's automatic reloads stay silent to avoid spam).
             this.push_toast(ToastKind::Success, Msg::Refreshed.t());
+            // … then also fetch the remote in the background so changes pushed
+            // elsewhere (e.g. a GitHub merge) show up. Quiet: success reloads the
+            // graph, failure (offline / no remote) is silent — no error spam.
+            this.fetch_async(true, cx);
             cx.notify();
         });
 

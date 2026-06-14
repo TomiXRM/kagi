@@ -348,6 +348,23 @@ fn appearance_section(app: &Entity<KagiApp>, theme_open: bool) -> impl IntoEleme
         toggle,
     );
 
+    // ── Auto-fetch toggle ──
+    let auto_fetch = theme::auto_fetch();
+    let app_f = app.clone();
+    let toggle_fetch = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
+        let on = !theme::auto_fetch();
+        app_f.update(cx, |_app, cx| {
+            theme::set_auto_fetch(on);
+            cx.notify();
+        });
+    };
+    let auto_fetch_ctl = chip(
+        "auto-fetch-toggle",
+        SharedString::from(if auto_fetch { "On" } else { "Off" }),
+        auto_fetch,
+        toggle_fetch,
+    );
+
     div()
         .flex()
         .flex_col()
@@ -369,6 +386,11 @@ fn appearance_section(app: &Entity<KagiApp>, theme_open: bool) -> impl IntoEleme
             SharedString::from(Msg::SettingsCompact.t()),
             SharedString::from(Msg::SettingsCompactDesc.t()),
             compact_ctl,
+        ))
+        .child(setting_row(
+            SharedString::from(Msg::SettingsAutoFetch.t()),
+            SharedString::from(Msg::SettingsAutoFetchDesc.t()),
+            auto_fetch_ctl,
         ))
 }
 

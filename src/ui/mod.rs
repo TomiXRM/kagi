@@ -14695,17 +14695,37 @@ fn render_commit_panel(
             b
         };
 
-        // Suggest (rule-based) — always available when something is staged.
-        let suggest_click = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-            this.smart_suggest(window, cx);
-        });
-        let suggest_btn = pill(
+        // Suggest — one button: uses the local LLM when it's usable (green),
+        // otherwise the rule-based draft (blue). Shows "Generating…" while the
+        // LLM runs. (The separate "Generate with Local LLM" button is gone.)
+        let llm_on = smart.llm_offered();
+        let suggest_label = if smart.generating {
+            "Generating…"
+        } else {
+            "Suggest"
+        };
+        let suggest_enabled = !staged_empty && !smart.generating;
+        let suggest_color = if llm_on {
+            theme().color_success
+        } else {
+            theme().color_branch
+        };
+        let mut suggest_btn = pill(
             "cp-smart-suggest",
-            SharedString::from("Suggest"),
-            !staged_empty,
-            theme().color_branch,
-        )
-        .when(!staged_empty, |el| el.on_click(suggest_click));
+            SharedString::from(suggest_label),
+            suggest_enabled,
+            suggest_color,
+        );
+        if suggest_enabled {
+            let suggest_click = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+                if llm_on {
+                    this.smart_generate(window, cx);
+                } else {
+                    this.smart_suggest(window, cx);
+                }
+            });
+            suggest_btn = suggest_btn.on_click(suggest_click);
+        }
 
         // Lang toggle (En / 日本語).
         let lang_label = match smart.lang {
@@ -14751,28 +14771,10 @@ fn render_commit_panel(
             .child(lang_btn)
             .child(style_btn);
 
-        // Generate with Local LLM — only when offered (detected + enabled).
-        if smart.llm_offered() {
-            let gen_enabled = !staged_empty && !smart.generating;
-            let gen_label = if smart.generating {
-                "Generating…".to_string()
-            } else {
-                "Generate with Local LLM".to_string()
-            };
-            let gen_click = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-                this.smart_generate(window, cx);
-            });
-            let gen_btn = pill(
-                "cp-smart-generate",
-                SharedString::from(gen_label),
-                gen_enabled,
-                theme().color_success,
-            )
-            .when(gen_enabled, |el| el.on_click(gen_click));
-            row = row.child(gen_btn);
-        } else if smart.ollama_available && !smart.llm_enabled {
-            // Detected but not yet enabled: offer an enable affordance that
-            // triggers the consent flow.
+        // "Generate with Local LLM" is folded into Suggest (above). When the LLM
+        // is detected but not yet enabled, offer an opt-in affordance so the user
+        // can turn it on (after which Suggest goes green and uses it).
+        if smart.ollama_available && !smart.llm_enabled {
             let enable_click = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
                 this.smart_generate(window, cx);
             });

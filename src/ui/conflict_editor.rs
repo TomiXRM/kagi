@@ -402,6 +402,16 @@ enum SideRow {
         text: String,
         taken: bool,
     },
+    /// A non-conflicting context line (a passthrough region) shown identically on
+    /// both panes. Rendering these makes each pane show the full ours/theirs file
+    /// — so the Merged Result Preview never contains lines the user couldn't see
+    /// in the editor — and keeps the two panes aligned at shared context.
+    Context { line_no: usize, text: String },
+    /// Filler row so a hunk occupies the same number of rows on both sides when
+    /// Current and Incoming have different line counts. Keeps the A and B panes
+    /// row-aligned and gives them identical total heights so the shared scroll
+    /// handle is not clamped to the shorter side.
+    Blank { hunk_index: usize },
 }
 
 fn side_file_checkbox(
@@ -429,6 +439,18 @@ fn build_side_rows(model: &kagi::git::resolution::HunkModel, side: SelectionSide
     let mut hunk_index = 0usize;
     let mut line_no = 1usize;
     for region in &model.regions {
+        if let Region::Passthrough(lines) = region {
+            // Context lines belong to both sides identically; show them so the
+            // pane reflects the whole file and the gutter numbers are the real
+            // ours/theirs line numbers (not hunk-only counts).
+            for text in lines {
+                rows.push(SideRow::Context {
+                    line_no,
+                    text: text.clone(),
+                });
+                line_no += 1;
+            }
+        }
         if let Region::Hunk(hunk) = region {
             let order = hunk
                 .line_select
@@ -469,6 +491,14 @@ fn build_side_rows(model: &kagi::git::resolution::HunkModel, side: SelectionSide
                     taken: is_taken,
                 });
                 line_no += 1;
+            }
+            // Pad the shorter side so this hunk occupies max(current, incoming)
+            // line rows on both panes — keeps the two sides row-aligned and gives
+            // them equal total height (so the shared scroll handle isn't clamped
+            // to the shorter side).
+            let max_lines = hunk.current.len().max(hunk.incoming.len());
+            for _ in lines.len()..max_lines {
+                rows.push(SideRow::Blank { hunk_index });
             }
             hunk_index += 1;
         }
@@ -559,8 +589,65 @@ fn render_side_rows(
                 selected_hunk,
                 cx,
             ),
+            SideRow::Context { line_no, text } => render_context_row(i, line_no, text),
+            SideRow::Blank { hunk_index } => render_blank_row(i, hunk_index, selected_hunk),
         })
         .collect()
+}
+
+/// A non-conflicting context line: no checkbox, muted text, real gutter number.
+/// Shown identically on both panes so the editor mirrors the full file.
+fn render_context_row(row_index: usize, line_no: usize, text_value: String) -> AnyElement {
+    div()
+        .id(SharedString::from(format!("side-ctx-{}", row_index)))
+        .flex()
+        .flex_row()
+        .items_center()
+        .min_w(relative(1.0))
+        .h(theme::scaled_px(17.))
+        .px(theme::scaled_px(4.))
+        .gap_1()
+        .bg(rgb(theme().bg_base))
+        .child(
+            // Spacer matching the checkbox column so context text aligns with
+            // code lines.
+            div().w(theme::scaled_px(15.)),
+        )
+        .child(
+            div()
+                .w(theme::scaled_px(42.))
+                .text_size(theme::scaled_px(11.))
+                .line_height(theme::scaled_px(17.))
+                .font_family(terminal::pick_font_family())
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(format!("{:>4}", line_no))),
+        )
+        .child(
+            div()
+                .flex_shrink_0()
+                .whitespace_nowrap()
+                .text_size(theme::scaled_px(12.))
+                .line_height(theme::scaled_px(17.))
+                .font_family(terminal::pick_font_family())
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(text_value)),
+        )
+        .into_any_element()
+}
+
+/// An empty filler row (same height as a code line) used to keep the two side
+/// panes aligned when a hunk has a different number of lines on each side.
+fn render_blank_row(row_index: usize, hunk_index: usize, selected_hunk: usize) -> AnyElement {
+    div()
+        .id(SharedString::from(format!("side-blank-{}", row_index)))
+        .w_full()
+        .h(theme::scaled_px(17.))
+        .bg(rgb(if selected_hunk == hunk_index {
+            theme().bg_row_alt
+        } else {
+            theme().bg_base
+        }))
+        .into_any_element()
 }
 
 fn render_hunk_header_row(
@@ -1083,4 +1170,69 @@ fn horizontal_divider() -> gpui::Stateful<gpui::Div> {
             },
             |_, _, _, cx| cx.new(|_| DividerGhost),
         )
+}
+
+#[cfg(test)]
+mod side_row_tests {
+    use super::*;
+    use kagi::git::resolution::HunkModel;
+
+    fn counts(rows: &[SideRow]) -> (usize, usize, usize, usize) {
+        let mut ctx = 0;
+        let mut blank = 0;
+        let mut line = 0;
+        for r in rows {
+            match r {
+                SideRow::Context { .. } => ctx += 1,
+                SideRow::Blank { .. } => blank += 1,
+                SideRow::Line { .. } => line += 1,
+                SideRow::HunkHeader { .. } => {}
+            }
+        }
+        (rows.len(), ctx, blank, line)
+    }
+
+    /// Bug 1 (scroll clamp) + Bug 2 (preview/editor consistency): both panes must
+    /// have an identical row count (so the shared scroll handle is not clamped to
+    /// the shorter side), passthrough context must be shown on both sides, and the
+    /// shorter side of a length-mismatched hunk must be blank-padded.
+    #[test]
+    fn side_panes_are_equal_length_and_show_context() {
+        // 1 leading context line; a hunk with 3 Current vs 1 Incoming lines;
+        // 2 trailing context lines.
+        let markers = "ctxA\n\
+            <<<<<<< Current\nC1\nC2\nC3\n=======\nI1\n>>>>>>> Incoming\n\
+            ctxB\nctxC\n";
+        let model = HunkModel::from_marker_text(markers);
+
+        let cur = build_side_rows(&model, SelectionSide::Current);
+        let inc = build_side_rows(&model, SelectionSide::Incoming);
+
+        // Equal total length → shared scroll handle covers the full content.
+        assert_eq!(
+            cur.len(),
+            inc.len(),
+            "A and B panes must have equal row counts (cur={:?} inc={:?})",
+            counts(&cur),
+            counts(&inc),
+        );
+
+        let (_c_total, c_ctx, c_blank, c_line) = counts(&cur);
+        let (_i_total, i_ctx, i_blank, i_line) = counts(&inc);
+
+        // Context (3 passthrough lines) is shown identically on both sides.
+        assert_eq!(c_ctx, 3, "current pane shows all context lines");
+        assert_eq!(i_ctx, 3, "incoming pane shows all context lines");
+
+        // Hunk has 3 Current vs 1 Incoming code lines.
+        assert_eq!(c_line, 3);
+        assert_eq!(i_line, 1);
+        // The shorter (Incoming) side is padded with max(3,1)-1 = 2 blanks; the
+        // longer (Current) side needs none.
+        assert_eq!(c_blank, 0, "current side needs no padding");
+        assert_eq!(
+            i_blank, 2,
+            "incoming side padded to the hunk's max line count"
+        );
+    }
 }

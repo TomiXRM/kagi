@@ -3,6 +3,34 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.7] — 2026-06-15
+
+### Added
+- **Drag-and-drop merge of upstream-only branches.** A remote-tracking branch
+  with no local counterpart (e.g. `origin/feature`) can now be dragged — from a
+  commit-graph remote badge or the sidebar remotes list — onto the current branch
+  to merge it directly via its remote ref (no local branch is created).
+- **Background auto-fetch.** Kagi now periodically fetches the remote (every few
+  minutes, while a repo is open) so the commit graph and ahead/behind counts stay
+  current without manual fetches. New **Settings ▸ Appearance ▸ Auto-fetch**
+  toggle (on by default).
+
+### Changed
+- **The 🔁 Refresh button now also fetches** the remote in the background (so a
+  merge done on GitHub shows up). It re-reads local state instantly and pulls the
+  remote quietly — failures (offline / no remote) are silent.
+- **Pull and Push are no longer grayed out** when there's "nothing" to do. Pull is
+  enabled whenever the branch has an upstream; Push whenever a remote exists. The
+  old ahead/behind gating used possibly-stale counts and caused a "can't pull
+  after a remote merge" dead-end. A no-op pull/push is harmless.
+
+### Fixed
+- **"Discard all" now removes newly-added (untracked) files** too, instead of
+  leaving them. Untracked files are deleted from disk after their content is backed
+  up to the ODB (recorded in the oplog) — recoverable with `git cat-file -p <sha>`,
+  exactly like a tracked discard. This is not `git clean` (ADR-0083). Per-file
+  Discard is also offered on untracked rows now.
+
 ## [0.3.6] — 2026-06-15
 
 ### Added

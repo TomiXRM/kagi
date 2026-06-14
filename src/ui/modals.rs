@@ -3574,3 +3574,205 @@ pub(crate) fn render_smart_commit_modal(
                 .child(card),
         )
 }
+
+/// Auto-update detail modal (ADR-0082, T-AUTOUPDATE-001).
+///
+/// Shows current → latest, the chosen asset, release notes, and — Phase 1 — a
+/// "Update now" button that downloads + verifies + installs + relaunches. Phase-0
+/// fallbacks ("Open release page", "Skip this version") are always present.
+pub(crate) fn render_update_modal(
+    plan: kagi_domain::update::UpdatePlan,
+    installing: bool,
+    status: Option<SharedString>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+        this.update_modal_open = false;
+        cx.notify();
+    });
+    let update_now = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+        this.start_update_install(cx);
+    });
+    let skip = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+        this.skip_this_update(cx);
+    });
+    let open_page = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+        this.open_release_page();
+    });
+
+    let btn = |id: &'static str, label: SharedString, accent: u32, fg: u32| {
+        div()
+            .id(id)
+            .px(theme::scaled_px(12.))
+            .py(theme::scaled_px(6.))
+            .rounded_md()
+            .bg(rgb(accent))
+            .text_color(rgb(fg))
+            .text_sm()
+            .cursor(gpui::CursorStyle::PointingHand)
+            .hover(|s| s.opacity(0.85))
+            .child(label)
+    };
+
+    let mut card =
+        div()
+            .w(theme::scaled_px(480.))
+            .bg(rgb(current_theme().modal))
+            .rounded_lg()
+            .p_4()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .text_color(rgb(current_theme().text_main))
+                    .text_xl()
+                    .child(SharedString::from("Update available")),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .text_sm()
+                    .child(div().text_color(rgb(current_theme().text_sub)).child(
+                        SharedString::from(format!(
+                            "v{}.{}.{}",
+                            plan.current.major, plan.current.minor, plan.current.patch
+                        )),
+                    ))
+                    .child(
+                        div()
+                            .text_color(rgb(current_theme().text_label))
+                            .child(SharedString::from("\u{2192}")),
+                    )
+                    .child(
+                        div()
+                            .text_color(rgb(current_theme().text_main))
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(SharedString::from(plan.tag.clone())),
+                    ),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(current_theme().text_sub))
+                    .child(SharedString::from(format!(
+                        "{}  ({:.1} MB)",
+                        plan.asset.name,
+                        plan.asset.size as f64 / 1_048_576.0
+                    ))),
+            );
+
+    // Release notes (scrollable).
+    if !plan.notes.trim().is_empty() {
+        card = card.child(
+            div()
+                .id("update-notes")
+                .max_h(theme::scaled_px(220.))
+                .overflow_y_scroll()
+                .p_2()
+                .rounded_md()
+                .bg(rgb(current_theme().bg_base))
+                .text_xs()
+                .text_color(rgb(current_theme().text_main))
+                .child(SharedString::from(plan.notes.clone())),
+        );
+    }
+
+    if let Some(s) = status {
+        card = card.child(
+            div()
+                .text_sm()
+                .text_color(rgb(current_theme().color_warning))
+                .child(s),
+        );
+    }
+
+    // Buttons row.
+    let mut actions = div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .child(
+            btn(
+                "update-skip",
+                SharedString::from("Skip this version"),
+                current_theme().surface,
+                current_theme().text_sub,
+            )
+            .on_click(skip),
+        )
+        .child(
+            btn(
+                "update-page",
+                SharedString::from("Release page"),
+                current_theme().surface,
+                current_theme().text_sub,
+            )
+            .on_click(open_page),
+        )
+        .child(div().flex_grow())
+        .child(
+            btn(
+                "update-cancel",
+                SharedString::from("Later"),
+                current_theme().surface,
+                current_theme().text_main,
+            )
+            .on_click(cancel),
+        );
+    if installing {
+        actions = actions.child(
+            div()
+                .px(theme::scaled_px(12.))
+                .py(theme::scaled_px(6.))
+                .rounded_md()
+                .bg(rgb(current_theme().text_muted))
+                .text_color(rgb(current_theme().bg_base))
+                .text_sm()
+                .child(SharedString::from("Updating…")),
+        );
+    } else {
+        actions = actions.child(
+            btn(
+                "update-now",
+                SharedString::from("Update now"),
+                current_theme().color_branch,
+                current_theme().bg_base,
+            )
+            .on_click(update_now),
+        );
+    }
+    card = card.child(actions);
+
+    div()
+        .size_full()
+        .absolute()
+        .top_0()
+        .left_0()
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .occlude()
+                .bg(rgb(current_theme().modal_overlay))
+                .opacity(0.65),
+        )
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .items_center()
+                .child(card),
+        )
+        .into_any_element()
+}

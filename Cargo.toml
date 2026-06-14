@@ -25,6 +25,10 @@ notify = "7"
 # concrete network client published), so a small blocking client is required.
 # rustls-tls reuses the rustls 0.23 / ring already present via gpui's tree.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
+# Auto-update (ADR-0082): SHA-256 verification of downloaded release assets, and
+# tempfiles for the download staging area (also used by tests).
+sha2 = "0.10"
+tempfile = "3"
 
 [dev-dependencies]
 tempfile = "3"

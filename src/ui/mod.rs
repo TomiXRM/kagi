@@ -1136,6 +1136,21 @@ pub struct KagiApp {
     /// that the resolution staging itself triggers (otherwise the panel would be
     /// torn down and re-replaced by an empty conflict view).
     pub merge_commit_ready: bool,
+    /// Auto-update (ADR-0082): the offered update + its source release, set by the
+    /// startup background check when a newer stable release exists for this
+    /// platform. `None` = up to date / not yet checked / skipped.
+    pub update_available: Option<(
+        kagi_domain::update::UpdatePlan,
+        kagi_domain::update::ReleaseInfo,
+    )>,
+    /// Run-once guard for the startup update check.
+    pub update_checked: bool,
+    /// Whether the update detail modal is open.
+    pub update_modal_open: bool,
+    /// Whether an install is in progress (disables the confirm button).
+    pub update_installing: bool,
+    /// Progress / error line shown in the update modal.
+    pub update_status: Option<SharedString>,
     /// T-CONFLICT-UX-010/012: index (among conflict hunks) of the focused hunk in
     /// the per-hunk Conflict Editor, so the selected-hunk highlight tracks the
     /// hunk the user last interacted with / navigated to.
@@ -1465,6 +1480,11 @@ impl KagiApp {
             conflict_ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             conflict_merge_commit_pending: false,
             merge_commit_ready: false,
+            update_available: None,
+            update_checked: false,
+            update_modal_open: false,
+            update_installing: false,
+            update_status: None,
             conflict_selected_hunk: 0,
             conflict_ab_scroll_handle: UniformListScrollHandle::new(),
             conflict_continue_modal: None,
@@ -1592,6 +1612,11 @@ impl KagiApp {
             conflict_ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             conflict_merge_commit_pending: false,
             merge_commit_ready: false,
+            update_available: None,
+            update_checked: false,
+            update_modal_open: false,
+            update_installing: false,
+            update_status: None,
             conflict_selected_hunk: 0,
             conflict_ab_scroll_handle: UniformListScrollHandle::new(),
             conflict_continue_modal: None,
@@ -7822,6 +7847,107 @@ impl KagiApp {
         .detach();
     }
 
+    // ── Auto-update (ADR-0082, T-AUTOUPDATE-001) ─────────────────────────────
+
+    /// Startup background update check (run-once). Best-effort and silent on
+    /// failure — never blocks or interrupts. Skipped when offline, when the user
+    /// disabled auto-check, or when `KAGI_NO_UPDATE_CHECK` is set (the headless
+    /// test harness sets it so `cargo test` never hits the network).
+    fn ensure_update_check(&mut self, cx: &mut Context<Self>) {
+        if self.update_checked {
+            return;
+        }
+        self.update_checked = true;
+        if std::env::var_os("KAGI_NO_UPDATE_CHECK").is_some() {
+            return;
+        }
+        if message_gen::offline() {
+            return;
+        }
+        if theme::read_setting("update_auto_check").as_deref() == Some("false") {
+            return;
+        }
+        let skipped = theme::read_setting("update_skipped");
+        let task =
+            cx.background_spawn(async move { kagi::update::check_for_update(skipped.as_deref()) });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| match result {
+                Ok(Some((plan, release))) => {
+                    eprintln!(
+                        "[kagi] update: {} available (current {})",
+                        plan.tag,
+                        env!("CARGO_PKG_VERSION")
+                    );
+                    app.update_available = Some((plan, release));
+                    cx.notify();
+                }
+                Ok(None) => eprintln!("[kagi] update: up to date"),
+                Err(e) => eprintln!("[kagi] update: check failed (ignored): {e}"),
+            });
+        })
+        .detach();
+    }
+
+    /// Download + verify + install the offered update, then relaunch. On failure
+    /// the running install is untouched and the error is shown in the modal.
+    fn start_update_install(&mut self, cx: &mut Context<Self>) {
+        let Some((plan, release)) = self.update_available.clone() else {
+            return;
+        };
+        if self.update_installing {
+            return;
+        }
+        self.update_installing = true;
+        self.update_status = Some(SharedString::from("Downloading & verifying…"));
+        cx.notify();
+        let task = cx.background_spawn(async move {
+            kagi::update::install(&plan, &release, &|m| eprintln!("[kagi] update: {m}"))
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| match result {
+                Ok(relaunch) => {
+                    eprintln!("[kagi] update: installed — relaunching");
+                    relaunch.spawn_and_exit();
+                }
+                Err(e) => {
+                    eprintln!("[kagi] update: failed: {e}");
+                    app.update_installing = false;
+                    app.update_status = Some(SharedString::from(format!("Update failed: {e}")));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// "Skip this version" — persist the tag so the banner stays hidden for it.
+    fn skip_this_update(&mut self, cx: &mut Context<Self>) {
+        if let Some((plan, _)) = &self.update_available {
+            theme::write_setting("update_skipped", Some(&plan.tag));
+        }
+        self.update_available = None;
+        self.update_modal_open = false;
+        cx.notify();
+    }
+
+    /// Open the release page in the default browser (Phase-0 fallback / manual).
+    fn open_release_page(&self) {
+        let Some((plan, _)) = &self.update_available else {
+            return;
+        };
+        let url = format!("https://github.com/TomiXRM/kagi/releases/tag/{}", plan.tag);
+        #[cfg(target_os = "macos")]
+        let _ = std::process::Command::new("open").arg(&url).spawn();
+        #[cfg(target_os = "linux")]
+        let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+        #[cfg(target_os = "windows")]
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .spawn();
+    }
+
     /// Read the current commit-message Input value (UI) or headless `commit_msg`.
     fn smart_commit_current_msg(&self, cx: &Context<Self>) -> String {
         if let Some(ref input) = self.commit_input {
@@ -9766,6 +9892,9 @@ impl Render for KagiApp {
         // frame so it self-heals after window re-create / zoom changes.
         window.set_rem_size(px(theme::rem_size_px()));
 
+        // Auto-update (ADR-0082): kick the run-once background version check.
+        self.ensure_update_check(cx);
+
         // W2-STATUS / ADR-0017: resolve the bottom-panel default height on
         // first render, once the viewport size is known (18% of viewport).
         if self.bottom_panel_height <= BOTTOM_PANEL_H_UNSET {
@@ -10427,6 +10556,23 @@ impl Render for KagiApp {
             .when_some(self.smart_commit.modal.clone(), |el, modal| {
                 el.child(render_smart_commit_modal(modal, cx))
             })
+            // ── Auto-update modal overlay (ADR-0082) ──────────
+            .when_some(
+                if self.update_modal_open {
+                    self.update_available.as_ref().map(|(p, _)| {
+                        (
+                            p.clone(),
+                            self.update_installing,
+                            self.update_status.clone(),
+                        )
+                    })
+                } else {
+                    None
+                },
+                |el, (plan, installing, status)| {
+                    el.child(render_update_modal(plan, installing, status, cx))
+                },
+            )
             // ── Status bar slot (T017) — last operation result ─
             .child(self.render_status_bar(status_footer, bottom_panel_open, cx))
             // ── W3-NOTIFY: toast stack (above everything) ──────
@@ -11019,6 +11165,41 @@ impl KagiApp {
                     .items_center()
                     .justify_end()
                     .flex_1()
+                    // Auto-update (ADR-0082): "↑ Update vX.Y.Z" chip when a newer
+                    // release is available; click opens the update modal.
+                    .when_some(
+                        self.update_available.as_ref().map(|(p, _)| p.tag.clone()),
+                        |el, tag| {
+                            let open = cx.listener(|this, _: &gpui::ClickEvent, _w, cx| {
+                                this.update_modal_open = true;
+                                cx.notify();
+                            });
+                            el.child(
+                                div()
+                                    .id("tb-update")
+                                    .flex()
+                                    .items_center()
+                                    .px(theme::scaled_px(8.0))
+                                    .py(theme::scaled_px(4.0))
+                                    .mr(theme::scaled_px(8.0))
+                                    .rounded_md()
+                                    .bg(rgb(theme().color_branch))
+                                    .cursor(gpui::CursorStyle::PointingHand)
+                                    .hover(|s| s.bg(rgb(theme().color_remote)))
+                                    .child(
+                                        div()
+                                            .text_color(rgb(theme().bg_base))
+                                            .text_xs()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .child(SharedString::from(format!(
+                                                "\u{2191} Update {}",
+                                                tag
+                                            ))),
+                                    )
+                                    .on_click(open),
+                            )
+                        },
+                    )
                     .child({
                         let settings_click =
                             cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {

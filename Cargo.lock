@@ -3146,6 +3146,7 @@ dependencies = [
  "kagi-domain",
  "notify",
  "portable-pty",
+ "sha2",
  "tempfile",
  "ureq",
 ]

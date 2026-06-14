@@ -427,7 +427,7 @@ fn settings_escape(s: &str) -> String {
 
 /// All known string-valued `settings.json` keys.  Listed so [`write_setting`]
 /// can round-trip every key it doesn't recognise as the current target.
-const SETTINGS_KEYS: [&str; 11] = [
+const SETTINGS_KEYS: [&str; 13] = [
     "theme",
     "lang",
     "ui_zoom",
@@ -443,6 +443,9 @@ const SETTINGS_KEYS: [&str; 11] = [
     // Read-only from kagi's side (the user sets it); listed here so kagi's own
     // settings writes preserve it.
     "mergetool",
+    // ADR-0082 auto-update: startup-check toggle + skipped-version tag.
+    "update_auto_check",
+    "update_skipped",
 ];
 
 /// Persist the theme slug to `settings.json` (preserving other keys).

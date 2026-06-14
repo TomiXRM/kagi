@@ -290,36 +290,54 @@ pub fn build_terminal_view(
 /// Order: RobotoMono Nerd Font → JetBrainsMono Nerd Font → Hack Nerd Font →
 /// Menlo (always present on macOS).
 pub(crate) fn pick_font_family() -> String {
-    const CANDIDATES: &[(&str, &str)] = &[
-        ("RobotoMonoNerdFont", "RobotoMono Nerd Font"),
-        ("JetBrainsMonoNerdFont", "JetBrainsMono Nerd Font"),
-        ("HackNerdFont", "Hack Nerd Font"),
-    ];
-
-    let mut dirs: Vec<PathBuf> = vec![PathBuf::from("/Library/Fonts")];
-    if let Ok(home) = std::env::var("HOME") {
-        dirs.insert(0, PathBuf::from(home).join("Library/Fonts"));
+    // Windows ships Consolas (a good monospace) but none of the macOS Nerd Font
+    // directories below exist, so resolve directly.
+    #[cfg(target_os = "windows")]
+    {
+        "Consolas".to_string()
     }
 
-    for (file_prefix, family) in CANDIDATES {
-        for dir in &dirs {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    if entry.file_name().to_string_lossy().starts_with(file_prefix) {
-                        return (*family).to_string();
+    #[cfg(not(target_os = "windows"))]
+    {
+        const CANDIDATES: &[(&str, &str)] = &[
+            ("RobotoMonoNerdFont", "RobotoMono Nerd Font"),
+            ("JetBrainsMonoNerdFont", "JetBrainsMono Nerd Font"),
+            ("HackNerdFont", "Hack Nerd Font"),
+        ];
+
+        let mut dirs: Vec<PathBuf> = vec![PathBuf::from("/Library/Fonts")];
+        if let Ok(home) = std::env::var("HOME") {
+            dirs.insert(0, PathBuf::from(home).join("Library/Fonts"));
+        }
+
+        for (file_prefix, family) in CANDIDATES {
+            for dir in &dirs {
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        if entry.file_name().to_string_lossy().starts_with(file_prefix) {
+                            return (*family).to_string();
+                        }
                     }
                 }
             }
         }
+        "Menlo".to_string()
     }
-    "Menlo".to_string()
 }
 
 /// Resolve the user's preferred shell.
 ///
-/// Returns `$SHELL` or falls back to `/bin/zsh`.
+/// Unix: `$SHELL`, falling back to `/bin/zsh`.
+/// Windows: `%ComSpec%` (the command processor), falling back to `cmd.exe`.
 pub fn resolve_shell() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
+    #[cfg(windows)]
+    {
+        std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
+    }
 }
 
 /// Ensure the terminal session is started.

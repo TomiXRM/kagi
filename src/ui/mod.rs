@@ -747,8 +747,13 @@ pub struct Toast {
     pub id: u64,
     pub kind: ToastKind,
     pub message: SharedString,
-    /// Creation time; used by the pruner for auto-dismiss.
+    /// Creation time; drives the enter animation and auto-dismiss timing.
     pub born: std::time::Instant,
+    /// `Some(t)` once the toast has begun sliding out (auto-expiry or the ×
+    /// button): `t` is when the exit animation started. The toast keeps
+    /// rendering during the exit so the slide-out is visible, then a one-shot
+    /// timer removes it. `None` while it is entering / visible.
+    pub dismissing: Option<std::time::Instant>,
 }
 
 impl Toast {
@@ -760,13 +765,25 @@ impl Toast {
         }
     }
 
-    fn expired(&self) -> bool {
-        self.born.elapsed() >= self.lifetime()
+    /// The toast has been visible long enough to start sliding out (and is not
+    /// already doing so).
+    fn should_start_exit(&self) -> bool {
+        self.dismissing.is_none() && self.born.elapsed() >= self.lifetime()
     }
 }
 
 /// Maximum simultaneously visible toasts (oldest dropped beyond this).
 const TOASTS_MAX: usize = 4;
+
+/// Snackbar slide animation timings / distance.
+const TOAST_ENTER_MS: u64 = 240;
+const TOAST_EXIT_MS: u64 = 220;
+/// Remove the toast slightly before the exit animation's nominal end so it
+/// never reverts to its resting (visible) state for a frame before removal.
+const TOAST_REMOVE_MS: u64 = 200;
+/// Horizontal slide distance (px): far enough to clear the left window edge,
+/// so the toast slides fully in from / out to off-screen.
+const TOAST_SLIDE_PX: f32 = 500.0;
 
 // ──────────────────────────────────────────────────────────────
 
@@ -4231,15 +4248,37 @@ impl KagiApp {
             kind,
             message: message.into(),
             born: Instant::now(),
+            dismissing: None,
         });
         if self.toasts.len() > TOASTS_MAX {
             self.toasts.remove(0);
         }
     }
 
-    /// Remove a toast by id (× button).
-    pub fn dismiss_toast(&mut self, id: u64) {
-        self.toasts.retain(|t| t.id != id);
+    /// Begin sliding a toast out (× button or auto-expiry), then remove it once
+    /// the exit animation has played. Marking `dismissing` keeps the card in the
+    /// tree so the slide-out is visible; a one-shot timer does the actual
+    /// removal. No-op if the toast is gone or already leaving.
+    pub fn start_toast_exit(&mut self, id: u64, cx: &mut Context<Self>) {
+        let Some(toast) = self.toasts.iter_mut().find(|t| t.id == id) else {
+            return;
+        };
+        if toast.dismissing.is_some() {
+            return;
+        }
+        toast.dismissing = Some(Instant::now());
+        cx.notify();
+        cx.spawn(async move |this, acx| {
+            gpui::Timer::after(Duration::from_millis(TOAST_REMOVE_MS)).await;
+            let _ = this.update(acx, |app, cx| {
+                let before = app.toasts.len();
+                app.toasts.retain(|t| t.id != id);
+                if app.toasts.len() != before {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// Debounced live re-plan for the open modal(s): waits 250ms of input
@@ -4611,14 +4650,24 @@ impl KagiApp {
         }
         self.toast_ticker_alive = true;
         cx.spawn(async move |this, acx| loop {
-            gpui::Timer::after(Duration::from_millis(500)).await;
+            gpui::Timer::after(Duration::from_millis(150)).await;
             let finished = this.update(acx, |app, cx| {
-                let before = app.toasts.len();
-                app.toasts.retain(|t| !t.expired());
-                if app.toasts.len() != before {
-                    cx.notify();
+                // Begin the slide-out for any toast that has hit its lifetime;
+                // `start_toast_exit` handles the removal once it has animated.
+                let expiring: Vec<u64> = app
+                    .toasts
+                    .iter()
+                    .filter(|t| t.should_start_exit())
+                    .map(|t| t.id)
+                    .collect();
+                for id in expiring {
+                    app.start_toast_exit(id, cx);
                 }
-                if app.toasts.is_empty() {
+                // The ticker only needs to keep watching while a toast is still
+                // counting down (not yet leaving). Once every toast is either
+                // gone or already sliding out, its removal timer takes over.
+                let still_watching = app.toasts.iter().any(|t| t.dismissing.is_none());
+                if !still_watching {
                     app.toast_ticker_alive = false;
                     true
                 } else {
@@ -4655,47 +4704,70 @@ impl KagiApp {
                 ToastKind::Error => (theme().color_blocker, "\u{2715}"), // ✕
             };
             let id = toast.id;
+            let leaving = toast.dismissing.is_some();
             let dismiss = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-                this.dismiss_toast(id);
-                cx.notify();
+                this.start_toast_exit(id, cx);
             });
-            stack = stack.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_start()
-                    .gap_2()
-                    .px_4()
-                    .py_3()
-                    .rounded(theme::scaled_px(8.))
-                    .bg(rgb(theme().panel))
-                    .border_1()
-                    .border_color(rgb(accent))
-                    .text_base()
-                    .text_color(rgb(theme().text_main))
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_color(rgb(accent))
-                            .child(SharedString::from(icon)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .overflow_hidden()
-                            .child(toast.message.clone()),
-                    )
-                    .child(
-                        div()
-                            .id(("toast-dismiss", id))
-                            .flex_shrink_0()
-                            .px_1()
-                            .text_color(rgb(theme().text_muted))
-                            .hover(|s| s.text_color(rgb(theme().text_main)))
-                            .on_click(dismiss)
-                            .child(SharedString::from("\u{00d7}")),
-                    ),
-            );
+            // Explicit width so the animated margin-left slides the whole card
+            // horizontally (a stretched flex child wouldn't translate cleanly).
+            let card = div()
+                .w(theme::scaled_px(460.))
+                .flex()
+                .flex_row()
+                .items_start()
+                .gap_2()
+                .px_4()
+                .py_3()
+                .rounded(theme::scaled_px(8.))
+                .bg(rgb(theme().panel))
+                .border_1()
+                .border_color(rgb(accent))
+                .text_base()
+                .text_color(rgb(theme().text_main))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_color(rgb(accent))
+                        .child(SharedString::from(icon)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .overflow_hidden()
+                        .child(toast.message.clone()),
+                )
+                .child(
+                    div()
+                        .id(("toast-dismiss", id))
+                        .flex_shrink_0()
+                        .px_1()
+                        .text_color(rgb(theme().text_muted))
+                        .hover(|s| s.text_color(rgb(theme().text_main)))
+                        .on_click(dismiss)
+                        .child(SharedString::from("\u{00d7}")),
+                );
+
+            // Slide + fade: in from the left on appear, out to the left on
+            // dismiss. Keyed by toast id so the animation plays once and holds.
+            use gpui::AnimationExt as _;
+            let animated = if leaving {
+                card.with_animation(
+                    ("kagi-toast-exit", id),
+                    gpui::Animation::new(Duration::from_millis(TOAST_EXIT_MS))
+                        .with_easing(gpui::quadratic),
+                    |el, delta| el.ml(px(-TOAST_SLIDE_PX * delta)).opacity(1.0 - delta),
+                )
+                .into_any_element()
+            } else {
+                card.with_animation(
+                    ("kagi-toast-enter", id),
+                    gpui::Animation::new(Duration::from_millis(TOAST_ENTER_MS))
+                        .with_easing(gpui::ease_out_quint()),
+                    |el, delta| el.ml(px(-TOAST_SLIDE_PX * (1.0 - delta))).opacity(delta),
+                )
+                .into_any_element()
+            };
+            stack = stack.child(animated);
         }
         Some(stack.into_any())
     }
@@ -9998,9 +10070,9 @@ impl Render for KagiApp {
         // post-operation paths force re-detection via `reload()`.
         self.detect_conflict_mode();
 
-        // W3-NOTIFY: drop expired toasts and keep the auto-dismiss ticker
-        // alive while any remain.
-        self.toasts.retain(|t| !t.expired());
+        // W3-NOTIFY: keep the auto-dismiss ticker alive while toasts remain. The
+        // ticker starts each toast's slide-out at end-of-life; a per-toast timer
+        // removes it once it has animated out (see start_toast_exit).
         self.ensure_toast_ticker(cx);
 
         // Modal text inputs: lazy-create + sync (needs Window).

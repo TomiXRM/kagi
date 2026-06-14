@@ -47,6 +47,7 @@ use super::{
     status::working_tree_status,
     status::ChangeKind,
     status::FileStatus,
+    status::WorkingTreeStatus,
     GitError, Head,
 };
 
@@ -309,6 +310,17 @@ impl CommitPreview {
 /// Returns [`GitError`] only if the working-tree status or HEAD cannot be read.
 pub fn commit_preview(repo: &Repository) -> Result<CommitPreview, GitError> {
     let status = working_tree_status(repo)?;
+    commit_preview_from_status(repo, &status)
+}
+
+/// Like [`commit_preview`] but reuses an already-computed [`WorkingTreeStatus`],
+/// avoiding a second `working_tree_status` walk. Callers that already have the
+/// status (e.g. the commit panel's reload) should use this — on a repo with
+/// hundreds of changes, `working_tree_status` is the expensive part.
+pub fn commit_preview_from_status(
+    repo: &Repository,
+    status: &WorkingTreeStatus,
+) -> Result<CommitPreview, GitError> {
     let head = resolve_head(repo)?;
 
     let mut added = 0usize;

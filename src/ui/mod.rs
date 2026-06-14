@@ -11617,14 +11617,11 @@ impl KagiApp {
         if commit_panel_open {
             // ── Commit Panel mode (T025) ──────────────
             if let Some(panel_state) = commit_panel.clone() {
-                // T-COMMIT-001: build the staged preview (count / A·M·D / target
-                // branch / author) from the current repo.  Pure read; falls back
-                // to None (preview hidden) if the repo cannot be opened.
-                let preview = self.repo_path.as_ref().and_then(|p| {
-                    kagi::git::Backend::open(p)
-                        .ok()
-                        .and_then(|repo| repo.commit_preview().ok())
-                });
+                // T-COMMIT-001: staged preview (count / A·M·D / target branch /
+                // author). Cached on the panel state (computed in reload_status) —
+                // computing it here ran a full working_tree_status *every frame*,
+                // which froze the panel to ~6fps on large repos (PERF fix).
+                let preview = panel_state.preview.clone();
                 body_row = body_row.child(divider2).child(render_commit_panel(
                     panel_state,
                     panel_width,

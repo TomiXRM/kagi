@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use gpui::SharedString;
 
-use kagi::git::{Backend, ChangeKind, FileDiffStat, FileStatus};
+use kagi::git::{Backend, ChangeKind, CommitPreview, FileDiffStat, FileStatus};
 
 // ──────────────────────────────────────────────────────────────
 // CommitPanelFileRef — which file is selected in the panel
@@ -69,6 +69,11 @@ pub struct CommitPanelState {
     pub plan_modal: Option<CommitPlanModal>,
     /// Whether the file list is in tree view (true) or flat view (false).
     pub tree_view: bool,
+    /// Cached staged-commit preview (count / A·M·D / target branch / author),
+    /// recomputed in [`Self::reload_status`]. **Must not** be recomputed every
+    /// render: `commit_preview()` runs a full `working_tree_status` (~150ms on a
+    /// large repo), which at 60fps froze the panel to ~6fps (PERF bug).
+    pub preview: Option<CommitPreview>,
 }
 
 impl CommitPanelState {
@@ -84,6 +89,7 @@ impl CommitPanelState {
             commit_msg: String::new(),
             plan_modal: None,
             tree_view: false,
+            preview: None,
         };
         state.reload_status(repo_path);
         state
@@ -105,6 +111,10 @@ impl CommitPanelState {
         };
         match backend.working_tree_status() {
             Ok(status) => {
+                // Cache the staged-commit preview here (NOT per render frame),
+                // reusing this `status` so we don't run a second
+                // working_tree_status walk. Done before `status` is consumed below.
+                self.preview = backend.commit_preview_from_status(&status).ok();
                 // Track conflicted paths for UI (these cannot be staged).
                 self.conflicted_paths = status.conflicted.iter().cloned().collect();
 

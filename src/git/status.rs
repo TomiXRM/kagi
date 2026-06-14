@@ -17,7 +17,7 @@
 //! `staged` and `unstaged`.
 
 use git2::{Repository, StatusOptions};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::GitError;
 
@@ -60,6 +60,7 @@ pub fn working_tree_status(repo: &Repository) -> Result<WorkingTreeStatus, GitEr
         .map_err(|e| GitError::Other(e.message().to_string()))?;
 
     let mut result = WorkingTreeStatus::default();
+    let workdir = repo.workdir().map(|p| p.to_path_buf());
 
     for entry in statuses.iter() {
         let s = entry.status();
@@ -142,12 +143,31 @@ pub fn working_tree_status(repo: &Repository) -> Result<WorkingTreeStatus, GitEr
         // ── Untracked ────────────────────────────────────────────────────
         if s.contains(git2::Status::WT_NEW) {
             if let Some(path) = entry_path(&entry) {
+                // Skip nested git repositories / linked worktrees (a directory
+                // containing a `.git`). git surfaces such a dir as a single
+                // untracked entry, but it is a whole separate checkout (often
+                // thousands of files) — showing it as "untracked" is noise, and
+                // tools like Claude Code create worktrees under
+                // `.claude/worktrees/`. Treat them as not part of this repo.
+                if is_nested_git_dir(workdir.as_deref(), &path) {
+                    continue;
+                }
                 result.untracked.push(path);
             }
         }
     }
 
     Ok(result)
+}
+
+/// Whether `rel` (relative to `workdir`) is a nested git repository or linked
+/// worktree — i.e. a directory that itself contains a `.git` (a real `.git`
+/// directory for a nested clone, or a `.git` *file* for a linked worktree).
+fn is_nested_git_dir(workdir: Option<&Path>, rel: &Path) -> bool {
+    match workdir {
+        Some(wd) => wd.join(rel).join(".git").exists(),
+        None => false,
+    }
 }
 
 // ────────────────────────────────────────────────────────────

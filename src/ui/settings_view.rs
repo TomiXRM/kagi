@@ -86,7 +86,11 @@ pub fn render_settings_overlay(
                         .py_px()
                         .rounded_md()
                         .text_color(rgb(theme().text_sub))
-                        .hover(|s| s.bg(rgb(theme().selected)).text_color(rgb(theme().text_main)).cursor_pointer())
+                        .hover(|s| {
+                            s.bg(rgb(theme().selected))
+                                .text_color(rgb(theme().text_main))
+                                .cursor_pointer()
+                        })
                         .on_click(close_click)
                         .child(SharedString::from("✕")),
                 ),
@@ -163,11 +167,7 @@ fn setting_row(
                 .flex_col()
                 .gap_1()
                 .flex_1()
-                .child(
-                    div()
-                        .text_color(rgb(theme().text_main))
-                        .child(title),
-                )
+                .child(div().text_color(rgb(theme().text_main)).child(title))
                 .child(
                     div()
                         .text_sm()
@@ -200,7 +200,11 @@ fn chip(
         .bg(rgb(bg))
         .text_sm()
         .text_color(rgb(fg))
-        .hover(|s| s.bg(rgb(theme().selected)).text_color(rgb(theme().text_main)).cursor_pointer())
+        .hover(|s| {
+            s.bg(rgb(theme().selected))
+                .text_color(rgb(theme().text_main))
+                .cursor_pointer()
+        })
         .on_click(on_click)
         .child(label)
         .into_any_element()
@@ -256,12 +260,7 @@ fn appearance_section(app: &Entity<KagiApp>, theme_open: bool) -> impl IntoEleme
                 .child(SharedString::from("\u{25be}")),
         );
 
-    let mut theme_dropdown = div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .items_end()
-        .child(field);
+    let mut theme_dropdown = div().flex().flex_col().gap_1().items_end().child(field);
 
     if theme_open {
         let mut options = div()
@@ -353,7 +352,9 @@ fn appearance_section(app: &Entity<KagiApp>, theme_open: bool) -> impl IntoEleme
         .flex()
         .flex_col()
         .gap_2()
-        .child(section_header(SharedString::from(Msg::SettingsAppearance.t())))
+        .child(section_header(SharedString::from(
+            Msg::SettingsAppearance.t(),
+        )))
         .child(setting_row(
             SharedString::from(Msg::SettingsTheme.t()),
             SharedString::from(Msg::SettingsThemeDesc.t()),
@@ -413,7 +414,9 @@ fn language_section(app: &Entity<KagiApp>) -> impl IntoElement {
         .flex()
         .flex_col()
         .gap_2()
-        .child(section_header(SharedString::from(Msg::SettingsLanguage.t())))
+        .child(section_header(SharedString::from(
+            Msg::SettingsLanguage.t(),
+        )))
         .child(setting_row(
             SharedString::from(Msg::SettingsInterfaceLang.t()),
             SharedString::from(Msg::SettingsInterfaceLangDesc.t()),

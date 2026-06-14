@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::{GitError, ops::StateSummary};
+use super::{ops::StateSummary, GitError};
 
 // ────────────────────────────────────────────────────────────
 // Public types
@@ -97,7 +97,7 @@ fn escape_json_string(s: &str) -> String {
     for ch in s.chars() {
         match ch {
             '\\' => out.push_str("\\\\"),
-            '"'  => out.push_str("\\\""),
+            '"' => out.push_str("\\\""),
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
@@ -137,7 +137,8 @@ fn entry_to_json(entry: &OpLogEntry) -> String {
             )
         }
         OpOutcome::Refused { blockers } => {
-            let blocker_strs: Vec<String> = blockers.iter().map(|b| escape_json_string(b)).collect();
+            let blocker_strs: Vec<String> =
+                blockers.iter().map(|b| escape_json_string(b)).collect();
             format!(
                 "{{\"kind\":\"Refused\",\"blockers\":[{}]}}",
                 blocker_strs.join(",")
@@ -215,12 +216,12 @@ fn unescape_json_str(s: &str) -> String {
             out.push(ch);
         } else {
             match chars.next() {
-                Some('"')  => out.push('"'),
+                Some('"') => out.push('"'),
                 Some('\\') => out.push('\\'),
-                Some('n')  => out.push('\n'),
-                Some('r')  => out.push('\r'),
-                Some('t')  => out.push('\t'),
-                Some('u')  => {
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('t') => out.push('\t'),
+                Some('u') => {
                     // Consume exactly 4 hex digits.
                     let hex: String = (0..4).filter_map(|_| chars.next()).collect();
                     if let Ok(code) = u32::from_str_radix(&hex, 16) {
@@ -229,7 +230,10 @@ fn unescape_json_str(s: &str) -> String {
                         }
                     }
                 }
-                Some(c) => { out.push('\\'); out.push(c); }
+                Some(c) => {
+                    out.push('\\');
+                    out.push(c);
+                }
                 None => {}
             }
         }
@@ -243,7 +247,7 @@ fn unescape_json_str(s: &str) -> String {
 ///
 /// Only searches within `json` — does NOT recurse into nested objects.
 /// Returns `None` if the key is not found or parsing fails.
-fn extract_str_field<'a>(json: &'a str, key: &str) -> Option<String> {
+fn extract_str_field(json: &str, key: &str) -> Option<String> {
     let needle = format!("\"{}\":", key);
     let pos = json.find(needle.as_str())?;
     let after = json[pos + needle.len()..].trim_start();
@@ -267,11 +271,13 @@ fn extract_str_field<'a>(json: &'a str, key: &str) -> Option<String> {
         Some(unescape_json_str(&after[inner_start..end]))
     } else {
         // Number or other scalar: read until `,`, `}`, or end.
-        let end = after
-            .find(|c: char| c == ',' || c == '}')
-            .unwrap_or(after.len());
+        let end = after.find([',', '}']).unwrap_or(after.len());
         let val = after[..end].trim();
-        if val.is_empty() { None } else { Some(val.to_string()) }
+        if val.is_empty() {
+            None
+        } else {
+            Some(val.to_string())
+        }
     }
 }
 
@@ -297,7 +303,7 @@ fn extract_object_field(json: &str, key: &str) -> Option<String> {
         if in_str {
             match ch {
                 '\\' => escape = true,
-                '"'  => in_str = false,
+                '"' => in_str = false,
                 _ => {}
             }
             continue;
@@ -337,30 +343,38 @@ fn extract_string_array(json: &str, key: &str) -> Vec<String> {
         if rest_t.starts_with(']') || rest_t.is_empty() {
             break;
         }
-        if rest_t.starts_with('"') {
+        if let Some(inner) = rest_t.strip_prefix('"') {
             // String element: find end.
-            let inner = &rest_t[1..];
             let mut escaped = false;
             let mut end = None;
             for (i, ch) in inner.char_indices() {
-                if escaped { escaped = false; }
-                else if ch == '\\' { escaped = true; }
-                else if ch == '"' { end = Some(i); break; }
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    end = Some(i);
+                    break;
+                }
             }
             if let Some(e) = end {
                 result.push(unescape_json_str(&inner[..e]));
                 rest = &inner[e + 1..]; // skip past closing '"'
-                // Skip optional comma.
+                                        // Skip optional comma.
                 rest = rest.trim_start();
-                if rest.starts_with(',') { rest = &rest[1..]; }
+                if rest.starts_with(',') {
+                    rest = &rest[1..];
+                }
             } else {
                 break;
             }
         } else {
             // Non-string token: skip to next comma or ']'.
-            let skip = rest_t.find(|c: char| c == ',' || c == ']').unwrap_or(rest_t.len());
+            let skip = rest_t.find([',', ']']).unwrap_or(rest_t.len());
             rest = &rest_t[skip..];
-            if rest.starts_with(',') { rest = &rest[1..]; }
+            if rest.starts_with(',') {
+                rest = &rest[1..];
+            }
         }
     }
     result
@@ -385,7 +399,10 @@ fn parse_oplog_line(line: &str) -> Option<OpLogEntry> {
     let before_obj = extract_object_field(line, "before")?;
     let before_head = extract_str_field(&before_obj, "head").unwrap_or_default();
     let before_dirty = extract_str_field(&before_obj, "dirty").unwrap_or_default();
-    let before = super::ops::StateSummary { head: before_head, dirty: before_dirty };
+    let before = super::ops::StateSummary {
+        head: before_head,
+        dirty: before_dirty,
+    };
 
     // "outcome" object.
     let outcome_obj = extract_object_field(line, "outcome")?;
@@ -411,7 +428,13 @@ fn parse_oplog_line(line: &str) -> Option<OpLogEntry> {
         _ => return None,
     };
 
-    Some(OpLogEntry { timestamp, op, repo, before, outcome })
+    Some(OpLogEntry {
+        timestamp,
+        op,
+        repo,
+        before,
+        outcome,
+    })
 }
 
 /// Read the last `n` entries from the oplog file (newest last in file,
@@ -462,7 +485,11 @@ pub fn append_oplog(entry: &OpLogEntry) -> Result<PathBuf, GitError> {
     // Auto-create parent directory.
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
-            GitError::Other(format!("oplog: mkdir failed for {}: {}", parent.display(), e))
+            GitError::Other(format!(
+                "oplog: mkdir failed for {}: {}",
+                parent.display(),
+                e
+            ))
         })?;
     }
 
@@ -472,7 +499,9 @@ pub fn append_oplog(entry: &OpLogEntry) -> Result<PathBuf, GitError> {
         .create(true)
         .append(true)
         .open(&path)
-        .map_err(|e| GitError::Other(format!("oplog: open failed for {}: {}", path.display(), e)))?;
+        .map_err(|e| {
+            GitError::Other(format!("oplog: open failed for {}: {}", path.display(), e))
+        })?;
 
     file.write_all(line.as_bytes()).map_err(|e| {
         GitError::Other(format!("oplog: write failed for {}: {}", path.display(), e))
@@ -558,8 +587,14 @@ mod tests {
         assert!(json.contains("\"op\":\"checkout\""), "op missing");
         assert!(json.contains("\"repo\":\"/tmp/repo\""), "repo missing");
         assert!(json.contains("\"kind\":\"Success\""), "kind missing");
-        assert!(json.contains("\"head\":\"branch: main\""), "before.head missing");
-        assert!(json.contains("\"head\":\"branch: feature\""), "after.head missing");
+        assert!(
+            json.contains("\"head\":\"branch: main\""),
+            "before.head missing"
+        );
+        assert!(
+            json.contains("\"head\":\"branch: feature\""),
+            "after.head missing"
+        );
     }
 
     #[test]
@@ -581,7 +616,10 @@ mod tests {
         };
         let json = entry_to_json(&entry);
         assert!(json.contains("\"kind\":\"Refused\""), "kind missing");
-        assert!(json.contains("Working tree has changes"), "blocker 1 missing");
+        assert!(
+            json.contains("Working tree has changes"),
+            "blocker 1 missing"
+        );
         assert!(json.contains("Branch"), "blocker 2 missing");
     }
 
@@ -610,14 +648,23 @@ mod tests {
             timestamp: 0,
             op: "checkout".to_string(),
             repo: "/path/with \"quotes\" and \\backslash".to_string(),
-            before: StateSummary { head: "branch: main".to_string(), dirty: "clean".to_string() },
+            before: StateSummary {
+                head: "branch: main".to_string(),
+                dirty: "clean".to_string(),
+            },
             outcome: OpOutcome::Success {
-                after: StateSummary { head: "branch: main".to_string(), dirty: "clean".to_string() },
+                after: StateSummary {
+                    head: "branch: main".to_string(),
+                    dirty: "clean".to_string(),
+                },
             },
         };
         let json = entry_to_json(&entry);
         // repo path with special chars must be properly escaped.
-        assert!(json.contains("\\\"quotes\\\""), "double-quote escaping failed");
+        assert!(
+            json.contains("\\\"quotes\\\""),
+            "double-quote escaping failed"
+        );
         assert!(json.contains("\\\\backslash"), "backslash escaping failed");
     }
 
@@ -663,13 +710,19 @@ mod tests {
         assert_eq!(lines.len(), 2, "expected 2 JSON lines, got: {:?}", lines);
 
         // Each line must contain the op name.
-        assert!(lines[0].contains("checkout"), "first line should mention checkout");
-        assert!(lines[1].contains("create-branch"), "second line should mention create-branch");
+        assert!(
+            lines[0].contains("checkout"),
+            "first line should mention checkout"
+        );
+        assert!(
+            lines[1].contains("create-branch"),
+            "second line should mention create-branch"
+        );
 
         // Restore env.
         match prev {
             Some(v) => std::env::set_var("KAGI_LOG_DIR", v),
-            None    => std::env::remove_var("KAGI_LOG_DIR"),
+            None => std::env::remove_var("KAGI_LOG_DIR"),
         }
     }
 
@@ -699,17 +752,17 @@ mod tests {
         let line = std::fs::read_to_string(&path).expect("read");
         let line = line.trim_end();
 
-        assert!(line.contains("\"timestamp\":9999"),    "timestamp field");
+        assert!(line.contains("\"timestamp\":9999"), "timestamp field");
         assert!(line.contains("\"op\":\"stash-apply\""), "op field");
         assert!(line.contains("\"repo\":\"/my/repo\""), "repo field");
-        assert!(line.contains("\"kind\":\"Refused\""),  "outcome kind");
+        assert!(line.contains("\"kind\":\"Refused\""), "outcome kind");
         assert!(line.contains("Working tree is dirty"), "blocker text");
         assert!(line.contains("\"head\":\"branch: feat\""), "before.head");
-        assert!(line.contains("\"dirty\":\"2 modified\""),  "before.dirty");
+        assert!(line.contains("\"dirty\":\"2 modified\""), "before.dirty");
 
         match prev {
             Some(v) => std::env::set_var("KAGI_LOG_DIR", v),
-            None    => std::env::remove_var("KAGI_LOG_DIR"),
+            None => std::env::remove_var("KAGI_LOG_DIR"),
         }
     }
 }

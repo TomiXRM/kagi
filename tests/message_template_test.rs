@@ -6,7 +6,7 @@
 //! into best-effort structured fields, and the plain ⇄ template round-trip the
 //! Commit Panel relies on to not lose user input on a mode toggle.
 
-use kagi::git::message_template::{TemplateFields, assemble, parse_message, TYPE_CHOICES};
+use kagi::git::message_template::{assemble, parse_message, TemplateFields, TYPE_CHOICES};
 
 // ── assemble: full + partial ────────────────────────────────────
 
@@ -158,14 +158,7 @@ fn parse_multiline_no_blank_keeps_only_first_as_subject() {
 
 #[test]
 fn round_trip_full_message() {
-    let f = TemplateFields::new(
-        "feat",
-        "core",
-        "ship it",
-        "Body paragraph.",
-        "",
-        "",
-    );
+    let f = TemplateFields::new("feat", "core", "ship it", "Body paragraph.", "", "");
     let plain = assemble(&f);
     let back = parse_message(&plain);
     assert_eq!(back.r#type, "feat");

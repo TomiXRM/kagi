@@ -187,7 +187,10 @@ fn detects_cherry_pick_session() {
     let repo = Repository::open(dir).unwrap();
     let session = detect_conflict_session(&repo).expect("expected cherry-pick session");
     match &session.op {
-        ConflictOp::CherryPick { source, source_summary } => {
+        ConflictOp::CherryPick {
+            source,
+            source_summary,
+        } => {
             assert!(source.is_some(), "CHERRY_PICK_HEAD sha should be readable");
             assert_eq!(source_summary.as_deref(), Some("side change"));
         }
@@ -277,7 +280,9 @@ fn buffer_choices_undo_and_provenance() {
     assert!(inc.as_deref().unwrap().contains("FEATURE change"));
 
     // Choose current → resolved text equals the current side, provenance Current.
-    buffer.apply_choice(path, ResolutionChoice::Current).unwrap();
+    buffer
+        .apply_choice(path, ResolutionChoice::Current)
+        .unwrap();
     assert!(buffer.has_resolution(path));
     assert!(buffer.resolved_text(path).unwrap().contains("MAIN change"));
     assert!(buffer
@@ -298,7 +303,10 @@ fn buffer_choices_undo_and_provenance() {
     // Undo returns to the Current-only resolution.
     assert!(buffer.undo(path));
     assert!(buffer.resolved_text(path).unwrap().contains("MAIN change"));
-    assert!(!buffer.resolved_text(path).unwrap().contains("FEATURE change"));
+    assert!(!buffer
+        .resolved_text(path)
+        .unwrap()
+        .contains("FEATURE change"));
 }
 
 #[test]
@@ -326,7 +334,10 @@ fn buffer_autosave_round_trip() {
         loaded.resolved_text(path).unwrap(),
         buffer.resolved_text(path).unwrap()
     );
-    assert_eq!(loaded.provenance(path).unwrap(), buffer.provenance(path).unwrap());
+    assert_eq!(
+        loaded.provenance(path).unwrap(),
+        buffer.provenance(path).unwrap()
+    );
 
     // Cleanup the global env var so other test binaries are unaffected.
     ResolutionBuffer::clear(tmp.path()).unwrap();
@@ -422,7 +433,10 @@ fn abort_restores_pre_op_state_and_retains_buffer() {
     // Working tree restored to the pre-op content ("MAIN change").
     let restored = std::fs::read_to_string(dir.join("file.txt")).unwrap();
     assert!(restored.contains("MAIN change"));
-    assert!(!restored.contains("<<<<<<<"), "no conflict markers should remain");
+    assert!(
+        !restored.contains("<<<<<<<"),
+        "no conflict markers should remain"
+    );
 
     // The buffer was preserved to the autosave dir.
     let preserved = outcome.buffer_preserved_at.expect("buffer preserved path");
@@ -446,8 +460,8 @@ fn execute_continue_merge_creates_merge_commit() {
         .apply_choice(Path::new("file.txt"), ResolutionChoice::BothCurrentFirst)
         .unwrap();
 
-    let outcome = kagi::git::execute_conflict_continue(&repo, &session, &buffer)
-        .expect("continue merge");
+    let outcome =
+        kagi::git::execute_conflict_continue(&repo, &session, &buffer).expect("continue merge");
     match outcome {
         kagi::git::ContinueOutcome::Committed(id) => {
             // The new commit is a merge (two parents).
@@ -529,8 +543,16 @@ fn hunk_model_splits_real_multi_hunk_conflict_and_assembles_marker_free() {
 
     let text = buffer.resolved_text(path).expect("resolved text");
     // Current branch is `main` (we merged feature into main).
-    assert!(text.contains("top MAIN"), "hunk 0 accepted current: {:?}", text);
-    assert!(text.contains("bottom FEATURE"), "hunk 1 accepted incoming: {:?}", text);
+    assert!(
+        text.contains("top MAIN"),
+        "hunk 0 accepted current: {:?}",
+        text
+    );
+    assert!(
+        text.contains("bottom FEATURE"),
+        "hunk 1 accepted incoming: {:?}",
+        text
+    );
     // Passthrough context preserved.
     assert!(text.contains("mid 2"));
     // Fully resolved → no markers.
@@ -718,7 +740,11 @@ fn skip_cherry_pick_drops_current_step() {
     let repo2 = Repository::open(dir).unwrap();
     assert!(detect_conflict_session(&repo2).is_none());
     let content = std::fs::read_to_string(dir.join("file.txt")).unwrap();
-    assert!(content.contains("MAIN"), "step changes dropped, got {:?}", content);
+    assert!(
+        content.contains("MAIN"),
+        "step changes dropped, got {:?}",
+        content
+    );
     assert!(!content.contains("<<<<<<<"), "no markers should remain");
 
     // Buffer preserved.
@@ -745,11 +771,16 @@ fn save_resolution_stages_file_to_stage_zero() {
 
     // Index has the conflict (unmerged) before Save.
     let index = repo.index().unwrap();
-    assert!(index.has_conflicts(), "index should be unmerged before Save");
+    assert!(
+        index.has_conflicts(),
+        "index should be unmerged before Save"
+    );
     drop(index);
 
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
-    buffer.apply_choice(path, ResolutionChoice::Current).unwrap();
+    buffer
+        .apply_choice(path, ResolutionChoice::Current)
+        .unwrap();
 
     let outcome = execute_conflict_save(&repo, &buffer, path).expect("save");
     assert_eq!(outcome.path, path.to_path_buf());
@@ -757,13 +788,23 @@ fn save_resolution_stages_file_to_stage_zero() {
     // After Save the index has no conflicts and the path is at stage 0.
     let repo2 = Repository::open(dir).unwrap();
     let index2 = repo2.index().unwrap();
-    assert!(!index2.has_conflicts(), "Save must collapse stages → stage 0");
+    assert!(
+        !index2.has_conflicts(),
+        "Save must collapse stages → stage 0"
+    );
     let entry = index2.get_path(path, 0);
-    assert!(entry.is_some(), "path must be present at stage 0 after Save");
+    assert!(
+        entry.is_some(),
+        "path must be present at stage 0 after Save"
+    );
 
     // The working tree holds the resolved (current) text, marker-free.
     let wt = std::fs::read_to_string(dir.join("file.txt")).unwrap();
-    assert!(wt.contains("MAIN change"), "working tree has resolved text: {:?}", wt);
+    assert!(
+        wt.contains("MAIN change"),
+        "working tree has resolved text: {:?}",
+        wt
+    );
     assert!(!kagi::git::text_has_conflict_marker(&wt));
 }
 
@@ -787,7 +828,10 @@ fn save_resolution_blocks_on_marker_residue() {
     );
     // The index must still be unmerged (nothing staged on a blocked save).
     let index = repo.index().unwrap();
-    assert!(index.has_conflicts(), "blocked Save must not stage the file");
+    assert!(
+        index.has_conflicts(),
+        "blocked Save must not stage the file"
+    );
 }
 
 /// merge Continue does NOT create a commit — it routes to the commit message
@@ -805,10 +849,11 @@ fn merge_continue_routes_to_commit_panel_without_committing() {
     let head_before = git_output(dir, &["rev-parse", "HEAD"]);
 
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
-    buffer.apply_choice(path, ResolutionChoice::Current).unwrap();
+    buffer
+        .apply_choice(path, ResolutionChoice::Current)
+        .unwrap();
 
-    let route = plan_conflict_continue_route(&repo, &session, &buffer, "main")
-        .expect("route");
+    let route = plan_conflict_continue_route(&repo, &session, &buffer, "main").expect("route");
     match route {
         ContinueRoute::MergeCommitPanel { message } => {
             assert!(
@@ -840,7 +885,9 @@ fn merge_commit_has_two_parents_and_cleans_state() {
 
     // Save the resolution (stages the file).
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
-    buffer.apply_choice(path, ResolutionChoice::Current).unwrap();
+    buffer
+        .apply_choice(path, ResolutionChoice::Current)
+        .unwrap();
     execute_conflict_save(&repo, &buffer, path).expect("save");
 
     // Create the merge commit with the panel's edited message.
@@ -851,10 +898,20 @@ fn merge_commit_has_two_parents_and_cleans_state() {
     let repo3 = Repository::open(dir).unwrap();
     let oid = git2::Oid::from_str(&id.0).unwrap();
     let commit = repo3.find_commit(oid).unwrap();
-    assert_eq!(commit.parent_count(), 2, "merge commit must have two parents");
+    assert_eq!(
+        commit.parent_count(),
+        2,
+        "merge commit must have two parents"
+    );
     assert_eq!(commit.message().unwrap().trim(), "Merge feature into main");
-    assert!(!dir.join(".git").join("MERGE_HEAD").exists(), "MERGE_HEAD cleaned");
-    assert!(detect_conflict_session(&repo3).is_none(), "no longer in conflict");
+    assert!(
+        !dir.join(".git").join("MERGE_HEAD").exists(),
+        "MERGE_HEAD cleaned"
+    );
+    assert!(
+        detect_conflict_session(&repo3).is_none(),
+        "no longer in conflict"
+    );
 }
 
 /// A sequencer (cherry-pick) Continue produces a `--continue` OperationPlan,
@@ -874,14 +931,19 @@ fn sequencer_continue_produces_a_plan() {
     let path = Path::new("file.txt");
 
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
-    buffer.apply_choice(path, ResolutionChoice::Incoming).unwrap();
+    buffer
+        .apply_choice(path, ResolutionChoice::Incoming)
+        .unwrap();
 
-    let route = plan_conflict_continue_route(&repo, &session, &buffer, "main")
-        .expect("route");
+    let route = plan_conflict_continue_route(&repo, &session, &buffer, "main").expect("route");
     match route {
         ContinueRoute::SequencerPlan(plan) => {
             assert!(plan.blockers.is_empty(), "resolved → no blockers");
-            assert!(plan.title.contains("cherry-pick"), "plan titled for the op: {}", plan.title);
+            assert!(
+                plan.title.contains("cherry-pick"),
+                "plan titled for the op: {}",
+                plan.title
+            );
         }
         other => panic!("sequencer must produce a plan, got {:?}", other),
     }
@@ -932,7 +994,11 @@ fn per_hunk_accept_is_independent() {
                 Region::Passthrough(_) => None,
             })
             .collect();
-        assert_eq!(hunks[0].choice, HunkChoice::AcceptCurrent, "hunk 0 unchanged");
+        assert_eq!(
+            hunks[0].choice,
+            HunkChoice::AcceptCurrent,
+            "hunk 0 unchanged"
+        );
         assert_eq!(hunks[1].choice, HunkChoice::AcceptIncoming);
     }
 }

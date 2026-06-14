@@ -39,15 +39,15 @@ use std::path::{Path, PathBuf};
 use git2::{DiffOptions, Repository};
 
 use super::{
-    GitError,
     checklist::checklist,
-    diff::{FileDiff, Hunk, DiffLine, DiffLineKind},
-    ops::{OperationPlan, StateSummary, build_signature},
-    status::working_tree_status,
+    diff::{DiffLine, DiffLineKind, FileDiff, Hunk},
     log::CommitId,
-    resolve_head, Head,
+    ops::{build_signature, OperationPlan, StateSummary},
+    resolve_head,
+    status::working_tree_status,
     status::ChangeKind,
     status::FileStatus,
+    GitError, Head,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -147,9 +147,9 @@ pub fn unstage_file(repo: &Repository, path: &Path) -> Result<(), GitError> {
             let head_oid = head_ref
                 .target()
                 .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
-            let head_obj = repo
-                .find_object(head_oid, None)
-                .map_err(|e| GitError::Other(format!("find_object(HEAD) failed: {}", e.message())))?;
+            let head_obj = repo.find_object(head_oid, None).map_err(|e| {
+                GitError::Other(format!("find_object(HEAD) failed: {}", e.message()))
+            })?;
 
             // reset_default(Some(&head_obj), [path]) is equivalent to
             // `git reset HEAD -- <path>`:
@@ -228,9 +228,9 @@ pub fn staged_file_diff(repo: &Repository, path: &Path) -> Result<FileDiff, GitE
             let head_oid = head_ref
                 .target()
                 .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
-            let head_commit = repo
-                .find_commit(head_oid)
-                .map_err(|e| GitError::Other(format!("find_commit(HEAD) failed: {}", e.message())))?;
+            let head_commit = repo.find_commit(head_oid).map_err(|e| {
+                GitError::Other(format!("find_commit(HEAD) failed: {}", e.message()))
+            })?;
             let tree = head_commit
                 .tree()
                 .map_err(|e| GitError::Other(format!("commit.tree() failed: {}", e.message())))?;
@@ -395,14 +395,10 @@ pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, Gi
     let head_display = head.display();
 
     let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty())
-            .then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty())
-            .then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty())
-            .then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty())
-            .then(|| format!("{} conflicted", status.conflicted.len())),
+        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
     ]
     .into_iter()
     .flatten()
@@ -476,10 +472,8 @@ pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, Gi
     let msg_summary: String = message.trim().chars().take(72).collect();
 
     let remaining_parts: Vec<String> = [
-        (!status.unstaged.is_empty())
-            .then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty())
-            .then(|| format!("{} untracked", status.untracked.len())),
+        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
     ]
     .into_iter()
     .flatten()
@@ -586,9 +580,9 @@ pub fn execute_commit(repo: &Repository, message: &str) -> Result<CommitId, GitE
             let head_oid = head_ref
                 .target()
                 .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
-            let head_commit = repo
-                .find_commit(head_oid)
-                .map_err(|e| GitError::Other(format!("find_commit(HEAD) failed: {}", e.message())))?;
+            let head_commit = repo.find_commit(head_oid).map_err(|e| {
+                GitError::Other(format!("find_commit(HEAD) failed: {}", e.message()))
+            })?;
 
             repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&head_commit])
                 .map_err(|e| GitError::Other(format!("commit failed: {}", e.message())))?
@@ -686,9 +680,9 @@ fn patch_to_file_diff(diff: &git2::Diff<'_>, path: &Path) -> Result<FileDiff, Gi
     let mut hunks = Vec::with_capacity(num_hunks);
 
     for h_idx in 0..num_hunks {
-        let (diff_hunk, line_count) = patch
-            .hunk(h_idx)
-            .map_err(|e| GitError::Other(format!("patch.hunk({}) failed: {}", h_idx, e.message())))?;
+        let (diff_hunk, line_count) = patch.hunk(h_idx).map_err(|e| {
+            GitError::Other(format!("patch.hunk({}) failed: {}", h_idx, e.message()))
+        })?;
 
         let old_range = (diff_hunk.old_start(), diff_hunk.old_lines());
         let new_range = (diff_hunk.new_start(), diff_hunk.new_lines());
@@ -696,9 +690,14 @@ fn patch_to_file_diff(diff: &git2::Diff<'_>, path: &Path) -> Result<FileDiff, Gi
         let mut lines = Vec::with_capacity(line_count);
 
         for l_idx in 0..line_count {
-            let diff_line = patch
-                .line_in_hunk(h_idx, l_idx)
-                .map_err(|e| GitError::Other(format!("patch.line_in_hunk({},{}) failed: {}", h_idx, l_idx, e.message())))?;
+            let diff_line = patch.line_in_hunk(h_idx, l_idx).map_err(|e| {
+                GitError::Other(format!(
+                    "patch.line_in_hunk({},{}) failed: {}",
+                    h_idx,
+                    l_idx,
+                    e.message()
+                ))
+            })?;
 
             let kind = match diff_line.origin() {
                 '+' | '>' => DiffLineKind::Added,
@@ -755,13 +754,21 @@ pub fn stage_files(repo: &Repository, paths: &[std::path::PathBuf]) -> Result<us
 
     for path in paths {
         if workdir.join(path).exists() {
-            index
-                .add_path(path)
-                .map_err(|e| GitError::Other(format!("index.add_path({}) failed: {}", path.display(), e.message())))?;
+            index.add_path(path).map_err(|e| {
+                GitError::Other(format!(
+                    "index.add_path({}) failed: {}",
+                    path.display(),
+                    e.message()
+                ))
+            })?;
         } else {
-            index
-                .remove_path(path)
-                .map_err(|e| GitError::Other(format!("index.remove_path({}) failed: {}", path.display(), e.message())))?;
+            index.remove_path(path).map_err(|e| {
+                GitError::Other(format!(
+                    "index.remove_path({}) failed: {}",
+                    path.display(),
+                    e.message()
+                ))
+            })?;
         }
     }
 
@@ -800,9 +807,9 @@ pub fn unstage_files(repo: &Repository, paths: &[std::path::PathBuf]) -> Result<
             let head_oid = head_ref
                 .target()
                 .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
-            let head_obj = repo
-                .find_object(head_oid, None)
-                .map_err(|e| GitError::Other(format!("find_object(HEAD) failed: {}", e.message())))?;
+            let head_obj = repo.find_object(head_oid, None).map_err(|e| {
+                GitError::Other(format!("find_object(HEAD) failed: {}", e.message()))
+            })?;
             let path_strs: Vec<String> = paths
                 .iter()
                 .map(|p| p.to_string_lossy().to_string())

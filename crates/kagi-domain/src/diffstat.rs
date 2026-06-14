@@ -142,14 +142,12 @@ mod tests {
                 for m in 1..=8 {
                     let (g, r) = bar_segments(a, d, m);
                     assert!(g + r <= m, "g+r exceeds max for ({a},{d},{m})");
-                    if a + d > 0 {
-                        if a > 0 && m >= 2 && d > 0 {
-                            assert!(
-                                g >= 1,
-                                "green must be >=1 when additions exist ({a},{d},{m})"
-                            );
-                            assert!(r >= 1, "red must be >=1 when deletions exist ({a},{d},{m})");
-                        }
+                    if a + d > 0 && a > 0 && m >= 2 && d > 0 {
+                        assert!(
+                            g >= 1,
+                            "green must be >=1 when additions exist ({a},{d},{m})"
+                        );
+                        assert!(r >= 1, "red must be >=1 when deletions exist ({a},{d},{m})");
                     }
                 }
             }

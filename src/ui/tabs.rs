@@ -19,17 +19,12 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use gpui::{
-    Context, PathPromptOptions, SharedString, Timer, Window,
-    div, prelude::*, rgb,
-};
+use gpui::{div, prelude::*, rgb, Context, PathPromptOptions, SharedString, Timer, Window};
 use gpui_component::tooltip::Tooltip;
 
-use super::{
-    KagiApp, ToastKind, FooterStatus,
-};
-use super::theme::{self, theme};
 use super::i18n::{self, Msg};
+use super::theme::{self, theme};
+use super::{FooterStatus, KagiApp, ToastKind};
 
 /// Lightweight descriptor for one open repository tab (ADR-0027).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -223,8 +218,7 @@ impl KagiApp {
                         app.loading_tab = None;
                         let msg = format!("Error: {err}");
                         eprintln!("[kagi] tab-load: {} error: {}", name, err);
-                        app.status_footer =
-                            FooterStatus::Failed(SharedString::from(msg));
+                        app.status_footer = FooterStatus::Failed(SharedString::from(msg));
                         cx.notify();
                     }
                 }
@@ -471,8 +465,16 @@ impl KagiApp {
 
         for (i, tab) in tabs.into_iter().enumerate() {
             let is_active = i == active;
-            let bg = if is_active { theme().selected } else { theme().surface };
-            let fg = if is_active { theme().text_main } else { theme().text_sub };
+            let bg = if is_active {
+                theme().selected
+            } else {
+                theme().surface
+            };
+            let fg = if is_active {
+                theme().text_main
+            } else {
+                theme().text_sub
+            };
             let full_path = tab.path.display().to_string();
 
             // chars()-based truncation is handled by `.truncate()` on the label
@@ -492,7 +494,10 @@ impl KagiApp {
                 .px(theme::scaled_px(3.))
                 .rounded_sm()
                 .text_color(rgb(theme().text_muted))
-                .hover(|s| s.bg(rgb(theme().surface)).text_color(rgb(theme().text_main)))
+                .hover(|s| {
+                    s.bg(rgb(theme().surface))
+                        .text_color(rgb(theme().text_main))
+                })
                 .cursor(gpui::CursorStyle::PointingHand)
                 .child(SharedString::from("\u{00d7}")) // ×
                 .on_click(close);
@@ -512,7 +517,9 @@ impl KagiApp {
                 .text_color(rgb(fg))
                 .border_r_1()
                 .border_color(rgb(theme().panel))
-                .when(is_active, |el| el.border_t_2().border_color(rgb(theme().color_branch)))
+                .when(is_active, |el| {
+                    el.border_t_2().border_color(rgb(theme().color_branch))
+                })
                 .cursor(gpui::CursorStyle::PointingHand)
                 .tooltip({
                     let full = full_path.clone();
@@ -537,7 +544,10 @@ impl KagiApp {
             .h_full()
             .px_3()
             .text_color(rgb(theme().text_sub))
-            .hover(|s| s.bg(rgb(theme().selected)).text_color(rgb(theme().text_main)))
+            .hover(|s| {
+                s.bg(rgb(theme().selected))
+                    .text_color(rgb(theme().text_main))
+            })
             .cursor(gpui::CursorStyle::PointingHand)
             .tooltip(|window, cx| Tooltip::new("Open Repository…").build(window, cx))
             .child(SharedString::from("+"))
@@ -563,7 +573,10 @@ impl KagiApp {
             .bg(rgb(theme().selected))
             .text_color(rgb(theme().text_main))
             .text_lg()
-            .hover(|s| s.bg(rgb(theme().color_branch)).text_color(rgb(theme().bg_base)))
+            .hover(|s| {
+                s.bg(rgb(theme().color_branch))
+                    .text_color(rgb(theme().bg_base))
+            })
             .cursor(gpui::CursorStyle::PointingHand)
             .child(SharedString::from("Open Repository\u{2026}"))
             .on_click(open_click);

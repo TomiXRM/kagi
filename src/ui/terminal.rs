@@ -21,7 +21,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use gpui::{AppContext, Context, Entity, Window, px};
+use gpui::{px, AppContext, Context, Entity, Window};
 use gpui_terminal::{ColorPalette, TerminalConfig, TerminalView};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 
@@ -42,14 +42,46 @@ pub fn build_color_palette() -> ColorPalette {
         .magenta(t.term_magenta.0, t.term_magenta.1, t.term_magenta.2)
         .cyan(t.term_cyan.0, t.term_cyan.1, t.term_cyan.2)
         .white(t.term_white.0, t.term_white.1, t.term_white.2)
-        .bright_black(t.term_bright_black.0, t.term_bright_black.1, t.term_bright_black.2)
-        .bright_red(t.term_bright_red.0, t.term_bright_red.1, t.term_bright_red.2)
-        .bright_green(t.term_bright_green.0, t.term_bright_green.1, t.term_bright_green.2)
-        .bright_yellow(t.term_bright_yellow.0, t.term_bright_yellow.1, t.term_bright_yellow.2)
-        .bright_blue(t.term_bright_blue.0, t.term_bright_blue.1, t.term_bright_blue.2)
-        .bright_magenta(t.term_bright_magenta.0, t.term_bright_magenta.1, t.term_bright_magenta.2)
-        .bright_cyan(t.term_bright_cyan.0, t.term_bright_cyan.1, t.term_bright_cyan.2)
-        .bright_white(t.term_bright_white.0, t.term_bright_white.1, t.term_bright_white.2)
+        .bright_black(
+            t.term_bright_black.0,
+            t.term_bright_black.1,
+            t.term_bright_black.2,
+        )
+        .bright_red(
+            t.term_bright_red.0,
+            t.term_bright_red.1,
+            t.term_bright_red.2,
+        )
+        .bright_green(
+            t.term_bright_green.0,
+            t.term_bright_green.1,
+            t.term_bright_green.2,
+        )
+        .bright_yellow(
+            t.term_bright_yellow.0,
+            t.term_bright_yellow.1,
+            t.term_bright_yellow.2,
+        )
+        .bright_blue(
+            t.term_bright_blue.0,
+            t.term_bright_blue.1,
+            t.term_bright_blue.2,
+        )
+        .bright_magenta(
+            t.term_bright_magenta.0,
+            t.term_bright_magenta.1,
+            t.term_bright_magenta.2,
+        )
+        .bright_cyan(
+            t.term_bright_cyan.0,
+            t.term_bright_cyan.1,
+            t.term_bright_cyan.2,
+        )
+        .bright_white(
+            t.term_bright_white.0,
+            t.term_bright_white.1,
+            t.term_bright_white.2,
+        )
         // W8-TERMSEL: selection highlight (translucent so glyphs stay readable).
         .selection(
             t.term_selection.0,
@@ -115,7 +147,7 @@ impl std::io::Write for SharedWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self.0.lock() {
             Ok(mut w) => w.write(buf),
-            Err(_) => Err(std::io::Error::new(std::io::ErrorKind::Other, "poisoned")),
+            Err(_) => Err(std::io::Error::other("poisoned")),
         }
     }
     fn flush(&mut self) -> std::io::Result<()> {
@@ -273,11 +305,7 @@ pub(crate) fn pick_font_family() -> String {
         for dir in &dirs {
             if let Ok(entries) = std::fs::read_dir(dir) {
                 for entry in entries.flatten() {
-                    if entry
-                        .file_name()
-                        .to_string_lossy()
-                        .starts_with(file_prefix)
-                    {
+                    if entry.file_name().to_string_lossy().starts_with(file_prefix) {
                         return (*family).to_string();
                     }
                 }

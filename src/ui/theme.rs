@@ -23,7 +23,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use gpui::{App, Hsla, hsla, rgb};
+use gpui::{hsla, rgb, App, Hsla};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Theme struct
@@ -639,7 +639,7 @@ const CATPPUCCIN_MOCHA: Theme = Theme {
     change_typechange: 0x585b70,
     change_dir: 0x6c7086,
 
-    accent: 0xcba6f7,     // mauve
+    accent: 0xcba6f7, // mauve
 
     lane_hsl: [
         (0.583, 0.75, 0.65), // blue
@@ -699,10 +699,10 @@ const XCODE_DARK: Theme = Theme {
     text_muted: 0x7f8493,
     text_label: 0x6c7080,
 
-    color_head: 0xff8170,    // red-orange (strings)
-    color_branch: 0x6bb0ff,  // blue
-    color_remote: 0x78c2b3,  // teal/green
-    color_tag: 0xd9c97c,     // sand/number
+    color_head: 0xff8170,   // red-orange (strings)
+    color_branch: 0x6bb0ff, // blue
+    color_remote: 0x78c2b3, // teal/green
+    color_tag: 0xd9c97c,    // sand/number
 
     color_success: 0x78c2b3,
     color_warning: 0xd9c97c,
@@ -720,7 +720,7 @@ const XCODE_DARK: Theme = Theme {
     change_typechange: 0x7f8493,
     change_dir: 0x6c7080,
 
-    accent: 0xdabaff,     // purple (keyword-ish)
+    accent: 0xdabaff, // purple (keyword-ish)
 
     lane_hsl: [
         (0.585, 0.70, 0.66),
@@ -780,10 +780,10 @@ const XCODE_LIGHT: Theme = Theme {
     text_muted: 0x8a8f99,
     text_label: 0x6f747e,
 
-    color_head: 0xc41a16,    // string red
-    color_branch: 0x0b4f79,  // type blue
-    color_remote: 0x2e8b57,  // green
-    color_tag: 0xb06000,     // amber
+    color_head: 0xc41a16,   // string red
+    color_branch: 0x0b4f79, // type blue
+    color_remote: 0x2e8b57, // green
+    color_tag: 0xb06000,    // amber
 
     color_success: 0x2e8b57,
     color_warning: 0xb06000,
@@ -801,7 +801,7 @@ const XCODE_LIGHT: Theme = Theme {
     change_typechange: 0x8a8f99,
     change_dir: 0x6f747e,
 
-    accent: 0x9b2393,     // keyword magenta
+    accent: 0x9b2393, // keyword magenta
 
     lane_hsl: [
         (0.585, 0.70, 0.45),
@@ -860,10 +860,10 @@ const ONE_DARK: Theme = Theme {
     text_muted: 0x5c6370,
     text_label: 0x6b7280,
 
-    color_head: 0xe06c75,    // red
-    color_branch: 0x61afef,  // blue
-    color_remote: 0x98c379,  // green
-    color_tag: 0xe5c07b,     // yellow
+    color_head: 0xe06c75,   // red
+    color_branch: 0x61afef, // blue
+    color_remote: 0x98c379, // green
+    color_tag: 0xe5c07b,    // yellow
 
     color_success: 0x98c379,
     color_warning: 0xe5c07b,
@@ -881,7 +881,7 @@ const ONE_DARK: Theme = Theme {
     change_typechange: 0x5c6370,
     change_dir: 0x6b7280,
 
-    accent: 0xc678dd,     // purple
+    accent: 0xc678dd, // purple
 
     lane_hsl: [
         (0.585, 0.80, 0.66),
@@ -941,10 +941,10 @@ const ONE_LIGHT: Theme = Theme {
     text_muted: 0x9d9d9f,
     text_label: 0x7a7c85,
 
-    color_head: 0xe45649,    // red
-    color_branch: 0x4078f2,  // blue
-    color_remote: 0x50a14f,  // green
-    color_tag: 0xc18401,     // amber
+    color_head: 0xe45649,   // red
+    color_branch: 0x4078f2, // blue
+    color_remote: 0x50a14f, // green
+    color_tag: 0xc18401,    // amber
 
     color_success: 0x50a14f,
     color_warning: 0xb07a00,
@@ -962,7 +962,7 @@ const ONE_LIGHT: Theme = Theme {
     change_typechange: 0x9d9d9f,
     change_dir: 0x7a7c85,
 
-    accent: 0xa626a4,     // purple
+    accent: 0xa626a4, // purple
 
     lane_hsl: [
         (0.605, 0.86, 0.60),
@@ -1049,13 +1049,13 @@ const MONOKAI: Theme = Theme {
     text_muted: 0x918d94,
     text_label: 0xa09ca3,
 
-    color_head: 0xff3d6f,    // vivid pink (ref keyword #ff668c, boosted)
-    color_branch: 0x5a9fff,  // vivid blue
-    color_remote: 0xa8e05a,  // vivid green (ref function #a4d671)
-    color_tag: 0xff8c1a,     // punchy warm orange
+    color_head: 0xff3d6f,   // vivid pink (ref keyword #ff668c, boosted)
+    color_branch: 0x5a9fff, // vivid blue
+    color_remote: 0xa8e05a, // vivid green (ref function #a4d671)
+    color_tag: 0xff8c1a,    // punchy warm orange
 
     color_success: 0xa8e05a,
-    color_warning: 0xf4cd62,  // matches ref string yellow #f4cd62
+    color_warning: 0xf4cd62, // matches ref string yellow #f4cd62
     color_blocker: 0xff3d6f,
     color_blocker_muted: 0x8f4a5e,
 
@@ -1070,7 +1070,7 @@ const MONOKAI: Theme = Theme {
     change_typechange: 0x918d94,
     change_dir: 0xa09ca3,
 
-    accent: 0xb08fff,     // vivid purple (ref #af9cf4, boosted)
+    accent: 0xb08fff, // vivid purple (ref #af9cf4, boosted)
 
     lane_hsl: [
         (0.585, 1.00, 0.70), // blue   (sat +0.05, l -0.01)
@@ -1176,7 +1176,10 @@ mod tests {
         // write_setting round-trips every known key — make sure parsing finds
         // each one independently (smart-commit keys must not clobber theme).
         let json = "{\n  \"theme\": \"one-dark\",\n  \"smart_commit_model\": \"gemma:2b\"\n}\n";
-        assert_eq!(parse_string_value(json, "theme").as_deref(), Some("one-dark"));
+        assert_eq!(
+            parse_string_value(json, "theme").as_deref(),
+            Some("one-dark")
+        );
         assert_eq!(
             parse_string_value(json, "smart_commit_model").as_deref(),
             Some("gemma:2b")

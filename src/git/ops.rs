@@ -78,12 +78,16 @@ use kagi_domain::head::Head;
 
 use super::cli::run_git;
 use super::log::CommitId;
-use super::{GitError, resolve_head, status::{working_tree_status, ChangeKind, FileStatus}};
+use super::{
+    resolve_head,
+    status::{working_tree_status, ChangeKind, FileStatus},
+    GitError,
+};
 
 pub use kagi_domain::plan::{
     AmendMode, AmendOutcome, BranchNameError, BranchRenameValidation, DiscardBackup,
-    DiscardOutcome, FetchOutcome, MergeKind, PullOutcome, PushOutcome, StateSummary,
-    UndoOutcome, WorktreePathError, WorktreeValidationError,
+    DiscardOutcome, FetchOutcome, MergeKind, PullOutcome, PushOutcome, StateSummary, UndoOutcome,
+    WorktreePathError, WorktreeValidationError,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -168,7 +172,9 @@ pub fn validate_branch_rename(
 
     let full_ref = format!("refs/heads/{}", trimmed);
     if !git2::Reference::is_valid_name(&full_ref) {
-        return BranchRenameValidation::Invalid(BranchNameError::RenameInvalid(trimmed.to_string()));
+        return BranchRenameValidation::Invalid(BranchNameError::RenameInvalid(
+            trimmed.to_string(),
+        ));
     }
 
     BranchRenameValidation::Valid
@@ -176,14 +182,10 @@ pub fn validate_branch_rename(
 
 fn status_summary_display(status: &super::status::WorkingTreeStatus) -> String {
     let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty())
-            .then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty())
-            .then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty())
-            .then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty())
-            .then(|| format!("{} conflicted", status.conflicted.len())),
+        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
     ]
     .into_iter()
     .flatten()
@@ -227,14 +229,10 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
     let head_display = head.display();
 
     let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty())
-            .then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty())
-            .then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty())
-            .then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty())
-            .then(|| format!("{} conflicted", status.conflicted.len())),
+        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
     ]
     .into_iter()
     .flatten()
@@ -256,9 +254,7 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
     let mut warnings: Vec<String> = Vec::new();
 
     // Branch existence check.
-    let branch_exists = repo
-        .find_branch(branch, BranchType::Local)
-        .is_ok();
+    let branch_exists = repo.find_branch(branch, BranchType::Local).is_ok();
 
     if !branch_exists {
         blockers.push(format!(
@@ -268,7 +264,11 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
     }
 
     // Already-HEAD check (only meaningful when HEAD is attached).
-    if let Head::Attached { branch: ref current_branch, .. } = head {
+    if let Head::Attached {
+        branch: ref current_branch,
+        ..
+    } = head
+    {
         if current_branch == branch {
             blockers.push(format!(
                 "Branch '{}' is already the current HEAD branch.",
@@ -445,8 +445,7 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
     };
 
     let mut warnings = vec![
-        "detached HEAD になります。新しい作業を残す場合は branch を作成してください。"
-            .to_string(),
+        "detached HEAD になります。新しい作業を残す場合は branch を作成してください。".to_string(),
         "Create branch here を先に使うことを推奨します。".to_string(),
     ];
     let mut blockers = Vec::new();
@@ -454,9 +453,13 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
     let target_oid = git2::Oid::from_str(&id.0)
         .or_else(|_| repo.revparse_single(&id.0).map(|obj| obj.id()))
         .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.0, e.message())))?;
-    let commit = repo
-        .find_commit(target_oid)
-        .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.short(), e.message())))?;
+    let commit = repo.find_commit(target_oid).map_err(|e| {
+        GitError::Other(format!(
+            "commit '{}' not found: {}",
+            id.short(),
+            e.message()
+        ))
+    })?;
 
     if matches!(&head, Head::Attached { target, .. } | Head::Detached { target } if target == &target_oid.to_string())
     {
@@ -507,7 +510,10 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
     );
 
     Ok(OperationPlan {
-        title: format!("Checkout commit {} '{}' (detached HEAD)", target_short, summary_line),
+        title: format!(
+            "Checkout commit {} '{}' (detached HEAD)",
+            target_short, summary_line
+        ),
         current,
         predicted,
         warnings,
@@ -597,9 +603,13 @@ pub fn execute_checkout_commit(repo: &Repository, id: &CommitId) -> Result<(), G
         .or_else(|_| repo.revparse_single(&id.0).map(|obj| obj.id()))
         .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.0, e.message())))?;
 
-    let commit = repo
-        .find_commit(target_oid)
-        .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.short(), e.message())))?;
+    let commit = repo.find_commit(target_oid).map_err(|e| {
+        GitError::Other(format!(
+            "commit '{}' not found: {}",
+            id.short(),
+            e.message()
+        ))
+    })?;
     let obj = commit.into_object();
 
     let mut cb = git2::build::CheckoutBuilder::new();
@@ -681,14 +691,10 @@ pub fn plan_create_branch(
     let head_display = head.display();
 
     let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty())
-            .then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty())
-            .then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty())
-            .then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty())
-            .then(|| format!("{} conflicted", status.conflicted.len())),
+        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
     ]
     .into_iter()
     .flatten()
@@ -775,17 +781,17 @@ pub fn plan_create_branch(
 /// - `at` is not a valid or existing commit OID.
 /// - A branch named `name` already exists (`force=false` is enforced by libgit2).
 /// - Any other libgit2 failure.
-pub fn execute_create_branch(
-    repo: &Repository,
-    name: &str,
-    at: &CommitId,
-) -> Result<(), GitError> {
+pub fn execute_create_branch(repo: &Repository, name: &str, at: &CommitId) -> Result<(), GitError> {
     // Resolve the target commit.
     let oid = git2::Oid::from_str(&at.0)
         .map_err(|e| GitError::Other(format!("invalid commit id '{}': {}", at.0, e.message())))?;
-    let commit = repo
-        .find_commit(oid)
-        .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", at.short(), e.message())))?;
+    let commit = repo.find_commit(oid).map_err(|e| {
+        GitError::Other(format!(
+            "commit '{}' not found: {}",
+            at.short(),
+            e.message()
+        ))
+    })?;
 
     // Create the branch.  force=false is a literal constant — never change this.
     repo.branch(name, &commit, false)
@@ -997,7 +1003,10 @@ fn plan_create_worktree_impl(
         let status = working_tree_status(repo)?;
         let mut blockers = Vec::new();
         if repo.find_branch(branch, BranchType::Local).is_err() {
-            blockers.push(format!("Branch '{}' does not exist in this repository.", branch));
+            blockers.push(format!(
+                "Branch '{}' does not exist in this repository.",
+                branch
+            ));
         }
         if let Some(path) = branch_checked_out_worktree_path(repo, branch)? {
             blockers.push(format!(
@@ -1039,11 +1048,7 @@ fn plan_create_worktree_impl(
             }
         }
     };
-    plan.title = format!(
-        "Create worktree '{}' @ {}",
-        branch,
-        start.short()
-    );
+    plan.title = format!("Create worktree '{}' @ {}", branch, start.short());
     plan.predicted = StateSummary {
         head: plan.current.head.clone(),
         dirty: plan.current.dirty.clone(),
@@ -1177,14 +1182,10 @@ pub fn plan_stash_push(
     let head_display = head.display();
 
     let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty())
-            .then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty())
-            .then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty())
-            .then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty())
-            .then(|| format!("{} conflicted", status.conflicted.len())),
+        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
     ]
     .into_iter()
     .flatten()
@@ -1347,10 +1348,7 @@ pub fn execute_stash_push(
 /// # Errors
 ///
 /// Returns [`GitError::Other`] if the repository cannot be queried.
-pub fn plan_stash_apply(
-    repo: &mut Repository,
-    index: usize,
-) -> Result<OperationPlan, GitError> {
+pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<OperationPlan, GitError> {
     // ── 1. Current HEAD and status ───────────────────────────
     let head = resolve_head(repo)?;
     let status = working_tree_status(repo)?;
@@ -1363,14 +1361,10 @@ pub fn plan_stash_apply(
     let head_display = head.display();
 
     let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty())
-            .then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty())
-            .then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty())
-            .then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty())
-            .then(|| format!("{} conflicted", status.conflicted.len())),
+        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
     ]
     .into_iter()
     .flatten()
@@ -1478,10 +1472,7 @@ pub fn plan_stash_apply(
 ///
 /// Returns [`GitError::Other`] on any libgit2 failure (including apply
 /// conflicts — in that case the stash entry remains intact).
-pub fn execute_stash_apply(
-    repo: &mut Repository,
-    index: usize,
-) -> Result<(), GitError> {
+pub fn execute_stash_apply(repo: &mut Repository, index: usize) -> Result<(), GitError> {
     repo.stash_apply(index, None)
         .map_err(|e| GitError::Other(format!("stash apply failed: {}", e.message())))?;
     Ok(())
@@ -1525,10 +1516,7 @@ pub fn execute_stash_apply(
 /// # Errors
 ///
 /// Returns [`GitError::Other`] if the repository cannot be queried.
-pub fn plan_stash_pop(
-    repo: &mut Repository,
-    index: usize,
-) -> Result<OperationPlan, GitError> {
+pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPlan, GitError> {
     // ── 1. Current HEAD and status ───────────────────────────
     let head = resolve_head(repo)?;
     let status = working_tree_status(repo)?;
@@ -1549,14 +1537,10 @@ pub fn plan_stash_pop(
     let head_display = head.display();
 
     let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty())
-            .then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty())
-            .then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty())
-            .then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty())
-            .then(|| format!("{} conflicted", status.conflicted.len())),
+        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
     ]
     .into_iter()
     .flatten()
@@ -1631,7 +1615,10 @@ pub fn plan_stash_pop(
     // After pop: working tree reflects stash content; stash entry is REMOVED.
     let predicted = StateSummary {
         head: head_display.clone(),
-        dirty: format!("restored from stash@{{{}}} (stash entry will be removed)", index),
+        dirty: format!(
+            "restored from stash@{{{}}} (stash entry will be removed)",
+            index
+        ),
     };
 
     // ── 7. Recovery guidance ──────────────────────────────────
@@ -1680,10 +1667,7 @@ pub fn plan_stash_pop(
 /// # Errors
 ///
 /// Returns [`GitError::Other`] on any libgit2 failure.
-pub fn execute_stash_pop(
-    repo: &mut Repository,
-    index: usize,
-) -> Result<(), GitError> {
+pub fn execute_stash_pop(repo: &mut Repository, index: usize) -> Result<(), GitError> {
     // Step 1: Apply the stash.
     repo.stash_apply(index, None)
         .map_err(|e| GitError::Other(format!("stash apply (pop phase) failed: {}", e.message())))?;
@@ -1812,7 +1796,11 @@ pub fn preflight_check_stash(
             "Stash list changed since planning: expected {} entr{}, \
              found {}. Please re-plan before proceeding.",
             expected_stash_count,
-            if expected_stash_count == 1 { "y" } else { "ies" },
+            if expected_stash_count == 1 {
+                "y"
+            } else {
+                "ies"
+            },
             current_count,
         )));
     }
@@ -1910,7 +1898,12 @@ fn preview_files_between_trees(
 ) -> Result<Vec<FileStatus>, GitError> {
     let mut diff = repo
         .diff_tree_to_tree(Some(old_tree), Some(new_tree), None)
-        .map_err(|e| GitError::Other(format!("diff_tree_to_tree for preview failed: {}", e.message())))?;
+        .map_err(|e| {
+            GitError::Other(format!(
+                "diff_tree_to_tree for preview failed: {}",
+                e.message()
+            ))
+        })?;
     let mut find_opts = git2::DiffFindOptions::new();
     find_opts.renames(true);
     diff.find_similar(Some(&mut find_opts))
@@ -1952,7 +1945,10 @@ fn resolve_branch_commit<'repo>(
     repo.find_branch(name, BranchType::Local)
         .or_else(|_| repo.find_branch(name, BranchType::Remote))
         .and_then(|branch| branch.get().peel_to_commit())
-        .or_else(|_| repo.revparse_single(name).and_then(|obj| obj.peel_to_commit()))
+        .or_else(|_| {
+            repo.revparse_single(name)
+                .and_then(|obj| obj.peel_to_commit())
+        })
         .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", name, e.message())))
 }
 
@@ -1988,10 +1984,7 @@ pub fn branch_checked_out_worktree_path(
     repo: &Repository,
     branch: &str,
 ) -> Result<Option<PathBuf>, GitError> {
-    let current_path = repo
-        .workdir()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_default();
+    let current_path = repo.workdir().map(|p| p.to_path_buf()).unwrap_or_default();
     let mut paths = Vec::new();
     if repo.is_worktree() {
         if let Some(main_path) = repo.commondir().parent().map(|p| p.to_path_buf()) {
@@ -2068,14 +2061,10 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
     let head_display = head.display();
 
     let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty())
-            .then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty())
-            .then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty())
-            .then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty())
-            .then(|| format!("{} conflicted", status.conflicted.len())),
+        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
     ]
     .into_iter()
     .flatten()
@@ -2107,8 +2096,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
     // Detached HEAD: MVP requires an attached branch.
     if let Head::Detached { .. } = &head {
         blockers.push(
-            "HEAD is detached. Cherry-pick is only supported when HEAD is on a branch."
-                .to_string(),
+            "HEAD is detached. Cherry-pick is only supported when HEAD is on a branch.".to_string(),
         );
     }
 
@@ -2148,14 +2136,17 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
     let target_oid = git2::Oid::from_str(&id.0)
         .or_else(|_| {
             // Try short-sha prefix lookup via revparse.
-            repo.revparse_single(&id.0)
-                .map(|obj| obj.id())
+            repo.revparse_single(&id.0).map(|obj| obj.id())
         })
         .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.0, e.message())))?;
 
-    let commit = repo
-        .find_commit(target_oid)
-        .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.short(), e.message())))?;
+    let commit = repo.find_commit(target_oid).map_err(|e| {
+        GitError::Other(format!(
+            "commit '{}' not found: {}",
+            id.short(),
+            e.message()
+        ))
+    })?;
 
     // Merge commit check.
     if commit.parent_count() > 1 {
@@ -2194,10 +2185,10 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             head: head_display.clone(),
             dirty: current.dirty.clone(),
         };
-        let recovery = format!(
+        let recovery =
             "To undo a cherry-pick after execution, use:\n  git revert <new-commit-sha>\n\
              The previous HEAD sha is recorded in the reflog:\n  git reflog"
-        );
+                .to_string();
         return Ok(OperationPlan {
             title: format!("Cherry-pick {} onto {}", id.short(), branch_name),
             current,
@@ -2262,10 +2253,10 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             head: head_display.clone(),
             dirty: current.dirty.clone(),
         };
-        let recovery = format!(
+        let recovery =
             "To undo a cherry-pick after execution, use:\n  git revert <new-commit-sha>\n\
              The previous HEAD sha is recorded in the reflog:\n  git reflog"
-        );
+                .to_string();
         return Ok(OperationPlan {
             title: format!("Cherry-pick {} onto {}", id.short(), branch_name),
             current,
@@ -2298,7 +2289,12 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
     // Diff head tree → cherry-picked tree to get preview files.
     let mut diff = repo
         .diff_tree_to_tree(Some(&head_tree), Some(&new_tree), None)
-        .map_err(|e| GitError::Other(format!("diff_tree_to_tree for preview failed: {}", e.message())))?;
+        .map_err(|e| {
+            GitError::Other(format!(
+                "diff_tree_to_tree for preview failed: {}",
+                e.message()
+            ))
+        })?;
 
     // Enable rename detection (same as commit_changed_files).
     let mut find_opts = git2::DiffFindOptions::new();
@@ -2347,10 +2343,10 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             head: head_display.clone(),
             dirty: current.dirty.clone(),
         };
-        let recovery = format!(
+        let recovery =
             "To undo a cherry-pick after execution, use:\n  git revert <new-commit-sha>\n\
              The previous HEAD sha is recorded in the reflog:\n  git reflog"
-        );
+                .to_string();
         return Ok(OperationPlan {
             title: format!("Cherry-pick {} onto {}", id.short(), branch_name),
             current,
@@ -2385,16 +2381,14 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
     let predicted = StateSummary {
         head: format!(
             "branch: {} (+1 commit: '{}' applied)",
-            branch_name,
-            summary_line
+            branch_name, summary_line
         ),
         dirty: "clean".to_string(),
     };
 
-    let recovery = format!(
-        "To undo a cherry-pick after execution, use:\n  git revert <new-commit-sha>\n\
+    let recovery = "To undo a cherry-pick after execution, use:\n  git revert <new-commit-sha>\n\
          The previous HEAD sha is recorded in the reflog:\n  git reflog"
-    );
+        .to_string();
 
     Ok(OperationPlan {
         title: format!(
@@ -2452,9 +2446,13 @@ pub fn execute_cherry_pick(repo: &Repository, id: &CommitId) -> Result<CommitId,
         .or_else(|_| repo.revparse_single(&id.0).map(|obj| obj.id()))
         .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.0, e.message())))?;
 
-    let commit = repo
-        .find_commit(target_oid)
-        .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.short(), e.message())))?;
+    let commit = repo.find_commit(target_oid).map_err(|e| {
+        GitError::Other(format!(
+            "commit '{}' not found: {}",
+            id.short(),
+            e.message()
+        ))
+    })?;
 
     // ── 2. Resolve HEAD commit ────────────────────────────────
     let head_ref = repo
@@ -2521,7 +2519,12 @@ pub fn execute_cherry_pick(repo: &Repository, id: &CommitId) -> Result<CommitId,
     let mut cb = git2::build::CheckoutBuilder::new();
     cb.safe();
     repo.checkout_tree(new_tree.as_object(), Some(&mut cb))
-        .map_err(|e| GitError::Other(format!("checkout_tree after cherry-pick failed: {}", e.message())))?;
+        .map_err(|e| {
+            GitError::Other(format!(
+                "checkout_tree after cherry-pick failed: {}",
+                e.message()
+            ))
+        })?;
 
     // ── 10. Advance the branch ref to the new commit ─────────
     let head_ref = repo
@@ -2537,7 +2540,12 @@ pub fn execute_cherry_pick(repo: &Repository, id: &CommitId) -> Result<CommitId,
         true,
         &format!("cherry-pick: {}", &new_oid.to_string()[..8]),
     )
-    .map_err(|e| GitError::Other(format!("branch ref update (cherry-pick) failed: {}", e.message())))?;
+    .map_err(|e| {
+        GitError::Other(format!(
+            "branch ref update (cherry-pick) failed: {}",
+            e.message()
+        ))
+    })?;
 
     Ok(CommitId(new_oid.to_string()))
 }
@@ -2555,7 +2563,10 @@ pub fn execute_cherry_pick(repo: &Repository, id: &CommitId) -> Result<CommitId,
 /// **predicted conflict is NOT a blocker** (W31): blockers stay empty, a warning
 /// lists the conflicted file(s), `predicted.dirty` reflects the conflict count,
 /// and the returned kind is [`MergeKind::Conflicts`].
-pub fn plan_merge_branch(repo: &Repository, target: &str) -> Result<(OperationPlan, MergeKind), GitError> {
+pub fn plan_merge_branch(
+    repo: &Repository,
+    target: &str,
+) -> Result<(OperationPlan, MergeKind), GitError> {
     let head = resolve_head(repo)?;
     let status = working_tree_status(repo)?;
     let current = StateSummary {
@@ -2591,12 +2602,17 @@ pub fn plan_merge_branch(repo: &Repository, target: &str) -> Result<(OperationPl
     let target_commit = resolve_branch_commit(repo, target)?;
     let target_oid = target_commit.id();
     if !current_branch.is_empty() && target == current_branch {
-        blockers.push(format!("Branch '{}' is already the current branch.", target));
+        blockers.push(format!(
+            "Branch '{}' is already the current branch.",
+            target
+        ));
     }
     if head_oid == target_oid {
         blockers.push(format!("{} is already HEAD. Nothing to merge.", target));
     } else if head_oid != git2::Oid::ZERO_SHA1
-        && repo.graph_descendant_of(head_oid, target_oid).unwrap_or(false)
+        && repo
+            .graph_descendant_of(head_oid, target_oid)
+            .unwrap_or(false)
     {
         blockers.push(format!(
             "Current branch '{}' already contains '{}'. Nothing to merge.",
@@ -2609,30 +2625,32 @@ pub fn plan_merge_branch(repo: &Repository, target: &str) -> Result<(OperationPl
     } else {
         format!("Merge {} into {}", target, current_branch)
     };
-    let recovery = format!(
-        "If this merge is not wanted after execution, use git reflog to find the previous HEAD.\n\
-         Fast-forward merges can be undone by moving the branch back; merge commits can be reverted with git revert -m 1 <merge-commit>."
-    );
+    let recovery = "If this merge is not wanted after execution, use git reflog to find the previous HEAD.\n\
+         Fast-forward merges can be undone by moving the branch back; merge commits can be reverted with git revert -m 1 <merge-commit>.".to_string();
 
-    let blocked_plan = |blockers: Vec<String>, warnings: Vec<String>, current: StateSummary| OperationPlan {
-        title: title.clone(),
-        current: current.clone(),
-        predicted: StateSummary {
-            head: current.head.clone(),
-            dirty: current.dirty.clone(),
-        },
-        warnings,
-        blockers,
-        recovery: recovery.clone(),
-        head_at_plan: head.clone(),
-        stash_count_at_plan: 0,
-        preview_files: Vec::new(),
-        preview_commits: Vec::new(),
-        destructive: false,
-    };
+    let blocked_plan =
+        |blockers: Vec<String>, warnings: Vec<String>, current: StateSummary| OperationPlan {
+            title: title.clone(),
+            current: current.clone(),
+            predicted: StateSummary {
+                head: current.head.clone(),
+                dirty: current.dirty.clone(),
+            },
+            warnings,
+            blockers,
+            recovery: recovery.clone(),
+            head_at_plan: head.clone(),
+            stash_count_at_plan: 0,
+            preview_files: Vec::new(),
+            preview_commits: Vec::new(),
+            destructive: false,
+        };
 
     if !blockers.is_empty() {
-        return Ok((blocked_plan(blockers, warnings, current), MergeKind::MergeCommit));
+        return Ok((
+            blocked_plan(blockers, warnings, current),
+            MergeKind::MergeCommit,
+        ));
     }
 
     let head_commit = repo
@@ -2644,7 +2662,9 @@ pub fn plan_merge_branch(repo: &Repository, target: &str) -> Result<(OperationPl
     let target_tree = target_commit
         .tree()
         .map_err(|e| GitError::Other(format!("target tree lookup failed: {}", e.message())))?;
-    let can_ff = repo.graph_descendant_of(target_oid, head_oid).unwrap_or(false);
+    let can_ff = repo
+        .graph_descendant_of(target_oid, head_oid)
+        .unwrap_or(false);
 
     // `kind` records what execution will do; `predicted_dirty` mirrors the
     // post-merge working-tree state shown in the plan card.
@@ -2665,7 +2685,9 @@ pub fn plan_merge_branch(repo: &Repository, target: &str) -> Result<(OperationPl
     } else {
         let mut index = repo
             .merge_commits(&head_commit, &target_commit, None)
-            .map_err(|e| GitError::Other(format!("merge_commits in-memory failed: {}", e.message())))?;
+            .map_err(|e| {
+                GitError::Other(format!("merge_commits in-memory failed: {}", e.message()))
+            })?;
         if index.has_conflicts() {
             // W31: a predicted conflict is a WARNING + confirm, not a blocker.
             // We still produce a useful preview from the conflicted merge index
@@ -2700,12 +2722,12 @@ pub fn plan_merge_branch(repo: &Repository, target: &str) -> Result<(OperationPl
                 ),
             )
         } else {
-            let new_tree_oid = index
-                .write_tree_to(repo)
-                .map_err(|e| GitError::Other(format!("index.write_tree_to failed: {}", e.message())))?;
-            let new_tree = repo
-                .find_tree(new_tree_oid)
-                .map_err(|e| GitError::Other(format!("find_tree for preview failed: {}", e.message())))?;
+            let new_tree_oid = index.write_tree_to(repo).map_err(|e| {
+                GitError::Other(format!("index.write_tree_to failed: {}", e.message()))
+            })?;
+            let new_tree = repo.find_tree(new_tree_oid).map_err(|e| {
+                GitError::Other(format!("find_tree for preview failed: {}", e.message()))
+            })?;
             (
                 preview_files_between_trees(repo, &head_tree, &new_tree)?,
                 format!(
@@ -2720,7 +2742,10 @@ pub fn plan_merge_branch(repo: &Repository, target: &str) -> Result<(OperationPl
 
     if preview_files.is_empty() && !matches!(kind, MergeKind::Conflicts(_)) {
         blockers.push(format!("Merging '{}' would produce no changes.", target));
-        return Ok((blocked_plan(blockers, warnings, current), MergeKind::MergeCommit));
+        return Ok((
+            blocked_plan(blockers, warnings, current),
+            MergeKind::MergeCommit,
+        ));
     }
 
     Ok((
@@ -2775,25 +2800,41 @@ pub fn execute_merge_branch(repo: &Repository, target: &str) -> Result<CommitId,
     let target_commit = resolve_branch_commit(repo, target)?;
     let target_oid = target_commit.id();
 
-    if head_oid == target_oid || repo.graph_descendant_of(head_oid, target_oid).unwrap_or(false) {
+    if head_oid == target_oid
+        || repo
+            .graph_descendant_of(head_oid, target_oid)
+            .unwrap_or(false)
+    {
         return Err(GitError::Other(format!(
             "Current branch '{}' already contains '{}'. Re-plan before executing.",
             current_branch, target
         )));
     }
 
-    if repo.graph_descendant_of(target_oid, head_oid).unwrap_or(false) {
+    if repo
+        .graph_descendant_of(target_oid, head_oid)
+        .unwrap_or(false)
+    {
         let obj = target_commit.as_object();
         let mut cb = git2::build::CheckoutBuilder::new();
         cb.safe();
-        repo.checkout_tree(obj, Some(&mut cb))
-            .map_err(|e| GitError::Other(format!("checkout_tree (merge FF) failed: {}", e.message())))?;
+        repo.checkout_tree(obj, Some(&mut cb)).map_err(|e| {
+            GitError::Other(format!("checkout_tree (merge FF) failed: {}", e.message()))
+        })?;
         let mut branch_ref = repo
             .find_reference(&refname)
             .map_err(|e| GitError::Other(format!("branch ref lookup failed: {}", e.message())))?;
         branch_ref
-            .set_target(target_oid, &format!("merge: fast-forward {} into {}", target, current_branch))
-            .map_err(|e| GitError::Other(format!("branch ref update (merge FF) failed: {}", e.message())))?;
+            .set_target(
+                target_oid,
+                &format!("merge: fast-forward {} into {}", target, current_branch),
+            )
+            .map_err(|e| {
+                GitError::Other(format!(
+                    "branch ref update (merge FF) failed: {}",
+                    e.message()
+                ))
+            })?;
         repo.set_head(&refname)
             .map_err(|e| GitError::Other(format!("set_head (merge FF) failed: {}", e.message())))?;
         return Ok(CommitId(target_oid.to_string()));
@@ -2831,13 +2872,20 @@ pub fn execute_merge_branch(repo: &Repository, target: &str) -> Result<CommitId,
     let mut cb = git2::build::CheckoutBuilder::new();
     cb.safe();
     repo.checkout_tree(new_tree.as_object(), Some(&mut cb))
-        .map_err(|e| GitError::Other(format!("checkout_tree after merge failed: {}", e.message())))?;
+        .map_err(|e| {
+            GitError::Other(format!("checkout_tree after merge failed: {}", e.message()))
+        })?;
     let mut branch_ref = repo
         .find_reference(&refname)
         .map_err(|e| GitError::Other(format!("branch ref lookup failed: {}", e.message())))?;
     branch_ref
-        .set_target(new_oid, &format!("merge: {} into {}", target, current_branch))
-        .map_err(|e| GitError::Other(format!("branch ref update (merge) failed: {}", e.message())))?;
+        .set_target(
+            new_oid,
+            &format!("merge: {} into {}", target, current_branch),
+        )
+        .map_err(|e| {
+            GitError::Other(format!("branch ref update (merge) failed: {}", e.message()))
+        })?;
     repo.set_head(&refname)
         .map_err(|e| GitError::Other(format!("set_head (merge) failed: {}", e.message())))?;
 
@@ -2858,7 +2906,10 @@ pub fn execute_merge_branch(repo: &Repository, target: &str) -> Result<CommitId,
 /// restore it (git2's `merge` does not write `ORIG_HEAD` itself). No force /
 /// `reset --hard` / `clean` is used; the checkout is the default git merge
 /// checkout. Returns the conflicted file paths from the index conflict iterator.
-pub fn execute_merge_into_conflict(repo: &Repository, target: &str) -> Result<Vec<String>, GitError> {
+pub fn execute_merge_into_conflict(
+    repo: &Repository,
+    target: &str,
+) -> Result<Vec<String>, GitError> {
     let head_ref = repo
         .head()
         .map_err(|e| GitError::Other(format!("HEAD lookup failed: {}", e.message())))?;
@@ -2878,7 +2929,11 @@ pub fn execute_merge_into_conflict(repo: &Repository, target: &str) -> Result<Ve
     let target_commit = resolve_branch_commit(repo, target)?;
     let target_oid = target_commit.id();
 
-    if head_oid == target_oid || repo.graph_descendant_of(head_oid, target_oid).unwrap_or(false) {
+    if head_oid == target_oid
+        || repo
+            .graph_descendant_of(head_oid, target_oid)
+            .unwrap_or(false)
+    {
         return Err(GitError::Other(format!(
             "Current branch '{}' already contains '{}'. Re-plan before executing.",
             current_branch, target
@@ -3053,14 +3108,10 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
     let head_display = head.display();
 
     let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty())
-            .then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty())
-            .then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty())
-            .then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty())
-            .then(|| format!("{} conflicted", status.conflicted.len())),
+        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
     ]
     .into_iter()
     .flatten()
@@ -3080,10 +3131,14 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
     let mut warnings = Vec::new();
 
     if let Head::Unborn { .. } = &head {
-        blockers.push("HEAD is unborn (no commits exist). Cannot revert on an empty branch.".to_string());
+        blockers.push(
+            "HEAD is unborn (no commits exist). Cannot revert on an empty branch.".to_string(),
+        );
     }
     if let Head::Detached { .. } = &head {
-        blockers.push("HEAD is detached. Revert is only supported when HEAD is on a branch.".to_string());
+        blockers.push(
+            "HEAD is detached. Revert is only supported when HEAD is on a branch.".to_string(),
+        );
     }
     if !status.conflicted.is_empty() {
         blockers.push(format!(
@@ -3112,16 +3167,19 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
     }
 
     let target_oid = if id.0.len() == 40 {
-        git2::Oid::from_str(&id.0)
-            .or_else(|_| repo.revparse_single(&id.0).map(|obj| obj.id()))
+        git2::Oid::from_str(&id.0).or_else(|_| repo.revparse_single(&id.0).map(|obj| obj.id()))
     } else {
         repo.revparse_single(&id.0).map(|obj| obj.id())
     }
     .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.0, e.message())))?;
 
-    let commit = repo
-        .find_commit(target_oid)
-        .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.short(), e.message())))?;
+    let commit = repo.find_commit(target_oid).map_err(|e| {
+        GitError::Other(format!(
+            "commit '{}' not found: {}",
+            id.short(),
+            e.message()
+        ))
+    })?;
 
     if commit.parent_count() > 1 {
         blockers.push(format!(
@@ -3139,7 +3197,9 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
 
     if let Some(head_oid) = head_oid_opt {
         let is_on_current_branch = head_oid == target_oid
-            || repo.graph_descendant_of(head_oid, target_oid).unwrap_or(false);
+            || repo
+                .graph_descendant_of(head_oid, target_oid)
+                .unwrap_or(false);
         if !is_on_current_branch {
             blockers.push(format!(
                 "Commit {} is not contained in the current branch. Revert only operates on current-branch commits.",
@@ -3160,34 +3220,38 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
         .chars()
         .take(72)
         .collect();
-    let recovery = format!(
-        "To undo this revert after execution, revert the new revert commit:\n  git revert <new-revert-commit-sha>\n\
-         The previous HEAD sha is recorded in the reflog:\n  git reflog"
-    );
+    let recovery = "To undo this revert after execution, revert the new revert commit:\n  git revert <new-revert-commit-sha>\n\
+         The previous HEAD sha is recorded in the reflog:\n  git reflog".to_string();
 
-    let blocked_plan = |blockers: Vec<String>, warnings: Vec<String>, current: StateSummary| OperationPlan {
-        title: format!("Revert {} '{}' on {}", id.short(), summary_line, branch_name),
-        current: current.clone(),
-        predicted: StateSummary {
-            head: head_display.clone(),
-            dirty: current.dirty.clone(),
-        },
-        warnings,
-        blockers,
-        recovery: recovery.clone(),
-        head_at_plan: head.clone(),
-        stash_count_at_plan: 0,
-        preview_files: Vec::new(),
-        preview_commits: Vec::new(),
-        destructive: false,
-    };
+    let blocked_plan =
+        |blockers: Vec<String>, warnings: Vec<String>, current: StateSummary| OperationPlan {
+            title: format!(
+                "Revert {} '{}' on {}",
+                id.short(),
+                summary_line,
+                branch_name
+            ),
+            current: current.clone(),
+            predicted: StateSummary {
+                head: head_display.clone(),
+                dirty: current.dirty.clone(),
+            },
+            warnings,
+            blockers,
+            recovery: recovery.clone(),
+            head_at_plan: head.clone(),
+            stash_count_at_plan: 0,
+            preview_files: Vec::new(),
+            preview_commits: Vec::new(),
+            destructive: false,
+        };
 
     if !blockers.is_empty() {
         return Ok(blocked_plan(blockers, warnings, current));
     }
 
-    let head_oid = head_oid_opt
-        .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
+    let head_oid =
+        head_oid_opt.ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
     let head_commit = repo
         .find_commit(head_oid)
         .map_err(|e| GitError::Other(format!("HEAD commit lookup failed: {}", e.message())))?;
@@ -3234,7 +3298,12 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
 
     let mut diff = repo
         .diff_tree_to_tree(Some(&head_tree), Some(&new_tree), None)
-        .map_err(|e| GitError::Other(format!("diff_tree_to_tree for preview failed: {}", e.message())))?;
+        .map_err(|e| {
+            GitError::Other(format!(
+                "diff_tree_to_tree for preview failed: {}",
+                e.message()
+            ))
+        })?;
     let mut find_opts = git2::DiffFindOptions::new();
     find_opts.renames(true);
     diff.find_similar(Some(&mut find_opts))
@@ -3288,7 +3357,12 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
     };
 
     Ok(OperationPlan {
-        title: format!("Revert {} '{}' on {}", id.short(), summary_line, branch_name),
+        title: format!(
+            "Revert {} '{}' on {}",
+            id.short(),
+            summary_line,
+            branch_name
+        ),
         current,
         predicted,
         warnings,
@@ -3309,16 +3383,19 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
 /// move the current branch ref to the new commit.
 pub fn execute_revert(repo: &Repository, id: &CommitId) -> Result<CommitId, GitError> {
     let target_oid = if id.0.len() == 40 {
-        git2::Oid::from_str(&id.0)
-            .or_else(|_| repo.revparse_single(&id.0).map(|obj| obj.id()))
+        git2::Oid::from_str(&id.0).or_else(|_| repo.revparse_single(&id.0).map(|obj| obj.id()))
     } else {
         repo.revparse_single(&id.0).map(|obj| obj.id())
     }
     .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.0, e.message())))?;
 
-    let commit = repo
-        .find_commit(target_oid)
-        .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.short(), e.message())))?;
+    let commit = repo.find_commit(target_oid).map_err(|e| {
+        GitError::Other(format!(
+            "commit '{}' not found: {}",
+            id.short(),
+            e.message()
+        ))
+    })?;
 
     if commit.parent_count() > 1 {
         return Err(GitError::Other(format!(
@@ -3394,7 +3471,12 @@ pub fn execute_revert(repo: &Repository, id: &CommitId) -> Result<CommitId, GitE
     let mut cb = git2::build::CheckoutBuilder::new();
     cb.safe();
     repo.checkout_tree(new_tree.as_object(), Some(&mut cb))
-        .map_err(|e| GitError::Other(format!("checkout_tree after revert failed: {}", e.message())))?;
+        .map_err(|e| {
+            GitError::Other(format!(
+                "checkout_tree after revert failed: {}",
+                e.message()
+            ))
+        })?;
 
     repo.reference(
         &refname,
@@ -3402,7 +3484,12 @@ pub fn execute_revert(repo: &Repository, id: &CommitId) -> Result<CommitId, GitE
         true,
         &format!("revert: {}", &new_oid.to_string()[..8]),
     )
-    .map_err(|e| GitError::Other(format!("branch ref update (revert) failed: {}", e.message())))?;
+    .map_err(|e| {
+        GitError::Other(format!(
+            "branch ref update (revert) failed: {}",
+            e.message()
+        ))
+    })?;
 
     Ok(CommitId(new_oid.to_string()))
 }
@@ -3446,14 +3533,10 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
     let head_display = head.display();
 
     let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty())
-            .then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty())
-            .then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty())
-            .then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty())
-            .then(|| format!("{} conflicted", status.conflicted.len())),
+        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
     ]
     .into_iter()
     .flatten()
@@ -3476,9 +3559,8 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
 
     // Detached HEAD: no branch to advance.
     if let Head::Detached { .. } = &head {
-        blockers.push(
-            "HEAD is detached. Pull is only supported when HEAD is on a branch.".to_string(),
-        );
+        blockers
+            .push("HEAD is detached. Pull is only supported when HEAD is on a branch.".to_string());
     }
 
     // Unborn HEAD: no commits exist yet.
@@ -3551,7 +3633,10 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
     let behind_label = if behind_count == 0 {
         "up to date (local knowledge; fetch may reveal more)".to_string()
     } else {
-        format!("{} behind upstream (local knowledge; fetch may reveal more)", behind_count)
+        format!(
+            "{} behind upstream (local knowledge; fetch may reveal more)",
+            behind_count
+        )
     };
 
     let predicted = StateSummary {
@@ -3560,15 +3645,17 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
     };
 
     // ── 7. Recovery guidance ──────────────────────────────────
-    let recovery = format!(
-        "Pull is non-destructive: fast-forward and clean merges do not lose work.\n\
+    let recovery = "Pull is non-destructive: fast-forward and clean merges do not lose work.\n\
          If the merge would conflict, execute is blocked and the repo remains untouched.\n\
          To undo a merge commit after execution:\n  git reset --hard HEAD~1\n\
          The reflog records every HEAD movement:\n  git reflog"
-    );
+        .to_string();
 
     Ok(OperationPlan {
-        title: format!("Pull '{}' from '{}'  ({})", branch_name, remote_name, behind_label),
+        title: format!(
+            "Pull '{}' from '{}'  ({})",
+            branch_name, remote_name, behind_label
+        ),
         current,
         predicted,
         warnings,
@@ -3651,7 +3738,8 @@ pub fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOutcome, 
 
     // HEAD is a descendant of upstream (already ahead) → UpToDate.
     // graph_descendant_of(a, b) returns true if a is a descendant of b.
-    if repo.graph_descendant_of(head_oid, upstream_oid)
+    if repo
+        .graph_descendant_of(head_oid, upstream_oid)
         .unwrap_or(false)
     {
         return Ok(PullOutcome::UpToDate);
@@ -3664,9 +3752,9 @@ pub fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOutcome, 
         .unwrap_or(false);
 
     if can_ff {
-        let upstream_commit = repo
-            .find_commit(upstream_oid)
-            .map_err(|e| GitError::Other(format!("upstream commit lookup failed: {}", e.message())))?;
+        let upstream_commit = repo.find_commit(upstream_oid).map_err(|e| {
+            GitError::Other(format!("upstream commit lookup failed: {}", e.message()))
+        })?;
 
         // ORDER MATTERS: check out the upstream tree while HEAD/index still
         // point at the OLD tree.  Safe checkout then sees old→new as the
@@ -3687,7 +3775,11 @@ pub fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOutcome, 
             &refname,
             upstream_oid,
             true,
-            &format!("pull: fast-forward {} to {}", branch_name, &upstream_oid.to_string()[..8]),
+            &format!(
+                "pull: fast-forward {} to {}",
+                branch_name,
+                &upstream_oid.to_string()[..8]
+            ),
         )
         .map_err(|e| GitError::Other(format!("branch ref update failed: {}", e.message())))?;
 
@@ -3717,17 +3809,15 @@ pub fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOutcome, 
     if index.has_conflicts() {
         let mut conflict_files: Vec<String> = Vec::new();
         if let Ok(conflicts) = index.conflicts() {
-            for conflict_result in conflicts {
-                if let Ok(conflict) = conflict_result {
-                    let path_bytes: Option<Vec<u8>> = conflict
-                        .our
-                        .as_ref()
-                        .map(|e| e.path.clone())
-                        .or_else(|| conflict.their.as_ref().map(|e| e.path.clone()))
-                        .or_else(|| conflict.ancestor.as_ref().map(|e| e.path.clone()));
-                    if let Some(p) = path_bytes {
-                        conflict_files.push(String::from_utf8_lossy(&p).into_owned());
-                    }
+            for conflict in conflicts.flatten() {
+                let path_bytes: Option<Vec<u8>> = conflict
+                    .our
+                    .as_ref()
+                    .map(|e| e.path.clone())
+                    .or_else(|| conflict.their.as_ref().map(|e| e.path.clone()))
+                    .or_else(|| conflict.ancestor.as_ref().map(|e| e.path.clone()));
+                if let Some(p) = path_bytes {
+                    conflict_files.push(String::from_utf8_lossy(&p).into_owned());
                 }
             }
         }
@@ -3774,8 +3864,11 @@ pub fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOutcome, 
     // ── 8. Sync WT + index to the merge tree (old baseline) ──
     let mut cb = git2::build::CheckoutBuilder::new();
     cb.safe();
-    repo.checkout_tree(repo.find_tree(new_tree_oid).unwrap().as_object(), Some(&mut cb))
-        .map_err(|e| GitError::Other(format!("checkout_tree after merge failed: {}", e.message())))?;
+    repo.checkout_tree(
+        repo.find_tree(new_tree_oid).unwrap().as_object(),
+        Some(&mut cb),
+    )
+    .map_err(|e| GitError::Other(format!("checkout_tree after merge failed: {}", e.message())))?;
 
     // ── 9. Move the branch ref to the merge commit ────────────
     let refname = format!("refs/heads/{}", branch_name);
@@ -3824,8 +3917,8 @@ pub fn fetch_remote(repo: &Repository, repo_path: &Path) -> Result<FetchOutcome,
         None => vec!["fetch", "--all"],
     };
 
-    let out = run_git(repo_path, &args)
-        .map_err(|e| GitError::Other(format!("fetch failed: {}", e)))?;
+    let out =
+        run_git(repo_path, &args).map_err(|e| GitError::Other(format!("fetch failed: {}", e)))?;
 
     if out.status != 0 {
         return Err(GitError::Other(format!(
@@ -3877,11 +3970,21 @@ fn resolve_upstream_info(
     // Open the branch config to find the remote name.
     let branch = repo
         .find_branch(branch_name, BranchType::Local)
-        .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", branch_name, e.message())))?;
+        .map_err(|e| {
+            GitError::Other(format!(
+                "branch '{}' not found: {}",
+                branch_name,
+                e.message()
+            ))
+        })?;
 
-    let upstream = branch
-        .upstream()
-        .map_err(|e| GitError::Other(format!("no upstream for '{}': {}", branch_name, e.message())))?;
+    let upstream = branch.upstream().map_err(|e| {
+        GitError::Other(format!(
+            "no upstream for '{}': {}",
+            branch_name,
+            e.message()
+        ))
+    })?;
 
     // upstream.name() returns Result<Option<&str>>.
     let upstream_name = upstream
@@ -3932,10 +4035,20 @@ fn resolve_upstream_oid(
     // Fall back to following the upstream ref from the branch config.
     let branch = repo
         .find_branch(branch_name, BranchType::Local)
-        .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", branch_name, e.message())))?;
-    let upstream = branch
-        .upstream()
-        .map_err(|e| GitError::Other(format!("no upstream for '{}': {}", branch_name, e.message())))?;
+        .map_err(|e| {
+            GitError::Other(format!(
+                "branch '{}' not found: {}",
+                branch_name,
+                e.message()
+            ))
+        })?;
+    let upstream = branch.upstream().map_err(|e| {
+        GitError::Other(format!(
+            "no upstream for '{}': {}",
+            branch_name,
+            e.message()
+        ))
+    })?;
     upstream
         .get()
         .target()
@@ -3952,10 +4065,7 @@ fn predict_merge_conflict(
     branch_name: &str,
     remote_name: &str,
 ) -> Result<Option<String>, GitError> {
-    let head_oid = repo
-        .head()
-        .ok()
-        .and_then(|r| r.target());
+    let head_oid = repo.head().ok().and_then(|r| r.target());
     let upstream_oid = resolve_upstream_oid(repo, branch_name, remote_name).ok();
 
     let (head_oid, upstream_oid) = match (head_oid, upstream_oid) {
@@ -3967,15 +4077,21 @@ fn predict_merge_conflict(
     if head_oid == upstream_oid {
         return Ok(None);
     }
-    if repo.graph_descendant_of(head_oid, upstream_oid).unwrap_or(false)
-        || repo.graph_descendant_of(upstream_oid, head_oid).unwrap_or(false)
+    if repo
+        .graph_descendant_of(head_oid, upstream_oid)
+        .unwrap_or(false)
+        || repo
+            .graph_descendant_of(upstream_oid, head_oid)
+            .unwrap_or(false)
     {
         return Ok(None);
     }
 
-    let head_commit = repo.find_commit(head_oid)
+    let head_commit = repo
+        .find_commit(head_oid)
         .map_err(|e| GitError::Other(e.message().to_string()))?;
-    let upstream_commit = repo.find_commit(upstream_oid)
+    let upstream_commit = repo
+        .find_commit(upstream_oid)
         .map_err(|e| GitError::Other(e.message().to_string()))?;
 
     let index = repo
@@ -4039,14 +4155,10 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
     let head_display = head.display();
 
     let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty())
-            .then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty())
-            .then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty())
-            .then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty())
-            .then(|| format!("{} conflicted", status.conflicted.len())),
+        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
     ]
     .into_iter()
     .flatten()
@@ -4065,22 +4177,19 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
 
     // ── 3. Early blockers (before touching git objects) ──────
     let mut blockers: Vec<String> = Vec::new();
-    let warnings: Vec<String> = vec![
-        "Non-fast-forward pushes will fail — force is not used.".to_string(),
-    ];
+    let warnings: Vec<String> =
+        vec!["Non-fast-forward pushes will fail — force is not used.".to_string()];
 
     // Detached HEAD.
     if let Head::Detached { .. } = &head {
-        blockers.push(
-            "HEAD is detached. Push is only supported when HEAD is on a branch.".to_string(),
-        );
+        blockers
+            .push("HEAD is detached. Push is only supported when HEAD is on a branch.".to_string());
     }
 
     // Unborn HEAD.
     if let Head::Unborn { .. } = &head {
-        blockers.push(
-            "HEAD is unborn (no commits exist). Cannot push an empty branch.".to_string(),
-        );
+        blockers
+            .push("HEAD is unborn (no commits exist). Cannot push an empty branch.".to_string());
     }
 
     // ── 4. Only proceed with upstream/remote analysis for Attached HEAD ──
@@ -4092,7 +4201,8 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
                 head: head_display.clone(),
                 dirty: current.dirty.clone(),
             };
-            let recovery = "Push requires a branch. Use `git checkout <branch>` to attach HEAD.".to_string();
+            let recovery =
+                "Push requires a branch. Use `git checkout <branch>` to attach HEAD.".to_string();
             return Ok(OperationPlan {
                 title: "Push (blocked)".to_string(),
                 current,
@@ -4119,7 +4229,13 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
             // Compute ahead count (HEAD vs upstream tip).
             let branch_ref = repo
                 .find_branch(&branch_name, BranchType::Local)
-                .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", branch_name, e.message())))?;
+                .map_err(|e| {
+                    GitError::Other(format!(
+                        "branch '{}' not found: {}",
+                        branch_name,
+                        e.message()
+                    ))
+                })?;
             let upstream_ref = branch_ref
                 .upstream()
                 .map_err(|e| GitError::Other(format!("upstream lookup failed: {}", e.message())))?;
@@ -4187,8 +4303,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
     // ── 8. Build preview_commits (revwalk) ───────────────────
     // Only collect when no blockers (pointless otherwise).
     let preview_commits: Vec<String> = if blockers.is_empty() {
-        build_push_preview(repo, &branch_name, &remote_name, has_upstream)
-            .unwrap_or_default()
+        build_push_preview(repo, &branch_name, &remote_name, has_upstream).unwrap_or_default()
     } else {
         Vec::new()
     };
@@ -4202,17 +4317,20 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
 
     // ── 9. Predicted StateSummary ─────────────────────────────
     let predicted = StateSummary {
-        head: format!("branch: {} (pushed {} commit(s))", branch_name, effective_ahead),
+        head: format!(
+            "branch: {} (pushed {} commit(s))",
+            branch_name, effective_ahead
+        ),
         dirty: current.dirty.clone(),
     };
 
     // ── 10. Recovery guidance ─────────────────────────────────
-    let recovery = format!(
+    let recovery =
         "Push only sends commits to the remote — the local repository is never modified.\n\
          If the push is rejected (non-fast-forward), pull first and re-plan:\n  \
          git pull\n  git push\n\
          The reflog records every HEAD movement:\n  git reflog"
-    );
+            .to_string();
 
     Ok(OperationPlan {
         title,
@@ -4291,15 +4409,27 @@ pub fn execute_push(repo: &Repository, repo_path: &Path) -> Result<PushOutcome, 
     let pushed_count = if has_upstream {
         let branch_ref2 = repo
             .find_branch(&branch_name, BranchType::Local)
-            .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", branch_name, e.message())))?;
+            .map_err(|e| {
+                GitError::Other(format!(
+                    "branch '{}' not found: {}",
+                    branch_name,
+                    e.message()
+                ))
+            })?;
         let upstream_ref = branch_ref2
             .upstream()
             .map_err(|e| GitError::Other(format!("upstream lookup failed: {}", e.message())))?;
-        let head_oid2 = branch_ref2.get().target()
+        let head_oid2 = branch_ref2
+            .get()
+            .target()
             .ok_or_else(|| GitError::Other("branch has no target".to_string()))?;
-        let upstream_oid2 = upstream_ref.get().target()
+        let upstream_oid2 = upstream_ref
+            .get()
+            .target()
             .ok_or_else(|| GitError::Other("upstream has no target".to_string()))?;
-        let (ahead, _) = repo.graph_ahead_behind(head_oid2, upstream_oid2).unwrap_or((0, 0));
+        let (ahead, _) = repo
+            .graph_ahead_behind(head_oid2, upstream_oid2)
+            .unwrap_or((0, 0));
         ahead
     } else {
         // Set-upstream flow: use revwalk count.
@@ -4316,8 +4446,8 @@ pub fn execute_push(repo: &Repository, repo_path: &Path) -> Result<PushOutcome, 
     };
 
     // ── 5. Run git push via CLI ───────────────────────────────
-    let out = run_git(repo_path, &args)
-        .map_err(|e| GitError::Other(format!("push failed: {}", e)))?;
+    let out =
+        run_git(repo_path, &args).map_err(|e| GitError::Other(format!("push failed: {}", e)))?;
 
     if out.status != 0 {
         return Err(GitError::Other(format!(
@@ -4408,7 +4538,13 @@ fn short_oid_string(oid: git2::Oid) -> String {
 
 fn local_branch_oid(repo: &Repository, branch_name: &str) -> Result<git2::Oid, GitError> {
     repo.find_branch(branch_name, BranchType::Local)
-        .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", branch_name, e.message())))?
+        .map_err(|e| {
+            GitError::Other(format!(
+                "branch '{}' not found: {}",
+                branch_name,
+                e.message()
+            ))
+        })?
         .get()
         .target()
         .ok_or_else(|| GitError::Other(format!("branch '{}' has no target OID", branch_name)))
@@ -4482,7 +4618,10 @@ fn build_push_preview_for_oid(
 /// This is a ref-only operation: execution fetches the branch's upstream remote
 /// and advances `refs/heads/<branch>` only if the upstream tip is a descendant
 /// of the local branch tip. The working tree and HEAD are never changed.
-pub fn plan_pull_branch_ff(repo: &Repository, branch_name: &str) -> Result<OperationPlan, GitError> {
+pub fn plan_pull_branch_ff(
+    repo: &Repository,
+    branch_name: &str,
+) -> Result<OperationPlan, GitError> {
     let head = resolve_head(repo)?;
     let status = working_tree_status(repo)?;
     let current = StateSummary {
@@ -4499,7 +4638,8 @@ pub fn plan_pull_branch_ff(repo: &Repository, branch_name: &str) -> Result<Opera
         ));
     } else if status.is_dirty() {
         warnings.push(
-            "Working tree is dirty; this ref-only pull will not touch the working tree.".to_string(),
+            "Working tree is dirty; this ref-only pull will not touch the working tree."
+                .to_string(),
         );
     }
 
@@ -4511,31 +4651,35 @@ pub fn plan_pull_branch_ff(repo: &Repository, branch_name: &str) -> Result<Opera
         }
     };
 
-    let (remote_name, upstream_oid, behind_count) =
-        match resolve_upstream_info(repo, branch_name) {
-            Ok((_, remote, behind)) => {
-                let oid = resolve_upstream_oid(repo, branch_name, &remote).ok();
-                (remote, oid, behind)
-            }
-            Err(e) => {
-                blockers.push(format!(
-                    "No upstream configured for branch '{}': {}.",
-                    branch_name, e
-                ));
-                (String::new(), None, 0)
-            }
-        };
+    let (remote_name, upstream_oid, behind_count) = match resolve_upstream_info(repo, branch_name) {
+        Ok((_, remote, behind)) => {
+            let oid = resolve_upstream_oid(repo, branch_name, &remote).ok();
+            (remote, oid, behind)
+        }
+        Err(e) => {
+            blockers.push(format!(
+                "No upstream configured for branch '{}': {}.",
+                branch_name, e
+            ));
+            (String::new(), None, 0)
+        }
+    };
 
     if blockers.is_empty() {
         if let Some(upstream_oid) = upstream_oid {
             if local_oid == upstream_oid
-                || repo.graph_descendant_of(local_oid, upstream_oid).unwrap_or(false)
+                || repo
+                    .graph_descendant_of(local_oid, upstream_oid)
+                    .unwrap_or(false)
             {
                 blockers.push(format!(
                     "Branch '{}' is already up to date with its upstream.",
                     branch_name
                 ));
-            } else if !repo.graph_descendant_of(upstream_oid, local_oid).unwrap_or(false) {
+            } else if !repo
+                .graph_descendant_of(upstream_oid, local_oid)
+                .unwrap_or(false)
+            {
                 blockers.push(format!(
                     "Branch '{}' cannot be fast-forwarded to its upstream; pull it while checked out to merge.",
                     branch_name
@@ -4603,11 +4747,16 @@ pub fn execute_pull_branch_ff(
 
     let upstream_oid = resolve_upstream_oid(repo, branch_name, &remote_name)?;
     if local_oid == upstream_oid
-        || repo.graph_descendant_of(local_oid, upstream_oid).unwrap_or(false)
+        || repo
+            .graph_descendant_of(local_oid, upstream_oid)
+            .unwrap_or(false)
     {
         return Ok(PullOutcome::UpToDate);
     }
-    if !repo.graph_descendant_of(upstream_oid, local_oid).unwrap_or(false) {
+    if !repo
+        .graph_descendant_of(upstream_oid, local_oid)
+        .unwrap_or(false)
+    {
         return Err(GitError::Other(format!(
             "branch '{}' is not fast-forwardable to upstream",
             branch_name
@@ -4619,7 +4768,11 @@ pub fn execute_pull_branch_ff(
         &refname,
         upstream_oid,
         true,
-        &format!("pull: fast-forward {} to {}", branch_name, short_oid_string(upstream_oid)),
+        &format!(
+            "pull: fast-forward {} to {}",
+            branch_name,
+            short_oid_string(upstream_oid)
+        ),
     )
     .map_err(|e| GitError::Other(format!("branch ref update failed: {}", e.message())))?;
 
@@ -4763,8 +4916,8 @@ pub fn execute_push_branch(
     } else {
         vec!["push", &remote_name, branch_name]
     };
-    let out = run_git(repo_path, &args)
-        .map_err(|e| GitError::Other(format!("push failed: {}", e)))?;
+    let out =
+        run_git(repo_path, &args).map_err(|e| GitError::Other(format!("push failed: {}", e)))?;
     if out.status != 0 {
         return Err(GitError::Other(format!(
             "push failed (exit {}): {}",
@@ -4835,7 +4988,13 @@ pub fn execute_set_upstream(
     preflight_check(repo, plan)?;
     let mut branch = repo
         .find_branch(branch_name, BranchType::Local)
-        .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", branch_name, e.message())))?;
+        .map_err(|e| {
+            GitError::Other(format!(
+                "branch '{}' not found: {}",
+                branch_name,
+                e.message()
+            ))
+        })?;
     branch
         .set_upstream(Some(upstream))
         .map_err(|e| GitError::Other(format!("set upstream failed: {}", e.message())))?;
@@ -4932,7 +5091,8 @@ pub fn plan_rename_branch(
     }
     if status.is_dirty() {
         warnings.push(
-            "Working tree is dirty; branch rename is ref-only and will not touch files.".to_string(),
+            "Working tree is dirty; branch rename is ref-only and will not touch files."
+                .to_string(),
         );
     }
     warnings.push(
@@ -4980,9 +5140,9 @@ pub fn execute_rename_branch(
     }
 
     let saved_config = branch_config_entries(repo, old_name);
-    let mut branch = repo
-        .find_branch(old_name, BranchType::Local)
-        .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", old_name, e.message())))?;
+    let mut branch = repo.find_branch(old_name, BranchType::Local).map_err(|e| {
+        GitError::Other(format!("branch '{}' not found: {}", old_name, e.message()))
+    })?;
     branch
         .rename(new_name, false)
         .map_err(|e| GitError::Other(format!("branch rename failed: {}", e.message())))?;
@@ -4992,9 +5152,9 @@ pub fn execute_rename_branch(
     if let Ok(mut config) = repo.config() {
         for (suffix, value) in saved_config {
             let key = format!("branch.{}.{}", new_name, suffix);
-            config
-                .set_str(&key, &value)
-                .map_err(|e| GitError::Other(format!("config carry-over failed: {}", e.message())))?;
+            config.set_str(&key, &value).map_err(|e| {
+                GitError::Other(format!("config carry-over failed: {}", e.message()))
+            })?;
         }
     }
 
@@ -5012,7 +5172,6 @@ pub fn execute_rename_branch(
     }
     Ok(())
 }
-
 
 // ────────────────────────────────────────────────────────────
 // UndoOutcome  (T-HT-009)
@@ -5059,14 +5218,10 @@ pub fn plan_undo_commit(repo: &Repository) -> Result<OperationPlan, GitError> {
     let head_display = head.display();
 
     let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty())
-            .then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty())
-            .then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty())
-            .then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty())
-            .then(|| format!("{} conflicted", status.conflicted.len())),
+        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
     ]
     .into_iter()
     .flatten()
@@ -5088,16 +5243,12 @@ pub fn plan_undo_commit(repo: &Repository) -> Result<OperationPlan, GitError> {
 
     // Detached HEAD: no branch ref to move.
     if let Head::Detached { .. } = &head {
-        blockers.push(
-            "HEAD is detached. Undo commit requires HEAD to be on a branch.".to_string(),
-        );
+        blockers.push("HEAD is detached. Undo commit requires HEAD to be on a branch.".to_string());
     }
 
     // Unborn HEAD: no commits to undo.
     if let Head::Unborn { .. } = &head {
-        blockers.push(
-            "HEAD is unborn (no commits exist). There is nothing to undo.".to_string(),
-        );
+        blockers.push("HEAD is unborn (no commits exist). There is nothing to undo.".to_string());
     }
 
     // Conflict state: refuse to operate on a repo mid-conflict.
@@ -5114,9 +5265,9 @@ pub fn plan_undo_commit(repo: &Repository) -> Result<OperationPlan, GitError> {
         Head::Attached { target, branch } => {
             let oid = git2::Oid::from_str(target)
                 .map_err(|e| GitError::Other(format!("HEAD OID parse failed: {}", e.message())))?;
-            let commit = repo
-                .find_commit(oid)
-                .map_err(|e| GitError::Other(format!("HEAD commit lookup failed: {}", e.message())))?;
+            let commit = repo.find_commit(oid).map_err(|e| {
+                GitError::Other(format!("HEAD commit lookup failed: {}", e.message()))
+            })?;
             (Some(commit), Some(branch.clone()))
         }
         _ => (None, None),
@@ -5220,7 +5371,10 @@ pub fn plan_undo_commit(repo: &Repository) -> Result<OperationPlan, GitError> {
     let predicted_dirty = if dirty_parts.is_empty() {
         "staged (undone commit changes restored to index)".to_string()
     } else {
-        format!("{}, staged (undone commit changes restored to index)", dirty_parts.join(", "))
+        format!(
+            "{}, staged (undone commit changes restored to index)",
+            dirty_parts.join(", ")
+        )
     };
 
     let predicted = StateSummary {
@@ -5349,7 +5503,12 @@ pub fn execute_undo_commit(repo: &Repository) -> Result<UndoOutcome, GitError> {
         &parent_oid.to_string()[..8],
     );
     repo.reference(&branch_refname, parent_oid, true, &log_msg)
-        .map_err(|e| GitError::Other(format!("branch ref update (undo-commit) failed: {}", e.message())))?;
+        .map_err(|e| {
+            GitError::Other(format!(
+                "branch ref update (undo-commit) failed: {}",
+                e.message()
+            ))
+        })?;
 
     Ok(UndoOutcome {
         undone: CommitId(head_oid.to_string()),
@@ -5410,14 +5569,10 @@ pub fn plan_amend(
 
     // ── 2. Structural blockers (HEAD shape) ──────────────────
     if let Head::Detached { .. } = &head {
-        blockers.push(
-            "HEAD is detached. Amend requires HEAD to be on a branch.".to_string(),
-        );
+        blockers.push("HEAD is detached. Amend requires HEAD to be on a branch.".to_string());
     }
     if let Head::Unborn { .. } = &head {
-        blockers.push(
-            "HEAD is unborn (no commits exist). There is nothing to amend.".to_string(),
-        );
+        blockers.push("HEAD is unborn (no commits exist). There is nothing to amend.".to_string());
     }
     if !status.conflicted.is_empty() {
         blockers.push(format!(
@@ -5431,9 +5586,9 @@ pub fn plan_amend(
         Head::Attached { target, branch } => {
             let oid = git2::Oid::from_str(target)
                 .map_err(|e| GitError::Other(format!("HEAD OID parse failed: {}", e.message())))?;
-            let commit = repo
-                .find_commit(oid)
-                .map_err(|e| GitError::Other(format!("HEAD commit lookup failed: {}", e.message())))?;
+            let commit = repo.find_commit(oid).map_err(|e| {
+                GitError::Other(format!("HEAD commit lookup failed: {}", e.message()))
+            })?;
             (Some(commit), Some(branch.clone()))
         }
         _ => (None, None),
@@ -5651,7 +5806,8 @@ pub fn execute_amend(
     }
     if head_commit.parent_count() == 0 {
         return Err(GitError::Other(
-            "HEAD is the root commit (no parent). Amending the root commit is not supported.".to_string(),
+            "HEAD is the root commit (no parent). Amending the root commit is not supported."
+                .to_string(),
         ));
     }
 
@@ -5694,13 +5850,14 @@ pub fn execute_amend(
     let new_message: String = if mode.replaces_message() {
         match message {
             Some(m) if !m.trim().is_empty() => m.to_string(),
-            _ => return Err(GitError::Other("Commit message must not be empty.".to_string())),
+            _ => {
+                return Err(GitError::Other(
+                    "Commit message must not be empty.".to_string(),
+                ))
+            }
         }
     } else {
-        head_commit
-            .message()
-            .unwrap_or("(no message)")
-            .to_string()
+        head_commit.message().unwrap_or("(no message)").to_string()
     };
 
     // ── 7. Create the commit object WITHOUT moving any ref ───
@@ -5723,7 +5880,9 @@ pub fn execute_amend(
         &new_oid.to_string()[..8],
     );
     repo.reference(&branch_refname, new_oid, true, &log_msg)
-        .map_err(|e| GitError::Other(format!("branch ref update (amend) failed: {}", e.message())))?;
+        .map_err(|e| {
+            GitError::Other(format!("branch ref update (amend) failed: {}", e.message()))
+        })?;
 
     Ok(AmendOutcome {
         old: CommitId(head_oid.to_string()),
@@ -5774,14 +5933,10 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
     let head_display = head.display();
 
     let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty())
-            .then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty())
-            .then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty())
-            .then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty())
-            .then(|| format!("{} conflicted", status.conflicted.len())),
+        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
     ]
     .into_iter()
     .flatten()
@@ -5848,7 +6003,11 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
     };
 
     // Current-branch check (HEAD attached to this branch).
-    if let Head::Attached { branch: ref head_branch, .. } = head {
+    if let Head::Attached {
+        branch: ref head_branch,
+        ..
+    } = head
+    {
         if head_branch == name {
             blockers.push(format!(
                 "Branch '{}' is the currently checked-out branch. \
@@ -5883,9 +6042,7 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
             match git2::Oid::from_str(target) {
                 Ok(head_oid) => {
                     head_oid == tip_oid
-                        || repo
-                            .graph_descendant_of(head_oid, tip_oid)
-                            .unwrap_or(false)
+                        || repo.graph_descendant_of(head_oid, tip_oid).unwrap_or(false)
                 }
                 Err(_) => false,
             }
@@ -5930,10 +6087,7 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
     );
 
     Ok(OperationPlan {
-        title: format!(
-            "Delete branch '{}' (tip {})",
-            name, tip_short
-        ),
+        title: format!("Delete branch '{}' (tip {})", name, tip_short),
         current,
         predicted,
         warnings,
@@ -6247,9 +6401,8 @@ pub fn execute_discard(
     for rel in &rels {
         cb.path(rel.as_str());
     }
-    repo.checkout_index(None, Some(&mut cb)).map_err(|e| {
-        GitError::Other(format!("discard: checkout_index failed: {}", e.message()))
-    })?;
+    repo.checkout_index(None, Some(&mut cb))
+        .map_err(|e| GitError::Other(format!("discard: checkout_index failed: {}", e.message())))?;
 
     // ── 3. VERIFY — targets must have left the unstaged set. ──
     let status = working_tree_status(repo)?;
@@ -6258,7 +6411,10 @@ pub fn execute_discard(
         .iter()
         .map(|f| f.path.to_string_lossy().replace('\\', "/"))
         .collect();
-    let leftover: Vec<&String> = rels.iter().filter(|r| still_unstaged.contains(*r)).collect();
+    let leftover: Vec<&String> = rels
+        .iter()
+        .filter(|r| still_unstaged.contains(*r))
+        .collect();
     if !leftover.is_empty() {
         return Err(GitError::Other(format!(
             "discard verify failed: {} target(s) still unstaged: {}",
@@ -6539,9 +6695,9 @@ fn execute_history_move(
         )));
     }
 
-    let branch_ref = repo.find_branch(branch, BranchType::Local).map_err(|e| {
-        GitError::Other(format!("branch '{}' not found: {}", branch, e.message()))
-    })?;
+    let branch_ref = repo
+        .find_branch(branch, BranchType::Local)
+        .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", branch, e.message())))?;
     let cur_oid = branch_ref
         .get()
         .target()
@@ -6577,7 +6733,11 @@ fn execute_history_move(
     );
     repo.reference(&branch_refname, to_oid, true, &log_msg)
         .map_err(|e| {
-            GitError::Other(format!("branch ref move ({}) failed: {}", label, e.message()))
+            GitError::Other(format!(
+                "branch ref move ({}) failed: {}",
+                label,
+                e.message()
+            ))
         })?;
 
     // ── MOVE: index → target tree (working tree untouched) ───

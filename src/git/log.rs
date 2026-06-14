@@ -124,22 +124,14 @@ pub fn commit_log(repo: &Repository, limit: usize) -> Result<Vec<Commit>, GitErr
         let id = CommitId(oid.to_string());
 
         // Collect parents preserving order (parents()[0] = first parent).
-        let parents: Vec<CommitId> = raw
-            .parent_ids()
-            .map(|p| CommitId(p.to_string()))
-            .collect();
+        let parents: Vec<CommitId> = raw.parent_ids().map(|p| CommitId(p.to_string())).collect();
 
         let author = sig_from_git2(raw.author());
         let committer = sig_from_git2(raw.committer());
 
         let message = String::from_utf8_lossy(raw.message_bytes()).into_owned();
         // Summary = first non-empty line of the message.
-        let summary = message
-            .lines()
-            .next()
-            .unwrap_or("")
-            .trim_end()
-            .to_string();
+        let summary = message.lines().next().unwrap_or("").trim_end().to_string();
 
         commits.push(Commit {
             id,

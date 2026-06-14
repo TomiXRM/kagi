@@ -969,11 +969,15 @@ mod tests {
         let groups = branch_context_menu_items(&ctx());
 
         assert_eq!(
-            item_for(&groups, BranchAction::MergeIntoCurrent).label.as_ref(),
+            item_for(&groups, BranchAction::MergeIntoCurrent)
+                .label
+                .as_ref(),
             "Merge feature/x into main"
         );
         assert_eq!(
-            item_for(&groups, BranchAction::RebaseCurrentOnto).label.as_ref(),
+            item_for(&groups, BranchAction::RebaseCurrentOnto)
+                .label
+                .as_ref(),
             "Rebase main onto feature/x"
         );
     }

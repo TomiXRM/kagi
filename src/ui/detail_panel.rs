@@ -270,8 +270,16 @@ mod tests {
             id: CommitId("b".repeat(40)),
             summary: "subject line".to_string(),
             message: msg.to_string(),
-            author: Signature { name: "A".to_string(), email: "a@b.com".to_string(), time: 1 },
-            committer: Signature { name: "A".to_string(), email: "a@b.com".to_string(), time: 1 },
+            author: Signature {
+                name: "A".to_string(),
+                email: "a@b.com".to_string(),
+                time: 1,
+            },
+            committer: Signature {
+                name: "A".to_string(),
+                email: "a@b.com".to_string(),
+                time: 1,
+            },
             parents: vec![],
         };
         let detail = commit_to_detail(&c);

@@ -7,9 +7,9 @@ use git2::{BranchType, Repository};
 use tempfile::TempDir;
 
 use kagi::git::{
-    BranchRenameValidation, PullOutcome, execute_pull_branch_ff, execute_push_branch,
-    execute_rename_branch, execute_set_upstream, plan_pull_branch_ff, plan_push_branch,
-    plan_rename_branch, plan_set_upstream, validate_branch_rename,
+    execute_pull_branch_ff, execute_push_branch, execute_rename_branch, execute_set_upstream,
+    plan_pull_branch_ff, plan_push_branch, plan_rename_branch, plan_set_upstream,
+    validate_branch_rename, BranchRenameValidation, PullOutcome,
 };
 
 fn git(dir: &Path, args: &[&str]) {
@@ -54,13 +54,26 @@ fn setup() -> Repos {
     let local = tmp.path().join("local");
     let other = tmp.path().join("other");
 
-    git(tmp.path(), &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()]);
+    git(
+        tmp.path(),
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            remote.to_str().unwrap(),
+        ],
+    );
     std::fs::create_dir(&local).unwrap();
     git(&local, &["init", "-q", "-b", "main", "."]);
     git(&local, &["config", "user.name", "Test"]);
     git(&local, &["config", "user.email", "test@example.com"]);
     git(&local, &["config", "commit.gpgsign", "false"]);
-    git(&local, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    git(
+        &local,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
 
     write_file(&local, "base.txt", "base\n");
     git(&local, &["add", "-A"]);
@@ -74,12 +87,25 @@ fn setup() -> Repos {
     git(&local, &["push", "-q", "-u", "origin", "feature/x"]);
     git(&local, &["checkout", "-q", "main"]);
 
-    git(tmp.path(), &["clone", "-q", remote.to_str().unwrap(), other.to_str().unwrap()]);
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            remote.to_str().unwrap(),
+            other.to_str().unwrap(),
+        ],
+    );
     git(&other, &["config", "user.name", "Other"]);
     git(&other, &["config", "user.email", "other@example.com"]);
     git(&other, &["config", "commit.gpgsign", "false"]);
 
-    Repos { _tmp: tmp, remote, local, other }
+    Repos {
+        _tmp: tmp,
+        remote,
+        local,
+        other,
+    }
 }
 
 #[test]
@@ -101,8 +127,15 @@ fn non_current_pull_ff_updates_ref_only() {
     let outcome = execute_pull_branch_ff(&repo, &r.local, &plan, "feature/x").expect("execute");
     assert!(matches!(outcome, PullOutcome::FastForward { .. }));
     assert_eq!(rev_parse(&r.local, "feature/x"), remote_feature);
-    assert_eq!(rev_parse(&r.local, "HEAD"), before_head, "HEAD must not move");
-    assert!(!r.local.join("remote.txt").exists(), "working tree must not change");
+    assert_eq!(
+        rev_parse(&r.local, "HEAD"),
+        before_head,
+        "HEAD must not move"
+    );
+    assert!(
+        !r.local.join("remote.txt").exists(),
+        "working tree must not change"
+    );
 }
 
 #[test]
@@ -136,7 +169,9 @@ fn set_upstream_is_config_only() {
     assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
     execute_set_upstream(&repo, &plan, "topic/no-upstream", "origin/main").expect("set upstream");
 
-    let branch = repo.find_branch("topic/no-upstream", BranchType::Local).unwrap();
+    let branch = repo
+        .find_branch("topic/no-upstream", BranchType::Local)
+        .unwrap();
     let upstream = branch.upstream().expect("upstream");
     assert_eq!(upstream.name().unwrap().unwrap(), "origin/main");
     assert_eq!(rev_parse(&r.local, "HEAD"), before_head);

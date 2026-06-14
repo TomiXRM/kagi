@@ -1,10 +1,10 @@
-mod ui;
 mod headless;
+mod ui;
 
 use std::path::PathBuf;
 
-use kagi::git::{Head, open_repository, snapshot};
-use ui::{KagiApp, run_app};
+use kagi::git::{open_repository, snapshot, Head};
+use ui::{run_app, KagiApp};
 
 fn main() {
     // Collect CLI arguments (skip argv[0]).
@@ -108,11 +108,8 @@ fn main() {
     }
 
     // HEAD-branch label for unborn repos.
-    match &snap.head {
-        Head::Unborn { branch } => {
-            eprintln!("[kagi] unborn HEAD on branch '{branch}', no commits");
-        }
-        _ => {}
+    if let Head::Unborn { branch } = &snap.head {
+        eprintln!("[kagi] unborn HEAD on branch '{branch}', no commits");
     }
 
     eprintln!("[kagi] commits in snapshot: {}", snap.commits.len());

@@ -4,7 +4,7 @@
 //! `Co-authored-by:` trailers from a raw commit message.  No filesystem or
 //! git access is required — these are pure string tests.
 
-use kagi::git::{CoAuthor, parse_coauthors};
+use kagi::git::{parse_coauthors, CoAuthor};
 
 fn ca(name: &str, email: &str) -> CoAuthor {
     CoAuthor {
@@ -92,10 +92,7 @@ fn duplicates_are_deduplicated() {
         Co-authored-by: Alice <ALICE@example.com>\n\
         Co-authored-by: Alice <alice@example.com>";
     // The first two collapse (email case-insensitive), the third is an exact dup.
-    assert_eq!(
-        parse_coauthors(msg),
-        vec![ca("Alice", "alice@example.com")]
-    );
+    assert_eq!(parse_coauthors(msg), vec![ca("Alice", "alice@example.com")]);
 }
 
 #[test]

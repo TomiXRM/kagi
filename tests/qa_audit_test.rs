@@ -28,9 +28,8 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi::git::{
-    execute_checkout_commit, execute_stash_push, execute_undo_commit,
-    plan_amend, plan_checkout_commit, plan_stash_pop, plan_stash_push,
-    snapshot, AmendMode, CommitId,
+    execute_checkout_commit, execute_stash_push, execute_undo_commit, plan_amend,
+    plan_checkout_commit, plan_stash_pop, plan_stash_push, snapshot, AmendMode, CommitId,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -109,7 +108,11 @@ fn stash_push_clean_is_blocked() {
     let tmp = TempDir::new().unwrap();
     let (_d, mut repo) = build_repo(&tmp);
     let plan = plan_stash_push(&mut repo, None, true).unwrap();
-    assert_eq!(plan.blockers.len(), 1, "clean tree → 'nothing to stash' blocker");
+    assert_eq!(
+        plan.blockers.len(),
+        1,
+        "clean tree → 'nothing to stash' blocker"
+    );
 }
 
 #[test]
@@ -156,7 +159,10 @@ fn stash_push_many_untracked_warns_not_blocks() {
         write_file(&d, &format!("u_{i}.txt"), "x");
     }
     let plan = plan_stash_push(&mut repo, None, true).unwrap();
-    assert!(plan.blockers.is_empty(), "untracked-only → stashable with -u");
+    assert!(
+        plan.blockers.is_empty(),
+        "untracked-only → stashable with -u"
+    );
     assert!(
         plan.warnings.iter().any(|w| w.contains("untracked")),
         "untracked inclusion should be a warning"
@@ -277,7 +283,9 @@ fn checkout_commit_dirty_plan_warns_but_does_not_block() {
         "non-overlapping dirty tree must not block"
     );
     assert!(
-        plan.warnings.iter().any(|w| w.to_lowercase().contains("dirty")),
+        plan.warnings
+            .iter()
+            .any(|w| w.to_lowercase().contains("dirty")),
         "must at least warn about the dirty tree"
     );
 }
@@ -362,7 +370,10 @@ fn amend_pushed_commit_is_blocked() {
     let (d, repo) = build_repo(&tmp);
 
     git(bare.path(), &["init", "-q", "--bare", "."]);
-    git(&d, &["remote", "add", "origin", bare.path().to_str().unwrap()]);
+    git(
+        &d,
+        &["remote", "add", "origin", bare.path().to_str().unwrap()],
+    );
     git(&d, &["push", "-q", "-u", "origin", "main"]);
 
     // Stage a change to amend into the pushed HEAD.

@@ -14,23 +14,25 @@
 //! The hash chip shows the full SHA in a tooltip and copies it on click
 //! (replacing the old always-on Metadata column of Parents / full SHA).
 
-use gpui::{App, Bounds, Context, IntoElement, Pixels, SharedString, Window, canvas, div, prelude::*, px, relative, rgb};
+use gpui::{
+    canvas, div, prelude::*, px, relative, rgb, App, Bounds, Context, IntoElement, Pixels,
+    SharedString, Window,
+};
 
-use kagi::git::{ChangeKind, CommitId, FileDiffStat, FileStatus, find_stat, parse_coauthors};
+use kagi::git::{find_stat, parse_coauthors, ChangeKind, CommitId, FileDiffStat, FileStatus};
 
 use super::{
-    CompareView, DividerDrag, DividerGhost, DividerKind, KagiApp,
     avatar::{avatar_color, avatar_initial},
     commit_list::{BadgeKind, RefBadge},
     context_menu::CommitAction,
     detail_panel::CommitDetail,
     diffstat_bar::diffstat_unit,
-    file_tree,
+    file_tree, CompareView, DividerDrag, DividerGhost, DividerKind, KagiApp,
 };
 
 // W9-THEME: all colours come from `theme()` (see theme.rs). No local palette.
-use super::theme::{self, theme};
 use super::i18n::{self, Msg};
+use super::theme::{self, theme};
 
 const MAX_FILES: usize = 100;
 const MAX_BADGE_CHARS: usize = 20;
@@ -74,9 +76,9 @@ pub fn render_inspector(
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     // ── Truncate input files before building the tree (T018 policy) ──────
-    let truncated_files: Option<Vec<FileStatus>> = changed_files.as_ref().map(|files| {
-        files.iter().take(MAX_FILES).cloned().collect()
-    });
+    let truncated_files: Option<Vec<FileStatus>> = changed_files
+        .as_ref()
+        .map(|files| files.iter().take(MAX_FILES).cloned().collect());
     let total_files = changed_files.as_ref().map(|f| f.len()).unwrap_or(0);
     let truncated_count = if total_files > MAX_FILES {
         Some(total_files - MAX_FILES)
@@ -85,9 +87,8 @@ pub fn render_inspector(
     };
 
     // ── Short SHA (first 8 hex chars) ────────────────────────────────────
-    let short_sha: SharedString = SharedString::from(
-        d.full_sha.chars().take(8).collect::<String>()
-    );
+    let short_sha: SharedString =
+        SharedString::from(d.full_sha.chars().take(8).collect::<String>());
 
     // ── Copy SHA handler (full raw SHA — no ZWSP) ─────────────────────────
     let copy_target1 = at.clone();
@@ -101,7 +102,8 @@ pub fn render_inspector(
     let (author_name, author_email) = parse_author(d.author_line.as_ref());
 
     // ── Message lines (split on '\n') ─────────────────────────────────────
-    let message_lines: Vec<_> = d.full_message
+    let message_lines: Vec<_> = d
+        .full_message
         .as_ref()
         .split('\n')
         .map(|line| {
@@ -111,7 +113,9 @@ pub fn render_inspector(
                 SharedString::from(line.to_string())
             };
             div()
-                .flex().flex_row().w_full()
+                .flex()
+                .flex_row()
+                .w_full()
                 .flex_shrink_0()
                 .text_color(rgb(theme().text_main))
                 .text_sm()
@@ -122,101 +126,138 @@ pub fn render_inspector(
         .collect();
 
     // ── Tree rows ─────────────────────────────────────────────────────────
-    let tree_rows = truncated_files.as_ref().map(|files| {
-        file_tree::build_file_tree(files)
-    });
+    let tree_rows = truncated_files
+        .as_ref()
+        .map(|files| file_tree::build_file_tree(files));
 
     let tree_element_rows: Vec<_> = if tree_view {
         match &tree_rows {
             None => vec![],
-            Some(rows) => rows.iter().map(|row| {
-                match row {
+            Some(rows) => rows
+                .iter()
+                .map(|row| match row {
                     file_tree::TreeRow::Dir { depth, name } => {
                         let indent = (*depth as f32) * 12.0;
                         div()
                             .id(SharedString::from(format!("tree-dir-{}", name.as_ref())))
-                            .flex().flex_row().items_center()
-                            .pl(theme::scaled_px(indent)).mb_px()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .pl(theme::scaled_px(indent))
+                            .mb_px()
                             .flex_shrink_0()
                             .overflow_hidden()
                             .child(
                                 div()
-                                    .text_sm().text_color(rgb(theme().change_dir))
+                                    .text_sm()
+                                    .text_color(rgb(theme().change_dir))
                                     .truncate()
                                     .child(name.clone()),
                             )
                             .into_any()
                     }
-                    file_tree::TreeRow::File { depth, name, file_index, change } => {
+                    file_tree::TreeRow::File {
+                        depth,
+                        name,
+                        file_index,
+                        change,
+                    } => {
                         let indent = (*depth as f32) * 12.0;
                         let (badge_char, badge_color) = change_badge(change);
                         let fi = *file_index;
-                        let stat = stat_for_index(truncated_files.as_ref(), changed_diffstat.as_ref(), fi);
-                        let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                            this.open_main_diff_inspector_file(fi);
-                            cx.notify();
-                        });
+                        let stat =
+                            stat_for_index(truncated_files.as_ref(), changed_diffstat.as_ref(), fi);
+                        let click =
+                            cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                                this.open_main_diff_inspector_file(fi);
+                                cx.notify();
+                            });
                         div()
                             .id(("file-row", fi))
-                            .flex().flex_row().items_center().gap_1()
-                            .pl(theme::scaled_px(indent)).mb_px()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1()
+                            .pl(theme::scaled_px(indent))
+                            .mb_px()
                             .flex_shrink_0()
-                            .when(active_file == Some(fi), |el| el.bg(rgb(theme().selected)).rounded_sm())
+                            .when(active_file == Some(fi), |el| {
+                                el.bg(rgb(theme().selected)).rounded_sm()
+                            })
                             .on_click(click)
                             .child(
-                                div().w(theme::scaled_px(14.)).flex_shrink_0()
-                                    .text_sm().text_color(rgb(badge_color))
+                                div()
+                                    .w(theme::scaled_px(14.))
+                                    .flex_shrink_0()
+                                    .text_sm()
+                                    .text_color(rgb(badge_color))
                                     .child(SharedString::from(badge_char)),
                             )
                             .child(
-                                div().flex_1().min_w(px(0.))
-                                    .text_sm().text_color(rgb(theme().text_main))
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .text_sm()
+                                    .text_color(rgb(theme().text_main))
                                     .truncate()
                                     .child(name.clone()),
                             )
                             .child(diffstat_unit(fi, stat))
                             .into_any()
                     }
-                }
-            }).collect(),
+                })
+                .collect(),
         }
     } else {
         // ── Flat path list ─────────────────────────────────────────────────
         match truncated_files.as_ref() {
             None => vec![],
-            Some(files) => files.iter().enumerate().map(|(fi, fs)| {
-                let (badge_char, badge_color) = change_badge(&fs.change);
-                let path_text = SharedString::from(
-                    fs.path.to_string_lossy().into_owned()
-                );
-                let stat = changed_diffstat
-                    .as_ref()
-                    .and_then(|stats| find_stat(stats, &fs.path));
-                let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                    this.open_main_diff_inspector_file(fi);
-                    cx.notify();
-                });
-                div()
-                    .id(("file-flat", fi))
-                    .flex().flex_row().items_center().gap_1()
-                    .mb_px()
-                    .flex_shrink_0()
-                    .when(active_file == Some(fi), |el| el.bg(rgb(theme().selected)).rounded_sm())
-                    .on_click(click)
-                    .child(
-                        div().w(theme::scaled_px(14.)).flex_shrink_0()
-                            .text_sm().text_color(rgb(badge_color))
-                            .child(SharedString::from(badge_char)),
-                    )
-                    .child(
-                        div().flex_1().min_w(px(0.))
-                            .text_sm().text_color(rgb(theme().text_main))
-                            .truncate()
-                            .child(path_text),
-                    )
-                    .child(diffstat_unit(fi, stat))
-                    .into_any()
-            }).collect(),
+            Some(files) => files
+                .iter()
+                .enumerate()
+                .map(|(fi, fs)| {
+                    let (badge_char, badge_color) = change_badge(&fs.change);
+                    let path_text = SharedString::from(fs.path.to_string_lossy().into_owned());
+                    let stat = changed_diffstat
+                        .as_ref()
+                        .and_then(|stats| find_stat(stats, &fs.path));
+                    let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                        this.open_main_diff_inspector_file(fi);
+                        cx.notify();
+                    });
+                    div()
+                        .id(("file-flat", fi))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .mb_px()
+                        .flex_shrink_0()
+                        .when(active_file == Some(fi), |el| {
+                            el.bg(rgb(theme().selected)).rounded_sm()
+                        })
+                        .on_click(click)
+                        .child(
+                            div()
+                                .w(theme::scaled_px(14.))
+                                .flex_shrink_0()
+                                .text_sm()
+                                .text_color(rgb(badge_color))
+                                .child(SharedString::from(badge_char)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .text_sm()
+                                .text_color(rgb(theme().text_main))
+                                .truncate()
+                                .child(path_text),
+                        )
+                        .child(diffstat_unit(fi, stat))
+                        .into_any()
+                })
+                .collect(),
         }
     };
 
@@ -224,7 +265,12 @@ pub fn render_inspector(
     let at_for_create = at.clone();
     let at_for_cherry = at.clone();
     let create_branch_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.dispatch_commit_action(CommitAction::CreateBranchHere, at_for_create.clone(), _window, cx);
+        this.dispatch_commit_action(
+            CommitAction::CreateBranchHere,
+            at_for_create.clone(),
+            _window,
+            cx,
+        );
         cx.notify();
     });
     let create_branch_button = action_button(
@@ -258,32 +304,55 @@ pub fn render_inspector(
         cx.notify();
     });
     let path_active = !tree_view;
-    let tree_active =  tree_view;
-    let path_bg = if path_active { theme().selected } else { theme().surface };
-    let tree_bg = if tree_active { theme().selected } else { theme().surface };
-    let path_col = if path_active { theme().text_main } else { theme().text_sub };
-    let tree_col = if tree_active { theme().text_main } else { theme().text_sub };
+    let tree_active = tree_view;
+    let path_bg = if path_active {
+        theme().selected
+    } else {
+        theme().surface
+    };
+    let tree_bg = if tree_active {
+        theme().selected
+    } else {
+        theme().surface
+    };
+    let path_col = if path_active {
+        theme().text_main
+    } else {
+        theme().text_sub
+    };
+    let tree_col = if tree_active {
+        theme().text_main
+    } else {
+        theme().text_sub
+    };
 
     let toggle_row = div()
         .id("files-toggle-row")
-        .flex().flex_row().items_center().gap_1()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
         .child(
             div()
                 .id("toggle-path")
-                .px_2().py_px()
+                .px_2()
+                .py_px()
                 .rounded_sm()
                 .bg(rgb(path_bg))
-                .text_xs().text_color(rgb(path_col))
+                .text_xs()
+                .text_color(rgb(path_col))
                 .on_click(toggle_click_a)
                 .child(SharedString::from("Path")),
         )
         .child(
             div()
                 .id("toggle-tree")
-                .px_2().py_px()
+                .px_2()
+                .py_px()
                 .rounded_sm()
                 .bg(rgb(tree_bg))
-                .text_xs().text_color(rgb(tree_col))
+                .text_xs()
+                .text_color(rgb(tree_col))
                 .on_click(toggle_click_b)
                 .child(SharedString::from("Tree")),
         );
@@ -298,28 +367,41 @@ pub fn render_inspector(
         let mut typechange = 0usize;
         for fs in files {
             match fs.change {
-                ChangeKind::Modified       => modified += 1,
-                ChangeKind::Added          => added += 1,
-                ChangeKind::Deleted        => deleted += 1,
+                ChangeKind::Modified => modified += 1,
+                ChangeKind::Added => added += 1,
+                ChangeKind::Deleted => deleted += 1,
                 ChangeKind::Renamed { .. } => renamed += 1,
-                ChangeKind::TypeChange     => typechange += 1,
+                ChangeKind::TypeChange => typechange += 1,
             }
         }
         let mut parts: Vec<String> = Vec::new();
-        if modified > 0   { parts.push(format!("{} modified", modified)); }
-        if added > 0      { parts.push(format!("{} added", added)); }
-        if deleted > 0    { parts.push(format!("{} deleted", deleted)); }
-        if renamed > 0    { parts.push(format!("{} renamed", renamed)); }
-        if typechange > 0 { parts.push(format!("{} type-change", typechange)); }
+        if modified > 0 {
+            parts.push(format!("{} modified", modified));
+        }
+        if added > 0 {
+            parts.push(format!("{} added", added));
+        }
+        if deleted > 0 {
+            parts.push(format!("{} deleted", deleted));
+        }
+        if renamed > 0 {
+            parts.push(format!("{} renamed", renamed));
+        }
+        if typechange > 0 {
+            parts.push(format!("{} type-change", typechange));
+        }
         let text = if parts.is_empty() {
             SharedString::from(Msg::NoFileChanges.t())
         } else {
             SharedString::from(parts.join("  \u{00B7}  "))
         };
         div()
-            .flex().flex_row().items_center()
+            .flex()
+            .flex_row()
+            .items_center()
             .mb_1()
-            .text_xs().text_color(rgb(theme().text_sub))
+            .text_xs()
+            .text_color(rgb(theme().text_sub))
             .truncate()
             .child(text)
     });
@@ -347,7 +429,10 @@ pub fn render_inspector(
                     .truncate()
                     .text_sm()
                     .text_color(rgb(theme().text_main))
-                    .child(SharedString::from(format!("Comparing: {}", view.title.as_ref()))),
+                    .child(SharedString::from(format!(
+                        "Comparing: {}",
+                        view.title.as_ref()
+                    ))),
             )
             .child(
                 div()
@@ -364,7 +449,11 @@ pub fn render_inspector(
 
     // ── Files header: Path⇄Tree toggle (compare banner above when comparing) ─
     let files_header = div()
-        .flex().flex_row().items_center().justify_end().mb_1()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_end()
+        .mb_1()
         .child(toggle_row);
 
     // ── Scrolling file list (own scroll, independent of message box) ──────
@@ -373,11 +462,14 @@ pub fn render_inspector(
         .flex_1()
         .min_h(px(0.))
         .overflow_y_scroll()
-        .flex().flex_col();
+        .flex()
+        .flex_col();
 
     if changed_files.is_none() {
         files_list = files_list.child(
-            div().text_sm().text_color(rgb(theme().text_muted))
+            div()
+                .text_sm()
+                .text_color(rgb(theme().text_muted))
                 .child(SharedString::from(Msg::DiffUnavailable.t())),
         );
     } else {
@@ -386,7 +478,9 @@ pub fn render_inspector(
         }
         if let Some(remaining) = truncated_count {
             files_list = files_list.child(
-                div().text_sm().text_color(rgb(theme().text_muted))
+                div()
+                    .text_sm()
+                    .text_color(rgb(theme().text_muted))
                     .child(SharedString::from(i18n::and_n_more(remaining))),
             );
         }
@@ -394,8 +488,12 @@ pub fn render_inspector(
 
     // ── Bottom box: compare banner / counts / toggle / files list ─────────
     let files_box = div()
-        .flex().flex_col().min_h(px(0.))
-        .flex_basis(relative((1.0 - inspector_split).clamp(INSPECTOR_SPLIT_MIN, INSPECTOR_SPLIT_MAX)))
+        .flex()
+        .flex_col()
+        .min_h(px(0.))
+        .flex_basis(relative(
+            (1.0 - inspector_split).clamp(INSPECTOR_SPLIT_MIN, INSPECTOR_SPLIT_MAX),
+        ))
         .flex_shrink()
         .px_3()
         .children(compare_banner)
@@ -405,7 +503,12 @@ pub fn render_inspector(
 
     // ── Title (commit summary, up to 2 wrapped lines + truncate) ──────────
     let title_text: SharedString = SharedString::from(
-        d.full_message.as_ref().lines().next().unwrap_or("").to_string()
+        d.full_message
+            .as_ref()
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_string(),
     );
     let title_el = div()
         .text_color(rgb(theme().text_main))
@@ -421,7 +524,9 @@ pub fn render_inspector(
     let initial = SharedString::from(avatar_initial(&author_name));
     let avatar_el = {
         let circle = div()
-            .w(theme::scaled_px(18.)).h(theme::scaled_px(18.)).flex_shrink_0()
+            .w(theme::scaled_px(18.))
+            .h(theme::scaled_px(18.))
+            .flex_shrink_0()
             .rounded_full()
             .overflow_hidden();
         match avatar_images.get(&author_email).cloned() {
@@ -431,9 +536,12 @@ pub fn render_inspector(
                     .rounded_full(),
             ),
             None => circle
-                .flex().items_center().justify_center()
+                .flex()
+                .items_center()
+                .justify_center()
                 .bg(avatar_hsla)
-                .text_xs().text_color(rgb(theme().bg_base))
+                .text_xs()
+                .text_color(rgb(theme().bg_base))
                 .child(initial),
         }
     };
@@ -449,37 +557,64 @@ pub fn render_inspector(
     // author), click = Copy SHA (dispatch).  This replaces the old always-on
     // Parents / full-SHA / Committer metadata column.
     let tooltip_text: SharedString = match &d.committer_line {
-        Some(c) => SharedString::from(format!("{}\nCommitter: {}", d.full_sha.as_ref(), c.as_ref())),
+        Some(c) => SharedString::from(format!(
+            "{}\nCommitter: {}",
+            d.full_sha.as_ref(),
+            c.as_ref()
+        )),
         None => d.full_sha.clone(),
     };
     let hash_chip = div()
         .id("inspector-hash-chip")
         .flex_shrink_0()
-        .px_1().rounded_sm()
+        .px_1()
+        .rounded_sm()
         .bg(rgb(theme().surface))
-        .text_xs().text_color(rgb(theme().text_sub))
-        .hover(|s| s.bg(rgb(theme().selected)).text_color(rgb(theme().text_main)).cursor_pointer())
+        .text_xs()
+        .text_color(rgb(theme().text_sub))
+        .hover(|s| {
+            s.bg(rgb(theme().selected))
+                .text_color(rgb(theme().text_main))
+                .cursor_pointer()
+        })
         .on_click(copy_sha_click1)
         .tooltip(move |_window, cx| {
-            cx.new(|_| HashTooltip { sha: tooltip_text.clone() }).into()
+            cx.new(|_| HashTooltip {
+                sha: tooltip_text.clone(),
+            })
+            .into()
         })
         .child(short_sha);
 
     let meta_row = div()
-        .flex().flex_row().items_center().gap_2().mb_2()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .mb_2()
         .child(avatar_el)
         .child(
-            div().flex_1().min_w(px(0.))
-                .flex().flex_row().items_center().gap_2()
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
                 .child(
-                    div().flex_shrink().min_w(px(0.))
-                        .text_sm().text_color(rgb(theme().text_main))
+                    div()
+                        .flex_shrink()
+                        .min_w(px(0.))
+                        .text_sm()
+                        .text_color(rgb(theme().text_main))
                         .truncate()
                         .child(author_name_short),
                 )
                 .child(
-                    div().flex_shrink_0()
-                        .text_xs().text_color(rgb(theme().text_muted))
+                    div()
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(rgb(theme().text_muted))
                         .child(d.committed_date),
                 ),
         )
@@ -512,7 +647,9 @@ pub fn render_inspector(
             let ca_hsla = avatar_color(&ca.email);
             let ca_avatar = {
                 let circle = div()
-                    .w(theme::scaled_px(16.)).h(theme::scaled_px(16.)).flex_shrink_0()
+                    .w(theme::scaled_px(16.))
+                    .h(theme::scaled_px(16.))
+                    .flex_shrink_0()
                     .rounded_full()
                     .overflow_hidden();
                 match avatar_images.get(&ca.email).cloned() {
@@ -522,12 +659,12 @@ pub fn render_inspector(
                             .rounded_full(),
                     ),
                     None => circle
-                        .flex().items_center().justify_center()
+                        .flex()
+                        .items_center()
+                        .justify_center()
                         .bg(ca_hsla)
                         .text_color(rgb(theme().bg_base))
-                        .child(
-                            div().text_size(px(9.)).child(ca_initial),
-                        ),
+                        .child(div().text_size(px(9.)).child(ca_initial)),
                 }
             };
 
@@ -540,11 +677,17 @@ pub fn render_inspector(
 
             let mut row = div()
                 .id(("inspector-coauthor", i))
-                .flex().flex_row().items_center().gap_2()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
                 .child(ca_avatar)
                 .child(
-                    div().flex_1().min_w(px(0.))
-                        .text_xs().text_color(rgb(theme().text_muted))
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .text_xs()
+                        .text_color(rgb(theme().text_muted))
                         .truncate()
                         .child(name_short),
                 );
@@ -561,13 +704,12 @@ pub fn render_inspector(
     let coauthors_block: Option<gpui::AnyElement> = if coauthor_rows.is_empty() {
         None
     } else {
-        let mut block = div()
-            .flex().flex_col().gap_px().mb_2()
-            .child(
-                div()
-                    .text_xs().text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::CoAuthoredBy.t())),
-            );
+        let mut block = div().flex().flex_col().gap_px().mb_2().child(
+            div()
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(Msg::CoAuthoredBy.t())),
+        );
         for r in coauthor_rows {
             block = block.child(r);
         }
@@ -576,15 +718,21 @@ pub fn render_inspector(
 
     // ── Ref badges row ────────────────────────────────────────────────────
     let badges_row = {
-        let mut row = div().flex().flex_row().items_center().flex_wrap().gap_1().mb_1();
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .flex_wrap()
+            .gap_1()
+            .mb_1();
         let mut by_prio = badges;
         by_prio.sort_by_key(|b| badge_priority(&b.kind));
         for badge in &by_prio {
             let color = match badge.kind {
                 BadgeKind::HeadBranch => theme().color_head,
-                BadgeKind::Branch     => theme().color_branch,
-                BadgeKind::Remote     => theme().color_remote,
-                BadgeKind::Tag        => theme().color_tag,
+                BadgeKind::Branch => theme().color_branch,
+                BadgeKind::Remote => theme().color_remote,
+                BadgeKind::Tag => theme().color_tag,
             };
             let label: SharedString = if badge.label.chars().count() > MAX_BADGE_CHARS {
                 let s: String = badge.label.chars().take(MAX_BADGE_CHARS - 1).collect();
@@ -595,12 +743,14 @@ pub fn render_inspector(
             let (badge_bg, badge_border, badge_text) = super::theme::badge_style(color);
             row = row.child(
                 div()
-                    .px_1().rounded_sm()
+                    .px_1()
+                    .rounded_sm()
                     .bg(gpui::rgba(badge_bg))
                     .border_1()
                     .border_color(gpui::rgba(badge_border))
                     .text_color(rgb(badge_text))
-                    .text_xs().flex_shrink_0()
+                    .text_xs()
+                    .flex_shrink_0()
                     .child(label),
             );
         }
@@ -609,7 +759,12 @@ pub fn render_inspector(
 
     // ── Compact Actions row (single row) ──────────────────────────────────
     let actions_row = div()
-        .flex().flex_row().items_center().gap_1().flex_wrap().mb_2()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .flex_wrap()
+        .mb_2()
         .child(create_branch_button)
         .child(cherry_pick_button);
 
@@ -620,8 +775,12 @@ pub fn render_inspector(
     }
     let message_box = div()
         .id("inspector-message-scroll")
-        .flex().flex_col().min_h(px(0.))
-        .flex_basis(relative(inspector_split.clamp(INSPECTOR_SPLIT_MIN, INSPECTOR_SPLIT_MAX)))
+        .flex()
+        .flex_col()
+        .min_h(px(0.))
+        .flex_basis(relative(
+            inspector_split.clamp(INSPECTOR_SPLIT_MIN, INSPECTOR_SPLIT_MAX),
+        ))
         .flex_shrink()
         .overflow_y_scroll()
         .px_3()
@@ -637,14 +796,20 @@ pub fn render_inspector(
         .hover(|s| s.bg(rgb(theme().color_branch)).cursor_row_resize())
         .cursor_row_resize()
         .on_drag(
-            DividerDrag { kind: DividerKind::InspectorSplit },
+            DividerDrag {
+                kind: DividerKind::InspectorSplit,
+            },
             |_drag, _pos, _window, cx| cx.new(|_| DividerGhost),
         );
 
     // ── Fixed header region (title, meta, badges, actions) — not scrolled ──
     let header_region = div()
-        .flex().flex_col().flex_shrink_0()
-        .px_3().pt_2().pb_1()
+        .flex()
+        .flex_col()
+        .flex_shrink_0()
+        .px_3()
+        .pt_2()
+        .pb_1()
         .child(title_el)
         .child(meta_row)
         .children(coauthors_block)
@@ -691,7 +856,8 @@ pub fn render_inspector(
         .w(theme::scaled_px(panel_width))
         .flex_shrink_0()
         .h_full()
-        .flex().flex_col()
+        .flex()
+        .flex_col()
         .bg(rgb(theme().panel))
         .child(header_region)
         .child(split_region)
@@ -724,11 +890,14 @@ struct HashTooltip {
 impl gpui::Render for HashTooltip {
     fn render(&mut self, _window: &mut gpui::Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let mut col = div()
-            .flex().flex_col()
-            .px_2().py_1()
+            .flex()
+            .flex_col()
+            .px_2()
+            .py_1()
             .rounded_sm()
             .bg(rgb(theme().surface))
-            .text_xs().text_color(rgb(theme().text_main));
+            .text_xs()
+            .text_color(rgb(theme().text_main));
         for line in self.sha.as_ref().split('\n') {
             col = col.child(div().child(SharedString::from(line.to_string())));
         }
@@ -775,11 +944,11 @@ fn stat_for_index<'a>(
 /// Change-kind badge char and colour.
 fn change_badge(change: &ChangeKind) -> (&'static str, u32) {
     match change {
-        ChangeKind::Added          => ("A", theme().change_added),
-        ChangeKind::Modified       => ("M", theme().change_modified),
-        ChangeKind::Deleted        => ("D", theme().change_deleted),
+        ChangeKind::Added => ("A", theme().change_added),
+        ChangeKind::Modified => ("M", theme().change_modified),
+        ChangeKind::Deleted => ("D", theme().change_deleted),
         ChangeKind::Renamed { .. } => ("R", theme().change_renamed),
-        ChangeKind::TypeChange     => ("T", theme().change_typechange),
+        ChangeKind::TypeChange => ("T", theme().change_typechange),
     }
 }
 
@@ -787,8 +956,8 @@ fn change_badge(change: &ChangeKind) -> (&'static str, u32) {
 fn badge_priority(kind: &BadgeKind) -> u8 {
     match kind {
         BadgeKind::HeadBranch => 0,
-        BadgeKind::Branch     => 1,
-        BadgeKind::Tag        => 2,
-        BadgeKind::Remote     => 3,
+        BadgeKind::Branch => 1,
+        BadgeKind::Tag => 2,
+        BadgeKind::Remote => 3,
     }
 }

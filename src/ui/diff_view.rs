@@ -191,7 +191,10 @@ pub(crate) fn lang_for_ext(ext: &str) -> Option<&'static str> {
 /// (plain-colour fallback).  Never panics.
 ///
 /// Returns the language name that was used (or "none").
-pub(crate) fn highlight_diff_rows(rows: &mut Vec<DiffRow>, file_path: &std::path::Path) -> &'static str {
+pub(crate) fn highlight_diff_rows(
+    rows: &mut Vec<DiffRow>,
+    file_path: &std::path::Path,
+) -> &'static str {
     use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};
     use gpui_component::Rope;
 
@@ -226,7 +229,7 @@ pub(crate) fn highlight_diff_rows(rows: &mut Vec<DiffRow>, file_path: &std::path
             // Skip the leading sigil ('+', '-', ' ') for parsing purposes.
             // The highlight byte ranges will be relative to `combined`, which
             // starts after the sigil.
-            let content = if t.len() > 0 { &t[1..] } else { "" };
+            let content = if !t.is_empty() { &t[1..] } else { "" };
             combined.push_str(content);
             combined.push('\n');
             line_offsets.push((i, start));
@@ -288,7 +291,10 @@ pub(crate) fn highlight_diff_rows(rows: &mut Vec<DiffRow>, file_path: &std::path
 
 /// Render a range of diff rows for the `"main-diff-list"` uniform_list.
 /// Includes line numbers: old/new each 5 chars wide, theme::theme().text_muted colour.
-pub(crate) fn render_main_diff_rows(rows: &[DiffRow], range: std::ops::Range<usize>) -> Vec<impl IntoElement> {
+pub(crate) fn render_main_diff_rows(
+    rows: &[DiffRow],
+    range: std::ops::Range<usize>,
+) -> Vec<impl IntoElement> {
     range
         .filter_map(|i| rows.get(i).map(|row| (i, row)))
         .map(|(i, row)| match row {

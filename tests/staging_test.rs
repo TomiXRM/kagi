@@ -31,12 +31,8 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi::git::{
-    stage_file, unstage_file,
-    unstaged_file_diff, staged_file_diff,
-    plan_commit, execute_commit,
-    commit_preview,
-    DiffLineKind,
-    working_tree_status,
+    commit_preview, execute_commit, plan_commit, stage_file, staged_file_diff, unstage_file,
+    unstaged_file_diff, working_tree_status, DiffLineKind,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -155,14 +151,21 @@ fn test_stage_new_untracked_file() {
 
     let status_before = working_tree_status(&repo).unwrap();
     assert!(
-        status_before.untracked.iter().any(|p| p.to_string_lossy().contains("new_file")),
+        status_before
+            .untracked
+            .iter()
+            .any(|p| p.to_string_lossy().contains("new_file")),
         "new_file.txt should be untracked before stage"
     );
 
     stage_file(&repo, Path::new("new_file.txt")).expect("stage_file failed");
 
     let status_after = working_tree_status(&repo).unwrap();
-    let staged_paths: Vec<_> = status_after.staged.iter().map(|f| f.path.to_string_lossy().to_string()).collect();
+    let staged_paths: Vec<_> = status_after
+        .staged
+        .iter()
+        .map(|f| f.path.to_string_lossy().to_string())
+        .collect();
     assert!(
         staged_paths.iter().any(|p| p.contains("new_file")),
         "new_file.txt should be staged after stage_file, got: {:?}",
@@ -170,7 +173,10 @@ fn test_stage_new_untracked_file() {
     );
     // Should no longer be untracked.
     assert!(
-        !status_after.untracked.iter().any(|p| p.to_string_lossy().contains("new_file")),
+        !status_after
+            .untracked
+            .iter()
+            .any(|p| p.to_string_lossy().contains("new_file")),
         "new_file.txt should not be untracked after stage_file"
     );
 }
@@ -199,7 +205,11 @@ fn test_stage_deleted_file() {
     stage_file(&repo, Path::new("README.md")).expect("stage_file for deletion failed");
 
     let status_after = working_tree_status(&repo).unwrap();
-    let staged_paths: Vec<_> = status_after.staged.iter().map(|f| f.path.to_string_lossy().to_string()).collect();
+    let staged_paths: Vec<_> = status_after
+        .staged
+        .iter()
+        .map(|f| f.path.to_string_lossy().to_string())
+        .collect();
     assert!(
         staged_paths.iter().any(|p| p.contains("README")),
         "README.md deletion should be staged, got: {:?}",
@@ -207,7 +217,10 @@ fn test_stage_deleted_file() {
     );
     // Should no longer be unstaged.
     assert!(
-        !status_after.unstaged.iter().any(|f| f.path.to_string_lossy().contains("README")),
+        !status_after
+            .unstaged
+            .iter()
+            .any(|f| f.path.to_string_lossy().contains("README")),
         "README.md should not appear as unstaged after staging the deletion"
     );
 }
@@ -284,7 +297,10 @@ fn test_unstage_new_file_becomes_untracked() {
 
     let status_staged = working_tree_status(&repo).unwrap();
     assert!(
-        status_staged.staged.iter().any(|f| f.path.to_string_lossy().contains("brand_new")),
+        status_staged
+            .staged
+            .iter()
+            .any(|f| f.path.to_string_lossy().contains("brand_new")),
         "brand_new.txt should be staged"
     );
 
@@ -294,12 +310,18 @@ fn test_unstage_new_file_becomes_untracked() {
     let status_after = working_tree_status(&repo).unwrap();
     // Not in staged.
     assert!(
-        !status_after.staged.iter().any(|f| f.path.to_string_lossy().contains("brand_new")),
+        !status_after
+            .staged
+            .iter()
+            .any(|f| f.path.to_string_lossy().contains("brand_new")),
         "brand_new.txt should not be staged after unstage"
     );
     // In untracked.
     assert!(
-        status_after.untracked.iter().any(|p| p.to_string_lossy().contains("brand_new")),
+        status_after
+            .untracked
+            .iter()
+            .any(|p| p.to_string_lossy().contains("brand_new")),
         "brand_new.txt should be untracked after unstage of new file, got: {:?}",
         status_after.untracked
     );
@@ -343,12 +365,16 @@ fn test_unborn_repo_stage_and_initial_commit() {
 
     let status = working_tree_status(&repo).unwrap();
     assert!(
-        status.staged.iter().any(|f| f.path.to_string_lossy().contains("first")),
+        status
+            .staged
+            .iter()
+            .any(|f| f.path.to_string_lossy().contains("first")),
         "first.txt should be staged on unborn repo"
     );
 
     // Execute initial commit (no parents).
-    let commit_id = execute_commit(&repo, "initial commit").expect("execute_commit on unborn failed");
+    let commit_id =
+        execute_commit(&repo, "initial commit").expect("execute_commit on unborn failed");
 
     // HEAD should now exist and be attached.
     let repo2 = Repository::open(&dir).expect("re-open");
@@ -361,7 +387,11 @@ fn test_unborn_repo_stage_and_initial_commit() {
 
     // Commit should have no parents.
     let commit = repo2.find_commit(head_oid).expect("find commit");
-    assert_eq!(commit.parent_count(), 0, "initial commit should have no parents");
+    assert_eq!(
+        commit.parent_count(),
+        0,
+        "initial commit should have no parents"
+    );
 
     // first.txt should exist in WT and tree.
     assert!(
@@ -382,8 +412,8 @@ fn test_unstaged_file_diff_returns_wt_change() {
     // Modify README.md in WT but don't stage.
     write_file(&dir, "README.md", "# modified\nnew line\n");
 
-    let diff = unstaged_file_diff(&repo, Path::new("README.md"))
-        .expect("unstaged_file_diff failed");
+    let diff =
+        unstaged_file_diff(&repo, Path::new("README.md")).expect("unstaged_file_diff failed");
 
     assert!(
         !diff.hunks.is_empty(),
@@ -392,9 +422,14 @@ fn test_unstaged_file_diff_returns_wt_change() {
 
     // Should contain Added lines (new content).
     let has_added = diff.hunks.iter().any(|h| {
-        h.lines.iter().any(|l| matches!(l.kind, DiffLineKind::Added))
+        h.lines
+            .iter()
+            .any(|l| matches!(l.kind, DiffLineKind::Added))
     });
-    assert!(has_added, "unstaged diff should have Added lines for WT modification");
+    assert!(
+        has_added,
+        "unstaged diff should have Added lines for WT modification"
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -410,8 +445,7 @@ fn test_staged_file_diff_returns_index_change() {
     write_file(&dir, "README.md", "# staged modification\nextra line\n");
     stage_file(&repo, Path::new("README.md")).expect("stage_file failed");
 
-    let diff = staged_file_diff(&repo, Path::new("README.md"))
-        .expect("staged_file_diff failed");
+    let diff = staged_file_diff(&repo, Path::new("README.md")).expect("staged_file_diff failed");
 
     assert!(
         !diff.hunks.is_empty(),
@@ -420,7 +454,9 @@ fn test_staged_file_diff_returns_index_change() {
 
     // Should contain both Added and Removed lines (modification).
     let has_added = diff.hunks.iter().any(|h| {
-        h.lines.iter().any(|l| matches!(l.kind, DiffLineKind::Added))
+        h.lines
+            .iter()
+            .any(|l| matches!(l.kind, DiffLineKind::Added))
     });
     assert!(has_added, "staged diff should have Added lines");
 }
@@ -439,15 +475,19 @@ fn test_partial_stage_diffs_are_independent() {
     stage_file(&repo, Path::new("README.md")).expect("stage_file (partial) failed");
 
     // Step 2: Further modify README.md in WT (but don't stage this change).
-    write_file(&dir, "README.md", "# staged content\nFurther WT modification\n");
+    write_file(
+        &dir,
+        "README.md",
+        "# staged content\nFurther WT modification\n",
+    );
 
     // Now index = "# staged content\n"
     //     WT    = "# staged content\nFurther WT modification\n"
 
-    let staged_diff = staged_file_diff(&repo, Path::new("README.md"))
-        .expect("staged_file_diff failed");
-    let unstaged_diff = unstaged_file_diff(&repo, Path::new("README.md"))
-        .expect("unstaged_file_diff failed");
+    let staged_diff =
+        staged_file_diff(&repo, Path::new("README.md")).expect("staged_file_diff failed");
+    let unstaged_diff =
+        unstaged_file_diff(&repo, Path::new("README.md")).expect("unstaged_file_diff failed");
 
     // Staged diff: HEAD (original) → index (staged version).
     // Must contain hunk(s) showing the staged change.
@@ -617,7 +657,12 @@ fn test_execute_commit_creates_commit_and_clears_staged() {
     let (dir, repo) = build_clean_repo(&tmp);
 
     // Capture HEAD before.
-    let head_before = repo.head().expect("head").target().expect("head target").to_string();
+    let head_before = repo
+        .head()
+        .expect("head")
+        .target()
+        .expect("head target")
+        .to_string();
 
     // Stage a change.
     let staged_content = "committed content\n";
@@ -627,20 +672,33 @@ fn test_execute_commit_creates_commit_and_clears_staged() {
     // Also create an unstaged / untracked file.
     write_file(&dir, "not_staged.txt", "not staged\n");
     let unstaged_content = "unstaged modification\n";
-    write_file(&dir, "README.md", &format!("{}{}", staged_content, unstaged_content));
+    write_file(
+        &dir,
+        "README.md",
+        &format!("{}{}", staged_content, unstaged_content),
+    );
     // Stage original content, then further modify WT so unstaged change remains.
     // Reset: re-stage only the first version.
     write_file(&dir, "README.md", staged_content);
     stage_file(&repo, Path::new("README.md")).expect("re-stage failed");
     // Add unstaged change after staging.
-    write_file(&dir, "README.md", &format!("{}{}", staged_content, unstaged_content));
+    write_file(
+        &dir,
+        "README.md",
+        &format!("{}{}", staged_content, unstaged_content),
+    );
 
     // Execute commit.
     let new_id = execute_commit(&repo, "test commit message").expect("execute_commit failed");
 
     // HEAD must have advanced.
     let repo2 = Repository::open(&dir).expect("re-open");
-    let head_after = repo2.head().expect("head").target().expect("head target").to_string();
+    let head_after = repo2
+        .head()
+        .expect("head")
+        .target()
+        .expect("head target")
+        .to_string();
     assert_ne!(head_before, head_after, "HEAD must advance after commit");
     assert_eq!(head_after, new_id.0, "HEAD must point to the new commit");
 
@@ -648,7 +706,11 @@ fn test_execute_commit_creates_commit_and_clears_staged() {
     let new_commit = repo2
         .find_commit(git2::Oid::from_str(&new_id.0).unwrap())
         .expect("find new commit");
-    assert_eq!(new_commit.parent_count(), 1, "new commit should have one parent");
+    assert_eq!(
+        new_commit.parent_count(),
+        1,
+        "new commit should have one parent"
+    );
     assert_eq!(
         new_commit.parent(0).unwrap().id().to_string(),
         head_before,
@@ -685,7 +747,9 @@ fn test_stage_files_batch() {
     for i in 1..=5 {
         write_file(&dir, &format!("f{}.txt", i), "x\n");
     }
-    let paths: Vec<std::path::PathBuf> = (1..=5).map(|i| std::path::PathBuf::from(format!("f{}.txt", i))).collect();
+    let paths: Vec<std::path::PathBuf> = (1..=5)
+        .map(|i| std::path::PathBuf::from(format!("f{}.txt", i)))
+        .collect();
     let n = kagi::git::stage_files(&repo, &paths).unwrap();
     assert_eq!(n, 5);
     let st = working_tree_status(&repo).unwrap();
@@ -701,7 +765,9 @@ fn test_unstage_files_batch() {
         write_file(&dir, &format!("g{}.txt", i), "y\n");
         git(&dir, &["add", &format!("g{}.txt", i)]);
     }
-    let paths: Vec<std::path::PathBuf> = (1..=4).map(|i| std::path::PathBuf::from(format!("g{}.txt", i))).collect();
+    let paths: Vec<std::path::PathBuf> = (1..=4)
+        .map(|i| std::path::PathBuf::from(format!("g{}.txt", i)))
+        .collect();
     let n = kagi::git::unstage_files(&repo, &paths).unwrap();
     assert_eq!(n, 4);
     let st = working_tree_status(&repo).unwrap();
@@ -746,7 +812,11 @@ fn test_commit_preview_amd_counts_attached() {
     );
     // Summary string reflects all three buckets.
     let s = pv.summary();
-    assert!(s.contains("+1") && s.contains("~1") && s.contains("-1"), "summary was {:?}", s);
+    assert!(
+        s.contains("+1") && s.contains("~1") && s.contains("-1"),
+        "summary was {:?}",
+        s
+    );
 }
 
 /// Unborn HEAD: no commits yet — branch field marked "(unborn)", no panic.
@@ -827,11 +897,9 @@ fn test_commit_preview_author_unknown_fallback() {
             let _ = git2::opts::set_search_path(level, &cfg_dir);
         }
         // git init via libgit2 so no `git` CLI global config bleeds in.
-        let repo = Repository::init_opts(
-            d,
-            git2::RepositoryInitOptions::new().initial_head("main"),
-        )
-        .unwrap();
+        let repo =
+            Repository::init_opts(d, git2::RepositoryInitOptions::new().initial_head("main"))
+                .unwrap();
         let pv = commit_preview(&repo).unwrap();
         for level in [
             git2::ConfigLevel::System,

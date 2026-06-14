@@ -14,9 +14,7 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi::git::{
-    execute_stash_pop, plan_stash_pop,
-    execute_stash_push, execute_stash_apply,
-    snapshot,
+    execute_stash_apply, execute_stash_pop, execute_stash_push, plan_stash_pop, snapshot,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -35,7 +33,12 @@ fn git(dir: &Path, args: &[&str]) {
         .env("HOME", dir)
         .status()
         .expect("git command failed to start");
-    assert!(status.success(), "git {} exited with {:?}", args.join(" "), status.code());
+    assert!(
+        status.success(),
+        "git {} exited with {:?}",
+        args.join(" "),
+        status.code()
+    );
 }
 
 fn write_file(dir: &Path, name: &str, content: &str) {
@@ -67,8 +70,7 @@ fn test_stash_pop_normal_restores_and_removes_entry() {
 
     // Dirty then push to stash.
     write_file(&repo_dir, "README.md", "stashed content\n");
-    execute_stash_push(&mut repo, Some("wip"), true)
-        .expect("push failed");
+    execute_stash_push(&mut repo, Some("wip"), true).expect("push failed");
 
     // Verify: clean, stash count = 1.
     {
@@ -107,7 +109,10 @@ fn test_stash_pop_normal_restores_and_removes_entry() {
 
     // File content must match the stashed content.
     let content = std::fs::read_to_string(repo_dir.join("README.md")).expect("read README.md");
-    assert_eq!(content, "stashed content\n", "file content must match stashed content after pop");
+    assert_eq!(
+        content, "stashed content\n",
+        "file content must match stashed content after pop"
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -148,16 +153,20 @@ fn test_stash_pop_conflict_prediction_blocker_stash_preserved() {
         !plan.blockers.is_empty(),
         "conflict prediction should produce blockers, got none"
     );
-    let has_conflict_blocker = plan.blockers.iter().any(|b| {
-        b.contains("conflict") || b.contains("Conflict")
-    });
+    let has_conflict_blocker = plan
+        .blockers
+        .iter()
+        .any(|b| b.contains("conflict") || b.contains("Conflict"));
     assert!(
         has_conflict_blocker,
         "blocker should mention conflict, got: {:?}",
         plan.blockers
     );
     // Blocker should also recommend apply as alternative.
-    let has_apply_suggestion = plan.blockers.iter().any(|b| b.contains("Apply") || b.contains("apply"));
+    let has_apply_suggestion = plan
+        .blockers
+        .iter()
+        .any(|b| b.contains("Apply") || b.contains("apply"));
     assert!(
         has_apply_suggestion,
         "blocker should recommend 'apply' as alternative, got: {:?}",
@@ -166,7 +175,10 @@ fn test_stash_pop_conflict_prediction_blocker_stash_preserved() {
 
     // WT must be intact (plan must not touch working tree).
     let wt_after = std::fs::read_to_string(d.join("file.txt")).expect("read after");
-    assert_eq!(wt_before, wt_after, "plan_stash_pop must not modify working tree");
+    assert_eq!(
+        wt_before, wt_after,
+        "plan_stash_pop must not modify working tree"
+    );
 
     // Stash must still be present.
     let snap = snapshot(&mut repo, 100).expect("snapshot after blocked plan");
@@ -199,9 +211,10 @@ fn test_stash_pop_blocker_dirty_working_tree() {
         !plan.blockers.is_empty(),
         "dirty working tree should produce a blocker for stash pop"
     );
-    let has_dirty_blocker = plan.blockers.iter().any(|b| {
-        b.contains("dirty") || b.contains("modified") || b.contains("staged")
-    });
+    let has_dirty_blocker = plan
+        .blockers
+        .iter()
+        .any(|b| b.contains("dirty") || b.contains("modified") || b.contains("staged"));
     assert!(
         has_dirty_blocker,
         "blocker should mention dirty tree, got: {:?}",
@@ -225,9 +238,10 @@ fn test_stash_pop_blocker_index_out_of_range() {
         !plan.blockers.is_empty(),
         "index out of range should produce a blocker"
     );
-    let has_range_blocker = plan.blockers.iter().any(|b| {
-        b.contains("out of range") || b.contains("range")
-    });
+    let has_range_blocker = plan
+        .blockers
+        .iter()
+        .any(|b| b.contains("out of range") || b.contains("range"));
     assert!(
         has_range_blocker,
         "blocker should mention index out of range, got: {:?}",
@@ -330,7 +344,8 @@ fn test_stash_push_include_untracked_false_untracked_remains() {
     execute_stash_apply(&mut repo, 0).expect("apply failed");
 
     // After apply: tracked changes restored, untracked file still present.
-    let readme_after_apply = std::fs::read_to_string(repo_dir.join("README.md")).expect("read README.md after apply");
+    let readme_after_apply =
+        std::fs::read_to_string(repo_dir.join("README.md")).expect("read README.md after apply");
     assert_eq!(
         readme_after_apply, "modified tracked\n",
         "tracked change must be restored after apply"
@@ -397,7 +412,11 @@ fn test_stash_pop_removes_only_target_index() {
 
     // Pop index 0 (most recent stash = "second").
     let plan = plan_stash_pop(&mut repo, 0).expect("plan failed");
-    assert!(plan.blockers.is_empty(), "pop should have no blockers, got: {:?}", plan.blockers);
+    assert!(
+        plan.blockers.is_empty(),
+        "pop should have no blockers, got: {:?}",
+        plan.blockers
+    );
 
     execute_stash_pop(&mut repo, 0).expect("pop failed");
 

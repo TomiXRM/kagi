@@ -120,7 +120,12 @@ fn setup_local_with_author(author_name: &str, author_email: &str) -> LocalRepo {
     // Second commit — the amend target — authored by a distinct identity.
     write_file(&path, "feature.txt", "feature v1\n");
     git(&path, &["add", "-A"]);
-    git_as(&path, author_name, author_email, &["commit", "-qm", "add feature"]);
+    git_as(
+        &path,
+        author_name,
+        author_email,
+        &["commit", "-qm", "add feature"],
+    );
 
     LocalRepo { _tmp: tmp, path }
 }
@@ -143,7 +148,14 @@ fn setup_with_remote() -> RepoWithRemote {
 
     git(
         tmp.path(),
-        &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()],
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            remote.to_str().unwrap(),
+        ],
     );
 
     std::fs::create_dir(&local).unwrap();
@@ -151,7 +163,10 @@ fn setup_with_remote() -> RepoWithRemote {
     git(&local, &["config", "user.name", "Test"]);
     git(&local, &["config", "user.email", "test@example.com"]);
     git(&local, &["config", "commit.gpgsign", "false"]);
-    git(&local, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    git(
+        &local,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
 
     write_file(&local, "base.txt", "base\n");
     git(&local, &["add", "-A"]);
@@ -195,7 +210,11 @@ fn test_amend_message_only() {
 
     assert_eq!(outcome.old.0, old_sha, "outcome.old must be old HEAD");
     assert_ne!(outcome.new.0, old_sha, "amend must produce a NEW SHA");
-    assert_eq!(head_sha(&r.path), outcome.new.0, "branch ref must point to new commit");
+    assert_eq!(
+        head_sha(&r.path),
+        outcome.new.0,
+        "branch ref must point to new commit"
+    );
 
     // Message-only → tree must be identical to the old HEAD tree.
     assert_eq!(
@@ -203,7 +222,11 @@ fn test_amend_message_only() {
         old_tree,
         "message-only amend must keep the old tree"
     );
-    assert_eq!(head_message(&r.path), "reworded message", "message replaced");
+    assert_eq!(
+        head_message(&r.path),
+        "reworded message",
+        "message replaced"
+    );
 
     // Author preserved.
     assert_eq!(head_author(&r.path), "Alice <alice@example.com>");
@@ -234,11 +257,19 @@ fn test_amend_staged_folds_changes() {
     assert_eq!(head_sha(&r.path), outcome.new.0);
 
     // Tree must differ (staged change folded in).
-    assert_ne!(head_tree_sha(&r.path), old_tree, "staged amend must change the tree");
+    assert_ne!(
+        head_tree_sha(&r.path),
+        old_tree,
+        "staged amend must change the tree"
+    );
     // The amended content is now in the commit's tree.
     assert_eq!(read_file(&r.path, "feature.txt"), "feature v2 amended\n");
     // Message is kept.
-    assert_eq!(head_message(&r.path), old_message, "staged amend keeps message");
+    assert_eq!(
+        head_message(&r.path),
+        old_message,
+        "staged amend keeps message"
+    );
 
     // Working tree must be clean after amend (staged change is committed,
     // and execute_amend does not leave the index out of sync).
@@ -275,10 +306,22 @@ fn test_amend_both() {
 
     let outcome = execute_amend(&repo, AmendMode::Both, Some("both: fold + reword")).unwrap();
     assert_ne!(outcome.new.0, old_sha);
-    assert_ne!(head_tree_sha(&r.path), old_tree, "both must change the tree");
+    assert_ne!(
+        head_tree_sha(&r.path),
+        old_tree,
+        "both must change the tree"
+    );
     assert_eq!(read_file(&r.path, "feature.txt"), "feature v3 both\n");
-    assert_eq!(head_message(&r.path), "both: fold + reword", "message replaced");
-    assert_eq!(head_author(&r.path), "Alice <alice@example.com>", "author preserved");
+    assert_eq!(
+        head_message(&r.path),
+        "both: fold + reword",
+        "message replaced"
+    );
+    assert_eq!(
+        head_author(&r.path),
+        "Alice <alice@example.com>",
+        "author preserved"
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -302,7 +345,10 @@ fn test_amend_author_preserved() {
         .output()
         .unwrap();
     let committer = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    assert_eq!(committer, "Committer <committer@example.com>", "committer updated");
+    assert_eq!(
+        committer, "Committer <committer@example.com>",
+        "committer updated"
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -452,7 +498,9 @@ fn test_plan_amend_staged_nothing_blocker() {
     let repo = Repository::open(&r.path).unwrap();
     let plan = plan_amend(&repo, AmendMode::Staged, None).unwrap();
     assert!(
-        plan.blockers.iter().any(|b| b.to_lowercase().contains("staged") || b.contains("Nothing")),
+        plan.blockers
+            .iter()
+            .any(|b| b.to_lowercase().contains("staged") || b.contains("Nothing")),
         "nothing-staged must block staged amend, got: {:?}",
         plan.blockers
     );
@@ -477,7 +525,11 @@ fn test_amend_round_trip() {
     // Restore the original commit via reflog SHA.
     git(&r.path, &["reset", "--hard", &outcome.old.0]);
 
-    assert_eq!(head_sha(&r.path), old_sha, "reset --hard <old> restores original SHA");
+    assert_eq!(
+        head_sha(&r.path),
+        old_sha,
+        "reset --hard <old> restores original SHA"
+    );
     assert_eq!(head_tree_sha(&r.path), old_tree);
     assert_eq!(head_message(&r.path), old_message);
 }

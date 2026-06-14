@@ -1761,7 +1761,7 @@ pub(crate) fn render_plan_modal_card(
                 .text_color(rgb(current_theme().bg_base))
                 .on_click(confirm_handler)
                 .hover(|style| style.opacity(0.85))
-                .child(SharedString::from(confirm_label)),
+                .child(confirm_label),
         );
     }
 

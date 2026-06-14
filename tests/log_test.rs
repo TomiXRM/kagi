@@ -14,7 +14,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{CommitId, commit_log};
+use kagi::git::{commit_log, CommitId};
 
 // ────────────────────────────────────────────────────────────
 // Helpers (mirrors status_test.rs by design; shared helper
@@ -133,7 +133,10 @@ fn build_branching_repo(tmp: &TempDir) -> Repository {
     git(dir, &["checkout", "main"]);
 
     // E: merge commit
-    git(dir, &["merge", "--no-ff", "feature/x", "-m", "merge feature/x"]);
+    git(
+        dir,
+        &["merge", "--no-ff", "feature/x", "-m", "merge feature/x"],
+    );
 
     Repository::open(dir).expect("failed to open repo")
 }
@@ -249,16 +252,8 @@ fn test_merge_commit_parents() {
     );
 
     // Verify parents[0] against `git log --pretty=%P -1 <sha>`
-    let git_parents_line = git_output(
-        dir,
-        &[
-            "log",
-            "--pretty=%P",
-            "-1",
-            merge.id.0.as_str(),
-        ],
-    );
-    let git_parents: Vec<&str> = git_parents_line.trim().split_whitespace().collect();
+    let git_parents_line = git_output(dir, &["log", "--pretty=%P", "-1", merge.id.0.as_str()]);
+    let git_parents: Vec<&str> = git_parents_line.split_whitespace().collect();
     assert_eq!(
         git_parents.len(),
         2,
@@ -329,7 +324,7 @@ fn test_summary_and_multiline_message() {
 
     // Use -m twice to produce a multi-paragraph message.
     let status = Command::new("git")
-        .args(&[
+        .args([
             "commit",
             "-m",
             "short summary line",

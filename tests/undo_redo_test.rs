@@ -19,9 +19,7 @@ use std::process::Command;
 
 use tempfile::TempDir;
 
-use kagi::git::{
-    Backend, CommitId, HistoryEntry, OperationHistory, OperationKind,
-};
+use kagi::git::{Backend, CommitId, HistoryEntry, OperationHistory, OperationKind};
 
 // ────────────────────────────────────────────────────────────
 // Helpers
@@ -144,20 +142,42 @@ fn commit_undo_then_redo() {
 
     // ── UNDO: HEAD moves back to the parent ──────────────────
     let plan = backend.plan_undo(&e).expect("plan_undo");
-    assert!(plan.blockers.is_empty(), "undo blockers: {:?}", plan.blockers);
+    assert!(
+        plan.blockers.is_empty(),
+        "undo blockers: {:?}",
+        plan.blockers
+    );
     backend.execute_undo(&e).expect("execute_undo");
-    assert_eq!(head_sha(dir), before, "HEAD must be at the parent after undo");
+    assert_eq!(
+        head_sha(dir),
+        before,
+        "HEAD must be at the parent after undo"
+    );
 
     // The undone commit is NOT destroyed — still in the ODB and the reflog.
-    assert!(object_exists(dir, &after), "undone commit must remain in ODB");
-    assert!(in_reflog(dir, &after), "undone commit must remain in reflog");
+    assert!(
+        object_exists(dir, &after),
+        "undone commit must remain in ODB"
+    );
+    assert!(
+        in_reflog(dir, &after),
+        "undone commit must remain in reflog"
+    );
 
     // ── REDO: HEAD moves forward to the commit again ─────────
     let backend = Backend::open(dir).expect("reopen");
     let plan = backend.plan_redo(&e).expect("plan_redo");
-    assert!(plan.blockers.is_empty(), "redo blockers: {:?}", plan.blockers);
+    assert!(
+        plan.blockers.is_empty(),
+        "redo blockers: {:?}",
+        plan.blockers
+    );
     backend.execute_redo(&e).expect("execute_redo");
-    assert_eq!(head_sha(dir), after, "HEAD must be back at the commit after redo");
+    assert_eq!(
+        head_sha(dir),
+        after,
+        "HEAD must be back at the commit after redo"
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -184,7 +204,10 @@ fn merge_undo_then_redo() {
     let before = head_sha(dir); // pre-merge HEAD
 
     // Non-fast-forward merge → a merge commit.
-    git(dir, &["merge", "--no-ff", "-q", "-m", "merge feature", "feature"]);
+    git(
+        dir,
+        &["merge", "--no-ff", "-q", "-m", "merge feature", "feature"],
+    );
     let after = head_sha(dir);
     assert_ne!(before, after, "merge must move HEAD");
     // Sanity: the merge commit has two parents.
@@ -204,14 +227,21 @@ fn merge_undo_then_redo() {
     assert_eq!(head_sha(dir), before, "HEAD must be pre-merge after undo");
 
     // The merge commit must survive (not destroyed).
-    assert!(object_exists(dir, &after), "merge commit must remain in ODB");
+    assert!(
+        object_exists(dir, &after),
+        "merge commit must remain in ODB"
+    );
     assert!(in_reflog(dir, &after), "merge commit must remain in reflog");
 
     // ── REDO: re-apply the merge ─────────────────────────────
     let backend = Backend::open(dir).expect("reopen");
     assert!(backend.plan_redo(&e).expect("plan").blockers.is_empty());
     backend.execute_redo(&e).expect("execute_redo");
-    assert_eq!(head_sha(dir), after, "HEAD must be the merge commit after redo");
+    assert_eq!(
+        head_sha(dir),
+        after,
+        "HEAD must be the merge commit after redo"
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -315,7 +345,10 @@ fn undo_redo_pipeline_via_domain_history() {
 
     // Undo: peek, run the backend move, then advance the cursor.
     let e = history.peek_undo().cloned().expect("peek_undo");
-    Backend::open(dir).unwrap().execute_undo(&e).expect("execute_undo");
+    Backend::open(dir)
+        .unwrap()
+        .execute_undo(&e)
+        .expect("execute_undo");
     history.undo();
     assert_eq!(head_sha(dir), before);
     assert!(!history.can_undo());
@@ -323,7 +356,10 @@ fn undo_redo_pipeline_via_domain_history() {
 
     // Redo.
     let e = history.peek_redo().cloned().expect("peek_redo");
-    Backend::open(dir).unwrap().execute_redo(&e).expect("execute_redo");
+    Backend::open(dir)
+        .unwrap()
+        .execute_redo(&e)
+        .expect("execute_redo");
     history.redo();
     assert_eq!(head_sha(dir), after);
     assert!(history.can_undo());

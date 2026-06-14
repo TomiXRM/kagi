@@ -270,13 +270,13 @@ impl ConflictHunk {
         if let Some(selection) = &self.line_select {
             return selection.side_state(side);
         }
-        let all = match (&self.choice, side) {
+        let all = matches!(
+            (&self.choice, side),
             (HunkChoice::AcceptCurrent, SelectionSide::Current)
-            | (HunkChoice::AcceptIncoming, SelectionSide::Incoming)
-            | (HunkChoice::BothCurrentFirst, _)
-            | (HunkChoice::BothIncomingFirst, _) => true,
-            _ => false,
-        };
+                | (HunkChoice::AcceptIncoming, SelectionSide::Incoming)
+                | (HunkChoice::BothCurrentFirst, _)
+                | (HunkChoice::BothIncomingFirst, _)
+        );
         if all {
             TriState::All
         } else {

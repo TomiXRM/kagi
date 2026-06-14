@@ -20,7 +20,10 @@
 //! [`Tooltip`] (which requires the element carry an `.id`) shows
 //! `"N additions, M deletions"`.
 
-use gpui::{rgb, IntoElement, SharedString, Styled, ParentElement, InteractiveElement, StatefulInteractiveElement};
+use gpui::{
+    rgb, InteractiveElement, IntoElement, ParentElement, SharedString, StatefulInteractiveElement,
+    Styled,
+};
 use gpui_component::tooltip::Tooltip;
 
 use kagi::git::{bar_segments, FileDiffStat};

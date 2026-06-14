@@ -28,7 +28,10 @@ fn drag_merge_gate(source: &str, branches: &[(String, bool)], busy: bool) -> Res
         return Err("another operation is in progress".to_string());
     }
     match branches.iter().find(|(n, _)| n == source) {
-        Some((_, true)) => Err(format!("Branch '{}' is already the current branch.", source)),
+        Some((_, true)) => Err(format!(
+            "Branch '{}' is already the current branch.",
+            source
+        )),
         Some((_, false)) => Ok(()),
         None => Err(format!("Branch '{}' is not a local branch.", source)),
     }
@@ -76,10 +79,7 @@ fn init_repo() -> TempDir {
 /// The branch list the sidebar/action layer would hold for a repo whose HEAD is
 /// `main` and which also has a `feature` branch.
 fn branches_main_feature() -> Vec<(String, bool)> {
-    vec![
-        ("main".to_string(), true),
-        ("feature".to_string(), false),
-    ]
+    vec![("main".to_string(), true), ("feature".to_string(), false)]
 }
 
 #[test]
@@ -127,7 +127,11 @@ fn drag_merge_fast_forward_produces_ff_plan() {
     // Drag reuses the SAME planner the menu uses; nothing is executed.
     let backend = Backend::open(dir).expect("open backend");
     let (plan, kind) = backend.plan_merge_branch("feature").expect("plan merge");
-    assert!(plan.blockers.is_empty(), "unexpected blockers: {:?}", plan.blockers);
+    assert!(
+        plan.blockers.is_empty(),
+        "unexpected blockers: {:?}",
+        plan.blockers
+    );
     assert_eq!(kind, MergeKind::FastForward);
     assert_eq!(plan.title, "Merge feature into main");
 }
@@ -151,7 +155,11 @@ fn drag_merge_diverged_produces_merge_commit_plan() {
 
     let backend = Backend::open(dir).expect("open backend");
     let (plan, kind) = backend.plan_merge_branch("feature").expect("plan merge");
-    assert!(plan.blockers.is_empty(), "unexpected blockers: {:?}", plan.blockers);
+    assert!(
+        plan.blockers.is_empty(),
+        "unexpected blockers: {:?}",
+        plan.blockers
+    );
     assert_eq!(kind, MergeKind::MergeCommit);
     assert_eq!(plan.title, "Merge feature into main");
 }
@@ -178,7 +186,9 @@ fn drag_merge_dirty_working_tree_warns_in_plan() {
     // ADR-0079 / plan_merge_branch behaviour: a dirty WT is surfaced as a
     // warning (clean-rollback advice), not a hard blocker.
     assert!(
-        plan.warnings.iter().any(|w| w.to_lowercase().contains("working tree")),
+        plan.warnings
+            .iter()
+            .any(|w| w.to_lowercase().contains("working tree")),
         "expected a dirty-working-tree warning, got warnings: {:?}",
         plan.warnings
     );

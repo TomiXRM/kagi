@@ -546,9 +546,7 @@ impl TerminalRenderer {
                 }
                 // Flush a span that runs to the end of the line.
                 if let Some(start) = span_start {
-                    self.paint_selection_span(
-                        origin, start, num_cols, line_idx, sel_color, window,
-                    );
+                    self.paint_selection_span(origin, start, num_cols, line_idx, sel_color, window);
                 }
             }
         }

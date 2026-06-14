@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use gpui::SharedString;
 
 use kagi::git::{Commit, CommitId, Head, RepoSnapshot};
-use kagi::graph::{GraphEdge, layout};
+use kagi::graph::{layout, GraphEdge};
 
 // ──────────────────────────────────────────────────────────────
 // Helpers
@@ -88,28 +88,31 @@ pub fn build_badge_map(snap: &RepoSnapshot) -> HashMap<CommitId, Vec<RefBadge>> 
     // Detached HEAD: add a standalone HEAD badge.
     if let Head::Detached { target } = &snap.head {
         let commit_id = CommitId(target.clone());
-        map.entry(commit_id)
-            .or_default()
-            .insert(0, RefBadge {
+        map.entry(commit_id).or_default().insert(
+            0,
+            RefBadge {
                 kind: BadgeKind::HeadBranch,
                 label: SharedString::from("HEAD"),
-            });
+            },
+        );
     }
 
     // Remote-tracking branches.
     for rb in &snap.remote_branches {
         let label = SharedString::from(format!("{}/{}", rb.remote, rb.name));
-        map.entry(rb.target.clone())
-            .or_default()
-            .push(RefBadge { kind: BadgeKind::Remote, label });
+        map.entry(rb.target.clone()).or_default().push(RefBadge {
+            kind: BadgeKind::Remote,
+            label,
+        });
     }
 
     // Tags.
     for t in &snap.tags {
         let label = SharedString::from(t.name.clone());
-        map.entry(t.target.clone())
-            .or_default()
-            .push(RefBadge { kind: BadgeKind::Tag, label });
+        map.entry(t.target.clone()).or_default().push(RefBadge {
+            kind: BadgeKind::Tag,
+            label,
+        });
     }
 
     map
@@ -178,11 +181,12 @@ pub fn build_commit_rows(snap: &RepoSnapshot) -> Vec<CommitRow> {
             // W2-GRAPH: determine HEAD / merge flags.
             let is_head = head_sha.map(|sha| c.id.0 == sha).unwrap_or(false);
             let is_merge = c.parents.len() >= 2;
-            commit_to_row(c, &badge_map, now_secs, lane, edges, lane_count, is_head, is_merge)
+            commit_to_row(
+                c, &badge_map, now_secs, lane, edges, lane_count, is_head, is_merge,
+            )
         })
         .collect()
 }
-
 
 fn commit_to_row(
     c: &Commit,
@@ -211,7 +215,19 @@ fn commit_to_row(
     let date = SharedString::from(relative_time(c.author.time, now_secs));
     let badges = badge_map.get(&c.id).cloned().unwrap_or_default();
 
-    CommitRow { short_id, summary, author, author_email, date, badges, lane, edges, lane_count, is_head, is_merge }
+    CommitRow {
+        short_id,
+        summary,
+        author,
+        author_email,
+        date,
+        badges,
+        lane,
+        edges,
+        lane_count,
+        is_head,
+        is_merge,
+    }
 }
 
 // ──────────────────────────────────────────────────────────────

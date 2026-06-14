@@ -149,11 +149,7 @@ fn test_unstaged_modified() {
         unstaged_paths
     );
 
-    let unstaged_file = status
-        .unstaged
-        .iter()
-        .find(|f| f.path == expected)
-        .unwrap();
+    let unstaged_file = status.unstaged.iter().find(|f| f.path == expected).unwrap();
     assert_eq!(
         unstaged_file.change,
         ChangeKind::Modified,

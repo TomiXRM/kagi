@@ -145,8 +145,18 @@ fn render_toolbar(
                         .child(SharedString::from(n_of_m)),
                 ),
         )
-        .child(tool_button("editor-prev", Msg::EditorPrevHunk.t(), theme().text_sub, prev))
-        .child(tool_button("editor-next", Msg::EditorNextHunk.t(), theme().text_sub, next))
+        .child(tool_button(
+            "editor-prev",
+            Msg::EditorPrevHunk.t(),
+            theme().text_sub,
+            prev,
+        ))
+        .child(tool_button(
+            "editor-next",
+            Msg::EditorNextHunk.t(),
+            theme().text_sub,
+            next,
+        ))
         .child(icon_button(
             "editor-open-external",
             "icons/external-link.svg",
@@ -155,19 +165,21 @@ fn render_toolbar(
             open_ext,
         ))
         // Reset all — destructive: trash icon, armed → blocker colour + confirm label.
-        .child(
-            icon_button(
-                "editor-reset",
-                "icons/trash-2.svg",
-                if reset_armed {
-                    Msg::EditorResetAllConfirm.t()
-                } else {
-                    Msg::EditorReset.t()
-                },
-                if reset_armed { theme().color_blocker } else { theme().color_warning },
-                reset,
-            ),
-        )
+        .child(icon_button(
+            "editor-reset",
+            "icons/trash-2.svg",
+            if reset_armed {
+                Msg::EditorResetAllConfirm.t()
+            } else {
+                Msg::EditorReset.t()
+            },
+            if reset_armed {
+                theme().color_blocker
+            } else {
+                theme().color_warning
+            },
+            reset,
+        ))
         .into_any_element()
 }
 
@@ -246,19 +258,25 @@ fn render_panes(
     };
 
     let labels = mode.labels();
-    let current_label =
-        format!("{} — {}", Msg::EditorCurrentSide.t(), labels.current.name);
-    let incoming_label =
-        format!("{} — {}", Msg::EditorIncomingSide.t(), labels.incoming.name);
+    let current_label = format!("{} — {}", Msg::EditorCurrentSide.t(), labels.current.name);
+    let incoming_label = format!("{} — {}", Msg::EditorIncomingSide.t(), labels.incoming.name);
 
     // ── A | B row (resizable A|B), measured for the vertical divider drag ──
     let ab_geom = chrome.ab_geom.clone();
     let ab_measure = canvas(
         move |bounds: Bounds<Pixels>, _w, _cx| {
             if std::env::var("KAGI_DEBUG_SPLIT").as_deref() == Ok("1") {
-                eprintln!("[kagi] ab_geom left={:.1} right={:.1} width={:.1}", f32::from(bounds.origin.x), f32::from(bounds.origin.x + bounds.size.width), f32::from(bounds.size.width));
+                eprintln!(
+                    "[kagi] ab_geom left={:.1} right={:.1} width={:.1}",
+                    f32::from(bounds.origin.x),
+                    f32::from(bounds.origin.x + bounds.size.width),
+                    f32::from(bounds.size.width)
+                );
             }
-            ab_geom.set((f32::from(bounds.origin.x), f32::from(bounds.origin.x + bounds.size.width)));
+            ab_geom.set((
+                f32::from(bounds.origin.x),
+                f32::from(bounds.origin.x + bounds.size.width),
+            ));
         },
         |_, _, _, _| {},
     )
@@ -270,7 +288,12 @@ fn render_panes(
         "conflict-pane-a",
         current_label,
         theme().color_branch,
-        Some(side_file_checkbox(path, model.file_side_state(SelectionSide::Current), SelectionSide::Current, cx)),
+        Some(side_file_checkbox(
+            path,
+            model.file_side_state(SelectionSide::Current),
+            SelectionSide::Current,
+            cx,
+        )),
         side_row_list(
             path,
             model,
@@ -285,7 +308,12 @@ fn render_panes(
         "conflict-pane-b",
         incoming_label,
         theme().color_remote,
-        Some(side_file_checkbox(path, model.file_side_state(SelectionSide::Incoming), SelectionSide::Incoming, cx)),
+        Some(side_file_checkbox(
+            path,
+            model.file_side_state(SelectionSide::Incoming),
+            SelectionSide::Incoming,
+            cx,
+        )),
         side_row_list(
             path,
             model,
@@ -308,7 +336,13 @@ fn render_panes(
         // drag maps the cursor against the whole span — measuring inside A would
         // shrink the span and feed back on itself, making resize unusable.
         .child(ab_measure)
-        .child(div().h_full().min_w(px(0.)).w(relative(chrome.ab_split)).child(a_pane))
+        .child(
+            div()
+                .h_full()
+                .min_w(px(0.))
+                .w(relative(chrome.ab_split))
+                .child(a_pane),
+        )
         .child(vertical_divider())
         .child(div().h_full().min_w(px(0.)).flex_1().child(b_pane));
 
@@ -328,7 +362,10 @@ fn render_panes(
     let geom = chrome.geom.clone();
     let measure = canvas(
         move |bounds: Bounds<Pixels>, _w, _cx| {
-            geom.set((f32::from(bounds.origin.y), f32::from(bounds.origin.y + bounds.size.height)));
+            geom.set((
+                f32::from(bounds.origin.y),
+                f32::from(bounds.origin.y + bounds.size.height),
+            ));
         },
         |_, _, _, _| {},
     )
@@ -353,7 +390,11 @@ fn render_panes(
 
 #[derive(Clone)]
 enum SideRow {
-    HunkHeader { hunk_index: usize, state: TriState, order: LineOrder },
+    HunkHeader {
+        hunk_index: usize,
+        state: TriState,
+        order: LineOrder,
+    },
     Line {
         hunk_index: usize,
         line_index: usize,
@@ -383,10 +424,7 @@ fn side_file_checkbox(
     )
 }
 
-fn build_side_rows(
-    model: &kagi::git::resolution::HunkModel,
-    side: SelectionSide,
-) -> Vec<SideRow> {
+fn build_side_rows(model: &kagi::git::resolution::HunkModel, side: SelectionSide) -> Vec<SideRow> {
     let mut rows = Vec::new();
     let mut hunk_index = 0usize;
     let mut line_no = 1usize;
@@ -489,32 +527,38 @@ fn render_side_rows(
     range
         .filter_map(|i| rows.get(i).map(|row| (i, row.clone())))
         .map(|(i, row)| match row {
-            SideRow::HunkHeader { hunk_index, state, order } => {
-                render_hunk_header_row(
-                    i,
-                    path.clone(),
-                    hunk_index,
-                    state,
-                    order,
-                    side,
-                    selected_hunk,
-                    cx,
-                )
-            }
-            SideRow::Line { hunk_index, line_index, line_no, text, taken } => {
-                render_code_line_row(
-                    i,
-                    path.clone(),
-                    hunk_index,
-                    line_index,
-                    line_no,
-                    text,
-                    taken,
-                    side,
-                    selected_hunk,
-                    cx,
-                )
-            }
+            SideRow::HunkHeader {
+                hunk_index,
+                state,
+                order,
+            } => render_hunk_header_row(
+                i,
+                path.clone(),
+                hunk_index,
+                state,
+                order,
+                side,
+                selected_hunk,
+                cx,
+            ),
+            SideRow::Line {
+                hunk_index,
+                line_index,
+                line_no,
+                text,
+                taken,
+            } => render_code_line_row(
+                i,
+                path.clone(),
+                hunk_index,
+                line_index,
+                line_no,
+                text,
+                taken,
+                side,
+                selected_hunk,
+                cx,
+            ),
         })
         .collect()
 }
@@ -565,7 +609,11 @@ fn render_hunk_header_row(
         // hunk gets a subtle tint. A thin top divider separates hunks instead.
         .border_t_1()
         .border_color(rgb(theme().selected))
-        .bg(rgb(if selected_hunk == hunk_index { theme().bg_row_alt } else { theme().bg_base }))
+        .bg(rgb(if selected_hunk == hunk_index {
+            theme().bg_row_alt
+        } else {
+            theme().bg_base
+        }))
         .hover(|s| s.bg(rgb(theme().selected)))
         .on_click(focus_click)
         .child(tri_checkbox(
@@ -637,7 +685,11 @@ fn render_code_line_row(
         .h(theme::scaled_px(17.))
         .px(theme::scaled_px(4.))
         .gap_1()
-        .bg(rgb(if selected_hunk == hunk_index { theme().bg_row_alt } else { theme().bg_base }))
+        .bg(rgb(if selected_hunk == hunk_index {
+            theme().bg_row_alt
+        } else {
+            theme().bg_base
+        }))
         .hover(|s| s.bg(rgb(theme().selected)))
         .on_click(focus_click)
         .child(line_checkbox(
@@ -662,7 +714,11 @@ fn render_code_line_row(
                 .text_size(theme::scaled_px(12.))
                 .line_height(theme::scaled_px(17.))
                 .font_family(terminal::pick_font_family())
-                .text_color(rgb(if taken { theme().text_main } else { theme().text_muted }))
+                .text_color(rgb(if taken {
+                    theme().text_main
+                } else {
+                    theme().text_muted
+                }))
                 .child(SharedString::from(text_value)),
         )
         .into_any_element()
@@ -792,7 +848,6 @@ fn pane(
         )
 }
 
-
 // ────────────────────────────────────────────────────────────
 // Result pane: Preview (read-only) / Edit (editable) — UX-015
 // ────────────────────────────────────────────────────────────
@@ -817,7 +872,11 @@ fn render_result_pane(
     } else {
         format!("{} {}", unresolved, Msg::EditorUnresolvedHunks.t())
     };
-    let status_color = if all_resolved { theme().color_success } else { theme().color_warning };
+    let status_color = if all_resolved {
+        theme().color_success
+    } else {
+        theme().color_warning
+    };
 
     let toggle = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
         this.conflict_editor_toggle_result_mode();
@@ -960,7 +1019,11 @@ where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
     let seg = |label: &str, active: bool| {
-        let accent = if active { theme().color_branch } else { theme().text_sub };
+        let accent = if active {
+            theme().color_branch
+        } else {
+            theme().text_sub
+        };
         div()
             .px(theme::scaled_px(7.))
             .py(theme::scaled_px(2.))
@@ -996,9 +1059,12 @@ fn vertical_divider() -> gpui::Stateful<gpui::Div> {
         .bg(rgb(theme().selected))
         .cursor_col_resize()
         .hover(|s| s.bg(rgb(theme().color_branch)))
-        .on_drag(DividerDrag { kind: DividerKind::ConflictAB }, |_, _, _, cx| {
-            cx.new(|_| DividerGhost)
-        })
+        .on_drag(
+            DividerDrag {
+                kind: DividerKind::ConflictAB,
+            },
+            |_, _, _, cx| cx.new(|_| DividerGhost),
+        )
 }
 
 /// Horizontal divider between the A·B row and the Result pane (drives the
@@ -1011,7 +1077,10 @@ fn horizontal_divider() -> gpui::Stateful<gpui::Div> {
         .bg(rgb(theme().selected))
         .cursor_row_resize()
         .hover(|s| s.bg(rgb(theme().color_branch)))
-        .on_drag(DividerDrag { kind: DividerKind::ConflictResult }, |_, _, _, cx| {
-            cx.new(|_| DividerGhost)
-        })
+        .on_drag(
+            DividerDrag {
+                kind: DividerKind::ConflictResult,
+            },
+            |_, _, _, cx| cx.new(|_| DividerGhost),
+        )
 }

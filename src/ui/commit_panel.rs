@@ -146,7 +146,6 @@ impl CommitPanelState {
     pub fn can_commit(&self) -> bool {
         !self.staged.is_empty() && !self.commit_msg.trim().is_empty()
     }
-
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -161,10 +160,10 @@ pub fn status_badge(change: &ChangeKind, is_conflicted: bool) -> (&'static str, 
         return ("C", t.color_blocker, true); // red background for conflicted
     }
     match change {
-        ChangeKind::Added      => ("A", t.change_added, false),
-        ChangeKind::Modified   => ("M", t.change_modified, false),
-        ChangeKind::Deleted    => ("D", t.change_deleted, false),
-        ChangeKind::Renamed{..} => ("R", t.change_renamed, false),
+        ChangeKind::Added => ("A", t.change_added, false),
+        ChangeKind::Modified => ("M", t.change_modified, false),
+        ChangeKind::Deleted => ("D", t.change_deleted, false),
+        ChangeKind::Renamed { .. } => ("R", t.change_renamed, false),
         ChangeKind::TypeChange => ("T", t.change_typechange, false),
     }
 }

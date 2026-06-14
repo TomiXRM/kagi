@@ -61,7 +61,11 @@ impl Lang {
     }
 
     fn from_index(i: usize) -> Lang {
-        if i == 1 { Lang::Ja } else { Lang::En }
+        if i == 1 {
+            Lang::Ja
+        } else {
+            Lang::En
+        }
     }
 
     fn index(self) -> usize {
@@ -820,7 +824,10 @@ impl Msg {
 pub fn wip_row_note(n: usize) -> String {
     let plural = if n == 1 { "" } else { "s" };
     match lang() {
-        Lang::En => format!("// WIP — {} change{} (click to open commit panel)", n, plural),
+        Lang::En => format!(
+            "// WIP — {} change{} (click to open commit panel)",
+            n, plural
+        ),
         Lang::Ja => format!("// WIP — {} change{}(クリックで commit panel)", n, plural),
     }
 }
@@ -843,7 +850,10 @@ pub fn unstaged_not_included(n: usize) -> String {
 /// The branch name stays verbatim per ADR-0048.
 pub fn branch_exists_fmt(name: &str) -> String {
     match lang() {
-        Lang::En => format!("A branch named '{}' already exists in this repository.", name),
+        Lang::En => format!(
+            "A branch named '{}' already exists in this repository.",
+            name
+        ),
         Lang::Ja => format!("branch '{}' は既に存在します。", name),
     }
 }
@@ -1014,8 +1024,14 @@ mod tests {
     fn parameterized_helpers_switch() {
         let _g = LOCK.lock().unwrap();
         set_lang_no_persist(Lang::En);
-        assert_eq!(wip_row_note(1), "// WIP — 1 change (click to open commit panel)");
-        assert_eq!(wip_row_note(3), "// WIP — 3 changes (click to open commit panel)");
+        assert_eq!(
+            wip_row_note(1),
+            "// WIP — 1 change (click to open commit panel)"
+        );
+        assert_eq!(
+            wip_row_note(3),
+            "// WIP — 3 changes (click to open commit panel)"
+        );
         set_lang_no_persist(Lang::Ja);
         assert!(wip_row_note(2).contains("クリックで commit panel"));
         set_lang_no_persist(Lang::En);
@@ -1078,11 +1094,20 @@ mod tests {
         use kagi::git::ops::{BranchNameError as B, WorktreePathError as W};
         let _g = LOCK.lock().unwrap();
         set_lang_no_persist(Lang::En);
-        assert_eq!(branch_name_error(&B::EmptyCreate), "Branch name must not be empty.");
-        assert_eq!(worktree_path_error(&W::Empty), "Worktree path must not be empty.");
+        assert_eq!(
+            branch_name_error(&B::EmptyCreate),
+            "Branch name must not be empty."
+        );
+        assert_eq!(
+            worktree_path_error(&W::Empty),
+            "Worktree path must not be empty."
+        );
         set_lang_no_persist(Lang::Ja);
         // Localized — no longer the English sentence, and the name stays verbatim.
-        assert_ne!(branch_name_error(&B::EmptyCreate), "Branch name must not be empty.");
+        assert_ne!(
+            branch_name_error(&B::EmptyCreate),
+            "Branch name must not be empty."
+        );
         assert!(branch_name_error(&B::CreateExists("feat".into())).contains("feat"));
         assert!(worktree_path_error(&W::Exists("/p".into())).contains("/p"));
         set_lang_no_persist(Lang::En);

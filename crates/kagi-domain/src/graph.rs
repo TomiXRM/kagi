@@ -119,7 +119,10 @@ pub enum EdgeKind {
 pub fn layout(commits: &[Commit]) -> GraphLayout {
     // Fast path: empty input.
     if commits.is_empty() {
-        return GraphLayout { rows: Vec::new(), lane_count: 0 };
+        return GraphLayout {
+            rows: Vec::new(),
+            lane_count: 0,
+        };
     }
 
     // `active[i]` = the CommitId that lane i is currently waiting for, or
@@ -245,22 +248,32 @@ pub fn layout(commits: &[Commit]) -> GraphLayout {
         // all, which is also valid.
         debug_assert!(
             {
-                let directed: Vec<_> = edges.iter()
+                let directed: Vec<_> = edges
+                    .iter()
                     .filter(|e| e.kind == EdgeKind::IntoNode || e.kind == EdgeKind::OutOfNode)
                     .collect();
                 directed.is_empty()
-                    || directed.iter().any(|e| e.from_lane == node_lane || e.to_lane == node_lane)
+                    || directed
+                        .iter()
+                        .any(|e| e.from_lane == node_lane || e.to_lane == node_lane)
             },
             "when directed edges exist, node lane must appear in at least one of them"
         );
 
-        rows.push(GraphRow { commit: commit.id.clone(), lane: node_lane, edges });
+        rows.push(GraphRow {
+            commit: commit.id.clone(),
+            lane: node_lane,
+            edges,
+        });
     }
 
     // Final invariant: empty input → empty rows (already handled by fast path)
     debug_assert!(!commits.is_empty() || rows.is_empty());
 
-    GraphLayout { rows, lane_count: max_lanes }
+    GraphLayout {
+        rows,
+        lane_count: max_lanes,
+    }
 }
 
 // ────────────────────────────────────────────────────────────
@@ -281,9 +294,7 @@ fn find_or_push_free_lane(active: &mut Vec<Option<CommitId>>) -> usize {
 
 /// Return the lane index that is currently waiting for `id`, or `None`.
 fn find_lane_for(active: &[Option<CommitId>], id: &CommitId) -> Option<usize> {
-    active
-        .iter()
-        .position(|slot| slot.as_ref() == Some(id))
+    active.iter().position(|slot| slot.as_ref() == Some(id))
 }
 
 // ────────────────────────────────────────────────────────────
@@ -326,8 +337,14 @@ mod tests {
     #[test]
     fn test_empty_input() {
         let layout = layout(&[]);
-        assert!(layout.rows.is_empty(), "empty input must produce empty rows");
-        assert_eq!(layout.lane_count, 0, "empty input must produce lane_count 0");
+        assert!(
+            layout.rows.is_empty(),
+            "empty input must produce empty rows"
+        );
+        assert_eq!(
+            layout.lane_count, 0,
+            "empty input must produce lane_count 0"
+        );
     }
 
     // ── test 2: linear history (3 commits, single lane) ──────────────────
@@ -342,11 +359,7 @@ mod tests {
 
     #[test]
     fn test_linear_three_commits() {
-        let commits = vec![
-            c("C", &["B"]),
-            c("B", &["A"]),
-            c("A", &[]),
-        ];
+        let commits = vec![c("C", &["B"]), c("B", &["A"]), c("A", &[])];
         let gl = layout(&commits);
 
         // All commits sit on lane 0.
@@ -360,7 +373,8 @@ mod tests {
         for row in &gl.rows {
             for edge in &row.edges {
                 assert_ne!(
-                    edge.kind, EdgeKind::Pass,
+                    edge.kind,
+                    EdgeKind::Pass,
                     "linear history must have no Pass edges"
                 );
             }
@@ -369,14 +383,23 @@ mod tests {
         // Row C: one OutOfNode(0→0), no IntoNode (it's the tip).
         let row_c = &gl.rows[0];
         assert_eq!(row_c.commit, cid("C"));
-        assert!(row_c.edges.iter().any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 0 && e.to_lane == 0));
+        assert!(row_c
+            .edges
+            .iter()
+            .any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 0 && e.to_lane == 0));
         assert!(!row_c.edges.iter().any(|e| e.kind == EdgeKind::IntoNode));
 
         // Row B: IntoNode(0→0) from C, OutOfNode(0→0) to A.
         let row_b = &gl.rows[1];
         assert_eq!(row_b.commit, cid("B"));
-        assert!(row_b.edges.iter().any(|e| e.kind == EdgeKind::IntoNode && e.from_lane == 0 && e.to_lane == 0));
-        assert!(row_b.edges.iter().any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 0 && e.to_lane == 0));
+        assert!(row_b
+            .edges
+            .iter()
+            .any(|e| e.kind == EdgeKind::IntoNode && e.from_lane == 0 && e.to_lane == 0));
+        assert!(row_b
+            .edges
+            .iter()
+            .any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 0 && e.to_lane == 0));
 
         // Row A (root): IntoNode(0→0), no OutOfNode.
         let row_a = &gl.rows[2];
@@ -435,7 +458,10 @@ mod tests {
 
         // Row A: only lane 0 was waiting, so IntoNode(0→0).
         assert!(
-            row_a.edges.iter().any(|e| e.kind == EdgeKind::IntoNode && e.from_lane == 0 && e.to_lane == 0),
+            row_a
+                .edges
+                .iter()
+                .any(|e| e.kind == EdgeKind::IntoNode && e.from_lane == 0 && e.to_lane == 0),
             "A must have IntoNode 0→0 (lane 0 was the sole waiter)"
         );
 
@@ -443,7 +469,10 @@ mod tests {
         // D must emit OutOfNode(1→0) and must NOT keep lane 1 for A.
         let row_d_ref = &gl.rows[2];
         assert!(
-            row_d_ref.edges.iter().any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 1 && e.to_lane == 0),
+            row_d_ref
+                .edges
+                .iter()
+                .any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 1 && e.to_lane == 0),
             "D must OutOfNode 1→0 (first-parent exception: A already waited by lane 0)"
         );
     }
@@ -516,11 +545,7 @@ mod tests {
 
     #[test]
     fn test_first_parent_already_waiting_exception() {
-        let commits = vec![
-            c("X", &["A"]),
-            c("Y", &["A"]),
-            c("A", &[]),
-        ];
+        let commits = vec![c("X", &["A"]), c("Y", &["A"]), c("A", &[])];
         let gl = layout(&commits);
 
         assert_eq!(gl.rows.len(), 3);
@@ -536,7 +561,10 @@ mod tests {
 
         // Y must emit OutOfNode from lane 1 to lane 0 (the exception).
         assert!(
-            row_y.edges.iter().any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 1 && e.to_lane == 0),
+            row_y
+                .edges
+                .iter()
+                .any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 1 && e.to_lane == 0),
             "Y must OutOfNode 1→0 due to exception (parents[0]=A already waited by lane 0)"
         );
 

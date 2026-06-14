@@ -8,12 +8,12 @@ use gpui_component::tooltip::Tooltip;
 
 use kagi::git::CommitId;
 
+use super::i18n::Msg;
+use super::theme::{self, theme};
 use super::{
     commit_list::{BadgeKind, RefBadge},
     FooterStatus, KagiApp,
 };
-use super::i18n::Msg;
-use super::theme::{self, theme};
 
 // W9-THEME: all colours come from `theme()` (see theme.rs).
 
@@ -653,7 +653,11 @@ mod tests {
         c.is_ancestor_of_head = true;
         let groups = build_commit_menu(&c);
 
-        assert_disabled_contains(&groups, CommitAction::CherryPick, "already in the current branch");
+        assert_disabled_contains(
+            &groups,
+            CommitAction::CherryPick,
+            "already in the current branch",
+        );
         assert_enabled(&groups, CommitAction::Revert);
         assert_enabled(&groups, CommitAction::CheckoutCommit);
         assert_enabled(&groups, CommitAction::CompareWithHead);

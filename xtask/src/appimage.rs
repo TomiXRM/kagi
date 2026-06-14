@@ -154,7 +154,11 @@ pub fn bundle(root: &Path, override_bin: Option<&str>, arch: &str) -> Result<(),
             if appimage.exists() {
                 std::fs::remove_file(&appimage).map_err(|e| format!("rm old AppImage: {e}"))?;
             }
-            println!("bundle-appimage: {tool} {} {}", appdir.display(), appimage.display());
+            println!(
+                "bundle-appimage: {tool} {} {}",
+                appdir.display(),
+                appimage.display()
+            );
             // CI invokes the downloaded tool with --appimage-extract-and-run so
             // FUSE is not required; pass ARCH so appimagetool labels correctly.
             let mut cmd = Command::new(&tool);
@@ -199,7 +203,8 @@ pub fn bundle(root: &Path, override_bin: Option<&str>, arch: &str) -> Result<(),
     .map_err(|e| format!("stage install script: {e}"))?;
     make_executable(&scripts_dir.join("install_linux_desktop.sh"))?;
 
-    let mut zip_entries: Vec<String> = vec!["kagi.png".into(), "scripts/install_linux_desktop.sh".into()];
+    let mut zip_entries: Vec<String> =
+        vec!["kagi.png".into(), "scripts/install_linux_desktop.sh".into()];
     if built {
         let name = appimage
             .file_name()

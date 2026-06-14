@@ -17,7 +17,9 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{ChangeKind, CommitId, DiffLineKind, commit_changed_files, commit_file_diff, commit_log};
+use kagi::git::{
+    commit_changed_files, commit_file_diff, commit_log, ChangeKind, CommitId, DiffLineKind,
+};
 
 // ────────────────────────────────────────────────────────────
 // Test helpers
@@ -263,7 +265,10 @@ fn test_merge_commit_first_parent_only() {
 
     // M: merge feature into main (first parent = B)
     git(dir, &["checkout", "main"]);
-    git(dir, &["merge", "--no-ff", "feature", "-m", "M: merge feature"]);
+    git(
+        dir,
+        &["merge", "--no-ff", "feature", "-m", "M: merge feature"],
+    );
 
     let repo = Repository::open(dir).expect("repo open failed");
     let commits = commit_log(&repo, 10_000).expect("commit_log failed");
@@ -277,8 +282,7 @@ fn test_merge_commit_first_parent_only() {
         "merge commit must have 2 parents"
     );
 
-    let files = commit_changed_files(&repo, &merge_commit.id)
-        .expect("commit_changed_files failed");
+    let files = commit_changed_files(&repo, &merge_commit.id).expect("commit_changed_files failed");
 
     // Only feature.txt should appear (the diff of M vs its first parent B).
     // base.txt was modified in B vs A, but M vs B shows it as unchanged.
@@ -311,8 +315,7 @@ fn test_file_diff_modified_hunk_content() {
 
     let id = head_commit_id(&repo);
     let path = std::path::Path::new("base.txt");
-    let file_diff = commit_file_diff(&repo, &id, path)
-        .expect("commit_file_diff failed");
+    let file_diff = commit_file_diff(&repo, &id, path).expect("commit_file_diff failed");
 
     assert!(!file_diff.is_binary, "text file must not be binary");
     assert!(
@@ -368,8 +371,7 @@ fn test_file_diff_added_all_lines_added() {
 
     let id = head_commit_id(&repo);
     let path = std::path::Path::new("new.txt");
-    let file_diff = commit_file_diff(&repo, &id, path)
-        .expect("commit_file_diff failed");
+    let file_diff = commit_file_diff(&repo, &id, path).expect("commit_file_diff failed");
 
     assert!(!file_diff.is_binary, "text file must not be binary");
     assert!(
@@ -416,13 +418,9 @@ fn test_file_diff_binary() {
 
     let id = head_commit_id(&repo);
     let path = std::path::Path::new("image.bin");
-    let file_diff = commit_file_diff(&repo, &id, path)
-        .expect("commit_file_diff failed");
+    let file_diff = commit_file_diff(&repo, &id, path).expect("commit_file_diff failed");
 
-    assert!(
-        file_diff.is_binary,
-        "binary file must have is_binary=true"
-    );
+    assert!(file_diff.is_binary, "binary file must have is_binary=true");
     assert!(
         file_diff.hunks.is_empty(),
         "binary file must have no hunks, got: {:?}",
@@ -439,11 +437,7 @@ fn test_file_diff_japanese_no_panic() {
     let dir = tmp.path();
 
     // Write a file with Japanese Unicode content.
-    write_file(
-        dir,
-        "japanese.txt",
-        "こんにちは世界\n日本語のテスト\n",
-    );
+    write_file(dir, "japanese.txt", "こんにちは世界\n日本語のテスト\n");
     git(dir, &["add", "japanese.txt"]);
     git(dir, &["commit", "-m", "add Japanese content"]);
 
@@ -451,10 +445,13 @@ fn test_file_diff_japanese_no_panic() {
     let path = std::path::Path::new("japanese.txt");
 
     // Must not panic.
-    let file_diff = commit_file_diff(&repo, &id, path)
-        .expect("commit_file_diff failed for Japanese content");
+    let file_diff =
+        commit_file_diff(&repo, &id, path).expect("commit_file_diff failed for Japanese content");
 
-    assert!(!file_diff.is_binary, "Japanese UTF-8 file must not be binary");
+    assert!(
+        !file_diff.is_binary,
+        "Japanese UTF-8 file must not be binary"
+    );
     assert!(
         !file_diff.hunks.is_empty(),
         "Japanese file must have at least one hunk"

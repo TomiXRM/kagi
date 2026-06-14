@@ -116,7 +116,9 @@ pub fn github_owner_repo(remote_url: &str) -> Option<(String, String)> {
     } else if let Some(idx) = url.find("github.com") {
         let after = &url[idx + "github.com".len()..];
         // After the host comes either `/` (https/ssh) or `:` (scp-like).
-        after.strip_prefix('/').or_else(|| after.strip_prefix(':'))?
+        after
+            .strip_prefix('/')
+            .or_else(|| after.strip_prefix(':'))?
     } else {
         return None;
     };
@@ -203,7 +205,9 @@ fn read_disk_cache(url: &str) -> Option<Vec<u8>> {
 /// Persist avatar bytes for `url` to the disk cache (best-effort; failures are
 /// silently ignored so a read-only HOME never breaks rendering).
 fn write_disk_cache(url: &str, bytes: &[u8]) {
-    let Some(path) = cache_path_for_url(url) else { return };
+    let Some(path) = cache_path_for_url(url) else {
+        return;
+    };
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -292,11 +296,14 @@ pub fn fetch_commit_author_avatars(owner: &str, repo: &str) -> Vec<(String, Stri
         return out;
     }
     for page in 1..=MAX_COMMIT_PAGES {
-        let url = format!(
-            "https://api.github.com/repos/{owner}/{repo}/commits?per_page=100&page={page}"
-        );
-        let Some(bytes) = http_get_bytes(&url) else { break };
-        let Ok(text) = String::from_utf8(bytes) else { break };
+        let url =
+            format!("https://api.github.com/repos/{owner}/{repo}/commits?per_page=100&page={page}");
+        let Some(bytes) = http_get_bytes(&url) else {
+            break;
+        };
+        let Ok(text) = String::from_utf8(bytes) else {
+            break;
+        };
         let entries = parse_commits_api(&text);
         if entries.is_empty() {
             break;
@@ -337,7 +344,8 @@ pub fn parse_commits_api(json: &str) -> Vec<(String, String)> {
             .find("\"email\":")
             .map(|p| email_pos + 1 + p)
             .unwrap_or(json.len());
-        if let Some(avatar) = find_first_quoted_value(&json[email_pos..next_email], "\"avatar_url\":")
+        if let Some(avatar) =
+            find_first_quoted_value(&json[email_pos..next_email], "\"avatar_url\":")
         {
             if !email.is_empty() && !avatar.is_empty() {
                 out.push((email, avatar));
@@ -432,11 +440,7 @@ pub struct ResolveOutcome {
 ///
 /// `emails` should already be de-duplicated by the caller; duplicates are
 /// tolerated but wasteful.
-pub fn resolve_avatars(
-    owner: &str,
-    repo: &str,
-    emails: &[String],
-) -> ResolveOutcome {
+pub fn resolve_avatars(owner: &str, repo: &str, emails: &[String]) -> ResolveOutcome {
     // email → avatar URL
     let mut url_for_email: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
@@ -635,7 +639,10 @@ mod tests {
         assert_eq!(a.len(), 16);
         assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
         // Different URLs hash differently.
-        assert_ne!(a, url_hash_hex("https://avatars.githubusercontent.com/other?s=64"));
+        assert_ne!(
+            a,
+            url_hash_hex("https://avatars.githubusercontent.com/other?s=64")
+        );
     }
 
     // ── format detection ───────────────────────────────────────

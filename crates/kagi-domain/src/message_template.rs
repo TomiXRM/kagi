@@ -64,8 +64,7 @@ pub struct TemplateFields {
 /// The field is *not* restricted to these — the panel also allows free text —
 /// but these are the quick-pick options (Conventional Commits' common set).
 pub const TYPE_CHOICES: &[&str] = &[
-    "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci",
-    "chore", "revert",
+    "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert",
 ];
 
 impl TemplateFields {

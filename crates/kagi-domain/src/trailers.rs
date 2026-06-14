@@ -76,8 +76,7 @@ pub fn parse_coauthors(message: &str) -> Vec<CoAuthor> {
 
         // De-duplicate on (name, lower-cased email).
         let is_dup = out.iter().any(|existing| {
-            existing.name == coauthor.name
-                && existing.email.eq_ignore_ascii_case(&coauthor.email)
+            existing.name == coauthor.name && existing.email.eq_ignore_ascii_case(&coauthor.email)
         });
         if !is_dup {
             out.push(coauthor);

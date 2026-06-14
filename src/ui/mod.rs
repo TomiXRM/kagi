@@ -30,8 +30,8 @@ pub mod terminal;
 pub mod theme;
 pub mod watcher;
 
-use i18n::Msg;
 pub use diff_view::*;
+use i18n::Msg;
 pub use modals::*;
 use theme::theme;
 
@@ -212,7 +212,10 @@ fn validate_merge_from_drag(
     };
     // Dropping a branch onto itself (it IS the current branch) is a no-op merge.
     if is_head {
-        return Err(format!("Branch '{}' is already the current branch.", source));
+        return Err(format!(
+            "Branch '{}' is already the current branch.",
+            source
+        ));
     }
     Ok(())
 }
@@ -323,8 +326,8 @@ use kagi::git::{
         default_tracking_branch_name, validate_branch_rename, AmendMode, MergeKind, OperationPlan,
         PullOutcome, StateSummary,
     },
-    ChangeKind, CommitId, DiffLineKind, FileDiffStat, FileStatus, Head, RemoteBranch,
-    RepoSnapshot, Stash, Tag, UpstreamInfo, Worktree,
+    ChangeKind, CommitId, DiffLineKind, FileDiffStat, FileStatus, Head, RemoteBranch, RepoSnapshot,
+    Stash, Tag, UpstreamInfo, Worktree,
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -4741,10 +4744,8 @@ impl KagiApp {
         // Enter-checkout on a dirty tree: stash the changes first (plan
         // pipeline; refused/failed stash aborts the checkout with the error
         // shown in the modal).
-        if modal.stash_first && self.status_summary.is_dirty {
-            if !self.stash_before_checkout() {
-                return;
-            }
+        if modal.stash_first && self.status_summary.is_dirty && !self.stash_before_checkout() {
+            return;
         }
         // Defence in depth: the UI never renders the confirm button when
         // blockers exist, but refuse here too so no code path can execute a
@@ -4922,10 +4923,8 @@ impl KagiApp {
         // Enter-checkout on a dirty tree: stash the changes first (synchronous;
         // armed/two-stage style state stays on the main thread). A refused/failed
         // auto-stash aborts the checkout with the error shown in the modal.
-        if modal.stash_first && self.status_summary.is_dirty {
-            if !self.stash_before_checkout() {
-                return;
-            }
+        if modal.stash_first && self.status_summary.is_dirty && !self.stash_before_checkout() {
+            return;
         }
         // Defence in depth: never execute a blocked plan.
         if !modal.plan.blockers.is_empty() {
@@ -5840,7 +5839,10 @@ impl KagiApp {
     pub fn start_merge_from_drag(&mut self, source: String, cx: &mut Context<Self>) {
         match validate_merge_from_drag(&source, &self.branches, self.busy_op.is_some()) {
             Ok(()) => {
-                eprintln!("[kagi] drag-merge: start merge from drag — source={}", source);
+                eprintln!(
+                    "[kagi] drag-merge: start merge from drag — source={}",
+                    source
+                );
                 self.open_merge_modal(source);
             }
             Err(reason) => {
@@ -6279,8 +6281,7 @@ impl KagiApp {
         let entry = match self.operation_history.peek_undo().cloned() {
             Some(e) => e,
             None => {
-                self.status_footer =
-                    FooterStatus::Idle(SharedString::from(Msg::NothingToUndo.t()));
+                self.status_footer = FooterStatus::Idle(SharedString::from(Msg::NothingToUndo.t()));
                 return;
             }
         };
@@ -6292,8 +6293,7 @@ impl KagiApp {
         let entry = match self.operation_history.peek_redo().cloned() {
             Some(e) => e,
             None => {
-                self.status_footer =
-                    FooterStatus::Idle(SharedString::from(Msg::NothingToRedo.t()));
+                self.status_footer = FooterStatus::Idle(SharedString::from(Msg::NothingToRedo.t()));
                 return;
             }
         };
@@ -8255,8 +8255,13 @@ impl KagiApp {
         let bg_msg = commit_message.clone();
         // T-UNDOREDO-001: capture branch + tip BEFORE the commit (main thread).
         let history_before = self.head_branch_and_sha();
-        let history_summary_line: String =
-            commit_message.lines().next().unwrap_or("").chars().take(72).collect();
+        let history_summary_line: String = commit_message
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(72)
+            .collect();
         let task = cx.background_spawn(async move { commit_blocking(&bg_path, &bg_plan, &bg_msg) });
         cx.spawn(async move |this, acx| {
             let result = task.await;
@@ -8280,11 +8285,8 @@ impl KagiApp {
                         if let (Some((hbranch, before)), Some((_, after_sha))) =
                             (history_before.clone(), app.head_branch_and_sha())
                         {
-                            let summary = format!(
-                                "commit {} '{}'",
-                                after_sha.short(),
-                                history_summary_line
-                            );
+                            let summary =
+                                format!("commit {} '{}'", after_sha.short(), history_summary_line);
                             app.record_history(
                                 kagi::git::OperationKind::Commit,
                                 &hbranch,
@@ -9556,7 +9558,7 @@ impl KagiApp {
     fn root_has_focus(&self, window: &Window) -> bool {
         self.root_focus
             .as_ref()
-            .map_or(false, |fh| fh.is_focused(window))
+            .is_some_and(|fh| fh.is_focused(window))
     }
 
     /// Enter on a selected commit: open the checkout plan for it
@@ -9725,7 +9727,7 @@ impl Render for KagiApp {
             use std::sync::atomic::{AtomicU64, Ordering as O};
             static N: AtomicU64 = AtomicU64::new(0);
             let n = N.fetch_add(1, O::Relaxed) + 1;
-            if n % 50 == 0 {
+            if n.is_multiple_of(50) {
                 eprintln!("[kagi] render: {} frames", n);
             }
         }
@@ -10551,8 +10553,7 @@ impl KagiApp {
             if this.operation_history.can_undo() {
                 this.open_history_undo_modal();
             } else {
-                this.status_footer =
-                    FooterStatus::Idle(SharedString::from(Msg::NothingToUndo.t()));
+                this.status_footer = FooterStatus::Idle(SharedString::from(Msg::NothingToUndo.t()));
             }
             cx.notify();
         });
@@ -10563,8 +10564,7 @@ impl KagiApp {
             if this.operation_history.can_redo() {
                 this.open_history_redo_modal();
             } else {
-                this.status_footer =
-                    FooterStatus::Idle(SharedString::from(Msg::NothingToRedo.t()));
+                this.status_footer = FooterStatus::Idle(SharedString::from(Msg::NothingToRedo.t()));
             }
             cx.notify();
         });
@@ -10756,68 +10756,68 @@ impl KagiApp {
                     .items_center()
                     .flex_1()
                     .min_w_0()
-            // ── LEFT: Refresh (user request: left of the repo title) ──
-            .child({
-                // Spin for one full turn after a click (user request).
-                const SPIN_MS: u64 = 700;
-                let spinning = match self.refresh_spin_started {
-                    Some(t) if t.elapsed() < Duration::from_millis(SPIN_MS) => true,
-                    Some(_) => {
-                        self.refresh_spin_started = None;
-                        false
-                    }
-                    None => false,
-                };
-                let icon = gpui::svg()
-                    .path("icons/refresh-cw.svg")
-                    .w(theme::scaled_px(16.0))
-                    .h(theme::scaled_px(16.0))
-                    .text_color(rgb(theme().text_main));
-                let icon: gpui::AnyElement = if spinning {
-                    use gpui::AnimationExt as _;
-                    icon.with_animation(
-                        "tb-refresh-spin",
-                        gpui::Animation::new(Duration::from_millis(SPIN_MS)),
-                        |svg, delta| {
-                            svg.with_transformation(gpui::Transformation::rotate(gpui::radians(
-                                delta * std::f32::consts::TAU,
-                            )))
-                        },
+                    // ── LEFT: Refresh (user request: left of the repo title) ──
+                    .child({
+                        // Spin for one full turn after a click (user request).
+                        const SPIN_MS: u64 = 700;
+                        let spinning = match self.refresh_spin_started {
+                            Some(t) if t.elapsed() < Duration::from_millis(SPIN_MS) => true,
+                            Some(_) => {
+                                self.refresh_spin_started = None;
+                                false
+                            }
+                            None => false,
+                        };
+                        let icon = gpui::svg()
+                            .path("icons/refresh-cw.svg")
+                            .w(theme::scaled_px(16.0))
+                            .h(theme::scaled_px(16.0))
+                            .text_color(rgb(theme().text_main));
+                        let icon: gpui::AnyElement = if spinning {
+                            use gpui::AnimationExt as _;
+                            icon.with_animation(
+                                "tb-refresh-spin",
+                                gpui::Animation::new(Duration::from_millis(SPIN_MS)),
+                                |svg, delta| {
+                                    svg.with_transformation(gpui::Transformation::rotate(
+                                        gpui::radians(delta * std::f32::consts::TAU),
+                                    ))
+                                },
+                            )
+                            .into_any_element()
+                        } else {
+                            icon.into_any_element()
+                        };
+                        div()
+                            .id("tb-refresh")
+                            .flex_shrink_0()
+                            .mr_2()
+                            .p_1()
+                            .rounded_md()
+                            .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
+                            .on_click(refresh_click)
+                            .child(icon)
+                    })
+                    // ── repo name + branch/upstream/ahead-behind ──
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(theme().text_main))
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .mr_1()
+                            .flex_shrink_0()
+                            .overflow_hidden()
+                            .child(SharedString::from(summary.repo_name.clone())),
                     )
-                    .into_any_element()
-                } else {
-                    icon.into_any_element()
-                };
-                div()
-                    .id("tb-refresh")
-                    .flex_shrink_0()
-                    .mr_2()
-                    .p_1()
-                    .rounded_md()
-                    .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
-                    .on_click(refresh_click)
-                    .child(icon)
-            })
-            // ── repo name + branch/upstream/ahead-behind ──
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme().text_main))
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .mr_1()
-                    .flex_shrink_0()
-                    .overflow_hidden()
-                    .child(SharedString::from(summary.repo_name.clone())),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme().text_sub))
-                    .mr_2()
-                    .flex_shrink_0()
-                    .overflow_hidden()
-                    .child(SharedString::from(branch_label)),
-            )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(theme().text_sub))
+                            .mr_2()
+                            .flex_shrink_0()
+                            .overflow_hidden()
+                            .child(SharedString::from(branch_label)),
+                    ),
             ) // ── end LEFT column ──
             // ── CENTRE: window-centred cluster (flex_shrink_0 group) ──
             // Pull Push | Branch Stash Pop | Undo Terminal
@@ -10827,107 +10827,111 @@ impl KagiApp {
                     .flex_row()
                     .items_center()
                     .flex_shrink_0()
-            // Pull (↓N chip when behind>0)
-            .child(
-                make_btn(
-                    "tb-pull",
-                    "Pull",
-                    gpui_component::IconName::ArrowDown,
-                    toolbar.pull_on,
-                    toolbar.behind,
-                )
-                .on_click(pull_click),
-            )
-            .child(div().w(theme::scaled_px(2.0)))
-            // Push (↑N chip when ahead>0)
-            .child(
-                make_btn(
-                    "tb-push",
-                    "Push",
-                    gpui_component::IconName::ArrowUp,
-                    toolbar.push_on,
-                    toolbar.ahead,
-                )
-                .on_click(push_click),
-            )
-            .child(sep())
-            // Branch
-            .child(
-                make_btn(
-                    "tb-branch",
-                    "Branch",
-                    gpui_component::IconName::Plus,
-                    true,
-                    0,
-                )
-                .on_click(branch_click),
-            )
-            .child(div().w(theme::scaled_px(2.0)))
-            // Stash
-            .child(
-                make_btn(
-                    "tb-stash",
-                    "Stash",
-                    gpui_component::IconName::Inbox,
-                    toolbar.stash_on,
-                    0,
-                )
-                .on_click(stash_click),
-            )
-            .child(div().w(theme::scaled_px(2.0)))
-            // Pop
-            .child(
-                make_btn(
-                    "tb-pop",
-                    "Pop",
-                    gpui_component::IconName::FolderOpen,
-                    toolbar.pop_on,
-                    0,
-                )
-                .on_click(pop_click),
-            )
-            .child(sep())
-            // Undo — operation-history undo (T-UNDOREDO-001). Label fixed; the
-            // previewed operation summary is shown in the tooltip.
-            .child(
-                make_btn(
-                    "tb-undo",
-                    Msg::Undo.t(),
-                    gpui_component::IconName::Undo2,
-                    undo_on,
-                    0,
-                )
-                .when_some(undo_tooltip_text, |btn, text| {
-                    btn.tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
-                })
-                .on_click(undo_click),
-            )
-            // Redo — operation-history redo (T-UNDOREDO-001).
-            .child(
-                make_btn(
-                    "tb-redo",
-                    Msg::Redo.t(),
-                    gpui_component::IconName::Redo2,
-                    redo_on,
-                    0,
-                )
-                .when_some(redo_tooltip_text, |btn, text| {
-                    btn.tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
-                })
-                .on_click(redo_click),
-            )
-            .child(div().w(theme::scaled_px(2.0)))
-            // Terminal (toggles bottom panel Terminal tab)
-            .child(
-                make_btn(
-                    "tb-terminal",
-                    "Terminal",
-                    gpui_component::IconName::SquareTerminal,
-                    terminal_on,
-                    0,
-                )
-                .on_click(terminal_click),
-            )
+                    // Pull (↓N chip when behind>0)
+                    .child(
+                        make_btn(
+                            "tb-pull",
+                            "Pull",
+                            gpui_component::IconName::ArrowDown,
+                            toolbar.pull_on,
+                            toolbar.behind,
+                        )
+                        .on_click(pull_click),
+                    )
+                    .child(div().w(theme::scaled_px(2.0)))
+                    // Push (↑N chip when ahead>0)
+                    .child(
+                        make_btn(
+                            "tb-push",
+                            "Push",
+                            gpui_component::IconName::ArrowUp,
+                            toolbar.push_on,
+                            toolbar.ahead,
+                        )
+                        .on_click(push_click),
+                    )
+                    .child(sep())
+                    // Branch
+                    .child(
+                        make_btn(
+                            "tb-branch",
+                            "Branch",
+                            gpui_component::IconName::Plus,
+                            true,
+                            0,
+                        )
+                        .on_click(branch_click),
+                    )
+                    .child(div().w(theme::scaled_px(2.0)))
+                    // Stash
+                    .child(
+                        make_btn(
+                            "tb-stash",
+                            "Stash",
+                            gpui_component::IconName::Inbox,
+                            toolbar.stash_on,
+                            0,
+                        )
+                        .on_click(stash_click),
+                    )
+                    .child(div().w(theme::scaled_px(2.0)))
+                    // Pop
+                    .child(
+                        make_btn(
+                            "tb-pop",
+                            "Pop",
+                            gpui_component::IconName::FolderOpen,
+                            toolbar.pop_on,
+                            0,
+                        )
+                        .on_click(pop_click),
+                    )
+                    .child(sep())
+                    // Undo — operation-history undo (T-UNDOREDO-001). Label fixed; the
+                    // previewed operation summary is shown in the tooltip.
+                    .child(
+                        make_btn(
+                            "tb-undo",
+                            Msg::Undo.t(),
+                            gpui_component::IconName::Undo2,
+                            undo_on,
+                            0,
+                        )
+                        .when_some(undo_tooltip_text, |btn, text| {
+                            btn.tooltip(move |window, cx| {
+                                Tooltip::new(text.clone()).build(window, cx)
+                            })
+                        })
+                        .on_click(undo_click),
+                    )
+                    // Redo — operation-history redo (T-UNDOREDO-001).
+                    .child(
+                        make_btn(
+                            "tb-redo",
+                            Msg::Redo.t(),
+                            gpui_component::IconName::Redo2,
+                            redo_on,
+                            0,
+                        )
+                        .when_some(redo_tooltip_text, |btn, text| {
+                            btn.tooltip(move |window, cx| {
+                                Tooltip::new(text.clone()).build(window, cx)
+                            })
+                        })
+                        .on_click(redo_click),
+                    )
+                    .child(div().w(theme::scaled_px(2.0)))
+                    // Terminal (toggles bottom panel Terminal tab)
+                    .child(
+                        make_btn(
+                            "tb-terminal",
+                            "Terminal",
+                            gpui_component::IconName::SquareTerminal,
+                            terminal_on,
+                            0,
+                        )
+                        .on_click(terminal_click),
+                    ),
             ) // ── end CENTRE cluster ──
             // ── RIGHT column (flex_1, equal width to the LEFT column) ──
             // Settings — now a standard toolbar button (icon + "Settings"
@@ -10943,8 +10947,7 @@ impl KagiApp {
                     .child({
                         let settings_click =
                             cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
-                                this.menu_overlay =
-                                    Some(commands::MenuOverlay::Settings);
+                                this.menu_overlay = Some(commands::MenuOverlay::Settings);
                                 cx.notify();
                             });
                         make_btn(
@@ -12436,7 +12439,6 @@ fn render_main_diff_view(
         })
 }
 
-
 /// Render the badge chips for one commit row as a horizontal flex container.
 ///
 /// Badge labels are capped at 24 visible chars with a trailing `…` to prevent
@@ -12509,7 +12511,10 @@ fn render_badges_column(
             // Stable element id so gpui interactivity (drag/drop) works. Keyed
             // by row position + badge label so a row with multiple branch chips
             // gets distinct ids (a commit can carry several branches).
-            .id(SharedString::from(format!("graph-badge-{i}-{}", badge.label)))
+            .id(SharedString::from(format!(
+                "graph-badge-{i}-{}",
+                badge.label
+            )))
             .px_1()
             .rounded_sm()
             .bg(gpui::rgba(badge_bg))
@@ -13681,9 +13686,8 @@ fn render_commit_panel(
                     let mut file_row = div()
                         .id(("cp-us-file", fi))
                         .when(
-                            active_wip.as_ref().map_or(false, |(st, p)| {
-                                *st == false
-                                    && panel.unstaged.get(fi).map_or(false, |f| &f.path == p)
+                            active_wip.as_ref().is_some_and(|(st, p)| {
+                                !*st && panel.unstaged.get(fi).is_some_and(|f| &f.path == p)
                             }),
                             |el| el.bg(rgb(theme().selected)),
                         )
@@ -13797,8 +13801,8 @@ fn render_commit_panel(
             let mut file_row = div()
                 .id(("cp-us-flat-file", fi))
                 .when(
-                    active_wip.as_ref().map_or(false, |(st, p)| {
-                        *st == false && panel.unstaged.get(fi).map_or(false, |f| &f.path == p)
+                    active_wip.as_ref().is_some_and(|(st, p)| {
+                        !*st && panel.unstaged.get(fi).is_some_and(|f| &f.path == p)
                     }),
                     |el| el.bg(rgb(theme().selected)),
                 )
@@ -13957,9 +13961,8 @@ fn render_commit_panel(
                         div()
                             .id(("cp-st-file", fi))
                             .when(
-                                active_wip.as_ref().map_or(false, |(st, p)| {
-                                    *st == true
-                                        && panel.staged.get(fi).map_or(false, |f| &f.path == p)
+                                active_wip.as_ref().is_some_and(|(st, p)| {
+                                    *st && panel.staged.get(fi).is_some_and(|f| &f.path == p)
                                 }),
                                 |el| el.bg(rgb(theme().selected)),
                             )
@@ -14039,8 +14042,8 @@ fn render_commit_panel(
                 div()
                     .id(("cp-st-flat-file", fi))
                     .when(
-                        active_wip.as_ref().map_or(false, |(st, p)| {
-                            *st == true && panel.staged.get(fi).map_or(false, |f| &f.path == p)
+                        active_wip.as_ref().is_some_and(|(st, p)| {
+                            *st && panel.staged.get(fi).is_some_and(|f| &f.path == p)
                         }),
                         |el| el.bg(rgb(theme().selected)),
                     )
@@ -14875,7 +14878,11 @@ mod drag_merge_validation_tests {
     fn drag_merge_rejects_current_branch_onto_itself() {
         let err = validate_merge_from_drag("main", &branches(), false)
             .expect_err("dropping current branch onto itself must be rejected");
-        assert!(err.contains("main"), "reason should name the branch: {}", err);
+        assert!(
+            err.contains("main"),
+            "reason should name the branch: {}",
+            err
+        );
         assert!(
             err.contains("current branch"),
             "reason should explain same-branch rejection: {}",
@@ -14940,6 +14947,9 @@ mod draggable_branch_name_tests {
             draggable_branch_name(&badge(BadgeKind::Remote, "origin/main")),
             None
         );
-        assert_eq!(draggable_branch_name(&badge(BadgeKind::Tag, "v0.1.0")), None);
+        assert_eq!(
+            draggable_branch_name(&badge(BadgeKind::Tag, "v0.1.0")),
+            None
+        );
     }
 }

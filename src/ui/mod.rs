@@ -747,8 +747,13 @@ pub struct Toast {
     pub id: u64,
     pub kind: ToastKind,
     pub message: SharedString,
-    /// Creation time; used by the pruner for auto-dismiss.
+    /// Creation time; drives the enter animation and auto-dismiss timing.
     pub born: std::time::Instant,
+    /// `Some(t)` once the toast has begun sliding out (auto-expiry or the ×
+    /// button): `t` is when the exit animation started. The toast keeps
+    /// rendering during the exit so the slide-out is visible, then a one-shot
+    /// timer removes it. `None` while it is entering / visible.
+    pub dismissing: Option<std::time::Instant>,
 }
 
 impl Toast {
@@ -760,13 +765,25 @@ impl Toast {
         }
     }
 
-    fn expired(&self) -> bool {
-        self.born.elapsed() >= self.lifetime()
+    /// The toast has been visible long enough to start sliding out (and is not
+    /// already doing so).
+    fn should_start_exit(&self) -> bool {
+        self.dismissing.is_none() && self.born.elapsed() >= self.lifetime()
     }
 }
 
 /// Maximum simultaneously visible toasts (oldest dropped beyond this).
 const TOASTS_MAX: usize = 4;
+
+/// Snackbar slide animation timings / distance.
+const TOAST_ENTER_MS: u64 = 240;
+const TOAST_EXIT_MS: u64 = 220;
+/// Remove the toast slightly before the exit animation's nominal end so it
+/// never reverts to its resting (visible) state for a frame before removal.
+const TOAST_REMOVE_MS: u64 = 200;
+/// Horizontal slide distance (px): far enough to clear the left window edge,
+/// so the toast slides fully in from / out to off-screen.
+const TOAST_SLIDE_PX: f32 = 500.0;
 
 // ──────────────────────────────────────────────────────────────
 
@@ -4231,15 +4248,37 @@ impl KagiApp {
             kind,
             message: message.into(),
             born: Instant::now(),
+            dismissing: None,
         });
         if self.toasts.len() > TOASTS_MAX {
             self.toasts.remove(0);
         }
     }
 
-    /// Remove a toast by id (× button).
-    pub fn dismiss_toast(&mut self, id: u64) {
-        self.toasts.retain(|t| t.id != id);
+    /// Begin sliding a toast out (× button or auto-expiry), then remove it once
+    /// the exit animation has played. Marking `dismissing` keeps the card in the
+    /// tree so the slide-out is visible; a one-shot timer does the actual
+    /// removal. No-op if the toast is gone or already leaving.
+    pub fn start_toast_exit(&mut self, id: u64, cx: &mut Context<Self>) {
+        let Some(toast) = self.toasts.iter_mut().find(|t| t.id == id) else {
+            return;
+        };
+        if toast.dismissing.is_some() {
+            return;
+        }
+        toast.dismissing = Some(Instant::now());
+        cx.notify();
+        cx.spawn(async move |this, acx| {
+            gpui::Timer::after(Duration::from_millis(TOAST_REMOVE_MS)).await;
+            let _ = this.update(acx, |app, cx| {
+                let before = app.toasts.len();
+                app.toasts.retain(|t| t.id != id);
+                if app.toasts.len() != before {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// Debounced live re-plan for the open modal(s): waits 250ms of input
@@ -4611,14 +4650,24 @@ impl KagiApp {
         }
         self.toast_ticker_alive = true;
         cx.spawn(async move |this, acx| loop {
-            gpui::Timer::after(Duration::from_millis(500)).await;
+            gpui::Timer::after(Duration::from_millis(150)).await;
             let finished = this.update(acx, |app, cx| {
-                let before = app.toasts.len();
-                app.toasts.retain(|t| !t.expired());
-                if app.toasts.len() != before {
-                    cx.notify();
+                // Begin the slide-out for any toast that has hit its lifetime;
+                // `start_toast_exit` handles the removal once it has animated.
+                let expiring: Vec<u64> = app
+                    .toasts
+                    .iter()
+                    .filter(|t| t.should_start_exit())
+                    .map(|t| t.id)
+                    .collect();
+                for id in expiring {
+                    app.start_toast_exit(id, cx);
                 }
-                if app.toasts.is_empty() {
+                // The ticker only needs to keep watching while a toast is still
+                // counting down (not yet leaving). Once every toast is either
+                // gone or already sliding out, its removal timer takes over.
+                let still_watching = app.toasts.iter().any(|t| t.dismissing.is_none());
+                if !still_watching {
                     app.toast_ticker_alive = false;
                     true
                 } else {
@@ -4655,47 +4704,70 @@ impl KagiApp {
                 ToastKind::Error => (theme().color_blocker, "\u{2715}"), // ✕
             };
             let id = toast.id;
+            let leaving = toast.dismissing.is_some();
             let dismiss = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-                this.dismiss_toast(id);
-                cx.notify();
+                this.start_toast_exit(id, cx);
             });
-            stack = stack.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_start()
-                    .gap_2()
-                    .px_4()
-                    .py_3()
-                    .rounded(theme::scaled_px(8.))
-                    .bg(rgb(theme().panel))
-                    .border_1()
-                    .border_color(rgb(accent))
-                    .text_base()
-                    .text_color(rgb(theme().text_main))
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_color(rgb(accent))
-                            .child(SharedString::from(icon)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .overflow_hidden()
-                            .child(toast.message.clone()),
-                    )
-                    .child(
-                        div()
-                            .id(("toast-dismiss", id))
-                            .flex_shrink_0()
-                            .px_1()
-                            .text_color(rgb(theme().text_muted))
-                            .hover(|s| s.text_color(rgb(theme().text_main)))
-                            .on_click(dismiss)
-                            .child(SharedString::from("\u{00d7}")),
-                    ),
-            );
+            // Explicit width so the animated margin-left slides the whole card
+            // horizontally (a stretched flex child wouldn't translate cleanly).
+            let card = div()
+                .w(theme::scaled_px(460.))
+                .flex()
+                .flex_row()
+                .items_start()
+                .gap_2()
+                .px_4()
+                .py_3()
+                .rounded(theme::scaled_px(8.))
+                .bg(rgb(theme().panel))
+                .border_1()
+                .border_color(rgb(accent))
+                .text_base()
+                .text_color(rgb(theme().text_main))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_color(rgb(accent))
+                        .child(SharedString::from(icon)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .overflow_hidden()
+                        .child(toast.message.clone()),
+                )
+                .child(
+                    div()
+                        .id(("toast-dismiss", id))
+                        .flex_shrink_0()
+                        .px_1()
+                        .text_color(rgb(theme().text_muted))
+                        .hover(|s| s.text_color(rgb(theme().text_main)))
+                        .on_click(dismiss)
+                        .child(SharedString::from("\u{00d7}")),
+                );
+
+            // Slide + fade: in from the left on appear, out to the left on
+            // dismiss. Keyed by toast id so the animation plays once and holds.
+            use gpui::AnimationExt as _;
+            let animated = if leaving {
+                card.with_animation(
+                    ("kagi-toast-exit", id),
+                    gpui::Animation::new(Duration::from_millis(TOAST_EXIT_MS))
+                        .with_easing(gpui::quadratic),
+                    |el, delta| el.ml(px(-TOAST_SLIDE_PX * delta)).opacity(1.0 - delta),
+                )
+                .into_any_element()
+            } else {
+                card.with_animation(
+                    ("kagi-toast-enter", id),
+                    gpui::Animation::new(Duration::from_millis(TOAST_ENTER_MS))
+                        .with_easing(gpui::ease_out_quint()),
+                    |el, delta| el.ml(px(-TOAST_SLIDE_PX * (1.0 - delta))).opacity(delta),
+                )
+                .into_any_element()
+            };
+            stack = stack.child(animated);
         }
         Some(stack.into_any())
     }
@@ -9998,9 +10070,9 @@ impl Render for KagiApp {
         // post-operation paths force re-detection via `reload()`.
         self.detect_conflict_mode();
 
-        // W3-NOTIFY: drop expired toasts and keep the auto-dismiss ticker
-        // alive while any remain.
-        self.toasts.retain(|t| !t.expired());
+        // W3-NOTIFY: keep the auto-dismiss ticker alive while toasts remain. The
+        // ticker starts each toast's slide-out at end-of-life; a per-toast timer
+        // removes it once it has animated out (see start_toast_exit).
         self.ensure_toast_ticker(cx);
 
         // Modal text inputs: lazy-create + sync (needs Window).
@@ -11634,6 +11706,7 @@ impl KagiApp {
                     .track_scroll(commit_scroll_handle)
                     .flex_1()
                     .min_h(px(0.)),
+                    true,
                 )
             });
 
@@ -12075,7 +12148,7 @@ impl KagiApp {
         .min_h(px(0.))
         .bg(rgb(theme().panel));
 
-        with_vertical_scrollbar("oplog-list-scroll", &scrollbar_handle, oplog_list)
+        with_vertical_scrollbar("oplog-list-scroll", &scrollbar_handle, oplog_list, true)
             .into_any_element()
     }
 
@@ -12785,6 +12858,7 @@ fn render_main_diff_view(
                 .track_scroll(scroll_handle)
                 .flex_1()
                 .min_h(px(0.)),
+                true,
             )
         })
 }
@@ -13730,20 +13804,29 @@ fn render_status_footer(status: FooterStatus) -> impl IntoElement {
 /// the inner `uniform_list` keeps its own `flex_1().min_h(0)` sizing.  Colours
 /// follow the gpui-component scrollbar theme fields, which
 /// `sync_gpui_component_theme` keeps in step with kagi's palette.
+/// `show_bar` controls whether the overlay scrollbar is rendered. `false` hides
+/// it entirely (the list still scrolls via wheel/trackpad) — used for the commit
+/// stage/unstage lists, which the user wants free of a visible scrollbar. When
+/// `true` the bar follows the theme default (`cx.theme().scrollbar_show`, which
+/// honours the macOS "show scroll bars" setting).
 fn with_vertical_scrollbar(
     id: &'static str,
     handle: &UniformListScrollHandle,
     list: impl IntoElement,
+    show_bar: bool,
 ) -> impl IntoElement {
-    div()
+    let mut container = div()
         .id(id)
         .relative()
         .flex_1()
         .min_h(px(0.))
         .flex()
         .flex_col()
-        .child(list)
-        .child(Scrollbar::vertical(handle))
+        .child(list);
+    if show_bar {
+        container = container.child(Scrollbar::vertical(handle));
+    }
+    container
 }
 
 /// Unstaged file-row context menu (right-click). Single item: Discard.
@@ -13910,6 +13993,7 @@ fn render_unstaged_flat_row(
         file_row = file_row.child(
             div()
                 .id(("cp-us-flat-stage-btn", fi))
+                .ml_2()
                 .px_1()
                 .py_px()
                 .rounded_sm()
@@ -13925,6 +14009,7 @@ fn render_unstaged_flat_row(
         file_row = file_row.child(
             div()
                 .id(("cp-us-flat-conflict-badge", fi))
+                .ml_2()
                 .px_1()
                 .py_px()
                 .rounded_sm()
@@ -14047,6 +14132,7 @@ fn render_unstaged_tree_row(
                 file_row = file_row.child(
                     div()
                         .id(("cp-us-stage-btn", fi))
+                        .ml_2()
                         .px_1()
                         .py_px()
                         .rounded_sm()
@@ -14062,6 +14148,7 @@ fn render_unstaged_tree_row(
                 file_row = file_row.child(
                     div()
                         .id(("cp-us-conflict-badge", fi))
+                        .ml_2()
                         .px_1()
                         .py_px()
                         .rounded_sm()
@@ -14147,6 +14234,7 @@ fn render_staged_flat_row(
             .child(
                 div()
                     .id(("cp-st-flat-unstage-btn", fi))
+                    .ml_2()
                     .px_1()
                     .py_px()
                     .rounded_sm()
@@ -14252,6 +14340,7 @@ fn render_staged_tree_row(
                     .child(
                         div()
                             .id(("cp-st-unstage-btn", fi))
+                            .ml_2()
                             .px_1()
                             .py_px()
                             .rounded_sm()
@@ -14695,17 +14784,37 @@ fn render_commit_panel(
             b
         };
 
-        // Suggest (rule-based) — always available when something is staged.
-        let suggest_click = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-            this.smart_suggest(window, cx);
-        });
-        let suggest_btn = pill(
+        // Suggest — one button: uses the local LLM when it's usable (green),
+        // otherwise the rule-based draft (blue). Shows "Generating…" while the
+        // LLM runs. (The separate "Generate with Local LLM" button is gone.)
+        let llm_on = smart.llm_offered();
+        let suggest_label = if smart.generating {
+            "Generating…"
+        } else {
+            "Suggest"
+        };
+        let suggest_enabled = !staged_empty && !smart.generating;
+        let suggest_color = if llm_on {
+            theme().color_success
+        } else {
+            theme().color_branch
+        };
+        let mut suggest_btn = pill(
             "cp-smart-suggest",
-            SharedString::from("Suggest"),
-            !staged_empty,
-            theme().color_branch,
-        )
-        .when(!staged_empty, |el| el.on_click(suggest_click));
+            SharedString::from(suggest_label),
+            suggest_enabled,
+            suggest_color,
+        );
+        if suggest_enabled {
+            let suggest_click = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+                if llm_on {
+                    this.smart_generate(window, cx);
+                } else {
+                    this.smart_suggest(window, cx);
+                }
+            });
+            suggest_btn = suggest_btn.on_click(suggest_click);
+        }
 
         // Lang toggle (En / 日本語).
         let lang_label = match smart.lang {
@@ -14751,28 +14860,10 @@ fn render_commit_panel(
             .child(lang_btn)
             .child(style_btn);
 
-        // Generate with Local LLM — only when offered (detected + enabled).
-        if smart.llm_offered() {
-            let gen_enabled = !staged_empty && !smart.generating;
-            let gen_label = if smart.generating {
-                "Generating…".to_string()
-            } else {
-                "Generate with Local LLM".to_string()
-            };
-            let gen_click = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-                this.smart_generate(window, cx);
-            });
-            let gen_btn = pill(
-                "cp-smart-generate",
-                SharedString::from(gen_label),
-                gen_enabled,
-                theme().color_success,
-            )
-            .when(gen_enabled, |el| el.on_click(gen_click));
-            row = row.child(gen_btn);
-        } else if smart.ollama_available && !smart.llm_enabled {
-            // Detected but not yet enabled: offer an enable affordance that
-            // triggers the consent flow.
+        // "Generate with Local LLM" is folded into Suggest (above). When the LLM
+        // is detected but not yet enabled, offer an opt-in affordance so the user
+        // can turn it on (after which Suggest goes green and uses it).
+        if smart.ollama_available && !smart.llm_enabled {
             let enable_click = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
                 this.smart_generate(window, cx);
             });
@@ -14943,6 +15034,7 @@ fn render_commit_panel(
                                 .track_scroll(unstaged_scroll_handle)
                                 .flex_1()
                                 .min_h(px(0.)),
+                                false,
                             )
                         }),
                 )
@@ -14991,6 +15083,7 @@ fn render_commit_panel(
                                 .track_scroll(staged_scroll_handle)
                                 .flex_1()
                                 .min_h(px(0.)),
+                                false,
                             )
                         }),
                 ),
@@ -15138,6 +15231,18 @@ pub fn run_app(app_state: KagiApp) {
             KeyBinding::new("up", DiffPrevFile, Some("!Terminal")),
             KeyBinding::new("down", DiffNextFile, Some("!Terminal")),
         ]);
+        // Ctrl+A = Select All in text inputs. gpui-component binds ctrl-a to
+        // *both* SelectAll and MoveHome (emacs-style) in the "Input" context,
+        // and the later (MoveHome) wins — so on this platform Ctrl+A jumped to
+        // line start instead of selecting all. Re-bind it to SelectAll here
+        // (registered after gpui_component::init, so it takes precedence).
+        // cmd-a (SelectAll) and double-click word-select already work natively.
+        cx.bind_keys([KeyBinding::new(
+            "ctrl-a",
+            gpui_component::input::SelectAll,
+            Some("Input"),
+        )]);
+
         // NOTE: a KeyBinding::new("enter", …) here never dispatched (the
         // Return key's key_char "\n" path); Enter is handled as a raw key
         // on the root element instead — see render().
@@ -15174,6 +15279,17 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
+            // Themed title bar: make the native bar transparent so kagi's own
+            // top content (the themed tab strip) fills the title-bar area
+            // instead of the default OS gray. The OS still draws the traffic
+            // lights, positioned over our content; the tab strip reserves space
+            // for them and is marked as a window-drag region (see
+            // render_tab_strip). Mirrors gpui-component's TitleBar options.
+            titlebar: Some(gpui::TitlebarOptions {
+                title: None,
+                appears_transparent: true,
+                traffic_light_position: Some(gpui::point(px(9.0), px(9.0))),
+            }),
             ..Default::default()
         },
         |window, cx| {

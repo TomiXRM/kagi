@@ -32,12 +32,14 @@ pub enum LineOrigin {
     Context,
 }
 
-/// Output order for line-level selections when both sides contribute lines.
+/// Tie-breaker order for line-level selections: results are assembled by line
+/// POSITION (see `ConflictHunk::resolved_lines`); `order` only decides which side
+/// comes first when BOTH sides are selected at the *same* position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineOrder {
-    /// Emit selected Current lines first, then selected Incoming lines.
+    /// At a shared position, emit the Current line before the Incoming line.
     CurrentFirst,
-    /// Emit selected Incoming lines first, then selected Current lines.
+    /// At a shared position, emit the Incoming line before the Current line.
     IncomingFirst,
 }
 
@@ -316,40 +318,43 @@ impl ConflictHunk {
                 .collect::<Vec<_>>()
         };
         if let Some(selection) = &self.line_select {
-            let cur_selected = || {
-                self.current
-                    .iter()
-                    .zip(selection.current_taken.iter())
-                    .filter(|(_line, taken)| **taken)
-                    .map(|(text, _taken)| ResolvedLine {
-                        text: text.clone(),
+            // Interleave by LINE POSITION, not grouped by side: the two panes are
+            // displayed row-aligned (the shorter side blank-padded to
+            // max(current, incoming) lines), so a checked line must land at its own
+            // position. Grouping by side put a single checked current line at the
+            // top/bottom of the hunk instead of in place. `order` only breaks the
+            // tie when BOTH sides are checked at the same position (uncommon).
+            let take_cur = |i: usize| -> Option<ResolvedLine> {
+                selection.current_taken.get(i).copied().and_then(|t| {
+                    t.then(|| ResolvedLine {
+                        text: self.current[i].clone(),
                         origin: LineOrigin::Current,
                     })
-                    .collect::<Vec<_>>()
+                })
             };
-            let inc_selected = || {
-                self.incoming
-                    .iter()
-                    .zip(selection.incoming_taken.iter())
-                    .filter(|(_line, taken)| **taken)
-                    .map(|(text, _taken)| ResolvedLine {
-                        text: text.clone(),
+            let take_inc = |i: usize| -> Option<ResolvedLine> {
+                selection.incoming_taken.get(i).copied().and_then(|t| {
+                    t.then(|| ResolvedLine {
+                        text: self.incoming[i].clone(),
                         origin: LineOrigin::Incoming,
                     })
-                    .collect::<Vec<_>>()
+                })
             };
-            return match selection.order {
-                LineOrder::CurrentFirst => {
-                    let mut v = cur_selected();
-                    v.extend(inc_selected());
-                    v
+            let n = self.current.len().max(self.incoming.len());
+            let mut v = Vec::new();
+            for i in 0..n {
+                match selection.order {
+                    LineOrder::CurrentFirst => {
+                        v.extend(take_cur(i));
+                        v.extend(take_inc(i));
+                    }
+                    LineOrder::IncomingFirst => {
+                        v.extend(take_inc(i));
+                        v.extend(take_cur(i));
+                    }
                 }
-                LineOrder::IncomingFirst => {
-                    let mut v = inc_selected();
-                    v.extend(cur_selected());
-                    v
-                }
-            };
+            }
+            return v;
         }
         match &self.choice {
             HunkChoice::AcceptCurrent => cur(&self.current),
@@ -802,6 +807,26 @@ keep bottom
         let texts: Vec<String> = m.assemble().into_iter().map(|l| l.text).collect();
         assert_eq!(texts[1], "a-incoming");
         assert_eq!(texts[2], "a-current");
+    }
+
+    #[test]
+    fn line_selection_interleaves_by_position() {
+        // Regression (user report): in a multi-line hunk, check all of Incoming,
+        // uncheck one Incoming line, and check the Current line at the same
+        // position — the Current line must land AT that position, not grouped at
+        // the top/bottom. (Previously lines were grouped by side.)
+        let markers = "<<<<<<< Current\nc1\nc2\nc3\n=======\ni1\ni2\ni3\n>>>>>>> Incoming\n";
+        let mut m = HunkModel::from_marker_text(markers);
+        assert!(m.set_hunk_side(0, SelectionSide::Incoming, true)); // all incoming
+        assert!(m.set_hunk_line(0, SelectionSide::Incoming, 1, false)); // drop i2
+        assert!(m.set_hunk_line(0, SelectionSide::Current, 1, true)); // take c2 instead
+
+        let texts: Vec<String> = m.assemble().into_iter().map(|l| l.text).collect();
+        assert_eq!(
+            texts,
+            vec!["i1".to_string(), "c2".to_string(), "i3".to_string()],
+            "the swapped-in current line must keep its position, not move to an end"
+        );
     }
 
     #[test]

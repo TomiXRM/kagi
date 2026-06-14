@@ -613,6 +613,8 @@ pub static THEMES: &[Theme] = &[
     ONE_DARK,
     ONE_LIGHT,
     MONOKAI,
+    TOKYO_NIGHT,
+    IBM_PC,
 ];
 
 // ── Catppuccin Mocha (default) ───────────────────────────────────────────
@@ -1128,6 +1130,169 @@ const MONOKAI: Theme = Theme {
     term_selection: (0x5a, 0x53, 0x62, 0xb3),
 };
 
+// ── Tokyo Night ───────────────────────────────────────────────────────────
+//
+// The popular "Tokyo Night" palette (enkia): bg #1a1b26, fg #c0caf5, blue
+// #7aa2f7, cyan #7dcfff, green #9ece6a, red #f7768e, yellow #e0af68, magenta
+// #bb9af7, comment #565f89, selection #283457.
+const TOKYO_NIGHT: Theme = Theme {
+    slug: "tokyo-night",
+    name: "Tokyo Night",
+    dark: true,
+
+    bg_base: 0x1a1b26,
+    bg_row_alt: 0x16161e,
+    surface: 0x292e42,
+    selected: 0x283457,
+    panel: 0x16161e,
+    sidebar: 0x13131a,
+    modal: 0x24283b,
+    modal_overlay: 0x000000,
+
+    text_main: 0xc0caf5,
+    text_sub: 0xa9b1d6,
+    text_muted: 0x565f89,
+    text_label: 0x9aa5ce,
+
+    color_head: 0xf7768e,
+    color_branch: 0x7aa2f7,
+    color_remote: 0x9ece6a,
+    color_tag: 0xe0af68,
+
+    color_success: 0x9ece6a,
+    color_warning: 0xe0af68,
+    color_blocker: 0xf7768e,
+    color_blocker_muted: 0x7a4250,
+
+    diff_added_bg: 0x1f3328,
+    diff_removed_bg: 0x3a1f28,
+    diff_hunk: 0x7aa2f7,
+
+    change_added: 0x9ece6a,
+    change_modified: 0xe0af68,
+    change_deleted: 0xf7768e,
+    change_renamed: 0x7aa2f7,
+    change_typechange: 0x565f89,
+    change_dir: 0x7dcfff,
+
+    accent: 0xbb9af7, // magenta
+
+    lane_hsl: [
+        (0.600, 0.80, 0.72), // blue
+        (0.250, 0.55, 0.61), // green
+        (0.100, 0.63, 0.64), // yellow
+        (0.960, 0.85, 0.72), // red/pink
+        (0.740, 0.80, 0.78), // purple
+        (0.550, 0.90, 0.74), // cyan
+    ],
+
+    avatar_sat: 0.65,
+    avatar_light: 0.65,
+
+    term_bg: (0x1a, 0x1b, 0x26),
+    term_fg: (0xc0, 0xca, 0xf5),
+    term_cursor: (0xc0, 0xca, 0xf5),
+    term_black: (0x15, 0x16, 0x1e),
+    term_red: (0xf7, 0x76, 0x8e),
+    term_green: (0x9e, 0xce, 0x6a),
+    term_yellow: (0xe0, 0xaf, 0x68),
+    term_blue: (0x7a, 0xa2, 0xf7),
+    term_magenta: (0xbb, 0x9a, 0xf7),
+    term_cyan: (0x7d, 0xcf, 0xff),
+    term_white: (0xa9, 0xb1, 0xd6),
+    term_bright_black: (0x41, 0x48, 0x68),
+    term_bright_red: (0xf7, 0x76, 0x8e),
+    term_bright_green: (0x9e, 0xce, 0x6a),
+    term_bright_yellow: (0xe0, 0xaf, 0x68),
+    term_bright_blue: (0x7a, 0xa2, 0xf7),
+    term_bright_magenta: (0xbb, 0x9a, 0xf7),
+    term_bright_cyan: (0x7d, 0xcf, 0xff),
+    term_bright_white: (0xc0, 0xca, 0xf5),
+    term_selection: (0x28, 0x34, 0x57, 0xb3),
+};
+
+// ── IBM PC ────────────────────────────────────────────────────────────────
+//
+// Classic IBM PC / DOS look: black background with the 16-colour CGA palette
+// (bright blue #5555ff, green #55ff55, cyan #55ffff, red #ff5555, magenta
+// #ff55ff, yellow #ffff55, white #ffffff), and the iconic blue selection bar.
+const IBM_PC: Theme = Theme {
+    slug: "ibm-pc",
+    name: "IBM PC",
+    dark: true,
+
+    bg_base: 0x000000,
+    bg_row_alt: 0x0a0a0a,
+    surface: 0x222222,
+    selected: 0x0000aa, // the classic DOS blue highlight bar
+    panel: 0x000000,
+    sidebar: 0x000000,
+    modal: 0x0000aa, // DOS blue dialog
+    modal_overlay: 0x000000,
+
+    text_main: 0xffffff,
+    text_sub: 0xaaaaaa,
+    text_muted: 0x555555,
+    text_label: 0x55ffff,
+
+    color_head: 0xff5555,
+    color_branch: 0x5555ff,
+    color_remote: 0x55ff55,
+    color_tag: 0xffff55,
+
+    color_success: 0x55ff55,
+    color_warning: 0xffff55,
+    color_blocker: 0xff5555,
+    color_blocker_muted: 0xaa0000,
+
+    diff_added_bg: 0x003300,
+    diff_removed_bg: 0x330000,
+    diff_hunk: 0x55ffff,
+
+    change_added: 0x55ff55,
+    change_modified: 0xffff55,
+    change_deleted: 0xff5555,
+    change_renamed: 0x55ffff,
+    change_typechange: 0x555555,
+    change_dir: 0x5555ff,
+
+    accent: 0xff55ff, // bright magenta
+
+    lane_hsl: [
+        (0.667, 1.0, 0.67), // bright blue
+        (0.333, 1.0, 0.67), // bright green
+        (0.167, 1.0, 0.67), // yellow
+        (0.000, 1.0, 0.67), // bright red
+        (0.833, 1.0, 0.67), // bright magenta
+        (0.500, 1.0, 0.67), // bright cyan
+    ],
+
+    avatar_sat: 1.0,
+    avatar_light: 0.60,
+
+    // Exact CGA 16-colour palette.
+    term_bg: (0x00, 0x00, 0x00),
+    term_fg: (0xaa, 0xaa, 0xaa),
+    term_cursor: (0xff, 0xff, 0xff),
+    term_black: (0x00, 0x00, 0x00),
+    term_red: (0xaa, 0x00, 0x00),
+    term_green: (0x00, 0xaa, 0x00),
+    term_yellow: (0xaa, 0x55, 0x00), // brown
+    term_blue: (0x00, 0x00, 0xaa),
+    term_magenta: (0xaa, 0x00, 0xaa),
+    term_cyan: (0x00, 0xaa, 0xaa),
+    term_white: (0xaa, 0xaa, 0xaa),
+    term_bright_black: (0x55, 0x55, 0x55),
+    term_bright_red: (0xff, 0x55, 0x55),
+    term_bright_green: (0x55, 0xff, 0x55),
+    term_bright_yellow: (0xff, 0xff, 0x55),
+    term_bright_blue: (0x55, 0x55, 0xff),
+    term_bright_magenta: (0xff, 0x55, 0xff),
+    term_bright_cyan: (0x55, 0xff, 0xff),
+    term_bright_white: (0xff, 0xff, 0xff),
+    term_selection: (0x00, 0x00, 0xaa, 0xb3),
+};
+
 // ──────────────────────────────────────────────────────────────────────────
 // Tests
 // ──────────────────────────────────────────────────────────────────────────
@@ -1138,11 +1303,11 @@ mod tests {
 
     #[test]
     fn six_themes_with_unique_slugs() {
-        assert_eq!(THEMES.len(), 6);
+        assert_eq!(THEMES.len(), 8);
         let mut slugs: Vec<&str> = THEMES.iter().map(|t| t.slug).collect();
         slugs.sort_unstable();
         slugs.dedup();
-        assert_eq!(slugs.len(), 6, "theme slugs must be unique");
+        assert_eq!(slugs.len(), 8, "theme slugs must be unique");
     }
 
     #[test]
@@ -1243,10 +1408,11 @@ mod tests {
     }
 
     #[test]
-    fn three_dark_three_light() {
+    fn dark_and_light_counts() {
         let dark = THEMES.iter().filter(|t| t.dark).count();
         let light = THEMES.iter().filter(|t| !t.dark).count();
-        assert_eq!(dark, 4); // catppuccin, xcode-dark, one-dark, monokai
+        // catppuccin, xcode-dark, one-dark, monokai, tokyo-night, ibm-pc
+        assert_eq!(dark, 6);
         assert_eq!(light, 2); // xcode-light, one-light
     }
 }

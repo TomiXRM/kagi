@@ -3,6 +3,35 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.6] — 2026-06-15
+
+### Added
+- **Two new themes: Tokyo Night and IBM PC.** Tokyo Night is a navy/blue-green
+  dark theme; IBM PC is a black-background CGA 16-colour theme.
+- **Smart commit message: the Suggest button now uses the local LLM when one is
+  available.** When Ollama is enabled, *Suggest* sends the staged diff to the
+  LLM and uses its output (button turns green); otherwise it falls back to the
+  rule-based suggestion (blue). The separate "Generate with Local LLM" button is
+  gone — folded into Suggest.
+- **Snackbar slide animation.** Toasts slide in from the left (fade in) when they
+  appear and slide back out (fade out) when they expire or are dismissed.
+
+### Changed
+- **Themed window title bar.** The title bar is no longer the default OS gray —
+  it is transparent so kagi's themed top bar (the repo tab strip) fills the
+  title-bar area and follows the active theme. The strip is draggable and, on
+  macOS, leaves room for the traffic lights.
+- **Ctrl+A selects all in text inputs** (e.g. the commit message), instead of
+  jumping to line start. Double-click word-select and ⌘A already worked.
+
+### Fixed
+- **Line-level conflict merge interleaves by position.** When taking individual
+  lines from both sides of a hunk, the result now keeps each line in its
+  original position instead of grouping all of one side first — so "base on the
+  left, pull in just line 10 from the right" lands line 10 in place.
+- Commit panel: hid the scrollbar on the stage/unstage lists (they still scroll),
+  and added a left margin before the per-row Stage/Unstage buttons.
+
 ## [0.3.5] — 2026-06-15
 
 ### Performance

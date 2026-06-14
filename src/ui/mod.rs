@@ -15279,6 +15279,17 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
+            // Themed title bar: make the native bar transparent so kagi's own
+            // top content (the themed tab strip) fills the title-bar area
+            // instead of the default OS gray. The OS still draws the traffic
+            // lights, positioned over our content; the tab strip reserves space
+            // for them and is marked as a window-drag region (see
+            // render_tab_strip). Mirrors gpui-component's TitleBar options.
+            titlebar: Some(gpui::TitlebarOptions {
+                title: None,
+                appears_transparent: true,
+                traffic_light_position: Some(gpui::point(px(9.0), px(9.0))),
+            }),
             ..Default::default()
         },
         |window, cx| {

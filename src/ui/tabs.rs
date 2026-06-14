@@ -477,7 +477,12 @@ impl KagiApp {
             .h(theme::scaled_px(TAB_STRIP_H))
             .bg(rgb(theme().panel))
             .border_b_1()
-            .border_color(rgb(theme().surface));
+            .border_color(rgb(theme().surface))
+            // Themed title bar: the strip now fills the (transparent) OS title-bar
+            // area. Drag it to move the window, and on macOS reserve space at the
+            // left for the traffic lights drawn over it.
+            .window_control_area(gpui::WindowControlArea::Drag)
+            .when(cfg!(target_os = "macos"), |s| s.pl(gpui::px(80.)));
 
         for (i, tab) in tabs.into_iter().enumerate() {
             let is_active = i == active;
@@ -605,6 +610,10 @@ impl KagiApp {
             .gap_4()
             .size_full()
             .bg(rgb(theme().bg_base))
+            // Themed transparent title bar leaves no OS drag area, so let the
+            // (otherwise empty) welcome surface drag the window; the button's
+            // own click still takes precedence.
+            .window_control_area(gpui::WindowControlArea::Drag)
             .child(
                 div()
                     .text_2xl()

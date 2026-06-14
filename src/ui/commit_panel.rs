@@ -118,6 +118,10 @@ impl CommitPanelState {
                 // Track conflicted paths for UI (these cannot be staged).
                 self.conflicted_paths = status.conflicted.iter().cloned().collect();
 
+                // Whether there are tracked modifications (the only thing
+                // unstaged_diffstat covers) — captured before `status` is moved.
+                let has_tracked_modifications = !status.unstaged.is_empty();
+
                 // Unstaged = modified + untracked combined
                 let mut unstaged = status.unstaged;
                 // Append untracked as Added entries
@@ -138,7 +142,14 @@ impl CommitPanelState {
                 self.staged = status.staged;
                 // W16-DIFFSTAT: aggregate additions/deletions for both sides.
                 // Best-effort: on error leave the lists empty (bar omitted).
-                self.unstaged_stats = backend.unstaged_diffstat().unwrap_or_default();
+                // unstaged_diffstat covers tracked modifications only — skip the
+                // (working-tree-walking) call entirely when there are none, so a
+                // dir full of untracked files costs nothing here.
+                self.unstaged_stats = if has_tracked_modifications {
+                    backend.unstaged_diffstat().unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
                 self.staged_stats = backend.staged_diffstat().unwrap_or_default();
                 // Clear selection on status change.
                 self.selected_file = None;

@@ -921,6 +921,11 @@ pub struct KagiApp {
     /// Scroll handle for the "commit-list" uniform_list.
     /// Stored in KagiApp so it persists across render frames.
     pub commit_scroll_handle: UniformListScrollHandle,
+    /// PERF: scroll handle for the commit panel's Unstaged `uniform_list`
+    /// (shared across flat/tree views — only one is visible at a time).
+    pub cp_unstaged_scroll_handle: UniformListScrollHandle,
+    /// PERF: scroll handle for the commit panel's Staged `uniform_list`.
+    pub cp_staged_scroll_handle: UniformListScrollHandle,
     /// Maps local branch name → the CommitId it points to.
     /// Built at snapshot time; used by jump_to_branch.
     pub branch_targets: HashMap<String, CommitId>,
@@ -1413,6 +1418,8 @@ impl KagiApp {
             smart_commit_detected_for: None,
             pending_smart_msg: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
+            cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
+            cp_staged_scroll_handle: UniformListScrollHandle::new(),
             branch_targets,
             commit_row_index,
             status_summary,
@@ -1545,6 +1552,8 @@ impl KagiApp {
             smart_commit_detected_for: None,
             pending_smart_msg: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
+            cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
+            cp_staged_scroll_handle: UniformListScrollHandle::new(),
             branch_targets: HashMap::new(),
             commit_row_index: HashMap::new(),
             status_summary: StatusBarSummary::default(),
@@ -11631,6 +11640,8 @@ impl KagiApp {
                     active_wip.clone(),
                     self.smart_commit.clone(),
                     preview,
+                    self.cp_unstaged_scroll_handle.clone(),
+                    self.cp_staged_scroll_handle.clone(),
                     cx,
                 ));
             }
@@ -13706,6 +13717,469 @@ fn render_file_menu_overlay(
 }
 
 // ──────────────────────────────────────────────────────────────
+// Commit Panel — virtualized per-row builders (PERF)
+// ──────────────────────────────────────────────────────────────
+//
+// These free functions build a SINGLE file row, reading live data from
+// `this.commit_panel` (NOT a captured-by-value clone).  They are invoked from
+// the `uniform_list` processors below for only the visible `range`, so the
+// commit panel costs O(visible rows) per frame instead of O(all files).
+
+/// PERF: recompute the WIP-highlight target from the open main diff.
+/// `Some((staged, path))` when a WIP (unstaged/staged) file is open in the
+/// center diff; mirrors the value the old call site passed in by value.
+fn cp_active_wip(this: &KagiApp) -> Option<(bool, PathBuf)> {
+    match this.main_diff.as_ref().map(|d| &d.source) {
+        Some(MainDiffSource::Unstaged { path }) => Some((false, path.clone())),
+        Some(MainDiffSource::Staged { path }) => Some((true, path.clone())),
+        _ => None,
+    }
+}
+
+/// PERF: build one unstaged row in flat view (index `fi` into `unstaged`).
+fn render_unstaged_flat_row(
+    this: &KagiApp,
+    fi: usize,
+    cx: &mut Context<KagiApp>,
+) -> Option<gpui::AnyElement> {
+    let panel = this.commit_panel.as_ref()?;
+    let f = panel.unstaged.get(fi)?;
+    let selected_file = panel.selected_file.clone();
+    let active_wip = cp_active_wip(this);
+
+    let name = f
+        .path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| f.path.to_string_lossy().into_owned());
+    let is_conflicted_file = panel.is_conflicted(&f.path);
+    // W17-DISCARD: untracked rows are surfaced as `Added`; not discardable.
+    let is_untracked_row = matches!(f.change, ChangeKind::Added);
+    let (badge, badge_color, _) = status_badge(&f.change, is_conflicted_file);
+    let is_sel = selected_file == Some(CommitPanelFileRef::Unstaged { index: fi });
+    let stat = panel.unstaged_stat(&f.path).cloned();
+    let wip_hit = active_wip
+        .as_ref()
+        .is_some_and(|(st, p)| !*st && &f.path == p);
+
+    let file_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+        this.select_commit_panel_file(CommitPanelFileRef::Unstaged { index: fi });
+        cx.notify();
+    });
+    let stage_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+        this.do_stage_file(fi);
+        cx.notify();
+    });
+    // Row background: conflicted files get red tint
+    let row_bg = if is_conflicted_file {
+        theme().diff_removed_bg
+    } else if is_sel {
+        theme().selected
+    } else {
+        theme().panel
+    };
+    let mut file_row = div()
+        .id(("cp-us-flat-file", fi))
+        .when(wip_hit, |el| el.bg(rgb(theme().selected)))
+        .flex()
+        .flex_row()
+        .items_center()
+        .px_2()
+        .py_px()
+        .bg(rgb(row_bg))
+        .hover(|s| s.bg(rgb(theme().surface)))
+        .on_click(file_click)
+        .child(
+            div()
+                .w(theme::scaled_px(12.))
+                .flex_shrink_0()
+                .text_xs()
+                .text_color(rgb(badge_color))
+                .child(SharedString::from(badge)),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .text_xs()
+                .text_color(rgb(theme().text_main))
+                .overflow_hidden()
+                .truncate()
+                .child(SharedString::from(name)),
+        )
+        .child(diffstat_bar::diffstat_unit(fi, stat.as_ref()));
+    // Stage button only for non-conflicted files
+    if !is_conflicted_file {
+        // W17-DISCARD: right-click on tracked rows opens the file
+        // context menu (Discard lives there, not as a per-row button).
+        if !is_untracked_row {
+            let menu_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
+                this.file_menu = Some((fi, e.position));
+                cx.stop_propagation();
+                cx.notify();
+            });
+            file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
+        }
+        file_row = file_row.child(
+            div()
+                .id(("cp-us-flat-stage-btn", fi))
+                .px_1()
+                .py_px()
+                .rounded_sm()
+                .flex_shrink_0()
+                .bg(rgb(theme().color_success))
+                .text_xs()
+                .text_color(rgb(theme().bg_base))
+                .on_click(stage_click)
+                .hover(|s| s.opacity(0.8))
+                .child(SharedString::from("Stage")),
+        );
+    } else {
+        file_row = file_row.child(
+            div()
+                .id(("cp-us-flat-conflict-badge", fi))
+                .px_1()
+                .py_px()
+                .rounded_sm()
+                .flex_shrink_0()
+                .bg(rgb(theme().color_blocker)) // red
+                .text_xs()
+                .text_color(rgb(theme().bg_base))
+                .child(SharedString::from("Conflict")),
+        );
+    }
+    Some(file_row.into_any_element())
+}
+
+/// PERF: build one unstaged tree row (index `row_index` into `unstaged_tree`).
+fn render_unstaged_tree_row(
+    this: &KagiApp,
+    row_index: usize,
+    cx: &mut Context<KagiApp>,
+) -> Option<gpui::AnyElement> {
+    let panel = this.commit_panel.as_ref()?;
+    let row = panel.unstaged_tree.get(row_index)?.clone();
+    let selected_file = panel.selected_file.clone();
+    let active_wip = cp_active_wip(this);
+
+    match row {
+        file_tree::TreeRow::Dir { depth, name } => {
+            let indent = (depth as f32) * 12.0;
+            Some(
+                div()
+                    .id(SharedString::from(format!("cp-us-dir-{}", name.as_ref())))
+                    .pl(theme::scaled_px(8.0 + indent))
+                    .py_px()
+                    .text_xs()
+                    .text_color(rgb(theme().change_dir))
+                    .child(name.clone())
+                    .into_any_element(),
+            )
+        }
+        file_tree::TreeRow::File {
+            depth,
+            name,
+            file_index,
+            change,
+        } => {
+            let indent = (depth as f32) * 12.0;
+            let fi = file_index;
+            // Look up the original path to check if conflicted
+            let path = panel.unstaged.get(fi).map(|f| f.path.clone());
+            let is_conflicted_file = path
+                .as_ref()
+                .map(|p| panel.is_conflicted(p))
+                .unwrap_or(false);
+            let (badge, badge_color, _) = status_badge(&change, is_conflicted_file);
+            let is_sel = selected_file == Some(CommitPanelFileRef::Unstaged { index: fi });
+            let stat = path.as_ref().and_then(|p| panel.unstaged_stat(p)).cloned();
+            let wip_hit = active_wip
+                .as_ref()
+                .zip(path.as_ref())
+                .is_some_and(|((st, p), fp)| !*st && fp == p);
+
+            let file_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                this.select_commit_panel_file(CommitPanelFileRef::Unstaged { index: fi });
+                cx.notify();
+            });
+            let stage_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                this.do_stage_file(fi);
+                cx.notify();
+            });
+            let row_bg = if is_conflicted_file {
+                theme().diff_removed_bg
+            } else if is_sel {
+                theme().selected
+            } else {
+                theme().panel
+            };
+            let mut file_row = div()
+                .id(("cp-us-file", fi))
+                .when(wip_hit, |el| el.bg(rgb(theme().selected)))
+                .flex()
+                .flex_row()
+                .items_center()
+                .pl(theme::scaled_px(8.0 + indent))
+                .pr(theme::scaled_px(2.0))
+                .py_px()
+                .bg(rgb(row_bg))
+                .hover(|s| s.bg(rgb(theme().surface)))
+                .on_click(file_click)
+                .child(
+                    div()
+                        .w(theme::scaled_px(12.))
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(rgb(badge_color))
+                        .child(SharedString::from(badge)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .text_xs()
+                        .text_color(rgb(theme().text_main))
+                        .overflow_hidden()
+                        .truncate()
+                        .child(name.clone()),
+                )
+                .child(diffstat_bar::diffstat_unit(fi, stat.as_ref()));
+            if !is_conflicted_file {
+                // W17-DISCARD: right-click on tracked rows opens the file
+                // context menu (Discard lives there, not as a per-row button).
+                if !matches!(change, ChangeKind::Added) {
+                    let menu_click =
+                        cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
+                            this.file_menu = Some((fi, e.position));
+                            cx.stop_propagation();
+                            cx.notify();
+                        });
+                    file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
+                }
+                file_row = file_row.child(
+                    div()
+                        .id(("cp-us-stage-btn", fi))
+                        .px_1()
+                        .py_px()
+                        .rounded_sm()
+                        .flex_shrink_0()
+                        .bg(rgb(theme().color_success))
+                        .text_xs()
+                        .text_color(rgb(theme().bg_base))
+                        .on_click(stage_click)
+                        .hover(|s| s.opacity(0.8))
+                        .child(SharedString::from("Stage")),
+                );
+            } else {
+                file_row = file_row.child(
+                    div()
+                        .id(("cp-us-conflict-badge", fi))
+                        .px_1()
+                        .py_px()
+                        .rounded_sm()
+                        .flex_shrink_0()
+                        .bg(rgb(theme().color_blocker))
+                        .text_xs()
+                        .text_color(rgb(theme().bg_base))
+                        .child(SharedString::from("Conflict")),
+                );
+            }
+            Some(file_row.into_any_element())
+        }
+    }
+}
+
+/// PERF: build one staged row in flat view (index `fi` into `staged`).
+fn render_staged_flat_row(
+    this: &KagiApp,
+    fi: usize,
+    cx: &mut Context<KagiApp>,
+) -> Option<gpui::AnyElement> {
+    let panel = this.commit_panel.as_ref()?;
+    let f = panel.staged.get(fi)?;
+    let selected_file = panel.selected_file.clone();
+    let active_wip = cp_active_wip(this);
+
+    let name = f
+        .path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| f.path.to_string_lossy().into_owned());
+    let (badge, badge_color, _conflicted) = status_badge(&f.change, false);
+    let is_sel = selected_file == Some(CommitPanelFileRef::Staged { index: fi });
+    let stat = panel.staged_stat(&f.path).cloned();
+    let wip_hit = active_wip
+        .as_ref()
+        .is_some_and(|(st, p)| *st && &f.path == p);
+
+    let file_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+        this.select_commit_panel_file(CommitPanelFileRef::Staged { index: fi });
+        cx.notify();
+    });
+    let unstage_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+        this.do_unstage_file(fi);
+        cx.notify();
+    });
+    Some(
+        div()
+            .id(("cp-st-flat-file", fi))
+            .when(wip_hit, |el| el.bg(rgb(theme().selected)))
+            .flex()
+            .flex_row()
+            .items_center()
+            .px_2()
+            .py_px()
+            .bg(rgb(if is_sel {
+                theme().selected
+            } else {
+                theme().panel
+            }))
+            .hover(|s| s.bg(rgb(theme().surface)))
+            .on_click(file_click)
+            .child(
+                div()
+                    .w(theme::scaled_px(12.))
+                    .flex_shrink_0()
+                    .text_xs()
+                    .text_color(rgb(badge_color))
+                    .child(SharedString::from(badge)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .text_xs()
+                    .text_color(rgb(theme().text_main))
+                    .overflow_hidden()
+                    .truncate()
+                    .child(SharedString::from(name)),
+            )
+            .child(diffstat_bar::diffstat_unit(fi + 100_000, stat.as_ref()))
+            .child(
+                div()
+                    .id(("cp-st-flat-unstage-btn", fi))
+                    .px_1()
+                    .py_px()
+                    .rounded_sm()
+                    .flex_shrink_0()
+                    .bg(rgb(theme().color_warning))
+                    .text_xs()
+                    .text_color(rgb(theme().bg_base))
+                    .on_click(unstage_click)
+                    .hover(|s| s.opacity(0.8))
+                    .child(SharedString::from("Unstage")),
+            )
+            .into_any_element(),
+    )
+}
+
+/// PERF: build one staged tree row (index `row_index` into `staged_tree`).
+fn render_staged_tree_row(
+    this: &KagiApp,
+    row_index: usize,
+    cx: &mut Context<KagiApp>,
+) -> Option<gpui::AnyElement> {
+    let panel = this.commit_panel.as_ref()?;
+    let row = panel.staged_tree.get(row_index)?.clone();
+    let selected_file = panel.selected_file.clone();
+    let active_wip = cp_active_wip(this);
+
+    match row {
+        file_tree::TreeRow::Dir { depth, name } => {
+            let indent = (depth as f32) * 12.0;
+            Some(
+                div()
+                    .id(SharedString::from(format!("cp-st-dir-{}", name.as_ref())))
+                    .pl(theme::scaled_px(8.0 + indent))
+                    .py_px()
+                    .text_xs()
+                    .text_color(rgb(theme().change_dir))
+                    .child(name.clone())
+                    .into_any_element(),
+            )
+        }
+        file_tree::TreeRow::File {
+            depth,
+            name,
+            file_index,
+            change,
+        } => {
+            let indent = (depth as f32) * 12.0;
+            let fi = file_index;
+            let (badge, badge_color, _conflicted) = status_badge(&change, false);
+            let is_sel = selected_file == Some(CommitPanelFileRef::Staged { index: fi });
+            let path = panel.staged.get(fi).map(|f| f.path.clone());
+            let stat = path.as_ref().and_then(|p| panel.staged_stat(p)).cloned();
+            let wip_hit = active_wip
+                .as_ref()
+                .zip(path.as_ref())
+                .is_some_and(|((st, p), fp)| *st && fp == p);
+
+            let file_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                this.select_commit_panel_file(CommitPanelFileRef::Staged { index: fi });
+                cx.notify();
+            });
+            let unstage_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                this.do_unstage_file(fi);
+                cx.notify();
+            });
+            Some(
+                div()
+                    .id(("cp-st-file", fi))
+                    .when(wip_hit, |el| el.bg(rgb(theme().selected)))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .pl(theme::scaled_px(8.0 + indent))
+                    .pr(theme::scaled_px(2.0))
+                    .py_px()
+                    .bg(rgb(if is_sel {
+                        theme().selected
+                    } else {
+                        theme().panel
+                    }))
+                    .hover(|s| s.bg(rgb(theme().surface)))
+                    .on_click(file_click)
+                    .child(
+                        div()
+                            .w(theme::scaled_px(12.))
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(rgb(badge_color))
+                            .child(SharedString::from(badge)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .text_xs()
+                            .text_color(rgb(theme().text_main))
+                            .overflow_hidden()
+                            .truncate()
+                            .child(name.clone()),
+                    )
+                    .child(diffstat_bar::diffstat_unit(fi + 100_000, stat.as_ref()))
+                    .child(
+                        div()
+                            .id(("cp-st-unstage-btn", fi))
+                            .px_1()
+                            .py_px()
+                            .rounded_sm()
+                            .flex_shrink_0()
+                            .bg(rgb(theme().color_warning))
+                            .text_xs()
+                            .text_color(rgb(theme().bg_base))
+                            .on_click(unstage_click)
+                            .hover(|s| s.opacity(0.8))
+                            .child(SharedString::from("Unstage")),
+                    )
+                    .into_any_element(),
+            )
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
 // Commit Panel renderer (T025)
 // ──────────────────────────────────────────────────────────────
 
@@ -13724,9 +14198,14 @@ fn render_commit_panel(
     commit_input: Option<Entity<InputState>>,
     template_mode: bool,
     template_inputs: Option<[Entity<InputState>; 6]>,
-    active_wip: Option<(bool, PathBuf)>,
+    // PERF: WIP highlight is now recomputed per visible row from `this.main_diff`
+    // inside the uniform_list processors; this parameter is retained for the
+    // stable call-site signature.
+    _active_wip: Option<(bool, PathBuf)>,
     smart: smart_commit::SmartCommitState,
     preview: Option<kagi::git::CommitPreview>,
+    unstaged_scroll_handle: UniformListScrollHandle,
+    staged_scroll_handle: UniformListScrollHandle,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     // theme().change_dir now sourced from theme().change_dir (W9-THEME).
@@ -13767,8 +14246,8 @@ fn render_commit_panel(
     };
     let can_commit = !panel.staged.is_empty() && input_msg_nonempty;
     let has_unstaged_warning = !panel.unstaged.is_empty() && staged_count > 0;
-    // T-UI-003: selected_file tracks which row is highlighted in the panel.
-    let selected_file = panel.selected_file.clone();
+    // PERF: selected_file is read per visible row from `this.commit_panel`
+    // inside the uniform_list processors, not captured here.
 
     // ── View switch: segmented [List | Tree] (T-UI-002) ──────
     let list_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
@@ -13882,257 +14361,13 @@ fn render_commit_panel(
         })
         .child(toggle_btn);
 
-    // Unstaged ファイル行コンテナ (スクロールボックス内に入る)
-    let mut unstaged_files = div().flex().flex_col();
-
-    if tree_view {
-        // Tree view: use build_file_tree
-        let tree_rows = file_tree::build_file_tree(&panel.unstaged);
-        for row in &tree_rows {
-            match row {
-                file_tree::TreeRow::Dir { depth, name } => {
-                    let indent = (*depth as f32) * 12.0;
-                    unstaged_files = unstaged_files.child(
-                        div()
-                            .id(SharedString::from(format!("cp-us-dir-{}", name.as_ref())))
-                            .pl(theme::scaled_px(8.0 + indent))
-                            .text_xs()
-                            .text_color(rgb(theme().change_dir))
-                            .child(name.clone()),
-                    );
-                }
-                file_tree::TreeRow::File {
-                    depth,
-                    name,
-                    file_index,
-                    change,
-                } => {
-                    let indent = (*depth as f32) * 12.0;
-                    let fi = *file_index;
-                    // Look up the original path to check if conflicted
-                    let is_conflicted_file = panel
-                        .unstaged
-                        .get(fi)
-                        .map(|f| panel.is_conflicted(&f.path))
-                        .unwrap_or(false);
-                    let (badge, badge_color, _) = status_badge(change, is_conflicted_file);
-                    let is_sel = selected_file == Some(CommitPanelFileRef::Unstaged { index: fi });
-                    let file_click =
-                        cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                            this.select_commit_panel_file(CommitPanelFileRef::Unstaged {
-                                index: fi,
-                            });
-                            cx.notify();
-                        });
-                    let stage_click =
-                        cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                            this.do_stage_file(fi);
-                            cx.notify();
-                        });
-                    let row_bg = if is_conflicted_file {
-                        theme().diff_removed_bg
-                    } else if is_sel {
-                        theme().selected
-                    } else {
-                        theme().panel
-                    };
-                    let mut file_row = div()
-                        .id(("cp-us-file", fi))
-                        .when(
-                            active_wip.as_ref().is_some_and(|(st, p)| {
-                                !*st && panel.unstaged.get(fi).is_some_and(|f| &f.path == p)
-                            }),
-                            |el| el.bg(rgb(theme().selected)),
-                        )
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .pl(theme::scaled_px(8.0 + indent))
-                        .pr(theme::scaled_px(2.0))
-                        .py_px()
-                        .bg(rgb(row_bg))
-                        .hover(|s| s.bg(rgb(theme().surface)))
-                        .on_click(file_click)
-                        .child(
-                            div()
-                                .w(theme::scaled_px(12.))
-                                .flex_shrink_0()
-                                .text_xs()
-                                .text_color(rgb(badge_color))
-                                .child(SharedString::from(badge)),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.))
-                                .text_xs()
-                                .text_color(rgb(theme().text_main))
-                                .overflow_hidden()
-                                .truncate()
-                                .child(name.clone()),
-                        )
-                        .child(diffstat_bar::diffstat_unit(
-                            fi,
-                            panel
-                                .unstaged
-                                .get(fi)
-                                .and_then(|f| kagi::git::find_stat(&panel.unstaged_stats, &f.path)),
-                        ));
-                    if !is_conflicted_file {
-                        // W17-DISCARD: right-click on tracked rows opens the file
-                        // context menu (Discard lives there, not as a per-row button).
-                        if !matches!(change, ChangeKind::Added) {
-                            let menu_click =
-                                cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
-                                    this.file_menu = Some((fi, e.position));
-                                    cx.stop_propagation();
-                                    cx.notify();
-                                });
-                            file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
-                        }
-                        file_row = file_row.child(
-                            div()
-                                .id(("cp-us-stage-btn", fi))
-                                .px_1()
-                                .py_px()
-                                .rounded_sm()
-                                .flex_shrink_0()
-                                .bg(rgb(theme().color_success))
-                                .text_xs()
-                                .text_color(rgb(theme().bg_base))
-                                .on_click(stage_click)
-                                .hover(|s| s.opacity(0.8))
-                                .child(SharedString::from("Stage")),
-                        );
-                    } else {
-                        file_row = file_row.child(
-                            div()
-                                .id(("cp-us-conflict-badge", fi))
-                                .px_1()
-                                .py_px()
-                                .rounded_sm()
-                                .flex_shrink_0()
-                                .bg(rgb(theme().color_blocker))
-                                .text_xs()
-                                .text_color(rgb(theme().bg_base))
-                                .child(SharedString::from("Conflict")),
-                        );
-                    }
-                    unstaged_files = unstaged_files.child(file_row);
-                }
-            }
-        }
+    // PERF: unstaged file rows are virtualized via `uniform_list` (built from
+    // free row functions reading `this.commit_panel`), not a prebuilt div.
+    let unstaged_row_count = if tree_view {
+        panel.unstaged_tree.len()
     } else {
-        // Flat view
-        for (fi, f) in panel.unstaged.iter().enumerate() {
-            let name = f
-                .path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| f.path.to_string_lossy().into_owned());
-            let is_conflicted_file = panel.is_conflicted(&f.path);
-            // W17-DISCARD: untracked rows are surfaced as `Added`; not discardable.
-            let is_untracked_row = matches!(f.change, ChangeKind::Added);
-            let (badge, badge_color, _) = status_badge(&f.change, is_conflicted_file);
-            let is_sel = selected_file == Some(CommitPanelFileRef::Unstaged { index: fi });
-            let file_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                this.select_commit_panel_file(CommitPanelFileRef::Unstaged { index: fi });
-                cx.notify();
-            });
-            let stage_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                this.do_stage_file(fi);
-                cx.notify();
-            });
-            // Row background: conflicted files get red tint
-            let row_bg = if is_conflicted_file {
-                theme().diff_removed_bg
-            } else if is_sel {
-                theme().selected
-            } else {
-                theme().panel
-            };
-            let mut file_row = div()
-                .id(("cp-us-flat-file", fi))
-                .when(
-                    active_wip.as_ref().is_some_and(|(st, p)| {
-                        !*st && panel.unstaged.get(fi).is_some_and(|f| &f.path == p)
-                    }),
-                    |el| el.bg(rgb(theme().selected)),
-                )
-                .flex()
-                .flex_row()
-                .items_center()
-                .px_2()
-                .py_px()
-                .bg(rgb(row_bg))
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .on_click(file_click)
-                .child(
-                    div()
-                        .w(theme::scaled_px(12.))
-                        .flex_shrink_0()
-                        .text_xs()
-                        .text_color(rgb(badge_color))
-                        .child(SharedString::from(badge)),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .text_xs()
-                        .text_color(rgb(theme().text_main))
-                        .overflow_hidden()
-                        .truncate()
-                        .child(SharedString::from(name)),
-                )
-                .child(diffstat_bar::diffstat_unit(
-                    fi,
-                    kagi::git::find_stat(&panel.unstaged_stats, &f.path),
-                ));
-            // Stage button only for non-conflicted files
-            if !is_conflicted_file {
-                // W17-DISCARD: right-click on tracked rows opens the file
-                // context menu (Discard lives there, not as a per-row button).
-                if !is_untracked_row {
-                    let menu_click =
-                        cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
-                            this.file_menu = Some((fi, e.position));
-                            cx.stop_propagation();
-                            cx.notify();
-                        });
-                    file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
-                }
-                file_row = file_row.child(
-                    div()
-                        .id(("cp-us-flat-stage-btn", fi))
-                        .px_1()
-                        .py_px()
-                        .rounded_sm()
-                        .flex_shrink_0()
-                        .bg(rgb(theme().color_success))
-                        .text_xs()
-                        .text_color(rgb(theme().bg_base))
-                        .on_click(stage_click)
-                        .hover(|s| s.opacity(0.8))
-                        .child(SharedString::from("Stage")),
-                );
-            } else {
-                file_row = file_row.child(
-                    div()
-                        .id(("cp-us-flat-conflict-badge", fi))
-                        .px_1()
-                        .py_px()
-                        .rounded_sm()
-                        .flex_shrink_0()
-                        .bg(rgb(theme().color_blocker)) // red
-                        .text_xs()
-                        .text_color(rgb(theme().bg_base))
-                        .child(SharedString::from("Conflict")),
-                );
-            }
-            unstaged_files = unstaged_files.child(file_row);
-        }
-    }
+        unstaged_count
+    };
 
     // ── Staged section ───────────────────────────────────────
     // T027: ヘッダ行は箱の外に固定し、ファイル行のみをスクロールボックス内に入れる
@@ -14172,185 +14407,13 @@ fn render_commit_panel(
             )
         });
 
-    // Staged ファイル行コンテナ (スクロールボックス内に入る)
-    let mut staged_files = div().flex().flex_col();
-
-    if tree_view {
-        let tree_rows = file_tree::build_file_tree(&panel.staged);
-        for row in &tree_rows {
-            match row {
-                file_tree::TreeRow::Dir { depth, name } => {
-                    let indent = (*depth as f32) * 12.0;
-                    staged_files = staged_files.child(
-                        div()
-                            .id(SharedString::from(format!("cp-st-dir-{}", name.as_ref())))
-                            .pl(theme::scaled_px(8.0 + indent))
-                            .text_xs()
-                            .text_color(rgb(theme().change_dir))
-                            .child(name.clone()),
-                    );
-                }
-                file_tree::TreeRow::File {
-                    depth,
-                    name,
-                    file_index,
-                    change,
-                } => {
-                    let indent = (*depth as f32) * 12.0;
-                    let fi = *file_index;
-                    let (badge, badge_color, _conflicted) = status_badge(change, false);
-                    let is_sel = selected_file == Some(CommitPanelFileRef::Staged { index: fi });
-                    let file_click =
-                        cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                            this.select_commit_panel_file(CommitPanelFileRef::Staged { index: fi });
-                            cx.notify();
-                        });
-                    let unstage_click =
-                        cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                            this.do_unstage_file(fi);
-                            cx.notify();
-                        });
-                    staged_files = staged_files.child(
-                        div()
-                            .id(("cp-st-file", fi))
-                            .when(
-                                active_wip.as_ref().is_some_and(|(st, p)| {
-                                    *st && panel.staged.get(fi).is_some_and(|f| &f.path == p)
-                                }),
-                                |el| el.bg(rgb(theme().selected)),
-                            )
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .pl(theme::scaled_px(8.0 + indent))
-                            .pr(theme::scaled_px(2.0))
-                            .py_px()
-                            .bg(rgb(if is_sel {
-                                theme().selected
-                            } else {
-                                theme().panel
-                            }))
-                            .hover(|s| s.bg(rgb(theme().surface)))
-                            .on_click(file_click)
-                            .child(
-                                div()
-                                    .w(theme::scaled_px(12.))
-                                    .flex_shrink_0()
-                                    .text_xs()
-                                    .text_color(rgb(badge_color))
-                                    .child(SharedString::from(badge)),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w(px(0.))
-                                    .text_xs()
-                                    .text_color(rgb(theme().text_main))
-                                    .overflow_hidden()
-                                    .truncate()
-                                    .child(name.clone()),
-                            )
-                            .child(diffstat_bar::diffstat_unit(
-                                fi + 100_000,
-                                panel.staged.get(fi).and_then(|f| {
-                                    kagi::git::find_stat(&panel.staged_stats, &f.path)
-                                }),
-                            ))
-                            .child(
-                                div()
-                                    .id(("cp-st-unstage-btn", fi))
-                                    .px_1()
-                                    .py_px()
-                                    .rounded_sm()
-                                    .flex_shrink_0()
-                                    .bg(rgb(theme().color_warning))
-                                    .text_xs()
-                                    .text_color(rgb(theme().bg_base))
-                                    .on_click(unstage_click)
-                                    .hover(|s| s.opacity(0.8))
-                                    .child(SharedString::from("Unstage")),
-                            ),
-                    );
-                }
-            }
-        }
+    // PERF: staged file rows are virtualized via `uniform_list` (built from
+    // free row functions reading `this.commit_panel`), not a prebuilt div.
+    let staged_row_count = if tree_view {
+        panel.staged_tree.len()
     } else {
-        for (fi, f) in panel.staged.iter().enumerate() {
-            let name = f
-                .path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| f.path.to_string_lossy().into_owned());
-            let (badge, badge_color, _conflicted) = status_badge(&f.change, false);
-            let is_sel = selected_file == Some(CommitPanelFileRef::Staged { index: fi });
-            let file_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                this.select_commit_panel_file(CommitPanelFileRef::Staged { index: fi });
-                cx.notify();
-            });
-            let unstage_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                this.do_unstage_file(fi);
-                cx.notify();
-            });
-            staged_files = staged_files.child(
-                div()
-                    .id(("cp-st-flat-file", fi))
-                    .when(
-                        active_wip.as_ref().is_some_and(|(st, p)| {
-                            *st && panel.staged.get(fi).is_some_and(|f| &f.path == p)
-                        }),
-                        |el| el.bg(rgb(theme().selected)),
-                    )
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .px_2()
-                    .py_px()
-                    .bg(rgb(if is_sel {
-                        theme().selected
-                    } else {
-                        theme().panel
-                    }))
-                    .hover(|s| s.bg(rgb(theme().surface)))
-                    .on_click(file_click)
-                    .child(
-                        div()
-                            .w(theme::scaled_px(12.))
-                            .flex_shrink_0()
-                            .text_xs()
-                            .text_color(rgb(badge_color))
-                            .child(SharedString::from(badge)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.))
-                            .text_xs()
-                            .text_color(rgb(theme().text_main))
-                            .overflow_hidden()
-                            .truncate()
-                            .child(SharedString::from(name)),
-                    )
-                    .child(diffstat_bar::diffstat_unit(
-                        fi + 100_000,
-                        kagi::git::find_stat(&panel.staged_stats, &f.path),
-                    ))
-                    .child(
-                        div()
-                            .id(("cp-st-flat-unstage-btn", fi))
-                            .px_1()
-                            .py_px()
-                            .rounded_sm()
-                            .flex_shrink_0()
-                            .bg(rgb(theme().color_warning))
-                            .text_xs()
-                            .text_color(rgb(theme().bg_base))
-                            .on_click(unstage_click)
-                            .hover(|s| s.opacity(0.8))
-                            .child(SharedString::from("Unstage")),
-                    ),
-            );
-        }
-    }
+        staged_count
+    };
 
     // ── plain ⇄ template mode toggle (T-COMMIT-009) ───────────────
     let mode_toggle = {
@@ -14747,35 +14810,99 @@ fn render_commit_panel(
                 .flex_col()
                 // Unstaged ヘッダ (固定)
                 .child(unstaged_header)
-                // Unstaged スクロールボックス (flex_1 + min_h(0) + 薄枠)
+                // Unstaged スクロールボックス — PERF: virtualized uniform_list.
                 .child(
                     div()
                         .id("cp-unstaged-scroll")
                         .flex_1()
                         .min_h(px(0.))
-                        .overflow_y_scroll()
                         .mx_1()
                         .mb_px()
                         .border_1()
                         .border_color(rgb(theme().surface))
                         .rounded_sm()
-                        .child(unstaged_files),
+                        .flex()
+                        .flex_col()
+                        .child({
+                            let handle = unstaged_scroll_handle.clone();
+                            with_vertical_scrollbar(
+                                "cp-unstaged-list-scroll",
+                                &handle,
+                                uniform_list(
+                                    "cp-unstaged-list",
+                                    unstaged_row_count,
+                                    cx.processor(
+                                        move |this, range: std::ops::Range<usize>, _window, cx| {
+                                            let tree = this
+                                                .commit_panel
+                                                .as_ref()
+                                                .map(|p| p.tree_view)
+                                                .unwrap_or(false);
+                                            range
+                                                .filter_map(|i| {
+                                                    if tree {
+                                                        render_unstaged_tree_row(this, i, cx)
+                                                    } else {
+                                                        render_unstaged_flat_row(this, i, cx)
+                                                    }
+                                                })
+                                                .collect::<Vec<_>>()
+                                        },
+                                    ),
+                                )
+                                .track_scroll(unstaged_scroll_handle)
+                                .flex_1()
+                                .min_h(px(0.)),
+                            )
+                        }),
                 )
                 // Staged ヘッダ (固定)
                 .child(staged_header)
-                // Staged スクロールボックス (flex_1 + min_h(0) + 薄枠)
+                // Staged スクロールボックス — PERF: virtualized uniform_list.
                 .child(
                     div()
                         .id("cp-staged-scroll")
                         .flex_1()
                         .min_h(px(0.))
-                        .overflow_y_scroll()
                         .mx_1()
                         .mb_px()
                         .border_1()
                         .border_color(rgb(theme().surface))
                         .rounded_sm()
-                        .child(staged_files),
+                        .flex()
+                        .flex_col()
+                        .child({
+                            let handle = staged_scroll_handle.clone();
+                            with_vertical_scrollbar(
+                                "cp-staged-list-scroll",
+                                &handle,
+                                uniform_list(
+                                    "cp-staged-list",
+                                    staged_row_count,
+                                    cx.processor(
+                                        move |this, range: std::ops::Range<usize>, _window, cx| {
+                                            let tree = this
+                                                .commit_panel
+                                                .as_ref()
+                                                .map(|p| p.tree_view)
+                                                .unwrap_or(false);
+                                            range
+                                                .filter_map(|i| {
+                                                    if tree {
+                                                        render_staged_tree_row(this, i, cx)
+                                                    } else {
+                                                        render_staged_flat_row(this, i, cx)
+                                                    }
+                                                })
+                                                .collect::<Vec<_>>()
+                                        },
+                                    ),
+                                )
+                                .track_scroll(staged_scroll_handle)
+                                .flex_1()
+                                .min_h(px(0.)),
+                            )
+                        }),
                 ),
         )
         // Commit footer: message input + warning + button

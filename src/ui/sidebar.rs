@@ -8,18 +8,15 @@
 
 use std::collections::HashSet;
 
-use gpui::{
-    Context, Entity, SharedString,
-    div, prelude::*, px, rgb,
-};
+use gpui::{div, prelude::*, px, rgb, Context, Entity, SharedString};
 use gpui_component::input::{Input, InputState};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::Sizable as _;
 
 use kagi::git::{CommitId, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
 
-use super::KagiApp;
 use super::theme::{self, theme};
+use super::{BranchDrag, BranchDragGhost, KagiApp};
 
 // W9-THEME: all colours come from `theme()` (see theme.rs).
 
@@ -84,7 +81,8 @@ pub enum GroupRow<T> {
 fn group_by_prefix<T: Clone>(items: &[T], name_of: impl Fn(&T) -> &str) -> Vec<GroupRow<T>> {
     // First pass: collect group order + counts (first-seen order).
     let mut group_order: Vec<String> = Vec::new();
-    let mut group_count: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut group_count: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     for it in items {
         if let Some((prefix, _rest)) = split_first_segment(name_of(it)) {
             if !group_count.contains_key(&prefix) {
@@ -268,8 +266,7 @@ fn group_remotes<T: Clone>(
             }
         }
 
-        let mut emitted_sub: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut emitted_sub: std::collections::HashSet<String> = std::collections::HashSet::new();
         for it in members {
             match split_first_segment(name_of(it)) {
                 Some((prefix, rest)) => {
@@ -357,22 +354,14 @@ pub fn render_sidebar(
     };
 
     // ── Count filtered items per section ─────────────────────────
-    let local_filtered: Vec<&(String, bool)> = branches
-        .iter()
-        .filter(|(n, _)| matches(n))
-        .collect();
+    let local_filtered: Vec<&(String, bool)> =
+        branches.iter().filter(|(n, _)| matches(n)).collect();
     let remote_filtered: Vec<&RemoteBranch> = remote_branches
         .iter()
         .filter(|rb| matches(&rb.name) || matches(&format!("{}/{}", rb.remote, rb.name)))
         .collect();
-    let tags_filtered: Vec<&Tag> = tags
-        .iter()
-        .filter(|t| matches(&t.name))
-        .collect();
-    let stashes_filtered: Vec<&Stash> = stashes
-        .iter()
-        .filter(|s| matches(&s.message))
-        .collect();
+    let tags_filtered: Vec<&Tag> = tags.iter().filter(|t| matches(&t.name)).collect();
+    let stashes_filtered: Vec<&Stash> = stashes.iter().filter(|s| matches(&s.message)).collect();
     let worktrees_filtered: Vec<&Worktree> = worktrees
         .iter()
         .filter(|w| matches(&w.name) || matches(w.path.to_string_lossy().as_ref()))
@@ -395,18 +384,15 @@ pub fn render_sidebar(
                 .px_2()
                 .py_1()
                 .flex_shrink_0()
-                .child(
-                    Input::new(input_entity)
-                        .xsmall()
-                        .appearance(true),
-                )
+                .child(Input::new(input_entity).xsmall().appearance(true))
                 .into_any_element()
         } else {
             // Placeholder: clicking creates the InputState (requires Window).
-            let create_handler = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
-                this.ensure_sidebar_filter(window, cx);
-                cx.notify();
-            });
+            let create_handler =
+                cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
+                    this.ensure_sidebar_filter(window, cx);
+                    cx.notify();
+                });
             div()
                 .id("sidebar-filter-placeholder")
                 .px_2()
@@ -473,38 +459,51 @@ pub fn render_sidebar(
             // text (prefix-stripped for grouped leaves); all click handlers,
             // the row id and the tooltip use the full `branch_name`.
             let local_leaf_row = |branch_name: &str,
-                                      is_head: bool,
-                                      display_label: &str,
-                                      indented: bool,
-                                      cx: &mut Context<KagiApp>|
+                                  is_head: bool,
+                                  display_label: &str,
+                                  indented: bool,
+                                  cx: &mut Context<KagiApp>|
              -> gpui::AnyElement {
-                let upstream_label: Option<SharedString> = if let Some(u) = branch_upstream_info.get(branch_name) {
-                    if u.ahead > 0 || u.behind > 0 {
-                        Some(SharedString::from(format!("\u{2191}{} \u{2193}{}", u.ahead, u.behind)))
+                let upstream_label: Option<SharedString> =
+                    if let Some(u) = branch_upstream_info.get(branch_name) {
+                        if u.ahead > 0 || u.behind > 0 {
+                            Some(SharedString::from(format!(
+                                "\u{2191}{} \u{2193}{}",
+                                u.ahead, u.behind
+                            )))
+                        } else {
+                            None
+                        }
                     } else {
                         None
-                    }
-                } else {
-                    None
-                };
+                    };
 
                 let label = if is_head {
                     SharedString::from(format!("\u{2713} {}", display_label))
                 } else {
                     SharedString::from(display_label.to_string())
                 };
-                let text_color = if is_head { theme().color_success } else { theme().text_main };
+                let text_color = if is_head {
+                    theme().color_success
+                } else {
+                    theme().text_main
+                };
                 let branch_for_click = branch_name.to_string();
                 let full_name = SharedString::from(branch_name.to_string());
                 // Grouped leaves get extra left padding to read as a child.
-                let left_pad = if indented { theme::scaled_px(28.) } else { theme::scaled_px(12.) };
+                let left_pad = if indented {
+                    theme::scaled_px(28.)
+                } else {
+                    theme::scaled_px(12.)
+                };
 
                 if is_head {
                     let branch_for_menu = branch_name.to_string();
-                    let head_click = cx.listener(move |this: &mut KagiApp, _e: &gpui::ClickEvent, _w, cx| {
-                        this.jump_to_branch(&branch_for_click);
-                        cx.notify();
-                    });
+                    let head_click =
+                        cx.listener(move |this: &mut KagiApp, _e: &gpui::ClickEvent, _w, cx| {
+                            this.jump_to_branch(&branch_for_click);
+                            cx.notify();
+                        });
                     let menu_click = cx.listener(
                         move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
                             this.open_local_branch_menu(branch_for_menu.clone(), event.position);
@@ -512,8 +511,24 @@ pub fn render_sidebar(
                             cx.notify();
                         },
                     );
+                    // T-DNDMERGE-001 / ADR-0079 layer 1: the current-branch row
+                    // is the (MVP) drop target.  `drag_over::<BranchDrag>` shows
+                    // a valid-target highlight while a branch is dragged over it;
+                    // `on_drop::<BranchDrag>` dispatches the dragged branch to the
+                    // action layer (`start_merge_from_drag`) — it does NOT call
+                    // git.  Dropping the current branch onto itself is rejected by
+                    // the action; `plan_merge_branch` guards the rest.
+                    let drop_handler = cx.listener(
+                        move |this: &mut KagiApp, payload: &BranchDrag, _window, cx| {
+                            this.start_merge_from_drag(payload.name.clone(), cx);
+                            cx.notify();
+                        },
+                    );
                     div()
-                        .id(SharedString::from(format!("sidebar-branch-{}", branch_name)))
+                        .id(SharedString::from(format!(
+                            "sidebar-branch-{}",
+                            branch_name
+                        )))
                         .flex()
                         .flex_row()
                         .items_center()
@@ -526,6 +541,12 @@ pub fn render_sidebar(
                         .overflow_hidden()
                         .on_click(head_click)
                         .on_mouse_down(gpui::MouseButton::Right, menu_click)
+                        .drag_over::<BranchDrag>(|style, _drag, _window, _cx| {
+                            style
+                                .bg(rgb(theme().selected))
+                                .border_color(rgb(theme().color_branch))
+                        })
+                        .on_drop::<BranchDrag>(drop_handler)
                         .hover(|style| style.bg(rgb(theme().surface)))
                         .tooltip(name_tooltip(full_name))
                         .child(div().flex_1().truncate().child(label))
@@ -544,18 +565,22 @@ pub fn render_sidebar(
                     let branch_for_dbl = branch_name.to_string();
                     let branch_for_delete = branch_name.to_string();
                     let branch_for_menu = branch_name.to_string();
-                    let click_handler = cx.listener(move |this: &mut KagiApp, event: &gpui::ClickEvent, _window, cx| {
-                        if event.click_count() >= 2 {
-                            this.open_plan_modal(branch_for_dbl.clone());
-                        } else {
-                            this.jump_to_branch(&branch_for_dbl);
-                        }
-                        cx.notify();
-                    });
-                    let delete_handler = cx.listener(move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
-                        this.open_delete_branch_modal(branch_for_delete.clone());
-                        cx.notify();
-                    });
+                    let click_handler = cx.listener(
+                        move |this: &mut KagiApp, event: &gpui::ClickEvent, _window, cx| {
+                            if event.click_count() >= 2 {
+                                this.open_plan_modal(branch_for_dbl.clone());
+                            } else {
+                                this.jump_to_branch(&branch_for_dbl);
+                            }
+                            cx.notify();
+                        },
+                    );
+                    let delete_handler = cx.listener(
+                        move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
+                            this.open_delete_branch_modal(branch_for_delete.clone());
+                            cx.notify();
+                        },
+                    );
                     let menu_click = cx.listener(
                         move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
                             this.open_local_branch_menu(branch_for_menu.clone(), event.position);
@@ -563,8 +588,19 @@ pub fn render_sidebar(
                             cx.notify();
                         },
                     );
+                    // T-DNDMERGE-001 / ADR-0079 layer 1: non-current LOCAL branch
+                    // leaves are draggable (remote/tag/folder rows are NOT — they
+                    // are built by other row builders and get no `on_drag`).  The
+                    // drag carries a `BranchDrag { name }` payload and renders a
+                    // ghost chip with the branch name.  `on_drag` fires only after
+                    // a movement threshold, so click-to-jump / dblclick-checkout /
+                    // right-click menu keep working unchanged.
+                    let branch_for_drag = branch_name.to_string();
                     div()
-                        .id(SharedString::from(format!("sidebar-branch-{}", branch_name)))
+                        .id(SharedString::from(format!(
+                            "sidebar-branch-{}",
+                            branch_name
+                        )))
                         .flex()
                         .flex_row()
                         .items_center()
@@ -577,6 +613,15 @@ pub fn render_sidebar(
                         .overflow_hidden()
                         .on_click(click_handler)
                         .on_mouse_down(gpui::MouseButton::Right, menu_click)
+                        .on_drag(
+                            BranchDrag {
+                                name: branch_for_drag.clone(),
+                            },
+                            move |drag: &BranchDrag, _pos, _window, cx| {
+                                let name = SharedString::from(drag.name.clone());
+                                cx.new(|_| BranchDragGhost { name })
+                            },
+                        )
                         .hover(|style| style.bg(rgb(theme().surface)))
                         .tooltip(name_tooltip(full_name))
                         .child(div().flex_1().truncate().child(label))
@@ -593,7 +638,10 @@ pub fn render_sidebar(
                         // ✕ delete button: always visible (small, muted) for non-HEAD branches.
                         .child(
                             div()
-                                .id(SharedString::from(format!("sidebar-delete-{}", branch_name)))
+                                .id(SharedString::from(format!(
+                                    "sidebar-delete-{}",
+                                    branch_name
+                                )))
                                 .flex_shrink_0()
                                 .ml_1()
                                 .px_1()
@@ -608,8 +656,10 @@ pub fn render_sidebar(
             };
 
             // Group the (filtered) local branches by `/`-prefix.
-            let local_owned: Vec<(String, bool)> =
-                local_filtered.iter().map(|(n, h)| (n.clone(), *h)).collect();
+            let local_owned: Vec<(String, bool)> = local_filtered
+                .iter()
+                .map(|(n, h)| (n.clone(), *h))
+                .collect();
             let grouped = group_by_prefix(&local_owned, |(n, _)| n.as_str());
 
             for row in &grouped {
@@ -618,17 +668,23 @@ pub fn render_sidebar(
                         let key = group_key(SECTION_LOCAL, prefix);
                         // Filter active ⇒ auto-expand so matching leaves show.
                         let group_collapsed = !has_filter && groups_collapsed.contains(&key);
-                        let arrow = if group_collapsed { "\u{25b8}" } else { "\u{25be}" };
-                        let glabel = SharedString::from(format!("{} {} ({})", arrow, prefix, count));
+                        let arrow = if group_collapsed {
+                            "\u{25b8}"
+                        } else {
+                            "\u{25be}"
+                        };
+                        let glabel =
+                            SharedString::from(format!("{} {} ({})", arrow, prefix, count));
                         let key_for_toggle = key.clone();
-                        let toggle = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-                            if this.branch_groups_collapsed.contains(&key_for_toggle) {
-                                this.branch_groups_collapsed.remove(&key_for_toggle);
-                            } else {
-                                this.branch_groups_collapsed.insert(key_for_toggle.clone());
-                            }
-                            cx.notify();
-                        });
+                        let toggle =
+                            cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                                if this.branch_groups_collapsed.contains(&key_for_toggle) {
+                                    this.branch_groups_collapsed.remove(&key_for_toggle);
+                                } else {
+                                    this.branch_groups_collapsed.insert(key_for_toggle.clone());
+                                }
+                                cx.notify();
+                            });
                         col = col.child(
                             div()
                                 .id(SharedString::from(format!("sidebar-group-{}", key)))
@@ -647,7 +703,11 @@ pub fn render_sidebar(
                                 .child(div().flex_1().truncate().child(glabel)),
                         );
                     }
-                    GroupRow::GroupedLeaf { prefix, leaf_label, item } => {
+                    GroupRow::GroupedLeaf {
+                        prefix,
+                        leaf_label,
+                        item,
+                    } => {
                         let key = group_key(SECTION_LOCAL, prefix);
                         let group_collapsed = !has_filter && groups_collapsed.contains(&key);
                         if !group_collapsed {
@@ -725,10 +785,12 @@ pub fn render_sidebar(
                 if can_jump {
                     let display_for_menu = display.to_string();
                     let target_for_menu = rb_target.clone();
-                    let click_handler = cx.listener(move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
-                        this.jump_to_commit(&rb_target);
-                        cx.notify();
-                    });
+                    let click_handler = cx.listener(
+                        move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
+                            this.jump_to_commit(&rb_target);
+                            cx.notify();
+                        },
+                    );
                     let menu_click = cx.listener(
                         move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
                             this.open_remote_branch_menu(
@@ -820,17 +882,23 @@ pub fn render_sidebar(
                     RemoteRow::Remote { remote, count } => {
                         let key = remote_key(remote);
                         let collapsed_now = !has_filter && groups_collapsed.contains(&key);
-                        let arrow = if collapsed_now { "\u{25b8}" } else { "\u{25be}" };
-                        let glabel = SharedString::from(format!("{} {} ({})", arrow, remote, count));
+                        let arrow = if collapsed_now {
+                            "\u{25b8}"
+                        } else {
+                            "\u{25be}"
+                        };
+                        let glabel =
+                            SharedString::from(format!("{} {} ({})", arrow, remote, count));
                         let key_for_toggle = key.clone();
-                        let toggle = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-                            if this.branch_groups_collapsed.contains(&key_for_toggle) {
-                                this.branch_groups_collapsed.remove(&key_for_toggle);
-                            } else {
-                                this.branch_groups_collapsed.insert(key_for_toggle.clone());
-                            }
-                            cx.notify();
-                        });
+                        let toggle =
+                            cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                                if this.branch_groups_collapsed.contains(&key_for_toggle) {
+                                    this.branch_groups_collapsed.remove(&key_for_toggle);
+                                } else {
+                                    this.branch_groups_collapsed.insert(key_for_toggle.clone());
+                                }
+                                cx.notify();
+                            });
                         col = col.child(
                             div()
                                 .id(SharedString::from(format!("sidebar-group-{}", key)))
@@ -849,7 +917,11 @@ pub fn render_sidebar(
                                 .child(div().flex_1().truncate().child(glabel)),
                         );
                     }
-                    RemoteRow::SubGroup { remote, prefix, count } => {
+                    RemoteRow::SubGroup {
+                        remote,
+                        prefix,
+                        count,
+                    } => {
                         let parent_key = remote_key(remote);
                         let remote_collapsed_now =
                             !has_filter && groups_collapsed.contains(&parent_key);
@@ -858,17 +930,23 @@ pub fn render_sidebar(
                         }
                         let key = remote_group_key(remote, prefix);
                         let collapsed_now = !has_filter && groups_collapsed.contains(&key);
-                        let arrow = if collapsed_now { "\u{25b8}" } else { "\u{25be}" };
-                        let glabel = SharedString::from(format!("{} {} ({})", arrow, prefix, count));
+                        let arrow = if collapsed_now {
+                            "\u{25b8}"
+                        } else {
+                            "\u{25be}"
+                        };
+                        let glabel =
+                            SharedString::from(format!("{} {} ({})", arrow, prefix, count));
                         let key_for_toggle = key.clone();
-                        let toggle = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-                            if this.branch_groups_collapsed.contains(&key_for_toggle) {
-                                this.branch_groups_collapsed.remove(&key_for_toggle);
-                            } else {
-                                this.branch_groups_collapsed.insert(key_for_toggle.clone());
-                            }
-                            cx.notify();
-                        });
+                        let toggle =
+                            cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                                if this.branch_groups_collapsed.contains(&key_for_toggle) {
+                                    this.branch_groups_collapsed.remove(&key_for_toggle);
+                                } else {
+                                    this.branch_groups_collapsed.insert(key_for_toggle.clone());
+                                }
+                                cx.notify();
+                            });
                         col = col.child(
                             div()
                                 .id(SharedString::from(format!("sidebar-group-{}", key)))
@@ -887,7 +965,11 @@ pub fn render_sidebar(
                                 .child(div().flex_1().truncate().child(glabel)),
                         );
                     }
-                    RemoteRow::RemoteLeaf { remote, leaf_label, item } => {
+                    RemoteRow::RemoteLeaf {
+                        remote,
+                        leaf_label,
+                        item,
+                    } => {
                         let parent_key = remote_key(remote);
                         let remote_collapsed_now =
                             !has_filter && groups_collapsed.contains(&parent_key);
@@ -895,9 +977,15 @@ pub fn render_sidebar(
                             continue;
                         }
                         let (_r, _n, display, target) = item;
-                        col = col.child(remote_leaf_row(display, leaf_label, target.clone(), 1, cx));
+                        col =
+                            col.child(remote_leaf_row(display, leaf_label, target.clone(), 1, cx));
                     }
-                    RemoteRow::SubGroupedLeaf { remote, prefix, leaf_label, item } => {
+                    RemoteRow::SubGroupedLeaf {
+                        remote,
+                        prefix,
+                        leaf_label,
+                        item,
+                    } => {
                         let parent_key = remote_key(remote);
                         let sub_key = remote_group_key(remote, prefix);
                         let hidden = !has_filter
@@ -907,7 +995,8 @@ pub fn render_sidebar(
                             continue;
                         }
                         let (_r, _n, display, target) = item;
-                        col = col.child(remote_leaf_row(display, leaf_label, target.clone(), 2, cx));
+                        col =
+                            col.child(remote_leaf_row(display, leaf_label, target.clone(), 2, cx));
                     }
                 }
             }
@@ -957,10 +1046,12 @@ pub fn render_sidebar(
 
                 let full_name = SharedString::from(tag.name.clone());
                 let row: gpui::AnyElement = if can_jump {
-                    let click_handler = cx.listener(move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
-                        this.jump_to_commit(&tag_target);
-                        cx.notify();
-                    });
+                    let click_handler = cx.listener(
+                        move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
+                            this.jump_to_commit(&tag_target);
+                            cx.notify();
+                        },
+                    );
                     div()
                         .id(SharedString::from(format!("sidebar-tag-{}", tag.name)))
                         .flex()
@@ -1008,14 +1099,15 @@ pub fn render_sidebar(
             if worktrees_collapsed { "▸" } else { "▾" },
             worktrees_count
         ));
-        let toggle_worktrees = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
-            if this.sidebar_collapsed.contains(SECTION_WORKTREES) {
-                this.sidebar_collapsed.remove(SECTION_WORKTREES);
-            } else {
-                this.sidebar_collapsed.insert(SECTION_WORKTREES);
-            }
-            cx.notify();
-        });
+        let toggle_worktrees =
+            cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
+                if this.sidebar_collapsed.contains(SECTION_WORKTREES) {
+                    this.sidebar_collapsed.remove(SECTION_WORKTREES);
+                } else {
+                    this.sidebar_collapsed.insert(SECTION_WORKTREES);
+                }
+                cx.notify();
+            });
         col = col.child(
             div()
                 .id("sidebar-section-worktrees")
@@ -1043,7 +1135,11 @@ pub fn render_sidebar(
                     SharedString::from(format!("{}  {}", wt.name, path_label))
                 };
                 let full_name = label.clone();
-                let text_color = if wt.is_current { theme().color_success } else { theme().text_sub };
+                let text_color = if wt.is_current {
+                    theme().color_success
+                } else {
+                    theme().text_sub
+                };
                 col = col.child(
                     div()
                         .id(SharedString::from(format!("sidebar-worktree-{}", wt.name)))
@@ -1072,14 +1168,15 @@ pub fn render_sidebar(
             if stashes_collapsed { "▸" } else { "▾" },
             stashes_count
         ));
-        let toggle_stashes = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
-            if this.sidebar_collapsed.contains(SECTION_STASHES) {
-                this.sidebar_collapsed.remove(SECTION_STASHES);
-            } else {
-                this.sidebar_collapsed.insert(SECTION_STASHES);
-            }
-            cx.notify();
-        });
+        let toggle_stashes =
+            cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
+                if this.sidebar_collapsed.contains(SECTION_STASHES) {
+                    this.sidebar_collapsed.remove(SECTION_STASHES);
+                } else {
+                    this.sidebar_collapsed.insert(SECTION_STASHES);
+                }
+                cx.notify();
+            });
         col = col.child(
             div()
                 .id("sidebar-section-stashes")
@@ -1104,10 +1201,12 @@ pub fn render_sidebar(
                 let raw_label = format!("stash@{{{}}}: {}", idx, stash.message);
                 let full_name = SharedString::from(raw_label.clone());
 
-                let click_handler = cx.listener(move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
-                    this.open_stash_apply_modal(idx);
-                    cx.notify();
-                });
+                let click_handler = cx.listener(
+                    move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
+                        this.open_stash_apply_modal(idx);
+                        cx.notify();
+                    },
+                );
 
                 col = col.child(
                     div()
@@ -1124,7 +1223,12 @@ pub fn render_sidebar(
                         .on_click(click_handler)
                         .hover(|style| style.bg(rgb(theme().surface)))
                         .tooltip(name_tooltip(full_name))
-                        .child(div().flex_1().truncate().child(SharedString::from(raw_label))),
+                        .child(
+                            div()
+                                .flex_1()
+                                .truncate()
+                                .child(SharedString::from(raw_label)),
+                        ),
                 );
             }
         }
@@ -1159,7 +1263,9 @@ mod tests {
         rows.iter()
             .map(|r| match r {
                 GroupRow::Group { prefix, count } => ("G", prefix.clone(), count.to_string()),
-                GroupRow::GroupedLeaf { leaf_label, item, .. } => ("L", leaf_label.clone(), item.clone()),
+                GroupRow::GroupedLeaf {
+                    leaf_label, item, ..
+                } => ("L", leaf_label.clone(), item.clone()),
                 GroupRow::TopLevel { item } => ("T", item.clone(), item.clone()),
             })
             .collect()
@@ -1172,8 +1278,14 @@ mod tests {
 
     #[test]
     fn split_basic() {
-        assert_eq!(split_first_segment("feat/a"), Some(("feat".into(), "a".into())));
-        assert_eq!(split_first_segment("feat/ui/x"), Some(("feat".into(), "ui/x".into())));
+        assert_eq!(
+            split_first_segment("feat/a"),
+            Some(("feat".into(), "a".into()))
+        );
+        assert_eq!(
+            split_first_segment("feat/ui/x"),
+            Some(("feat".into(), "ui/x".into()))
+        );
         assert_eq!(split_first_segment("main"), None);
         // Empty halves stay top-level.
         assert_eq!(split_first_segment("/x"), None);
@@ -1252,21 +1364,31 @@ mod tests {
 
     /// Compact view of a RemoteRow: ("R", remote, count), ("S", prefix, count),
     /// ("RL", remote, leaf), ("SL", prefix, leaf).
-    fn summarize_remote(rows: &[RemoteRow<(String, String)>]) -> Vec<(&'static str, String, String)> {
+    fn summarize_remote(
+        rows: &[RemoteRow<(String, String)>],
+    ) -> Vec<(&'static str, String, String)> {
         rows.iter()
             .map(|r| match r {
                 RemoteRow::Remote { remote, count } => ("R", remote.clone(), count.to_string()),
-                RemoteRow::SubGroup { prefix, count, .. } => ("S", prefix.clone(), count.to_string()),
-                RemoteRow::RemoteLeaf { leaf_label, .. } => ("RL", leaf_label.clone(), String::new()),
-                RemoteRow::SubGroupedLeaf { prefix, leaf_label, .. } => ("SL", prefix.clone(), leaf_label.clone()),
+                RemoteRow::SubGroup { prefix, count, .. } => {
+                    ("S", prefix.clone(), count.to_string())
+                }
+                RemoteRow::RemoteLeaf { leaf_label, .. } => {
+                    ("RL", leaf_label.clone(), String::new())
+                }
+                RemoteRow::SubGroupedLeaf {
+                    prefix, leaf_label, ..
+                } => ("SL", prefix.clone(), leaf_label.clone()),
             })
             .collect()
     }
 
     /// Build remote rows from (remote, name) pairs.
     fn group_rem(pairs: &[(&str, &str)]) -> Vec<RemoteRow<(String, String)>> {
-        let owned: Vec<(String, String)> =
-            pairs.iter().map(|(r, n)| (r.to_string(), n.to_string())).collect();
+        let owned: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(r, n)| (r.to_string(), n.to_string()))
+            .collect();
         group_remotes(&owned, |(r, _)| r.as_str(), |(_, n)| n.as_str())
     }
 
@@ -1338,7 +1460,10 @@ mod tests {
         // The remote header key (2 segments) never equals any sub-group key
         // (3 segments), and never matches a local key.
         assert_ne!(remote_key("origin"), remote_group_key("origin", "feat"));
-        assert_ne!(remote_group_key("origin", "feat"), group_key(SECTION_LOCAL, "feat"));
+        assert_ne!(
+            remote_group_key("origin", "feat"),
+            group_key(SECTION_LOCAL, "feat")
+        );
     }
 
     #[test]

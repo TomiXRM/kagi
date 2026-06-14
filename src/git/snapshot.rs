@@ -10,11 +10,11 @@
 use git2::{BranchType, Repository};
 
 use super::{
-    GitError, Head,
-    log::{CommitId, Commit, commit_log},
+    log::{commit_log, Commit, CommitId},
     refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree},
     resolve_head,
-    status::{WorkingTreeStatus, working_tree_status},
+    status::{working_tree_status, WorkingTreeStatus},
+    GitError, Head,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -150,7 +150,11 @@ fn collect_branches(repo: &Repository, _head: &Head) -> Result<Vec<Branch>, GitE
             Err(_) => None, // no upstream configured
         };
 
-        branches.push(Branch { name, target, upstream });
+        branches.push(Branch {
+            name,
+            target,
+            upstream,
+        });
     }
 
     branches.sort_by(|a, b| a.name.cmp(&b.name));
@@ -196,12 +200,14 @@ fn collect_remote_branches(repo: &Repository) -> Result<Vec<RemoteBranch>, GitEr
 
         let target = CommitId(target_oid.to_string());
 
-        remote_branches.push(RemoteBranch { remote, name, target });
+        remote_branches.push(RemoteBranch {
+            remote,
+            name,
+            target,
+        });
     }
 
-    remote_branches.sort_by(|a, b| {
-        a.remote.cmp(&b.remote).then(a.name.cmp(&b.name))
-    });
+    remote_branches.sort_by(|a, b| a.remote.cmp(&b.remote).then(a.name.cmp(&b.name)));
 
     Ok(remote_branches)
 }
@@ -270,10 +276,7 @@ fn collect_stashes(repo: &mut Repository) -> Result<Vec<Stash>, GitError> {
 
 /// Collect the primary worktree plus registered linked worktrees.
 fn collect_worktrees(repo: &Repository) -> Result<Vec<Worktree>, GitError> {
-    let current_path = repo
-        .workdir()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_default();
+    let current_path = repo.workdir().map(|p| p.to_path_buf()).unwrap_or_default();
     let main_path = if repo.is_worktree() {
         repo.commondir()
             .parent()

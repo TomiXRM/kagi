@@ -64,13 +64,9 @@ pub fn run_git(repo_dir: &Path, args: &[&str]) -> Result<GitCliOutput, GitError>
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let child = cmd.spawn().map_err(|e| {
-        GitError::Other(format!(
-            "failed to start git {}: {}",
-            args.join(" "),
-            e
-        ))
-    })?;
+    let child = cmd
+        .spawn()
+        .map_err(|e| GitError::Other(format!("failed to start git {}: {}", args.join(" "), e)))?;
 
     // Run `child.wait_with_output()` on a background thread so we can apply a
     // timeout.  `std::process::Child` is not `Send` in all configurations, so
@@ -93,9 +89,7 @@ pub fn run_git(repo_dir: &Path, args: &[&str]) -> Result<GitCliOutput, GitError>
                 GIT_CLI_TIMEOUT_SECS
             ))
         })?
-        .map_err(|e| {
-            GitError::Other(format!("git {} I/O error: {}", args.join(" "), e))
-        })?;
+        .map_err(|e| GitError::Other(format!("git {} I/O error: {}", args.join(" "), e)))?;
 
     let status = output.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();

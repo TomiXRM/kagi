@@ -104,7 +104,10 @@ fn discard_modification_restores_from_index() {
     // No longer unstaged.
     let status = working_tree_status(&repo).unwrap();
     assert!(
-        !status.unstaged.iter().any(|f| f.path == Path::new("tracked.txt")),
+        !status
+            .unstaged
+            .iter()
+            .any(|f| f.path == Path::new("tracked.txt")),
         "tracked.txt should have left the unstaged set"
     );
 
@@ -140,7 +143,10 @@ fn discard_unstaged_deletion_restores_file() {
 
     let status = working_tree_status(&repo).unwrap();
     assert!(
-        !status.unstaged.iter().any(|f| f.path == Path::new("tracked.txt")),
+        !status
+            .unstaged
+            .iter()
+            .any(|f| f.path == Path::new("tracked.txt")),
         "tracked.txt should have left the unstaged set"
     );
 }
@@ -162,8 +168,14 @@ fn discard_leaves_staged_content_unchanged() {
 
     // Sanity: file is both staged and unstaged now.
     let before = working_tree_status(&repo).unwrap();
-    assert!(before.staged.iter().any(|f| f.path == Path::new("tracked.txt")));
-    assert!(before.unstaged.iter().any(|f| f.path == Path::new("tracked.txt")));
+    assert!(before
+        .staged
+        .iter()
+        .any(|f| f.path == Path::new("tracked.txt")));
+    assert!(before
+        .unstaged
+        .iter()
+        .any(|f| f.path == Path::new("tracked.txt")));
 
     let paths = vec!["tracked.txt".to_string()];
     let plan = plan_discard(&repo, &paths).expect("plan");
@@ -176,11 +188,17 @@ fn discard_leaves_staged_content_unchanged() {
     // The staged change is still present (index untouched).
     let after = working_tree_status(&repo).unwrap();
     assert!(
-        after.staged.iter().any(|f| f.path == Path::new("tracked.txt")),
+        after
+            .staged
+            .iter()
+            .any(|f| f.path == Path::new("tracked.txt")),
         "staged change must survive discard"
     );
     assert!(
-        !after.unstaged.iter().any(|f| f.path == Path::new("tracked.txt")),
+        !after
+            .unstaged
+            .iter()
+            .any(|f| f.path == Path::new("tracked.txt")),
         "unstaged change must be gone"
     );
 
@@ -212,8 +230,9 @@ fn discard_untracked_is_blocked() {
         "untracked discard must be blocked"
     );
     assert!(
-        plan.blockers.iter().any(|b| b.contains("untracked")
-            || b.contains("Untracked")),
+        plan.blockers
+            .iter()
+            .any(|b| b.contains("untracked") || b.contains("Untracked")),
         "blocker should mention untracked: {:?}",
         plan.blockers
     );
@@ -261,7 +280,10 @@ fn discard_conflicted_is_blocked() {
     let repo = Repository::open(&d).unwrap();
     let status = working_tree_status(&repo).unwrap();
     assert!(
-        status.conflicted.iter().any(|p| p == Path::new("conflict.txt")),
+        status
+            .conflicted
+            .iter()
+            .any(|p| p == Path::new("conflict.txt")),
         "conflict.txt should be conflicted"
     );
 
@@ -272,8 +294,9 @@ fn discard_conflicted_is_blocked() {
         "conflicted discard must be blocked"
     );
     assert!(
-        plan.blockers.iter().any(|b| b.contains("conflict")
-            || b.contains("Conflict")),
+        plan.blockers
+            .iter()
+            .any(|b| b.contains("conflict") || b.contains("Conflict")),
         "blocker should mention conflict: {:?}",
         plan.blockers
     );
@@ -316,10 +339,18 @@ fn discard_multi_file_one_outcome() {
     assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
 
     let outcome = execute_discard(&repo, &plan, &paths).expect("execute");
-    assert_eq!(outcome.backups.len(), 2, "one backup per file, one operation");
+    assert_eq!(
+        outcome.backups.len(),
+        2,
+        "one backup per file, one operation"
+    );
 
     let summary = outcome.oplog_summary();
-    assert!(summary.contains("discarded 2 file(s)"), "summary: {}", summary);
+    assert!(
+        summary.contains("discarded 2 file(s)"),
+        "summary: {}",
+        summary
+    );
     assert!(summary.contains("tracked.txt="), "summary: {}", summary);
     assert!(summary.contains("second.txt="), "summary: {}", summary);
 

@@ -21,9 +21,9 @@
 //! JSON, no serde — same approach as `oplog.rs`), honouring `KAGI_LOG_DIR`.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use gpui::{App, Hsla, hsla, rgb};
+use gpui::{hsla, rgb, App, Hsla};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Theme struct
@@ -277,6 +277,39 @@ pub fn init_zoom() {
     eprintln!("[kagi] zoom: {:.2}x", zoom());
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// T-SETTINGS-001: compact-graph toggle (persisted, global — mirrors zoom).
+// ──────────────────────────────────────────────────────────────────────────
+//
+// `graph_compact` lives on `KagiApp` (read every render frame), but the
+// Settings window persists/restores it through `settings.json` like every other
+// preference.  We keep a process-global atomic so startup can seed the initial
+// value (read once when a `KagiApp` is constructed) without a serde layer.
+
+/// Active compact-graph flag (`false` = normal row height). Defaults to off.
+static GRAPH_COMPACT: AtomicBool = AtomicBool::new(false);
+
+/// The currently-active compact-graph flag (seeds new `KagiApp`s at startup).
+#[inline]
+pub fn compact_graph() -> bool {
+    GRAPH_COMPACT.load(Ordering::Relaxed)
+}
+
+/// Set + persist the compact-graph flag to `settings.json` (key `graph_compact`).
+pub fn set_compact_graph(on: bool) {
+    GRAPH_COMPACT.store(on, Ordering::Relaxed);
+    write_setting("graph_compact", Some(if on { "true" } else { "false" }));
+}
+
+/// Initialise the compact-graph flag at startup from `settings.json`
+/// (`"graph_compact"`, `"true"`/`"false"`). Missing/invalid → off.
+pub fn init_compact_graph() {
+    if let Some(raw) = read_setting("graph_compact") {
+        GRAPH_COMPACT.store(raw.trim() == "true", Ordering::Relaxed);
+    }
+    eprintln!("[kagi] graph_compact: {}", compact_graph());
+}
+
 /// Look up a theme index by slug.
 pub fn index_of(slug: &str) -> Option<usize> {
     THEMES.iter().position(|t| t.slug == slug)
@@ -394,10 +427,12 @@ fn settings_escape(s: &str) -> String {
 
 /// All known string-valued `settings.json` keys.  Listed so [`write_setting`]
 /// can round-trip every key it doesn't recognise as the current target.
-const SETTINGS_KEYS: [&str; 10] = [
+const SETTINGS_KEYS: [&str; 11] = [
     "theme",
     "lang",
     "ui_zoom",
+    // T-SETTINGS-001: compact commit-graph row height toggle.
+    "graph_compact",
     "smart_commit_llm_enabled",
     "smart_commit_model",
     "smart_commit_lang",
@@ -604,7 +639,7 @@ const CATPPUCCIN_MOCHA: Theme = Theme {
     change_typechange: 0x585b70,
     change_dir: 0x6c7086,
 
-    accent: 0xcba6f7,     // mauve
+    accent: 0xcba6f7, // mauve
 
     lane_hsl: [
         (0.583, 0.75, 0.65), // blue
@@ -664,10 +699,10 @@ const XCODE_DARK: Theme = Theme {
     text_muted: 0x7f8493,
     text_label: 0x6c7080,
 
-    color_head: 0xff8170,    // red-orange (strings)
-    color_branch: 0x6bb0ff,  // blue
-    color_remote: 0x78c2b3,  // teal/green
-    color_tag: 0xd9c97c,     // sand/number
+    color_head: 0xff8170,   // red-orange (strings)
+    color_branch: 0x6bb0ff, // blue
+    color_remote: 0x78c2b3, // teal/green
+    color_tag: 0xd9c97c,    // sand/number
 
     color_success: 0x78c2b3,
     color_warning: 0xd9c97c,
@@ -685,7 +720,7 @@ const XCODE_DARK: Theme = Theme {
     change_typechange: 0x7f8493,
     change_dir: 0x6c7080,
 
-    accent: 0xdabaff,     // purple (keyword-ish)
+    accent: 0xdabaff, // purple (keyword-ish)
 
     lane_hsl: [
         (0.585, 0.70, 0.66),
@@ -745,10 +780,10 @@ const XCODE_LIGHT: Theme = Theme {
     text_muted: 0x8a8f99,
     text_label: 0x6f747e,
 
-    color_head: 0xc41a16,    // string red
-    color_branch: 0x0b4f79,  // type blue
-    color_remote: 0x2e8b57,  // green
-    color_tag: 0xb06000,     // amber
+    color_head: 0xc41a16,   // string red
+    color_branch: 0x0b4f79, // type blue
+    color_remote: 0x2e8b57, // green
+    color_tag: 0xb06000,    // amber
 
     color_success: 0x2e8b57,
     color_warning: 0xb06000,
@@ -766,7 +801,7 @@ const XCODE_LIGHT: Theme = Theme {
     change_typechange: 0x8a8f99,
     change_dir: 0x6f747e,
 
-    accent: 0x9b2393,     // keyword magenta
+    accent: 0x9b2393, // keyword magenta
 
     lane_hsl: [
         (0.585, 0.70, 0.45),
@@ -825,10 +860,10 @@ const ONE_DARK: Theme = Theme {
     text_muted: 0x5c6370,
     text_label: 0x6b7280,
 
-    color_head: 0xe06c75,    // red
-    color_branch: 0x61afef,  // blue
-    color_remote: 0x98c379,  // green
-    color_tag: 0xe5c07b,     // yellow
+    color_head: 0xe06c75,   // red
+    color_branch: 0x61afef, // blue
+    color_remote: 0x98c379, // green
+    color_tag: 0xe5c07b,    // yellow
 
     color_success: 0x98c379,
     color_warning: 0xe5c07b,
@@ -846,7 +881,7 @@ const ONE_DARK: Theme = Theme {
     change_typechange: 0x5c6370,
     change_dir: 0x6b7280,
 
-    accent: 0xc678dd,     // purple
+    accent: 0xc678dd, // purple
 
     lane_hsl: [
         (0.585, 0.80, 0.66),
@@ -906,10 +941,10 @@ const ONE_LIGHT: Theme = Theme {
     text_muted: 0x9d9d9f,
     text_label: 0x7a7c85,
 
-    color_head: 0xe45649,    // red
-    color_branch: 0x4078f2,  // blue
-    color_remote: 0x50a14f,  // green
-    color_tag: 0xc18401,     // amber
+    color_head: 0xe45649,   // red
+    color_branch: 0x4078f2, // blue
+    color_remote: 0x50a14f, // green
+    color_tag: 0xc18401,    // amber
 
     color_success: 0x50a14f,
     color_warning: 0xb07a00,
@@ -927,7 +962,7 @@ const ONE_LIGHT: Theme = Theme {
     change_typechange: 0x9d9d9f,
     change_dir: 0x7a7c85,
 
-    accent: 0xa626a4,     // purple
+    accent: 0xa626a4, // purple
 
     lane_hsl: [
         (0.605, 0.86, 0.60),
@@ -1014,13 +1049,13 @@ const MONOKAI: Theme = Theme {
     text_muted: 0x918d94,
     text_label: 0xa09ca3,
 
-    color_head: 0xff3d6f,    // vivid pink (ref keyword #ff668c, boosted)
-    color_branch: 0x5a9fff,  // vivid blue
-    color_remote: 0xa8e05a,  // vivid green (ref function #a4d671)
-    color_tag: 0xff8c1a,     // punchy warm orange
+    color_head: 0xff3d6f,   // vivid pink (ref keyword #ff668c, boosted)
+    color_branch: 0x5a9fff, // vivid blue
+    color_remote: 0xa8e05a, // vivid green (ref function #a4d671)
+    color_tag: 0xff8c1a,    // punchy warm orange
 
     color_success: 0xa8e05a,
-    color_warning: 0xf4cd62,  // matches ref string yellow #f4cd62
+    color_warning: 0xf4cd62, // matches ref string yellow #f4cd62
     color_blocker: 0xff3d6f,
     color_blocker_muted: 0x8f4a5e,
 
@@ -1035,7 +1070,7 @@ const MONOKAI: Theme = Theme {
     change_typechange: 0x918d94,
     change_dir: 0xa09ca3,
 
-    accent: 0xb08fff,     // vivid purple (ref #af9cf4, boosted)
+    accent: 0xb08fff, // vivid purple (ref #af9cf4, boosted)
 
     lane_hsl: [
         (0.585, 1.00, 0.70), // blue   (sat +0.05, l -0.01)
@@ -1141,7 +1176,10 @@ mod tests {
         // write_setting round-trips every known key — make sure parsing finds
         // each one independently (smart-commit keys must not clobber theme).
         let json = "{\n  \"theme\": \"one-dark\",\n  \"smart_commit_model\": \"gemma:2b\"\n}\n";
-        assert_eq!(parse_string_value(json, "theme").as_deref(), Some("one-dark"));
+        assert_eq!(
+            parse_string_value(json, "theme").as_deref(),
+            Some("one-dark")
+        );
         assert_eq!(
             parse_string_value(json, "smart_commit_model").as_deref(),
             Some("gemma:2b")
@@ -1161,6 +1199,25 @@ mod tests {
     #[test]
     fn ui_zoom_in_settings_keys() {
         assert!(SETTINGS_KEYS.contains(&"ui_zoom"));
+    }
+
+    // T-SETTINGS-001: the Settings window persists graph_compact through the same
+    // flat settings.json storage; the key must be registered so write_setting
+    // round-trips it (and never clobbers it when writing a sibling key).
+    #[test]
+    fn graph_compact_in_settings_keys() {
+        assert!(SETTINGS_KEYS.contains(&"graph_compact"));
+    }
+
+    // T-SETTINGS-001: the Settings Theme Select maps slug ↔ index purely; the
+    // round-trip must be lossless for every built-in theme (the Select renders
+    // by slug and reuses `set_active(slug)` / `active_index()` to apply).
+    #[test]
+    fn theme_slug_index_roundtrip() {
+        for (i, t) in THEMES.iter().enumerate() {
+            assert_eq!(index_of(t.slug), Some(i));
+            assert_eq!(THEMES[i].slug, t.slug);
+        }
     }
 
     #[test]

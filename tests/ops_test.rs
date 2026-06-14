@@ -13,17 +13,13 @@ use git2::{BranchType, Repository};
 use tempfile::TempDir;
 
 use kagi::git::{
-    CommitId, Head,
     ops::{
-        execute_checkout, execute_checkout_commit, execute_create_branch,
-        plan_checkout, plan_checkout_commit, plan_create_branch,
-        plan_create_branch_with_checkout, preflight_check,
-        plan_stash_push, execute_stash_push,
-        plan_stash_apply, execute_stash_apply,
-        preflight_check_stash,
-        plan_cherry_pick, execute_cherry_pick,
+        execute_checkout, execute_checkout_commit, execute_cherry_pick, execute_create_branch,
+        execute_stash_apply, execute_stash_push, plan_checkout, plan_checkout_commit,
+        plan_cherry_pick, plan_create_branch, plan_create_branch_with_checkout, plan_stash_apply,
+        plan_stash_push, preflight_check, preflight_check_stash,
     },
-    snapshot,
+    snapshot, CommitId, Head,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -103,8 +99,7 @@ fn test_plan_clean_repo_no_blockers() {
         plan.blockers
     );
     assert_eq!(
-        plan.predicted.head,
-        "branch: feature/one",
+        plan.predicted.head, "branch: feature/one",
         "predicted HEAD should be 'branch: feature/one'"
     );
 }
@@ -437,7 +432,10 @@ fn test_checkout_commit_plan_warns_and_execute_detaches_head() {
         "HEAD should be detached at target after checkout commit, got: {:?}",
         snap.head
     );
-    assert!(repo_dir.join("feat.txt").exists(), "target tree should be checked out");
+    assert!(
+        repo_dir.join("feat.txt").exists(),
+        "target tree should be checked out"
+    );
 }
 
 #[test]
@@ -464,7 +462,10 @@ fn test_checkout_commit_dirty_safe_checkout_fails_without_moving_head() {
     // Execution still refuses and preserves the local edit (data-safety), even
     // when driven past the plan's blocker.
     let result = execute_checkout_commit(&repo, &target);
-    assert!(result.is_err(), "safe checkout should refuse dirty overwrite");
+    assert!(
+        result.is_err(),
+        "safe checkout should refuse dirty overwrite"
+    );
 
     let mut repo2 = Repository::open(&repo_dir).expect("re-open repo");
     let snap = snapshot(&mut repo2, 100).expect("snapshot after failed checkout commit");
@@ -502,8 +503,7 @@ fn test_create_branch_normal_creates_branch() {
     let (repo_dir, repo) = build_two_branch_repo(&tmp);
 
     let at = head_commit_id(&repo);
-    let plan = plan_create_branch(&repo, "new-feature", &at)
-        .expect("plan_create_branch failed");
+    let plan = plan_create_branch(&repo, "new-feature", &at).expect("plan_create_branch failed");
 
     assert!(
         plan.blockers.is_empty(),
@@ -512,14 +512,16 @@ fn test_create_branch_normal_creates_branch() {
     );
 
     // Execute.
-    execute_create_branch(&repo, "new-feature", &at)
-        .expect("execute_create_branch failed");
+    execute_create_branch(&repo, "new-feature", &at).expect("execute_create_branch failed");
 
     // Branch must exist.
     let branch_exists = repo
         .find_branch("new-feature", git2::BranchType::Local)
         .is_ok();
-    assert!(branch_exists, "branch 'new-feature' should exist after creation");
+    assert!(
+        branch_exists,
+        "branch 'new-feature' should exist after creation"
+    );
 
     // HEAD must still be on main.
     let head_ref = repo.head().expect("repo.head()");
@@ -551,8 +553,7 @@ fn test_create_branch_head_and_wt_unchanged() {
         .map(|o| o.to_string())
         .unwrap_or_default();
 
-    execute_create_branch(&repo, "stable-branch", &at)
-        .expect("execute_create_branch failed");
+    execute_create_branch(&repo, "stable-branch", &at).expect("execute_create_branch failed");
 
     // HEAD oid must be unchanged.
     let head_oid_after = repo
@@ -561,7 +562,10 @@ fn test_create_branch_head_and_wt_unchanged() {
         .target()
         .map(|o| o.to_string())
         .unwrap_or_default();
-    assert_eq!(head_oid_before, head_oid_after, "HEAD OID should not change");
+    assert_eq!(
+        head_oid_before, head_oid_after,
+        "HEAD OID should not change"
+    );
 
     // Branch must point to same commit.
     let branch_ref = repo
@@ -591,8 +595,7 @@ fn test_create_branch_same_name_blocker() {
     let at = head_commit_id(&repo);
 
     // 'main' already exists.
-    let plan = plan_create_branch(&repo, "main", &at)
-        .expect("plan_create_branch failed");
+    let plan = plan_create_branch(&repo, "main", &at).expect("plan_create_branch failed");
 
     assert!(
         !plan.blockers.is_empty(),
@@ -617,8 +620,7 @@ fn test_create_branch_invalid_name_with_space() {
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
 
     let at = head_commit_id(&repo);
-    let plan = plan_create_branch(&repo, "has space", &at)
-        .expect("plan_create_branch failed");
+    let plan = plan_create_branch(&repo, "has space", &at).expect("plan_create_branch failed");
 
     assert!(
         !plan.blockers.is_empty(),
@@ -641,8 +643,7 @@ fn test_create_branch_invalid_name_double_dot() {
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
 
     let at = head_commit_id(&repo);
-    let plan = plan_create_branch(&repo, "feat..broken", &at)
-        .expect("plan_create_branch failed");
+    let plan = plan_create_branch(&repo, "feat..broken", &at).expect("plan_create_branch failed");
 
     assert!(
         !plan.blockers.is_empty(),
@@ -656,8 +657,7 @@ fn test_create_branch_invalid_name_leading_dash() {
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
 
     let at = head_commit_id(&repo);
-    let plan = plan_create_branch(&repo, "-bad-name", &at)
-        .expect("plan_create_branch failed");
+    let plan = plan_create_branch(&repo, "-bad-name", &at).expect("plan_create_branch failed");
 
     assert!(
         !plan.blockers.is_empty(),
@@ -673,8 +673,7 @@ fn test_create_branch_empty_name_blocker() {
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
 
     let at = head_commit_id(&repo);
-    let plan = plan_create_branch(&repo, "", &at)
-        .expect("plan_create_branch failed");
+    let plan = plan_create_branch(&repo, "", &at).expect("plan_create_branch failed");
 
     assert!(
         !plan.blockers.is_empty(),
@@ -691,7 +690,11 @@ fn test_create_branch_with_checkout_predicts_new_head() {
     let plan = plan_create_branch_with_checkout(&repo, "checkout-me", &at, true)
         .expect("plan_create_branch_with_checkout failed");
 
-    assert!(plan.blockers.is_empty(), "unexpected blockers: {:?}", plan.blockers);
+    assert!(
+        plan.blockers.is_empty(),
+        "unexpected blockers: {:?}",
+        plan.blockers
+    );
     assert_eq!(plan.predicted.head, "branch: checkout-me");
     assert!(plan.title.contains("and checkout"));
 }
@@ -708,10 +711,7 @@ fn test_execute_create_branch_does_not_overwrite_existing() {
     let feature_branch = repo
         .find_branch("feature/one", git2::BranchType::Local)
         .expect("feature/one should exist");
-    let feature_oid = feature_branch
-        .get()
-        .target()
-        .expect("feature/one target");
+    let feature_oid = feature_branch.get().target().expect("feature/one target");
     let feature_commit_id_str = feature_oid.to_string();
 
     // We are on main; HEAD is at a different commit.
@@ -773,8 +773,8 @@ fn test_stash_push_normal_cleans_working_tree() {
     // Dirty the repo.
     write_file(&repo_dir, "README.md", "modified\n");
 
-    let plan = plan_stash_push(&mut repo, Some("test stash"), true)
-        .expect("plan_stash_push failed");
+    let plan =
+        plan_stash_push(&mut repo, Some("test stash"), true).expect("plan_stash_push failed");
 
     assert!(
         plan.blockers.is_empty(),
@@ -784,8 +784,7 @@ fn test_stash_push_normal_cleans_working_tree() {
 
     // Execute.
     let mut repo2 = Repository::open(&repo_dir).expect("re-open");
-    execute_stash_push(&mut repo2, Some("test stash"), true)
-        .expect("execute_stash_push failed");
+    execute_stash_push(&mut repo2, Some("test stash"), true).expect("execute_stash_push failed");
 
     // Working tree must be clean after push.
     let mut repo3 = Repository::open(&repo_dir).expect("re-open");
@@ -805,8 +804,7 @@ fn test_stash_push_blocker_on_clean_repo() {
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, mut repo) = build_clean_repo(&tmp);
 
-    let plan = plan_stash_push(&mut repo, None, true)
-        .expect("plan_stash_push failed");
+    let plan = plan_stash_push(&mut repo, None, true).expect("plan_stash_push failed");
 
     assert!(
         !plan.blockers.is_empty(),
@@ -833,8 +831,7 @@ fn test_stash_push_untracked_warning() {
     // Add only an untracked file.
     write_file(&repo_dir, "untracked.txt", "not tracked\n");
 
-    let plan = plan_stash_push(&mut repo, None, true)
-        .expect("plan_stash_push failed");
+    let plan = plan_stash_push(&mut repo, None, true).expect("plan_stash_push failed");
 
     assert!(
         plan.blockers.is_empty(),
@@ -858,8 +855,7 @@ fn test_stash_apply_normal_restores_content_stash_remains() {
     write_file(&repo_dir, "README.md", "stashed content\n");
 
     // Push to stash so working tree is clean.
-    execute_stash_push(&mut repo, Some("wip"), true)
-        .expect("execute_stash_push failed");
+    execute_stash_push(&mut repo, Some("wip"), true).expect("execute_stash_push failed");
 
     // Verify clean + 1 stash.
     {
@@ -869,8 +865,7 @@ fn test_stash_apply_normal_restores_content_stash_remains() {
     }
 
     // Plan apply at index 0.
-    let plan = plan_stash_apply(&mut repo, 0)
-        .expect("plan_stash_apply failed");
+    let plan = plan_stash_apply(&mut repo, 0).expect("plan_stash_apply failed");
 
     assert!(
         plan.blockers.is_empty(),
@@ -879,8 +874,7 @@ fn test_stash_apply_normal_restores_content_stash_remains() {
     );
 
     // Execute apply.
-    execute_stash_apply(&mut repo, 0)
-        .expect("execute_stash_apply failed");
+    execute_stash_apply(&mut repo, 0).expect("execute_stash_apply failed");
 
     // Working tree must be dirty again (content restored).
     let snap_after = snapshot(&mut repo, 100).expect("snapshot after apply");
@@ -906,15 +900,13 @@ fn test_stash_apply_blocker_dirty_working_tree() {
 
     // Push something to stash first so there's a stash entry.
     write_file(&repo_dir, "README.md", "to stash\n");
-    execute_stash_push(&mut repo, None, true)
-        .expect("execute_stash_push failed");
+    execute_stash_push(&mut repo, None, true).expect("execute_stash_push failed");
 
     // Now dirty the working tree again (unstaged change).
     write_file(&repo_dir, "README.md", "new dirty\n");
 
     // Plan apply: should be blocked because working tree is dirty.
-    let plan = plan_stash_apply(&mut repo, 0)
-        .expect("plan_stash_apply failed");
+    let plan = plan_stash_apply(&mut repo, 0).expect("plan_stash_apply failed");
 
     assert!(
         !plan.blockers.is_empty(),
@@ -939,8 +931,7 @@ fn test_stash_apply_blocker_index_out_of_range() {
     let (_repo_dir, mut repo) = build_clean_repo(&tmp);
 
     // No stash entries exist. Try to apply index 0.
-    let plan = plan_stash_apply(&mut repo, 0)
-        .expect("plan_stash_apply failed");
+    let plan = plan_stash_apply(&mut repo, 0).expect("plan_stash_apply failed");
 
     assert!(
         !plan.blockers.is_empty(),
@@ -973,20 +964,19 @@ fn test_stash_push_apply_round_trip_content_matches() {
         .expect("execute_stash_push failed");
 
     // File must be reverted to its committed content.
-    let file_after_push = std::fs::read_to_string(repo_dir.join("README.md"))
-        .expect("read README.md after push");
+    let file_after_push =
+        std::fs::read_to_string(repo_dir.join("README.md")).expect("read README.md after push");
     assert_ne!(
         file_after_push, original_content,
         "file content should differ from stashed content after push"
     );
 
     // Apply.
-    execute_stash_apply(&mut repo, 0)
-        .expect("execute_stash_apply failed");
+    execute_stash_apply(&mut repo, 0).expect("execute_stash_apply failed");
 
     // File must be restored to original_content.
-    let file_after_apply = std::fs::read_to_string(repo_dir.join("README.md"))
-        .expect("read README.md after apply");
+    let file_after_apply =
+        std::fs::read_to_string(repo_dir.join("README.md")).expect("read README.md after apply");
     assert_eq!(
         file_after_apply, original_content,
         "file content must match original after apply round-trip"
@@ -1013,20 +1003,17 @@ fn test_preflight_check_stash_detects_count_change() {
 
     // Create stash 1.
     write_file(&repo_dir, "README.md", "first stash content\n");
-    execute_stash_push(&mut repo, Some("first"), true)
-        .expect("first push failed");
+    execute_stash_push(&mut repo, Some("first"), true).expect("first push failed");
 
     // Plan apply at index 0.
-    let plan = plan_stash_apply(&mut repo, 0)
-        .expect("plan_stash_apply failed");
+    let plan = plan_stash_apply(&mut repo, 0).expect("plan_stash_apply failed");
     assert!(plan.blockers.is_empty(), "should have no blockers");
 
     let stash_count_at_plan = plan.stash_count_at_plan();
 
     // Simulate another stash being added between plan and execution.
     write_file(&repo_dir, "extra.txt", "extra content\n");
-    execute_stash_push(&mut repo, Some("extra stash"), true)
-        .expect("second push failed");
+    execute_stash_push(&mut repo, Some("extra stash"), true).expect("second push failed");
 
     // preflight_check_stash must detect the count changed.
     let result = preflight_check_stash(&mut repo, &plan, stash_count_at_plan);
@@ -1096,8 +1083,16 @@ fn test_cherry_pick_plan_normal_no_blockers() {
     );
     // Plan must not have modified HEAD or WT.
     let repo2 = Repository::open(tmp.path()).expect("re-open");
-    let head_branch = repo2.head().expect("head").shorthand().map(|s| s.to_string()).unwrap_or_default();
-    assert_eq!(head_branch, "main", "plan_cherry_pick must not change HEAD branch");
+    let head_branch = repo2
+        .head()
+        .expect("head")
+        .shorthand()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    assert_eq!(
+        head_branch, "main",
+        "plan_cherry_pick must not change HEAD branch"
+    );
 
     // preview_files must be non-empty (feat_two.txt should appear).
     assert!(
@@ -1111,7 +1106,10 @@ fn test_cherry_pick_plan_normal_no_blockers() {
     assert!(
         has_feat_two,
         "preview_files should include feat_two.txt, got: {:?}",
-        plan.preview_files.iter().map(|f| f.path.display().to_string()).collect::<Vec<_>>()
+        plan.preview_files
+            .iter()
+            .map(|f| f.path.display().to_string())
+            .collect::<Vec<_>>()
     );
 }
 
@@ -1145,18 +1143,35 @@ fn test_cherry_pick_execute_normal() {
         .target()
         .expect("target")
         .to_string();
-    assert_ne!(head_before, head_after, "HEAD must advance after cherry-pick");
+    assert_ne!(
+        head_before, head_after,
+        "HEAD must advance after cherry-pick"
+    );
     assert_eq!(head_after, new_id.0, "HEAD must point to the new commit");
 
     // New commit must be on 'main'.
-    let head_branch = repo2.head().expect("head").shorthand().map(|s| s.to_string()).unwrap_or_default();
+    let head_branch = repo2
+        .head()
+        .expect("head")
+        .shorthand()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
     assert_eq!(head_branch, "main", "HEAD branch must still be main");
 
     // Parent of new commit must be old HEAD.
-    let new_commit = repo2.find_commit(git2::Oid::from_str(&new_id.0).unwrap()).expect("find new commit");
-    assert_eq!(new_commit.parent_count(), 1, "new commit should have one parent");
+    let new_commit = repo2
+        .find_commit(git2::Oid::from_str(&new_id.0).unwrap())
+        .expect("find new commit");
+    assert_eq!(
+        new_commit.parent_count(),
+        1,
+        "new commit should have one parent"
+    );
     let parent_oid = new_commit.parent(0).expect("parent").id().to_string();
-    assert_eq!(parent_oid, head_before, "parent of new commit must be old HEAD");
+    assert_eq!(
+        parent_oid, head_before,
+        "parent of new commit must be old HEAD"
+    );
 
     // Message must match the cherry-picked commit.
     let original_commit = repo2
@@ -1164,13 +1179,24 @@ fn test_cherry_pick_execute_normal() {
         .expect("find feature commit");
     let original_msg = original_commit.message().expect("original message");
     let new_msg = new_commit.message().expect("new commit message");
-    assert_eq!(new_msg, original_msg, "cherry-pick must preserve commit message");
+    assert_eq!(
+        new_msg, original_msg,
+        "cherry-pick must preserve commit message"
+    );
 
     // Author must match.
     let orig_author = original_commit.author();
     let new_author = new_commit.author();
-    assert_eq!(orig_author.name(), new_author.name(), "author name must be preserved");
-    assert_eq!(orig_author.email(), new_author.email(), "author email must be preserved");
+    assert_eq!(
+        orig_author.name(),
+        new_author.name(),
+        "author name must be preserved"
+    );
+    assert_eq!(
+        orig_author.email(),
+        new_author.email(),
+        "author email must be preserved"
+    );
 
     // Working tree must reflect the cherry-picked file.
     assert!(
@@ -1245,12 +1271,23 @@ fn test_cherry_pick_plan_conflict_blocker_wt_intact() {
 
     // WT must be intact (plan must not touch working tree).
     let wt_after = std::fs::read_to_string(d.join("file.txt")).expect("read file.txt after");
-    assert_eq!(wt_before, wt_after, "plan_cherry_pick must not modify working tree content");
+    assert_eq!(
+        wt_before, wt_after,
+        "plan_cherry_pick must not modify working tree content"
+    );
 
     // HEAD must be unchanged.
     let repo2 = Repository::open(d).expect("re-open");
-    let head_branch = repo2.head().expect("head").shorthand().map(|s| s.to_string()).unwrap_or_default();
-    assert_eq!(head_branch, "main", "HEAD branch must remain main after conflict plan");
+    let head_branch = repo2
+        .head()
+        .expect("head")
+        .shorthand()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    assert_eq!(
+        head_branch, "main",
+        "HEAD branch must remain main after conflict plan"
+    );
 }
 
 // ── T016-4: dirty working tree — plan blocked ──────────────────────────────
@@ -1269,10 +1306,12 @@ fn test_cherry_pick_plan_dirty_wt_blocker() {
         !plan.blockers.is_empty(),
         "dirty working tree should produce blockers"
     );
-    let has_dirty_blocker = plan
-        .blockers
-        .iter()
-        .any(|b| b.contains("staged") || b.contains("modified") || b.contains("dirty") || b.contains("Working tree"));
+    let has_dirty_blocker = plan.blockers.iter().any(|b| {
+        b.contains("staged")
+            || b.contains("modified")
+            || b.contains("dirty")
+            || b.contains("Working tree")
+    });
     assert!(
         has_dirty_blocker,
         "blocker should mention dirty tree, got: {:?}",
@@ -1281,7 +1320,12 @@ fn test_cherry_pick_plan_dirty_wt_blocker() {
 
     // HEAD must be unchanged.
     let repo2 = Repository::open(tmp.path()).expect("re-open");
-    let head_branch = repo2.head().expect("head").shorthand().map(|s| s.to_string()).unwrap_or_default();
+    let head_branch = repo2
+        .head()
+        .expect("head")
+        .shorthand()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
     assert_eq!(head_branch, "main", "HEAD must remain main");
 }
 
@@ -1314,7 +1358,10 @@ fn test_cherry_pick_plan_merge_commit_blocker() {
     git(d, &["commit", "-qm", "side b"]);
 
     // Merge side-a into side-b to create a merge commit.
-    git(d, &["merge", "-q", "--no-ff", "-m", "merge side-a", "side-a"]);
+    git(
+        d,
+        &["merge", "-q", "--no-ff", "-m", "merge side-a", "side-a"],
+    );
 
     // Capture merge commit id.
     let repo_tmp = Repository::open(d).expect("open repo");
@@ -1343,7 +1390,12 @@ fn test_cherry_pick_plan_merge_commit_blocker() {
 
     // HEAD must be unchanged.
     let repo2 = Repository::open(d).expect("re-open");
-    let head_branch = repo2.head().expect("head").shorthand().map(|s| s.to_string()).unwrap_or_default();
+    let head_branch = repo2
+        .head()
+        .expect("head")
+        .shorthand()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
     assert_eq!(head_branch, "main", "HEAD must remain main");
 }
 
@@ -1384,7 +1436,10 @@ fn test_cherry_pick_plan_already_applied_blocker() {
 
     // Execute the cherry-pick first.
     let plan = plan_cherry_pick(&repo, &feature_id).expect("plan failed");
-    assert!(plan.blockers.is_empty(), "first plan should have no blockers");
+    assert!(
+        plan.blockers.is_empty(),
+        "first plan should have no blockers"
+    );
     execute_cherry_pick(&repo, &feature_id).expect("execute failed");
 
     // Re-open the repo after the cherry-pick.
@@ -1401,16 +1456,13 @@ fn test_cherry_pick_plan_already_applied_blocker() {
     // - "no changes / already applied" (different commit hash) — preferred
     // - "HEAD same" (deterministic commit hash due to same tree/parent/author/timestamp)
     // Both are valid indicators that the commit cannot/should not be cherry-picked again.
-    let has_applied_blocker = plan2
-        .blockers
-        .iter()
-        .any(|b| {
-            b.contains("no changes")
+    let has_applied_blocker = plan2.blockers.iter().any(|b| {
+        b.contains("no changes")
                 || b.contains("applied already")
                 || b.contains("empty")
                 || b.contains("current HEAD")  // HEAD-same check fires when hash is deterministic
                 || b.contains("same")
-        });
+    });
     assert!(
         has_applied_blocker,
         "blocker should indicate commit is already applied or HEAD-same, got: {:?}",
@@ -1435,7 +1487,10 @@ fn test_cherry_pick_plan_preview_files_match() {
         plan.preview_files.len(),
         1,
         "should have exactly 1 preview file, got: {:?}",
-        plan.preview_files.iter().map(|f| f.path.display().to_string()).collect::<Vec<_>>()
+        plan.preview_files
+            .iter()
+            .map(|f| f.path.display().to_string())
+            .collect::<Vec<_>>()
     );
     let pf = &plan.preview_files[0];
     assert!(
@@ -1478,11 +1533,17 @@ fn test_cherry_pick_plan_does_not_change_repo() {
         .target()
         .expect("target")
         .to_string();
-    assert_eq!(head_oid_before, head_oid_after, "plan must not change HEAD OID");
+    assert_eq!(
+        head_oid_before, head_oid_after,
+        "plan must not change HEAD OID"
+    );
 
     // WT content must not have changed.
     let wt_content_after = std::fs::read_to_string(repo_dir.join("base.txt")).expect("read after");
-    assert_eq!(wt_content_before, wt_content_after, "plan must not modify working tree");
+    assert_eq!(
+        wt_content_before, wt_content_after,
+        "plan must not modify working tree"
+    );
 
     // main branch tip must not have changed.
     let main_tip = repo2
@@ -1492,7 +1553,10 @@ fn test_cherry_pick_plan_does_not_change_repo() {
         .target()
         .expect("main tip")
         .to_string();
-    assert_eq!(head_oid_before, main_tip, "main branch tip must not change after plan");
+    assert_eq!(
+        head_oid_before, main_tip,
+        "main branch tip must not change after plan"
+    );
 
     // Repo state must not be CHERRYPICK (no .git/CHERRY_PICK_HEAD).
     let cherry_pick_head = repo_dir.join(".git").join("CHERRY_PICK_HEAD");
@@ -1525,7 +1589,10 @@ fn test_cherry_pick_updates_modified_existing_file() {
     git(dir, &["commit", "-qam", "feat edit"]);
     let feat_sha = {
         let out = std::process::Command::new("git")
-            .args(["rev-parse", "HEAD"]).current_dir(dir).output().unwrap();
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     };
 

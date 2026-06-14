@@ -61,7 +61,11 @@ impl Lang {
     }
 
     fn from_index(i: usize) -> Lang {
-        if i == 1 { Lang::Ja } else { Lang::En }
+        if i == 1 {
+            Lang::Ja
+        } else {
+            Lang::En
+        }
     }
 
     fn index(self) -> usize {
@@ -199,9 +203,20 @@ pub enum Msg {
     PushNothing,
     StashClean,
     PopEmpty,
-    UndoDetached,
-    UndoUnborn,
-    UndoAhead0,
+    // Legacy undo-commit disabled-reason strings (UndoDetached / UndoUnborn /
+    // UndoAhead0) were removed when the toolbar Undo button was generalised to
+    // operation-history undo (T-UNDOREDO-001); the headless undo-commit path in
+    // main.rs no longer surfaces a disabled reason.
+
+    // ── Operation Undo / Redo (T-UNDOREDO-001, ADR-0081) ────────────
+    /// Toolbar "Undo" button label (domain word — English in both langs).
+    Undo,
+    /// Toolbar "Redo" button label (domain word — English in both langs).
+    Redo,
+    /// Footer / tooltip shown when there is nothing to undo.
+    NothingToUndo,
+    /// Footer / tooltip shown when there is nothing to redo.
+    NothingToRedo,
 
     // ── Checkout / compare prose & recovery ─────────────────────────
     CheckoutSelectFirst,
@@ -355,6 +370,31 @@ pub enum Msg {
     MergeAndResolveConflicts,
     /// Prominent warning shown on the merge modal when conflicts are predicted.
     MergeConflictWarning,
+
+    // ── T-SETTINGS-001 / ADR-0080: Settings window (prose localized; the
+    //    domain word "graph" stays English per ADR-0048) ──────────────────
+    /// Settings window title.
+    SettingsTitle,
+    /// Settings sidebar: Appearance page title.
+    SettingsAppearance,
+    /// Settings sidebar: Language page title.
+    SettingsLanguage,
+    /// Appearance → Theme row title.
+    SettingsTheme,
+    /// Appearance → Theme row description.
+    SettingsThemeDesc,
+    /// Appearance → UI Zoom row title.
+    SettingsZoom,
+    /// Appearance → UI Zoom row description.
+    SettingsZoomDesc,
+    /// Appearance → Compact graph row title.
+    SettingsCompact,
+    /// Appearance → Compact graph row description.
+    SettingsCompactDesc,
+    /// Language → Interface language row title.
+    SettingsInterfaceLang,
+    /// Language → Interface language row description.
+    SettingsInterfaceLangDesc,
 }
 
 impl Msg {
@@ -470,12 +510,13 @@ impl Msg {
             (Ja, StashClean) => "Stash: working tree is clean — nothing to stash",
             (En, PopEmpty) => "Pop: stash is empty",
             (Ja, PopEmpty) => "Pop: stash が空です",
-            (En, UndoDetached) => "Undo: detached HEAD — cannot undo",
-            (Ja, UndoDetached) => "Undo: detached HEAD — undo できません",
-            (En, UndoUnborn) => "Undo: no commits yet — cannot undo",
-            (Ja, UndoUnborn) => "Undo: no commits yet — undo できません",
-            (En, UndoAhead0) => "Undo: ahead=0 — pushed commits cannot be undone here",
-            (Ja, UndoAhead0) => "Undo: ahead=0 — push 済みの commit はここでは undo できません",
+            // ── Operation Undo / Redo (ADR-0081; domain words English) ──
+            (En, Undo) | (Ja, Undo) => "Undo",
+            (En, Redo) | (Ja, Redo) => "Redo",
+            (En, NothingToUndo) => "nothing to undo",
+            (Ja, NothingToUndo) => "undo する操作がありません",
+            (En, NothingToRedo) => "nothing to redo",
+            (Ja, NothingToRedo) => "redo する操作がありません",
 
             // ── Checkout / compare prose ────────────────────────────
             (En, CheckoutSelectFirst) => "Checkout: select a commit, then press Enter",
@@ -741,6 +782,35 @@ impl Msg {
             (Ja, MergeConflictWarning) => {
                 "この merge は conflict を発生させます。conflict marker を残して Conflict Mode に入り、各ファイルを解決します(中止すれば merge 前の状態に戻せます)。"
             }
+
+            // ── T-SETTINGS-001: Settings window ──────────────────────
+            (En, SettingsTitle) => "Settings",
+            (Ja, SettingsTitle) => "設定",
+            (En, SettingsAppearance) => "Appearance",
+            (Ja, SettingsAppearance) => "外観",
+            (En, SettingsLanguage) => "Language",
+            (Ja, SettingsLanguage) => "言語",
+            (En, SettingsTheme) => "Theme",
+            (Ja, SettingsTheme) => "テーマ",
+            (En, SettingsThemeDesc) => "Colour theme used across the whole app.",
+            (Ja, SettingsThemeDesc) => "アプリ全体で使用するカラーテーマ。",
+            (En, SettingsZoom) => "UI Zoom",
+            (Ja, SettingsZoom) => "UI ズーム",
+            (En, SettingsZoomDesc) => "Scale all text and layout (0.7×–1.5×).",
+            (Ja, SettingsZoomDesc) => "テキストとレイアウト全体を拡大縮小します(0.7×〜1.5×)。",
+            // "graph" is a domain word and stays English in both arms (ADR-0048).
+            (En, SettingsCompact) => "Compact graph",
+            (Ja, SettingsCompact) => "graph をコンパクト表示",
+            (En, SettingsCompactDesc) => "Use a tighter row height in the commit graph.",
+            (Ja, SettingsCompactDesc) => "commit graph の行の高さを詰めて表示します。",
+            (En, SettingsInterfaceLang) => "Interface language",
+            (Ja, SettingsInterfaceLang) => "表示言語",
+            (En, SettingsInterfaceLangDesc) => {
+                "Language for explanatory text (Git domain words stay English)."
+            }
+            (Ja, SettingsInterfaceLangDesc) => {
+                "説明文の言語(Git の用語は英語のままです)。"
+            }
         }
     }
 }
@@ -754,7 +824,10 @@ impl Msg {
 pub fn wip_row_note(n: usize) -> String {
     let plural = if n == 1 { "" } else { "s" };
     match lang() {
-        Lang::En => format!("// WIP — {} change{} (click to open commit panel)", n, plural),
+        Lang::En => format!(
+            "// WIP — {} change{} (click to open commit panel)",
+            n, plural
+        ),
         Lang::Ja => format!("// WIP — {} change{}(クリックで commit panel)", n, plural),
     }
 }
@@ -777,7 +850,10 @@ pub fn unstaged_not_included(n: usize) -> String {
 /// The branch name stays verbatim per ADR-0048.
 pub fn branch_exists_fmt(name: &str) -> String {
     match lang() {
-        Lang::En => format!("A branch named '{}' already exists in this repository.", name),
+        Lang::En => format!(
+            "A branch named '{}' already exists in this repository.",
+            name
+        ),
         Lang::Ja => format!("branch '{}' は既に存在します。", name),
     }
 }
@@ -948,8 +1024,14 @@ mod tests {
     fn parameterized_helpers_switch() {
         let _g = LOCK.lock().unwrap();
         set_lang_no_persist(Lang::En);
-        assert_eq!(wip_row_note(1), "// WIP — 1 change (click to open commit panel)");
-        assert_eq!(wip_row_note(3), "// WIP — 3 changes (click to open commit panel)");
+        assert_eq!(
+            wip_row_note(1),
+            "// WIP — 1 change (click to open commit panel)"
+        );
+        assert_eq!(
+            wip_row_note(3),
+            "// WIP — 3 changes (click to open commit panel)"
+        );
         set_lang_no_persist(Lang::Ja);
         assert!(wip_row_note(2).contains("クリックで commit panel"));
         set_lang_no_persist(Lang::En);
@@ -1012,11 +1094,20 @@ mod tests {
         use kagi::git::ops::{BranchNameError as B, WorktreePathError as W};
         let _g = LOCK.lock().unwrap();
         set_lang_no_persist(Lang::En);
-        assert_eq!(branch_name_error(&B::EmptyCreate), "Branch name must not be empty.");
-        assert_eq!(worktree_path_error(&W::Empty), "Worktree path must not be empty.");
+        assert_eq!(
+            branch_name_error(&B::EmptyCreate),
+            "Branch name must not be empty."
+        );
+        assert_eq!(
+            worktree_path_error(&W::Empty),
+            "Worktree path must not be empty."
+        );
         set_lang_no_persist(Lang::Ja);
         // Localized — no longer the English sentence, and the name stays verbatim.
-        assert_ne!(branch_name_error(&B::EmptyCreate), "Branch name must not be empty.");
+        assert_ne!(
+            branch_name_error(&B::EmptyCreate),
+            "Branch name must not be empty."
+        );
         assert!(branch_name_error(&B::CreateExists("feat".into())).contains("feat"));
         assert!(worktree_path_error(&W::Exists("/p".into())).contains("/p"));
         set_lang_no_persist(Lang::En);

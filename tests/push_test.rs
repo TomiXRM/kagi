@@ -78,14 +78,27 @@ fn setup() -> Repos {
     let other = tmp.path().join("other");
 
     // -b main: ensure the default branch is "main" so the second clone is not unborn.
-    git(tmp.path(), &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()]);
+    git(
+        tmp.path(),
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            remote.to_str().unwrap(),
+        ],
+    );
 
     std::fs::create_dir(&local).unwrap();
     git(&local, &["init", "-q", "-b", "main", "."]);
     git(&local, &["config", "user.name", "Test"]);
     git(&local, &["config", "user.email", "test@example.com"]);
     git(&local, &["config", "commit.gpgsign", "false"]);
-    git(&local, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    git(
+        &local,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
 
     write_file(&local, "base.txt", "base\n");
     git(&local, &["add", "-A"]);
@@ -95,13 +108,23 @@ fn setup() -> Repos {
     // Second clone used to push commits "from elsewhere" (for non-FF tests).
     git(
         tmp.path(),
-        &["clone", "-q", remote.to_str().unwrap(), other.to_str().unwrap()],
+        &[
+            "clone",
+            "-q",
+            remote.to_str().unwrap(),
+            other.to_str().unwrap(),
+        ],
     );
     git(&other, &["config", "user.name", "Other"]);
     git(&other, &["config", "user.email", "other@example.com"]);
     git(&other, &["config", "commit.gpgsign", "false"]);
 
-    Repos { _tmp: tmp, remote, local, other }
+    Repos {
+        _tmp: tmp,
+        remote,
+        local,
+        other,
+    }
 }
 
 /// Push a commit from `other` to the remote (advance the remote without touching local).
@@ -211,7 +234,9 @@ fn test_push_set_upstream() {
 
     // Re-open repo to verify upstream is now configured.
     let repo2 = Repository::open(&r.local).unwrap();
-    let branch = repo2.find_branch("feature/new", git2::BranchType::Local).unwrap();
+    let branch = repo2
+        .find_branch("feature/new", git2::BranchType::Local)
+        .unwrap();
     assert!(
         branch.upstream().is_ok(),
         "upstream should be configured after set-upstream push"
@@ -223,7 +248,9 @@ fn test_push_set_upstream() {
         .current_dir(&r.remote)
         .output()
         .expect("rev-parse failed");
-    let remote_sha = String::from_utf8_lossy(&remote_ref_out.stdout).trim().to_string();
+    let remote_sha = String::from_utf8_lossy(&remote_ref_out.stdout)
+        .trim()
+        .to_string();
     assert_eq!(
         remote_sha, local_sha,
         "remote branch should match local HEAD"
@@ -292,13 +319,14 @@ fn test_push_detached_blocker() {
 fn test_push_no_force_in_args() {
     // Read the ops.rs source.
     let src = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src/git/ops.rs"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/git/ops.rs"),
     )
     .expect("could not read ops.rs");
 
     // Find the execute_push function section only (up to build_push_preview).
-    let push_section_start = src.find("pub fn execute_push").expect("execute_push not found");
+    let push_section_start = src
+        .find("pub fn execute_push")
+        .expect("execute_push not found");
     let push_section = &src[push_section_start..];
 
     // Find internal helpers marker as the end boundary.
@@ -345,9 +373,16 @@ fn test_push_local_unchanged_on_error() {
     );
 
     // Local HEAD unchanged.
-    assert_eq!(head_sha(&r.local), head_before, "HEAD must not move after failed push");
+    assert_eq!(
+        head_sha(&r.local),
+        head_before,
+        "HEAD must not move after failed push"
+    );
 
     // Working tree unchanged.
     let content = std::fs::read_to_string(r.local.join("a.txt")).unwrap();
-    assert_eq!(content, "a\n", "working tree must be untouched after failed push");
+    assert_eq!(
+        content, "a\n",
+        "working tree must be untouched after failed push"
+    );
 }

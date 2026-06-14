@@ -99,6 +99,19 @@ cargo run --release -- /path/to/your/repo
 - First build takes a few minutes (gpui / libgit2); afterwards it's seconds
 - Bare repositories are not supported (point it at a normal repo with a working tree)
 
+### Install the `kagi` command
+
+Install the binary onto your `PATH` so you can open any repo from the terminal:
+
+```sh
+cargo install --path .          # installs `kagi` to ~/.cargo/bin
+kagi /path/to/your/repo         # open Kagi on that repo
+kagi                            # no arg → Welcome screen
+```
+
+The binary embeds all its assets, so it is self-contained (no asset directory to
+ship alongside it).
+
 ### Try it without touching your repos
 
 ```sh
@@ -131,6 +144,31 @@ cargo test --workspace    # 36 integration suites + unit tests
 - Design docs: [docs/requirements.md](docs/requirements.md) · [docs/architecture.md](docs/architecture.md) · [ADRs](docs/adr/)
 - Ticket board: [docs/tickets/INDEX.md](docs/tickets/INDEX.md)
 - **Never test against a real repository** — use `scripts/make_fixture.sh` / tempdirs. `KAGI_AUTO_CONFIRM` and the other `KAGI_*` env vars are headless-testing tools only
+
+### 🏗️ v1.0 re-architecture (in progress, `re-architecture` branch)
+
+Kagi is being re-architected into a layered Cargo workspace so the safety-first
+design is enforced by the type system, not by convention. The plan, research, and
+decisions live in [docs/rearch/](docs/rearch/) (inventory, 10 domain research docs,
+`architecture.md`, migration log) and [ADRs 0072–0078](docs/adr/).
+
+Target layering (dependencies point down only):
+
+```
+kagi (bin) → kagi-ui → kagi-app → kagi-git → kagi-domain
+                                   (git2 here   (pure: no git2,
+                                    only)        no gpui)
+```
+
+The **core invariant**: the UI never opens a `git2::Repository` or calls `git2::`
+directly — all Git work flows through the `plan → confirm → preflight → execute →
+verify → log` pipeline. Progress so far: the pure **`kagi-domain`** crate is
+extracted (14 modules — commit/graph/diff/conflict model/rules/plan types, zero
+git2/gpui), and **`src/ui` is now completely git2-free** (every access routes
+through `kagi::git::Backend`), enforced by a CI grep gate. `cargo test --workspace`
+stays green at every step. Remaining: the per-session app-state model
+(`AppState`/`RepoSession`/`OperationController`), the view decomposition, and the
+async worker-thread backend.
 
 ## 🗺️ Status
 

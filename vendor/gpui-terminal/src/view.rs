@@ -54,9 +54,9 @@ use crate::input::keystroke_to_bytes;
 use crate::mouse::{
     Selection, SelectionType, clamp_point_to_grid, pixel_to_cell, selection_type_from_clicks,
 };
-use alacritty_terminal::index::Point as AlacPoint;
 use crate::render::TerminalRenderer;
 use crate::terminal::TerminalState;
+use alacritty_terminal::index::Point as AlacPoint;
 use gpui::{Edges, *};
 use std::cell::Cell;
 use std::io::{Read, Write};
@@ -764,15 +764,11 @@ impl TerminalView {
         // to flow through keystroke_to_bytes (0x03) untouched. No-op when there
         // is no selection.
         let ks = &event.keystroke;
-        if ks.modifiers.platform
-            && !ks.modifiers.control
-            && !ks.modifiers.alt
-            && ks.key == "c"
-        {
-            if let Some(text) = self.selection_text() {
-                if !text.is_empty() {
-                    cx.write_to_clipboard(ClipboardItem::new_string(text));
-                }
+        if ks.modifiers.platform && !ks.modifiers.control && !ks.modifiers.alt && ks.key == "c" {
+            if let Some(text) = self.selection_text()
+                && !text.is_empty()
+            {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
             }
             // Consume the event regardless of whether there was a selection, so
             // the literal "c" is never written to the PTY for this chord.
@@ -849,11 +845,12 @@ impl TerminalView {
 
         // kagi: a single click that did not drag clears the selection (matches
         // common terminal behaviour where clicking deselects).
-        if let Some(sel) = &self.selection {
-            if sel.selection_type == SelectionType::Simple && sel.start == sel.end {
-                self.selection = None;
-                cx.notify();
-            }
+        if let Some(sel) = &self.selection
+            && sel.selection_type == SelectionType::Simple
+            && sel.start == sel.end
+        {
+            self.selection = None;
+            cx.notify();
         }
     }
 
@@ -862,7 +859,12 @@ impl TerminalView {
     /// kagi: while a drag is in progress, extends the active selection to the
     /// cell under the cursor. Only notifies when the endpoint actually changes,
     /// to avoid repainting every frame.
-    fn on_mouse_move(&mut self, event: &MouseMoveEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.selecting {
             return;
         }
@@ -913,9 +915,9 @@ impl TerminalView {
                     term.semantic_search_right(point),
                 )
             }),
-            SelectionType::Line => self.state.with_term(|term| {
-                (term.line_search_left(point), term.line_search_right(point))
-            }),
+            SelectionType::Line => self
+                .state
+                .with_term(|term| (term.line_search_left(point), term.line_search_right(point))),
         }
     }
 
@@ -930,7 +932,9 @@ impl TerminalView {
         } else {
             (sel.end, sel.start)
         };
-        let text = self.state.with_term(|term| term.bounds_to_string(start, end));
+        let text = self
+            .state
+            .with_term(|term| term.bounds_to_string(start, end));
         Some(text)
     }
 

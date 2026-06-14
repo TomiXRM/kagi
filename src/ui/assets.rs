@@ -20,19 +20,65 @@ pub struct KagiAssets;
 
 /// (path, bytes) table of every embedded asset.
 const ASSETS: &[(&str, &[u8])] = &[
-    ("icons/arrow-down.svg", include_bytes!("../../assets/icons/arrow-down.svg")),
-    ("icons/arrow-up.svg", include_bytes!("../../assets/icons/arrow-up.svg")),
-    ("icons/plus.svg", include_bytes!("../../assets/icons/plus.svg")),
-    ("icons/inbox.svg", include_bytes!("../../assets/icons/inbox.svg")),
-    ("icons/folder-open.svg", include_bytes!("../../assets/icons/folder-open.svg")),
-    ("icons/undo-2.svg", include_bytes!("../../assets/icons/undo-2.svg")),
-    ("icons/loader-circle.svg", include_bytes!("../../assets/icons/loader-circle.svg")),
-    ("icons/square-terminal.svg", include_bytes!("../../assets/icons/square-terminal.svg")),
-    ("icons/menu.svg", include_bytes!("../../assets/icons/menu.svg")),
-    ("icons/refresh-cw.svg", include_bytes!("../../assets/icons/refresh-cw.svg")),
+    (
+        "icons/arrow-down.svg",
+        include_bytes!("../../assets/icons/arrow-down.svg"),
+    ),
+    (
+        "icons/arrow-up.svg",
+        include_bytes!("../../assets/icons/arrow-up.svg"),
+    ),
+    (
+        "icons/plus.svg",
+        include_bytes!("../../assets/icons/plus.svg"),
+    ),
+    (
+        "icons/inbox.svg",
+        include_bytes!("../../assets/icons/inbox.svg"),
+    ),
+    (
+        "icons/folder-open.svg",
+        include_bytes!("../../assets/icons/folder-open.svg"),
+    ),
+    (
+        "icons/undo-2.svg",
+        include_bytes!("../../assets/icons/undo-2.svg"),
+    ),
+    (
+        "icons/loader-circle.svg",
+        include_bytes!("../../assets/icons/loader-circle.svg"),
+    ),
+    (
+        "icons/square-terminal.svg",
+        include_bytes!("../../assets/icons/square-terminal.svg"),
+    ),
+    (
+        "icons/menu.svg",
+        include_bytes!("../../assets/icons/menu.svg"),
+    ),
+    (
+        "icons/refresh-cw.svg",
+        include_bytes!("../../assets/icons/refresh-cw.svg"),
+    ),
     // T-CONFLICT-POLISH-040/041: Conflict Editor toolbar icons.
-    ("icons/external-link.svg", include_bytes!("../../assets/icons/external-link.svg")),
-    ("icons/trash-2.svg", include_bytes!("../../assets/icons/trash-2.svg")),
+    (
+        "icons/external-link.svg",
+        include_bytes!("../../assets/icons/external-link.svg"),
+    ),
+    (
+        "icons/trash-2.svg",
+        include_bytes!("../../assets/icons/trash-2.svg"),
+    ),
+    // T-SETTINGS-001: header Settings gear (gpui_component IconName::Settings).
+    (
+        "icons/settings.svg",
+        include_bytes!("../../assets/icons/settings.svg"),
+    ),
+    // T-UNDOREDO-001: toolbar Redo button (gpui_component IconName::Redo2).
+    (
+        "icons/redo-2.svg",
+        include_bytes!("../../assets/icons/redo-2.svg"),
+    ),
 ];
 
 impl AssetSource for KagiAssets {

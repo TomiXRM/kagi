@@ -7,11 +7,8 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi::git::{
+    ops::{execute_create_worktree, plan_create_worktree, preflight_check, validate_worktree_path},
     CommitId,
-    ops::{
-        execute_create_worktree, plan_create_worktree, preflight_check,
-        validate_worktree_path,
-    },
 };
 
 fn git(dir: &Path, args: &[&str]) {
@@ -70,16 +67,20 @@ fn create_worktree_success_creates_branch_and_linked_repo() {
     let at = head_commit_id(&repo);
     let path = worktrees_tmp.path().join("wt-feature");
 
-    let plan = plan_create_worktree(&repo, "wt-feature", &path, &at)
-        .expect("plan_create_worktree");
-    assert!(plan.blockers.is_empty(), "unexpected blockers: {:?}", plan.blockers);
+    let plan = plan_create_worktree(&repo, "wt-feature", &path, &at).expect("plan_create_worktree");
+    assert!(
+        plan.blockers.is_empty(),
+        "unexpected blockers: {:?}",
+        plan.blockers
+    );
 
     preflight_check(&repo, &plan).expect("preflight");
-    execute_create_worktree(&repo, "wt-feature", &path, &at)
-        .expect("execute_create_worktree");
+    execute_create_worktree(&repo, "wt-feature", &path, &at).expect("execute_create_worktree");
 
     assert!(path.join("README.md").exists());
-    assert!(repo.find_branch("wt-feature", git2::BranchType::Local).is_ok());
+    assert!(repo
+        .find_branch("wt-feature", git2::BranchType::Local)
+        .is_ok());
     let linked = Repository::open(&path).expect("open linked worktree");
     assert_eq!(linked.head().unwrap().shorthand().ok(), Some("wt-feature"));
 }
@@ -93,8 +94,8 @@ fn create_worktree_path_collision_is_blocker() {
     let path = worktrees_tmp.path().join("exists");
     std::fs::create_dir(&path).unwrap();
 
-    let plan = plan_create_worktree(&repo, "wt-collision", &path, &at)
-        .expect("plan_create_worktree");
+    let plan =
+        plan_create_worktree(&repo, "wt-collision", &path, &at).expect("plan_create_worktree");
     assert!(
         plan.blockers.iter().any(|b| b.contains("already exists")),
         "expected path collision blocker, got {:?}",
@@ -110,8 +111,7 @@ fn create_worktree_branch_collision_is_blocker() {
     let at = head_commit_id(&repo);
     let path = worktrees_tmp.path().join("wt-main");
 
-    let plan = plan_create_worktree(&repo, "main", &path, &at)
-        .expect("plan_create_worktree");
+    let plan = plan_create_worktree(&repo, "main", &path, &at).expect("plan_create_worktree");
     assert!(
         plan.blockers.iter().any(|b| b.contains("already exists")),
         "expected branch collision blocker, got {:?}",
@@ -127,8 +127,8 @@ fn create_worktree_preflight_detects_head_move() {
     let at = head_commit_id(&repo);
     let path = worktrees_tmp.path().join("wt-preflight");
 
-    let plan = plan_create_worktree(&repo, "wt-preflight", &path, &at)
-        .expect("plan_create_worktree");
+    let plan =
+        plan_create_worktree(&repo, "wt-preflight", &path, &at).expect("plan_create_worktree");
     assert!(plan.blockers.is_empty());
 
     write_file(repo_tmp.path(), "second.txt", "second\n");
@@ -152,10 +152,12 @@ fn validate_worktree_path_rejects_repo_inside_and_accepts_japanese_path() {
     assert!(inside.is_err(), "repo-internal path should be rejected");
 
     let japanese = worktrees_tmp.path().join("作業ツリー");
-    let normalized = validate_worktree_path(repo_root, &japanese)
-        .expect("Japanese path should validate");
+    let normalized =
+        validate_worktree_path(repo_root, &japanese).expect("Japanese path should validate");
     assert_eq!(
         normalized,
-        std::fs::canonicalize(worktrees_tmp.path()).unwrap().join("作業ツリー")
+        std::fs::canonicalize(worktrees_tmp.path())
+            .unwrap()
+            .join("作業ツリー")
     );
 }

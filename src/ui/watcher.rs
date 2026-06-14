@@ -84,12 +84,13 @@ fn path_is_relevant(p: &Path) -> bool {
 /// Returns `None` if the `.git` directory does not exist or the watcher could
 /// not be created (e.g. inotify limit exceeded).  The caller should treat this
 /// as a no-op rather than a fatal error.
-pub fn start_git_watcher(
-    repo_root: &PathBuf,
-) -> Option<(mpsc::Receiver<()>, RecommendedWatcher)> {
+pub fn start_git_watcher(repo_root: &PathBuf) -> Option<(mpsc::Receiver<()>, RecommendedWatcher)> {
     let git_dir = repo_root.join(".git");
     if !git_dir.exists() {
-        eprintln!("[kagi] watcher: .git dir not found at {}", git_dir.display());
+        eprintln!(
+            "[kagi] watcher: .git dir not found at {}",
+            git_dir.display()
+        );
         return None;
     }
 
@@ -118,7 +119,11 @@ pub fn start_git_watcher(
     };
 
     if let Err(e) = watcher.watch(&git_dir, RecursiveMode::Recursive) {
-        eprintln!("[kagi] watcher: failed to watch {}: {}", git_dir.display(), e);
+        eprintln!(
+            "[kagi] watcher: failed to watch {}: {}",
+            git_dir.display(),
+            e
+        );
         return None;
     }
 

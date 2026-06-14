@@ -30,18 +30,16 @@
 //! standard text-input behaviour of cmd-z/x/c/v/a is never overridden.
 
 use gpui::{
-    actions, div, prelude::*, rgb, App, Context, KeyBinding, Menu, MenuItem,
-    MouseButton, OsAction, SharedString, Window,
+    actions, div, prelude::*, rgb, App, Context, KeyBinding, Menu, MenuItem, MouseButton, OsAction,
+    SharedString, Window,
 };
 
 use kagi::git::CommitId;
 
-use super::{
-    BottomTab, FooterStatus, KagiApp, ToastKind, ToggleBottomPanel,
-};
 use super::context_menu::CommitAction;
 use super::i18n::{self, Lang, Msg};
 use super::theme::{self, theme};
+use super::{BottomTab, FooterStatus, KagiApp, ToastKind, ToggleBottomPanel};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Actions — one gpui Action per command (1:1, ADR-0029).
@@ -54,6 +52,8 @@ actions!(
     [
         // kagi (app menu)
         About,
+        // T-SETTINGS-001 / ADR-0080: open the Settings window (also cmd-,).
+        OpenSettings,
         Quit,
         // File
         NewTab,
@@ -167,65 +167,292 @@ pub enum CommandState {
 /// [`build_menus`]); this slice is the canonical id → metadata map used by the
 /// `KAGI_MENU_DUMP` verifier and by keystroke lookup.
 pub const COMMANDS: &[Command] = &[
-    Command { id: "app.about", label: "About kagi", keystroke: None, dangerous: false },
-    Command { id: "app.quit", label: "Quit kagi", keystroke: Some("cmd-q"), dangerous: false },
-
-    Command { id: "file.newTab", label: "New Tab", keystroke: Some("cmd-t"), dangerous: false },
-    Command { id: "file.closeTab", label: "Close Tab", keystroke: Some("cmd-w"), dangerous: false },
-    Command { id: "file.cloneRepository", label: "Clone Repository…", keystroke: Some("cmd-shift-o"), dangerous: false },
-    Command { id: "file.openRepository", label: "Open Repository…", keystroke: Some("cmd-o"), dangerous: false },
-    Command { id: "file.openInTerminal", label: "Open Repository in Terminal", keystroke: None, dangerous: false },
-    Command { id: "file.refresh", label: "Refresh Repository", keystroke: Some("cmd-r"), dangerous: false },
-
-    Command { id: "view.zoomIn", label: "Zoom In", keystroke: Some("cmd-="), dangerous: false },
-    Command { id: "view.zoomOut", label: "Zoom Out", keystroke: Some("cmd--"), dangerous: false },
-    Command { id: "view.zoomReset", label: "Actual Size", keystroke: Some("cmd-0"), dangerous: false },
-    Command { id: "view.fullScreen", label: "Enter Full Screen", keystroke: Some("ctrl-cmd-f"), dangerous: false },
-    Command { id: "view.toggleSidebar", label: "Toggle Sidebar", keystroke: None, dangerous: false },
-    Command { id: "view.toggleTerminal", label: "Toggle Terminal", keystroke: Some("cmd-j"), dangerous: false },
-    Command { id: "view.toggleCommitDetails", label: "Toggle Commit Details", keystroke: None, dangerous: false },
-    Command { id: "view.toggleDiffView", label: "Toggle Diff View", keystroke: None, dangerous: false },
-
-    Command { id: "repo.fetch", label: "Fetch", keystroke: None, dangerous: false },
-    Command { id: "repo.pull", label: "Pull", keystroke: None, dangerous: false },
-    Command { id: "repo.push", label: "Push", keystroke: None, dangerous: false },
-    Command { id: "repo.openInFinder", label: "Open in Finder", keystroke: None, dangerous: false },
-
-    Command { id: "branch.new", label: "New Branch…", keystroke: None, dangerous: false },
-    Command { id: "branch.checkout", label: "Checkout Branch…", keystroke: None, dangerous: false },
-    Command { id: "branch.rename", label: "Rename Branch…", keystroke: None, dangerous: false },
-    Command { id: "branch.delete", label: "Delete Branch…", keystroke: None, dangerous: true },
-
-    Command { id: "commit.copyHash", label: "Copy Commit Hash", keystroke: None, dangerous: false },
-    Command { id: "commit.checkout", label: "Checkout Commit", keystroke: None, dangerous: false },
-    Command { id: "commit.createBranch", label: "Create Branch from Commit…", keystroke: None, dangerous: false },
-    Command { id: "commit.cherryPick", label: "Cherry-pick", keystroke: None, dangerous: false },
-    Command { id: "commit.revert", label: "Revert", keystroke: None, dangerous: false },
-    Command { id: "commit.reset", label: "Reset HEAD to Commit…", keystroke: None, dangerous: true },
-    Command { id: "commit.compareWorkingTree", label: "Compare with Working Tree", keystroke: None, dangerous: false },
-
-    Command { id: "window.minimize", label: "Minimize", keystroke: Some("cmd-m"), dangerous: false },
-    Command { id: "window.zoom", label: "Zoom", keystroke: None, dangerous: false },
-    Command { id: "window.new", label: "New Window", keystroke: None, dangerous: false },
-    Command { id: "window.close", label: "Close Window", keystroke: None, dangerous: false },
-
-    Command { id: "help.shortcuts", label: "Keyboard Shortcuts", keystroke: None, dangerous: false },
-    Command { id: "help.documentation", label: "Documentation", keystroke: None, dangerous: false },
-    Command { id: "help.reportIssue", label: "Report Issue", keystroke: None, dangerous: false },
-
+    Command {
+        id: "app.about",
+        label: "About kagi",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "app.settings",
+        label: "Settings…",
+        keystroke: Some("cmd-,"),
+        dangerous: false,
+    },
+    Command {
+        id: "app.quit",
+        label: "Quit kagi",
+        keystroke: Some("cmd-q"),
+        dangerous: false,
+    },
+    Command {
+        id: "file.newTab",
+        label: "New Tab",
+        keystroke: Some("cmd-t"),
+        dangerous: false,
+    },
+    Command {
+        id: "file.closeTab",
+        label: "Close Tab",
+        keystroke: Some("cmd-w"),
+        dangerous: false,
+    },
+    Command {
+        id: "file.cloneRepository",
+        label: "Clone Repository…",
+        keystroke: Some("cmd-shift-o"),
+        dangerous: false,
+    },
+    Command {
+        id: "file.openRepository",
+        label: "Open Repository…",
+        keystroke: Some("cmd-o"),
+        dangerous: false,
+    },
+    Command {
+        id: "file.openInTerminal",
+        label: "Open Repository in Terminal",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "file.refresh",
+        label: "Refresh Repository",
+        keystroke: Some("cmd-r"),
+        dangerous: false,
+    },
+    Command {
+        id: "view.zoomIn",
+        label: "Zoom In",
+        keystroke: Some("cmd-="),
+        dangerous: false,
+    },
+    Command {
+        id: "view.zoomOut",
+        label: "Zoom Out",
+        keystroke: Some("cmd--"),
+        dangerous: false,
+    },
+    Command {
+        id: "view.zoomReset",
+        label: "Actual Size",
+        keystroke: Some("cmd-0"),
+        dangerous: false,
+    },
+    Command {
+        id: "view.fullScreen",
+        label: "Enter Full Screen",
+        keystroke: Some("ctrl-cmd-f"),
+        dangerous: false,
+    },
+    Command {
+        id: "view.toggleSidebar",
+        label: "Toggle Sidebar",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "view.toggleTerminal",
+        label: "Toggle Terminal",
+        keystroke: Some("cmd-j"),
+        dangerous: false,
+    },
+    Command {
+        id: "view.toggleCommitDetails",
+        label: "Toggle Commit Details",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "view.toggleDiffView",
+        label: "Toggle Diff View",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "repo.fetch",
+        label: "Fetch",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "repo.pull",
+        label: "Pull",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "repo.push",
+        label: "Push",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "repo.openInFinder",
+        label: "Open in Finder",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "branch.new",
+        label: "New Branch…",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "branch.checkout",
+        label: "Checkout Branch…",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "branch.rename",
+        label: "Rename Branch…",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "branch.delete",
+        label: "Delete Branch…",
+        keystroke: None,
+        dangerous: true,
+    },
+    Command {
+        id: "commit.copyHash",
+        label: "Copy Commit Hash",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "commit.checkout",
+        label: "Checkout Commit",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "commit.createBranch",
+        label: "Create Branch from Commit…",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "commit.cherryPick",
+        label: "Cherry-pick",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "commit.revert",
+        label: "Revert",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "commit.reset",
+        label: "Reset HEAD to Commit…",
+        keystroke: None,
+        dangerous: true,
+    },
+    Command {
+        id: "commit.compareWorkingTree",
+        label: "Compare with Working Tree",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "window.minimize",
+        label: "Minimize",
+        keystroke: Some("cmd-m"),
+        dangerous: false,
+    },
+    Command {
+        id: "window.zoom",
+        label: "Zoom",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "window.new",
+        label: "New Window",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "window.close",
+        label: "Close Window",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "help.shortcuts",
+        label: "Keyboard Shortcuts",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "help.documentation",
+        label: "Documentation",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "help.reportIssue",
+        label: "Report Issue",
+        keystroke: None,
+        dangerous: false,
+    },
     // View → Theme (W9-THEME / ADR-0036). Labels here are the plain theme names;
     // the live "✓ " active marker is applied in `theme_submenu`.
-    Command { id: "theme.catppuccin", label: "Catppuccin Mocha", keystroke: None, dangerous: false },
-    Command { id: "theme.xcodeDark", label: "Xcode Dark", keystroke: None, dangerous: false },
-    Command { id: "theme.xcodeLight", label: "Xcode Light", keystroke: None, dangerous: false },
-    Command { id: "theme.oneDark", label: "One Dark", keystroke: None, dangerous: false },
-    Command { id: "theme.oneLight", label: "One Light", keystroke: None, dangerous: false },
-    Command { id: "theme.monokai", label: "Monokai (Warm Hybrid)", keystroke: None, dangerous: false },
-
+    Command {
+        id: "theme.catppuccin",
+        label: "Catppuccin Mocha",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "theme.xcodeDark",
+        label: "Xcode Dark",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "theme.xcodeLight",
+        label: "Xcode Light",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "theme.oneDark",
+        label: "One Dark",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "theme.oneLight",
+        label: "One Light",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "theme.monokai",
+        label: "Monokai (Warm Hybrid)",
+        keystroke: None,
+        dangerous: false,
+    },
     // View → Language (W22-I18N / ADR-0048). The live "✓ " active marker is
     // applied in `lang_submenu`.
-    Command { id: "lang.english", label: "English", keystroke: None, dangerous: false },
-    Command { id: "lang.japanese", label: "日本語", keystroke: None, dangerous: false },
+    Command {
+        id: "lang.english",
+        label: "English",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "lang.japanese",
+        label: "日本語",
+        keystroke: None,
+        dangerous: false,
+    },
 ];
 
 /// Look up a command's metadata by id.
@@ -255,6 +482,7 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
     match id {
         // ── Always available ────────────────────────────────────────────
         "app.about"
+        | "app.settings"
         | "app.quit"
         | "file.newTab"
         | "file.openRepository"
@@ -385,6 +613,8 @@ pub fn build_menus() -> Vec<Menu> {
             name: "kagi".into(),
             items: vec![
                 mi("app.about", About),
+                MenuItem::separator(),
+                mi("app.settings", OpenSettings),
                 MenuItem::separator(),
                 mi("app.quit", Quit),
             ],
@@ -565,7 +795,17 @@ fn lang_submenu() -> Menu {
 // the dispatch tag, but the OS performs the actual edit via the responder
 // chain — these are never dispatched to kagi.  No global KeyBinding is bound to
 // them, so they never interfere with text-input cmd-z/x/c/v/a.
-actions!(kagi_edit, [EditCut, EditCopy, EditPaste, EditSelectAll, EditUndo, EditRedo]);
+actions!(
+    kagi_edit,
+    [
+        EditCut,
+        EditCopy,
+        EditPaste,
+        EditSelectAll,
+        EditUndo,
+        EditRedo
+    ]
+);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Keybinding registration.
@@ -581,6 +821,8 @@ actions!(kagi_edit, [EditCut, EditCopy, EditPaste, EditSelectAll, EditUndo, Edit
 pub fn register_keybindings(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-q", Quit, None),
+        // T-SETTINGS-001: cmd-, opens the Settings window (macOS convention).
+        KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("cmd-t", NewTab, None),
         KeyBinding::new("cmd-w", CloseTab, None),
         KeyBinding::new("cmd-shift-o", CloneRepository, None),
@@ -665,6 +907,9 @@ pub enum MenuOverlay {
         title: SharedString,
         lines: Vec<SharedString>,
     },
+    /// T-SETTINGS-001 / ADR-0080: the OpenLogi-style Settings window
+    /// (Appearance + Language pages). Hosted as an overlay (no sub-window yet).
+    Settings,
 }
 
 const GITHUB_URL: &str = "https://github.com/TomiXRM/kagi";
@@ -688,6 +933,11 @@ impl KagiApp {
         match id {
             // ── kagi ────────────────────────────────────────────────
             "app.about" => self.open_about_overlay(),
+            // T-SETTINGS-001: open the OpenLogi-style Settings overlay.
+            "app.settings" => {
+                self.menu_overlay = Some(MenuOverlay::Settings);
+                cx.notify();
+            }
             "app.quit" => cx.quit(),
 
             // ── File ────────────────────────────────────────────────
@@ -777,12 +1027,8 @@ impl KagiApp {
             "help.reportIssue" => cx.open_url(ISSUES_URL),
 
             // ── View → Theme (W9-THEME / ADR-0036) ──────────────────
-            "theme.catppuccin"
-            | "theme.xcodeDark"
-            | "theme.xcodeLight"
-            | "theme.oneDark"
-            | "theme.oneLight"
-            | "theme.monokai" => {
+            "theme.catppuccin" | "theme.xcodeDark" | "theme.xcodeLight" | "theme.oneDark"
+            | "theme.oneLight" | "theme.monokai" => {
                 if let Some(slug) = theme_slug_for_command(id) {
                     self.set_theme(slug, cx);
                 }
@@ -852,17 +1098,16 @@ impl KagiApp {
 
     /// Map a `commit.*` menu id to the existing [`CommitAction`] and dispatch it
     /// against the currently-selected commit via `dispatch_commit_action`.
-    fn dispatch_selected_commit(
-        &mut self,
-        id: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn dispatch_selected_commit(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let row = match self.selected {
             Some(r) => r,
             None => return,
         };
-        let target = match self.details.get(row).map(|d| CommitId(d.full_sha.to_string())) {
+        let target = match self
+            .details
+            .get(row)
+            .map(|d| CommitId(d.full_sha.to_string()))
+        {
             Some(t) => t,
             None => return,
         };
@@ -895,7 +1140,8 @@ impl KagiApp {
         match std::process::Command::new("open").arg(&path).spawn() {
             Ok(_) => {
                 eprintln!("[kagi] menu: open-in-finder {}", path.display());
-                self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpenedInFinder.t()));
+                self.status_footer =
+                    FooterStatus::Idle(SharedString::from(Msg::OpenedInFinder.t()));
             }
             Err(e) => {
                 self.status_footer =
@@ -911,23 +1157,25 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match git2::Repository::open(&repo_path) {
+        let backend = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(format!(
                     "fetch: repo open error: {}",
-                    e.message()
+                    e
                 )));
                 return;
             }
         };
         eprintln!("[kagi] menu: fetch start");
-        match kagi::git::fetch_remote(&repo, &repo_path) {
+        match backend.fetch_remote() {
             Ok(outcome) => {
                 eprintln!("[kagi] menu: fetch ok remote={}", outcome.remote);
                 self.reload();
-                self.status_footer =
-                    FooterStatus::Success(SharedString::from(format!("Fetched {}", outcome.remote)));
+                self.status_footer = FooterStatus::Success(SharedString::from(format!(
+                    "Fetched {}",
+                    outcome.remote
+                )));
                 self.push_toast(ToastKind::Success, format!("Fetched {}", outcome.remote));
             }
             Err(e) => {
@@ -981,6 +1229,13 @@ impl KagiApp {
                 Some(self.render_branch_picker(mode, branches, cx))
             }
             MenuOverlay::Info { title, lines } => Some(self.render_info_overlay(title, lines, cx)),
+            // T-SETTINGS-001: the OpenLogi-style Settings window (the field
+            // closures route apply/persist through the live `KagiApp` entity).
+            MenuOverlay::Settings => Some(super::settings_view::render_settings_overlay(
+                cx.entity(),
+                self.settings_theme_open,
+                cx,
+            )),
         }
     }
 
@@ -1044,7 +1299,10 @@ impl KagiApp {
                     .text_sm()
                     .text_color(rgb(theme().text_sub))
                     .cursor_pointer()
-                    .hover(|s| s.bg(rgb(theme().selected)).text_color(rgb(theme().text_main)))
+                    .hover(|s| {
+                        s.bg(rgb(theme().selected))
+                            .text_color(rgb(theme().text_main))
+                    })
                     .on_click(click)
                     .child(SharedString::from(name)),
             );
@@ -1093,11 +1351,7 @@ impl KagiApp {
     }
 
     /// Centre an overlay panel over a dim, click-to-dismiss backdrop.
-    fn wrap_overlay(
-        &self,
-        panel: gpui::AnyElement,
-        cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    fn wrap_overlay(&self, panel: gpui::AnyElement, cx: &mut Context<Self>) -> gpui::AnyElement {
         let dismiss = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
             this.menu_overlay = None;
             cx.stop_propagation();

@@ -10,7 +10,9 @@ use kagi::git::ops::{
     default_tracking_branch_name, execute_checkout_tracking_branch, execute_merge_into_conflict,
     plan_checkout_tracking_branch, plan_merge_branch, MergeKind,
 };
-use kagi::git::{detect_conflict_session, execute_conflict_abort, plan_conflict_abort, ResolutionBuffer};
+use kagi::git::{
+    detect_conflict_session, execute_conflict_abort, plan_conflict_abort, ResolutionBuffer,
+};
 
 fn git(dir: &Path, args: &[&str]) {
     let output = Command::new("git")
@@ -75,7 +77,11 @@ fn merge_plan_reports_fast_forward_direction() {
     git(dir, &["checkout", "-q", "main"]);
 
     let (plan, kind) = plan_merge_branch(&repo, "feature").expect("plan merge");
-    assert!(plan.blockers.is_empty(), "unexpected blockers: {:?}", plan.blockers);
+    assert!(
+        plan.blockers.is_empty(),
+        "unexpected blockers: {:?}",
+        plan.blockers
+    );
     assert_eq!(kind, MergeKind::FastForward);
     assert_eq!(plan.title, "Merge feature into main");
     assert!(
@@ -83,11 +89,10 @@ fn merge_plan_reports_fast_forward_direction() {
         "expected ff plan, got {}",
         plan.predicted.head
     );
-    assert!(
-        plan.preview_files
-            .iter()
-            .any(|f| f.path == Path::new("feature.txt"))
-    );
+    assert!(plan
+        .preview_files
+        .iter()
+        .any(|f| f.path == Path::new("feature.txt")));
 }
 
 #[test]
@@ -106,7 +111,11 @@ fn merge_plan_reports_merge_commit_for_diverged_branch() {
     git(dir, &["commit", "-qm", "main"]);
 
     let (plan, kind) = plan_merge_branch(&repo, "feature").expect("plan merge");
-    assert!(plan.blockers.is_empty(), "unexpected blockers: {:?}", plan.blockers);
+    assert!(
+        plan.blockers.is_empty(),
+        "unexpected blockers: {:?}",
+        plan.blockers
+    );
     assert_eq!(kind, MergeKind::MergeCommit);
     assert_eq!(plan.title, "Merge feature into main");
     assert!(
@@ -266,7 +275,11 @@ fn checkout_tracking_branch_plan_and_execute_from_file_remote() {
     );
     let plan = plan_checkout_tracking_branch(&repo, "origin/remote-only", "remote-only")
         .expect("tracking plan");
-    assert!(plan.blockers.is_empty(), "unexpected blockers: {:?}", plan.blockers);
+    assert!(
+        plan.blockers.is_empty(),
+        "unexpected blockers: {:?}",
+        plan.blockers
+    );
 
     execute_checkout_tracking_branch(&repo, "origin/remote-only", "remote-only")
         .expect("checkout tracking");
@@ -295,8 +308,7 @@ fn checkout_tracking_branch_name_collision_is_blocker() {
     git(dir, &["push", "-q", "-u", "origin", "main"]);
     git(dir, &["fetch", "-q", "origin"]);
 
-    let plan = plan_checkout_tracking_branch(&repo, "origin/main", "main")
-        .expect("tracking plan");
+    let plan = plan_checkout_tracking_branch(&repo, "origin/main", "main").expect("tracking plan");
     assert!(
         plan.blockers.iter().any(|b| b.contains("already exists")),
         "expected collision blocker, got {:?}",

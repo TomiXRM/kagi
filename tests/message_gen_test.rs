@@ -111,7 +111,11 @@ fn collect_staged_diff_includes_staged_excludes_unstaged() {
 
     // The staged file set reflects only the staged add.
     let files = collect_staged_files(&repo);
-    assert_eq!(files.len(), 1, "expected exactly one staged file: {files:?}");
+    assert_eq!(
+        files.len(),
+        1,
+        "expected exactly one staged file: {files:?}"
+    );
     assert_eq!(files[0].path, Path::new("staged.txt"));
     assert_eq!(files[0].change, ChangeKind::Added);
 }

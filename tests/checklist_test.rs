@@ -259,7 +259,11 @@ fn private_key_content_warns() {
 fn ordinary_code_no_secret_warn() {
     let tmp = TempDir::new().unwrap();
     let (d, repo) = init_repo(&tmp);
-    write(&d, "src/lib.rs", b"pub fn add(a: i32, b: i32) -> i32 { a + b }\n");
+    write(
+        &d,
+        "src/lib.rs",
+        b"pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    );
     git(&d, &["add", "src/lib.rs"]);
 
     let (_blockers, warnings) = run_checklist(&repo);
@@ -274,7 +278,11 @@ fn ordinary_code_no_secret_warn() {
 fn pem_key_name_warns() {
     let tmp = TempDir::new().unwrap();
     let (d, repo) = init_repo(&tmp);
-    write(&d, "certs/server.pem", b"not actually a key but named .pem\n");
+    write(
+        &d,
+        "certs/server.pem",
+        b"not actually a key but named .pem\n",
+    );
     git(&d, &["add", "certs/server.pem"]);
 
     let (_blockers, warnings) = run_checklist(&repo);
@@ -403,7 +411,11 @@ fn env_threshold_override() {
 fn plan_commit_surfaces_marker_blocker() {
     let tmp = TempDir::new().unwrap();
     let (d, repo) = init_repo(&tmp);
-    write(&d, "merge.rs", b"x\n<<<<<<< HEAD\na\n=======\nb\n>>>>>>> y\n");
+    write(
+        &d,
+        "merge.rs",
+        b"x\n<<<<<<< HEAD\na\n=======\nb\n>>>>>>> y\n",
+    );
     git(&d, &["add", "merge.rs"]);
 
     let plan = plan_commit(&repo, "fix: resolve").expect("plan_commit");

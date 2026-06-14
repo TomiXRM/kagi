@@ -79,7 +79,10 @@ fn saving_blank_message_clears_existing_draft() {
         assert!(load_draft(repo, "main").is_some());
 
         save_draft(repo, "main", "  \t\n ", "plain").expect("save blank");
-        assert!(load_draft(repo, "main").is_none(), "blank save should delete");
+        assert!(
+            load_draft(repo, "main").is_none(),
+            "blank save should delete"
+        );
     });
 }
 
@@ -100,7 +103,10 @@ fn corrupt_draft_file_loads_as_none() {
             .expect("a draft file exists");
         std::fs::write(&file, "}{ broken json \x00 not parseable").expect("corrupt");
 
-        assert!(load_draft(repo, "main").is_none(), "corrupt draft must be ignored, not crash");
+        assert!(
+            load_draft(repo, "main").is_none(),
+            "corrupt draft must be ignored, not crash"
+        );
     });
 }
 

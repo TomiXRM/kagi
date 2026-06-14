@@ -6,7 +6,7 @@
 //!
 //! No network calls are made; avatars are purely local / deterministic.
 
-use gpui::{Hsla, hsla};
+use gpui::{hsla, Hsla};
 
 // ──────────────────────────────────────────────────────────────
 // FNV-1a hash (32-bit)
@@ -124,7 +124,12 @@ mod tests {
         ];
         for s in &samples {
             let c = avatar_color(s);
-            assert!(c.h >= 0.0 && c.h < 1.0, "hue out of range for {:?}: {}", s, c.h);
+            assert!(
+                c.h >= 0.0 && c.h < 1.0,
+                "hue out of range for {:?}: {}",
+                s,
+                c.h
+            );
             assert_eq!(c.s, 0.70);
             assert_eq!(c.l, 0.60);
             assert_eq!(c.a, 1.0);
@@ -137,7 +142,7 @@ mod tests {
         let c = avatar_color("test@example.com");
         assert_eq!(c.s, 0.70, "saturation must be 0.70");
         assert_eq!(c.l, 0.60, "lightness must be 0.60");
-        assert_eq!(c.a, 1.0,  "alpha must be 1.0");
+        assert_eq!(c.a, 1.0, "alpha must be 1.0");
     }
 
     // ── avatar_initial tests ─────────────────────────────────

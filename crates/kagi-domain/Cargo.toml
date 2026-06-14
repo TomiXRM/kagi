@@ -1,0 +1,10 @@
+[package]
+name = "kagi-domain"
+version = "0.3.0"
+license = "MIT"
+edition = "2021"
+
+# kagi-domain is the PURE domain layer (ADR-0072): no gpui, no git2, no I/O.
+# Adding either of those as a dependency here is a design violation — keep this
+# section empty (or std-only crates) so the layer stays unit-testable in isolation.
+[dependencies]

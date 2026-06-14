@@ -84,7 +84,10 @@ fn setup_repo() -> TestRepo {
 
     // Merge `merged` into main (no-ff so a real merge commit is created).
     git(&path, &["checkout", "-q", "main"]);
-    git(&path, &["merge", "--no-ff", "-m", "merge merged into main", "merged"]);
+    git(
+        &path,
+        &["merge", "--no-ff", "-m", "merge merged into main", "merged"],
+    );
 
     // Create `unmerged` branch and commit (NOT merged into main).
     git(&path, &["checkout", "-q", "-b", "unmerged"]);
@@ -270,18 +273,28 @@ fn test_execute_delete_branch_preflight_mismatch() {
     git(&path, &["add", "-A"]);
     git(&path, &["commit", "-qm", "to delete commit"]);
     git(&path, &["checkout", "-q", "main"]);
-    git(&path, &["merge", "--no-ff", "-m", "merge to-delete", "to-delete"]);
+    git(
+        &path,
+        &["merge", "--no-ff", "-m", "merge to-delete", "to-delete"],
+    );
 
     // Build plan (captures current HEAD).
     let repo = Repository::open(&path).unwrap();
     let plan = plan_delete_branch(&repo, "to-delete").expect("plan should succeed");
-    assert!(plan.blockers.is_empty(), "should have no blockers: {:?}", plan.blockers);
+    assert!(
+        plan.blockers.is_empty(),
+        "should have no blockers: {:?}",
+        plan.blockers
+    );
 
     // Simulate HEAD movement: add a new commit on main after planning.
     drop(repo);
     write_file(&path, "extra.txt", "extra\n");
     git(&path, &["add", "-A"]);
-    git(&path, &["commit", "-qm", "extra commit (moves HEAD after planning)"]);
+    git(
+        &path,
+        &["commit", "-qm", "extra commit (moves HEAD after planning)"],
+    );
 
     // Execute must fail because HEAD moved.
     let repo2 = Repository::open(&path).unwrap();
@@ -311,7 +324,14 @@ fn test_delete_branch_upstream_warning() {
     // Create bare remote.
     git(
         tmp.path(),
-        &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()],
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            remote.to_str().unwrap(),
+        ],
     );
 
     // Create local repo.
@@ -320,7 +340,10 @@ fn test_delete_branch_upstream_warning() {
     git(&local, &["config", "user.name", "Test"]);
     git(&local, &["config", "user.email", "test@example.com"]);
     git(&local, &["config", "commit.gpgsign", "false"]);
-    git(&local, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    git(
+        &local,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
 
     // Initial commit + push.
     write_file(&local, "base.txt", "base\n");
@@ -382,8 +405,14 @@ fn test_delete_branch_with_duplicated_gh_config_keys() {
         );
     }
     // A second polluted key, plus a normal upstream-style key.
-    git(&r.path, &["config", "--add", "branch.merged.gh-merge-base", "main"]);
-    git(&r.path, &["config", "--add", "branch.merged.gh-merge-base", "main"]);
+    git(
+        &r.path,
+        &["config", "--add", "branch.merged.gh-merge-base", "main"],
+    );
+    git(
+        &r.path,
+        &["config", "--add", "branch.merged.gh-merge-base", "main"],
+    );
 
     let repo = Repository::open(&r.path).unwrap();
     let plan = plan_delete_branch(&repo, "merged").expect("plan should succeed");
@@ -402,8 +431,11 @@ fn test_delete_branch_with_duplicated_gh_config_keys() {
     let cfg = repo.config().unwrap().snapshot().unwrap();
     let mut leftover = 0;
     let mut entries = cfg.entries(Some("branch\\.merged\\..*")).unwrap();
-    while let Some(_) = entries.next() {
+    while entries.next().is_some() {
         leftover += 1;
     }
-    assert_eq!(leftover, 0, "branch.merged.* config entries must be removed");
+    assert_eq!(
+        leftover, 0,
+        "branch.merged.* config entries must be removed"
+    );
 }

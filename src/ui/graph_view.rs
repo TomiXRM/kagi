@@ -27,9 +27,7 @@
 //! so the curve never exceeds the available space regardless of lane spacing
 //! or row height.
 
-use gpui::{
-    App, Bounds, Canvas, PathBuilder, Pixels, Window, canvas, point, px,
-};
+use gpui::{canvas, point, px, App, Bounds, Canvas, PathBuilder, Pixels, Window};
 
 use kagi::graph::{EdgeKind, GraphEdge};
 
@@ -53,7 +51,7 @@ pub const LANE_W: f32 = 14.0;
 pub const MAX_LANES: usize = 8;
 /// Row height in pixels (must match what uniform_list computes for each row).
 /// T008 rows use `py(px(3.))` (6 px total padding) plus text ≈ 18 px → 24 px.
-pub const ROW_H: f32 = 29.0;  // 24.0 * 1.2 (user request: +20% row spacing)
+pub const ROW_H: f32 = 29.0; // 24.0 * 1.2 (user request: +20% row spacing)
 /// Node circle radius in pixels.
 const NODE_R: f32 = 4.0;
 /// Edge stroke width in pixels.
@@ -105,7 +103,7 @@ pub fn graph_width_for_lanes(visible_lanes: usize) -> f32 {
 /// consistent with the actual on-screen lane pitch at any zoom — otherwise the
 /// canvas would clip a different number of lanes than it draws.
 pub fn lanes_for_width(width_px: f32) -> usize {
-    ((width_px / lane_w()).floor() as usize).max(0)
+    (width_px / lane_w()).floor() as usize
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -123,13 +121,7 @@ pub fn lanes_for_width(width_px: f32) -> usize {
 /// - horizontal segment: `(x_node ± R, mid_y)` → `(x_node, mid_y)`
 ///
 /// The `R` value is clamped so neither half-segment underflows.
-fn draw_into_node(
-    builder: &mut PathBuilder,
-    x_from: f32,
-    y_top: f32,
-    x_node: f32,
-    mid_y: f32,
-) {
+fn draw_into_node(builder: &mut PathBuilder, x_from: f32, y_top: f32, x_node: f32, mid_y: f32) {
     let dx = (x_node - x_from).abs();
     // Available vertical from y_top to mid_y.
     let avail_v = (mid_y - y_top).max(0.0);
@@ -155,7 +147,7 @@ fn draw_into_node(
     // Quadratic Bézier: control at corner point, end at horizontal lane.
     // The arc begins at (x_from, mid_y - r) and ends at (x_from + dir*r, mid_y).
     let ctrl = point(px(x_from), px(mid_y));
-    let end  = point(px(x_from + dir * r), px(mid_y));
+    let end = point(px(x_from + dir * r), px(mid_y));
     builder.curve_to(end, ctrl);
 
     // Horizontal segment from arc end to node centre.
@@ -167,13 +159,7 @@ fn draw_into_node(
 /// Path:  `(x_node, mid_y)` → horizontal → quadratic Bézier arc → `(x_to, y_bot)` ↓
 ///
 /// Mirror image of [`draw_into_node`].
-fn draw_out_of_node(
-    builder: &mut PathBuilder,
-    x_node: f32,
-    mid_y: f32,
-    x_to: f32,
-    y_bot: f32,
-) {
+fn draw_out_of_node(builder: &mut PathBuilder, x_node: f32, mid_y: f32, x_to: f32, y_bot: f32) {
     let dx = (x_to - x_node).abs();
     let avail_v = (y_bot - mid_y).max(0.0);
     // W28: corner radius scales with zoom (see `draw_into_node`).
@@ -195,7 +181,7 @@ fn draw_out_of_node(
 
     // Quadratic Bézier: control at corner point, end on vertical lane.
     let ctrl = point(px(x_to), px(mid_y));
-    let end  = point(px(x_to), px(mid_y + r));
+    let end = point(px(x_to), px(mid_y + r));
     builder.curve_to(end, ctrl);
 
     // Vertical segment from arc end to bottom of row.
@@ -240,13 +226,13 @@ pub fn graph_canvas(
         move |bounds: Bounds<Pixels>, _prepaint: (), window: &mut Window, _cx: &mut App| {
             let ox = f32::from(bounds.origin.x); // absolute left edge
             let oy = f32::from(bounds.origin.y); // absolute top edge
-            // Use the actual canvas height rather than the ROW_H constant so
-            // edges always span the full row even if the row height changes.
-            // W28: use the measured row height for vertical anchoring. The row
-            // container height is itself `scaled_px(row_height)`, so `mid_y`
-            // (and thus the ● node centre + edge endpoints) tracks zoom with no
-            // extra scaling here — that is what keeps the node centred and the
-            // edges drift-free at any zoom.
+                                                 // Use the actual canvas height rather than the ROW_H constant so
+                                                 // edges always span the full row even if the row height changes.
+                                                 // W28: use the measured row height for vertical anchoring. The row
+                                                 // container height is itself `scaled_px(row_height)`, so `mid_y`
+                                                 // (and thus the ● node centre + edge endpoints) tracks zoom with no
+                                                 // extra scaling here — that is what keeps the node centred and the
+                                                 // edges drift-free at any zoom.
             let row_h = f32::from(bounds.size.height);
             let mid_y = node_center_y(oy, row_h);
 
@@ -363,9 +349,12 @@ pub fn graph_canvas(
                     for i in 0..=SEGMENTS {
                         let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
                         let px_val = cx_abs + ring_r * angle.cos();
-                        let py_val = mid_y  + ring_r * angle.sin();
-                        if i == 0 { rb.move_to(point(px(px_val), px(py_val))); }
-                        else       { rb.line_to(point(px(px_val), px(py_val))); }
+                        let py_val = mid_y + ring_r * angle.sin();
+                        if i == 0 {
+                            rb.move_to(point(px(px_val), px(py_val)));
+                        } else {
+                            rb.line_to(point(px(px_val), px(py_val)));
+                        }
                     }
                     rb.close();
                     if let Ok(path) = rb.build() {
@@ -376,9 +365,12 @@ pub fn graph_canvas(
                     for i in 0..=SEGMENTS {
                         let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
                         let px_val = cx_abs + head_r * angle.cos();
-                        let py_val = mid_y  + head_r * angle.sin();
-                        if i == 0 { fb.move_to(point(px(px_val), px(py_val))); }
-                        else       { fb.line_to(point(px(px_val), px(py_val))); }
+                        let py_val = mid_y + head_r * angle.sin();
+                        if i == 0 {
+                            fb.move_to(point(px(px_val), px(py_val)));
+                        } else {
+                            fb.line_to(point(px(px_val), px(py_val)));
+                        }
                     }
                     fb.close();
                     if let Ok(path) = fb.build() {
@@ -392,9 +384,12 @@ pub fn graph_canvas(
                     for i in 0..=SEGMENTS {
                         let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
                         let px_val = cx_abs + outer_r * angle.cos();
-                        let py_val = mid_y  + outer_r * angle.sin();
-                        if i == 0 { rb.move_to(point(px(px_val), px(py_val))); }
-                        else       { rb.line_to(point(px(px_val), px(py_val))); }
+                        let py_val = mid_y + outer_r * angle.sin();
+                        if i == 0 {
+                            rb.move_to(point(px(px_val), px(py_val)));
+                        } else {
+                            rb.line_to(point(px(px_val), px(py_val)));
+                        }
                     }
                     rb.close();
                     if let Ok(path) = rb.build() {
@@ -405,9 +400,12 @@ pub fn graph_canvas(
                     for i in 0..=SEGMENTS {
                         let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
                         let px_val = cx_abs + base_r * angle.cos();
-                        let py_val = mid_y  + base_r * angle.sin();
-                        if i == 0 { fb.move_to(point(px(px_val), px(py_val))); }
-                        else       { fb.line_to(point(px(px_val), px(py_val))); }
+                        let py_val = mid_y + base_r * angle.sin();
+                        if i == 0 {
+                            fb.move_to(point(px(px_val), px(py_val)));
+                        } else {
+                            fb.line_to(point(px(px_val), px(py_val)));
+                        }
                     }
                     fb.close();
                     if let Ok(path) = fb.build() {
@@ -419,7 +417,7 @@ pub fn graph_canvas(
                     for i in 0..=SEGMENTS {
                         let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
                         let px_val = cx_abs + base_r * angle.cos();
-                        let py_val = mid_y  + base_r * angle.sin();
+                        let py_val = mid_y + base_r * angle.sin();
                         if i == 0 {
                             builder.move_to(point(px(px_val), px(py_val)));
                         } else {
@@ -497,7 +495,10 @@ mod tests {
         assert!(close(theme::scaled(EDGE_W), EDGE_W));
         assert!(close(theme::scaled(CORNER_R), CORNER_R));
         // Node centre x in lane 1 (ox = 0, no scroll): 1*14 + 7 = 21.
-        assert!(close(lane_center_x(0.0, 1, 0.0), LANE_W * 1.0 + LANE_W / 2.0));
+        assert!(close(
+            lane_center_x(0.0, 1, 0.0),
+            LANE_W * 1.0 + LANE_W / 2.0
+        ));
         // Node centre y for a 29px row: 0 + 29/2 = 14.5.
         assert!(close(node_center_y(0.0, ROW_H), ROW_H / 2.0));
 
@@ -506,9 +507,18 @@ mod tests {
         let z = theme::zoom();
         assert!(close(z, 0.8), "zoom set to 0.8");
         assert!(close(lane_w(), LANE_W * 0.8), "lane pitch shrinks 0.8");
-        assert!(close(node_radius(), NODE_R * 0.8), "node radius shrinks 0.8");
-        assert!(close(theme::scaled(EDGE_W), EDGE_W * 0.8), "edge width shrinks 0.8");
-        assert!(close(theme::scaled(CORNER_R), CORNER_R * 0.8), "corner radius shrinks 0.8");
+        assert!(
+            close(node_radius(), NODE_R * 0.8),
+            "node radius shrinks 0.8"
+        );
+        assert!(
+            close(theme::scaled(EDGE_W), EDGE_W * 0.8),
+            "edge width shrinks 0.8"
+        );
+        assert!(
+            close(theme::scaled(CORNER_R), CORNER_R * 0.8),
+            "corner radius shrinks 0.8"
+        );
         // Lane x-centre: lane*pitch + pitch/2, all scaled by 0.8.
         let lw08 = LANE_W * 0.8;
         assert!(close(lane_center_x(0.0, 2, 0.0), 2.0 * lw08 + lw08 / 2.0));
@@ -526,7 +536,10 @@ mod tests {
         assert!(close(z, 1.3), "zoom set to 1.3");
         assert!(close(lane_w(), LANE_W * 1.3), "lane pitch grows 1.3");
         assert!(close(node_radius(), NODE_R * 1.3), "node radius grows 1.3");
-        assert!(close(theme::scaled(EDGE_W), EDGE_W * 1.3), "edge width grows 1.3");
+        assert!(
+            close(theme::scaled(EDGE_W), EDGE_W * 1.3),
+            "edge width grows 1.3"
+        );
         let row_h_13 = f32::from(theme::scaled_px(ROW_H));
         assert!(close(node_center_y(0.0, row_h_13), ROW_H * 1.3 / 2.0));
         // A 112px column now fits fewer (wider) lanes.

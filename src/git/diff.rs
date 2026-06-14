@@ -25,63 +25,19 @@
 use std::path::{Path, PathBuf};
 
 use git2::{Diff, DiffFindOptions, DiffOptions, Repository};
+use kagi_domain::status::{ChangeKind, FileStatus};
 
-use super::{ChangeKind, CommitId, FileStatus, GitError};
+use super::{CommitId, GitError};
 
 // ────────────────────────────────────────────────────────────
 // Diff models (architecture.md §3)
 // ────────────────────────────────────────────────────────────
-
-/// The kind of a diff line: unchanged context, a newly-added line, or a
-/// removed line.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DiffLineKind {
-    /// Unchanged context line (present in both old and new).
-    Context,
-    /// Line that was added in the new version.
-    Added,
-    /// Line that was removed from the old version.
-    Removed,
-}
-
-/// One line in a diff hunk.
-#[derive(Debug, Clone)]
-pub struct DiffLine {
-    /// The role of this line (context, added, or removed).
-    pub kind: DiffLineKind,
-    /// The line content, including any trailing newline, as lossy UTF-8.
-    pub content: String,
-    /// 1-based line number in the old file, if applicable.
-    pub old_lineno: Option<u32>,
-    /// 1-based line number in the new file, if applicable.
-    pub new_lineno: Option<u32>,
-}
-
-/// A contiguous block of changes in a file diff.
-#[derive(Debug, Clone)]
-pub struct Hunk {
-    /// `(start, count)` range in the old file.
-    pub old_range: (u32, u32),
-    /// `(start, count)` range in the new file.
-    pub new_range: (u32, u32),
-    /// The lines belonging to this hunk (context + added + removed).
-    pub lines: Vec<DiffLine>,
-}
-
-/// The complete diff for one file in a commit.
-#[derive(Debug, Clone)]
-pub struct FileDiff {
-    /// Path in the old tree (populated for Deleted / Renamed files).
-    pub old_path: Option<PathBuf>,
-    /// Path in the new tree (populated for Added / Modified / Renamed files).
-    pub new_path: Option<PathBuf>,
-    /// The type of change that produced this diff.
-    pub change: ChangeKind,
-    /// The diff hunks.  Empty for binary files.
-    pub hunks: Vec<Hunk>,
-    /// `true` if git detected the file as binary (no text diff available).
-    pub is_binary: bool,
-}
+//
+// `DiffLineKind`, `DiffLine`, `Hunk`, and `FileDiff` now live in the pure
+// `kagi-domain` crate (ADR-0072). They are re-exported here so existing
+// `kagi::git::*` paths keep resolving while the git2-backed diff functions
+// below construct them.
+pub use kagi_domain::diff::{DiffLine, DiffLineKind, FileDiff, Hunk};
 
 // ────────────────────────────────────────────────────────────
 // Public API
@@ -100,10 +56,7 @@ pub struct FileDiff {
 /// # Errors
 ///
 /// Returns [`GitError::Other`] on any libgit2 failure.
-pub fn commit_changed_files(
-    repo: &Repository,
-    id: &CommitId,
-) -> Result<Vec<FileStatus>, GitError> {
+pub fn commit_changed_files(repo: &Repository, id: &CommitId) -> Result<Vec<FileStatus>, GitError> {
     // 1. Resolve the commit object.
     let oid = git2::Oid::from_str(&id.0).map_err(|e| GitError::Other(e.message().to_string()))?;
     let commit = repo

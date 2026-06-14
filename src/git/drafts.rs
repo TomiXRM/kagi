@@ -77,12 +77,18 @@ pub fn save_draft(
     }
 
     let path = draft_file_path(repo_path, branch).ok_or_else(|| {
-        GitError::Other("draft: could not determine drafts dir (no HOME or KAGI_LOG_DIR)".to_string())
+        GitError::Other(
+            "draft: could not determine drafts dir (no HOME or KAGI_LOG_DIR)".to_string(),
+        )
     })?;
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
-            GitError::Other(format!("draft: mkdir failed for {}: {}", parent.display(), e))
+            GitError::Other(format!(
+                "draft: mkdir failed for {}: {}",
+                parent.display(),
+                e
+            ))
         })?;
     }
 
@@ -118,7 +124,9 @@ pub fn load_draft(repo_path: &Path, branch: &str) -> Option<Draft> {
 /// deleting an existing file fails for a reason other than "not found".
 pub fn clear_draft(repo_path: &Path, branch: &str) -> Result<(), GitError> {
     let path = draft_file_path(repo_path, branch).ok_or_else(|| {
-        GitError::Other("draft: could not determine drafts dir (no HOME or KAGI_LOG_DIR)".to_string())
+        GitError::Other(
+            "draft: could not determine drafts dir (no HOME or KAGI_LOG_DIR)".to_string(),
+        )
     })?;
 
     match std::fs::remove_file(&path) {

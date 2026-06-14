@@ -11,7 +11,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{Head, snapshot};
+use kagi::git::{snapshot, Head};
 
 // ────────────────────────────────────────────────────────────
 // Helpers
@@ -66,7 +66,10 @@ fn build_fixture(tmp: &TempDir) -> (std::path::PathBuf, std::path::PathBuf, Repo
     git(base, &["init", "-q", "--bare", remote.to_str().unwrap()]);
 
     // work repo
-    git(base, &["init", "-q", "-b", "main", repo_dir.to_str().unwrap()]);
+    git(
+        base,
+        &["init", "-q", "-b", "main", repo_dir.to_str().unwrap()],
+    );
     let d = &repo_dir;
     git(d, &["config", "user.name", "Test"]);
     git(d, &["config", "user.email", "test@example.com"]);
@@ -96,15 +99,32 @@ fn build_fixture(tmp: &TempDir) -> (std::path::PathBuf, std::path::PathBuf, Repo
     write_file(d, "b.txt", "b\n");
     git(d, &["add", "b.txt"]);
     git(d, &["commit", "-qm", "add b.txt"]);
-    git(d, &["merge", "-q", "--no-ff", "feature/one", "-m", "merge feature/one"]);
+    git(
+        d,
+        &[
+            "merge",
+            "-q",
+            "--no-ff",
+            "feature/one",
+            "-m",
+            "merge feature/one",
+        ],
+    );
 
     // lightweight tag
     git(d, &["tag", "v0.1.0"]);
 
     // annotated tag
-    git(d, &[
-        "tag", "-a", "v0.1.0-annot", "-m", "annotated tag for testing",
-    ]);
+    git(
+        d,
+        &[
+            "tag",
+            "-a",
+            "v0.1.0-annot",
+            "-m",
+            "annotated tag for testing",
+        ],
+    );
 
     // branch feature/two
     git(d, &["checkout", "-qb", "feature/two"]);
@@ -117,7 +137,18 @@ fn build_fixture(tmp: &TempDir) -> (std::path::PathBuf, std::path::PathBuf, Repo
 
     // push everything to origin
     git(d, &["checkout", "-q", "main"]);
-    git(d, &["push", "-q", "-u", "origin", "main", "feature/one", "feature/two"]);
+    git(
+        d,
+        &[
+            "push",
+            "-q",
+            "-u",
+            "origin",
+            "main",
+            "feature/one",
+            "feature/two",
+        ],
+    );
 
     // make feature/two 1 behind: reset local branch back 1 commit
     git(d, &["checkout", "-q", "feature/two"]);
@@ -164,7 +195,10 @@ fn test_snapshot_unborn_repo() {
     );
     assert!(snap.commits.is_empty(), "expected no commits");
     assert!(snap.branches.is_empty(), "expected no branches");
-    assert!(snap.remote_branches.is_empty(), "expected no remote branches");
+    assert!(
+        snap.remote_branches.is_empty(),
+        "expected no remote branches"
+    );
     assert!(snap.tags.is_empty(), "expected no tags");
     assert!(snap.stashes.is_empty(), "expected no stashes");
 }
@@ -215,9 +249,20 @@ fn test_snapshot_branch_ahead_behind() {
         .find(|b| b.name == "feature/two")
         .expect("feature/two branch not found");
 
-    let f2_up = f2.upstream.as_ref().expect("feature/two should have upstream");
-    assert_eq!(f2_up.ahead, 0, "feature/two should be ahead 0, got {}", f2_up.ahead);
-    assert_eq!(f2_up.behind, 1, "feature/two should be behind 1, got {}", f2_up.behind);
+    let f2_up = f2
+        .upstream
+        .as_ref()
+        .expect("feature/two should have upstream");
+    assert_eq!(
+        f2_up.ahead, 0,
+        "feature/two should be ahead 0, got {}",
+        f2_up.ahead
+    );
+    assert_eq!(
+        f2_up.behind, 1,
+        "feature/two should be behind 1, got {}",
+        f2_up.behind
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -259,7 +304,11 @@ fn test_snapshot_remote_branches_no_head() {
         .iter()
         .map(|rb| format!("{}/{}", rb.remote, rb.name))
         .collect();
-    assert!(names.contains(&"origin/main".to_string()), "missing origin/main: {:?}", names);
+    assert!(
+        names.contains(&"origin/main".to_string()),
+        "missing origin/main: {:?}",
+        names
+    );
     assert!(
         names.contains(&"origin/feature/one".to_string()),
         "missing origin/feature/one: {:?}",

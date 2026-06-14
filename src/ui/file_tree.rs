@@ -216,7 +216,10 @@ mod tests {
 
     /// Assert that the total number of File rows equals `files.len()`.
     fn assert_file_count(rows: &[TreeRow], expected: usize) {
-        let count = rows.iter().filter(|r| matches!(r, TreeRow::File { .. })).count();
+        let count = rows
+            .iter()
+            .filter(|r| matches!(r, TreeRow::File { .. }))
+            .count();
         assert_eq!(
             count, expected,
             "TreeRow::File count ({count}) != input files count ({expected})"
@@ -246,11 +249,7 @@ mod tests {
     // ── Test 2: nested directories ────────────────────────────────────────
     #[test]
     fn test_nested_dirs() {
-        let files = vec![
-            added("src/a.rs"),
-            added("src/sub/b.rs"),
-            added("docs/c.md"),
-        ];
+        let files = vec![added("src/a.rs"), added("src/sub/b.rs"), added("docs/c.md")];
         let rows = build_file_tree(&files);
 
         assert_file_count(&rows, 3);
@@ -281,17 +280,32 @@ mod tests {
             .collect();
 
         // docs is at depth 0, c.md at depth 1.
-        let docs_depth = depth_map.iter().find(|(n, _)| *n == Some("docs")).map(|(_, d)| *d);
+        let docs_depth = depth_map
+            .iter()
+            .find(|(n, _)| *n == Some("docs"))
+            .map(|(_, d)| *d);
         assert_eq!(docs_depth, Some(0));
-        let c_md_depth = depth_map.iter().find(|(n, _)| *n == Some("c.md")).map(|(_, d)| *d);
+        let c_md_depth = depth_map
+            .iter()
+            .find(|(n, _)| *n == Some("c.md"))
+            .map(|(_, d)| *d);
         assert_eq!(c_md_depth, Some(1));
 
         // src is at depth 0, sub at depth 1, b.rs at depth 2.
-        let src_depth = depth_map.iter().find(|(n, _)| *n == Some("src")).map(|(_, d)| *d);
+        let src_depth = depth_map
+            .iter()
+            .find(|(n, _)| *n == Some("src"))
+            .map(|(_, d)| *d);
         assert_eq!(src_depth, Some(0));
-        let sub_depth = depth_map.iter().find(|(n, _)| *n == Some("sub")).map(|(_, d)| *d);
+        let sub_depth = depth_map
+            .iter()
+            .find(|(n, _)| *n == Some("sub"))
+            .map(|(_, d)| *d);
         assert_eq!(sub_depth, Some(1));
-        let b_rs_depth = depth_map.iter().find(|(n, _)| *n == Some("b.rs")).map(|(_, d)| *d);
+        let b_rs_depth = depth_map
+            .iter()
+            .find(|(n, _)| *n == Some("b.rs"))
+            .map(|(_, d)| *d);
         assert_eq!(b_rs_depth, Some(2));
     }
 
@@ -314,7 +328,12 @@ mod tests {
             other => panic!("expected Dir, got {:?}", other),
         }
         match &rows[1] {
-            TreeRow::File { depth, name, file_index, .. } => {
+            TreeRow::File {
+                depth,
+                name,
+                file_index,
+                ..
+            } => {
                 assert_eq!(*depth, 1);
                 assert_eq!(name.as_ref(), "c.rs");
                 assert_eq!(*file_index, 0);
@@ -328,11 +347,7 @@ mod tests {
     fn test_mixed_sort_order() {
         // At the root level: files z.txt, a.txt, and a directory "mdir/".
         // Dirs should come before files; within each group, sorted by name.
-        let files = vec![
-            added("z.txt"),
-            added("mdir/inner.txt"),
-            added("a.txt"),
-        ];
+        let files = vec![added("z.txt"), added("mdir/inner.txt"), added("a.txt")];
         let rows = build_file_tree(&files);
 
         assert_file_count(&rows, 3);
@@ -377,12 +392,10 @@ mod tests {
         assert!(has_jp_dir, "expected Japanese directory name");
 
         // Compression must not apply (two children in ドキュメント/).
-        let jp_dir_depth = rows
-            .iter()
-            .find_map(|r| match r {
-                TreeRow::Dir { name, depth } if name.as_ref() == "ドキュメント" => Some(*depth),
-                _ => None,
-            });
+        let jp_dir_depth = rows.iter().find_map(|r| match r {
+            TreeRow::Dir { name, depth } if name.as_ref() == "ドキュメント" => Some(*depth),
+            _ => None,
+        });
         assert_eq!(jp_dir_depth, Some(0));
     }
 
@@ -391,9 +404,9 @@ mod tests {
     fn test_file_index_preserved() {
         // Three files: the second one is under a deep compressed path.
         let files = vec![
-            added("top.txt"),         // index 0
-            added("x/y/deep.txt"),    // index 1 — x/y will be compressed
-            added("other.txt"),       // index 2
+            added("top.txt"),      // index 0
+            added("x/y/deep.txt"), // index 1 — x/y will be compressed
+            added("other.txt"),    // index 2
         ];
         let rows = build_file_tree(&files);
 

@@ -44,7 +44,7 @@ use super::log::CommitId;
 use super::ops::{OperationPlan, StateSummary};
 use super::resolution::ResolutionBuffer;
 use super::status::working_tree_status;
-use super::{GitError, Head, resolve_head};
+use super::{resolve_head, GitError, Head};
 
 // ────────────────────────────────────────────────────────────
 // Public types — operation kind
@@ -297,10 +297,7 @@ fn read_rebase_progress(git_dir: &Path) -> (usize, usize) {
 
 /// Read the commit currently being replayed in a rebase from
 /// `.git/rebase-merge/{stopped-sha,orig-head}` → short sha + summary.
-fn read_rebase_commit(
-    repo: &Repository,
-    git_dir: &Path,
-) -> (Option<String>, Option<String>) {
+fn read_rebase_commit(repo: &Repository, git_dir: &Path) -> (Option<String>, Option<String>) {
     let dir = git_dir.join("rebase-merge");
     // `stopped-sha` holds the commit that conflicted (merge backend, Git 2.x).
     for name in ["stopped-sha", "orig-head"] {
@@ -391,9 +388,7 @@ fn classify_kind(repo: &Repository, conflict: &git2::IndexConflict) -> ConflictK
     let ancestor = conflict.ancestor.as_ref();
 
     // Binary wins over every other classification (no usable text merge).
-    if entry_is_binary(repo, our)
-        || entry_is_binary(repo, their)
-        || entry_is_binary(repo, ancestor)
+    if entry_is_binary(repo, our) || entry_is_binary(repo, their) || entry_is_binary(repo, ancestor)
     {
         return ConflictKind::Binary;
     }
@@ -663,8 +658,10 @@ pub fn continue_blockers(
         .files
         .iter()
         .filter(|f| {
-            matches!(f.kind, ConflictKind::ModifyDelete | ConflictKind::RenameDelete)
-                && !buffer.has_resolution(&f.path)
+            matches!(
+                f.kind,
+                ConflictKind::ModifyDelete | ConflictKind::RenameDelete
+            ) && !buffer.has_resolution(&f.path)
         })
         .map(|f| f.path.to_string_lossy().into_owned())
         .collect();
@@ -932,13 +929,16 @@ pub fn execute_conflict_continue(
                 GitError::Other(format!("mkdir {} failed: {}", parent.display(), e))
             })?;
         }
-        std::fs::write(&abs, text.as_bytes()).map_err(|e| {
-            GitError::Other(format!("write {} failed: {}", abs.display(), e))
-        })?;
+        std::fs::write(&abs, text.as_bytes())
+            .map_err(|e| GitError::Other(format!("write {} failed: {}", abs.display(), e)))?;
         // Staging the path collapses stage 1/2/3 → stage 0 (resolution).
-        index
-            .add_path(&file.path)
-            .map_err(|e| GitError::Other(format!("stage {} failed: {}", file.path.display(), e.message())))?;
+        index.add_path(&file.path).map_err(|e| {
+            GitError::Other(format!(
+                "stage {} failed: {}",
+                file.path.display(),
+                e.message()
+            ))
+        })?;
     }
     index
         .write()
@@ -985,9 +985,9 @@ fn create_merge_commit(
         .ok()
         .and_then(|s| git2::Oid::from_str(s.trim()).ok())
         .ok_or_else(|| GitError::Other("MERGE_HEAD missing or unreadable".to_string()))?;
-    let merge_commit = repo
-        .find_commit(merge_head_oid)
-        .map_err(|e| GitError::Other(format!("MERGE_HEAD commit lookup failed: {}", e.message())))?;
+    let merge_commit = repo.find_commit(merge_head_oid).map_err(|e| {
+        GitError::Other(format!("MERGE_HEAD commit lookup failed: {}", e.message()))
+    })?;
 
     let message = match message_override {
         Some(m) => m.to_string(),
@@ -1065,9 +1065,9 @@ pub fn execute_conflict_save(
     let mut index = repo
         .index()
         .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
-    index
-        .add_path(path)
-        .map_err(|e| GitError::Other(format!("stage {} failed: {}", path.display(), e.message())))?;
+    index.add_path(path).map_err(|e| {
+        GitError::Other(format!("stage {} failed: {}", path.display(), e.message()))
+    })?;
     index
         .write()
         .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
@@ -1144,7 +1144,10 @@ fn prefilled_merge_message(repo: &Repository, op: &ConflictOp, current_branch: &
         }
     }
     let labels = side_labels(op, current_branch);
-    format!("Merge {} into {}", labels.incoming.name, labels.current.name)
+    format!(
+        "Merge {} into {}",
+        labels.incoming.name, labels.current.name
+    )
 }
 
 /// Create the merge commit for the commit-panel Commit button (ADR-0068).
@@ -1247,12 +1250,12 @@ pub fn execute_conflict_abort(
     if let Some(ref sha) = orig_sha {
         let oid = git2::Oid::from_str(sha)
             .map_err(|e| GitError::Other(format!("bad ORIG_HEAD {}: {}", sha, e.message())))?;
-        let commit = repo
-            .find_commit(oid)
-            .map_err(|e| GitError::Other(format!("ORIG_HEAD commit lookup failed: {}", e.message())))?;
-        let tree = commit
-            .tree()
-            .map_err(|e| GitError::Other(format!("ORIG_HEAD tree lookup failed: {}", e.message())))?;
+        let commit = repo.find_commit(oid).map_err(|e| {
+            GitError::Other(format!("ORIG_HEAD commit lookup failed: {}", e.message()))
+        })?;
+        let tree = commit.tree().map_err(|e| {
+            GitError::Other(format!("ORIG_HEAD tree lookup failed: {}", e.message()))
+        })?;
 
         let workdir = repo
             .workdir()
@@ -1635,7 +1638,12 @@ mod tests {
 
     /// Assert no label role/name contains the forbidden words.
     fn assert_no_ours_theirs(labels: &SideLabels) {
-        for l in [&labels.current, &labels.incoming, &labels.base, &labels.result] {
+        for l in [
+            &labels.current,
+            &labels.incoming,
+            &labels.base,
+            &labels.result,
+        ] {
             let role = l.role.to_lowercase();
             assert!(!role.contains("ours"), "role leaked 'ours': {}", l.role);
             assert!(!role.contains("theirs"), "role leaked 'theirs': {}", l.role);

@@ -14,8 +14,8 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi::git::{
-    ChangeKind, CommitId, commit_diffstat, commit_log, find_stat, staged_diffstat,
-    unstaged_diffstat,
+    commit_diffstat, commit_log, find_stat, staged_diffstat, unstaged_diffstat, ChangeKind,
+    CommitId,
 };
 
 // ────────────────────────────────────────────────────────────

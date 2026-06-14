@@ -75,14 +75,27 @@ fn setup() -> Repos {
 
     // -b main: under the isolated test env the default branch would be
     // "master", leaving the bare HEAD dangling and the second clone unborn.
-    git(tmp.path(), &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()]);
+    git(
+        tmp.path(),
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            remote.to_str().unwrap(),
+        ],
+    );
 
     std::fs::create_dir(&local).unwrap();
     git(&local, &["init", "-q", "-b", "main", "."]);
     git(&local, &["config", "user.name", "Test"]);
     git(&local, &["config", "user.email", "test@example.com"]);
     git(&local, &["config", "commit.gpgsign", "false"]);
-    git(&local, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    git(
+        &local,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
 
     write_file(&local, "base.txt", "base\n");
     git(&local, &["add", "-A"]);
@@ -92,13 +105,23 @@ fn setup() -> Repos {
     // Second clone used to push commits "from elsewhere".
     git(
         tmp.path(),
-        &["clone", "-q", remote.to_str().unwrap(), other.to_str().unwrap()],
+        &[
+            "clone",
+            "-q",
+            remote.to_str().unwrap(),
+            other.to_str().unwrap(),
+        ],
     );
     git(&other, &["config", "user.name", "Other"]);
     git(&other, &["config", "user.email", "other@example.com"]);
     git(&other, &["config", "commit.gpgsign", "false"]);
 
-    Repos { _tmp: tmp, remote, local, other }
+    Repos {
+        _tmp: tmp,
+        remote,
+        local,
+        other,
+    }
 }
 
 /// Commit `content` into `name` in the `other` clone and push to the remote.
@@ -177,14 +200,30 @@ fn test_pull_conflict_leaves_repo_untouched() {
     let repo = Repository::open(&r.local).unwrap();
     let err = execute_pull(&repo, &r.local).expect_err("pull must fail on conflict");
     let msg = format!("{}", err);
-    assert!(msg.contains("conflict"), "error should mention conflict: {}", msg);
-    assert!(msg.contains("base.txt"), "error should name the file: {}", msg);
+    assert!(
+        msg.contains("conflict"),
+        "error should mention conflict: {}",
+        msg
+    );
+    assert!(
+        msg.contains("base.txt"),
+        "error should name the file: {}",
+        msg
+    );
 
     // Repo completely untouched:
     assert_eq!(head_sha(&r.local), head_before, "HEAD must not move");
-    assert_eq!(read_file(&r.local, "base.txt"), "local version\n", "WT must be untouched");
+    assert_eq!(
+        read_file(&r.local, "base.txt"),
+        "local version\n",
+        "WT must be untouched"
+    );
     let repo = Repository::open(&r.local).unwrap();
-    assert_eq!(repo.state(), git2::RepositoryState::Clean, "no MERGING state");
+    assert_eq!(
+        repo.state(),
+        git2::RepositoryState::Clean,
+        "no MERGING state"
+    );
     let st = working_tree_status(&repo).unwrap();
     assert!(!st.is_dirty(), "index/WT must stay clean");
 }
@@ -271,7 +310,10 @@ fn test_pull_ff_updates_modified_existing_file() {
 
     assert_eq!(read_file(&r.local, "base.txt"), "updated upstream\n");
     let st = working_tree_status(&Repository::open(&r.local).unwrap()).unwrap();
-    assert!(!st.is_dirty(), "WT must be clean after FF over modified file");
+    assert!(
+        !st.is_dirty(),
+        "WT must be clean after FF over modified file"
+    );
 }
 
 #[test]
@@ -292,5 +334,8 @@ fn test_pull_merge_updates_modified_existing_file() {
     assert_eq!(read_file(&r.local, "base.txt"), "upstream edit\n");
     assert_eq!(read_file(&r.local, "local.txt"), "local\n");
     let st = working_tree_status(&Repository::open(&r.local).unwrap()).unwrap();
-    assert!(!st.is_dirty(), "WT must be clean after merge over modified file");
+    assert!(
+        !st.is_dirty(),
+        "WT must be clean after merge over modified file"
+    );
 }

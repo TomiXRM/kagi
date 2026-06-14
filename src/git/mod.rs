@@ -7,6 +7,7 @@
 //! computing the file-level diff for a single commit.
 //! Network transports (https/ssh) are not used in the MVP.
 
+pub mod backend;
 mod checklist;
 pub mod cli;
 pub mod conflicts;
@@ -26,94 +27,80 @@ mod status;
 mod trailers;
 
 #[allow(unused_imports)]
-pub use diff::{
-    DiffLine, DiffLineKind, FileDiff, Hunk, commit_changed_files, commit_file_diff,
-    compare_commit_to_workdir, compare_commit_to_workdir_file_diff, compare_commits,
-    compare_file_diff,
-};
-#[allow(unused_imports)]
-pub use diffstat::{
-    FileDiffStat, bar_segments, commit_diffstat, find_stat, staged_diffstat, unstaged_diffstat,
-};
-#[allow(unused_imports)]
-pub use message_gen::{
-    GenError, GenInput, Lang, MessageBackend, Style,
-    collect_staged_diff, collect_staged_files, generate_message, rule_based,
-    ollama_available, ollama_list_models,
-};
-#[allow(unused_imports)]
-pub use message_template::{TemplateFields, TYPE_CHOICES, assemble, parse_message};
-#[allow(unused_imports)]
-pub use oplog::{OpLogEntry, OpOutcome, append_oplog, read_oplog_tail};
-#[allow(unused_imports)]
-pub use drafts::{Draft, clear_draft, load_draft, save_draft};
-#[allow(unused_imports)]
-pub use log::{Commit, CommitId, Signature, commit_log};
-#[allow(unused_imports)]
-pub use cli::{GitCliOutput, run_git};
-#[allow(unused_imports)]
-pub use ops::{
-    OperationPlan, StateSummary,
-    execute_checkout, execute_checkout_commit, plan_checkout, plan_checkout_commit, preflight_check,
-    plan_create_branch, execute_create_branch,
-    plan_create_branch_with_checkout,
-    plan_create_worktree, execute_create_worktree, validate_worktree_path,
-    plan_open_worktree_for_branch, execute_open_worktree_for_branch,
-    branch_checked_out_worktree_path,
-    plan_stash_push, execute_stash_push,
-    plan_stash_apply, execute_stash_apply,
-    plan_stash_pop, execute_stash_pop,
-    preflight_check_stash,
-    plan_cherry_pick, execute_cherry_pick,
-    plan_merge_branch, execute_merge_branch, execute_merge_into_conflict, MergeKind,
-    default_tracking_branch_name,
-    plan_checkout_tracking_branch, execute_checkout_tracking_branch,
-    plan_revert, execute_revert,
-    plan_pull, execute_pull, PullOutcome,
-    plan_push, execute_push, PushOutcome,
-    plan_pull_branch_ff, execute_pull_branch_ff,
-    plan_push_branch, execute_push_branch,
-    plan_set_upstream, execute_set_upstream,
-    plan_rename_branch, execute_rename_branch, validate_branch_rename, BranchRenameValidation,
-    plan_undo_commit, execute_undo_commit, UndoOutcome,
-    plan_amend, execute_amend, AmendMode, AmendOutcome,
-    plan_delete_branch, execute_delete_branch,
-    plan_discard, execute_discard, DiscardBackup, DiscardOutcome,
-    fetch_remote, FetchOutcome,
-};
+pub use backend::Backend;
 #[allow(unused_imports)]
 pub use checklist::{checklist, text_has_conflict_marker};
 #[allow(unused_imports)]
+pub use cli::{run_git, GitCliOutput};
+#[allow(unused_imports)]
 pub use conflicts::{
+    continue_blockers, detect_conflict_session, execute_conflict_abort, execute_conflict_continue,
+    execute_conflict_save, execute_conflict_skip, execute_merge_commit, plan_conflict_abort,
+    plan_conflict_continue, plan_conflict_continue_route, plan_conflict_skip, side_labels,
     AbortOutcome, ConflictFile, ConflictKind, ConflictOp, ConflictSession, ConflictStatus,
-    ContinueBlocker, ContinueOutcome, ContinueRoute, SaveOutcome, SideLabel, SideLabels, SkipOutcome,
-    continue_blockers, detect_conflict_session, side_labels,
-    plan_conflict_continue, plan_conflict_continue_route, execute_conflict_continue,
-    execute_conflict_save, execute_merge_commit,
-    plan_conflict_abort, execute_conflict_abort,
-    plan_conflict_skip, execute_conflict_skip,
+    ContinueBlocker, ContinueOutcome, ContinueRoute, SaveOutcome, SideLabel, SideLabels,
+    SkipOutcome,
 };
+#[allow(unused_imports)]
+pub use diff::{
+    commit_changed_files, commit_file_diff, compare_commit_to_workdir,
+    compare_commit_to_workdir_file_diff, compare_commits, compare_file_diff, DiffLine,
+    DiffLineKind, FileDiff, Hunk,
+};
+#[allow(unused_imports)]
+pub use diffstat::{
+    bar_segments, commit_diffstat, find_stat, staged_diffstat, unstaged_diffstat, FileDiffStat,
+};
+#[allow(unused_imports)]
+pub use drafts::{clear_draft, load_draft, save_draft, Draft};
+#[allow(unused_imports)]
+pub use log::{commit_log, Commit, CommitId, Signature};
+#[allow(unused_imports)]
+pub use message_gen::{
+    collect_staged_diff, collect_staged_files, generate_message, ollama_available,
+    ollama_list_models, rule_based, GenError, GenInput, Lang, MessageBackend, Style,
+};
+#[allow(unused_imports)]
+pub use message_template::{assemble, parse_message, TemplateFields, TYPE_CHOICES};
+#[allow(unused_imports)]
+pub use oplog::{append_oplog, read_oplog_tail, OpLogEntry, OpOutcome};
+#[allow(unused_imports)]
+pub use ops::{
+    branch_checked_out_worktree_path, default_tracking_branch_name, execute_amend,
+    execute_checkout, execute_checkout_commit, execute_checkout_tracking_branch,
+    execute_cherry_pick, execute_create_branch, execute_create_worktree, execute_delete_branch,
+    execute_discard, execute_merge_branch, execute_merge_into_conflict,
+    execute_open_worktree_for_branch, execute_pull, execute_pull_branch_ff, execute_push,
+    execute_push_branch, execute_redo, execute_rename_branch, execute_revert, execute_set_upstream,
+    execute_stash_apply, execute_stash_pop, execute_stash_push, execute_undo, execute_undo_commit,
+    fetch_remote, plan_amend, plan_checkout, plan_checkout_commit, plan_checkout_tracking_branch,
+    plan_cherry_pick, plan_create_branch, plan_create_branch_with_checkout, plan_create_worktree,
+    plan_delete_branch, plan_discard, plan_merge_branch, plan_open_worktree_for_branch, plan_pull,
+    plan_pull_branch_ff, plan_push, plan_push_branch, plan_redo, plan_rename_branch, plan_revert,
+    plan_set_upstream, plan_stash_apply, plan_stash_pop, plan_stash_push, plan_undo,
+    plan_undo_commit, preflight_check, preflight_check_stash, validate_branch_rename,
+    validate_worktree_path, AmendMode, AmendOutcome, BranchRenameValidation, DiscardBackup,
+    DiscardOutcome, FetchOutcome, HistoryMoveOutcome, MergeKind, OperationPlan, PullOutcome,
+    PushOutcome, StateSummary, UndoOutcome,
+};
+#[allow(unused_imports)]
+pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
 #[allow(unused_imports)]
 pub use resolution::{
     ConflictHunk, HunkChoice, HunkModel, LineOrigin, Region, ResolutionBuffer, ResolutionChoice,
     ResolvedLine,
 };
 #[allow(unused_imports)]
-pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
-#[allow(unused_imports)]
-pub use snapshot::{RepoSnapshot, snapshot};
+pub use snapshot::{snapshot, RepoSnapshot};
 #[allow(unused_imports)]
 pub use staging::{
-    stage_files, unstage_files,
-    stage_file, unstage_file,
-    unstaged_file_diff, staged_file_diff,
-    plan_commit, execute_commit,
-    commit_preview, CommitPreview,
+    commit_preview, execute_commit, plan_commit, stage_file, stage_files, staged_file_diff,
+    unstage_file, unstage_files, unstaged_file_diff, CommitPreview,
 };
 #[allow(unused_imports)]
-pub use status::{ChangeKind, FileStatus, WorkingTreeStatus, working_tree_status};
+pub use status::{working_tree_status, ChangeKind, FileStatus, WorkingTreeStatus};
 #[allow(unused_imports)]
-pub use trailers::{CoAuthor, parse_coauthors};
+pub use trailers::{parse_coauthors, CoAuthor};
 
 use std::path::{Path, PathBuf};
 
@@ -123,40 +110,9 @@ use git2::Repository;
 // Public types
 // ────────────────────────────────────────────────────────────
 
-/// The HEAD state of a repository, as defined in architecture.md §3.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Head {
-    /// HEAD points to a branch (normal state).
-    Attached {
-        /// Short branch name, e.g. `"main"`.
-        branch: String,
-        /// Hex SHA of the commit HEAD → branch tip resolve to.
-        target: String,
-    },
-    /// HEAD is a detached commit reference.
-    Detached {
-        /// Hex SHA of the commit HEAD points to.
-        target: String,
-    },
-    /// HEAD points to a branch that has no commits yet (`git init` fresh repo).
-    Unborn {
-        /// Short branch name from `.git/HEAD`, e.g. `"main"`.
-        branch: String,
-    },
-}
-
-impl Head {
-    /// Human-readable one-liner for display in the UI.
-    pub fn display(&self) -> String {
-        match self {
-            Head::Attached { branch, .. } => format!("branch: {}", branch),
-            Head::Detached { target } => {
-                format!("detached: {}", target.get(..8).unwrap_or(target))
-            }
-            Head::Unborn { branch } => format!("unborn ({})", branch),
-        }
-    }
-}
+pub use kagi_domain::head::Head;
+#[allow(unused_imports)]
+pub use kagi_domain::history::{HistoryEntry, OperationHistory, OperationKind};
 
 /// Basic information about an opened repository.
 #[derive(Debug, Clone)]
@@ -246,7 +202,11 @@ pub fn open_repository(path: &Path) -> Result<RepoInfo, GitError> {
     // 6. Resolve HEAD state.
     let head = resolve_head(&repo)?;
 
-    Ok(RepoInfo { name, workdir, head })
+    Ok(RepoInfo {
+        name,
+        workdir,
+        head,
+    })
 }
 
 // ────────────────────────────────────────────────────────────
@@ -259,10 +219,7 @@ pub(crate) fn resolve_head(repo: &Repository) -> Result<Head, GitError> {
         Ok(reference) => {
             if reference.is_branch() {
                 // Attached HEAD: extract branch name and target SHA.
-                let branch = reference
-                    .shorthand()
-                    .unwrap_or("(unknown)")
-                    .to_string();
+                let branch = reference.shorthand().unwrap_or("(unknown)").to_string();
                 let target = reference
                     .target()
                     .map(|oid| oid.to_string())
@@ -289,11 +246,10 @@ pub(crate) fn resolve_head(repo: &Repository) -> Result<Head, GitError> {
                     .ok()
                     .and_then(|r| {
                         // symbolic_target returns Result<Option<&str>, Error>
-                        r.symbolic_target().ok().flatten()
-                            .and_then(|sym| {
-                                // "refs/heads/main" → "main"
-                                sym.strip_prefix("refs/heads/").map(|b| b.to_owned())
-                            })
+                        r.symbolic_target().ok().flatten().and_then(|sym| {
+                            // "refs/heads/main" → "main"
+                            sym.strip_prefix("refs/heads/").map(|b| b.to_owned())
+                        })
                     })
                     .unwrap_or_else(|| "(unknown)".to_string());
                 Ok(Head::Unborn { branch })

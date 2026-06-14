@@ -108,7 +108,14 @@ fn setup_with_remote() -> RepoWithRemote {
     // bare remote — `-b main` prevents the default-branch issue in isolated env.
     git(
         tmp.path(),
-        &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()],
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            remote.to_str().unwrap(),
+        ],
     );
 
     std::fs::create_dir(&local).unwrap();
@@ -116,7 +123,10 @@ fn setup_with_remote() -> RepoWithRemote {
     git(&local, &["config", "user.name", "Test"]);
     git(&local, &["config", "user.email", "test@example.com"]);
     git(&local, &["config", "commit.gpgsign", "false"]);
-    git(&local, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    git(
+        &local,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
 
     write_file(&local, "base.txt", "base\n");
     git(&local, &["add", "-A"]);
@@ -314,7 +324,10 @@ fn test_plan_undo_commit_merge_commit_blocker() {
 
     // Merge into main — creates a merge commit.
     git(&path, &["checkout", "-q", "main"]);
-    git(&path, &["merge", "--no-ff", "-m", "merge side into main", "side"]);
+    git(
+        &path,
+        &["merge", "--no-ff", "-m", "merge side into main", "side"],
+    );
 
     // HEAD is now a merge commit.
     let repo = Repository::open(&path).unwrap();

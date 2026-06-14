@@ -10,8 +10,8 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{Commit, CommitId, Signature, commit_log};
-use kagi::graph::{EdgeKind, GraphLayout, layout};
+use kagi::git::{commit_log, Commit, CommitId, Signature};
+use kagi::graph::{layout, EdgeKind, GraphLayout};
 
 // ────────────────────────────────────────────────────────────
 // Test helpers — commit construction
@@ -131,10 +131,16 @@ fn check_invariants(commits: &[Commit], gl: &GraphLayout) {
             .collect();
 
         assert_eq!(
-            bottom_open, top_open,
+            bottom_open,
+            top_open,
             "invariant 3 violated between rows {} ({}) and {} ({}): \
              bottom-open lanes {:?} != top-open lanes {:?}",
-            i, row_r.commit, i + 1, row_next.commit, bottom_open, top_open
+            i,
+            row_r.commit,
+            i + 1,
+            row_next.commit,
+            bottom_open,
+            top_open
         );
     }
 
@@ -155,7 +161,7 @@ fn check_invariants(commits: &[Commit], gl: &GraphLayout) {
 
     if let Some(max) = max_used_lane {
         assert!(
-            gl.lane_count >= max + 1,
+            gl.lane_count > max,
             "invariant 4 violated: lane_count ({}) < max_used_lane + 1 ({})",
             gl.lane_count,
             max + 1
@@ -166,18 +172,25 @@ fn check_invariants(commits: &[Commit], gl: &GraphLayout) {
         assert!(
             row.lane < gl.lane_count,
             "invariant 4 violated at row {} (commit {}): row.lane ({}) >= lane_count ({})",
-            i, row.commit, row.lane, gl.lane_count
+            i,
+            row.commit,
+            row.lane,
+            gl.lane_count
         );
         for edge in &row.edges {
             assert!(
                 edge.from_lane < gl.lane_count,
                 "invariant 4 violated at row {}: edge.from_lane ({}) >= lane_count ({})",
-                i, edge.from_lane, gl.lane_count
+                i,
+                edge.from_lane,
+                gl.lane_count
             );
             assert!(
                 edge.to_lane < gl.lane_count,
                 "invariant 4 violated at row {}: edge.to_lane ({}) >= lane_count ({})",
-                i, edge.to_lane, gl.lane_count
+                i,
+                edge.to_lane,
+                gl.lane_count
             );
         }
     }
@@ -195,7 +208,11 @@ fn check_invariants(commits: &[Commit], gl: &GraphLayout) {
             assert!(
                 seen.insert(key),
                 "invariant 5 violated at row {} (commit {}): duplicate edge ({:?} → {:?}, {:?})",
-                i, row.commit, edge.from_lane, edge.to_lane, edge.kind
+                i,
+                row.commit,
+                edge.from_lane,
+                edge.to_lane,
+                edge.kind
             );
         }
     }
@@ -417,10 +434,7 @@ fn test_criss_cross_merge() {
     check_invariants(&commits, &gl);
 
     assert_eq!(gl.rows.len(), 4);
-    assert!(
-        gl.lane_count >= 1,
-        "criss-cross: lane_count must be >= 1"
-    );
+    assert!(gl.lane_count >= 1, "criss-cross: lane_count must be >= 1");
 }
 
 // ────────────────────────────────────────────────────────────
@@ -472,7 +486,10 @@ fn test_parallel_long_branch_pass_edges() {
         );
     }
 
-    assert!(gl.lane_count >= 2, "parallel branch: lane_count must be >= 2");
+    assert!(
+        gl.lane_count >= 2,
+        "parallel branch: lane_count must be >= 2"
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -549,7 +566,10 @@ fn test_lane_reuse_after_merge() {
     // X (index 4) should reuse lane 0.
     let row_x = &gl.rows[4];
     assert_eq!(row_x.commit, cid("X"));
-    assert_eq!(row_x.lane, 0, "X must reuse lane 0 (find_or_push_free_lane leftmost)");
+    assert_eq!(
+        row_x.lane, 0,
+        "X must reuse lane 0 (find_or_push_free_lane leftmost)"
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -613,9 +633,9 @@ fn test_single_commit() {
 #[test]
 fn test_stress_three_level_nested() {
     let commits = vec![
-        c("M3",  &["B3",  "F3"]),
-        c("B3",  &["M2a"]),
-        c("F3",  &["M2b"]),
+        c("M3", &["B3", "F3"]),
+        c("B3", &["M2a"]),
+        c("F3", &["M2b"]),
         c("M2a", &["B2a", "F2a"]),
         c("B2a", &["R2a"]),
         c("F2a", &["R2a"]),
@@ -636,7 +656,8 @@ fn test_stress_three_level_nested() {
     assert!(
         gl.lane_count <= commits.len(),
         "stress: lane_count ({}) should not exceed commit count ({})",
-        gl.lane_count, commits.len()
+        gl.lane_count,
+        commits.len()
     );
 }
 
@@ -811,7 +832,7 @@ fn test_two_roots_lane_concurrent_then_reuse() {
         c("M", &["X", "Y"]),
         c("X", &[]),
         c("Y", &[]),
-        c("N", &["P"]),  // new branch after M's subtree is done
+        c("N", &["P"]), // new branch after M's subtree is done
         c("P", &[]),
     ];
     let gl = layout(&commits);
@@ -823,5 +844,8 @@ fn test_two_roots_lane_concurrent_then_reuse() {
     // After M,X,Y are processed, N should land on lane 0 (leftmost free).
     let row_n = &gl.rows[3];
     assert_eq!(row_n.commit, cid("N"));
-    assert_eq!(row_n.lane, 0, "N must reuse lane 0 after all prior lanes freed");
+    assert_eq!(
+        row_n.lane, 0,
+        "N must reuse lane 0 after all prior lanes freed"
+    );
 }

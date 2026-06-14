@@ -78,7 +78,10 @@ pub fn bundle(root: &Path) -> Result<(), String> {
     )?;
     let built_bin = root.join("target/release").join(BIN_NAME);
     if !built_bin.exists() {
-        return Err(format!("expected binary not found: {}", built_bin.display()));
+        return Err(format!(
+            "expected binary not found: {}",
+            built_bin.display()
+        ));
     }
 
     // 3) Assemble the bundle skeleton.
@@ -142,11 +145,7 @@ pub fn dmg(root: &Path) -> Result<(), String> {
     util::clean_dir(&stage)?;
     std::fs::create_dir_all(&stage).map_err(|e| format!("mkdir stage: {e}"))?;
     // Copy the .app into the stage (cp -R to preserve symlinks/perms/signature).
-    util::run(Command::new("cp").args([
-        "-R",
-        app.to_str().unwrap(),
-        stage.to_str().unwrap(),
-    ]))?;
+    util::run(Command::new("cp").args(["-R", app.to_str().unwrap(), stage.to_str().unwrap()]))?;
     // /Applications symlink for drag-install UX.
     std::os::unix::fs::symlink("/Applications", stage.join("Applications"))
         .map_err(|e| format!("symlink Applications: {e}"))?;

@@ -1,6 +1,6 @@
 [package]
 name = "kagi-domain"
-version = "0.3.0"
+version = "0.3.1"
 license = "MIT"
 edition = "2021"
 

@@ -24,3 +24,4 @@ pub mod refs;
 pub mod resolution;
 pub mod status;
 pub mod trailers;
+pub mod update;

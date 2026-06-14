@@ -13,7 +13,9 @@ use std::path::PathBuf;
 
 use gpui::SharedString;
 
-use kagi::git::{Backend, ChangeKind, FileDiffStat, FileStatus};
+use kagi::git::{Backend, ChangeKind, CommitPreview, FileDiffStat, FileStatus};
+
+use crate::ui::file_tree::{self, TreeRow};
 
 // ──────────────────────────────────────────────────────────────
 // CommitPanelFileRef — which file is selected in the panel
@@ -69,6 +71,21 @@ pub struct CommitPanelState {
     pub plan_modal: Option<CommitPlanModal>,
     /// Whether the file list is in tree view (true) or flat view (false).
     pub tree_view: bool,
+    /// Cached staged-commit preview (count / A·M·D / target branch / author),
+    /// recomputed in [`Self::reload_status`]. **Must not** be recomputed every
+    /// render: `commit_preview()` runs a full `working_tree_status` (~150ms on a
+    /// large repo), which at 60fps froze the panel to ~6fps (PERF bug).
+    pub preview: Option<CommitPreview>,
+    /// PERF: cached tree rows for the unstaged section, rebuilt in
+    /// [`reload_status`] so the tree is NOT recomputed every frame.
+    pub unstaged_tree: Vec<TreeRow>,
+    /// PERF: cached tree rows for the staged section (see `unstaged_tree`).
+    pub staged_tree: Vec<TreeRow>,
+    /// PERF: O(1) lookup from unstaged file path → index into `unstaged_stats`.
+    /// Replaces the per-row `find_stat` linear scan (was O(N²) per frame).
+    pub unstaged_stat_index: std::collections::HashMap<PathBuf, usize>,
+    /// PERF: O(1) lookup from staged file path → index into `staged_stats`.
+    pub staged_stat_index: std::collections::HashMap<PathBuf, usize>,
 }
 
 impl CommitPanelState {
@@ -84,6 +101,11 @@ impl CommitPanelState {
             commit_msg: String::new(),
             plan_modal: None,
             tree_view: false,
+            preview: None,
+            unstaged_tree: Vec::new(),
+            staged_tree: Vec::new(),
+            unstaged_stat_index: std::collections::HashMap::new(),
+            staged_stat_index: std::collections::HashMap::new(),
         };
         state.reload_status(repo_path);
         state
@@ -105,8 +127,16 @@ impl CommitPanelState {
         };
         match backend.working_tree_status() {
             Ok(status) => {
+                // Cache the staged-commit preview here (NOT per render frame),
+                // reusing this `status` so we don't run a second
+                // working_tree_status walk. Done before `status` is consumed below.
+                self.preview = backend.commit_preview_from_status(&status).ok();
                 // Track conflicted paths for UI (these cannot be staged).
                 self.conflicted_paths = status.conflicted.iter().cloned().collect();
+
+                // Whether there are tracked modifications (the only thing
+                // unstaged_diffstat covers) — captured before `status` is moved.
+                let has_tracked_modifications = !status.unstaged.is_empty();
 
                 // Unstaged = modified + untracked combined
                 let mut unstaged = status.unstaged;
@@ -128,15 +158,60 @@ impl CommitPanelState {
                 self.staged = status.staged;
                 // W16-DIFFSTAT: aggregate additions/deletions for both sides.
                 // Best-effort: on error leave the lists empty (bar omitted).
-                self.unstaged_stats = backend.unstaged_diffstat().unwrap_or_default();
+                // unstaged_diffstat covers tracked modifications only — skip the
+                // (working-tree-walking) call entirely when there are none, so a
+                // dir full of untracked files costs nothing here.
+                self.unstaged_stats = if has_tracked_modifications {
+                    backend.unstaged_diffstat().unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
                 self.staged_stats = backend.staged_diffstat().unwrap_or_default();
                 // Clear selection on status change.
                 self.selected_file = None;
+                // PERF: recompute the cached tree rows and diffstat indices once
+                // per status change (NOT per frame).
+                self.rebuild_derived();
             }
             Err(e) => {
                 eprintln!("[kagi] commit_panel: working_tree_status error: {}", e);
             }
         }
+    }
+
+    /// PERF: rebuild the cached tree rows and diffstat path→index maps from the
+    /// current `unstaged`/`staged`/`*_stats` lists.  Called once per status
+    /// change from [`reload_status`], so render is O(visible rows) not O(N²).
+    fn rebuild_derived(&mut self) {
+        self.unstaged_tree = file_tree::build_file_tree(&self.unstaged);
+        self.staged_tree = file_tree::build_file_tree(&self.staged);
+
+        self.unstaged_stat_index = self
+            .unstaged_stats
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.path.clone(), i))
+            .collect();
+        self.staged_stat_index = self
+            .staged_stats
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.path.clone(), i))
+            .collect();
+    }
+
+    /// O(1) lookup of the unstaged [`FileDiffStat`] for `path`.
+    pub fn unstaged_stat(&self, path: &PathBuf) -> Option<&FileDiffStat> {
+        self.unstaged_stat_index
+            .get(path)
+            .and_then(|&i| self.unstaged_stats.get(i))
+    }
+
+    /// O(1) lookup of the staged [`FileDiffStat`] for `path`.
+    pub fn staged_stat(&self, path: &PathBuf) -> Option<&FileDiffStat> {
+        self.staged_stat_index
+            .get(path)
+            .and_then(|&i| self.staged_stats.get(i))
     }
 
     /// Return true if commit is possible (staged > 0 and message non-empty).

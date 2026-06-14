@@ -3,6 +3,73 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.5] — 2026-06-15
+
+### Performance
+- **Commit panel no longer janks the whole UI.** It used to run a full
+  `working_tree_status` every render frame (for the staged preview) and read every
+  untracked file for a diffstat — so opening it on a large repo dropped the app to
+  ~6fps and a bulk untracked drop (e.g. 300 images) froze it. Now the preview is
+  cached, untracked files are not diffstatted, and the file lists are **virtualized**
+  (`uniform_list`, O(visible) per frame) — scrolling stays smooth with hundreds of
+  changes.
+
+### Added
+- **WIP auto-refreshes on working-tree changes**, not only on git operations: the
+  watcher now watches the working tree and refreshes the WIP / commit panel when
+  files change on disk (background status check; a no-op when nothing the repo
+  cares about changed, so a busy nested worktree doesn't cause reload storms).
+- **Persisted commit-list column widths** (BRANCH/TAG, GRAPH) — your resize sticks
+  across restarts.
+
+### Fixed
+- Watcher no longer reloads this view on **sibling worktree / submodule** git
+  activity (`.git/worktrees/…`, `.git/modules/…`) — fixes the reload storm from an
+  active Claude Code worktree.
+- Nested git worktrees/repos are no longer listed as a giant "untracked" entry in
+  the commit panel.
+- Header: a long repo/branch label no longer overlaps the Pull/Push/Branch
+  buttons — the repo name now sits above a smaller current-branch line, each
+  truncating with an ellipsis.
+- Commit panel: the per-file Stage button is right-aligned again.
+
+## [0.3.4] — 2026-06-14
+
+### Added
+- **In-app auto-update** (ADR-0082). On startup Kagi checks GitHub Releases in the
+  background (best-effort, silent on failure, opt-out via Settings) and shows an
+  **"↑ Update vX.Y.Z"** chip in the header when a newer release exists. Clicking it
+  opens a modal with the current → latest versions, the platform asset, and the
+  **release notes rendered as Markdown**. "Update now" downloads the asset,
+  **verifies its SHA-256** against the release checksums, swaps it into the running
+  install atomically, and relaunches — or "Skip this version" / "Release page" /
+  "Later". Checking is opt-in and silent; installing is always confirmed and
+  checksum-verified, writes atomically, and runs no destructive command.
+  - Linux installs cleanly; **macOS/Windows are unsigned**, so the OS still warns
+    on the relaunched build until code signing lands (ADR-0038 Phase 2). The macOS
+    path is verified end-to-end; Linux/Windows install paths are implemented but not
+    yet runtime-verified by the maintainers.
+
+## [0.3.3] — 2026-06-14
+
+### Added
+- **Windows build** (x86_64), experimental / best-effort. Releases now ship
+  `kagi-<version>-x86_64-windows.zip` (a self-contained `kagi.exe` — assets are
+  embedded). The terminal uses `cmd.exe` and settings/avatars/oplog resolve under
+  `%USERPROFILE%`. Built and packaged by CI; not yet runtime-verified by the
+  maintainers, and unsigned (SmartScreen warns on first launch).
+
+### Fixed
+- **Conflict editor, mismatched-length sides.** Scrolling the longer of the two
+  panes was clamped to the shorter side's line count (the panes share one scroll
+  handle but had unequal row counts); each hunk now blank-pads the shorter side so
+  both panes have equal height.
+- **Conflict editor, missing context.** The A/B panes skipped non-conflicting
+  context lines, so the Merged Result Preview contained lines that were invisible
+  in the editor (reading as code at "unexpected positions"). Context lines now
+  render on both panes (muted, with real per-side line numbers) and stay aligned,
+  so each pane shows the full file and the preview is traceable to what's on screen.
+
 ## [0.3.1] — 2026-06-14
 
 ### Fixed

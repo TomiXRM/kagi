@@ -213,6 +213,15 @@ impl Backend {
         staging::commit_preview(&self.repo)
     }
 
+    /// [`Self::commit_preview`] reusing an already-computed status (avoids a
+    /// second `working_tree_status` walk).
+    pub fn commit_preview_from_status(
+        &self,
+        status: &WorkingTreeStatus,
+    ) -> Result<CommitPreview, GitError> {
+        staging::commit_preview_from_status(&self.repo, status)
+    }
+
     pub fn plan(&self, op: &Operation) -> Result<OperationPlan, GitError> {
         match op {
             Operation::Commit { message } => self.plan_commit(message),

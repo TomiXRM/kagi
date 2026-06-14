@@ -14,6 +14,7 @@ mod icon;
 mod linux;
 mod macos;
 mod util;
+mod windows;
 
 use std::process::ExitCode;
 
@@ -26,6 +27,7 @@ subcommands:
   bundle-macos             release build + assemble & ad-hoc-sign Kagi.app
   dmg-macos                build the distributable DMG (run bundle-macos first)
   bundle-linux [--bin P]   assemble the Linux tar.gz layout (--bin overrides the binary)
+  bundle-windows [--bin P]  zip kagi.exe (+ LICENSE) → kagi-<v>-x86_64-windows.zip (Windows)
   bundle-appimage --bin P [--arch x86_64|aarch64]
                            assemble Kagi.AppDir, run appimagetool when present, and zip
 "
@@ -50,6 +52,19 @@ fn run() -> Result<(), String> {
                 }
             }
             linux::bundle(&root, override_bin)
+        }
+        Some("bundle-windows") => {
+            // optional `--bin <path>` override
+            let mut override_bin = None;
+            let mut it = args.iter().skip(1);
+            while let Some(a) = it.next() {
+                if a == "--bin" {
+                    override_bin = it.next().map(String::as_str);
+                } else {
+                    return Err(format!("unknown argument: {a}\n\n{}", usage()));
+                }
+            }
+            windows::bundle(&root, override_bin)
         }
         Some("bundle-appimage") => {
             let mut override_bin = None;

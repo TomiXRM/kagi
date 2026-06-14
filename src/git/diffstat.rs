@@ -109,12 +109,16 @@ pub fn staged_diffstat(repo: &Repository) -> Result<Vec<FileDiffStat>, GitError>
     diff_to_diffstats(&mut diff)
 }
 
-/// Diffstat for the unstaged changes (index → working tree, untracked included).
+/// Diffstat for the unstaged changes of **tracked** files (index → working tree).
+///
+/// Untracked files are intentionally **excluded**: computing a line diffstat for
+/// an untracked file means reading its full content, and a bulk untracked drop
+/// (e.g. 300 images) made this cost hundreds of ms on the UI thread on every
+/// reload. Untracked files are shown in the commit panel as new ("A") without a
+/// `+/−` bar; only tracked modifications get bars.
 pub fn unstaged_diffstat(repo: &Repository) -> Result<Vec<FileDiffStat>, GitError> {
     let mut opts = DiffOptions::new();
-    opts.include_untracked(true)
-        .recurse_untracked_dirs(true)
-        .show_untracked_content(true);
+    // No include_untracked: tracked modifications only (cheap, predictable).
     let mut diff = repo
         .diff_index_to_workdir(None, Some(&mut opts))
         .map_err(|e| GitError::Other(e.message().to_string()))?;

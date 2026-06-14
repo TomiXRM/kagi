@@ -67,6 +67,22 @@ jobs:
       - name: cargo test --workspace
         run: cargo test --workspace
 
+  # ── ADVISORY: Windows release build (validates the cross-platform port) ──────
+  build-windows:
+    name: build (Windows, advisory)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo build --release -p kagi
+        run: cargo build --release -p kagi
+      - name: Bundle Windows zip
+        run: cargo run -p xtask -- bundle-windows --bin target/release/kagi.exe
+      - name: List dist
+        run: dir target\dist
+
   # ── ADVISORY: fmt + clippy (pre-existing v0.2.0 debt; tracked for S7 cleanup) ─
   lint:
     name: fmt + clippy (advisory)

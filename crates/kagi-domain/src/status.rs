@@ -52,7 +52,7 @@ pub struct FileStatus {
 ///
 /// A file that has both staged and unstaged changes will appear in **both**
 /// `staged` and `unstaged` (e.g. partially-staged modifications).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorkingTreeStatus {
     /// Files staged in the index (ready to be committed).
     pub staged: Vec<FileStatus>,

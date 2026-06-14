@@ -147,8 +147,7 @@ pub fn dmg(root: &Path) -> Result<(), String> {
     // Copy the .app into the stage (cp -R to preserve symlinks/perms/signature).
     util::run(Command::new("cp").args(["-R", app.to_str().unwrap(), stage.to_str().unwrap()]))?;
     // /Applications symlink for drag-install UX.
-    std::os::unix::fs::symlink("/Applications", stage.join("Applications"))
-        .map_err(|e| format!("symlink Applications: {e}"))?;
+    applications_symlink(&stage)?;
 
     let dmg_path = dist.join(format!("Kagi-{version}-{arch}.dmg"));
     if dmg_path.exists() {
@@ -171,4 +170,18 @@ pub fn dmg(root: &Path) -> Result<(), String> {
     util::clean_dir(&stage)?;
     println!("dmg-macos: wrote {}", dmg_path.display());
     Ok(())
+}
+
+/// Create the `/Applications` drag-install symlink inside the DMG stage. This is
+/// macOS-only; the `not(unix)` stub lets xtask compile on Windows (where only
+/// `bundle-windows` runs), erroring if `dmg-macos` is somehow invoked there.
+#[cfg(unix)]
+fn applications_symlink(stage: &Path) -> Result<(), String> {
+    std::os::unix::fs::symlink("/Applications", stage.join("Applications"))
+        .map_err(|e| format!("symlink Applications: {e}"))
+}
+
+#[cfg(not(unix))]
+fn applications_symlink(_stage: &Path) -> Result<(), String> {
+    Err("dmg-macos is only supported on a Unix host".to_string())
 }

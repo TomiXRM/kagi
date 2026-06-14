@@ -24,6 +24,8 @@ Built with Rust + [GPUI](https://www.gpui.rs/) — the UI framework behind [Zed]
 
 Kagi shows you **exactly what will happen before any Git operation runs** — and is engineered so that it *cannot* destroy your repository. Every write operation goes through a `plan → confirm → preflight → execute → verify` pipeline, and the dangerous commands simply don't exist in the codebase.
 
+> **⬇️ Download:** prebuilt apps for **macOS, Linux, and Windows** are on the [**Releases page**](https://github.com/TomiXRM/kagi/releases) — see [Install](#-install) below. From v0.3.4 on, Kagi can also check for and install updates from within the app.
+
 ## ✨ Features
 
 - 🌳 **Commit graph first** — GitKraken-style lanes, ref badges, HEAD ring, merge nodes, WIP row, virtualized for 10k+ commits
@@ -70,6 +72,7 @@ Grab the latest build from [**GitHub Releases**](https://github.com/TomiXRM/kagi
 |----|-------|
 | macOS (Apple Silicon) | `Kagi-<version>-arm64.dmg` |
 | Linux (x86_64 / arm64) | `kagi-<version>-<arch>.tar.gz` (binary + `.desktop` + icon), or the AppImage zip `kagi_Linux-AppImage_<arch>.zip` |
+| Windows (x86_64) | `kagi-<version>-x86_64-windows.zip` — extract and run `kagi.exe` (self-contained; assets are embedded) |
 
 For the AppImage: `unzip kagi_Linux-AppImage_<arch>.zip && bash scripts/install_linux_desktop.sh` registers it under `~/.local` (icon + `.desktop` entry, fully offline).
 
@@ -85,6 +88,10 @@ Kagi is **not yet notarized by Apple** (ad-hoc signature only — no Apple Devel
    ```
 
 Signing + notarization (ADR-0038 Phase 2) is planned once an Apple Developer Program membership is in place.
+
+### ⚠️ Windows: first launch & status
+
+The Windows build is **experimental / best-effort** (built and packaged by CI, not yet runtime-verified by the maintainers — please report issues). It is unsigned, so SmartScreen will warn on first launch: click **More info → Run anyway**. A normal `git` install on `PATH` is recommended (Kagi shells out to `git` and opens an integrated terminal).
 
 ## 🛠️ Build from source
 

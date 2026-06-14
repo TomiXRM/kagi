@@ -205,7 +205,11 @@ fn unstaged_diffstat_reports_workdir_changes() {
 }
 
 #[test]
-fn unstaged_diffstat_includes_untracked_file() {
+fn unstaged_diffstat_excludes_untracked_files() {
+    // Untracked files are intentionally NOT diffstatted: line stats require
+    // reading every file, which made a bulk untracked drop (e.g. 300 images)
+    // freeze the UI on each reload. They show in the commit panel as new ("A")
+    // without a +/- bar instead. Only tracked modifications get bars.
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -213,8 +217,8 @@ fn unstaged_diffstat_includes_untracked_file() {
     write_file(dir, "untracked.txt", "one\ntwo\nthree\n");
 
     let stats = unstaged_diffstat(&repo).unwrap();
-    let s = find_stat(&stats, Path::new("untracked.txt")).expect("untracked.txt missing");
-    assert_eq!(s.change, ChangeKind::Added);
-    assert_eq!(s.additions, 3);
-    assert_eq!(s.deletions, 0);
+    assert!(
+        find_stat(&stats, Path::new("untracked.txt")).is_none(),
+        "untracked files must be excluded from unstaged_diffstat (perf)"
+    );
 }

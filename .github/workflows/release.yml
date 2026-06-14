@@ -37,6 +37,10 @@ jobs:
             target: linux-arm64
             kind: linux
             arch: aarch64
+          - os: windows-latest
+            target: windows-x86_64
+            kind: windows
+            arch: x86_64
     steps:
       - uses: actions/checkout@v4
 
@@ -97,6 +101,15 @@ jobs:
       - name: Bundle AppImage zip
         if: matrix.kind == 'linux'
         run: cargo run -p xtask -- bundle-appimage --bin target/release/kagi --arch ${{ matrix.arch }}
+
+      # ── Windows: release build + zip (assets are embedded in the .exe) ────
+      - name: Build Windows release binary
+        if: matrix.kind == 'windows'
+        run: cargo build --release -p kagi
+
+      - name: Bundle Windows zip
+        if: matrix.kind == 'windows'
+        run: cargo run -p xtask -- bundle-windows --bin target/release/kagi.exe
 
       # ── Checksums over this leg's artifacts ───────────────────────────────
       - name: Generate SHA256SUMS

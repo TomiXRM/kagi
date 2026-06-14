@@ -105,6 +105,19 @@ impl OperationHistory {
         }
     }
 
+    /// Create a history pre-seeded with `entries`, all marked as applied
+    /// (`cursor = entries.len()`), i.e. the current state is the newest entry.
+    ///
+    /// `entries` must be ordered **oldest → newest** (the same order
+    /// [`record`](Self::record) appends in), so [`peek_undo`](Self::peek_undo)
+    /// targets the most-recent operation. Used to hydrate the in-session stack
+    /// from a repository's reflog (ADR-0084) so undo works on a freshly-opened
+    /// repo. Pure — no I/O.
+    pub fn seeded(entries: Vec<HistoryEntry>) -> Self {
+        let cursor = entries.len();
+        Self { entries, cursor }
+    }
+
     /// Record a freshly-executed operation at the cursor.
     ///
     /// Any redo tail (entries past the cursor, i.e. operations that were undone
@@ -337,6 +350,30 @@ mod tests {
         }
         assert_eq!(h.cursor(), 5);
         assert!(h.redo().is_none());
+    }
+
+    #[test]
+    fn seeded_marks_all_entries_applied_and_undo_targets_newest() {
+        let h = OperationHistory::seeded(vec![
+            entry("main", "a0", "a1"),
+            entry("main", "a1", "a2"),
+            entry("main", "a2", "a3"),
+        ]);
+        assert_eq!(h.len(), 3);
+        assert_eq!(h.cursor(), 3);
+        assert!(h.can_undo());
+        assert!(!h.can_redo());
+        // Oldest→newest order means undo targets the newest (a3).
+        assert_eq!(h.peek_undo().unwrap().after, cid("a3"));
+        assert_eq!(h.peek_undo().unwrap().before, cid("a2"));
+    }
+
+    #[test]
+    fn seeded_empty_is_idle() {
+        let h = OperationHistory::seeded(Vec::new());
+        assert!(h.is_empty());
+        assert!(!h.can_undo());
+        assert!(!h.can_redo());
     }
 
     #[test]

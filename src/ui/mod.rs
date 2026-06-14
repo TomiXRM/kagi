@@ -996,6 +996,11 @@ pub struct KagiApp {
     /// the before/after commit SHAs; undo/redo move the branch ref between them
     /// via the safe pipeline. Lost on quit (reflog is the durable backstop).
     pub operation_history: kagi::git::OperationHistory,
+    /// Whether the reflog-seed of `operation_history` has been attempted for the
+    /// current repo (ADR-0084). Set on the first render with a repo open so undo
+    /// works on a freshly-opened repo (the initial CLI/snapshot path never calls
+    /// `reload()`); reset on reload / tab switch so the next repo re-seeds.
+    pub history_seed_attempted: bool,
     /// Set while an Undo/Redo plan modal is open; carries the entry being
     /// previewed and whether it is an undo (`true`) or redo (`false`).
     pub history_modal: Option<HistoryPlanModal>,
@@ -1486,6 +1491,7 @@ impl KagiApp {
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
             operation_history: kagi::git::OperationHistory::new(),
+            history_seed_attempted: false,
             history_modal: None,
             terminal_sessions: HashMap::new(),
             tabs: Vec::new(),
@@ -1627,6 +1633,7 @@ impl KagiApp {
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
             operation_history: kagi::git::OperationHistory::new(),
+            history_seed_attempted: false,
             history_modal: None,
             terminal_sessions: HashMap::new(),
             tabs: Vec::new(),
@@ -1798,6 +1805,11 @@ impl KagiApp {
 
         // Fold the snapshot-derived data in (assignment only).
         self.apply_tab_view(view);
+
+        // ADR-0084: seed the undo/redo history from the branch reflog when it is
+        // empty (freshly-opened repo / post-branch-switch) so Cmd+Z works
+        // immediately. Only seed when empty — never clobber the in-session stack.
+        self.seed_history_from_reflog(&repo);
 
         // Baseline for the FS watcher's working-tree path (skip-if-unchanged).
         self.last_working_status = Some(snap.status.clone());
@@ -6536,6 +6548,33 @@ impl KagiApp {
 
     // ── Operation Undo / Redo (T-UNDOREDO-001, ADR-0081) ─────
 
+    /// ADR-0084: hydrate the in-session [`OperationHistory`] from the current
+    /// branch's reflog when it is **empty** (freshly-opened repo, or after a
+    /// branch switch which clears the per-repo stack). This makes Cmd+Z work
+    /// immediately, even on operations performed outside this session.
+    ///
+    /// Only seeds when empty — an in-session stack (with precise summaries) is
+    /// never clobbered. Reflog read failures are logged and ignored (best-effort).
+    fn seed_history_from_reflog(&mut self, backend: &kagi::git::Backend) {
+        if self.operation_history.len() != 0 {
+            return;
+        }
+        match backend.history_from_reflog() {
+            Ok(entries) => {
+                if !entries.is_empty() {
+                    eprintln!(
+                        "[kagi] history: seeded {} entries from reflog",
+                        entries.len()
+                    );
+                    self.operation_history = kagi::git::OperationHistory::seeded(entries);
+                }
+            }
+            Err(e) => {
+                eprintln!("[kagi] history: reflog seed failed: {}", e);
+            }
+        }
+    }
+
     /// Record a successful ref-moving operation into the in-session
     /// [`OperationHistory`]. `before`/`after` are the branch tip SHAs around the
     /// operation; recording truncates any redo tail (standard undo-stack).
@@ -10125,6 +10164,19 @@ impl Render for KagiApp {
         // ahead/behind stay fresh). Lazily spawned; no-op when off / no repo.
         self.ensure_auto_fetch_ticker(cx);
 
+        // ADR-0084: seed the undo/redo history from the reflog once per repo, so
+        // Cmd+Z works on a freshly-opened repo (the initial CLI/snapshot path
+        // never calls `reload()`). `seed_history_from_reflog` is only-when-empty,
+        // so it never clobbers an in-session stack.
+        if !self.history_seed_attempted {
+            self.history_seed_attempted = true;
+            if let Some(repo_path) = self.repo_path.clone() {
+                if let Ok(backend) = kagi::git::Backend::open(&repo_path) {
+                    self.seed_history_from_reflog(&backend);
+                }
+            }
+        }
+
         // Modal text inputs: lazy-create + sync (needs Window).
         self.sync_modal_inputs(window, cx);
 
@@ -10552,6 +10604,29 @@ impl Render for KagiApp {
             }))
             .on_action(cx.listener(|this, _: &CheckoutSelected, window, cx| {
                 this.checkout_selected_commit(window, cx);
+            }))
+            // ADR-0084: Cmd+Z / Cmd+Shift+Z app history undo/redo. Mirrors the
+            // toolbar undo/redo buttons: open the plan→confirm modal when there
+            // is something to (un)do, else surface a "nothing to" footer. The
+            // keybinding's `!Input && !Terminal` predicate already keeps these
+            // off text fields and the terminal.
+            .on_action(cx.listener(|this, _: &commands::HistoryUndo, _window, cx| {
+                if this.operation_history.can_undo() {
+                    this.open_history_undo_modal();
+                } else {
+                    this.status_footer =
+                        FooterStatus::Idle(SharedString::from(Msg::NothingToUndo.t()));
+                }
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &commands::HistoryRedo, _window, cx| {
+                if this.operation_history.can_redo() {
+                    this.open_history_redo_modal();
+                } else {
+                    this.status_footer =
+                        FooterStatus::Idle(SharedString::from(Msg::NothingToRedo.t()));
+                }
+                cx.notify();
             }))
             // Enter checks out the selected commit. Handled as a raw key on
             // the root (the "enter" KeyBinding never dispatched — its
@@ -15282,6 +15357,19 @@ pub fn run_app(app_state: KagiApp) {
         cx.bind_keys([
             KeyBinding::new("up", DiffPrevFile, Some("!Terminal")),
             KeyBinding::new("down", DiffNextFile, Some("!Terminal")),
+        ]);
+        // ADR-0084: app-level Undo/Redo. Scoped `!Input && !Terminal` so a
+        // focused text field (gpui-component Input, key_context "Input") keeps
+        // OS-standard text undo (OsAction::Undo) and the terminal keeps its own
+        // Cmd+Z — the app history move only fires elsewhere (e.g. commit graph).
+        // gpui 0.2.2 only accepts `&&`/`||` (single `&` fails to parse).
+        cx.bind_keys([
+            KeyBinding::new("cmd-z", commands::HistoryUndo, Some("!Input && !Terminal")),
+            KeyBinding::new(
+                "cmd-shift-z",
+                commands::HistoryRedo,
+                Some("!Input && !Terminal"),
+            ),
         ]);
         // Ctrl+A = Select All in text inputs. gpui-component binds ctrl-a to
         // *both* SelectAll and MoveHome (emacs-style) in the "Input" context,

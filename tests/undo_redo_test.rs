@@ -10,9 +10,10 @@
 //! |---|------|----------------|
 //! | 1 | `commit_undo_then_redo` | commit → undo (HEAD to parent) → redo (HEAD forward); commit stays in reflog |
 //! | 2 | `merge_undo_then_redo` | merge → undo (HEAD to pre-merge) → redo; merge commit stays in reflog |
-//! | 3 | `undo_preserves_working_tree_changes` | uncommitted edits survive an undo (soft/mixed, never --hard) |
+//! | 3 | `undo_preserves_working_tree_changes` | uncommitted edits survive an undo; undone commit returns STAGED (soft, ADR-0084) |
 //! | 4 | `plan_undo_stale_entry_is_blocked` | branch moved since the op → plan raises a blocker; execute refuses |
 //! | 5 | `undo_redo_pipeline_via_domain_history` | drives the domain OperationHistory + Backend together |
+//! | 6 | `reflog_seed_enables_undo_on_freshly_opened_repo` | reflog seed → undo works with no in-session history (ADR-0084) |
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -277,6 +278,81 @@ fn undo_preserves_working_tree_changes() {
         read_file(dir, "scratch.txt"),
         "work in progress\n",
         "working-tree changes must be preserved by undo"
+    );
+
+    // ADR-0084 (soft semantics): the undone commit's file comes back STAGED
+    // (index still holds the commit's tree), like `git reset --soft`.
+    let status = backend.working_tree_status().expect("status");
+    assert!(
+        status
+            .staged
+            .iter()
+            .any(|f| f.path == std::path::Path::new("feature.txt")),
+        "undone commit's file must be STAGED after soft undo, staged={:?}",
+        status.staged.iter().map(|f| &f.path).collect::<Vec<_>>()
+    );
+    // The unrelated working-tree edit stays out of the index (untracked).
+    assert!(
+        status
+            .untracked
+            .iter()
+            .any(|p| p == std::path::Path::new("scratch.txt")),
+        "the unrelated working-tree edit must remain unstaged (untracked)"
+    );
+}
+
+// ────────────────────────────────────────────────────────────
+// Test 6: reflog-seeded history — undo works on a freshly-opened repo
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn reflog_seed_enables_undo_on_freshly_opened_repo() {
+    let repo = setup_local();
+    let dir = &repo.path;
+
+    let parent = head_sha(dir);
+
+    // Make a commit via plain `git` — NOT through the app, so there is no
+    // in-session OperationHistory. Only the reflog records the ref move.
+    write_file(dir, "seeded.txt", "seed\n");
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-qm", "commit via git"]);
+    let head = head_sha(dir);
+    assert_ne!(parent, head);
+
+    // Open a FRESH backend with no in-session history and seed from the reflog.
+    let backend = Backend::open(dir).expect("open");
+    let entries = backend.history_from_reflog().expect("history_from_reflog");
+    assert!(
+        !entries.is_empty(),
+        "reflog should yield at least the latest commit move"
+    );
+
+    let history = OperationHistory::seeded(entries);
+    assert!(
+        history.can_undo(),
+        "a freshly-opened repo must be able to undo via the reflog seed"
+    );
+
+    // The most-recent undoable entry must target the parent (undo → parent).
+    let top = history.peek_undo().expect("peek_undo");
+    assert_eq!(top.after.0, head, "undo's `after` is the current HEAD");
+    assert_eq!(top.before.0, parent, "undo's `before` is the parent commit");
+    assert_eq!(top.branch, "main");
+    assert_eq!(top.kind, OperationKind::Commit);
+
+    // And it actually executes: HEAD moves back to the parent (soft).
+    let e = top.clone();
+    backend.execute_undo(&e).expect("execute_undo");
+    assert_eq!(head_sha(dir), parent, "undo moves HEAD to the parent");
+    // The commit's file returns staged (soft).
+    let status = backend.working_tree_status().expect("status");
+    assert!(
+        status
+            .staged
+            .iter()
+            .any(|f| f.path == std::path::Path::new("seeded.txt")),
+        "soft undo leaves the commit's file staged"
     );
 }
 

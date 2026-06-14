@@ -817,6 +817,14 @@ impl Backend {
         ops::execute_redo(&self.repo, &entry.branch, &entry.before, &entry.after)
     }
 
+    /// Read the current branch's reflog into an undo/redo history seed
+    /// (ADR-0084). Entries are ordered oldest → newest, ready for
+    /// [`kagi_domain::history::OperationHistory::seeded`], so undo/redo works on
+    /// a freshly-opened repository (no in-session operations required).
+    pub fn history_from_reflog(&self) -> Result<Vec<HistoryEntry>, GitError> {
+        ops::history_from_reflog(&self.repo)
+    }
+
     pub fn plan_amend(
         &self,
         mode: AmendMode,

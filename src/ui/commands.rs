@@ -113,6 +113,12 @@ actions!(
         // View → Language (W22-I18N / ADR-0048): one action per UI language.
         LangEnglish,
         LangJapanese,
+        // ADR-0084: app-level Undo/Redo (Cmd+Z / Cmd+Shift+Z). Distinct from the
+        // OsAction text-input EditUndo/EditRedo — these move branch refs via the
+        // history plan→confirm modal and are bound only when neither a text Input
+        // nor the Terminal is focused.
+        HistoryUndo,
+        HistoryRedo,
     ]
 );
 

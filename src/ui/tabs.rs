@@ -165,6 +165,11 @@ impl KagiApp {
         self.commit_panel_open = false;
         self.commit_panel = None;
         self.commit_input = None;
+        // ADR-0084: drop the previous repo's undo/redo history and re-arm the
+        // reflog seed so the next repo seeds its own (else Cmd+Z would target
+        // the old repo's branch).
+        self.operation_history = kagi::git::OperationHistory::new();
+        self.history_seed_attempted = false;
     }
 
     /// W6-TABSPEED / ADR-0030: snapshot + build the [`TabViewState`] on a

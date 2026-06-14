@@ -1128,6 +1128,14 @@ pub struct KagiApp {
     /// present, so the commit panel's commit button creates the 2-parent merge
     /// commit via `execute_merge_commit`.  Cleared on commit / abort / reload.
     pub conflict_merge_commit_pending: bool,
+    /// Set by `detect_conflict_mode` when the in-progress operation is a **merge**
+    /// whose conflicts are all resolved (MERGE_HEAD present, no remaining unmerged
+    /// index entries).  This is the "ready to create the merge commit" state — the
+    /// app shows the commit panel, not an empty Conflict Mode editor.  Used by
+    /// `reload` to keep the merge commit panel alive across the FS-watcher reload
+    /// that the resolution staging itself triggers (otherwise the panel would be
+    /// torn down and re-replaced by an empty conflict view).
+    pub merge_commit_ready: bool,
     /// T-CONFLICT-UX-010/012: index (among conflict hunks) of the focused hunk in
     /// the per-hunk Conflict Editor, so the selected-hunk highlight tracks the
     /// hunk the user last interacted with / navigated to.
@@ -1456,6 +1464,7 @@ impl KagiApp {
             conflict_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             conflict_ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             conflict_merge_commit_pending: false,
+            merge_commit_ready: false,
             conflict_selected_hunk: 0,
             conflict_ab_scroll_handle: UniformListScrollHandle::new(),
             conflict_continue_modal: None,
@@ -1582,6 +1591,7 @@ impl KagiApp {
             conflict_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             conflict_ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             conflict_merge_commit_pending: false,
+            merge_commit_ready: false,
             conflict_selected_hunk: 0,
             conflict_ab_scroll_handle: UniformListScrollHandle::new(),
             conflict_continue_modal: None,
@@ -1649,17 +1659,25 @@ impl KagiApp {
         self.cherry_pick_modal = None;
         self.revert_modal = None;
         self.conflict_continue_modal = None;
-        // ADR-0068: a reload after commit / abort ends any continued-merge flow.
-        self.conflict_merge_commit_pending = false;
+        // A merge that has been continued to the commit panel triggers its own
+        // FS-watcher reload (staging writes the working tree + index). Preserve
+        // the commit panel + merge message across that self-induced reload so the
+        // user is not bounced out of the commit screen; the post-detect block
+        // below confirms the merge is still pending (else it resets everything).
+        let was_merge_commit_pending = self.conflict_merge_commit_pending;
         self.commit_menu = None;
         self.file_menu = None;
-        // T025/T026: reset commit panel and input so it reflects fresh status after reload.
-        self.commit_panel_open = false;
-        self.commit_panel = None;
-        self.commit_input = None;
-        // T-COMMIT-009: reset template mode + field inputs to match commit_input.
-        self.commit_template_mode = false;
-        self.commit_template_inputs = None;
+        if !was_merge_commit_pending {
+            // ADR-0068: a reload after commit / abort ends any continued-merge flow.
+            self.conflict_merge_commit_pending = false;
+            // T025/T026: reset commit panel and input so it reflects fresh status after reload.
+            self.commit_panel_open = false;
+            self.commit_panel = None;
+            self.commit_input = None;
+            // T-COMMIT-009: reset template mode + field inputs to match commit_input.
+            self.commit_template_mode = false;
+            self.commit_template_inputs = None;
+        }
         // commit_scroll_handle is preserved so the existing Rc<RefCell<...>> reference
         // wired into the uniform_list continues to work after reload.
         // status_footer is intentionally preserved across reloads so the last
@@ -1685,6 +1703,32 @@ impl KagiApp {
         // Mode.  Force re-detection by invalidating the render-time guard.
         self.conflict_detected_for = None;
         self.detect_conflict_mode();
+
+        // Re-resolve the continued-merge flow after detection.
+        if was_merge_commit_pending {
+            if self.merge_commit_ready {
+                // Still a resolved merge awaiting its commit: keep the commit
+                // panel up (refresh the staged list from the index) and keep the
+                // pre-filled / user-edited merge message entity untouched.
+                let mut panel = CommitPanelState::from_repo(&repo_path);
+                if let Some(ref existing) = self.commit_panel {
+                    panel.tree_view = existing.tree_view;
+                }
+                self.commit_panel = Some(panel);
+                self.commit_panel_open = true;
+                self.conflict = None;
+                self.conflict_merge_commit_pending = true;
+            } else {
+                // The merge commit was created (MERGE_HEAD gone) or aborted — end
+                // the flow and reset the deferred commit-panel state.
+                self.conflict_merge_commit_pending = false;
+                self.commit_panel_open = false;
+                self.commit_panel = None;
+                self.commit_input = None;
+                self.commit_template_mode = false;
+                self.commit_template_inputs = None;
+            }
+        }
     }
 
     /// W6-TABSPEED: assign a [`TabViewState`] into `self` (main thread, no I/O).
@@ -1783,6 +1827,10 @@ impl KagiApp {
             }
         };
 
+        // Recomputed fresh every detection (the run-once guard is reset by
+        // reload / tab switch before each call).
+        self.merge_commit_ready = false;
+
         let session = match repo.detect_conflict_session() {
             Some(s) => s,
             None => {
@@ -1794,6 +1842,19 @@ impl KagiApp {
                 return;
             }
         };
+
+        // A merge with MERGE_HEAD present but no remaining unmerged index entries
+        // is not a conflict to resolve — it is a resolved merge ready to commit.
+        // Show the commit panel (handled by `reload`), not an empty Conflict Mode
+        // editor.  Without this the FS-watcher reload that staging triggers would
+        // re-enter Conflict Mode with zero files and clobber the commit panel.
+        if matches!(session.op, kagi::git::ConflictOp::Merge { .. }) && session.files.is_empty() {
+            eprintln!("[kagi] conflict-mode: merge resolved — ready to commit");
+            self.merge_commit_ready = true;
+            self.conflict = None;
+            self.conflict_editing = None;
+            return;
+        }
 
         // Build / reload the resolution buffer.  A previously-autosaved buffer
         // (e.g. from before a restart) is preferred so partial work survives;
@@ -2369,6 +2430,20 @@ impl KagiApp {
                 // Transition to the commit message panel pre-filled with the merge
                 // message.  MERGE_HEAD stays present so the commit becomes a merge
                 // commit.  No commit is created here (ADR-0068).
+                //
+                // Stage the resolutions into the index first: the per-file Save is
+                // optional, so the index may still hold unmerged entries.  Without
+                // this the commit panel shows nothing staged (Commit disabled) and
+                // execute_merge_commit refuses the still-conflicted index.
+                if let Err(e) = repo.stage_conflict_resolution(&mode.session, &mode.buffer) {
+                    eprintln!("[kagi] refused: {} stage failed: {}", op_name, e);
+                    self.push_toast(
+                        ToastKind::Error,
+                        SharedString::from(format!("Could not stage resolution: {}", e)),
+                    );
+                    cx.notify();
+                    return;
+                }
                 eprintln!(
                     "[kagi] {}: routing to commit message panel (merge)",
                     op_name

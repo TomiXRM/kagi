@@ -37,9 +37,9 @@ pub use conflicts::{
     continue_blockers, detect_conflict_session, execute_conflict_abort, execute_conflict_continue,
     execute_conflict_save, execute_conflict_skip, execute_merge_commit, plan_conflict_abort,
     plan_conflict_continue, plan_conflict_continue_route, plan_conflict_skip, side_labels,
-    AbortOutcome, ConflictFile, ConflictKind, ConflictOp, ConflictSession, ConflictStatus,
-    ContinueBlocker, ContinueOutcome, ContinueRoute, SaveOutcome, SideLabel, SideLabels,
-    SkipOutcome,
+    stage_conflict_resolution, AbortOutcome, ConflictFile, ConflictKind, ConflictOp,
+    ConflictSession, ConflictStatus, ContinueBlocker, ContinueOutcome, ContinueRoute, SaveOutcome,
+    SideLabel, SideLabels, SkipOutcome,
 };
 #[allow(unused_imports)]
 pub use diff::{

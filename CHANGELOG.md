@@ -3,6 +3,19 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.1] — 2026-06-14
+
+### Fixed
+- **Could not commit after resolving a merge conflict.** After resolving all
+  conflicts and clicking **Continue**, Kagi advanced to the commit panel but the
+  commit could not be completed: the resolutions were never staged (the per-file
+  Save is optional), so the index kept its unmerged entries — the Commit button
+  stayed disabled and the merge commit was refused. Continue now stages the
+  resolutions before opening the commit panel, and a resolved merge (MERGE_HEAD
+  present, no remaining unmerged entries) is treated as "ready to commit" rather
+  than re-entering an empty Conflict Mode, so the commit panel stays put across
+  the filesystem-watcher reload that staging triggers. GUI-verified end to end.
+
 ## [0.3.0] — 2026-06-14
 
 This release ships new user-facing features on top of the start of the v1.0

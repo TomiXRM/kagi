@@ -11090,30 +11090,39 @@ impl KagiApp {
                             .on_click(refresh_click)
                             .child(icon)
                     })
-                    // ── repo name + branch/upstream/ahead-behind ──
-                    // Both shrink + truncate (min_w_0, not flex_shrink_0) so a long
-                    // repo/branch label clips with an ellipsis instead of running
-                    // under the centre Pull/Push/Branch cluster (user report).
+                    // ── repo name (top) + current branch (smaller, below) ──
+                    // Stacked vertically so a long branch label never competes
+                    // horizontally with the repo name (which used to vanish) nor
+                    // runs under the centre Pull/Push/Branch cluster. Each line
+                    // shrinks + truncates within the left column (user request).
                     .child(
                         div()
-                            .text_sm()
-                            .text_color(rgb(theme().text_main))
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .mr_1()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
                             .min_w_0()
-                            .overflow_hidden()
-                            .truncate()
-                            .child(SharedString::from(summary.repo_name.clone())),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(theme().text_sub))
                             .mr_2()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .truncate()
-                            .child(SharedString::from(branch_label)),
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(rgb(theme().text_main))
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .line_height(theme::scaled_px(16.0))
+                                    .w_full()
+                                    .overflow_hidden()
+                                    .truncate()
+                                    .child(SharedString::from(summary.repo_name.clone())),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(theme().text_sub))
+                                    .line_height(theme::scaled_px(13.0))
+                                    .w_full()
+                                    .overflow_hidden()
+                                    .truncate()
+                                    .child(SharedString::from(branch_label)),
+                            ),
                     ),
             ) // ── end LEFT column ──
             // ── CENTRE: window-centred cluster (flex_shrink_0 group) ──

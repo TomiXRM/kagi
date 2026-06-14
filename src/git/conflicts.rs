@@ -895,6 +895,44 @@ pub fn execute_conflict_continue(
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
 ) -> Result<ContinueOutcome, GitError> {
+    // 1. Materialize each resolved buffer file to the working tree and stage it
+    //    (collapses stage 1/2/3 → stage 0), so the index carries no unmerged
+    //    entries.
+    stage_conflict_resolution(repo, session, buffer)?;
+
+    // 2. For a merge, create the merge commit and clear the state.
+    if let ConflictOp::Merge { .. } = session.op {
+        let mut index = repo
+            .index()
+            .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+        let oid = create_merge_commit(repo, &mut index, None)?;
+        repo.cleanup_state()
+            .map_err(|e| GitError::Other(format!("cleanup_state failed: {}", e.message())))?;
+        return Ok(ContinueOutcome::Committed(oid));
+    }
+
+    // 3. Sequencer operations: the buffer is staged; the sequence executor (a
+    // later lane) commits + advances. We report Staged so callers know the
+    // repo is mid-sequence with conflicts resolved.
+    Ok(ContinueOutcome::Staged)
+}
+
+/// Materialize every resolved buffer file to the working tree and stage it,
+/// collapsing index stages 1/2/3 → stage 0 (resolution).
+///
+/// Shared by [`execute_conflict_continue`] and the UI merge-commit-panel route:
+/// when `Continue` routes a merge to the commit panel, the resolutions must be
+/// staged here (the per-file `Save` is optional, so the index may still hold
+/// unmerged entries). Without this the commit panel sees nothing staged and
+/// [`execute_merge_commit`] refuses the still-conflicted index. Writes nothing
+/// to refs and creates no commit.
+///
+/// Defensively refuses if conflict markers remain in the buffer.
+pub fn stage_conflict_resolution(
+    repo: &Repository,
+    session: &ConflictSession,
+    buffer: &ResolutionBuffer,
+) -> Result<(), GitError> {
     // Defensive re-check: never write markers into a commit.
     let residue = buffer.files_with_marker_residue();
     if !residue.is_empty() {
@@ -908,7 +946,6 @@ pub fn execute_conflict_continue(
         .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?
         .to_path_buf();
 
-    // 1. Materialize each resolved file to the working tree, then stage it.
     let mut index = repo
         .index()
         .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
@@ -943,19 +980,7 @@ pub fn execute_conflict_continue(
     index
         .write()
         .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
-
-    // 2. For a merge, create the merge commit and clear the state.
-    if let ConflictOp::Merge { .. } = session.op {
-        let oid = create_merge_commit(repo, &mut index, None)?;
-        repo.cleanup_state()
-            .map_err(|e| GitError::Other(format!("cleanup_state failed: {}", e.message())))?;
-        return Ok(ContinueOutcome::Committed(oid));
-    }
-
-    // 3. Sequencer operations: the buffer is staged; the sequence executor (a
-    // later lane) commits + advances. We report Staged so callers know the
-    // repo is mid-sequence with conflicts resolved.
-    Ok(ContinueOutcome::Staged)
+    Ok(())
 }
 
 /// Build a merge commit from the staged index with HEAD + MERGE_HEAD parents.

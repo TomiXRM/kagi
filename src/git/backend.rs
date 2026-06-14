@@ -458,6 +458,18 @@ impl Backend {
         conflicts::execute_conflict_save(&self.repo, buffer, path)
     }
 
+    /// Materialize + stage every resolved buffer file (collapsing unmerged index
+    /// stages → stage 0) without creating a commit. Used by the UI merge route
+    /// before opening the commit panel, so the index carries no unmerged entries
+    /// and the staged resolutions are visible to the Commit button.
+    pub fn stage_conflict_resolution(
+        &self,
+        session: &conflicts::ConflictSession,
+        buffer: &ResolutionBuffer,
+    ) -> Result<(), GitError> {
+        conflicts::stage_conflict_resolution(&self.repo, session, buffer)
+    }
+
     pub fn execute_merge_commit(&self, message: &str) -> Result<CommitId, GitError> {
         conflicts::execute_merge_commit(&self.repo, message)
     }

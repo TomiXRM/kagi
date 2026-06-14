@@ -478,6 +478,60 @@ fn execute_continue_merge_creates_merge_commit() {
     assert!(content.contains("MAIN change") && content.contains("FEATURE change"));
 }
 
+/// Regression: the UI merge route is `stage_conflict_resolution` (on Continue)
+/// → `execute_merge_commit` (commit panel button), with NO per-file Save in
+/// between. The user reported the commit panel could not commit because the
+/// index still held unmerged entries (Commit disabled / merge commit refused).
+/// Staging on Continue must collapse the conflict so the commit succeeds.
+#[test]
+fn stage_then_merge_commit_without_per_file_save() {
+    let tmp = merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+
+    // Resolve only in the buffer — do NOT call execute_conflict_save.
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(Path::new("file.txt"), ResolutionChoice::BothCurrentFirst)
+        .unwrap();
+
+    // Before staging: the index is still conflicted (this is the bug state).
+    assert!(
+        repo.index().unwrap().has_conflicts(),
+        "precondition: index is unmerged before Continue stages it"
+    );
+
+    // Continue route stages the resolution into the index.
+    kagi::git::stage_conflict_resolution(&repo, &session, &buffer).expect("stage on continue");
+
+    let index = repo.index().unwrap();
+    assert!(
+        !index.has_conflicts(),
+        "staging must collapse stages 1/2/3 → stage 0 (no unmerged entries)"
+    );
+    // The commit panel reads staged files from the index — must be non-empty.
+    assert!(
+        index.get_path(Path::new("file.txt"), 0).is_some(),
+        "file.txt must be staged at stage 0 so the Commit button enables"
+    );
+
+    // Commit panel button → execute_merge_commit now succeeds (it would have
+    // refused the conflicted index before).
+    let id = kagi::git::execute_merge_commit(&repo, "Merge feature into main")
+        .expect("merge commit from staged index");
+    let parents = git_output(dir, &["rev-list", "--parents", "-n", "1", &id.0]);
+    assert_eq!(
+        parents.split_whitespace().count(),
+        3,
+        "merge commit should have 2 parents"
+    );
+    assert!(
+        detect_conflict_session(&repo).is_none(),
+        "merge state cleared"
+    );
+}
+
 // ────────────────────────────────────────────────────────────
 // W32-CONFLICT-EDITOR: hunk-level model over a real multi-hunk conflict
 // ────────────────────────────────────────────────────────────

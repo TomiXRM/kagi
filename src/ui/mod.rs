@@ -2369,6 +2369,20 @@ impl KagiApp {
                 // Transition to the commit message panel pre-filled with the merge
                 // message.  MERGE_HEAD stays present so the commit becomes a merge
                 // commit.  No commit is created here (ADR-0068).
+                //
+                // Stage the resolutions into the index first: the per-file Save is
+                // optional, so the index may still hold unmerged entries.  Without
+                // this the commit panel shows nothing staged (Commit disabled) and
+                // execute_merge_commit refuses the still-conflicted index.
+                if let Err(e) = repo.stage_conflict_resolution(&mode.session, &mode.buffer) {
+                    eprintln!("[kagi] refused: {} stage failed: {}", op_name, e);
+                    self.push_toast(
+                        ToastKind::Error,
+                        SharedString::from(format!("Could not stage resolution: {}", e)),
+                    );
+                    cx.notify();
+                    return;
+                }
                 eprintln!(
                     "[kagi] {}: routing to commit message panel (merge)",
                     op_name

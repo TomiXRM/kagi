@@ -3,7 +3,7 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
-## [Unreleased] — v0.3.0 (in progress)
+## [0.3.0] — 2026-06-14
 
 This release ships new user-facing features on top of the start of the v1.0
 internal re-architecture. See `docs/rearch/` for the architecture work and

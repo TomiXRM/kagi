@@ -15553,14 +15553,35 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
     use gpui::{size, Bounds, WindowBounds, WindowOptions};
 
     // KAGI_WINDOW=WxH (dev/testing only): override the initial window size
-    // so layout behaviour at small sizes can be verified headlessly.
-    let (win_w, win_h) = std::env::var("KAGI_WINDOW")
-        .ok()
-        .and_then(|s| {
-            let (w, h) = s.split_once('x')?;
-            Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
-        })
-        .unwrap_or((1440.0, 920.0));
+    // verbatim so layout behaviour at specific sizes can be verified headlessly.
+    let (win_w, win_h) = if let Some((w, h)) = std::env::var("KAGI_WINDOW").ok().and_then(|s| {
+        let (w, h) = s.split_once('x')?;
+        Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
+    }) {
+        (w, h)
+    } else {
+        // Preferred initial size, but clamped to the active display so the window
+        // never opens off-screen on small / scaled displays (user-reported). The
+        // ideal size is kept on big screens; only the upper bound is a fraction
+        // of the display (so 4K/ultrawide don't get a needlessly huge window).
+        const PREF_W: f32 = 1440.0;
+        const PREF_H: f32 = 920.0;
+        const MIN_W: f32 = 900.0;
+        const MIN_H: f32 = 600.0;
+        match cx.primary_display() {
+            Some(display) => {
+                let ds = display.bounds().size;
+                let max_w = f32::from(ds.width) * 0.92;
+                let max_h = f32::from(ds.height) * 0.90;
+                // clamp(low, high) with low never above high (tiny displays fill).
+                (
+                    PREF_W.clamp(MIN_W.min(max_w), max_w),
+                    PREF_H.clamp(MIN_H.min(max_h), max_h),
+                )
+            }
+            None => (PREF_W, PREF_H),
+        }
+    };
     let bounds = Bounds::centered(None, size(px(win_w), px(win_h)), cx);
     cx.open_window(
         WindowOptions {

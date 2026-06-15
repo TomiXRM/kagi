@@ -616,6 +616,7 @@ impl KagiApp {
             .justify_center()
             .gap_4()
             .size_full()
+            .font_family(super::UI_FONT)
             .bg(rgb(theme().bg_base))
             // Themed transparent title bar leaves no OS drag area, so let the
             // (otherwise empty) welcome surface drag the window; the button's

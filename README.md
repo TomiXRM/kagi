@@ -95,7 +95,19 @@ The Windows build is **experimental / best-effort** (built and packaged by CI, n
 
 ## 🛠️ Build from source
 
-Requirements: Rust stable (rustup) and macOS with **Xcode Command Line Tools only** (no full Xcode needed — Kagi uses GPUI's `runtime_shaders`).
+Requirements: Rust stable (rustup), plus:
+
+- **macOS** — **Xcode Command Line Tools only** (no full Xcode needed; Kagi uses GPUI's `runtime_shaders`).
+- **Linux** — GPUI's native build deps. On Debian/Ubuntu:
+
+  ```sh
+  sudo apt-get install -y \
+    libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+    libx11-dev libxcb1-dev libfontconfig-dev libfreetype-dev \
+    libasound2-dev libvulkan-dev libzstd-dev
+  ```
+
+  (Without these, `cargo run` fails to build — e.g. a missing `libxkbcommon-x11-dev` is a common one.)
 
 ```sh
 git clone https://github.com/TomiXRM/kagi.git

@@ -201,8 +201,7 @@ pub fn bundle(root: &Path, override_bin: Option<&str>, arch: &str) -> Result<(),
         .map_err(|e| format!("stage install script: {e}"))?;
     make_executable(&stage.join("install_linux_desktop.sh"))?;
 
-    let mut zip_entries: Vec<String> =
-        vec!["kagi.png".into(), "install_linux_desktop.sh".into()];
+    let mut zip_entries: Vec<String> = vec!["kagi.png".into(), "install_linux_desktop.sh".into()];
     if built {
         let name = appimage
             .file_name()

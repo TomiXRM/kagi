@@ -326,6 +326,32 @@ fn row_height(compact: bool) -> f32 {
     theme::scaled(if compact { ROW_H_COMPACT } else { ROW_H_FULL })
 }
 
+/// Friendly present-progressive label for the busy snackbar, keyed by the
+/// `busy_op` tag set when an async op starts.
+fn busy_label(op: &str) -> String {
+    let s = match op {
+        "merge-plan" => "Planning merge…",
+        "merge" => "Merging…",
+        "pull" => "Pulling…",
+        "push" => "Pushing…",
+        "fetch" => "Fetching…",
+        "commit" => "Committing…",
+        "amend" => "Amending commit…",
+        "checkout" => "Checking out…",
+        "cherry-pick" => "Cherry-picking…",
+        "revert" => "Reverting…",
+        "discard" => "Discarding…",
+        "stash" => "Stashing…",
+        "stash-pop" => "Applying stash…",
+        "create-worktree" => "Creating worktree…",
+        "delete-branch" => "Deleting branch…",
+        "rename-branch" => "Renaming branch…",
+        "set-upstream" => "Setting upstream…",
+        other => return format!("{other}…"),
+    };
+    s.to_string()
+}
+
 use branch_menu::{
     BranchAction, BranchConflictMode, BranchKind, BranchMenuContext, BranchMenuState,
 };
@@ -4759,7 +4785,7 @@ impl KagiApp {
     /// Render the toast stack as an absolute overlay (bottom-right, above
     /// the status bar). Returns `None` when there is nothing to show.
     fn render_toasts(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        if self.toasts.is_empty() {
+        if self.toasts.is_empty() && self.busy_op.is_none() {
             return None;
         }
         let mut stack = div()
@@ -4770,6 +4796,12 @@ impl KagiApp {
             .flex()
             .flex_col()
             .gap_2();
+
+        // While an async op runs, show a busy snackbar with a spinning sync icon
+        // (user request) — a lighter alternative to a blocking popup.
+        if let Some(op) = self.busy_op {
+            stack = stack.child(self.render_busy_snackbar(op));
+        }
 
         for toast in &self.toasts {
             let (accent, icon) = match toast.kind {
@@ -4844,6 +4876,54 @@ impl KagiApp {
             stack = stack.child(animated);
         }
         Some(stack.into_any())
+    }
+
+    /// A snackbar shown while an async op runs: a continuously spinning sync
+    /// icon + a friendly label (user request — a non-blocking alternative to a
+    /// modal busy-spinner). Driven automatically by `busy_op`, so every async
+    /// op gets one for free.
+    fn render_busy_snackbar(&self, op: &'static str) -> gpui::AnyElement {
+        use gpui::AnimationExt as _;
+        const SPIN_MS: u64 = 700;
+        let accent = theme().color_branch;
+        let icon = gpui::svg()
+            .path("icons/refresh-cw.svg")
+            // ~2× the header spinner (user request) so the busy snackbar reads
+            // clearly as "working".
+            .w(theme::scaled_px(32.0))
+            .h(theme::scaled_px(32.0))
+            .text_color(rgb(accent))
+            .with_animation(
+                "kagi-busy-snackbar-spin",
+                gpui::Animation::new(Duration::from_millis(SPIN_MS)).repeat(),
+                |svg, delta| {
+                    svg.with_transformation(gpui::Transformation::rotate(gpui::radians(
+                        delta * std::f32::consts::TAU,
+                    )))
+                },
+            );
+        div()
+            .w(theme::scaled_px(460.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .px_4()
+            .py_3()
+            .rounded(theme::scaled_px(8.))
+            .bg(rgb(theme().panel))
+            .border_1()
+            .border_color(rgb(accent))
+            .text_base()
+            .text_color(rgb(theme().text_main))
+            .child(div().flex_shrink_0().child(icon))
+            .child(
+                div()
+                    .flex_1()
+                    .overflow_hidden()
+                    .child(SharedString::from(busy_label(op))),
+            )
+            .into_any()
     }
 
     /// Read the current HEAD branch name + commit SHA from the open repo.
@@ -5360,6 +5440,22 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
+                // Already-up-to-date pull (nothing to pull by local knowledge)
+                // is not worth a blocking popup (user request): snackbar instead.
+                // Background auto-fetch keeps the behind count fresh; the title
+                // carries the "up to date (local knowledge…)" behind-label from
+                // ops::plan_pull when behind == 0.
+                if plan.blockers.is_empty()
+                    && plan.warnings.is_empty()
+                    && plan.title.contains("up to date (local knowledge")
+                {
+                    self.push_toast(
+                        ToastKind::Info,
+                        SharedString::from(Msg::AlreadyUpToDatePull.t()),
+                    );
+                    self.status_footer = FooterStatus::Idle(SharedString::from(""));
+                    return;
+                }
                 self.pull_modal = Some(PullPlanModal {
                     plan: std::sync::Arc::new(plan),
                     error: None,
@@ -5552,6 +5648,20 @@ impl KagiApp {
                     plan.warnings.len(),
                     plan.preview_commits.len(),
                 );
+                // No-op push (already up to date — nothing to push) is not worth
+                // a blocking popup (user request): show a snackbar instead. The
+                // "nothing to push" blocker is the *only* blocker in this case
+                // (see ops::plan_push step 6).
+                if !plan.blockers.is_empty()
+                    && plan.blockers.iter().all(|b| b.contains("nothing to push"))
+                {
+                    self.push_toast(
+                        ToastKind::Info,
+                        SharedString::from(Msg::AlreadyUpToDatePush.t()),
+                    );
+                    self.status_footer = FooterStatus::Idle(SharedString::from(""));
+                    return;
+                }
                 self.push_modal = Some(PushPlanModal {
                     plan: std::sync::Arc::new(plan),
                     error: None,

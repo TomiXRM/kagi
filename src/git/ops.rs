@@ -6306,8 +6306,9 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
     // (but recoverable) deletion.
     if untracked_targets > 0 {
         warnings.push(format!(
-            "{} untracked file(s) will be deleted from disk (backed up to the oplog first; \
-             recover with `git cat-file -p <blob-sha>`).",
+            "⚠️ {} untracked file(s) will be PERMANENTLY DELETED from disk (and any \
+             now-empty folders removed). A backup blob is saved to the oplog first — \
+             recover with `git cat-file -p <blob-sha>`.",
             untracked_targets
         ));
     }
@@ -6436,6 +6437,20 @@ pub fn execute_discard(
                     rel, e
                 )));
             }
+        }
+    }
+
+    // ── 2c. Prune now-empty parent directories left by deleted untracked files
+    // (the `-d` of `git clean -fd`), so discarding an untracked folder leaves no
+    // empty husk. `remove_dir` only removes empty dirs; we walk up and stop at
+    // the first non-empty dir, never touching the workdir root.
+    for rel in &untracked_rels {
+        let mut dir = std::path::Path::new(rel.as_str()).parent();
+        while let Some(d) = dir.filter(|d| !d.as_os_str().is_empty()) {
+            if std::fs::remove_dir(workdir.join(d)).is_err() {
+                break; // non-empty or already gone — stop ascending
+            }
+            dir = d.parent();
         }
     }
 

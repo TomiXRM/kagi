@@ -340,8 +340,8 @@ use kagi::git::{
         default_tracking_branch_name, validate_branch_rename, AmendMode, MergeKind, OperationPlan,
         PullOutcome, StateSummary,
     },
-    ChangeKind, CommitId, DiffLineKind, FileDiffStat, FileStatus, Head, RemoteBranch, RepoSnapshot,
-    Stash, Tag, UpstreamInfo, Worktree,
+    CommitId, DiffLineKind, FileDiffStat, FileStatus, Head, RemoteBranch, RepoSnapshot, Stash, Tag,
+    UpstreamInfo, Worktree,
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -14702,10 +14702,13 @@ fn render_commit_panel(
     let staged_count = panel.staged.len();
     // W17-DISCARD: count discard-eligible unstaged files (exclude untracked,
     // which the panel surfaces as `Added` rows, and conflicted files).
+    // ADR-0083: untracked (`Added`) rows ARE discardable (deleted with backup),
+    // so they count toward enabling "Discard all" — only conflicted rows are
+    // excluded. Must mirror `discard_partition`.
     let discard_eligible_count = panel
         .unstaged
         .iter()
-        .filter(|f| !panel.is_conflicted(&f.path) && !matches!(f.change, ChangeKind::Added))
+        .filter(|f| !panel.is_conflicted(&f.path))
         .count();
     // T026 / T-COMMIT-009: can_commit uses the effective message — in template
     // mode the assembled fields, else the plain Input value (headless: commit_msg).

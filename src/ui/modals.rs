@@ -1171,26 +1171,22 @@ pub(crate) fn render_merge_modal(
         cx.notify();
     });
     // W31-MERGE-INTO-CONFLICT: a conflict-producing merge gets a localized
-    // "resolve conflicts" confirm label and a prominent localized warning banner
-    // prepended to the plan's (English, git-layer) per-file warning.
-    // T-DNDMERGE-001 / ADR-0079: the confirm button must be explicit, not vague —
-    // `Merge <source> into <current>` (domain words / branch names stay English).
+    // Confirm-button label. The full "Merge <source> into <current>" context is
+    // already the modal's title (the plan title), so the button stays short —
+    // just "Merge" — so a long branch name (e.g. origin/FW/MainBoard_V26.1) can't
+    // overflow the button width. The conflict case keeps its short localized
+    // hint + a prominent warning banner prepended to the plan's warnings.
     let (confirm_label, plan): (SharedString, std::sync::Arc<OperationPlan>) =
         if matches!(modal.kind, MergeKind::Conflicts(_)) {
             let mut plan = (*modal.plan).clone();
             plan.warnings
                 .insert(0, Msg::MergeConflictWarning.t().to_string());
-            let label = SharedString::from(format!(
-                "Merge {} into {} ({})",
-                modal.target,
-                modal.into_branch,
-                Msg::MergeAndResolveConflicts.t()
-            ));
-            (label, std::sync::Arc::new(plan))
+            (
+                SharedString::from(Msg::MergeAndResolveConflicts.t()),
+                std::sync::Arc::new(plan),
+            )
         } else {
-            let label =
-                SharedString::from(format!("Merge {} into {}", modal.target, modal.into_branch));
-            (label, modal.plan)
+            (SharedString::from("Merge"), modal.plan)
         };
     render_plan_modal_card(
         plan,

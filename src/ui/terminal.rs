@@ -212,6 +212,16 @@ pub fn build_terminal_view(
 
     // Build the shell command.
     let mut cmd = CommandBuilder::new(shell);
+    // Launch as a LOGIN + INTERACTIVE shell so the user's rc files are sourced
+    // (~/.zprofile + ~/.zshrc for zsh, ~/.bash_profile + ~/.bashrc for bash) —
+    // otherwise a GUI-launched app gets a bare PATH and tools like `python`,
+    // Homebrew, pyenv, etc. aren't found. Skipped on Windows (cmd.exe has no
+    // such flags and inherits the environment directly).
+    #[cfg(not(windows))]
+    {
+        cmd.arg("-l");
+        cmd.arg("-i");
+    }
     cmd.cwd(repo_path);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");

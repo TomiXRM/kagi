@@ -232,7 +232,9 @@ fn discard_untracked_deletes_file_and_backs_it_up() {
         plan.blockers
     );
     assert!(
-        plan.warnings.iter().any(|w| w.contains("deleted")),
+        plan.warnings
+            .iter()
+            .any(|w| w.to_lowercase().contains("deleted")),
         "plan should warn the file will be deleted: {:?}",
         plan.warnings
     );
@@ -264,6 +266,37 @@ fn discard_untracked_deletes_file_and_backs_it_up() {
     assert_eq!(
         restored, "untracked body\n",
         "backup blob must hold the deleted file's content"
+    );
+}
+
+// ADR-0083: discarding all untracked files in a new folder also removes the
+// now-empty folder (the `-d` of `git clean -fd`).
+#[test]
+fn discard_untracked_prunes_now_empty_dirs() {
+    let tmp = TempDir::new().unwrap();
+    let d = build_repo(&tmp);
+    let repo = Repository::open(&d).unwrap();
+
+    std::fs::create_dir_all(d.join("newdir/sub")).unwrap();
+    write_file(&d, "newdir/inner.txt", "a\n");
+    write_file(&d, "newdir/sub/deep.txt", "b\n");
+
+    let paths = vec![
+        "newdir/inner.txt".to_string(),
+        "newdir/sub/deep.txt".to_string(),
+    ];
+    let plan = plan_discard(&repo, &paths).expect("plan");
+    execute_discard(&repo, &plan, &paths).expect("execute");
+
+    assert!(!d.join("newdir/sub/deep.txt").exists(), "file deleted");
+    assert!(!d.join("newdir/inner.txt").exists(), "file deleted");
+    assert!(
+        !d.join("newdir/sub").exists(),
+        "empty sub-directory must be pruned"
+    );
+    assert!(
+        !d.join("newdir").exists(),
+        "empty directory must be pruned (git clean -fd)"
     );
 }
 

@@ -938,18 +938,30 @@ impl TerminalView {
         Some(text)
     }
 
-    /// Handle scroll events.
-    ///
-    /// Currently a placeholder for future scrollback support.
+    /// Handle scroll events: move the scrollback display offset by the wheel
+    /// delta (converted from pixels to lines via the cell height). Scrolling up
+    /// reveals older history; scrolling back down returns to the live prompt.
     fn on_scroll(
         &mut self,
-        _event: &ScrollWheelEvent,
+        event: &ScrollWheelEvent,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        // TODO: Implement scrollback
-        // - Scroll the terminal display up/down
-        // - Send scroll reports if alternate screen is not active
+        let line_height = self.renderer.cell_height;
+        if line_height <= gpui::px(0.0) {
+            return;
+        }
+        let dy = f32::from(event.delta.pixel_delta(line_height).y);
+        let lines = (dy / f32::from(line_height)).round() as i32;
+        if lines == 0 {
+            return;
+        }
+        // alacritty `Scroll::Delta(+n)` scrolls UP into history; gpui's wheel
+        // delta is positive when scrolling up, so the signs already match.
+        self.state.with_term_mut(|term| {
+            term.scroll_display(alacritty_terminal::grid::Scroll::Delta(lines));
+        });
+        cx.notify();
     }
 
     /// Process pending terminal events.

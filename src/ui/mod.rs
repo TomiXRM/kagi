@@ -326,6 +326,32 @@ fn row_height(compact: bool) -> f32 {
     theme::scaled(if compact { ROW_H_COMPACT } else { ROW_H_FULL })
 }
 
+/// Friendly present-progressive label for the busy snackbar, keyed by the
+/// `busy_op` tag set when an async op starts.
+fn busy_label(op: &str) -> String {
+    let s = match op {
+        "merge-plan" => "Planning merge…",
+        "merge" => "Merging…",
+        "pull" => "Pulling…",
+        "push" => "Pushing…",
+        "fetch" => "Fetching…",
+        "commit" => "Committing…",
+        "amend" => "Amending commit…",
+        "checkout" => "Checking out…",
+        "cherry-pick" => "Cherry-picking…",
+        "revert" => "Reverting…",
+        "discard" => "Discarding…",
+        "stash" => "Stashing…",
+        "stash-pop" => "Applying stash…",
+        "create-worktree" => "Creating worktree…",
+        "delete-branch" => "Deleting branch…",
+        "rename-branch" => "Renaming branch…",
+        "set-upstream" => "Setting upstream…",
+        other => return format!("{other}…"),
+    };
+    s.to_string()
+}
+
 use branch_menu::{
     BranchAction, BranchConflictMode, BranchKind, BranchMenuContext, BranchMenuState,
 };
@@ -340,8 +366,8 @@ use kagi::git::{
         default_tracking_branch_name, validate_branch_rename, AmendMode, MergeKind, OperationPlan,
         PullOutcome, StateSummary,
     },
-    ChangeKind, CommitId, DiffLineKind, FileDiffStat, FileStatus, Head, RemoteBranch, RepoSnapshot,
-    Stash, Tag, UpstreamInfo, Worktree,
+    CommitId, DiffLineKind, FileDiffStat, FileStatus, Head, RemoteBranch, RepoSnapshot, Stash, Tag,
+    UpstreamInfo, Worktree,
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -765,6 +791,10 @@ pub enum ToastKind {
     Success,
     /// Operation failed or was refused (red, 8s).
     Error,
+    /// Sync-flavoured info (blue, 4s): renders the same big spinning sync icon
+    /// as the busy snackbar, so "already up to date" reads consistently with
+    /// an in-flight pull/push. Used for the no-op pull/push snackbars.
+    Sync,
 }
 
 /// One snackbar entry, stacked bottom-right above the status bar.
@@ -971,6 +1001,14 @@ pub struct KagiApp {
     /// Scroll handle for the "commit-list" uniform_list.
     /// Stored in KagiApp so it persists across render frames.
     pub commit_scroll_handle: UniformListScrollHandle,
+    /// PERF-SIDEBAR-VIRT: scroll handle for the sidebar navigator
+    /// `uniform_list` ("sidebar-list"). Persisted across frames.
+    pub sidebar_scroll_handle: UniformListScrollHandle,
+    /// PERF-SIDEBAR-VIRT: pre-flattened sidebar rows, rebuilt each render from
+    /// the snapshot fields (branches/remotes/tags/…) honouring collapse +
+    /// filter state. The "sidebar-list" `uniform_list` processor reads
+    /// `self.sidebar_rows[i]`, so the sidebar costs O(visible rows) per frame.
+    pub sidebar_rows: Vec<sidebar::SidebarRow>,
     /// PERF: scroll handle for the commit panel's Unstaged `uniform_list`
     /// (shared across flat/tree views — only one is visible at a time).
     pub cp_unstaged_scroll_handle: UniformListScrollHandle,
@@ -1493,6 +1531,8 @@ impl KagiApp {
             smart_commit_detected_for: None,
             pending_smart_msg: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
+            sidebar_scroll_handle: UniformListScrollHandle::new(),
+            sidebar_rows: Vec::new(),
             cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
             cp_staged_scroll_handle: UniformListScrollHandle::new(),
             branch_targets,
@@ -1636,6 +1676,8 @@ impl KagiApp {
             smart_commit_detected_for: None,
             pending_smart_msg: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
+            sidebar_scroll_handle: UniformListScrollHandle::new(),
+            sidebar_rows: Vec::new(),
             cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
             cp_staged_scroll_handle: UniformListScrollHandle::new(),
             branch_targets: HashMap::new(),
@@ -3607,7 +3649,6 @@ impl KagiApp {
         self.busy_op = Some("create-worktree");
         self.create_worktree_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCreateWorktree.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedCreateWorktree.t());
         eprintln!("[kagi] async: create-worktree started");
 
         let branch_input = modal.branch_input.clone();
@@ -3765,7 +3806,6 @@ impl KagiApp {
         self.busy_op = Some("stash");
         self.stash_push_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStash.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedStash.t());
         eprintln!("[kagi] async: stash-push started");
 
         let msg_opt = if modal.input.is_empty() {
@@ -4089,7 +4129,6 @@ impl KagiApp {
         self.busy_op = Some("cherry-pick");
         self.cherry_pick_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCherryPick.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedCherryPick.t());
         eprintln!("[kagi] async: cherry-pick started");
 
         let plan = modal.plan.clone();
@@ -4231,7 +4270,6 @@ impl KagiApp {
         self.busy_op = Some("revert");
         self.revert_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyRevert.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedRevert.t());
         eprintln!("[kagi] async: revert started");
 
         let plan = modal.plan.clone();
@@ -4747,7 +4785,7 @@ impl KagiApp {
     /// Render the toast stack as an absolute overlay (bottom-right, above
     /// the status bar). Returns `None` when there is nothing to show.
     fn render_toasts(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        if self.toasts.is_empty() {
+        if self.toasts.is_empty() && self.busy_op.is_none() {
             return None;
         }
         let mut stack = div()
@@ -4759,13 +4797,32 @@ impl KagiApp {
             .flex_col()
             .gap_2();
 
+        // While an async op runs, show a busy snackbar with a spinning sync icon
+        // (user request) — a lighter alternative to a blocking popup.
+        if let Some(op) = self.busy_op {
+            stack = stack.child(self.render_busy_snackbar(op));
+        }
+
         for toast in &self.toasts {
-            let (accent, icon) = match toast.kind {
+            let (accent, glyph) = match toast.kind {
                 ToastKind::Info => (theme().color_branch, "\u{27f3}"), // ⟳
                 ToastKind::Success => (theme().color_success, "\u{2713}"), // ✓
                 ToastKind::Error => (theme().color_blocker, "\u{2715}"), // ✕
+                ToastKind::Sync => (theme().color_branch, ""),
             };
             let id = toast.id;
+            let is_sync = toast.kind == ToastKind::Sync;
+            // Sync toasts reuse the busy snackbar's big spinning icon (user
+            // request: "already up to date" must match an in-flight op); the
+            // others keep the compact text glyph.
+            let icon_el: gpui::AnyElement = if is_sync {
+                self.big_sync_icon(accent, ("kagi-toast-sync", id))
+            } else {
+                div()
+                    .text_color(rgb(accent))
+                    .child(SharedString::from(glyph))
+                    .into_any_element()
+            };
             let leaving = toast.dismissing.is_some();
             let dismiss = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
                 this.start_toast_exit(id, cx);
@@ -4776,8 +4833,8 @@ impl KagiApp {
                 .w(theme::scaled_px(460.))
                 .flex()
                 .flex_row()
-                .items_start()
-                .gap_2()
+                .when(is_sync, |d| d.items_center().gap_3())
+                .when(!is_sync, |d| d.items_start().gap_2())
                 .px_4()
                 .py_3()
                 .rounded(theme::scaled_px(8.))
@@ -4786,12 +4843,7 @@ impl KagiApp {
                 .border_color(rgb(accent))
                 .text_base()
                 .text_color(rgb(theme().text_main))
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_color(rgb(accent))
-                        .child(SharedString::from(icon)),
-                )
+                .child(div().flex_shrink_0().child(icon_el))
                 .child(
                     div()
                         .flex_1()
@@ -4832,6 +4884,64 @@ impl KagiApp {
             stack = stack.child(animated);
         }
         Some(stack.into_any())
+    }
+
+    /// A snackbar shown while an async op runs: a continuously spinning sync
+    /// icon + a friendly label (user request — a non-blocking alternative to a
+    /// modal busy-spinner). Driven automatically by `busy_op`, so every async
+    /// op gets one for free.
+    /// The big spinning sync icon shared by the busy snackbar and the
+    /// sync-flavoured no-op toasts (`ToastKind::Sync`), so every sync-icon
+    /// snackbar looks identical. `key` keeps each animation instance distinct.
+    fn big_sync_icon(&self, accent: u32, key: impl Into<gpui::ElementId>) -> gpui::AnyElement {
+        use gpui::AnimationExt as _;
+        const SPIN_MS: u64 = 700;
+        gpui::svg()
+            .path("icons/refresh-cw.svg")
+            // ~2× the header spinner (user request) so the snackbar reads
+            // clearly as "working".
+            .w(theme::scaled_px(32.0))
+            .h(theme::scaled_px(32.0))
+            .text_color(rgb(accent))
+            .with_animation(
+                key,
+                gpui::Animation::new(Duration::from_millis(SPIN_MS)).repeat(),
+                |svg, delta| {
+                    svg.with_transformation(gpui::Transformation::rotate(gpui::radians(
+                        delta * std::f32::consts::TAU,
+                    )))
+                },
+            )
+            .into_any_element()
+    }
+
+    fn render_busy_snackbar(&self, op: &'static str) -> gpui::AnyElement {
+        let accent = theme().color_branch;
+        let icon = self.big_sync_icon(accent, "kagi-busy-snackbar-spin");
+        div()
+            .w(theme::scaled_px(460.))
+            .flex()
+            .flex_row()
+            .items_center()
+            // 1.5× the toast gap (8px → 12px) so the larger sync icon breathes
+            // a bit more from the label (user request).
+            .gap_3()
+            .px_4()
+            .py_3()
+            .rounded(theme::scaled_px(8.))
+            .bg(rgb(theme().panel))
+            .border_1()
+            .border_color(rgb(accent))
+            .text_base()
+            .text_color(rgb(theme().text_main))
+            .child(div().flex_shrink_0().child(icon))
+            .child(
+                div()
+                    .flex_1()
+                    .overflow_hidden()
+                    .child(SharedString::from(busy_label(op))),
+            )
+            .into_any()
     }
 
     /// Read the current HEAD branch name + commit SHA from the open repo.
@@ -5268,7 +5378,6 @@ impl KagiApp {
         self.busy_op = Some("checkout");
         self.plan_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCheckout.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedCheckout.t());
         eprintln!("[kagi] async: checkout started");
 
         let plan = modal.plan.clone();
@@ -5348,6 +5457,22 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
+                // Already-up-to-date pull (nothing to pull by local knowledge)
+                // is not worth a blocking popup (user request): snackbar instead.
+                // Background auto-fetch keeps the behind count fresh; the title
+                // carries the "up to date (local knowledge…)" behind-label from
+                // ops::plan_pull when behind == 0.
+                if plan.blockers.is_empty()
+                    && plan.warnings.is_empty()
+                    && plan.title.contains("up to date (local knowledge")
+                {
+                    self.push_toast(
+                        ToastKind::Sync,
+                        SharedString::from(Msg::AlreadyUpToDatePull.t()),
+                    );
+                    self.status_footer = FooterStatus::Idle(SharedString::from(""));
+                    return;
+                }
                 self.pull_modal = Some(PullPlanModal {
                     plan: std::sync::Arc::new(plan),
                     error: None,
@@ -5457,7 +5582,6 @@ impl KagiApp {
         self.busy_op = Some("pull");
         self.pull_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedPull.t());
         eprintln!("[kagi] async: pull started");
 
         let plan = modal.plan.clone();
@@ -5540,6 +5664,20 @@ impl KagiApp {
                     plan.warnings.len(),
                     plan.preview_commits.len(),
                 );
+                // No-op push (already up to date — nothing to push) is not worth
+                // a blocking popup (user request): show a snackbar instead. The
+                // "nothing to push" blocker is the *only* blocker in this case
+                // (see ops::plan_push step 6).
+                if !plan.blockers.is_empty()
+                    && plan.blockers.iter().all(|b| b.contains("nothing to push"))
+                {
+                    self.push_toast(
+                        ToastKind::Sync,
+                        SharedString::from(Msg::AlreadyUpToDatePush.t()),
+                    );
+                    self.status_footer = FooterStatus::Idle(SharedString::from(""));
+                    return;
+                }
                 self.push_modal = Some(PushPlanModal {
                     plan: std::sync::Arc::new(plan),
                     error: None,
@@ -5647,7 +5785,6 @@ impl KagiApp {
         self.busy_op = Some("push");
         self.push_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPush.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedPush.t());
         eprintln!("[kagi] async: push started");
 
         let plan = modal.plan.clone();
@@ -6085,7 +6222,7 @@ impl KagiApp {
 
     // ── T-BCM-030/T-BCM-061: Branch menu plans ───────────────
 
-    pub fn open_merge_modal(&mut self, target: String) {
+    pub fn open_merge_modal(&mut self, target: String, cx: &mut Context<Self>) {
         if self.busy_op.is_some() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
@@ -6094,47 +6231,63 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "merge: repo open error: {}",
-                    e
-                )));
-                return;
-            }
-        };
-        match repo.plan_merge_branch(&target) {
-            Ok((plan, kind)) => {
-                eprintln!(
-                    "[kagi] plan: merge {} blockers={} warnings={} preview_files={} kind={:?}",
-                    target,
-                    plan.blockers.len(),
-                    plan.warnings.len(),
-                    plan.preview_files.len(),
-                    kind
-                );
-                // Current (checked-out) branch = the merge destination, for the
-                // explicit confirm-button label (ADR-0079).
-                let into_branch = self
-                    .branches
-                    .iter()
-                    .find(|(_, is_head)| *is_head)
-                    .map(|(name, _)| name.clone())
-                    .unwrap_or_else(|| "HEAD".to_string());
-                self.merge_modal = Some(MergePlanModal {
-                    target,
-                    into_branch,
-                    plan: std::sync::Arc::new(plan),
-                    kind,
-                    error: None,
-                });
-            }
-            Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("merge plan error: {}", e)));
-            }
-        }
+        // Current (checked-out) branch = the merge destination, captured on the
+        // main thread for the modal's into-branch label (ADR-0079).
+        let into_branch = self
+            .branches
+            .iter()
+            .find(|(_, is_head)| *is_head)
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| "HEAD".to_string());
+
+        // Planning a merge runs an in-memory merge (conflict dry-run) which is
+        // heavy on large repos — do it off the UI thread so the window doesn't
+        // freeze. `busy_op` drives the spinning sync icon + blocks re-entry.
+        self.busy_op = Some("merge-plan");
+        self.status_footer = FooterStatus::Busy(SharedString::from("Planning merge…"));
+        eprintln!("[kagi] async: merge plan started for {}", target);
+        let bg_path = repo_path.clone();
+        let bg_target = target.clone();
+        let task = cx.background_spawn(async move {
+            let repo =
+                kagi::git::Backend::open(&bg_path).map_err(|e| format!("repo open error: {e}"))?;
+            repo.plan_merge_branch(&bg_target)
+                .map_err(|e| format!("{e}"))
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok((plan, kind)) => {
+                        eprintln!(
+                            "[kagi] plan: merge {} blockers={} warnings={} preview_files={} kind={:?}",
+                            target,
+                            plan.blockers.len(),
+                            plan.warnings.len(),
+                            plan.preview_files.len(),
+                            kind
+                        );
+                        app.status_footer = FooterStatus::Idle(SharedString::from(""));
+                        app.merge_modal = Some(MergePlanModal {
+                            target,
+                            into_branch,
+                            plan: std::sync::Arc::new(plan),
+                            kind,
+                            error: None,
+                        });
+                    }
+                    Err(e) => {
+                        app.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                            "merge plan error: {}",
+                            e
+                        )));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub fn cancel_merge_modal(&mut self) {
@@ -6164,7 +6317,7 @@ impl KagiApp {
                     "[kagi] drag-merge: start merge from drag — source={}",
                     source
                 );
-                self.open_merge_modal(source);
+                self.open_merge_modal(source, cx);
             }
             Err(reason) => {
                 eprintln!("[kagi] drag-merge: rejected — {}", reason);
@@ -6205,7 +6358,6 @@ impl KagiApp {
         self.busy_op = Some("merge");
         self.merge_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyMerge.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedMerge.t());
         eprintln!("[kagi] async: merge started");
 
         let plan = modal.plan.clone();
@@ -6357,7 +6509,6 @@ impl KagiApp {
         self.busy_op = Some("checkout");
         self.tracking_checkout_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCheckout.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedCheckout.t());
         eprintln!("[kagi] async: checkout-tracking started");
 
         let plan = modal.plan.clone();
@@ -7081,7 +7232,6 @@ impl KagiApp {
         self.busy_op = Some("amend");
         self.amend_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyAmend.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedAmend.t());
         eprintln!("[kagi] async: amend started");
 
         let plan = modal.plan.clone();
@@ -7309,7 +7459,6 @@ impl KagiApp {
         self.busy_op = Some("stash-pop");
         self.pop_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStashPop.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedStashPop.t());
         eprintln!("[kagi] async: stash-pop started");
 
         let plan = modal.plan.clone();
@@ -7552,7 +7701,6 @@ impl KagiApp {
         self.busy_op = Some("delete-branch");
         self.delete_branch_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranch.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedDeleteBranch.t());
         eprintln!("[kagi] async: delete-branch started");
 
         let plan = modal.plan.clone();
@@ -7765,7 +7913,6 @@ impl KagiApp {
         self.busy_op = Some("discard");
         self.discard_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDiscard.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedDiscard.t());
         eprintln!("[kagi] async: discard started");
 
         let plan = modal.plan.clone();
@@ -8698,7 +8845,6 @@ impl KagiApp {
 
         self.busy_op = Some("commit");
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCommit.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedCommit.t());
         eprintln!("[kagi] async: commit started");
 
         let bg_path = repo_path.clone();
@@ -9872,7 +10018,7 @@ impl KagiApp {
                 }
             }
             BranchAction::MergeIntoCurrent => {
-                self.open_merge_modal(state.name);
+                self.open_merge_modal(state.name, cx);
             }
             BranchAction::CreateWorktreeFromHere => {
                 self.open_create_worktree_modal_prefilled(state.target, state.name, false, cx);
@@ -10420,18 +10566,32 @@ impl Render for KagiApp {
         let compare_view = self.compare_view.clone();
         let main_diff_scroll_handle = self.main_diff_scroll_handle.clone();
 
-        // Clone branch list and modal state for render.
-        let branches = self.branches.clone();
-        let stashes = self.stashes.clone();
+        // Clone modal state for render.
         let is_dirty = self.is_dirty;
-        // W2-SIDEBAR: clone navigator data for sidebar render.
-        let remote_branches = self.remote_branches.clone();
-        let tags = self.tags.clone();
-        let worktrees = self.worktrees.clone();
-        let branch_upstream_info = self.branch_upstream_info.clone();
-        let sidebar_collapsed = self.sidebar_collapsed.clone();
-        let branch_groups_collapsed = self.branch_groups_collapsed.clone();
+        // PERF-SIDEBAR-VIRT: the navigator data (branches/remotes/tags/…) is no
+        // longer cloned for render_sidebar — it's flattened into
+        // `self.sidebar_rows` below and read by the virtualized list processor.
         let sidebar_filter = self.sidebar_filter.clone();
+        // PERF-SIDEBAR-VIRT: flatten the navigator into `self.sidebar_rows`
+        // (honouring collapse + filter) so the "sidebar-list" uniform_list can
+        // virtualize it. Rebuilt every render; the processor reads the field.
+        let sidebar_filter_text: String = self
+            .sidebar_filter
+            .as_ref()
+            .map(|ent| ent.read(cx).value().to_lowercase())
+            .unwrap_or_default();
+        self.sidebar_rows = sidebar::build_sidebar_rows(
+            &self.branches,
+            &self.remote_branches,
+            &self.tags,
+            &self.stashes,
+            &self.worktrees,
+            &self.sidebar_collapsed,
+            &self.branch_groups_collapsed,
+            &sidebar_filter_text,
+        );
+        let sidebar_row_count = self.sidebar_rows.len();
+        let sidebar_scroll_handle = self.sidebar_scroll_handle.clone();
         let plan_modal = self.plan_modal.clone();
         let pull_modal = self.pull_modal.clone();
         let undo_modal = self.undo_modal.clone();
@@ -10862,14 +11022,8 @@ impl Render for KagiApp {
                     main_diff,
                     compare_view,
                     main_diff_scroll_handle,
-                    branches,
-                    remote_branches,
-                    tags,
-                    stashes,
-                    worktrees,
-                    branch_upstream_info,
-                    sidebar_collapsed,
-                    branch_groups_collapsed,
+                    sidebar_row_count,
+                    sidebar_scroll_handle,
                     sidebar_filter,
                     is_dirty,
                     sidebar_width,
@@ -11435,14 +11589,17 @@ impl KagiApp {
                     .child({
                         // Spin for one full turn after a click (user request).
                         const SPIN_MS: u64 = 700;
-                        let spinning = match self.refresh_spin_started {
-                            Some(t) if t.elapsed() < Duration::from_millis(SPIN_MS) => true,
-                            Some(_) => {
+                        // Spin while any async op is in flight (merge plan/exec,
+                        // pull, push, fetch, …) — the user wants the sync icon to
+                        // keep turning during async work — and for one rotation
+                        // after an explicit Refresh click.
+                        if let Some(t) = self.refresh_spin_started {
+                            if t.elapsed() >= Duration::from_millis(SPIN_MS) {
                                 self.refresh_spin_started = None;
-                                false
                             }
-                            None => false,
-                        };
+                        }
+                        let spinning =
+                            self.busy_op.is_some() || self.refresh_spin_started.is_some();
                         let icon = gpui::svg()
                             .path("icons/refresh-cw.svg")
                             .w(theme::scaled_px(16.0))
@@ -11452,7 +11609,9 @@ impl KagiApp {
                             use gpui::AnimationExt as _;
                             icon.with_animation(
                                 "tb-refresh-spin",
-                                gpui::Animation::new(Duration::from_millis(SPIN_MS)),
+                                // Repeat so it spins continuously for the whole
+                                // async op (not just one rotation).
+                                gpui::Animation::new(Duration::from_millis(SPIN_MS)).repeat(),
                                 |svg, delta| {
                                     svg.with_transformation(gpui::Transformation::rotate(
                                         gpui::radians(delta * std::f32::consts::TAU),
@@ -11703,14 +11862,11 @@ impl KagiApp {
         main_diff: Option<MainDiffView>,
         compare_view: Option<CompareView>,
         main_diff_scroll_handle: UniformListScrollHandle,
-        branches: Vec<(String, bool)>,
-        remote_branches: Vec<RemoteBranch>,
-        tags: Vec<Tag>,
-        stashes: Vec<kagi::git::Stash>,
-        worktrees: Vec<Worktree>,
-        branch_upstream_info: HashMap<String, UpstreamInfo>,
-        sidebar_collapsed: HashSet<&'static str>,
-        branch_groups_collapsed: HashSet<String>,
+        // PERF-SIDEBAR-VIRT: the navigator is now virtualized from
+        // `self.sidebar_rows` (built in `render`); render_body only needs the
+        // row count + scroll handle + filter input for `render_sidebar`.
+        sidebar_row_count: usize,
+        sidebar_scroll_handle: UniformListScrollHandle,
         sidebar_filter: Option<Entity<InputState>>,
         is_dirty: bool,
         sidebar_width: f32,
@@ -12038,17 +12194,10 @@ impl KagiApp {
             // ── Left sidebar (W5-MENU: hidden when toggled off) ──
             .when(sidebar_visible, |el| {
                 el.child(sidebar::render_sidebar(
-                    &branches,
-                    &remote_branches,
-                    &tags,
-                    &stashes,
-                    &worktrees,
-                    &branch_upstream_info,
-                    &self.commit_row_index,
-                    &sidebar_collapsed,
-                    &branch_groups_collapsed,
                     sidebar_filter,
                     sidebar_width,
+                    sidebar_row_count,
+                    sidebar_scroll_handle,
                     cx,
                 ))
                 // ── Sidebar divider ───────────────────────
@@ -14112,7 +14261,7 @@ fn render_status_footer(status: FooterStatus) -> impl IntoElement {
 /// stage/unstage lists, which the user wants free of a visible scrollbar. When
 /// `true` the bar follows the theme default (`cx.theme().scrollbar_show`, which
 /// honours the macOS "show scroll bars" setting).
-fn with_vertical_scrollbar(
+pub(super) fn with_vertical_scrollbar(
     id: &'static str,
     handle: &UniformListScrollHandle,
     list: impl IntoElement,
@@ -14692,10 +14841,13 @@ fn render_commit_panel(
     let staged_count = panel.staged.len();
     // W17-DISCARD: count discard-eligible unstaged files (exclude untracked,
     // which the panel surfaces as `Added` rows, and conflicted files).
+    // ADR-0083: untracked (`Added`) rows ARE discardable (deleted with backup),
+    // so they count toward enabling "Discard all" — only conflicted rows are
+    // excluded. Must mirror `discard_partition`.
     let discard_eligible_count = panel
         .unstaged
         .iter()
-        .filter(|f| !panel.is_conflicted(&f.path) && !matches!(f.change, ChangeKind::Added))
+        .filter(|f| !panel.is_conflicted(&f.path))
         .count();
     // T026 / T-COMMIT-009: can_commit uses the effective message — in template
     // mode the assembled fields, else the plain Input value (headless: commit_msg).

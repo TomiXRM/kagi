@@ -190,21 +190,18 @@ pub fn bundle(root: &Path, override_bin: Option<&str>, arch: &str) -> Result<(),
     let stage = dist.join("appimage-zip-stage");
     util::clean_dir(&stage)?;
     std::fs::create_dir_all(&stage).map_err(|e| format!("mkdir {}: {e}", stage.display()))?;
-    let scripts_dir = stage.join("scripts");
-    std::fs::create_dir_all(&scripts_dir)
-        .map_err(|e| format!("mkdir {}: {e}", scripts_dir.display()))?;
 
+    // Flat archive: the install script sits at the zip root next to the AppImage
+    // and icon, so `SCRIPT_DIR` (the script's own dir) is exactly where the
+    // AppImage/icon are — `bash install_linux_desktop.sh` just works (matches the
+    // CANViewer packaging).
     std::fs::copy(appdir.join("kagi.png"), stage.join("kagi.png"))
         .map_err(|e| format!("stage icon: {e}"))?;
-    std::fs::copy(
-        &install_script,
-        scripts_dir.join("install_linux_desktop.sh"),
-    )
-    .map_err(|e| format!("stage install script: {e}"))?;
-    make_executable(&scripts_dir.join("install_linux_desktop.sh"))?;
+    std::fs::copy(&install_script, stage.join("install_linux_desktop.sh"))
+        .map_err(|e| format!("stage install script: {e}"))?;
+    make_executable(&stage.join("install_linux_desktop.sh"))?;
 
-    let mut zip_entries: Vec<String> =
-        vec!["kagi.png".into(), "scripts/install_linux_desktop.sh".into()];
+    let mut zip_entries: Vec<String> = vec!["kagi.png".into(), "install_linux_desktop.sh".into()];
     if built {
         let name = appimage
             .file_name()

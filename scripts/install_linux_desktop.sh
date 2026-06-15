@@ -17,7 +17,17 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 APPIMAGE_PATH="${1:-}"
 if [[ -z "${APPIMAGE_PATH}" ]]; then
-  APPIMAGE_PATH="$(find "${SCRIPT_DIR}" "${ROOT_DIR}/dist" -maxdepth 1 -name "${APP_NAME}-*.AppImage" -print -quit 2>/dev/null || true)"
+  # Search, in order: the script's own dir, the unzip root (where the
+  # distributed `kagi_Linux-AppImage_<arch>.zip` places the AppImage next to
+  # `scripts/`), the current working dir, and `<root>/dist` + `target/dist`
+  # (dev builds).
+  APPIMAGE_PATH="$(find \
+      "${SCRIPT_DIR}" \
+      "${ROOT_DIR}" \
+      "${PWD}" \
+      "${ROOT_DIR}/dist" \
+      "${ROOT_DIR}/target/dist" \
+      -maxdepth 1 -name "${APP_NAME}-*.AppImage" -print -quit 2>/dev/null || true)"
 fi
 
 if [[ -z "${APPIMAGE_PATH}" || ! -f "${APPIMAGE_PATH}" ]]; then
@@ -26,11 +36,19 @@ if [[ -z "${APPIMAGE_PATH}" || ! -f "${APPIMAGE_PATH}" ]]; then
 fi
 
 ICON_SOURCE=""
-if [[ -f "${SCRIPT_DIR}/kagi.png" ]]; then
-  ICON_SOURCE="${SCRIPT_DIR}/kagi.png"
-elif [[ -f "${ROOT_DIR}/assets/icon/icon_512x512.png" ]]; then
-  ICON_SOURCE="${ROOT_DIR}/assets/icon/icon_512x512.png"
-else
+# kagi.png ships at the zip root (next to scripts/); also accept it beside the
+# script, in the cwd, or the in-repo source icon (dev).
+for cand in \
+    "${SCRIPT_DIR}/kagi.png" \
+    "${ROOT_DIR}/kagi.png" \
+    "${PWD}/kagi.png" \
+    "${ROOT_DIR}/assets/icon/icon_512x512.png"; do
+  if [[ -f "${cand}" ]]; then
+    ICON_SOURCE="${cand}"
+    break
+  fi
+done
+if [[ -z "${ICON_SOURCE}" ]]; then
   echo "Could not find ${APP_NAME} icon (kagi.png)." >&2
   exit 1
 fi

@@ -3,6 +3,30 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.10] — 2026-06-15
+
+### Fixed
+- **Linux AppImage installer now works with no arguments.** The zip nested the
+  install script under `scripts/` while the AppImage and icon sat at the root, so
+  `install_linux_desktop.sh` couldn't find them and only printed its usage
+  message. The zip is now **flat** (script next to the AppImage + icon, per
+  ADR-0047), and the script's auto-detect also searches the unzip root — so
+  `unzip … && bash install_linux_desktop.sh` registers Kagi under `~/.local`.
+
+## [0.3.9] — 2026-06-15
+
+### Added
+- **Checkout a remote-only branch from the commit graph.** Right-clicking a
+  commit that carries a remote-only badge (e.g. `origin/feature` with no local
+  branch) now offers **"Checkout '<remote>' as local branch…"** — it creates a
+  local tracking branch and switches to it (the same flow as the sidebar). It is
+  hidden when a local branch of that name already exists.
+
+### Changed
+- **Enter approves / Esc cancels the active modal.** When any confirmation/plan
+  modal is open, Enter confirms it and Esc cancels it.
+- **Taller title bar** for a bit more padding around the tabs and traffic lights.
+
 ## [0.3.8] — 2026-06-15
 
 ### Added

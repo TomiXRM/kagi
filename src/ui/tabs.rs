@@ -35,8 +35,10 @@ pub struct RepoTab {
     pub name: String,
 }
 
-/// Height of the tab strip in pixels.
-const TAB_STRIP_H: f32 = 30.0;
+/// Height of the tab strip in pixels. The strip doubles as the themed title bar
+/// (the OS bar is transparent), so it carries a little extra height for padding
+/// around the tabs and the traffic lights.
+const TAB_STRIP_H: f32 = 40.0;
 /// Minimum / maximum width of a single tab (truncate beyond max).
 const TAB_MIN_W: f32 = 80.0;
 const TAB_MAX_W: f32 = 200.0;

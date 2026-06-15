@@ -43,6 +43,9 @@ pub enum CommitAction {
     Revert,
     CheckoutCommit,
     CheckoutRef(String),
+    /// Checkout a remote-only branch (e.g. `origin/feature`) by creating a local
+    /// tracking branch and switching to it (ADR mirrors the sidebar flow).
+    CheckoutTrackingBranch(String),
     CompareWithHead,
     CompareWithWorkingTree,
     ShowChangedFiles,
@@ -79,6 +82,9 @@ pub struct MenuContext {
     pub detached: bool,
     pub has_local_changes: bool,
     pub refs_here: Vec<RefBadge>,
+    /// Names of all LOCAL branches in the repo (used to tell whether a remote
+    /// badge here is remote-only → offer "checkout as local branch").
+    pub local_branches: Vec<String>,
 }
 
 pub fn build_commit_menu(ctx: &MenuContext) -> Vec<MenuGroup> {
@@ -97,6 +103,28 @@ pub fn build_commit_menu(ctx: &MenuContext) -> Vec<MenuGroup> {
             false,
         ),
     };
+
+    // Remote-only badges at this commit (no local branch of the same name) get a
+    // "checkout as local branch" item — creates a local tracking branch and
+    // switches to it (mirrors the sidebar remote-branch menu).
+    let remote_checkout_items: Vec<MenuItem> = ctx
+        .refs_here
+        .iter()
+        .filter(|b| b.kind == BadgeKind::Remote)
+        .filter(|b| {
+            let local = remote_local_name(b.label.as_ref());
+            !ctx.local_branches.iter().any(|n| n == local)
+        })
+        .map(|b| {
+            let full = b.label.as_ref().to_string();
+            item(
+                CommitAction::CheckoutTrackingBranch(full.clone()),
+                format!("Checkout '{}' as local branch...", full),
+                ItemState::Enabled,
+                false,
+            )
+        })
+        .collect();
 
     vec![
         MenuGroup {
@@ -171,15 +199,19 @@ pub fn build_commit_menu(ctx: &MenuContext) -> Vec<MenuGroup> {
         },
         MenuGroup {
             title: Some("Checkout / Move"),
-            items: vec![
-                item(
-                    CommitAction::CheckoutCommit,
-                    checkout_commit_label(ctx),
-                    checkout_commit_state(ctx),
-                    false,
-                ),
-                checkout_ref_item,
-            ],
+            items: {
+                let mut items = vec![
+                    item(
+                        CommitAction::CheckoutCommit,
+                        checkout_commit_label(ctx),
+                        checkout_commit_state(ctx),
+                        false,
+                    ),
+                    checkout_ref_item,
+                ];
+                items.extend(remote_checkout_items);
+                items
+            },
         },
         MenuGroup {
             title: Some("Compare"),
@@ -563,6 +595,12 @@ fn reset_state(ctx: &MenuContext) -> ItemState {
     }
 }
 
+/// The local branch name a remote badge would map to: `origin/feature` →
+/// `feature` (strips the first path segment, the remote name).
+fn remote_local_name(label: &str) -> &str {
+    label.split_once('/').map(|(_, name)| name).unwrap_or(label)
+}
+
 fn primary_checkout_ref(refs: &[RefBadge]) -> Option<String> {
     refs.iter()
         .find(|badge| badge.kind == BadgeKind::Branch)
@@ -592,6 +630,7 @@ mod tests {
             detached: false,
             has_local_changes: false,
             refs_here: Vec::new(),
+            local_branches: Vec::new(),
         }
     }
 
@@ -760,5 +799,38 @@ mod tests {
     fn truncates_header_by_chars() {
         let header = short_title_header("1234567890", "日本語メッセージがとても長いので切り詰める");
         assert!(header.as_ref().starts_with("12345678 日本語"));
+    }
+
+    fn has_tracking_checkout(groups: &[MenuGroup], remote: &str) -> bool {
+        groups.iter().flat_map(|g| g.items.iter()).any(|i| {
+            matches!(&i.action, CommitAction::CheckoutTrackingBranch(n) if n == remote)
+                && i.state == ItemState::Enabled
+        })
+    }
+
+    #[test]
+    fn remote_only_badge_offers_tracking_checkout() {
+        let mut c = ctx();
+        c.refs_here = vec![RefBadge {
+            kind: BadgeKind::Remote,
+            label: "origin/feature".into(),
+        }];
+        // No local `feature` → offer "checkout as local branch".
+        c.local_branches = vec!["main".to_string()];
+        let groups = build_commit_menu(&c);
+        assert!(has_tracking_checkout(&groups, "origin/feature"));
+    }
+
+    #[test]
+    fn remote_badge_with_local_counterpart_has_no_tracking_checkout() {
+        let mut c = ctx();
+        c.refs_here = vec![RefBadge {
+            kind: BadgeKind::Remote,
+            label: "origin/feature".into(),
+        }];
+        // A local `feature` already exists → no tracking-checkout item.
+        c.local_branches = vec!["main".to_string(), "feature".to_string()];
+        let groups = build_commit_menu(&c);
+        assert!(!has_tracking_checkout(&groups, "origin/feature"));
     }
 }

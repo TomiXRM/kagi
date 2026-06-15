@@ -9625,6 +9625,7 @@ impl KagiApp {
             detached: self.status_summary.is_detached,
             has_local_changes: self.is_dirty,
             refs_here: row.badges.clone(),
+            local_branches: self.branches.iter().map(|(n, _)| n.clone()).collect(),
         })
     }
 
@@ -9940,6 +9941,11 @@ impl KagiApp {
                 } else {
                     self.open_plan_modal(ref_name);
                 }
+            }
+            CommitAction::CheckoutTrackingBranch(remote_name) => {
+                // Remote-only branch: create a local tracking branch + checkout
+                // (same flow as the sidebar remote-branch menu).
+                self.open_tracking_checkout_modal(remote_name);
             }
             CommitAction::CreateBranchHere => {
                 self.open_create_branch_modal(target, cx);

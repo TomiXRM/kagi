@@ -3,6 +3,39 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.12] — 2026-06-16
+
+### Added
+- **Background progress is a single, unified snackbar.** Every slow operation
+  (merge, pull, push, stash, checkout, commit, …) runs off the UI thread and
+  shows one busy snackbar with a large spinning sync icon + label
+  ("Merging…", "Pulling…"). The old per-operation "X: started" toasts are gone
+  (ADR-0086).
+
+### Changed
+- **No-op Push / Pull no longer pops a dialog.** When there's nothing to push
+  or pull (already up to date), Kagi shows a quick "Already up to date"
+  snackbar with the same big sync icon instead of opening a confirmation modal.
+  Real push/pull operations still show the confirm modal (ADR-0086).
+- **Merge no longer freezes the window.** Merge planning and execution run on a
+  background thread; the sync icon spins while busy. The merge confirm button
+  is now just "Merge" (it could overflow the window with long branch names).
+
+### Fixed
+- **Add/add text conflicts show in the conflict editor.** Files added on both
+  sides (no common ancestor) — e.g. `.h` headers — were misdetected as binary
+  and hidden; they now materialize as a 3-way text conflict.
+- **Terminal loads your shell config and scrolls.** The embedded terminal now
+  starts a login + interactive shell (so `~/.zshrc`/PATH apply — `python` etc.
+  resolve) and vertical scrollback works.
+- **Discard handles untracked files.** "Discard all" now includes untracked
+  files (deletes them, backed up to the oplog first) and prunes now-empty
+  folders — equivalent to `git clean -fd` but recoverable (ADR-0083).
+
+### Performance
+- **Branch / tag / remote sidebar is virtualized** (uniform_list), so scrolling
+  and terminal typing stay smooth on large repositories.
+
 ## [0.3.11] — 2026-06-15
 
 ### Fixed

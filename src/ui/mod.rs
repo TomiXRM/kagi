@@ -6097,7 +6097,7 @@ impl KagiApp {
 
     // ── T-BCM-030/T-BCM-061: Branch menu plans ───────────────
 
-    pub fn open_merge_modal(&mut self, target: String) {
+    pub fn open_merge_modal(&mut self, target: String, cx: &mut Context<Self>) {
         if self.busy_op.is_some() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
@@ -6106,47 +6106,63 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "merge: repo open error: {}",
-                    e
-                )));
-                return;
-            }
-        };
-        match repo.plan_merge_branch(&target) {
-            Ok((plan, kind)) => {
-                eprintln!(
-                    "[kagi] plan: merge {} blockers={} warnings={} preview_files={} kind={:?}",
-                    target,
-                    plan.blockers.len(),
-                    plan.warnings.len(),
-                    plan.preview_files.len(),
-                    kind
-                );
-                // Current (checked-out) branch = the merge destination, for the
-                // explicit confirm-button label (ADR-0079).
-                let into_branch = self
-                    .branches
-                    .iter()
-                    .find(|(_, is_head)| *is_head)
-                    .map(|(name, _)| name.clone())
-                    .unwrap_or_else(|| "HEAD".to_string());
-                self.merge_modal = Some(MergePlanModal {
-                    target,
-                    into_branch,
-                    plan: std::sync::Arc::new(plan),
-                    kind,
-                    error: None,
-                });
-            }
-            Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("merge plan error: {}", e)));
-            }
-        }
+        // Current (checked-out) branch = the merge destination, captured on the
+        // main thread for the modal's into-branch label (ADR-0079).
+        let into_branch = self
+            .branches
+            .iter()
+            .find(|(_, is_head)| *is_head)
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| "HEAD".to_string());
+
+        // Planning a merge runs an in-memory merge (conflict dry-run) which is
+        // heavy on large repos — do it off the UI thread so the window doesn't
+        // freeze. `busy_op` drives the spinning sync icon + blocks re-entry.
+        self.busy_op = Some("merge-plan");
+        self.status_footer = FooterStatus::Busy(SharedString::from("Planning merge…"));
+        eprintln!("[kagi] async: merge plan started for {}", target);
+        let bg_path = repo_path.clone();
+        let bg_target = target.clone();
+        let task = cx.background_spawn(async move {
+            let repo =
+                kagi::git::Backend::open(&bg_path).map_err(|e| format!("repo open error: {e}"))?;
+            repo.plan_merge_branch(&bg_target)
+                .map_err(|e| format!("{e}"))
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok((plan, kind)) => {
+                        eprintln!(
+                            "[kagi] plan: merge {} blockers={} warnings={} preview_files={} kind={:?}",
+                            target,
+                            plan.blockers.len(),
+                            plan.warnings.len(),
+                            plan.preview_files.len(),
+                            kind
+                        );
+                        app.status_footer = FooterStatus::Idle(SharedString::from(""));
+                        app.merge_modal = Some(MergePlanModal {
+                            target,
+                            into_branch,
+                            plan: std::sync::Arc::new(plan),
+                            kind,
+                            error: None,
+                        });
+                    }
+                    Err(e) => {
+                        app.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                            "merge plan error: {}",
+                            e
+                        )));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub fn cancel_merge_modal(&mut self) {
@@ -6176,7 +6192,7 @@ impl KagiApp {
                     "[kagi] drag-merge: start merge from drag — source={}",
                     source
                 );
-                self.open_merge_modal(source);
+                self.open_merge_modal(source, cx);
             }
             Err(reason) => {
                 eprintln!("[kagi] drag-merge: rejected — {}", reason);
@@ -9884,7 +9900,7 @@ impl KagiApp {
                 }
             }
             BranchAction::MergeIntoCurrent => {
-                self.open_merge_modal(state.name);
+                self.open_merge_modal(state.name, cx);
             }
             BranchAction::CreateWorktreeFromHere => {
                 self.open_create_worktree_modal_prefilled(state.target, state.name, false, cx);
@@ -11455,14 +11471,17 @@ impl KagiApp {
                     .child({
                         // Spin for one full turn after a click (user request).
                         const SPIN_MS: u64 = 700;
-                        let spinning = match self.refresh_spin_started {
-                            Some(t) if t.elapsed() < Duration::from_millis(SPIN_MS) => true,
-                            Some(_) => {
+                        // Spin while any async op is in flight (merge plan/exec,
+                        // pull, push, fetch, …) — the user wants the sync icon to
+                        // keep turning during async work — and for one rotation
+                        // after an explicit Refresh click.
+                        if let Some(t) = self.refresh_spin_started {
+                            if t.elapsed() >= Duration::from_millis(SPIN_MS) {
                                 self.refresh_spin_started = None;
-                                false
                             }
-                            None => false,
-                        };
+                        }
+                        let spinning =
+                            self.busy_op.is_some() || self.refresh_spin_started.is_some();
                         let icon = gpui::svg()
                             .path("icons/refresh-cw.svg")
                             .w(theme::scaled_px(16.0))
@@ -11472,7 +11491,9 @@ impl KagiApp {
                             use gpui::AnimationExt as _;
                             icon.with_animation(
                                 "tb-refresh-spin",
-                                gpui::Animation::new(Duration::from_millis(SPIN_MS)),
+                                // Repeat so it spins continuously for the whole
+                                // async op (not just one rotation).
+                                gpui::Animation::new(Duration::from_millis(SPIN_MS)).repeat(),
                                 |svg, delta| {
                                     svg.with_transformation(gpui::Transformation::rotate(
                                         gpui::radians(delta * std::f32::consts::TAU),

@@ -971,6 +971,14 @@ pub struct KagiApp {
     /// Scroll handle for the "commit-list" uniform_list.
     /// Stored in KagiApp so it persists across render frames.
     pub commit_scroll_handle: UniformListScrollHandle,
+    /// PERF-SIDEBAR-VIRT: scroll handle for the sidebar navigator
+    /// `uniform_list` ("sidebar-list"). Persisted across frames.
+    pub sidebar_scroll_handle: UniformListScrollHandle,
+    /// PERF-SIDEBAR-VIRT: pre-flattened sidebar rows, rebuilt each render from
+    /// the snapshot fields (branches/remotes/tags/…) honouring collapse +
+    /// filter state. The "sidebar-list" `uniform_list` processor reads
+    /// `self.sidebar_rows[i]`, so the sidebar costs O(visible rows) per frame.
+    pub sidebar_rows: Vec<sidebar::SidebarRow>,
     /// PERF: scroll handle for the commit panel's Unstaged `uniform_list`
     /// (shared across flat/tree views — only one is visible at a time).
     pub cp_unstaged_scroll_handle: UniformListScrollHandle,
@@ -1493,6 +1501,8 @@ impl KagiApp {
             smart_commit_detected_for: None,
             pending_smart_msg: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
+            sidebar_scroll_handle: UniformListScrollHandle::new(),
+            sidebar_rows: Vec::new(),
             cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
             cp_staged_scroll_handle: UniformListScrollHandle::new(),
             branch_targets,
@@ -1636,6 +1646,8 @@ impl KagiApp {
             smart_commit_detected_for: None,
             pending_smart_msg: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
+            sidebar_scroll_handle: UniformListScrollHandle::new(),
+            sidebar_rows: Vec::new(),
             cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
             cp_staged_scroll_handle: UniformListScrollHandle::new(),
             branch_targets: HashMap::new(),
@@ -10420,18 +10432,32 @@ impl Render for KagiApp {
         let compare_view = self.compare_view.clone();
         let main_diff_scroll_handle = self.main_diff_scroll_handle.clone();
 
-        // Clone branch list and modal state for render.
-        let branches = self.branches.clone();
-        let stashes = self.stashes.clone();
+        // Clone modal state for render.
         let is_dirty = self.is_dirty;
-        // W2-SIDEBAR: clone navigator data for sidebar render.
-        let remote_branches = self.remote_branches.clone();
-        let tags = self.tags.clone();
-        let worktrees = self.worktrees.clone();
-        let branch_upstream_info = self.branch_upstream_info.clone();
-        let sidebar_collapsed = self.sidebar_collapsed.clone();
-        let branch_groups_collapsed = self.branch_groups_collapsed.clone();
+        // PERF-SIDEBAR-VIRT: the navigator data (branches/remotes/tags/…) is no
+        // longer cloned for render_sidebar — it's flattened into
+        // `self.sidebar_rows` below and read by the virtualized list processor.
         let sidebar_filter = self.sidebar_filter.clone();
+        // PERF-SIDEBAR-VIRT: flatten the navigator into `self.sidebar_rows`
+        // (honouring collapse + filter) so the "sidebar-list" uniform_list can
+        // virtualize it. Rebuilt every render; the processor reads the field.
+        let sidebar_filter_text: String = self
+            .sidebar_filter
+            .as_ref()
+            .map(|ent| ent.read(cx).value().to_lowercase())
+            .unwrap_or_default();
+        self.sidebar_rows = sidebar::build_sidebar_rows(
+            &self.branches,
+            &self.remote_branches,
+            &self.tags,
+            &self.stashes,
+            &self.worktrees,
+            &self.sidebar_collapsed,
+            &self.branch_groups_collapsed,
+            &sidebar_filter_text,
+        );
+        let sidebar_row_count = self.sidebar_rows.len();
+        let sidebar_scroll_handle = self.sidebar_scroll_handle.clone();
         let plan_modal = self.plan_modal.clone();
         let pull_modal = self.pull_modal.clone();
         let undo_modal = self.undo_modal.clone();
@@ -10862,14 +10888,8 @@ impl Render for KagiApp {
                     main_diff,
                     compare_view,
                     main_diff_scroll_handle,
-                    branches,
-                    remote_branches,
-                    tags,
-                    stashes,
-                    worktrees,
-                    branch_upstream_info,
-                    sidebar_collapsed,
-                    branch_groups_collapsed,
+                    sidebar_row_count,
+                    sidebar_scroll_handle,
                     sidebar_filter,
                     is_dirty,
                     sidebar_width,
@@ -11703,14 +11723,11 @@ impl KagiApp {
         main_diff: Option<MainDiffView>,
         compare_view: Option<CompareView>,
         main_diff_scroll_handle: UniformListScrollHandle,
-        branches: Vec<(String, bool)>,
-        remote_branches: Vec<RemoteBranch>,
-        tags: Vec<Tag>,
-        stashes: Vec<kagi::git::Stash>,
-        worktrees: Vec<Worktree>,
-        branch_upstream_info: HashMap<String, UpstreamInfo>,
-        sidebar_collapsed: HashSet<&'static str>,
-        branch_groups_collapsed: HashSet<String>,
+        // PERF-SIDEBAR-VIRT: the navigator is now virtualized from
+        // `self.sidebar_rows` (built in `render`); render_body only needs the
+        // row count + scroll handle + filter input for `render_sidebar`.
+        sidebar_row_count: usize,
+        sidebar_scroll_handle: UniformListScrollHandle,
         sidebar_filter: Option<Entity<InputState>>,
         is_dirty: bool,
         sidebar_width: f32,
@@ -12038,17 +12055,10 @@ impl KagiApp {
             // ── Left sidebar (W5-MENU: hidden when toggled off) ──
             .when(sidebar_visible, |el| {
                 el.child(sidebar::render_sidebar(
-                    &branches,
-                    &remote_branches,
-                    &tags,
-                    &stashes,
-                    &worktrees,
-                    &branch_upstream_info,
-                    &self.commit_row_index,
-                    &sidebar_collapsed,
-                    &branch_groups_collapsed,
                     sidebar_filter,
                     sidebar_width,
+                    sidebar_row_count,
+                    sidebar_scroll_handle,
                     cx,
                 ))
                 // ── Sidebar divider ───────────────────────
@@ -14112,7 +14122,7 @@ fn render_status_footer(status: FooterStatus) -> impl IntoElement {
 /// stage/unstage lists, which the user wants free of a visible scrollbar. When
 /// `true` the bar follows the theme default (`cx.theme().scrollbar_show`, which
 /// honours the macOS "show scroll bars" setting).
-fn with_vertical_scrollbar(
+pub(super) fn with_vertical_scrollbar(
     id: &'static str,
     handle: &UniformListScrollHandle,
     list: impl IntoElement,

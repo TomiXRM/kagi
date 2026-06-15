@@ -8,15 +8,24 @@
 
 use std::collections::HashSet;
 
-use gpui::{div, prelude::*, px, rgb, Context, Entity, SharedString};
+use gpui::{div, prelude::*, px, rgb, uniform_list, Context, Entity, SharedString};
 use gpui_component::input::{Input, InputState};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::Sizable as _;
 
-use kagi::git::{CommitId, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
+use kagi::git::{CommitId, RemoteBranch, Stash, Tag, Worktree};
 
 use super::theme::{self, theme};
 use super::{BranchDrag, BranchDragGhost, KagiApp};
+
+/// Uniform row height (unscaled) used for **every** virtualized sidebar row.
+///
+/// `uniform_list` requires a single fixed row height — it measures the first
+/// item and applies that height to all of them. Every sidebar row (section
+/// header, group header, branch/remote/tag/worktree/stash leaf, and the
+/// placeholder rows) is therefore pinned to this height so the virtualized
+/// list scrolls correctly regardless of which row happens to be first.
+const SIDEBAR_ROW_H: f32 = 24.0;
 
 // W9-THEME: all colours come from `theme()` (see theme.rs).
 
@@ -305,403 +314,150 @@ fn name_tooltip(
 }
 
 // ──────────────────────────────────────────────────────────────
-// render_sidebar — main entry point
+// PERF-SIDEBAR-VIRT: flat row model for `uniform_list`
 // ──────────────────────────────────────────────────────────────
+//
+// On repos with thousands of refs (e.g. zed: ~4500 branches/tags/remotes)
+// the old per-`for`-loop sidebar fed *every* row into taffy on every full
+// window draw, so unrelated redraws (graph scroll, terminal keystrokes) paid
+// an O(all refs) layout cost. We now flatten the whole navigator into a single
+// `Vec<SidebarRow>` (honouring section/group collapse + the filter) and render
+// it with `uniform_list`, so only the visible window of rows is built and laid
+// out per frame — exactly like the commit list.
+//
+// The flat Vec is rebuilt once per render (cheap: just grouping + collapse
+// pruning) and stashed on `KagiApp.sidebar_rows`; the `uniform_list` processor
+// reads `this.sidebar_rows[i]` and dispatches to `build_sidebar_row`, which
+// reproduces every behaviour the old per-section code had (click/jump,
+// dbl-click checkout, delete, drag, drop-to-merge, context menus, collapse
+// toggles, indentation, tooltips, the ✓ HEAD marker, lane colours).
 
-/// Render the left sidebar as a 4-section Repository Navigator.
+/// One flattened, virtualized sidebar row.
 ///
-/// Sections: LOCAL BRANCHES / REMOTE BRANCHES / TAGS / STASHES
-/// - Each section header shows item count and a collapse toggle (▸/▾).
-/// - A filter input at the top filters all sections by partial name match.
-/// - Existing click/jump/dblclick behaviour is preserved exactly.
+/// Each variant carries exactly the data its renderer needs. The whole list is
+/// uniform-height (`SIDEBAR_ROW_H`), so headers and leaves can be interleaved
+/// inside a single `uniform_list`.
+#[derive(Debug, Clone)]
+pub enum SidebarRow {
+    /// A top-level section header (LOCAL BRANCHES / REMOTE BRANCHES / TAGS /
+    /// WORKTREES / STASHES). `section` is the static collapse key.
+    SectionHeader {
+        section: &'static str,
+        title: &'static str,
+        count: usize,
+        collapsed: bool,
+    },
+    /// A `/`-prefix group header inside LOCAL BRANCHES (collapse key
+    /// `local:<prefix>`).
+    LocalGroupHeader {
+        key: String,
+        prefix: String,
+        count: usize,
+        collapsed: bool,
+    },
+    /// A local branch leaf. `display_label` is what shows (prefix-stripped for
+    /// grouped leaves); `name` is the full branch name used for handlers/id.
+    LocalBranchLeaf {
+        name: String,
+        display_label: String,
+        is_head: bool,
+        indented: bool,
+    },
+    /// REMOTE BRANCHES level-1 header (a remote name). Collapse key
+    /// `remote:<remote>`.
+    RemoteHeader {
+        key: String,
+        remote: String,
+        count: usize,
+        collapsed: bool,
+    },
+    /// REMOTE BRANCHES level-2 sub-group header. Collapse key
+    /// `remote:<remote>:<prefix>`.
+    RemoteSubGroup {
+        key: String,
+        prefix: String,
+        count: usize,
+        collapsed: bool,
+    },
+    /// A remote branch leaf. `display` is the full `origin/…` name (used for
+    /// jump/tooltip/id/drag); `display_label` is the prefix-stripped label;
+    /// `depth` drives indentation (1 = direct under remote, 2 = under
+    /// sub-group).
+    RemoteLeaf {
+        display: String,
+        display_label: String,
+        target: CommitId,
+        depth: u8,
+    },
+    /// A tag leaf.
+    Tag { name: String, target: CommitId },
+    /// A worktree leaf.
+    Worktree {
+        name: String,
+        path_label: String,
+        is_current: bool,
+    },
+    /// A stash leaf.
+    Stash { index: usize, message: String },
+}
+
+/// Build the flat, virtualization-ready sidebar row list.
 ///
-/// New state fields required on `KagiApp` (added in mod.rs):
-/// - `sidebar_collapsed: HashSet<&'static str>`
-/// - `sidebar_filter: Option<Entity<InputState>>`
-/// - `remote_branches: Vec<RemoteBranch>`
-/// - `tags: Vec<Tag>`
-/// - `branch_upstream_info: std::collections::HashMap<String, UpstreamInfo>`
+/// Walks the SAME grouping (`group_by_prefix` / `group_remotes`) and collapse
+/// logic the old per-section renderer used: a collapsed section contributes
+/// only its header; a collapsed group contributes only its header; an active
+/// filter auto-expands every group (matching the previous behaviour). The
+/// result is stored on `KagiApp.sidebar_rows` and consumed by the
+/// `uniform_list` processor.
 #[allow(clippy::too_many_arguments)]
-pub fn render_sidebar(
+pub fn build_sidebar_rows(
     branches: &[(String, bool)],
     remote_branches: &[RemoteBranch],
     tags: &[Tag],
     stashes: &[Stash],
     worktrees: &[Worktree],
-    branch_upstream_info: &std::collections::HashMap<String, UpstreamInfo>,
-    commit_row_index: &std::collections::HashMap<CommitId, usize>,
     collapsed: &HashSet<&'static str>,
     groups_collapsed: &HashSet<String>,
-    filter_input: Option<Entity<InputState>>,
-    width: f32,
-    cx: &mut Context<KagiApp>,
-) -> impl IntoElement {
-    // ── Derive filter text from InputState (if present) ──────────
-    let filter_text: String = if let Some(ref ent) = filter_input {
-        ent.read(cx).value().to_lowercase()
-    } else {
-        String::new()
-    };
+    filter_text: &str,
+) -> Vec<SidebarRow> {
     let has_filter = !filter_text.is_empty();
-
-    // ── Filter helper ─────────────────────────────────────────────
     let matches = |name: &str| -> bool {
         if has_filter {
-            name.to_lowercase().contains(&filter_text)
+            name.to_lowercase().contains(filter_text)
         } else {
             true
         }
     };
 
-    // ── Count filtered items per section ─────────────────────────
-    let local_filtered: Vec<&(String, bool)> =
-        branches.iter().filter(|(n, _)| matches(n)).collect();
-    let remote_filtered: Vec<&RemoteBranch> = remote_branches
-        .iter()
-        .filter(|rb| matches(&rb.name) || matches(&format!("{}/{}", rb.remote, rb.name)))
-        .collect();
-    let tags_filtered: Vec<&Tag> = tags.iter().filter(|t| matches(&t.name)).collect();
-    let stashes_filtered: Vec<&Stash> = stashes.iter().filter(|s| matches(&s.message)).collect();
-    let worktrees_filtered: Vec<&Worktree> = worktrees
-        .iter()
-        .filter(|w| matches(&w.name) || matches(w.path.to_string_lossy().as_ref()))
-        .collect();
+    let mut rows: Vec<SidebarRow> = Vec::new();
 
-    // ── Scrollable inner column ───────────────────────────────────
-    let mut col = div()
-        .id("sidebar-scroll")
-        .flex_1()
-        .min_h(px(0.))
-        .overflow_y_scroll()
-        .flex()
-        .flex_col()
-        .py_1();
-
-    // ── Filter input row ─────────────────────────────────────────
+    // ── LOCAL BRANCHES ───────────────────────────────────────────
     {
-        let filter_area: gpui::AnyElement = if let Some(ref input_entity) = filter_input {
-            div()
-                .px_2()
-                .py_1()
-                .flex_shrink_0()
-                .child(Input::new(input_entity).xsmall().appearance(true))
-                .into_any_element()
-        } else {
-            // Placeholder: clicking creates the InputState (requires Window).
-            let create_handler =
-                cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
-                    this.ensure_sidebar_filter(window, cx);
-                    cx.notify();
-                });
-            div()
-                .id("sidebar-filter-placeholder")
-                .px_2()
-                .py_1()
-                .flex_shrink_0()
-                .on_click(create_handler)
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .child(
-                    div()
-                        .h(theme::scaled_px(22.))
-                        .flex()
-                        .items_center()
-                        .px_2()
-                        .text_xs()
-                        .text_color(rgb(theme().text_muted))
-                        .bg(rgb(theme().bg_base))
-                        .rounded(theme::scaled_px(4.))
-                        .child(SharedString::from("filter…")),
-                )
-                .into_any_element()
-        };
-        col = col.child(filter_area);
-    }
-
-    // ── LOCAL BRANCHES section ────────────────────────────────────
-    {
-        let local_collapsed = collapsed.contains(SECTION_LOCAL);
-        let local_count = branches.len();
-        let header_label = SharedString::from(format!(
-            "{} LOCAL BRANCHES ({})",
-            if local_collapsed { "▸" } else { "▾" },
-            local_count
-        ));
-        let toggle_local = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
-            if this.sidebar_collapsed.contains(SECTION_LOCAL) {
-                this.sidebar_collapsed.remove(SECTION_LOCAL);
-            } else {
-                this.sidebar_collapsed.insert(SECTION_LOCAL);
-            }
-            cx.notify();
+        let section_collapsed = collapsed.contains(SECTION_LOCAL);
+        rows.push(SidebarRow::SectionHeader {
+            section: SECTION_LOCAL,
+            title: "LOCAL BRANCHES",
+            count: branches.len(),
+            collapsed: section_collapsed,
         });
-        col = col.child(
-            div()
-                .id("sidebar-section-local")
-                .px_3()
-                .py_1()
-                .flex_shrink_0()
-                .flex()
-                .flex_row()
-                .items_center()
-                .text_xs()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(theme().text_muted))
-                .on_click(toggle_local)
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .child(header_label),
-        );
-
-        if !local_collapsed {
-            // W13-BRANCHTREE: build a single leaf-row builder so grouped
-            // leaves and top-level leaves share *exactly* the same behaviour
-            // (click=jump / dblclick=checkout / ✕ delete / ✓ current /
-            // ↑↓ upstream / truncate+tooltip). `display_label` is the visible
-            // text (prefix-stripped for grouped leaves); all click handlers,
-            // the row id and the tooltip use the full `branch_name`.
-            let local_leaf_row = |branch_name: &str,
-                                  is_head: bool,
-                                  display_label: &str,
-                                  indented: bool,
-                                  cx: &mut Context<KagiApp>|
-             -> gpui::AnyElement {
-                let upstream_label: Option<SharedString> =
-                    if let Some(u) = branch_upstream_info.get(branch_name) {
-                        if u.ahead > 0 || u.behind > 0 {
-                            Some(SharedString::from(format!(
-                                "\u{2191}{} \u{2193}{}",
-                                u.ahead, u.behind
-                            )))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
-
-                let label = if is_head {
-                    SharedString::from(format!("\u{2713} {}", display_label))
-                } else {
-                    SharedString::from(display_label.to_string())
-                };
-                let text_color = if is_head {
-                    theme().color_success
-                } else {
-                    theme().text_main
-                };
-                let branch_for_click = branch_name.to_string();
-                let full_name = SharedString::from(branch_name.to_string());
-                // Grouped leaves get extra left padding to read as a child.
-                let left_pad = if indented {
-                    theme::scaled_px(28.)
-                } else {
-                    theme::scaled_px(12.)
-                };
-
-                if is_head {
-                    let branch_for_menu = branch_name.to_string();
-                    let head_click =
-                        cx.listener(move |this: &mut KagiApp, _e: &gpui::ClickEvent, _w, cx| {
-                            this.jump_to_branch(&branch_for_click);
-                            cx.notify();
-                        });
-                    let menu_click = cx.listener(
-                        move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
-                            this.open_local_branch_menu(branch_for_menu.clone(), event.position);
-                            cx.stop_propagation();
-                            cx.notify();
-                        },
-                    );
-                    // T-DNDMERGE-001 / ADR-0079 layer 1: the current-branch row
-                    // is the (MVP) drop target.  `drag_over::<BranchDrag>` shows
-                    // a valid-target highlight while a branch is dragged over it;
-                    // `on_drop::<BranchDrag>` dispatches the dragged branch to the
-                    // action layer (`start_merge_from_drag`) — it does NOT call
-                    // git.  Dropping the current branch onto itself is rejected by
-                    // the action; `plan_merge_branch` guards the rest.
-                    let drop_handler = cx.listener(
-                        move |this: &mut KagiApp, payload: &BranchDrag, _window, cx| {
-                            this.start_merge_from_drag(payload.name.clone(), cx);
-                            cx.notify();
-                        },
-                    );
-                    div()
-                        .id(SharedString::from(format!(
-                            "sidebar-branch-{}",
-                            branch_name
-                        )))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .flex_shrink_0()
-                        .pl(left_pad)
-                        .pr_3()
-                        .py_1()
-                        .text_sm()
-                        .text_color(rgb(text_color))
-                        .overflow_hidden()
-                        .on_click(head_click)
-                        .on_mouse_down(gpui::MouseButton::Right, menu_click)
-                        .drag_over::<BranchDrag>(|style, _drag, _window, _cx| {
-                            style
-                                .bg(rgb(theme().selected))
-                                .border_color(rgb(theme().color_branch))
-                        })
-                        .on_drop::<BranchDrag>(drop_handler)
-                        .hover(|style| style.bg(rgb(theme().surface)))
-                        .tooltip(name_tooltip(full_name))
-                        .child(div().flex_1().truncate().child(label))
-                        .when_some(upstream_label, |el, ul| {
-                            el.child(
-                                div()
-                                    .flex_shrink_0()
-                                    .ml_2()
-                                    .text_xs()
-                                    .text_color(rgb(theme().text_sub))
-                                    .child(ul),
-                            )
-                        })
-                        .into_any()
-                } else {
-                    let branch_for_dbl = branch_name.to_string();
-                    let branch_for_delete = branch_name.to_string();
-                    let branch_for_menu = branch_name.to_string();
-                    let click_handler = cx.listener(
-                        move |this: &mut KagiApp, event: &gpui::ClickEvent, _window, cx| {
-                            if event.click_count() >= 2 {
-                                this.open_plan_modal(branch_for_dbl.clone());
-                            } else {
-                                this.jump_to_branch(&branch_for_dbl);
-                            }
-                            cx.notify();
-                        },
-                    );
-                    let delete_handler = cx.listener(
-                        move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
-                            this.open_delete_branch_modal(branch_for_delete.clone());
-                            cx.notify();
-                        },
-                    );
-                    let menu_click = cx.listener(
-                        move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
-                            this.open_local_branch_menu(branch_for_menu.clone(), event.position);
-                            cx.stop_propagation();
-                            cx.notify();
-                        },
-                    );
-                    // T-DNDMERGE-001 / ADR-0079 layer 1: non-current LOCAL branch
-                    // leaves are draggable (remote/tag/folder rows are NOT — they
-                    // are built by other row builders and get no `on_drag`).  The
-                    // drag carries a `BranchDrag { name }` payload and renders a
-                    // ghost chip with the branch name.  `on_drag` fires only after
-                    // a movement threshold, so click-to-jump / dblclick-checkout /
-                    // right-click menu keep working unchanged.
-                    let branch_for_drag = branch_name.to_string();
-                    div()
-                        .id(SharedString::from(format!(
-                            "sidebar-branch-{}",
-                            branch_name
-                        )))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .flex_shrink_0()
-                        .pl(left_pad)
-                        .pr_3()
-                        .py_1()
-                        .text_sm()
-                        .text_color(rgb(text_color))
-                        .overflow_hidden()
-                        .on_click(click_handler)
-                        .on_mouse_down(gpui::MouseButton::Right, menu_click)
-                        .on_drag(
-                            BranchDrag {
-                                name: branch_for_drag.clone(),
-                            },
-                            move |drag: &BranchDrag, _pos, _window, cx| {
-                                let name = SharedString::from(drag.name.clone());
-                                cx.new(|_| BranchDragGhost { name })
-                            },
-                        )
-                        .hover(|style| style.bg(rgb(theme().surface)))
-                        .tooltip(name_tooltip(full_name))
-                        .child(div().flex_1().truncate().child(label))
-                        .when_some(upstream_label, |el, ul| {
-                            el.child(
-                                div()
-                                    .flex_shrink_0()
-                                    .ml_2()
-                                    .text_xs()
-                                    .text_color(rgb(theme().text_sub))
-                                    .child(ul),
-                            )
-                        })
-                        // ✕ delete button: always visible (small, muted) for non-HEAD branches.
-                        .child(
-                            div()
-                                .id(SharedString::from(format!(
-                                    "sidebar-delete-{}",
-                                    branch_name
-                                )))
-                                .flex_shrink_0()
-                                .ml_1()
-                                .px_1()
-                                .text_xs()
-                                .text_color(rgb(theme().text_muted))
-                                .on_click(delete_handler)
-                                .hover(|s| s.text_color(rgb(theme().color_blocker)))
-                                .child(SharedString::from("\u{00d7}")),
-                        )
-                        .into_any()
-                }
-            };
-
-            // Group the (filtered) local branches by `/`-prefix.
-            let local_owned: Vec<(String, bool)> = local_filtered
+        if !section_collapsed {
+            let local_owned: Vec<(String, bool)> = branches
                 .iter()
-                .map(|(n, h)| (n.clone(), *h))
+                .filter(|(n, _)| matches(n))
+                .cloned()
                 .collect();
             let grouped = group_by_prefix(&local_owned, |(n, _)| n.as_str());
-
             for row in &grouped {
                 match row {
                     GroupRow::Group { prefix, count } => {
                         let key = group_key(SECTION_LOCAL, prefix);
-                        // Filter active ⇒ auto-expand so matching leaves show.
                         let group_collapsed = !has_filter && groups_collapsed.contains(&key);
-                        let arrow = if group_collapsed {
-                            "\u{25b8}"
-                        } else {
-                            "\u{25be}"
-                        };
-                        let glabel =
-                            SharedString::from(format!("{} {} ({})", arrow, prefix, count));
-                        let key_for_toggle = key.clone();
-                        let toggle =
-                            cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-                                if this.branch_groups_collapsed.contains(&key_for_toggle) {
-                                    this.branch_groups_collapsed.remove(&key_for_toggle);
-                                } else {
-                                    this.branch_groups_collapsed.insert(key_for_toggle.clone());
-                                }
-                                cx.notify();
-                            });
-                        col = col.child(
-                            div()
-                                .id(SharedString::from(format!("sidebar-group-{}", key)))
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .flex_shrink_0()
-                                .pl(theme::scaled_px(20.))
-                                .pr_3()
-                                .py_1()
-                                .text_sm()
-                                .text_color(rgb(theme().text_sub))
-                                .overflow_hidden()
-                                .on_click(toggle)
-                                .hover(|s| s.bg(rgb(theme().surface)))
-                                .child(div().flex_1().truncate().child(glabel)),
-                        );
+                        rows.push(SidebarRow::LocalGroupHeader {
+                            key,
+                            prefix: prefix.clone(),
+                            count: *count,
+                            collapsed: group_collapsed,
+                        });
                     }
                     GroupRow::GroupedLeaf {
                         prefix,
@@ -712,178 +468,41 @@ pub fn render_sidebar(
                         let group_collapsed = !has_filter && groups_collapsed.contains(&key);
                         if !group_collapsed {
                             let (name, is_head) = item;
-                            col = col.child(local_leaf_row(name, *is_head, leaf_label, true, cx));
+                            rows.push(SidebarRow::LocalBranchLeaf {
+                                name: name.clone(),
+                                display_label: leaf_label.clone(),
+                                is_head: *is_head,
+                                indented: true,
+                            });
                         }
                     }
                     GroupRow::TopLevel { item } => {
                         let (name, is_head) = item;
-                        col = col.child(local_leaf_row(name, *is_head, name, false, cx));
+                        rows.push(SidebarRow::LocalBranchLeaf {
+                            name: name.clone(),
+                            display_label: name.clone(),
+                            is_head: *is_head,
+                            indented: false,
+                        });
                     }
                 }
             }
         }
     }
 
-    // ── REMOTE BRANCHES section ───────────────────────────────────
+    // ── REMOTE BRANCHES ──────────────────────────────────────────
     {
-        let remote_collapsed = collapsed.contains(SECTION_REMOTE);
-        let remote_count = remote_branches.len();
-        let header_label = SharedString::from(format!(
-            "{} REMOTE BRANCHES ({})",
-            if remote_collapsed { "▸" } else { "▾" },
-            remote_count
-        ));
-        let toggle_remote = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
-            if this.sidebar_collapsed.contains(SECTION_REMOTE) {
-                this.sidebar_collapsed.remove(SECTION_REMOTE);
-            } else {
-                this.sidebar_collapsed.insert(SECTION_REMOTE);
-            }
-            cx.notify();
+        let section_collapsed = collapsed.contains(SECTION_REMOTE);
+        rows.push(SidebarRow::SectionHeader {
+            section: SECTION_REMOTE,
+            title: "REMOTE BRANCHES",
+            count: remote_branches.len(),
+            collapsed: section_collapsed,
         });
-        col = col.child(
-            div()
-                .id("sidebar-section-remote")
-                .px_3()
-                .pt_2()
-                .pb_1()
-                .flex_shrink_0()
-                .flex()
-                .flex_row()
-                .items_center()
-                .text_xs()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(theme().text_muted))
-                .on_click(toggle_remote)
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .child(header_label),
-        );
-
-        if !remote_collapsed {
-            // W19-REMOTE-TREE: remote rows are grouped on TWO levels — the
-            // remote name is level 1 (`origin`, `upstream`, …) and the branch
-            // name's own first `/`-segment is level 2 within that remote
-            // (`origin/feat/x` → origin ▸ feat ▸ x; `origin/main` →
-            // origin ▸ main). `RemoteBranch` already stores remote/name split,
-            // so we group on `name` per remote. Jump/tooltip/id all use the
-            // full `origin/…` display name. `depth` sets the indent: 1 for a
-            // leaf directly under a remote, 2 for a leaf under a sub-group.
-            let remote_leaf_row = |display: &str,
-                                   display_label: &str,
-                                   rb_target: CommitId,
-                                   depth: u8,
-                                   cx: &mut Context<KagiApp>|
-             -> gpui::AnyElement {
-                let can_jump = commit_row_index.contains_key(&rb_target);
-                let full_name = SharedString::from(display.to_string());
-                let label = SharedString::from(display_label.to_string());
-                // T-DNDMERGE-001: remote branches are draggable merge sources too
-                // (drop onto the current branch to merge the upstream-only branch
-                // directly via its `remote/name` ref).
-                let drag_name = display.to_string();
-                let left_pad = match depth {
-                    0 => theme::scaled_px(12.),
-                    1 => theme::scaled_px(28.),
-                    _ => theme::scaled_px(44.),
-                };
-                if can_jump {
-                    let display_for_menu = display.to_string();
-                    let target_for_menu = rb_target.clone();
-                    let click_handler = cx.listener(
-                        move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
-                            this.jump_to_commit(&rb_target);
-                            cx.notify();
-                        },
-                    );
-                    let menu_click = cx.listener(
-                        move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
-                            this.open_remote_branch_menu(
-                                display_for_menu.clone(),
-                                target_for_menu.clone(),
-                                event.position,
-                            );
-                            cx.stop_propagation();
-                            cx.notify();
-                        },
-                    );
-                    div()
-                        .id(SharedString::from(format!("sidebar-remote-{}", display)))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .flex_shrink_0()
-                        .pl(left_pad)
-                        .pr_3()
-                        .py_1()
-                        .text_sm()
-                        .text_color(rgb(theme().color_remote))
-                        .overflow_hidden()
-                        .on_click(click_handler)
-                        .on_mouse_down(gpui::MouseButton::Right, menu_click)
-                        .cursor_grab()
-                        .on_drag(
-                            BranchDrag {
-                                name: drag_name.clone(),
-                            },
-                            move |drag: &BranchDrag, _pos, _window, cx| {
-                                let name = SharedString::from(drag.name.clone());
-                                cx.new(|_| BranchDragGhost { name })
-                            },
-                        )
-                        .hover(|style| style.bg(rgb(theme().surface)))
-                        .tooltip(name_tooltip(full_name))
-                        .child(div().flex_1().truncate().child(label))
-                        .into_any()
-                } else {
-                    let display_for_menu = display.to_string();
-                    let target_for_menu = rb_target.clone();
-                    let menu_click = cx.listener(
-                        move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
-                            this.open_remote_branch_menu(
-                                display_for_menu.clone(),
-                                target_for_menu.clone(),
-                                event.position,
-                            );
-                            cx.stop_propagation();
-                            cx.notify();
-                        },
-                    );
-                    div()
-                        .id(SharedString::from(format!("sidebar-remote-{}", display)))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .flex_shrink_0()
-                        .pl(left_pad)
-                        .pr_3()
-                        .py_1()
-                        .text_sm()
-                        .text_color(rgb(theme().color_remote))
-                        .overflow_hidden()
-                        .on_mouse_down(gpui::MouseButton::Right, menu_click)
-                        .cursor_grab()
-                        .on_drag(
-                            BranchDrag {
-                                name: drag_name.clone(),
-                            },
-                            move |drag: &BranchDrag, _pos, _window, cx| {
-                                let name = SharedString::from(drag.name.clone());
-                                cx.new(|_| BranchDragGhost { name })
-                            },
-                        )
-                        .hover(|style| style.bg(rgb(theme().surface)))
-                        .tooltip(name_tooltip(full_name))
-                        .child(div().flex_1().truncate().child(label))
-                        .into_any()
-                }
-            };
-
-            // Build (remote, name, display, target) tuples then group on two
-            // levels via `group_remotes`. `display` is the full `origin/…`
-            // name used for jump/tooltip/id; `name` (remote stripped) drives
-            // the level-2 prefix grouping.
-            let remote_owned: Vec<(String, String, String, CommitId)> = remote_filtered
+        if !section_collapsed {
+            let remote_owned: Vec<(String, String, String, CommitId)> = remote_branches
                 .iter()
+                .filter(|rb| matches(&rb.name) || matches(&format!("{}/{}", rb.remote, rb.name)))
                 .map(|rb| {
                     (
                         rb.remote.clone(),
@@ -898,49 +517,17 @@ pub fn render_sidebar(
                 |(r, _, _, _)| r.as_str(),
                 |(_, n, _, _)| n.as_str(),
             );
-
-            // A sub-group is hidden when either its own key OR its parent
-            // remote key is collapsed; the level-1 remote collapse also hides
-            // every descendant. Filter active ⇒ everything auto-expands.
             for row in &grouped {
                 match row {
                     RemoteRow::Remote { remote, count } => {
                         let key = remote_key(remote);
                         let collapsed_now = !has_filter && groups_collapsed.contains(&key);
-                        let arrow = if collapsed_now {
-                            "\u{25b8}"
-                        } else {
-                            "\u{25be}"
-                        };
-                        let glabel =
-                            SharedString::from(format!("{} {} ({})", arrow, remote, count));
-                        let key_for_toggle = key.clone();
-                        let toggle =
-                            cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-                                if this.branch_groups_collapsed.contains(&key_for_toggle) {
-                                    this.branch_groups_collapsed.remove(&key_for_toggle);
-                                } else {
-                                    this.branch_groups_collapsed.insert(key_for_toggle.clone());
-                                }
-                                cx.notify();
-                            });
-                        col = col.child(
-                            div()
-                                .id(SharedString::from(format!("sidebar-group-{}", key)))
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .flex_shrink_0()
-                                .pl(theme::scaled_px(20.))
-                                .pr_3()
-                                .py_1()
-                                .text_sm()
-                                .text_color(rgb(theme().text_sub))
-                                .overflow_hidden()
-                                .on_click(toggle)
-                                .hover(|s| s.bg(rgb(theme().surface)))
-                                .child(div().flex_1().truncate().child(glabel)),
-                        );
+                        rows.push(SidebarRow::RemoteHeader {
+                            key,
+                            remote: remote.clone(),
+                            count: *count,
+                            collapsed: collapsed_now,
+                        });
                     }
                     RemoteRow::SubGroup {
                         remote,
@@ -948,47 +535,17 @@ pub fn render_sidebar(
                         count,
                     } => {
                         let parent_key = remote_key(remote);
-                        let remote_collapsed_now =
-                            !has_filter && groups_collapsed.contains(&parent_key);
-                        if remote_collapsed_now {
+                        if !has_filter && groups_collapsed.contains(&parent_key) {
                             continue;
                         }
                         let key = remote_group_key(remote, prefix);
                         let collapsed_now = !has_filter && groups_collapsed.contains(&key);
-                        let arrow = if collapsed_now {
-                            "\u{25b8}"
-                        } else {
-                            "\u{25be}"
-                        };
-                        let glabel =
-                            SharedString::from(format!("{} {} ({})", arrow, prefix, count));
-                        let key_for_toggle = key.clone();
-                        let toggle =
-                            cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-                                if this.branch_groups_collapsed.contains(&key_for_toggle) {
-                                    this.branch_groups_collapsed.remove(&key_for_toggle);
-                                } else {
-                                    this.branch_groups_collapsed.insert(key_for_toggle.clone());
-                                }
-                                cx.notify();
-                            });
-                        col = col.child(
-                            div()
-                                .id(SharedString::from(format!("sidebar-group-{}", key)))
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .flex_shrink_0()
-                                .pl(theme::scaled_px(32.))
-                                .pr_3()
-                                .py_1()
-                                .text_sm()
-                                .text_color(rgb(theme().text_sub))
-                                .overflow_hidden()
-                                .on_click(toggle)
-                                .hover(|s| s.bg(rgb(theme().surface)))
-                                .child(div().flex_1().truncate().child(glabel)),
-                        );
+                        rows.push(SidebarRow::RemoteSubGroup {
+                            key,
+                            prefix: prefix.clone(),
+                            count: *count,
+                            collapsed: collapsed_now,
+                        });
                     }
                     RemoteRow::RemoteLeaf {
                         remote,
@@ -996,14 +553,16 @@ pub fn render_sidebar(
                         item,
                     } => {
                         let parent_key = remote_key(remote);
-                        let remote_collapsed_now =
-                            !has_filter && groups_collapsed.contains(&parent_key);
-                        if remote_collapsed_now {
+                        if !has_filter && groups_collapsed.contains(&parent_key) {
                             continue;
                         }
                         let (_r, _n, display, target) = item;
-                        col =
-                            col.child(remote_leaf_row(display, leaf_label, target.clone(), 1, cx));
+                        rows.push(SidebarRow::RemoteLeaf {
+                            display: display.clone(),
+                            display_label: leaf_label.clone(),
+                            target: target.clone(),
+                            depth: 1,
+                        });
                     }
                     RemoteRow::SubGroupedLeaf {
                         remote,
@@ -1020,244 +579,666 @@ pub fn render_sidebar(
                             continue;
                         }
                         let (_r, _n, display, target) = item;
-                        col =
-                            col.child(remote_leaf_row(display, leaf_label, target.clone(), 2, cx));
+                        rows.push(SidebarRow::RemoteLeaf {
+                            display: display.clone(),
+                            display_label: leaf_label.clone(),
+                            target: target.clone(),
+                            depth: 2,
+                        });
                     }
                 }
             }
         }
     }
 
-    // ── TAGS section ──────────────────────────────────────────────
+    // ── TAGS ─────────────────────────────────────────────────────
     {
-        let tags_collapsed = collapsed.contains(SECTION_TAGS);
-        let tags_count = tags.len();
-        let header_label = SharedString::from(format!(
-            "{} TAGS ({})",
-            if tags_collapsed { "▸" } else { "▾" },
-            tags_count
-        ));
-        let toggle_tags = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
-            if this.sidebar_collapsed.contains(SECTION_TAGS) {
-                this.sidebar_collapsed.remove(SECTION_TAGS);
+        let section_collapsed = collapsed.contains(SECTION_TAGS);
+        rows.push(SidebarRow::SectionHeader {
+            section: SECTION_TAGS,
+            title: "TAGS",
+            count: tags.len(),
+            collapsed: section_collapsed,
+        });
+        if !section_collapsed {
+            for tag in tags.iter().filter(|t| matches(&t.name)) {
+                rows.push(SidebarRow::Tag {
+                    name: tag.name.clone(),
+                    target: tag.target.clone(),
+                });
+            }
+        }
+    }
+
+    // ── WORKTREES ────────────────────────────────────────────────
+    {
+        let section_collapsed = collapsed.contains(SECTION_WORKTREES);
+        rows.push(SidebarRow::SectionHeader {
+            section: SECTION_WORKTREES,
+            title: "WORKTREES",
+            count: worktrees.len(),
+            collapsed: section_collapsed,
+        });
+        if !section_collapsed {
+            for wt in worktrees
+                .iter()
+                .filter(|w| matches(&w.name) || matches(w.path.to_string_lossy().as_ref()))
+            {
+                rows.push(SidebarRow::Worktree {
+                    name: wt.name.clone(),
+                    path_label: wt.path.display().to_string(),
+                    is_current: wt.is_current,
+                });
+            }
+        }
+    }
+
+    // ── STASHES ──────────────────────────────────────────────────
+    {
+        let section_collapsed = collapsed.contains(SECTION_STASHES);
+        rows.push(SidebarRow::SectionHeader {
+            section: SECTION_STASHES,
+            title: "STASHES",
+            count: stashes.len(),
+            collapsed: section_collapsed,
+        });
+        if !section_collapsed {
+            for stash in stashes.iter().filter(|s| matches(&s.message)) {
+                rows.push(SidebarRow::Stash {
+                    index: stash.index,
+                    message: stash.message.clone(),
+                });
+            }
+        }
+    }
+
+    rows
+}
+
+// ──────────────────────────────────────────────────────────────
+// Per-row builders (called from the `uniform_list` processor)
+// ──────────────────────────────────────────────────────────────
+
+/// Dispatch a single flat row to its renderer. Reads live data from `this`
+/// (upstream info, commit index) so handlers see current state, mirroring the
+/// commit-list per-row builders.
+fn build_sidebar_row(
+    this: &KagiApp,
+    row: &SidebarRow,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    match row {
+        SidebarRow::SectionHeader {
+            section,
+            title,
+            count,
+            collapsed,
+        } => build_section_header(section, title, *count, *collapsed, cx),
+        SidebarRow::LocalGroupHeader {
+            key,
+            prefix,
+            count,
+            collapsed,
+        } => build_group_header(key, prefix, *count, *collapsed, theme::scaled_px(20.), cx),
+        SidebarRow::LocalBranchLeaf {
+            name,
+            display_label,
+            is_head,
+            indented,
+        } => build_local_branch_leaf(this, name, *is_head, display_label, *indented, cx),
+        SidebarRow::RemoteHeader {
+            key,
+            remote,
+            count,
+            collapsed,
+        } => build_group_header(key, remote, *count, *collapsed, theme::scaled_px(20.), cx),
+        SidebarRow::RemoteSubGroup {
+            key,
+            prefix,
+            count,
+            collapsed,
+        } => build_group_header(key, prefix, *count, *collapsed, theme::scaled_px(32.), cx),
+        SidebarRow::RemoteLeaf {
+            display,
+            display_label,
+            target,
+            depth,
+        } => build_remote_leaf(this, display, display_label, target.clone(), *depth, cx),
+        SidebarRow::Tag { name, target } => build_tag_row(this, name, target.clone(), cx),
+        SidebarRow::Worktree {
+            name,
+            path_label,
+            is_current,
+        } => build_worktree_row(name, path_label, *is_current),
+        SidebarRow::Stash { index, message } => build_stash_row(*index, message, cx),
+    }
+}
+
+/// Section header row (LOCAL BRANCHES / …). Click toggles `sidebar_collapsed`.
+fn build_section_header(
+    section: &'static str,
+    title: &'static str,
+    count: usize,
+    collapsed: bool,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let label = SharedString::from(format!(
+        "{} {} ({})",
+        if collapsed { "\u{25b8}" } else { "\u{25be}" },
+        title,
+        count
+    ));
+    let toggle = cx.listener(
+        move |this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
+            if this.sidebar_collapsed.contains(section) {
+                this.sidebar_collapsed.remove(section);
             } else {
-                this.sidebar_collapsed.insert(SECTION_TAGS);
+                this.sidebar_collapsed.insert(section);
             }
             cx.notify();
+        },
+    );
+    div()
+        .id(SharedString::from(format!("sidebar-section-{}", section)))
+        .h(theme::scaled_px(SIDEBAR_ROW_H))
+        .px_3()
+        .flex()
+        .flex_row()
+        .items_center()
+        .text_xs()
+        .font_weight(gpui::FontWeight::BOLD)
+        .text_color(rgb(theme().text_muted))
+        .on_click(toggle)
+        .hover(|s| s.bg(rgb(theme().surface)))
+        .child(label)
+        .into_any()
+}
+
+/// A `/`-prefix group header (local groups, remote level-1, remote level-2).
+/// Click toggles `branch_groups_collapsed` for `key`. `left_pad` sets indent.
+fn build_group_header(
+    key: &str,
+    label_text: &str,
+    count: usize,
+    collapsed: bool,
+    left_pad: gpui::Pixels,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let arrow = if collapsed { "\u{25b8}" } else { "\u{25be}" };
+    let glabel = SharedString::from(format!("{} {} ({})", arrow, label_text, count));
+    let key_for_toggle = key.to_string();
+    let toggle = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+        if this.branch_groups_collapsed.contains(&key_for_toggle) {
+            this.branch_groups_collapsed.remove(&key_for_toggle);
+        } else {
+            this.branch_groups_collapsed.insert(key_for_toggle.clone());
+        }
+        cx.notify();
+    });
+    div()
+        .id(SharedString::from(format!("sidebar-group-{}", key)))
+        .h(theme::scaled_px(SIDEBAR_ROW_H))
+        .flex()
+        .flex_row()
+        .items_center()
+        .pl(left_pad)
+        .pr_3()
+        .text_sm()
+        .text_color(rgb(theme().text_sub))
+        .overflow_hidden()
+        .on_click(toggle)
+        .hover(|s| s.bg(rgb(theme().surface)))
+        .child(div().flex_1().truncate().child(glabel))
+        .into_any()
+}
+
+/// A local branch leaf — preserves the full behaviour of the old
+/// `local_leaf_row`: HEAD rows are drop targets (`drag_over`/`on_drop` →
+/// `start_merge_from_drag`) with click=jump + right-click menu; non-HEAD rows
+/// are draggable (`BranchDrag` + ghost), click=jump / dbl-click=checkout
+/// (`open_plan_modal`), have a right-click menu and a ✕ delete button; both
+/// show the ✓ HEAD marker, ↑↓ upstream counts, truncation + tooltip.
+fn build_local_branch_leaf(
+    this: &KagiApp,
+    branch_name: &str,
+    is_head: bool,
+    display_label: &str,
+    indented: bool,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let upstream_label: Option<SharedString> =
+        this.branch_upstream_info.get(branch_name).and_then(|u| {
+            if u.ahead > 0 || u.behind > 0 {
+                Some(SharedString::from(format!(
+                    "\u{2191}{} \u{2193}{}",
+                    u.ahead, u.behind
+                )))
+            } else {
+                None
+            }
         });
-        col = col.child(
-            div()
-                .id("sidebar-section-tags")
-                .px_3()
-                .pt_2()
-                .pb_1()
-                .flex_shrink_0()
-                .flex()
-                .flex_row()
-                .items_center()
-                .text_xs()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(theme().text_muted))
-                .on_click(toggle_tags)
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .child(header_label),
+
+    let label = if is_head {
+        SharedString::from(format!("\u{2713} {}", display_label))
+    } else {
+        SharedString::from(display_label.to_string())
+    };
+    let text_color = if is_head {
+        theme().color_success
+    } else {
+        theme().text_main
+    };
+    let full_name = SharedString::from(branch_name.to_string());
+    let left_pad = if indented {
+        theme::scaled_px(28.)
+    } else {
+        theme::scaled_px(12.)
+    };
+
+    if is_head {
+        let branch_for_click = branch_name.to_string();
+        let branch_for_menu = branch_name.to_string();
+        let head_click = cx.listener(move |this: &mut KagiApp, _e: &gpui::ClickEvent, _w, cx| {
+            this.jump_to_branch(&branch_for_click);
+            cx.notify();
+        });
+        let menu_click = cx.listener(
+            move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
+                this.open_local_branch_menu(branch_for_menu.clone(), event.position);
+                cx.stop_propagation();
+                cx.notify();
+            },
         );
-
-        if !tags_collapsed {
-            for tag in &tags_filtered {
-                let tag_target = tag.target.clone();
-                let tag_label = SharedString::from(tag.name.clone());
-                let can_jump = commit_row_index.contains_key(&tag_target);
-
-                let full_name = SharedString::from(tag.name.clone());
-                let row: gpui::AnyElement = if can_jump {
-                    let click_handler = cx.listener(
-                        move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
-                            this.jump_to_commit(&tag_target);
-                            cx.notify();
-                        },
-                    );
+        let drop_handler = cx.listener(
+            move |this: &mut KagiApp, payload: &BranchDrag, _window, cx| {
+                this.start_merge_from_drag(payload.name.clone(), cx);
+                cx.notify();
+            },
+        );
+        div()
+            .id(SharedString::from(format!(
+                "sidebar-branch-{}",
+                branch_name
+            )))
+            .h(theme::scaled_px(SIDEBAR_ROW_H))
+            .flex()
+            .flex_row()
+            .items_center()
+            .pl(left_pad)
+            .pr_3()
+            .text_sm()
+            .text_color(rgb(text_color))
+            .overflow_hidden()
+            .on_click(head_click)
+            .on_mouse_down(gpui::MouseButton::Right, menu_click)
+            .drag_over::<BranchDrag>(|style, _drag, _window, _cx| {
+                style
+                    .bg(rgb(theme().selected))
+                    .border_color(rgb(theme().color_branch))
+            })
+            .on_drop::<BranchDrag>(drop_handler)
+            .hover(|style| style.bg(rgb(theme().surface)))
+            .tooltip(name_tooltip(full_name))
+            .child(div().flex_1().truncate().child(label))
+            .when_some(upstream_label, |el, ul| {
+                el.child(
                     div()
-                        .id(SharedString::from(format!("sidebar-tag-{}", tag.name)))
-                        .flex()
-                        .flex_row()
-                        .items_center()
                         .flex_shrink_0()
-                        .px_3()
-                        .py_1()
-                        .text_sm()
-                        .text_color(rgb(theme().color_tag))
-                        .overflow_hidden()
-                        .on_click(click_handler)
-                        .hover(|style| style.bg(rgb(theme().surface)))
-                        .tooltip(name_tooltip(full_name))
-                        .child(div().flex_1().truncate().child(tag_label))
-                        .into_any()
+                        .ml_2()
+                        .text_xs()
+                        .text_color(rgb(theme().text_sub))
+                        .child(ul),
+                )
+            })
+            .into_any()
+    } else {
+        let branch_for_dbl = branch_name.to_string();
+        let branch_for_delete = branch_name.to_string();
+        let branch_for_menu = branch_name.to_string();
+        let branch_for_drag = branch_name.to_string();
+        let click_handler = cx.listener(
+            move |this: &mut KagiApp, event: &gpui::ClickEvent, _window, cx| {
+                if event.click_count() >= 2 {
+                    this.open_plan_modal(branch_for_dbl.clone());
                 } else {
-                    div()
-                        .id(SharedString::from(format!("sidebar-tag-{}", tag.name)))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .flex_shrink_0()
-                        .px_3()
-                        .py_1()
-                        .text_sm()
-                        .text_color(rgb(theme().color_tag))
-                        .overflow_hidden()
-                        .tooltip(name_tooltip(full_name))
-                        .child(div().flex_1().truncate().child(tag_label))
-                        .into_any()
-                };
-
-                col = col.child(row);
-            }
-        }
-    }
-
-    // ── WORKTREES section ───────────────────────────────────────
-    {
-        let worktrees_collapsed = collapsed.contains(SECTION_WORKTREES);
-        let worktrees_count = worktrees.len();
-        let header_label = SharedString::from(format!(
-            "{} WORKTREES ({})",
-            if worktrees_collapsed { "▸" } else { "▾" },
-            worktrees_count
-        ));
-        let toggle_worktrees =
-            cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
-                if this.sidebar_collapsed.contains(SECTION_WORKTREES) {
-                    this.sidebar_collapsed.remove(SECTION_WORKTREES);
-                } else {
-                    this.sidebar_collapsed.insert(SECTION_WORKTREES);
+                    this.jump_to_branch(&branch_for_dbl);
                 }
                 cx.notify();
-            });
-        col = col.child(
-            div()
-                .id("sidebar-section-worktrees")
-                .px_3()
-                .pt_2()
-                .pb_1()
-                .flex_shrink_0()
-                .flex()
-                .flex_row()
-                .items_center()
-                .text_xs()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(theme().text_muted))
-                .on_click(toggle_worktrees)
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .child(header_label),
+            },
         );
-
-        if !worktrees_collapsed {
-            for wt in &worktrees_filtered {
-                let path_label = wt.path.display().to_string();
-                let label = if wt.is_current {
-                    SharedString::from(format!("\u{2713} {}  {}", wt.name, path_label))
-                } else {
-                    SharedString::from(format!("{}  {}", wt.name, path_label))
-                };
-                let full_name = label.clone();
-                let text_color = if wt.is_current {
-                    theme().color_success
-                } else {
-                    theme().text_sub
-                };
-                col = col.child(
-                    div()
-                        .id(SharedString::from(format!("sidebar-worktree-{}", wt.name)))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .flex_shrink_0()
-                        .px_3()
-                        .py_1()
-                        .text_sm()
-                        .text_color(rgb(text_color))
-                        .overflow_hidden()
-                        .tooltip(name_tooltip(full_name))
-                        .child(div().flex_1().truncate().child(label)),
-                );
-            }
-        }
-    }
-
-    // ── STASHES section ───────────────────────────────────────────
-    {
-        let stashes_collapsed = collapsed.contains(SECTION_STASHES);
-        let stashes_count = stashes.len();
-        let header_label = SharedString::from(format!(
-            "{} STASHES ({})",
-            if stashes_collapsed { "▸" } else { "▾" },
-            stashes_count
-        ));
-        let toggle_stashes =
-            cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
-                if this.sidebar_collapsed.contains(SECTION_STASHES) {
-                    this.sidebar_collapsed.remove(SECTION_STASHES);
-                } else {
-                    this.sidebar_collapsed.insert(SECTION_STASHES);
-                }
+        let delete_handler = cx.listener(
+            move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
+                this.open_delete_branch_modal(branch_for_delete.clone());
                 cx.notify();
-            });
-        col = col.child(
-            div()
-                .id("sidebar-section-stashes")
-                .px_3()
-                .pt_2()
-                .pb_1()
-                .flex_shrink_0()
-                .flex()
-                .flex_row()
-                .items_center()
-                .text_xs()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(theme().text_muted))
-                .on_click(toggle_stashes)
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .child(header_label),
+            },
         );
-
-        if !stashes_collapsed {
-            for stash in &stashes_filtered {
-                let idx = stash.index;
-                let raw_label = format!("stash@{{{}}}: {}", idx, stash.message);
-                let full_name = SharedString::from(raw_label.clone());
-
-                let click_handler = cx.listener(
-                    move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
-                        this.open_stash_apply_modal(idx);
-                        cx.notify();
-                    },
-                );
-
-                col = col.child(
+        let menu_click = cx.listener(
+            move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
+                this.open_local_branch_menu(branch_for_menu.clone(), event.position);
+                cx.stop_propagation();
+                cx.notify();
+            },
+        );
+        div()
+            .id(SharedString::from(format!(
+                "sidebar-branch-{}",
+                branch_name
+            )))
+            .h(theme::scaled_px(SIDEBAR_ROW_H))
+            .flex()
+            .flex_row()
+            .items_center()
+            .pl(left_pad)
+            .pr_3()
+            .text_sm()
+            .text_color(rgb(text_color))
+            .overflow_hidden()
+            .on_click(click_handler)
+            .on_mouse_down(gpui::MouseButton::Right, menu_click)
+            .on_drag(
+                BranchDrag {
+                    name: branch_for_drag.clone(),
+                },
+                move |drag: &BranchDrag, _pos, _window, cx| {
+                    let name = SharedString::from(drag.name.clone());
+                    cx.new(|_| BranchDragGhost { name })
+                },
+            )
+            .hover(|style| style.bg(rgb(theme().surface)))
+            .tooltip(name_tooltip(full_name))
+            .child(div().flex_1().truncate().child(label))
+            .when_some(upstream_label, |el, ul| {
+                el.child(
                     div()
-                        .id(("sidebar-stash", idx))
-                        .flex()
-                        .flex_row()
-                        .items_center()
                         .flex_shrink_0()
-                        .px_3()
-                        .py_1()
-                        .text_sm()
-                        .text_color(rgb(theme().color_warning))
-                        .overflow_hidden()
-                        .on_click(click_handler)
-                        .hover(|style| style.bg(rgb(theme().surface)))
-                        .tooltip(name_tooltip(full_name))
-                        .child(
-                            div()
-                                .flex_1()
-                                .truncate()
-                                .child(SharedString::from(raw_label)),
-                        ),
-                );
-            }
-        }
+                        .ml_2()
+                        .text_xs()
+                        .text_color(rgb(theme().text_sub))
+                        .child(ul),
+                )
+            })
+            .child(
+                div()
+                    .id(SharedString::from(format!(
+                        "sidebar-delete-{}",
+                        branch_name
+                    )))
+                    .flex_shrink_0()
+                    .ml_1()
+                    .px_1()
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .on_click(delete_handler)
+                    .hover(|s| s.text_color(rgb(theme().color_blocker)))
+                    .child(SharedString::from("\u{00d7}")),
+            )
+            .into_any()
     }
+}
+
+/// A remote branch leaf — preserves the old `remote_leaf_row`: jumpable rows
+/// get click=jump + right-click `open_remote_branch_menu`; all rows are
+/// draggable merge sources (`BranchDrag` + ghost) with the menu; indentation
+/// by `depth`; truncation + tooltip; remote lane colour.
+fn build_remote_leaf(
+    this: &KagiApp,
+    display: &str,
+    display_label: &str,
+    rb_target: CommitId,
+    depth: u8,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let can_jump = this.commit_row_index.contains_key(&rb_target);
+    let full_name = SharedString::from(display.to_string());
+    let label = SharedString::from(display_label.to_string());
+    let drag_name = display.to_string();
+    let left_pad = match depth {
+        0 => theme::scaled_px(12.),
+        1 => theme::scaled_px(28.),
+        _ => theme::scaled_px(44.),
+    };
+    let display_for_menu = display.to_string();
+    let target_for_menu = rb_target.clone();
+    let menu_click = cx.listener(
+        move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
+            this.open_remote_branch_menu(
+                display_for_menu.clone(),
+                target_for_menu.clone(),
+                event.position,
+            );
+            cx.stop_propagation();
+            cx.notify();
+        },
+    );
+
+    let base = div()
+        .id(SharedString::from(format!("sidebar-remote-{}", display)))
+        .h(theme::scaled_px(SIDEBAR_ROW_H))
+        .flex()
+        .flex_row()
+        .items_center()
+        .pl(left_pad)
+        .pr_3()
+        .text_sm()
+        .text_color(rgb(theme().color_remote))
+        .overflow_hidden()
+        .on_mouse_down(gpui::MouseButton::Right, menu_click)
+        .cursor_grab()
+        .on_drag(
+            BranchDrag {
+                name: drag_name.clone(),
+            },
+            move |drag: &BranchDrag, _pos, _window, cx| {
+                let name = SharedString::from(drag.name.clone());
+                cx.new(|_| BranchDragGhost { name })
+            },
+        )
+        .hover(|style| style.bg(rgb(theme().surface)))
+        .tooltip(name_tooltip(full_name))
+        .child(div().flex_1().truncate().child(label));
+
+    if can_jump {
+        let click_handler = cx.listener(
+            move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
+                this.jump_to_commit(&rb_target);
+                cx.notify();
+            },
+        );
+        base.on_click(click_handler).into_any()
+    } else {
+        base.into_any()
+    }
+}
+
+/// A tag leaf — click jumps to the tag's target when it is in the loaded graph.
+fn build_tag_row(
+    this: &KagiApp,
+    tag_name: &str,
+    tag_target: CommitId,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let tag_label = SharedString::from(tag_name.to_string());
+    let full_name = SharedString::from(tag_name.to_string());
+    let can_jump = this.commit_row_index.contains_key(&tag_target);
+    let base = div()
+        .id(SharedString::from(format!("sidebar-tag-{}", tag_name)))
+        .h(theme::scaled_px(SIDEBAR_ROW_H))
+        .flex()
+        .flex_row()
+        .items_center()
+        .px_3()
+        .text_sm()
+        .text_color(rgb(theme().color_tag))
+        .overflow_hidden()
+        .tooltip(name_tooltip(full_name))
+        .child(div().flex_1().truncate().child(tag_label));
+    if can_jump {
+        let click_handler = cx.listener(
+            move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
+                this.jump_to_commit(&tag_target);
+                cx.notify();
+            },
+        );
+        base.hover(|style| style.bg(rgb(theme().surface)))
+            .on_click(click_handler)
+            .into_any()
+    } else {
+        base.into_any()
+    }
+}
+
+/// A worktree leaf (read-only; ✓ marks the current worktree).
+fn build_worktree_row(name: &str, path_label: &str, is_current: bool) -> gpui::AnyElement {
+    let label = if is_current {
+        SharedString::from(format!("\u{2713} {}  {}", name, path_label))
+    } else {
+        SharedString::from(format!("{}  {}", name, path_label))
+    };
+    let full_name = label.clone();
+    let text_color = if is_current {
+        theme().color_success
+    } else {
+        theme().text_sub
+    };
+    div()
+        .id(SharedString::from(format!("sidebar-worktree-{}", name)))
+        .h(theme::scaled_px(SIDEBAR_ROW_H))
+        .flex()
+        .flex_row()
+        .items_center()
+        .px_3()
+        .text_sm()
+        .text_color(rgb(text_color))
+        .overflow_hidden()
+        .tooltip(name_tooltip(full_name))
+        .child(div().flex_1().truncate().child(label))
+        .into_any()
+}
+
+/// A stash leaf — click opens the stash apply modal.
+fn build_stash_row(index: usize, message: &str, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let raw_label = format!("stash@{{{}}}: {}", index, message);
+    let full_name = SharedString::from(raw_label.clone());
+    let click_handler = cx.listener(
+        move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
+            this.open_stash_apply_modal(index);
+            cx.notify();
+        },
+    );
+    div()
+        .id(("sidebar-stash", index))
+        .h(theme::scaled_px(SIDEBAR_ROW_H))
+        .flex()
+        .flex_row()
+        .items_center()
+        .px_3()
+        .text_sm()
+        .text_color(rgb(theme().color_warning))
+        .overflow_hidden()
+        .on_click(click_handler)
+        .hover(|style| style.bg(rgb(theme().surface)))
+        .tooltip(name_tooltip(full_name))
+        .child(
+            div()
+                .flex_1()
+                .truncate()
+                .child(SharedString::from(raw_label)),
+        )
+        .into_any()
+}
+
+// ──────────────────────────────────────────────────────────────
+// render_sidebar — main entry point
+// ──────────────────────────────────────────────────────────────
+
+/// Render the left sidebar as a 4-section Repository Navigator.
+///
+/// Sections: LOCAL BRANCHES / REMOTE BRANCHES / TAGS / WORKTREES / STASHES.
+///
+/// PERF-SIDEBAR-VIRT: the section/group/leaf rows are virtualized with
+/// `uniform_list` over the pre-flattened `this.sidebar_rows` (built by
+/// [`build_sidebar_rows`] in `render`), so only the visible rows are built and
+/// laid out per frame — fixing the O(all refs) taffy cost on huge repos. The
+/// filter input is pinned above the list (it has its own height). All section
+/// headers, group headers and leaves share `SIDEBAR_ROW_H` so the uniform list
+/// scrolls correctly. Every click/jump/dbl-click/drag/drop/context-menu/
+/// collapse behaviour from the old per-`for`-loop version is preserved in the
+/// per-row builders.
+///
+/// State fields on `KagiApp`:
+/// - `sidebar_rows: Vec<SidebarRow>` (the virtualization source)
+/// - `sidebar_scroll_handle: UniformListScrollHandle`
+/// - `sidebar_collapsed` / `branch_groups_collapsed` / `sidebar_filter`
+pub fn render_sidebar(
+    filter_input: Option<Entity<InputState>>,
+    width: f32,
+    row_count: usize,
+    scroll_handle: gpui::UniformListScrollHandle,
+    cx: &mut Context<KagiApp>,
+) -> impl IntoElement {
+    // ── Filter input row (pinned above the virtualized list) ──────
+    let filter_area: gpui::AnyElement = if let Some(ref input_entity) = filter_input {
+        div()
+            .px_2()
+            .py_1()
+            .flex_shrink_0()
+            .child(Input::new(input_entity).xsmall().appearance(true))
+            .into_any_element()
+    } else {
+        // Placeholder: clicking creates the InputState (requires Window).
+        let create_handler = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
+            this.ensure_sidebar_filter(window, cx);
+            cx.notify();
+        });
+        div()
+            .id("sidebar-filter-placeholder")
+            .px_2()
+            .py_1()
+            .flex_shrink_0()
+            .on_click(create_handler)
+            .hover(|s| s.bg(rgb(theme().surface)))
+            .child(
+                div()
+                    .h(theme::scaled_px(22.))
+                    .flex()
+                    .items_center()
+                    .px_2()
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .bg(rgb(theme().bg_base))
+                    .rounded(theme::scaled_px(4.))
+                    .child(SharedString::from("filter…")),
+            )
+            .into_any_element()
+    };
+
+    // ── Virtualized navigator list ────────────────────────────────
+    let scrollbar_handle = scroll_handle.clone();
+    let list = super::with_vertical_scrollbar(
+        "sidebar-list-scroll",
+        &scrollbar_handle,
+        uniform_list(
+            "sidebar-list",
+            row_count,
+            cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                range
+                    .filter_map(|i| {
+                        this.sidebar_rows
+                            .get(i)
+                            .cloned()
+                            .map(|row| build_sidebar_row(this, &row, cx))
+                    })
+                    .collect::<Vec<_>>()
+            }),
+        )
+        .track_scroll(scroll_handle)
+        .flex_1()
+        .min_h(px(0.))
+        .py_1(),
+        // Hidden scrollbar (user request): the branch list still scrolls via
+        // wheel/trackpad, just without the overlay bar.
+        false,
+    );
 
     // ── Fixed-width outer shell ───────────────────────────────────
     div()
@@ -1270,7 +1251,8 @@ pub fn render_sidebar(
         .flex()
         .flex_col()
         .bg(rgb(theme().sidebar))
-        .child(col)
+        .child(filter_area)
+        .child(list)
 }
 
 // ──────────────────────────────────────────────────────────────

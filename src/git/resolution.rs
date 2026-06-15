@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use git2::{IndexEntry, MergeFileOptions, Repository};
+use git2::{FileMode, IndexEntry, MergeFileInput, MergeFileOptions, Repository};
 
 use super::GitError;
 
@@ -549,10 +549,19 @@ fn materialize_zdiff3(repo: &Repository, path: &Path) -> Option<String> {
         if p != path {
             continue;
         }
-        // merge_file_from_index needs all three stages present; modify-delete /
-        // add-add cannot be materialized this way.
+        // merge_file_from_index needs all three index stages present.
         let (ancestor, our, their) = match (entry.ancestor, entry.our, entry.their) {
             (Some(a), Some(o), Some(t)) => (a, o, t),
+            // add/add: the file was added independently on both sides, so there
+            // is no common base. merge_file_from_index can't be used (no
+            // ancestor stage), but this is still a TEXT conflict — materialize it
+            // against an empty base so the editor shows both sides instead of
+            // wrongly falling back to the "binary / single-sided" message.
+            (None, Some(o), Some(t)) => {
+                return merge_addadd(repo, path, &o, &t, true)
+                    .or_else(|| merge_addadd(repo, path, &o, &t, false));
+            }
+            // modify/delete and other single-sided shapes have no text merge.
             _ => return None,
         };
         // Try zdiff3 first, then standard.
@@ -585,6 +594,53 @@ fn merge_with_style(
     let result = repo
         .merge_file_from_index(ancestor, our, their, Some(&mut opts))
         .ok()?;
+    Some(String::from_utf8_lossy(result.content()).into_owned())
+}
+
+/// Materialize an **add/add** conflict (no common base): a content merge of
+/// `our` vs `their` against an empty ancestor via `git2::merge_file`. Returns
+/// `None` if either blob is unreadable or the merge errors. The whole file
+/// becomes a conflict region (both sides "added" everything), which is exactly
+/// what the 3-way editor needs to show. (Bug: add/add `.h` files were shown as
+/// "binary / single-sided" because `merge_file_from_index` requires a base.)
+fn merge_addadd(
+    repo: &Repository,
+    path: &Path,
+    our: &IndexEntry,
+    their: &IndexEntry,
+    zdiff3: bool,
+) -> Option<String> {
+    let our_blob = repo.find_blob(our.id).ok()?;
+    let their_blob = repo.find_blob(their.id).ok()?;
+    let path_str = path.to_string_lossy();
+
+    let mut ancestor_in = MergeFileInput::new();
+    ancestor_in
+        .content(b"")
+        .path(path_str.as_ref())
+        .mode(Some(FileMode::Blob));
+    let mut our_in = MergeFileInput::new();
+    our_in
+        .content(our_blob.content())
+        .path(path_str.as_ref())
+        .mode(Some(FileMode::Blob));
+    let mut their_in = MergeFileInput::new();
+    their_in
+        .content(their_blob.content())
+        .path(path_str.as_ref())
+        .mode(Some(FileMode::Blob));
+
+    let mut opts = MergeFileOptions::new();
+    opts.ancestor_label("Base");
+    opts.our_label("Current");
+    opts.their_label("Incoming");
+    if zdiff3 {
+        opts.style_zdiff3(true);
+    } else {
+        opts.style_standard(true);
+    }
+
+    let result = git2::merge_file(&ancestor_in, &our_in, &their_in, Some(&mut opts)).ok()?;
     Some(String::from_utf8_lossy(result.content()).into_owned())
 }
 

@@ -263,6 +263,83 @@ fn classifies_binary_conflict() {
 }
 
 // ────────────────────────────────────────────────────────────
+// add/add conflict (no common base) is a TEXT merge, not "binary"
+// (regression: add/add .h files showed as "binary / single-sided")
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn add_add_text_conflict_materializes_as_text() {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir);
+
+    // Common ancestor has NO header.h.
+    write_file(dir, "README", "base\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    // feature adds header.h one way.
+    git(dir, &["checkout", "-q", "-b", "feature"]);
+    write_file(
+        dir,
+        "header.h",
+        "#ifndef H\n#define H\nint feature_fn(void);\n#endif\n",
+    );
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "feature header"]);
+
+    // main adds header.h a different way → add/add (no common base).
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(
+        dir,
+        "header.h",
+        "#ifndef H\n#define H\nint main_fn(void);\n#endif\n",
+    );
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "main header"]);
+
+    git_allow_fail(dir, &["merge", "feature"]);
+
+    let repo = Repository::open(dir).unwrap();
+
+    // Classified as a text Content conflict (not Binary).
+    let session = detect_conflict_session(&repo).expect("conflict session");
+    let file = session
+        .files
+        .iter()
+        .find(|f| f.path.to_string_lossy() == "header.h")
+        .expect("header.h should be a conflict");
+    assert_eq!(
+        file.kind,
+        ConflictKind::Content,
+        "an add/add text file must not be classified Binary"
+    );
+
+    // The fix: an add/add text conflict materializes to marker text (it returned
+    // None before — no ancestor stage for merge_file_from_index — so the editor
+    // wrongly showed the "binary / single-sided" message).
+    let mut buffer = ResolutionBuffer::from_repo(&repo).expect("build buffer");
+    let path = Path::new("header.h");
+    let markers = buffer
+        .materialized_markers(&repo, path)
+        .expect("add/add text conflict must materialize markers (regression: was None)");
+    assert!(
+        markers.contains("feature_fn(void)") && markers.contains("main_fn(void)"),
+        "markers must show both sides:\n{markers}"
+    );
+
+    // And a hunk model builds from those markers (so the editor shows hunks).
+    assert!(
+        buffer.ensure_hunks(path, &markers),
+        "ensure_hunks should succeed"
+    );
+    assert!(
+        buffer.hunk_model(path).is_some(),
+        "a hunk model must exist for an add/add text conflict"
+    );
+}
+
+// ────────────────────────────────────────────────────────────
 // T-CONFLICT-005: resolution buffer
 // ────────────────────────────────────────────────────────────
 

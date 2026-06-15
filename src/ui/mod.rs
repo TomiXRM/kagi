@@ -227,6 +227,13 @@ fn validate_merge_from_drag(
     Err(format!("Branch '{}' is not a branch.", source))
 }
 
+/// Bundled UI sans family (OFL Inter), loaded at startup via `add_fonts`, so the
+/// UI looks identical on every OS instead of relying on the platform default.
+pub const UI_FONT: &str = "Inter";
+/// Bundled monospace family (OFL JetBrains Mono) for the terminal / conflict
+/// editor / code — replaces the macOS-only "Menlo" fallback.
+pub const MONO_FONT: &str = "JetBrains Mono";
+
 // Sidebar / panel width limits.
 const SIDEBAR_MIN: f32 = 120.0;
 const SIDEBAR_MAX: f32 = 400.0;
@@ -1116,6 +1123,11 @@ pub struct KagiApp {
     /// Transient overlay opened from the menu bar (branch picker / About /
     /// Keyboard Shortcuts).  `None` when no menu overlay is visible.
     pub menu_overlay: Option<commands::MenuOverlay>,
+    /// Linux/FreeBSD client-side menu dropdown currently open from the in-app
+    /// menu bar. Native macOS menus are provided by `cx.set_menus`, so this is
+    /// only read on Linux/FreeBSD (dead on other targets).
+    #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+    pub platform_menu_open: Option<usize>,
     // ── W6-TABSPEED: async tab loading + stale-while-revalidate cache ──
     /// Cache of snapshot-derived display data keyed by repository path
     /// (ADR-0030).  A cached tab is applied instantly on switch (zero-frame
@@ -1532,6 +1544,7 @@ impl KagiApp {
             sidebar_visible: true,
             inspector_visible: true,
             menu_overlay: None,
+            platform_menu_open: None,
             // W6-TABSPEED
             tab_cache: HashMap::new(),
             switch_generation: 0,
@@ -1674,6 +1687,7 @@ impl KagiApp {
             sidebar_visible: true,
             inspector_visible: true,
             menu_overlay: None,
+            platform_menu_open: None,
             // W6-TABSPEED
             tab_cache: HashMap::new(),
             switch_generation: 0,
@@ -10357,25 +10371,32 @@ impl Render for KagiApp {
         // screen (genuine repo-open failure at startup; headless log compat).
         if let Some(err) = self.error.clone().filter(|e| !e.is_empty()) {
             // ── Error / usage state ──────────────────────────
-            return div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .size_full()
-                .bg(rgb(theme().bg_base))
-                .child(
-                    div()
-                        .text_xl()
-                        .text_color(rgb(theme().text_main))
-                        .child(err),
-                )
-                .into_any();
+            // Merge: keep the platform window shell (Linux titlebar/menu) from
+            // our branch AND the bundled UI font from origin.
+            return self.platform_window_shell(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .size_full()
+                    .font_family(UI_FONT)
+                    .bg(rgb(theme().bg_base))
+                    .child(
+                        div()
+                            .text_xl()
+                            .text_color(rgb(theme().text_main))
+                            .child(err),
+                    )
+                    .into_any(),
+                cx,
+            );
         }
 
         // W4-TABS / ADR-0028: no open tabs → Welcome screen.
         if self.tabs.is_empty() {
-            return self.render_welcome(cx).into_any();
+            let welcome = self.render_welcome(cx).into_any();
+            return self.platform_window_shell(welcome, cx);
         }
 
         // ── Pre-fetch detail for panel (if any row is selected) ─
@@ -10710,7 +10731,9 @@ impl Render for KagiApp {
             .flex()
             .flex_col()
             .size_full()
+            .font_family(UI_FONT)
             .bg(rgb(theme().bg_base))
+            .children(self.render_platform_titlebar(cx))
             // Key events only dispatch along the focus path, so the root must
             // own (and initially hold) focus for window-wide actions to work.
             .when_some(self.root_focus.clone(), |el, fh| el.track_focus(&fh))
@@ -11001,6 +11024,8 @@ impl Render for KagiApp {
             .child(self.render_status_bar(status_footer, bottom_panel_open, cx))
             // ── W3-NOTIFY: toast stack (above everything) ──────
             .children(self.render_toasts(cx))
+            // Linux/FreeBSD in-app menu dropdown (native menu bar is macOS-only).
+            .children(self.render_platform_menu_dropdown(cx))
             .into_any()
     }
 }
@@ -15481,6 +15506,24 @@ pub fn run_app(app_state: KagiApp) {
     });
 
     application.run(move |cx: &mut App| {
+        // Bundle fonts so the UI + monospace look identical on every OS. Linux
+        // has no "Menlo"/SF and the platform default is inconsistent, which made
+        // fonts render broken on Ubuntu (user-reported). OFL: Inter (UI) +
+        // JetBrains Mono (terminal / conflict editor / code). The family names
+        // here MUST match the fonts' name tables (UI_FONT / MONO_FONT).
+        if let Err(e) = cx.text_system().add_fonts(vec![
+            std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-Regular.ttf")),
+            std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-Bold.ttf")),
+            std::borrow::Cow::Borrowed(include_bytes!(
+                "../../assets/fonts/JetBrainsMono-Regular.ttf"
+            )),
+            std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/JetBrainsMono-Bold.ttf")),
+        ]) {
+            eprintln!("[kagi] fonts: add_fonts failed (UI may fall back): {e}");
+        } else {
+            eprintln!("[kagi] fonts: loaded Inter + JetBrains Mono");
+        }
+
         // T025: initialize gpui-component (registers key bindings, themes, etc.)
         gpui_component::init(cx);
 
@@ -15553,29 +15596,41 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
     use gpui::{size, Bounds, WindowBounds, WindowOptions};
 
     // KAGI_WINDOW=WxH (dev/testing only): override the initial window size
-    // so layout behaviour at small sizes can be verified headlessly.
-    let (win_w, win_h) = std::env::var("KAGI_WINDOW")
-        .ok()
-        .and_then(|s| {
-            let (w, h) = s.split_once('x')?;
-            Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
-        })
-        .unwrap_or((1440.0, 920.0));
+    // verbatim so layout behaviour at specific sizes can be verified headlessly.
+    let (win_w, win_h) = if let Some((w, h)) = std::env::var("KAGI_WINDOW").ok().and_then(|s| {
+        let (w, h) = s.split_once('x')?;
+        Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
+    }) {
+        (w, h)
+    } else {
+        // Preferred initial size, but clamped to the active display so the window
+        // never opens off-screen on small / scaled displays (user-reported). The
+        // ideal size is kept on big screens; only the upper bound is a fraction
+        // of the display (so 4K/ultrawide don't get a needlessly huge window).
+        const PREF_W: f32 = 1440.0;
+        const PREF_H: f32 = 920.0;
+        const MIN_W: f32 = 900.0;
+        const MIN_H: f32 = 600.0;
+        match cx.primary_display() {
+            Some(display) => {
+                let ds = display.bounds().size;
+                let max_w = f32::from(ds.width) * 0.92;
+                let max_h = f32::from(ds.height) * 0.90;
+                // clamp(low, high) with low never above high (tiny displays fill).
+                (
+                    PREF_W.clamp(MIN_W.min(max_w), max_w),
+                    PREF_H.clamp(MIN_H.min(max_h), max_h),
+                )
+            }
+            None => (PREF_W, PREF_H),
+        }
+    };
     let bounds = Bounds::centered(None, size(px(win_w), px(win_h)), cx);
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
-            // Themed title bar: make the native bar transparent so kagi's own
-            // top content (the themed tab strip) fills the title-bar area
-            // instead of the default OS gray. The OS still draws the traffic
-            // lights, positioned over our content; the tab strip reserves space
-            // for them and is marked as a window-drag region (see
-            // render_tab_strip). Mirrors gpui-component's TitleBar options.
-            titlebar: Some(gpui::TitlebarOptions {
-                title: None,
-                appears_transparent: true,
-                traffic_light_position: Some(gpui::point(px(9.0), px(9.0))),
-            }),
+            titlebar: main_window_titlebar(),
+            window_decorations: main_window_decorations(),
             ..Default::default()
         },
         |window, cx| {
@@ -15626,6 +15681,313 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
         },
     )
     .unwrap();
+}
+
+#[cfg(target_os = "macos")]
+fn main_window_titlebar() -> Option<gpui::TitlebarOptions> {
+    // Themed title bar: make the native bar transparent so kagi's own top
+    // content fills the title-bar area. macOS still draws the traffic lights,
+    // positioned over our content; the tab strip reserves space for them.
+    Some(gpui::TitlebarOptions {
+        title: None,
+        appears_transparent: true,
+        traffic_light_position: Some(gpui::point(px(9.0), px(9.0))),
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn main_window_titlebar() -> Option<gpui::TitlebarOptions> {
+    Some(gpui_component::TitleBar::title_bar_options())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn main_window_titlebar() -> Option<gpui::TitlebarOptions> {
+    Some(gpui::TitlebarOptions {
+        title: Some("Kagi".into()),
+        appears_transparent: false,
+        traffic_light_position: None,
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn main_window_decorations() -> Option<gpui::WindowDecorations> {
+    Some(gpui::WindowDecorations::Client)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn main_window_decorations() -> Option<gpui::WindowDecorations> {
+    None
+}
+
+impl KagiApp {
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn render_platform_titlebar(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let mut menu_row = div().flex().items_center().h_full().gap_1().pr_3();
+
+        // ADR-0085: drive the heads from the canonical MENU_BAR, skipping
+        // `mac_only` sections (the Edit menu — see ADR-0085 §4).  The dropdown
+        // uses the same filtered iterator, so `ix` lines up between the head and
+        // its panel (and with the left-offset maths below).
+        for (ix, section) in commands::linux_menu_sections().enumerate() {
+            let open = self.platform_menu_open == Some(ix);
+            let click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+                this.platform_menu_open = if this.platform_menu_open == Some(ix) {
+                    None
+                } else {
+                    Some(ix)
+                };
+                cx.stop_propagation();
+                cx.notify();
+            });
+            let suppress_drag = |_: &gpui::MouseDownEvent, window: &mut Window, cx: &mut App| {
+                window.prevent_default();
+                cx.stop_propagation();
+            };
+
+            menu_row = menu_row.child(
+                div()
+                    .id(("platform-menu-head", ix))
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .px_2()
+                    .text_sm()
+                    .rounded_sm()
+                    .text_color(rgb(theme().text_main))
+                    .bg(if open {
+                        rgb(theme().selected)
+                    } else {
+                        rgb(theme().panel)
+                    })
+                    .hover(|s| s.bg(rgb(theme().selected)))
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, suppress_drag)
+                    .on_click(click)
+                    .child(SharedString::from(section.label)),
+            );
+        }
+
+        Some(
+            gpui_component::TitleBar::new()
+                .child(menu_row)
+                .into_any_element(),
+        )
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    fn render_platform_titlebar(&mut self, _cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        None
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn render_platform_menu_dropdown(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let ix = self.platform_menu_open?;
+        // ADR-0085: index into the *filtered* sections (same iterator the heads
+        // use), so the open panel matches the head it was launched from and the
+        // left offset (computed from `ix`) lines up.
+        let section = commands::linux_menu_sections().nth(ix)?;
+        let dismiss = cx.listener(|this, _: &gpui::MouseDownEvent, _window, cx| {
+            this.platform_menu_open = None;
+            cx.stop_propagation();
+            cx.notify();
+        });
+
+        let mut panel = div()
+            // Block mouse events from reaching the dismiss backdrop below —
+            // without this, pressing a menu item fires the backdrop's
+            // on_mouse_down first, the menu unmounts, and the item's on_click
+            // (down+up on the same element) never completes. Same fix as the
+            // commit context menu (see context_menu.rs).
+            .occlude()
+            .absolute()
+            .top_1()
+            .left(theme::scaled_px(8.0 + ix as f32 * 78.0))
+            .w(theme::scaled_px(260.0))
+            .py_1()
+            .rounded(theme::scaled_px(6.0))
+            .border_1()
+            .border_color(rgb(theme().selected))
+            .bg(rgb(theme().panel))
+            .shadow_lg();
+
+        // ADR-0085: one clickable command row, reused for plain `Command` nodes
+        // and for the inline-expanded Theme/Language submenu rows.  `row_ix` is
+        // only used to build a stable element id.
+        let command_row = |this: &Self,
+                           cx: &mut Context<Self>,
+                           row_ix: usize,
+                           id: &'static str|
+         -> gpui::AnyElement {
+            let command = commands::command(id);
+            let state = commands::command_state(this, id);
+            let enabled = matches!(state, commands::CommandState::Enabled);
+            // `platform_menu_label` adds the "✓ " active marker for the current
+            // theme / language (no-op for ordinary commands).
+            let label = platform_menu_label(id, command.map(|c| c.label).unwrap_or(id));
+            let key = command.and_then(|c| c.keystroke).unwrap_or("");
+            let invoke = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+                if commands::is_enabled(this, id) {
+                    this.platform_menu_open = None;
+                    this.handle_menu_command(id, window, cx);
+                    cx.notify();
+                }
+                cx.stop_propagation();
+            });
+            let disabled_reason = match state {
+                commands::CommandState::Disabled(reason) => Some(reason),
+                _ => None,
+            };
+
+            div()
+                .id(SharedString::from(format!(
+                    "platform-menu-item-{ix}-{row_ix}"
+                )))
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .px_3()
+                .py(theme::scaled_px(5.0))
+                .text_sm()
+                .text_color(if enabled {
+                    rgb(theme().text_main)
+                } else {
+                    rgb(theme().text_muted)
+                })
+                .when(enabled, |s| {
+                    s.cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme().selected)))
+                        .on_click(invoke)
+                })
+                .when_some(disabled_reason, |s, reason| {
+                    s.tooltip(move |window, cx| Tooltip::new(reason.to_string()).build(window, cx))
+                })
+                .child(div().flex_1().truncate().child(SharedString::from(label)))
+                .when(!key.is_empty(), |s| {
+                    s.child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(theme().text_muted))
+                            .child(SharedString::from(key)),
+                    )
+                })
+                .into_any_element()
+        };
+
+        // `row_ix` is a running counter (submenus expand to several rows, so it
+        // diverges from `item_ix`) — it only needs to be unique within a panel.
+        let mut row_ix = 0usize;
+        for (item_ix, node) in section.items.iter().enumerate() {
+            match node {
+                commands::MenuNode::Separator => {
+                    panel = panel.child(
+                        div()
+                            .id(SharedString::from(format!(
+                                "platform-menu-separator-{ix}-{item_ix}"
+                            )))
+                            .my_1()
+                            .h(px(1.0))
+                            .bg(rgb(theme().surface)),
+                    );
+                }
+                commands::MenuNode::Command(id) => {
+                    panel = panel.child(command_row(self, cx, row_ix, id));
+                    row_ix += 1;
+                }
+                // ADR-0085 §3: the dropdown has no nested-panel support, so the
+                // dynamic submenus expand inline as command rows (the "✓ " marker
+                // is applied by `platform_menu_label`) — preserving the previous
+                // View-menu behaviour on Linux.
+                commands::MenuNode::Submenu(commands::DynSubmenu::Theme) => {
+                    for id in commands::THEME_COMMAND_IDS {
+                        panel = panel.child(command_row(self, cx, row_ix, id));
+                        row_ix += 1;
+                    }
+                }
+                commands::MenuNode::Submenu(commands::DynSubmenu::Language) => {
+                    for id in commands::LANG_COMMAND_IDS {
+                        panel = panel.child(command_row(self, cx, row_ix, id));
+                        row_ix += 1;
+                    }
+                }
+                // OsEdit only ever appears in `mac_only` sections, which are
+                // filtered out before we get here — but match exhaustively.
+                commands::MenuNode::OsEdit(_) => {}
+            }
+        }
+
+        Some(
+            div()
+                .absolute()
+                .top(gpui_component::TITLE_BAR_HEIGHT)
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .on_mouse_down(MouseButton::Left, dismiss),
+                )
+                .child(panel)
+                .into_any_element(),
+        )
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    fn render_platform_menu_dropdown(&self, _cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        None
+    }
+
+    // `cx` is only used by the Linux/FreeBSD branch (titlebar + menu dropdown);
+    // the other-target branch just returns `content`.
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "freebsd")),
+        allow(unused_variables)
+    )]
+    fn platform_window_shell(
+        &mut self,
+        content: gpui::AnyElement,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        {
+            div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .bg(rgb(theme().bg_base))
+                .children(self.render_platform_titlebar(cx))
+                .child(div().flex_1().min_h(px(0.0)).child(content))
+                .children(self.render_platform_menu_dropdown(cx))
+                .into_any()
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        {
+            content
+        }
+    }
+}
+
+// Only the Linux/FreeBSD in-app menu calls this (✓ marker for theme/lang).
+#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+fn platform_menu_label(id: &str, fallback: &str) -> String {
+    if let Some(slug) = commands::theme_slug_for_command(id) {
+        if theme::theme().slug == slug {
+            return format!("\u{2713} {fallback}");
+        }
+    }
+    if let Some(lang) = commands::lang_for_command(id) {
+        if i18n::lang() == lang {
+            return format!("\u{2713} {fallback}");
+        }
+    }
+    fallback.to_string()
 }
 
 // ────────────────────────────────────────────────────────────

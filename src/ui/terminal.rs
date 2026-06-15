@@ -284,14 +284,17 @@ pub fn build_terminal_view(
     Ok((view_entity, master_arc, paste_writer))
 }
 
-/// Pick the terminal font family: prefer Nerd Fonts (user request),
-/// checking the macOS font directories for installed families.
+/// Pick the terminal font family: prefer an installed Nerd Font (for terminal
+/// icon glyphs), otherwise fall back to the **bundled** JetBrains Mono
+/// (`super::MONO_FONT`, loaded via `add_fonts`), which is guaranteed present on
+/// every OS. The old "Menlo" fallback was macOS-only and rendered broken on
+/// Linux (user-reported).
 ///
 /// Order: RobotoMono Nerd Font → JetBrainsMono Nerd Font → Hack Nerd Font →
-/// Menlo (always present on macOS).
+/// bundled JetBrains Mono.
 pub(crate) fn pick_font_family() -> String {
-    // Windows ships Consolas (a good monospace) but none of the macOS Nerd Font
-    // directories below exist, so resolve directly.
+    // Windows ships Consolas (a good monospace); the Nerd Font dirs below are
+    // Unix-only, so resolve directly.
     #[cfg(target_os = "windows")]
     {
         "Consolas".to_string()
@@ -305,10 +308,17 @@ pub(crate) fn pick_font_family() -> String {
             ("HackNerdFont", "Hack Nerd Font"),
         ];
 
-        let mut dirs: Vec<PathBuf> = vec![PathBuf::from("/Library/Fonts")];
+        // Both macOS and Linux user/system font directories (top-level scan).
+        let mut dirs: Vec<PathBuf> = Vec::new();
         if let Ok(home) = std::env::var("HOME") {
-            dirs.insert(0, PathBuf::from(home).join("Library/Fonts"));
+            let h = PathBuf::from(home);
+            dirs.push(h.join("Library/Fonts")); // macOS (user)
+            dirs.push(h.join(".local/share/fonts")); // Linux (user)
+            dirs.push(h.join(".fonts")); // Linux (user, legacy)
         }
+        dirs.push(PathBuf::from("/Library/Fonts")); // macOS (system)
+        dirs.push(PathBuf::from("/usr/share/fonts")); // Linux (system)
+        dirs.push(PathBuf::from("/usr/local/share/fonts")); // Linux (system)
 
         for (file_prefix, family) in CANDIDATES {
             for dir in &dirs {
@@ -321,7 +331,7 @@ pub(crate) fn pick_font_family() -> String {
                 }
             }
         }
-        "Menlo".to_string()
+        super::MONO_FONT.to_string()
     }
 }
 

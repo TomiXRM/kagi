@@ -3,6 +3,25 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.11] — 2026-06-15
+
+### Fixed
+- **Fonts render consistently on Linux.** Kagi now bundles **Inter** (UI) and
+  **JetBrains Mono** (terminal / conflict editor / code) and loads them at
+  startup, instead of relying on the platform default and the macOS-only "Menlo"
+  fallback (which rendered broken on Ubuntu). The look is now identical on every
+  OS; CJK still falls back to a system font.
+- **Window no longer opens off-screen.** The initial size is the preferred
+  1440×920 but clamped to the active display (≤92% width / 90% height, 900×600
+  floor), so it always fits on small / scaled displays.
+
+### Changed
+- Polished theme colors for secondary controls and the title bar.
+
+### Docs / internal
+- Documented the Linux build dependencies (apt packages) for building from
+  source. Silenced macOS dead-code warnings for the Linux-only in-app menu.
+
 ## [0.3.10] — 2026-06-15
 
 ### Fixed

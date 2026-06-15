@@ -145,6 +145,225 @@ pub fn theme_slug_for_command(id: &str) -> Option<&'static str> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Declarative menu layout — the single source of truth (ADR-0085).
+// ──────────────────────────────────────────────────────────────────────────
+//
+// ADR-0085: the menu *structure* (which command id lives in which section, in
+// what order, with which separators / submenus) used to be hand-duplicated in
+// two places: `build_menus()` (macOS native `Vec<Menu>`) and `mod.rs`'s
+// `PLATFORM_MENUS` (the Linux self-drawn dropdown).  They drifted.  This tree
+// is now the *only* canonical layout — both consumers walk `MENU_BAR`, so the
+// platforms can never disagree on structure again.  Behaviour/state/labels
+// still come from the Command Registry (`COMMANDS` / `command_state`, ADR-0029).
+
+/// A single menu entry.  Pure layout data; the canonical tree is [`MENU_BAR`].
+pub enum MenuNode {
+    /// A Command Registry id (e.g. `"file.newTab"`).  Label / keystroke / state
+    /// are pulled from the registry — never hard-coded here.
+    Command(&'static str),
+    /// An in-menu divider.
+    Separator,
+    /// A dynamic submenu whose contents (and the "✓ " active marker) are built
+    /// at render time.  macOS nests a real `Menu`; Linux expands it inline into
+    /// the dropdown panel (it has no nested-panel support) — both behaviours are
+    /// preserved from before ADR-0085.
+    Submenu(DynSubmenu),
+    /// An OS-standard Edit item (handled by the macOS responder chain via
+    /// `MenuItem::os_action`).  Only ever appears inside a `mac_only` section,
+    /// so Linux skips it wholesale (it has no responder chain — see ADR-0085 §4).
+    OsEdit(OsEditItem),
+}
+
+/// The two dynamic submenus under View (ADR-0036 theme, ADR-0048 language).
+pub enum DynSubmenu {
+    Theme,
+    Language,
+}
+
+/// The OS-standard Edit items (macOS responder chain — ADR-0029).
+pub enum OsEditItem {
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+}
+
+/// One top-level menu section (a head in the macOS menu bar / Linux titlebar).
+pub struct MenuSection {
+    /// Section head label, e.g. `"File"`.  The first section is the app menu.
+    pub label: &'static str,
+    /// Ordered entries; separators and submenus are positional.
+    pub items: &'static [MenuNode],
+    /// macOS-only section (relies on the responder chain).  Linux skips it
+    /// entirely — see ADR-0085 §4 (the intentional Edit-menu OS difference).
+    /// Only read by `linux_menu_sections` (dead on non-Linux targets).
+    #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+    pub mac_only: bool,
+}
+
+/// The canonical menu bar (ADR-0085).  `build_menus()` (macOS) and the Linux
+/// dropdown both read this, so structure can never drift between platforms.
+/// Order and separator positions mirror the historical `build_menus()` exactly.
+pub const MENU_BAR: &[MenuSection] = &[
+    // ── Kagi (app menu) ──────────────────────────────────────────────
+    MenuSection {
+        label: "Kagi",
+        mac_only: false,
+        items: &[
+            MenuNode::Command("app.about"),
+            MenuNode::Separator,
+            MenuNode::Command("app.settings"),
+            MenuNode::Separator,
+            MenuNode::Command("app.quit"),
+        ],
+    },
+    // ── File ─────────────────────────────────────────────────────────
+    MenuSection {
+        label: "File",
+        mac_only: false,
+        items: &[
+            MenuNode::Command("file.newTab"),
+            MenuNode::Command("file.closeTab"),
+            MenuNode::Separator,
+            MenuNode::Command("file.cloneRepository"),
+            MenuNode::Command("file.openRepository"),
+            MenuNode::Command("file.openInTerminal"),
+            MenuNode::Separator,
+            MenuNode::Command("file.refresh"),
+        ],
+    },
+    // ── Edit (OS-standard; macOS-only, ADR-0085 §4) ──────────────────
+    MenuSection {
+        label: "Edit",
+        mac_only: true,
+        items: &[
+            MenuNode::OsEdit(OsEditItem::Undo),
+            MenuNode::OsEdit(OsEditItem::Redo),
+            MenuNode::Separator,
+            MenuNode::OsEdit(OsEditItem::Cut),
+            MenuNode::OsEdit(OsEditItem::Copy),
+            MenuNode::OsEdit(OsEditItem::Paste),
+            MenuNode::OsEdit(OsEditItem::SelectAll),
+        ],
+    },
+    // ── View ─────────────────────────────────────────────────────────
+    MenuSection {
+        label: "View",
+        mac_only: false,
+        items: &[
+            MenuNode::Command("view.zoomIn"),
+            MenuNode::Command("view.zoomOut"),
+            MenuNode::Command("view.zoomReset"),
+            MenuNode::Separator,
+            MenuNode::Command("view.fullScreen"),
+            MenuNode::Separator,
+            MenuNode::Command("view.toggleSidebar"),
+            MenuNode::Command("view.toggleTerminal"),
+            MenuNode::Command("view.toggleCommitDetails"),
+            MenuNode::Command("view.toggleDiffView"),
+            MenuNode::Separator,
+            // W9-THEME / W22-I18N: dynamic submenus (active item gets "✓ ").
+            MenuNode::Submenu(DynSubmenu::Theme),
+            MenuNode::Submenu(DynSubmenu::Language),
+        ],
+    },
+    // ── Repository ───────────────────────────────────────────────────
+    MenuSection {
+        label: "Repository",
+        mac_only: false,
+        items: &[
+            MenuNode::Command("repo.fetch"),
+            MenuNode::Command("repo.pull"),
+            MenuNode::Command("repo.push"),
+            MenuNode::Separator,
+            MenuNode::Command("repo.openInFinder"),
+            MenuNode::Command("file.openInTerminal"),
+        ],
+    },
+    // ── Branch ───────────────────────────────────────────────────────
+    MenuSection {
+        label: "Branch",
+        mac_only: false,
+        items: &[
+            MenuNode::Command("branch.new"),
+            MenuNode::Command("branch.checkout"),
+            MenuNode::Command("branch.rename"),
+            MenuNode::Command("branch.delete"),
+        ],
+    },
+    // ── Commit ───────────────────────────────────────────────────────
+    MenuSection {
+        label: "Commit",
+        mac_only: false,
+        items: &[
+            MenuNode::Command("commit.copyHash"),
+            MenuNode::Command("commit.checkout"),
+            MenuNode::Command("commit.createBranch"),
+            MenuNode::Separator,
+            MenuNode::Command("commit.cherryPick"),
+            MenuNode::Command("commit.revert"),
+            MenuNode::Command("commit.reset"),
+            MenuNode::Separator,
+            MenuNode::Command("commit.compareWorkingTree"),
+        ],
+    },
+    // ── Window ───────────────────────────────────────────────────────
+    MenuSection {
+        label: "Window",
+        mac_only: false,
+        items: &[
+            MenuNode::Command("window.minimize"),
+            MenuNode::Command("window.zoom"),
+            MenuNode::Separator,
+            MenuNode::Command("window.new"),
+            MenuNode::Command("window.close"),
+        ],
+    },
+    // ── Help ─────────────────────────────────────────────────────────
+    MenuSection {
+        label: "Help",
+        mac_only: false,
+        items: &[
+            MenuNode::Command("help.shortcuts"),
+            MenuNode::Command("help.documentation"),
+            MenuNode::Command("help.reportIssue"),
+            MenuNode::Separator,
+            MenuNode::Command("app.about"),
+        ],
+    },
+];
+
+/// The sections the Linux/FreeBSD self-drawn menu bar renders: [`MENU_BAR`]
+/// minus the `mac_only` sections (the Edit menu — ADR-0085 §3/§4).  Heads and
+/// the open dropdown both iterate this so their indices (and the dropdown's
+/// left offset) stay aligned.
+#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+pub fn linux_menu_sections() -> impl Iterator<Item = &'static MenuSection> {
+    MENU_BAR.iter().filter(|s| !s.mac_only)
+}
+
+/// The ordered theme command ids, as they appear under View → Theme.  Used by
+/// the Linux dropdown to inline-expand `DynSubmenu::Theme` (macOS nests
+/// [`theme_submenu`] instead).  These mirror the registry's `theme.*` ids.
+#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+pub const THEME_COMMAND_IDS: &[&str] = &[
+    "theme.catppuccin",
+    "theme.xcodeDark",
+    "theme.xcodeLight",
+    "theme.oneDark",
+    "theme.oneLight",
+    "theme.monokai",
+];
+
+/// The ordered language command ids, as they appear under View → Language.
+/// Used by the Linux dropdown to inline-expand `DynSubmenu::Language` (macOS
+/// nests [`lang_submenu`] instead).  These mirror the registry's `lang.*` ids.
+#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+pub const LANG_COMMAND_IDS: &[&str] = &["lang.english", "lang.japanese"];
+
+// ──────────────────────────────────────────────────────────────────────────
 // Command registry types (ADR-0029).
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -605,140 +824,117 @@ pub(crate) fn is_enabled(app: &KagiApp, id: &str) -> bool {
 // Menu construction (gpui native).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Build a single `MenuItem::action` from a registry id.  The label and
-/// keystroke (rendered by gpui from the keymap) are pulled from the registry,
-/// guaranteeing the menu can never drift from [`COMMANDS`].
-fn mi(id: &str, action: impl gpui::Action) -> MenuItem {
+/// Build a `MenuItem::action` for a registry command id, centralising the
+/// id → gpui Action pairing in **one** place (ADR-0085 §2).  The label (and the
+/// keystroke gpui renders from the keymap) come from the registry, so the menu
+/// can never drift from [`COMMANDS`].
+///
+/// An id present in [`MENU_BAR`] but missing here is a wiring bug; we
+/// `debug_assert!` so it's caught in dev, and fall back to a non-dispatching
+/// item (`About`, which is always available) so release builds stay usable.
+fn action_menu_item(id: &str) -> MenuItem {
     let label: SharedString = command(id)
         .map(|c| SharedString::from(c.label))
         .unwrap_or_else(|| SharedString::from(id.to_string()));
-    MenuItem::action(label, action)
+    match id {
+        // kagi (app menu)
+        "app.about" => MenuItem::action(label, About),
+        "app.settings" => MenuItem::action(label, OpenSettings),
+        "app.quit" => MenuItem::action(label, Quit),
+        // File
+        "file.newTab" => MenuItem::action(label, NewTab),
+        "file.closeTab" => MenuItem::action(label, CloseTab),
+        "file.cloneRepository" => MenuItem::action(label, CloneRepository),
+        "file.openRepository" => MenuItem::action(label, OpenRepository),
+        "file.openInTerminal" => MenuItem::action(label, OpenInTerminal),
+        "file.refresh" => MenuItem::action(label, RefreshRepository),
+        // View
+        "view.zoomIn" => MenuItem::action(label, ZoomIn),
+        "view.zoomOut" => MenuItem::action(label, ZoomOut),
+        "view.zoomReset" => MenuItem::action(label, ZoomReset),
+        "view.fullScreen" => MenuItem::action(label, EnterFullScreen),
+        "view.toggleSidebar" => MenuItem::action(label, ToggleSidebar),
+        // Terminal toggle reuses ToggleBottomPanel (cmd-j); registry label is
+        // "Toggle Terminal".
+        "view.toggleTerminal" => MenuItem::action(label, ToggleBottomPanel),
+        "view.toggleCommitDetails" => MenuItem::action(label, ToggleCommitDetails),
+        "view.toggleDiffView" => MenuItem::action(label, ToggleDiffView),
+        // Repository
+        "repo.fetch" => MenuItem::action(label, Fetch),
+        "repo.pull" => MenuItem::action(label, Pull),
+        "repo.push" => MenuItem::action(label, Push),
+        "repo.openInFinder" => MenuItem::action(label, OpenInFinder),
+        // Branch
+        "branch.new" => MenuItem::action(label, NewBranch),
+        "branch.checkout" => MenuItem::action(label, CheckoutBranch),
+        "branch.rename" => MenuItem::action(label, RenameBranch),
+        "branch.delete" => MenuItem::action(label, DeleteBranch),
+        // Commit
+        "commit.copyHash" => MenuItem::action(label, CopyCommitHash),
+        "commit.checkout" => MenuItem::action(label, CheckoutCommit),
+        "commit.createBranch" => MenuItem::action(label, CreateBranchFromCommit),
+        "commit.cherryPick" => MenuItem::action(label, CherryPickCommit),
+        "commit.revert" => MenuItem::action(label, RevertCommit),
+        "commit.reset" => MenuItem::action(label, ResetToCommit),
+        "commit.compareWorkingTree" => MenuItem::action(label, CompareWithWorkingTree),
+        // Window
+        "window.minimize" => MenuItem::action(label, MinimizeWindow),
+        "window.zoom" => MenuItem::action(label, ZoomWindow),
+        "window.new" => MenuItem::action(label, NewWindow),
+        "window.close" => MenuItem::action(label, CloseWindow),
+        // Help
+        "help.shortcuts" => MenuItem::action(label, KeyboardShortcuts),
+        "help.documentation" => MenuItem::action(label, Documentation),
+        "help.reportIssue" => MenuItem::action(label, ReportIssue),
+        // Unknown id → caught in dev; release falls back to an always-available
+        // item so the menu still builds.
+        _ => {
+            debug_assert!(false, "action_menu_item: no gpui Action for id {id:?}");
+            MenuItem::action(label, About)
+        }
+    }
 }
 
-/// Build the full menu bar.  Pure function of [`COMMANDS`] — no app state is
-/// read here; availability is applied later by gpui's per-item validation
-/// against the dispatch tree (see module docs).
+/// Build the `MenuItem` for an OS-standard Edit entry (macOS responder chain).
+fn os_edit_menu_item(kind: &OsEditItem) -> MenuItem {
+    match kind {
+        OsEditItem::Undo => MenuItem::os_action("Undo", EditUndo, OsAction::Undo),
+        OsEditItem::Redo => MenuItem::os_action("Redo", EditRedo, OsAction::Redo),
+        OsEditItem::Cut => MenuItem::os_action("Cut", EditCut, OsAction::Cut),
+        OsEditItem::Copy => MenuItem::os_action("Copy", EditCopy, OsAction::Copy),
+        OsEditItem::Paste => MenuItem::os_action("Paste", EditPaste, OsAction::Paste),
+        OsEditItem::SelectAll => {
+            MenuItem::os_action("Select All", EditSelectAll, OsAction::SelectAll)
+        }
+    }
+}
+
+/// Build the full macOS menu bar by walking [`MENU_BAR`] (ADR-0085 §2).  Pure
+/// function of the canonical tree + [`COMMANDS`] — no app state is read here;
+/// availability is applied later by gpui's per-item validation against the
+/// dispatch tree (see module docs).  Called unconditionally on every OS;
+/// `cx.set_menus` is a no-op outside macOS, so this stays cross-platform.
 pub fn build_menus() -> Vec<Menu> {
-    vec![
-        // ── kagi (app menu) ──────────────────────────────────────────
-        Menu {
-            name: "kagi".into(),
-            items: vec![
-                mi("app.about", About),
-                MenuItem::separator(),
-                mi("app.settings", OpenSettings),
-                MenuItem::separator(),
-                mi("app.quit", Quit),
-            ],
-        },
-        // ── File ─────────────────────────────────────────────────────
-        Menu {
-            name: "File".into(),
-            items: vec![
-                mi("file.newTab", NewTab),
-                mi("file.closeTab", CloseTab),
-                MenuItem::separator(),
-                mi("file.cloneRepository", CloneRepository),
-                mi("file.openRepository", OpenRepository),
-                mi("file.openInTerminal", OpenInTerminal),
-                MenuItem::separator(),
-                mi("file.refresh", RefreshRepository),
-            ],
-        },
-        // ── Edit (OS-standard; os_action only, no global KeyBinding) ──
-        Menu {
-            name: "Edit".into(),
-            items: vec![
-                MenuItem::os_action("Undo", EditUndo, OsAction::Undo),
-                MenuItem::os_action("Redo", EditRedo, OsAction::Redo),
-                MenuItem::separator(),
-                MenuItem::os_action("Cut", EditCut, OsAction::Cut),
-                MenuItem::os_action("Copy", EditCopy, OsAction::Copy),
-                MenuItem::os_action("Paste", EditPaste, OsAction::Paste),
-                MenuItem::os_action("Select All", EditSelectAll, OsAction::SelectAll),
-            ],
-        },
-        // ── View ─────────────────────────────────────────────────────
-        Menu {
-            name: "View".into(),
-            items: vec![
-                mi("view.zoomIn", ZoomIn),
-                mi("view.zoomOut", ZoomOut),
-                mi("view.zoomReset", ZoomReset),
-                MenuItem::separator(),
-                mi("view.fullScreen", EnterFullScreen),
-                MenuItem::separator(),
-                mi("view.toggleSidebar", ToggleSidebar),
-                MenuItem::action("Toggle Terminal", ToggleBottomPanel),
-                mi("view.toggleCommitDetails", ToggleCommitDetails),
-                mi("view.toggleDiffView", ToggleDiffView),
-                MenuItem::separator(),
-                // W9-THEME: Theme submenu (active item prefixed with "✓ ").
-                MenuItem::submenu(theme_submenu()),
-                // W22-I18N: Language submenu (active item prefixed with "✓ ").
-                MenuItem::submenu(lang_submenu()),
-            ],
-        },
-        // ── Repository ───────────────────────────────────────────────
-        Menu {
-            name: "Repository".into(),
-            items: vec![
-                mi("repo.fetch", Fetch),
-                mi("repo.pull", Pull),
-                mi("repo.push", Push),
-                MenuItem::separator(),
-                mi("repo.openInFinder", OpenInFinder),
-                mi("file.openInTerminal", OpenInTerminal),
-            ],
-        },
-        // ── Branch ───────────────────────────────────────────────────
-        Menu {
-            name: "Branch".into(),
-            items: vec![
-                mi("branch.new", NewBranch),
-                mi("branch.checkout", CheckoutBranch),
-                mi("branch.rename", RenameBranch),
-                mi("branch.delete", DeleteBranch),
-            ],
-        },
-        // ── Commit ───────────────────────────────────────────────────
-        Menu {
-            name: "Commit".into(),
-            items: vec![
-                mi("commit.copyHash", CopyCommitHash),
-                mi("commit.checkout", CheckoutCommit),
-                mi("commit.createBranch", CreateBranchFromCommit),
-                MenuItem::separator(),
-                mi("commit.cherryPick", CherryPickCommit),
-                mi("commit.revert", RevertCommit),
-                mi("commit.reset", ResetToCommit),
-                MenuItem::separator(),
-                mi("commit.compareWorkingTree", CompareWithWorkingTree),
-            ],
-        },
-        // ── Window ───────────────────────────────────────────────────
-        Menu {
-            name: "Window".into(),
-            items: vec![
-                mi("window.minimize", MinimizeWindow),
-                mi("window.zoom", ZoomWindow),
-                MenuItem::separator(),
-                mi("window.new", NewWindow),
-                mi("window.close", CloseWindow),
-            ],
-        },
-        // ── Help ─────────────────────────────────────────────────────
-        Menu {
-            name: "Help".into(),
-            items: vec![
-                mi("help.shortcuts", KeyboardShortcuts),
-                mi("help.documentation", Documentation),
-                mi("help.reportIssue", ReportIssue),
-                MenuItem::separator(),
-                mi("app.about", About),
-            ],
-        },
-    ]
+    MENU_BAR
+        .iter()
+        .map(|section| {
+            let items = section
+                .items
+                .iter()
+                .map(|node| match node {
+                    MenuNode::Command(id) => action_menu_item(id),
+                    MenuNode::Separator => MenuItem::separator(),
+                    MenuNode::Submenu(DynSubmenu::Theme) => MenuItem::submenu(theme_submenu()),
+                    MenuNode::Submenu(DynSubmenu::Language) => MenuItem::submenu(lang_submenu()),
+                    MenuNode::OsEdit(kind) => os_edit_menu_item(kind),
+                })
+                .collect();
+            Menu {
+                name: section.label.into(),
+                items,
+            }
+        })
+        .collect()
 }
 
 /// Build the View → Theme submenu (W9-THEME / ADR-0036).
@@ -990,6 +1186,14 @@ impl KagiApp {
             "view.toggleSidebar" => {
                 self.sidebar_visible = !self.sidebar_visible;
                 eprintln!("[kagi] menu: sidebar_visible={}", self.sidebar_visible);
+            }
+            "view.toggleTerminal" => {
+                self.bottom_panel_open = !self.bottom_panel_open;
+                eprintln!("[kagi] menu: bottom_panel_open={}", self.bottom_panel_open);
+                if self.bottom_panel_open {
+                    self.bottom_tab = BottomTab::Terminal;
+                    self.ensure_terminal(window, cx);
+                }
             }
             "view.toggleCommitDetails" => {
                 self.inspector_visible = !self.inspector_visible;
@@ -1454,5 +1658,44 @@ impl KagiApp {
             )
             .child(panel)
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ADR-0085: guard against a typo'd id in the canonical [`MENU_BAR`].  Every
+    /// `MenuNode::Command(id)` must resolve in the Command Registry, otherwise
+    /// the menu would show a raw id (macOS) / lose its label and state (Linux).
+    #[test]
+    fn menu_bar_command_ids_exist_in_registry() {
+        for section in MENU_BAR {
+            for node in section.items {
+                if let MenuNode::Command(id) = node {
+                    assert!(
+                        command(id).is_some(),
+                        "MENU_BAR references unknown command id {id:?} (section {:?})",
+                        section.label,
+                    );
+                }
+            }
+        }
+    }
+
+    /// The inline-expanded theme/language ids (used by the Linux dropdown) must
+    /// likewise resolve in the registry — same drift guard for the submenus.
+    #[test]
+    fn dyn_submenu_ids_exist_in_registry() {
+        for id in THEME_COMMAND_IDS.iter().chain(LANG_COMMAND_IDS.iter()) {
+            assert!(
+                command(id).is_some(),
+                "dynamic submenu references unknown command id {id:?}"
+            );
+            assert!(
+                theme_slug_for_command(id).is_some() || lang_for_command(id).is_some(),
+                "dynamic submenu id {id:?} maps to neither a theme nor a language"
+            );
+        }
     }
 }

@@ -575,6 +575,12 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     gc.colors.accent_foreground = to_hsla(k.text_main);
     gc.colors.link = to_hsla(k.color_branch);
 
+    // ── Secondary / title-bar controls (gpui-component TitleBar) ──
+    gc.colors.secondary = to_hsla(k.surface);
+    gc.colors.secondary_foreground = to_hsla(k.text_main);
+    gc.colors.secondary_hover = to_hsla(k.selected);
+    gc.colors.secondary_active = to_hsla(k.surface);
+
     // ── Input border (Input, Checkbox unchecked) ────────────────
     gc.colors.input = to_hsla(k.text_muted);
     gc.colors.caret = to_hsla(k.text_main);
@@ -583,6 +589,9 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     gc.colors.success = to_hsla(k.color_success);
     gc.colors.warning = to_hsla(k.color_warning);
     gc.colors.danger = to_hsla(k.color_blocker);
+    gc.colors.danger_hover = to_hsla(k.color_blocker);
+    gc.colors.danger_active = to_hsla(k.color_blocker);
+    gc.colors.danger_foreground = to_hsla(0xffffff);
     gc.colors.info = to_hsla(k.color_branch);
 
     // ── List / sidebar (PopupMenu, ListItem, Sidebar) ───────────
@@ -591,6 +600,8 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     gc.colors.list_hover = to_hsla(k.surface);
     gc.colors.sidebar = to_hsla(k.sidebar);
     gc.colors.sidebar_foreground = to_hsla(k.text_main);
+    gc.colors.title_bar = to_hsla(k.panel);
+    gc.colors.title_bar_border = to_hsla(k.surface);
 
     // ── Scrollbar (W12-GCADOPT §2.10) ───────────────────────────
     gc.colors.scrollbar = to_hsla(k.bg_base);

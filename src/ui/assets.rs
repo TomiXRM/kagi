@@ -79,6 +79,26 @@ const ASSETS: &[(&str, &[u8])] = &[
         "icons/redo-2.svg",
         include_bytes!("../../assets/icons/redo-2.svg"),
     ),
+    // T-LINUX-TITLEBAR: client-side window control buttons drawn by
+    // gpui_component::TitleBar on Linux/freebsd (WindowControls →
+    // IconName::WindowMinimize/Maximize/Restore/Close). Without these the
+    // close/maximize/minimize buttons render as nothing (blank title bar).
+    (
+        "icons/window-minimize.svg",
+        include_bytes!("../../assets/icons/window-minimize.svg"),
+    ),
+    (
+        "icons/window-maximize.svg",
+        include_bytes!("../../assets/icons/window-maximize.svg"),
+    ),
+    (
+        "icons/window-restore.svg",
+        include_bytes!("../../assets/icons/window-restore.svg"),
+    ),
+    (
+        "icons/window-close.svg",
+        include_bytes!("../../assets/icons/window-close.svg"),
+    ),
 ];
 
 impl AssetSource for KagiAssets {

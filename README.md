@@ -74,7 +74,7 @@ Grab the latest build from [**GitHub Releases**](https://github.com/TomiXRM/kagi
 | Linux (x86_64 / arm64) | `kagi-<version>-<arch>.tar.gz` (binary + `.desktop` + icon), or the AppImage zip `kagi_Linux-AppImage_<arch>.zip` |
 | Windows (x86_64) | `kagi-<version>-x86_64-windows.zip` — extract and run `kagi.exe` (self-contained; assets are embedded) |
 
-For the AppImage: `unzip kagi_Linux-AppImage_<arch>.zip && bash scripts/install_linux_desktop.sh` registers it under `~/.local` (icon + `.desktop` entry, fully offline).
+For the AppImage: `unzip kagi_Linux-AppImage_<arch>.zip && bash install_linux_desktop.sh` registers it under `~/.local` (icon + `.desktop` entry, fully offline).
 
 ### ⚠️ macOS: first launch on an unsigned build
 

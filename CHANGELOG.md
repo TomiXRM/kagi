@@ -3,6 +3,23 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.8] — 2026-06-15
+
+### Added
+- **Cmd+Z / Cmd+Shift+Z for Undo / Redo** of git operations (ADR-0084). Bound so
+  they never shadow text-input undo (in the commit message box) or the
+  integrated terminal's Cmd+Z — they only act on the commit graph.
+- **Undo works on a freshly-opened repository.** The undo/redo history is now
+  seeded from the current branch's **reflog** on open, so you can undo the last
+  operation(s) even in a repo you just opened (not only ones done this session).
+  Switching tabs re-seeds from the new repo's reflog.
+
+### Changed
+- **Undo of a commit now uses `git reset --soft` semantics** — the undone
+  commit's changes come back **staged** (index untouched, working tree
+  preserved), instead of unstaged. Still a safe ref-only move: no `reset --hard`,
+  no `clean`, and the commit stays in the object store + reflog.
+
 ## [0.3.7] — 2026-06-15
 
 ### Added

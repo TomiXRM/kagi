@@ -4907,7 +4907,9 @@ impl KagiApp {
             .flex()
             .flex_row()
             .items_center()
-            .gap_2()
+            // 1.5× the toast gap (8px → 12px) so the larger sync icon breathes
+            // a bit more from the label (user request).
+            .gap_3()
             .px_4()
             .py_3()
             .rounded(theme::scaled_px(8.))

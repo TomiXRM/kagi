@@ -391,6 +391,10 @@ pub enum Msg {
     SettingsCompact,
     /// Appearance → Compact graph row description.
     SettingsCompactDesc,
+    /// Appearance → Auto-fetch row title.
+    SettingsAutoFetch,
+    /// Appearance → Auto-fetch row description.
+    SettingsAutoFetchDesc,
     /// Language → Interface language row title.
     SettingsInterfaceLang,
     /// Language → Interface language row description.
@@ -803,6 +807,14 @@ impl Msg {
             (Ja, SettingsCompact) => "graph をコンパクト表示",
             (En, SettingsCompactDesc) => "Use a tighter row height in the commit graph.",
             (Ja, SettingsCompactDesc) => "commit graph の行の高さを詰めて表示します。",
+            (En, SettingsAutoFetch) => "Auto-fetch",
+            (Ja, SettingsAutoFetch) => "自動 fetch",
+            (En, SettingsAutoFetchDesc) => {
+                "Periodically fetch the remote in the background so the graph and ahead/behind stay current."
+            }
+            (Ja, SettingsAutoFetchDesc) => {
+                "バックグラウンドで定期的に remote を fetch し、graph や ahead/behind を最新に保ちます。"
+            }
             (En, SettingsInterfaceLang) => "Interface language",
             (Ja, SettingsInterfaceLang) => "表示言語",
             (En, SettingsInterfaceLangDesc) => {

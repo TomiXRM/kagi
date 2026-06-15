@@ -177,14 +177,16 @@ impl gpui::Render for BranchDragGhost {
 /// T-DNDMERGE-001 / ADR-0079: pure helper that extracts the draggable branch
 /// name from a graph ref-badge for the `BranchDrag { name }` payload.
 ///
-/// Only `BadgeKind::Branch` chips are draggable, and for that kind `label` IS
-/// the plain local-branch name (built by `commit_list::build_badge_map`).
-/// `HeadBranch` (label = `"<name> ✓"`, and it is the drop *target*, not a
-/// source), `Remote`, and `Tag` chips are NOT draggable → `None`.
+/// `BadgeKind::Branch` (label IS the plain local-branch name) and
+/// `BadgeKind::Remote` (label IS the full `remote/name` ref) are both draggable
+/// merge sources — a remote chip lets an upstream-only branch be merged
+/// directly via its remote-tracking ref (resolved by the merge backend), with
+/// no local branch required. `HeadBranch` (label = `"<name> ✓"`, and it is the
+/// drop *target*, not a source) and `Tag` chips are NOT draggable → `None`.
 fn draggable_branch_name(badge: &commit_list::RefBadge) -> Option<String> {
     match badge.kind {
-        BadgeKind::Branch => Some(badge.label.to_string()),
-        BadgeKind::HeadBranch | BadgeKind::Remote | BadgeKind::Tag => None,
+        BadgeKind::Branch | BadgeKind::Remote => Some(badge.label.to_string()),
+        BadgeKind::HeadBranch | BadgeKind::Tag => None,
     }
 }
 
@@ -192,32 +194,37 @@ fn draggable_branch_name(badge: &commit_list::RefBadge) -> Option<String> {
 /// extracted so the rejection rules can be unit-tested without a `Window`/`cx`.
 ///
 /// `branches` is the local-branch list as held in `KagiApp::branches`
-/// (`(name, is_head)`).  Returns `Ok(())` when the drag may proceed to
-/// `open_merge_modal(source)`, or `Err(reason)` describing why it is rejected
-/// (same-branch / unknown branch / busy).  `plan_merge_branch` remains the
-/// authoritative guard for dirty-WT / ff / conflict prediction.
+/// (`(name, is_head)`); `remotes` is the list of remote-tracking ref names
+/// (`"origin/feature"`, from `KagiApp::remote_branches`).  Returns `Ok(())` when
+/// the drag may proceed to `open_merge_modal(source)`, or `Err(reason)`
+/// describing why it is rejected (same-branch / unknown branch / busy).
+/// `plan_merge_branch` remains the authoritative guard for dirty-WT / ff /
+/// conflict prediction.
 fn validate_merge_from_drag(
     source: &str,
     branches: &[(String, bool)],
+    remotes: &[String],
     busy: bool,
 ) -> Result<(), String> {
     if busy {
         return Err(Msg::OpInProgress.t().to_string());
     }
-    // Source must be a real local branch.
-    let entry = branches.iter().find(|(n, _)| n == source);
-    let is_head = match entry {
-        Some((_, head)) => *head,
-        None => return Err(format!("Branch '{}' is not a local branch.", source)),
-    };
-    // Dropping a branch onto itself (it IS the current branch) is a no-op merge.
-    if is_head {
-        return Err(format!(
-            "Branch '{}' is already the current branch.",
-            source
-        ));
+    // A local branch (but not the current one — that's a no-op merge).
+    if let Some((_, is_head)) = branches.iter().find(|(n, _)| n == source) {
+        if *is_head {
+            return Err(format!(
+                "Branch '{}' is already the current branch.",
+                source
+            ));
+        }
+        return Ok(());
     }
-    Ok(())
+    // Or a remote-tracking branch: an upstream-only branch is merged directly
+    // via its remote ref (no local branch needed). It can never be HEAD.
+    if remotes.iter().any(|n| n == source) {
+        return Ok(());
+    }
+    Err(format!("Branch '{}' is not a branch.", source))
 }
 
 // Sidebar / panel width limits.
@@ -489,12 +496,18 @@ impl StatusBarSummary {
         let behind = self.behind.unwrap_or(0);
         let ahead = self.ahead.unwrap_or(0);
 
-        // ADR-0013: Pull disabled if no upstream OR behind=0 (nothing to pull).
-        let pull_on = !no_upstream && behind > 0;
-        // Push: enabled when (upstream && ahead>0) OR (no-upstream && attached && remote exists).
-        // Dirty WT is irrelevant — push never changes local state.
-        let push_on =
-            (!no_upstream && ahead > 0) || (self.no_upstream && !not_attached && self.has_remote);
+        // Pull: enabled whenever the current branch has an upstream (attached,
+        // born). We intentionally do NOT require behind>0: the behind count is
+        // only as fresh as the last fetch, so gating on a stale behind==0 would
+        // wrongly disable Pull right after the upstream advanced (the GitHub-merge
+        // catch-22). Pull fetches first anyway, so a truly up-to-date pull is a
+        // harmless no-op.
+        let pull_on = !no_upstream;
+        // Push: enabled whenever a remote exists and HEAD is an attached, born
+        // branch. Like Pull we don't require ahead>0 (stale until fetch); pushing
+        // with nothing ahead is a harmless no-op. Dirty WT is irrelevant — push
+        // never changes local state.
+        let push_on = !not_attached && self.has_remote;
         let stash_on = self.is_dirty; // Stash: disabled if working tree is clean
         let pop_on = self.stash_count > 0; // Pop: disabled if no stashes
         let undo_on = !not_attached && ahead > 0; // disabled if detached/unborn or ahead=0
@@ -589,13 +602,21 @@ mod toolbar_tests {
     }
 
     /// State 1: clean branch, behind=0, ahead=0 (e.g. fixture main when in sync).
+    /// Pull/Push stay ENABLED: ahead/behind are only as fresh as the last fetch,
+    /// so gating on them caused the "can't pull after a GitHub merge" catch-22.
+    /// They no-op when the branch is genuinely in sync.
     #[test]
     fn toolbar_clean_behind0() {
         let s = make_summary(0, 0, false, 0);
         let t = s.toolbar_state();
-        // ADR-0013: Pull disabled when behind=0.
-        assert!(!t.pull_on, "pull must be off when behind=0");
-        assert!(!t.push_on, "push must be off when ahead=0");
+        assert!(
+            t.pull_on,
+            "pull stays on with an upstream (counts may be stale)"
+        );
+        assert!(
+            t.push_on,
+            "push stays on with a remote (counts may be stale)"
+        );
         assert!(!t.stash_on, "stash must be off when clean");
         assert!(!t.pop_on, "pop must be off when no stash");
         assert!(!t.undo_on, "undo must be off when ahead=0");
@@ -644,18 +665,23 @@ mod toolbar_tests {
         assert!(!t.undo_on, "undo must be off on detached HEAD");
     }
 
-    /// ADR-0013: fixture main (ahead=1, behind=0) → pull must be off.
+    /// fixture main (ahead=1, behind=0): Pull is now ENABLED — it is no longer
+    /// gated on behind>0 (it would be stale until a fetch anyway).
     #[test]
-    fn toolbar_fixture_main_behind0_pull_off() {
+    fn toolbar_fixture_main_behind0_pull_on() {
         // This mirrors the fixture repo: main is 1 ahead, 0 behind.
         let s = make_summary(1, 0, false, 0);
         let t = s.toolbar_state();
-        assert!(!t.pull_on, "fixture main (behind=0) must have pull=off");
+        assert!(
+            t.pull_on,
+            "pull stays on with an upstream even when behind=0"
+        );
         assert!(t.push_on, "fixture main (ahead=1) must have push=on");
         assert!(t.undo_on, "fixture main (ahead=1) must have undo=on");
     }
 
-    /// ADR-0013: feature/two (ahead=0, behind=1) → pull must be on, push must be off.
+    /// feature/two (ahead=0, behind=1): Pull on; Push is now also ENABLED — it
+    /// is no longer gated on ahead>0 (pushing nothing is a harmless no-op).
     #[test]
     fn toolbar_feature_two_behind1_pull_on() {
         // Mirrors fixture feature/two: 0 ahead, 1 behind.
@@ -663,8 +689,8 @@ mod toolbar_tests {
         let t = s.toolbar_state();
         assert!(t.pull_on, "feature/two (behind=1) must have pull=on");
         assert!(
-            !t.push_on,
-            "feature/two (ahead=0) must have push=off (no upstream-new branch)"
+            t.push_on,
+            "push stays on with a remote (ahead=0 no longer disables)"
         );
         assert!(!t.undo_on, "feature/two (ahead=0) must have undo=off");
     }
@@ -970,6 +996,11 @@ pub struct KagiApp {
     /// the before/after commit SHAs; undo/redo move the branch ref between them
     /// via the safe pipeline. Lost on quit (reflog is the durable backstop).
     pub operation_history: kagi::git::OperationHistory,
+    /// Whether the reflog-seed of `operation_history` has been attempted for the
+    /// current repo (ADR-0084). Set on the first render with a repo open so undo
+    /// works on a freshly-opened repo (the initial CLI/snapshot path never calls
+    /// `reload()`); reset on reload / tab switch so the next repo re-seeds.
+    pub history_seed_attempted: bool,
     /// Set while an Undo/Redo plan modal is open; carries the entry being
     /// previewed and whether it is an undo (`true`) or redo (`false`).
     pub history_modal: Option<HistoryPlanModal>,
@@ -1039,6 +1070,12 @@ pub struct KagiApp {
     pub next_toast_id: u64,
     /// True while the 500ms auto-dismiss ticker task is alive.
     pub toast_ticker_alive: bool,
+    /// True while a background fetch is in flight (refresh / auto-fetch),
+    /// so we never stack concurrent fetches.
+    pub fetch_in_flight: bool,
+    /// True while the periodic background auto-fetch ticker task is alive
+    /// (spawned lazily from render; see `ensure_auto_fetch_ticker`).
+    pub auto_fetch_ticker_alive: bool,
     /// When `Some`, the refresh icon spins (set on click; cleared after one
     /// full rotation in render).
     pub refresh_spin_started: Option<Instant>,
@@ -1454,6 +1491,7 @@ impl KagiApp {
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
             operation_history: kagi::git::OperationHistory::new(),
+            history_seed_attempted: false,
             history_modal: None,
             terminal_sessions: HashMap::new(),
             tabs: Vec::new(),
@@ -1477,6 +1515,8 @@ impl KagiApp {
             toasts: Vec::new(),
             next_toast_id: 0,
             toast_ticker_alive: false,
+            fetch_in_flight: false,
+            auto_fetch_ticker_alive: false,
             busy_op: None,
             modal_replan_gen: 0,
             last_draft_value: String::new(),
@@ -1593,6 +1633,7 @@ impl KagiApp {
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
             operation_history: kagi::git::OperationHistory::new(),
+            history_seed_attempted: false,
             history_modal: None,
             terminal_sessions: HashMap::new(),
             tabs: Vec::new(),
@@ -1616,6 +1657,8 @@ impl KagiApp {
             toasts: Vec::new(),
             next_toast_id: 0,
             toast_ticker_alive: false,
+            fetch_in_flight: false,
+            auto_fetch_ticker_alive: false,
             busy_op: None,
             modal_replan_gen: 0,
             last_draft_value: String::new(),
@@ -1762,6 +1805,11 @@ impl KagiApp {
 
         // Fold the snapshot-derived data in (assignment only).
         self.apply_tab_view(view);
+
+        // ADR-0084: seed the undo/redo history from the branch reflog when it is
+        // empty (freshly-opened repo / post-branch-switch) so Cmd+Z works
+        // immediately. Only seed when empty — never clobber the in-session stack.
+        self.seed_history_from_reflog(&repo);
 
         // Baseline for the FS watcher's working-tree path (skip-if-unchanged).
         self.last_working_status = Some(snap.status.clone());
@@ -6080,15 +6128,23 @@ impl KagiApp {
     }
 
     /// T-DNDMERGE-001 / ADR-0079 layer 2: the single entry point a branch
-    /// drag-and-drop dispatches to.  `source` is the dragged local branch (the
-    /// merge source = the branch merged INTO HEAD).  This validates the obvious
-    /// rejections (busy / not a local branch / dropping the current branch onto
-    /// itself) and, on success, delegates to the existing merge pipeline via
+    /// drag-and-drop dispatches to.  `source` is the dragged branch (the merge
+    /// source = the branch merged INTO HEAD) — a local branch name, or a
+    /// remote-tracking ref like `origin/feature` for an upstream-only branch,
+    /// which the planner resolves directly (no local branch is created).  This
+    /// validates the obvious rejections (busy / not a branch / dropping the
+    /// current branch onto itself) and, on success, delegates to the merge
+    /// pipeline via
     /// [`open_merge_modal`] — it never touches git directly (the safety
     /// thesis: drop is a trigger; `plan_merge_branch` remains authoritative for
     /// dirty-WT / ff / conflict prediction).
     pub fn start_merge_from_drag(&mut self, source: String, cx: &mut Context<Self>) {
-        match validate_merge_from_drag(&source, &self.branches, self.busy_op.is_some()) {
+        let remotes: Vec<String> = self
+            .remote_branches
+            .iter()
+            .map(|rb| format!("{}/{}", rb.remote, rb.name))
+            .collect();
+        match validate_merge_from_drag(&source, &self.branches, &remotes, self.busy_op.is_some()) {
             Ok(()) => {
                 eprintln!(
                     "[kagi] drag-merge: start merge from drag — source={}",
@@ -6491,6 +6547,33 @@ impl KagiApp {
     }
 
     // ── Operation Undo / Redo (T-UNDOREDO-001, ADR-0081) ─────
+
+    /// ADR-0084: hydrate the in-session [`OperationHistory`] from the current
+    /// branch's reflog when it is **empty** (freshly-opened repo, or after a
+    /// branch switch which clears the per-repo stack). This makes Cmd+Z work
+    /// immediately, even on operations performed outside this session.
+    ///
+    /// Only seeds when empty — an in-session stack (with precise summaries) is
+    /// never clobbered. Reflog read failures are logged and ignored (best-effort).
+    fn seed_history_from_reflog(&mut self, backend: &kagi::git::Backend) {
+        if self.operation_history.len() != 0 {
+            return;
+        }
+        match backend.history_from_reflog() {
+            Ok(entries) => {
+                if !entries.is_empty() {
+                    eprintln!(
+                        "[kagi] history: seeded {} entries from reflog",
+                        entries.len()
+                    );
+                    self.operation_history = kagi::git::OperationHistory::seeded(entries);
+                }
+            }
+            Err(e) => {
+                eprintln!("[kagi] history: reflog seed failed: {}", e);
+            }
+        }
+    }
 
     /// Record a successful ref-moving operation into the in-session
     /// [`OperationHistory`]. `before`/`after` are the branch tip SHAs around the
@@ -7527,9 +7610,10 @@ impl KagiApp {
         if let Some(panel) = self.commit_panel.as_ref() {
             for f in &panel.unstaged {
                 let rel = f.path.to_string_lossy().replace('\\', "/");
-                // Conflicted rows, and untracked rows (surfaced in the panel as
-                // `Added` entries in the unstaged section), are not discardable.
-                if panel.is_conflicted(&f.path) || matches!(f.change, ChangeKind::Added) {
+                // Conflicted rows are not discardable. Untracked rows (surfaced as
+                // `Added` entries) ARE discardable — they are deleted from disk
+                // after an ODB backup (ADR-0083).
+                if panel.is_conflicted(&f.path) {
                     skipped.push(rel);
                 } else {
                     eligible.push(rel);
@@ -7540,8 +7624,9 @@ impl KagiApp {
     }
 
     /// Open the discard modal for a single unstaged row (by its index in the
-    /// commit panel's `unstaged` vector). Untracked / conflicted rows are not
-    /// offered a Discard button, so this is only called for eligible rows.
+    /// commit panel's `unstaged` vector). Conflicted rows are not offered a
+    /// Discard menu; untracked rows are (they are deleted after an ODB backup,
+    /// ADR-0083).
     pub fn open_discard_modal_for_index(&mut self, index: usize) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
@@ -10075,6 +10160,23 @@ impl Render for KagiApp {
         // removes it once it has animated out (see start_toast_exit).
         self.ensure_toast_ticker(cx);
 
+        // Background auto-fetch ticker (periodic `git fetch` so the graph and
+        // ahead/behind stay fresh). Lazily spawned; no-op when off / no repo.
+        self.ensure_auto_fetch_ticker(cx);
+
+        // ADR-0084: seed the undo/redo history from the reflog once per repo, so
+        // Cmd+Z works on a freshly-opened repo (the initial CLI/snapshot path
+        // never calls `reload()`). `seed_history_from_reflog` is only-when-empty,
+        // so it never clobbers an in-session stack.
+        if !self.history_seed_attempted {
+            self.history_seed_attempted = true;
+            if let Some(repo_path) = self.repo_path.clone() {
+                if let Ok(backend) = kagi::git::Backend::open(&repo_path) {
+                    self.seed_history_from_reflog(&backend);
+                }
+            }
+        }
+
         // Modal text inputs: lazy-create + sync (needs Window).
         self.sync_modal_inputs(window, cx);
 
@@ -10502,6 +10604,29 @@ impl Render for KagiApp {
             }))
             .on_action(cx.listener(|this, _: &CheckoutSelected, window, cx| {
                 this.checkout_selected_commit(window, cx);
+            }))
+            // ADR-0084: Cmd+Z / Cmd+Shift+Z app history undo/redo. Mirrors the
+            // toolbar undo/redo buttons: open the plan→confirm modal when there
+            // is something to (un)do, else surface a "nothing to" footer. The
+            // keybinding's `!Input && !Terminal` predicate already keeps these
+            // off text fields and the terminal.
+            .on_action(cx.listener(|this, _: &commands::HistoryUndo, _window, cx| {
+                if this.operation_history.can_undo() {
+                    this.open_history_undo_modal();
+                } else {
+                    this.status_footer =
+                        FooterStatus::Idle(SharedString::from(Msg::NothingToUndo.t()));
+                }
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &commands::HistoryRedo, _window, cx| {
+                if this.operation_history.can_redo() {
+                    this.open_history_redo_modal();
+                } else {
+                    this.status_footer =
+                        FooterStatus::Idle(SharedString::from(Msg::NothingToRedo.t()));
+                }
+                cx.notify();
             }))
             // Enter checks out the selected commit. Handled as a raw key on
             // the root (the "enter" KeyBinding never dispatched — its
@@ -10946,11 +11071,16 @@ impl KagiApp {
         // Refresh — always enabled.
         let refresh_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
             this.refresh_spin_started = Some(Instant::now());
+            // Re-read local .git immediately (instant feedback) …
             this.reload();
             this.status_footer = FooterStatus::Idle(SharedString::from(Msg::Refreshed.t()));
             // W3-NOTIFY: explicit refresh gets a completion toast (the
             // watcher's automatic reloads stay silent to avoid spam).
             this.push_toast(ToastKind::Success, Msg::Refreshed.t());
+            // … then also fetch the remote in the background so changes pushed
+            // elsewhere (e.g. a GitHub merge) show up. Quiet: success reloads the
+            // graph, failure (offline / no remote) is silent — no error spam.
+            this.fetch_async(true, cx);
             cx.notify();
         });
 
@@ -12952,17 +13082,19 @@ fn render_badges_column(
             .child(label);
 
         // T-DNDMERGE-001 / ADR-0079: wire drag/drop onto the chip based on kind.
-        //   - `BadgeKind::Branch` → INDEPENDENTLY draggable, carrying ITS OWN
-        //     branch name (= the merge source) in `BranchDrag { name }`. Because
-        //     each visible branch chip carries its own name, dragging a specific
-        //     badge unambiguously selects that branch even when a commit has
-        //     several. Remote/Tag chips are NOT draggable.
+        //   - `BadgeKind::Branch` / `BadgeKind::Remote` → INDEPENDENTLY draggable,
+        //     carrying ITS OWN name (= the merge source) in `BranchDrag { name }`.
+        //     For a remote chip the name is the full `remote/name` ref, so an
+        //     upstream-only branch can be merged directly. Each visible chip
+        //     carries its own name, so dragging a specific badge unambiguously
+        //     selects that branch even when a commit has several. Tag chips are
+        //     NOT draggable.
         //   - `BadgeKind::HeadBranch` (the current branch) → drop TARGET. It
         //     shows a valid-target highlight via `.drag_over::<BranchDrag>` and
         //     dispatches to `start_merge_from_drag` on drop. The drop is a
         //     TRIGGER only — it never calls git from the view (same as sidebar).
         let chip = match badge.kind {
-            BadgeKind::Branch => {
+            BadgeKind::Branch | BadgeKind::Remote => {
                 if let Some(name) = draggable_branch_name(badge) {
                     chip.cursor_grab().on_drag(
                         BranchDrag { name: name.clone() },
@@ -12989,7 +13121,7 @@ fn render_badges_column(
                 })
                 .on_drop::<BranchDrag>(drop_handler)
             }
-            BadgeKind::Remote | BadgeKind::Tag => chip,
+            BadgeKind::Tag => chip,
         };
         inner = inner.child(chip);
 
@@ -13922,8 +14054,6 @@ fn render_unstaged_flat_row(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| f.path.to_string_lossy().into_owned());
     let is_conflicted_file = panel.is_conflicted(&f.path);
-    // W17-DISCARD: untracked rows are surfaced as `Added`; not discardable.
-    let is_untracked_row = matches!(f.change, ChangeKind::Added);
     let (badge, badge_color, _) = status_badge(&f.change, is_conflicted_file);
     let is_sel = selected_file == Some(CommitPanelFileRef::Unstaged { index: fi });
     let stat = panel.unstaged_stat(&f.path).cloned();
@@ -13980,16 +14110,15 @@ fn render_unstaged_flat_row(
         .child(diffstat_bar::diffstat_unit(fi, stat.as_ref()));
     // Stage button only for non-conflicted files
     if !is_conflicted_file {
-        // W17-DISCARD: right-click on tracked rows opens the file
-        // context menu (Discard lives there, not as a per-row button).
-        if !is_untracked_row {
-            let menu_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
-                this.file_menu = Some((fi, e.position));
-                cx.stop_propagation();
-                cx.notify();
-            });
-            file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
-        }
+        // W17-DISCARD / ADR-0083: right-click opens the file context menu
+        // (Discard lives there). Tracked rows are restored from the index;
+        // untracked rows are deleted (after an ODB backup).
+        let menu_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
+            this.file_menu = Some((fi, e.position));
+            cx.stop_propagation();
+            cx.notify();
+        });
+        file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
         file_row = file_row.child(
             div()
                 .id(("cp-us-flat-stage-btn", fi))
@@ -14118,17 +14247,15 @@ fn render_unstaged_tree_row(
                 )
                 .child(diffstat_bar::diffstat_unit(fi, stat.as_ref()));
             if !is_conflicted_file {
-                // W17-DISCARD: right-click on tracked rows opens the file
-                // context menu (Discard lives there, not as a per-row button).
-                if !matches!(change, ChangeKind::Added) {
-                    let menu_click =
-                        cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
-                            this.file_menu = Some((fi, e.position));
-                            cx.stop_propagation();
-                            cx.notify();
-                        });
-                    file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
-                }
+                // W17-DISCARD / ADR-0083: right-click opens the file context menu
+                // (Discard lives there). Untracked rows are discardable too —
+                // deleted from disk after an ODB backup.
+                let menu_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
+                    this.file_menu = Some((fi, e.position));
+                    cx.stop_propagation();
+                    cx.notify();
+                });
+                file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
                 file_row = file_row.child(
                     div()
                         .id(("cp-us-stage-btn", fi))
@@ -15231,6 +15358,19 @@ pub fn run_app(app_state: KagiApp) {
             KeyBinding::new("up", DiffPrevFile, Some("!Terminal")),
             KeyBinding::new("down", DiffNextFile, Some("!Terminal")),
         ]);
+        // ADR-0084: app-level Undo/Redo. Scoped `!Input && !Terminal` so a
+        // focused text field (gpui-component Input, key_context "Input") keeps
+        // OS-standard text undo (OsAction::Undo) and the terminal keeps its own
+        // Cmd+Z — the app history move only fires elsewhere (e.g. commit graph).
+        // gpui 0.2.2 only accepts `&&`/`||` (single `&` fails to parse).
+        cx.bind_keys([
+            KeyBinding::new("cmd-z", commands::HistoryUndo, Some("!Input && !Terminal")),
+            KeyBinding::new(
+                "cmd-shift-z",
+                commands::HistoryRedo,
+                Some("!Input && !Terminal"),
+            ),
+        ]);
         // Ctrl+A = Select All in text inputs. gpui-component binds ctrl-a to
         // *both* SelectAll and MoveHome (emacs-style) in the "Input" context,
         // and the later (MoveHome) wins — so on this platform Ctrl+A jumped to
@@ -15448,21 +15588,35 @@ mod drag_merge_validation_tests {
         ]
     }
 
+    fn remotes() -> Vec<String> {
+        vec!["origin/main".to_string(), "origin/feature".to_string()]
+    }
+
     #[test]
     fn drag_merge_accepts_other_local_branch() {
         assert_eq!(
-            validate_merge_from_drag("feature", &branches(), false),
+            validate_merge_from_drag("feature", &branches(), &remotes(), false),
             Ok(())
         );
         assert_eq!(
-            validate_merge_from_drag("topic/x", &branches(), false),
+            validate_merge_from_drag("topic/x", &branches(), &remotes(), false),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn drag_merge_accepts_remote_only_branch() {
+        // An upstream-only branch (a remote ref with no local counterpart) is a
+        // valid merge source — merged directly via its remote-tracking ref.
+        assert_eq!(
+            validate_merge_from_drag("origin/feature", &branches(), &remotes(), false),
             Ok(())
         );
     }
 
     #[test]
     fn drag_merge_rejects_current_branch_onto_itself() {
-        let err = validate_merge_from_drag("main", &branches(), false)
+        let err = validate_merge_from_drag("main", &branches(), &remotes(), false)
             .expect_err("dropping current branch onto itself must be rejected");
         assert!(
             err.contains("main"),
@@ -15478,10 +15632,10 @@ mod drag_merge_validation_tests {
 
     #[test]
     fn drag_merge_rejects_unknown_branch() {
-        let err = validate_merge_from_drag("ghost", &branches(), false)
-            .expect_err("a non-existent local branch must be rejected");
+        let err = validate_merge_from_drag("ghost", &branches(), &remotes(), false)
+            .expect_err("a non-existent branch must be rejected");
         assert!(
-            err.contains("not a local branch"),
+            err.contains("not a branch"),
             "reason should explain unknown branch: {}",
             err
         );
@@ -15489,7 +15643,7 @@ mod drag_merge_validation_tests {
 
     #[test]
     fn drag_merge_rejects_when_busy() {
-        let err = validate_merge_from_drag("feature", &branches(), true)
+        let err = validate_merge_from_drag("feature", &branches(), &remotes(), true)
             .expect_err("a drag while another op is busy must be rejected");
         assert!(!err.is_empty(), "busy rejection should carry a reason");
     }
@@ -15522,15 +15676,21 @@ mod draggable_branch_name_tests {
     }
 
     #[test]
-    fn head_remote_tag_badges_are_not_draggable() {
+    fn remote_badge_yields_its_full_ref() {
+        // A remote-tracking chip is a draggable merge source: its label is the
+        // full `remote/name` ref, resolved directly by the merge backend.
+        assert_eq!(
+            draggable_branch_name(&badge(BadgeKind::Remote, "origin/feature")),
+            Some("origin/feature".to_string())
+        );
+    }
+
+    #[test]
+    fn head_and_tag_badges_are_not_draggable() {
         // HeadBranch is the drop *target* (and its label carries the "✓"
-        // indicator), never a drag source.
+        // indicator), never a drag source. Tags are not merge sources here.
         assert_eq!(
             draggable_branch_name(&badge(BadgeKind::HeadBranch, "main ✓")),
-            None
-        );
-        assert_eq!(
-            draggable_branch_name(&badge(BadgeKind::Remote, "origin/main")),
             None
         );
         assert_eq!(

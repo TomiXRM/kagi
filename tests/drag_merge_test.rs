@@ -19,11 +19,18 @@ use kagi::git::Backend;
 // ── Validation gate (a copy of the action-layer rule under test) ──
 //
 // `KagiApp::start_merge_from_drag` delegates the obvious rejections to the pure
-// helper `validate_merge_from_drag(source, branches, busy)`.  That helper lives
-// inside `src/ui` (a binary-only module), so we re-state the contract here and
-// assert the drag path honours it before reaching the planner.  `branches` is
-// the `(name, is_head)` list as held in `KagiApp::branches`.
-fn drag_merge_gate(source: &str, branches: &[(String, bool)], busy: bool) -> Result<(), String> {
+// helper `validate_merge_from_drag(source, branches, remotes, busy)`.  That
+// helper lives inside `src/ui` (a binary-only module), so we re-state the
+// contract here and assert the drag path honours it before reaching the planner.
+// `branches` is the `(name, is_head)` list as held in `KagiApp::branches`;
+// `remotes` is the list of `remote/name` refs (`KagiApp::remote_branches`) —
+// an upstream-only branch is a valid source, merged directly via its ref.
+fn drag_merge_gate(
+    source: &str,
+    branches: &[(String, bool)],
+    remotes: &[String],
+    busy: bool,
+) -> Result<(), String> {
     if busy {
         return Err("another operation is in progress".to_string());
     }
@@ -33,7 +40,8 @@ fn drag_merge_gate(source: &str, branches: &[(String, bool)], busy: bool) -> Res
             source
         )),
         Some((_, false)) => Ok(()),
-        None => Err(format!("Branch '{}' is not a local branch.", source)),
+        None if remotes.iter().any(|n| n == source) => Ok(()),
+        None => Err(format!("Branch '{}' is not a branch.", source)),
     }
 }
 
@@ -82,11 +90,17 @@ fn branches_main_feature() -> Vec<(String, bool)> {
     vec![("main".to_string(), true), ("feature".to_string(), false)]
 }
 
+/// Local-branch list for a repo whose only local branch is the current `main`
+/// (used by the remote-only merge test, where `feature` exists only on a remote).
+fn branches_main_only() -> Vec<(String, bool)> {
+    vec![("main".to_string(), true)]
+}
+
 #[test]
 fn drag_merge_same_branch_is_rejected_before_planning() {
     // Dragging the current branch onto itself must be rejected by the gate, so
     // the planner is never even reached (drop is a trigger, not an execution).
-    let err = drag_merge_gate("main", &branches_main_feature(), false)
+    let err = drag_merge_gate("main", &branches_main_feature(), &[], false)
         .expect_err("same-branch drag must be rejected");
     assert!(
         err.contains("main") && err.contains("current branch"),
@@ -97,14 +111,14 @@ fn drag_merge_same_branch_is_rejected_before_planning() {
 
 #[test]
 fn drag_merge_unknown_source_is_rejected() {
-    let err = drag_merge_gate("ghost", &branches_main_feature(), false)
+    let err = drag_merge_gate("ghost", &branches_main_feature(), &[], false)
         .expect_err("unknown source must be rejected");
-    assert!(err.contains("not a local branch"), "got: {}", err);
+    assert!(err.contains("not a branch"), "got: {}", err);
 }
 
 #[test]
 fn drag_merge_while_busy_is_rejected() {
-    let err = drag_merge_gate("feature", &branches_main_feature(), true)
+    let err = drag_merge_gate("feature", &branches_main_feature(), &[], true)
         .expect_err("a drag while busy must be rejected");
     assert!(!err.is_empty());
 }
@@ -122,7 +136,7 @@ fn drag_merge_fast_forward_produces_ff_plan() {
     git(dir, &["checkout", "-q", "main"]);
 
     // Gate accepts (feature != current, exists, not busy).
-    drag_merge_gate("feature", &branches_main_feature(), false).expect("gate should accept");
+    drag_merge_gate("feature", &branches_main_feature(), &[], false).expect("gate should accept");
 
     // Drag reuses the SAME planner the menu uses; nothing is executed.
     let backend = Backend::open(dir).expect("open backend");
@@ -151,7 +165,7 @@ fn drag_merge_diverged_produces_merge_commit_plan() {
     git(dir, &["add", "main.txt"]);
     git(dir, &["commit", "-qm", "main"]);
 
-    drag_merge_gate("feature", &branches_main_feature(), false).expect("gate should accept");
+    drag_merge_gate("feature", &branches_main_feature(), &[], false).expect("gate should accept");
 
     let backend = Backend::open(dir).expect("open backend");
     let (plan, kind) = backend.plan_merge_branch("feature").expect("plan merge");
@@ -179,7 +193,7 @@ fn drag_merge_dirty_working_tree_warns_in_plan() {
     write_file(dir, "base.txt", "base modified\n");
 
     // The gate still accepts (dirty-WT is the planner's job, not the gate's).
-    drag_merge_gate("feature", &branches_main_feature(), false).expect("gate should accept");
+    drag_merge_gate("feature", &branches_main_feature(), &[], false).expect("gate should accept");
 
     let backend = Backend::open(dir).expect("open backend");
     let (plan, _kind) = backend.plan_merge_branch("feature").expect("plan merge");
@@ -192,4 +206,55 @@ fn drag_merge_dirty_working_tree_warns_in_plan() {
         "expected a dirty-working-tree warning, got warnings: {:?}",
         plan.warnings
     );
+}
+
+#[test]
+fn drag_merge_remote_only_branch_produces_plan() {
+    // An upstream-only branch: a remote-tracking ref `origin/feature` exists but
+    // there is NO local `feature`. Dragging it onto the current branch must be
+    // accepted by the gate and the planner must resolve the remote ref directly
+    // (no local branch is created) — the user can then confirm the merge.
+    let tmp = init_repo();
+    let dir = tmp.path();
+
+    // Build the would-be remote tip on a temporary local branch...
+    git(dir, &["checkout", "-qb", "feature"]);
+    write_file(dir, "feature.txt", "feature\n");
+    git(dir, &["add", "feature.txt"]);
+    git(dir, &["commit", "-qm", "feature"]);
+    let feature_sha = {
+        let out = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .expect("rev-parse");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    git(dir, &["checkout", "-q", "main"]);
+    // ...then publish it as a remote-tracking ref and drop the local branch, so
+    // `origin/feature` is the only reference to that commit.
+    git(
+        dir,
+        &["update-ref", "refs/remotes/origin/feature", &feature_sha],
+    );
+    git(dir, &["branch", "-qD", "feature"]);
+
+    // Gate: source is not in local branches, but IS a known remote ref → accept.
+    let remotes = vec!["origin/feature".to_string()];
+    drag_merge_gate("origin/feature", &branches_main_only(), &remotes, false)
+        .expect("gate should accept a remote-only branch");
+
+    // The planner resolves the remote ref directly (find_branch Remote / revparse).
+    let backend = Backend::open(dir).expect("open backend");
+    let (plan, kind) = backend
+        .plan_merge_branch("origin/feature")
+        .expect("plan merge of remote-only branch");
+    assert!(
+        plan.blockers.is_empty(),
+        "unexpected blockers: {:?}",
+        plan.blockers
+    );
+    // main is an ancestor of origin/feature → fast-forward.
+    assert_eq!(kind, MergeKind::FastForward);
+    assert_eq!(plan.title, "Merge origin/feature into main");
 }

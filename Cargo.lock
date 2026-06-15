@@ -3137,7 +3137,7 @@ dependencies = [
 
 [[package]]
 name = "kagi"
-version = "0.3.6"
+version = "0.3.8"
 dependencies = [
  "git2",
  "gpui",
@@ -3153,7 +3153,7 @@ dependencies = [
 
 [[package]]
 name = "kagi-domain"
-version = "0.3.6"
+version = "0.3.8"
 
 [[package]]
 name = "khronos-egl"

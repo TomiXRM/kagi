@@ -65,19 +65,25 @@ fn run_headless_discard(repo_path: &PathBuf, single: Option<String>, all: bool) 
     if all {
         match working_tree_status(&repo) {
             Ok(status) => {
-                let untracked: std::collections::HashSet<String> = status
-                    .untracked
-                    .iter()
-                    .map(|p| p.to_string_lossy().replace('\\', "/"))
-                    .collect();
                 let conflicted: std::collections::HashSet<String> = status
                     .conflicted
                     .iter()
                     .map(|p| p.to_string_lossy().replace('\\', "/"))
                     .collect();
+                // ADR-0083: untracked files ARE discardable (deleted after an ODB
+                // backup); only conflicted rows are skipped. Mirrors the UI's
+                // `discard_partition`.
                 for f in &status.unstaged {
                     let rel = f.path.to_string_lossy().replace('\\', "/");
-                    if !untracked.contains(&rel) && !conflicted.contains(&rel) {
+                    if !conflicted.contains(&rel) {
+                        paths.push(rel);
+                    }
+                }
+                // Untracked files are surfaced in the unstaged section by the UI;
+                // include them here too so the headless path matches.
+                for p in &status.untracked {
+                    let rel = p.to_string_lossy().replace('\\', "/");
+                    if !paths.contains(&rel) {
                         paths.push(rel);
                     }
                 }

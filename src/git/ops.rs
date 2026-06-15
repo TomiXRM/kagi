@@ -6260,6 +6260,9 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
         blockers.push("Nothing to discard: no files selected.".to_string());
     }
 
+    // Count untracked targets — they are discarded by DELETING the file (after
+    // an ODB backup), not by restoring from the index (ADR-0083).
+    let mut untracked_targets = 0usize;
     for rel in &rels {
         if conflicted_set.contains(rel) {
             blockers.push(format!(
@@ -6267,10 +6270,7 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
                 rel
             ));
         } else if untracked_set.contains(rel) {
-            blockers.push(format!(
-                "'{}' is untracked. Untracked files are not deleted by kagi.",
-                rel
-            ));
+            untracked_targets += 1;
         } else if !unstaged_set.contains(rel) {
             blockers.push(format!("'{}' has no unstaged changes to discard.", rel));
         }
@@ -6280,7 +6280,7 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
     let predicted = StateSummary {
         head: head.display(),
         dirty: if blockers.is_empty() {
-            format!("{} file(s) restored from index", target_count)
+            format!("{} file(s) discarded", target_count)
         } else {
             dirty_display
         },
@@ -6295,17 +6295,20 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
         format!("Discard changes to {} file(s)", target_count)
     };
 
-    let recovery = "This permanently discards your unstaged changes to the selected \
-        file(s). A backup blob of each file's current content is recorded in the \
-        oplog (op=\"discard\"); recover with `git cat-file -p <blob-sha>`."
+    let recovery = "This discards your unstaged changes to the selected file(s): \
+        tracked files are restored from the index, untracked files are deleted from \
+        disk. Either way a backup blob of each file's current content is recorded in \
+        the oplog (op=\"discard\") first; recover with `git cat-file -p <blob-sha>`."
         .to_string();
 
-    // Surface untracked-in-tree as an informational warning (the UI already
-    // excludes them; this keeps the plan honest if called directly).
-    if !status.untracked.is_empty() {
+    // ADR-0083: untracked targets are DELETED (after an ODB backup). Surface this
+    // as a warning so the confirm step is explicit about the irreversible-looking
+    // (but recoverable) deletion.
+    if untracked_targets > 0 {
         warnings.push(format!(
-            "{} untracked file(s) are not affected (untracked files are not deleted by kagi).",
-            status.untracked.len()
+            "{} untracked file(s) will be deleted from disk (backed up to the oplog first; \
+             recover with `git cat-file -p <blob-sha>`).",
+            untracked_targets
         ));
     }
 
@@ -6329,15 +6332,16 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
 /// 1. **backup** — write each target's CURRENT working-tree content into the ODB
 ///    via `repo.blob()`, collecting `path → blob SHA`. If **any** backup fails,
 ///    the whole discard is aborted (no working-tree change is made).
-/// 2. **checkout_index** — restore the working tree from the index for the target
-///    paths only, with `force()` (`git checkout -- <path>` semantics). The index
-///    and refs are never touched (`update_index(false)`).
-/// 3. **verify** — re-read status and confirm each target left the unstaged set.
+/// 2. **apply** — *tracked* targets are restored from the index with
+///    `checkout_index` + `force()` (`git checkout -- <path>` semantics); *untracked*
+///    targets are DELETED from disk (ADR-0083 — recoverable via the step-1 backup,
+///    so this is not `git clean`). The index and refs are never touched.
+/// 3. **verify** — re-read status and confirm each target left the unstaged set
+///    (tracked) or is gone from disk (untracked).
 ///
 /// Returns the [`DiscardOutcome`] (the path→blob backup list) so the caller can
 /// record it in the oplog as the recovery handle. The caller MUST have rejected
-/// untracked / conflicted targets at plan time (this function backs up and
-/// restores exactly the paths it is given).
+/// conflicted targets at plan time.
 pub fn execute_discard(
     repo: &Repository,
     plan: &OperationPlan,
@@ -6361,6 +6365,15 @@ pub fn execute_discard(
     if rels.is_empty() {
         return Err(GitError::Other("discard: no target paths".to_string()));
     }
+
+    // Classify targets up front: untracked targets are deleted, tracked targets
+    // are restored from the index (ADR-0083).
+    let status_before = working_tree_status(repo)?;
+    let untracked_set: std::collections::HashSet<String> = status_before
+        .untracked
+        .iter()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .collect();
 
     // ── 1. BACKUP — write each target's current WT content to the ODB. ──
     // Any failure aborts the whole discard BEFORE the working tree is touched.
@@ -6392,32 +6405,66 @@ pub fn execute_discard(
         });
     }
 
-    // ── 2. checkout_index with path filter + force (restore WT from index). ──
-    // update_index(false): the index (staged changes) is NEVER modified.
-    let mut cb = git2::build::CheckoutBuilder::new();
-    cb.force();
-    cb.update_index(false);
-    cb.disable_pathspec_match(true);
-    for rel in &rels {
-        cb.path(rel.as_str());
-    }
-    repo.checkout_index(None, Some(&mut cb))
-        .map_err(|e| GitError::Other(format!("discard: checkout_index failed: {}", e.message())))?;
+    // Partition into tracked (restore from index) vs untracked (delete).
+    let (untracked_rels, tracked_rels): (Vec<&String>, Vec<&String>) =
+        rels.iter().partition(|r| untracked_set.contains(*r));
 
-    // ── 3. VERIFY — targets must have left the unstaged set. ──
+    // ── 2a. checkout_index with path filter + force (restore WT from index). ──
+    // update_index(false): the index (staged changes) is NEVER modified.
+    if !tracked_rels.is_empty() {
+        let mut cb = git2::build::CheckoutBuilder::new();
+        cb.force();
+        cb.update_index(false);
+        cb.disable_pathspec_match(true);
+        for rel in &tracked_rels {
+            cb.path(rel.as_str());
+        }
+        repo.checkout_index(None, Some(&mut cb)).map_err(|e| {
+            GitError::Other(format!("discard: checkout_index failed: {}", e.message()))
+        })?;
+    }
+
+    // ── 2b. DELETE untracked targets (ADR-0083; content backed up in step 1). ──
+    for rel in &untracked_rels {
+        let abs = workdir.join(rel);
+        match std::fs::remove_file(&abs) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(GitError::Other(format!(
+                    "discard: failed to delete untracked file '{}': {}",
+                    rel, e
+                )));
+            }
+        }
+    }
+
+    // ── 3. VERIFY — tracked targets left the unstaged set; untracked are gone. ──
     let status = working_tree_status(repo)?;
     let still_unstaged: std::collections::HashSet<String> = status
         .unstaged
         .iter()
         .map(|f| f.path.to_string_lossy().replace('\\', "/"))
         .collect();
-    let leftover: Vec<&String> = rels
+    let still_untracked: std::collections::HashSet<String> = status
+        .untracked
         .iter()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .collect();
+    let mut leftover: Vec<&String> = tracked_rels
+        .iter()
+        .copied()
         .filter(|r| still_unstaged.contains(*r))
         .collect();
+    leftover.extend(
+        untracked_rels
+            .iter()
+            .copied()
+            .filter(|r| still_untracked.contains(*r)),
+    );
     if !leftover.is_empty() {
         return Err(GitError::Other(format!(
-            "discard verify failed: {} target(s) still unstaged: {}",
+            "discard verify failed: {} target(s) not discarded: {}",
             leftover.len(),
             leftover
                 .iter()
@@ -6580,8 +6627,8 @@ fn plan_history_move(
     // Dirty working tree → preserved, but warn.
     if !status.staged.is_empty() || !status.unstaged.is_empty() {
         warnings.push(
-            "You have uncommitted changes. They will be preserved in the working tree; \
-             only the branch ref and index move."
+            "You have uncommitted changes. They will be preserved verbatim; \
+             only the branch ref moves (soft reset — index and working tree untouched)."
                 .to_string(),
         );
     }
@@ -6595,7 +6642,8 @@ fn plan_history_move(
             other => other.display(),
         },
         dirty: format!(
-            "index reset to {} (working-tree changes preserved)",
+            "soft move to {} (index untouched → the move's diff shows STAGED; \
+             working-tree changes preserved)",
             to_short
         ),
     };
@@ -6655,11 +6703,13 @@ pub fn plan_redo(
 /// `from`, and `to` is reachable — stale entries are rejected with a clear
 /// message rather than corrupting state.
 ///
-/// MOVE (mixed/soft, never `--hard`):
+/// MOVE (soft, never `--hard`, never `--mixed`):
 /// 1. `repo.reference(refs/heads/<branch>, to, true, msg)` — move the branch ref.
-/// 2. `index.read_tree(to_tree)` + `index.write()` — reconcile the index to the
-///    target tree. The working tree is **never** written to, so uncommitted
-///    edits are preserved.
+///
+/// The index and working tree are **never** touched (ADR-0084, `git reset
+/// --soft` semantics). After undoing a commit, HEAD is at the parent but the
+/// index still holds the commit's tree, so the commit's changes reappear
+/// **staged**. Uncommitted working-tree edits are always preserved.
 ///
 /// VERIFY: HEAD now resolves to `to`.
 fn execute_history_move(
@@ -6711,18 +6761,17 @@ fn execute_history_move(
         )));
     }
 
-    let to_commit = repo.find_commit(to_oid).map_err(|e| {
+    // Reachability check only — the target commit must exist. We never read its
+    // tree into the index (soft semantics: the index is left untouched).
+    repo.find_commit(to_oid).map_err(|e| {
         GitError::Other(format!(
             "Stale history entry: target {} unreachable: {}",
             &to_oid.to_string()[..8],
             e.message()
         ))
     })?;
-    let to_tree = to_commit
-        .tree()
-        .map_err(|e| GitError::Other(format!("target tree lookup failed: {}", e.message())))?;
 
-    // ── MOVE: branch ref (mixed/soft — never --hard) ─────────
+    // ── MOVE: branch ref only (soft — never --mixed, never --hard) ─
     let branch_refname = format!("refs/heads/{}", branch);
     let log_msg = format!(
         "{}: move {} from {} to {}",
@@ -6740,18 +6789,9 @@ fn execute_history_move(
             ))
         })?;
 
-    // ── MOVE: index → target tree (working tree untouched) ───
-    {
-        let mut index = repo
-            .index()
-            .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
-        index
-            .read_tree(&to_tree)
-            .map_err(|e| GitError::Other(format!("index.read_tree failed: {}", e.message())))?;
-        index
-            .write()
-            .map_err(|e| GitError::Other(format!("index.write failed: {}", e.message())))?;
-    }
+    // NOTE: the index and working tree are intentionally left untouched (soft
+    // reset). After undoing a commit, the index still holds that commit's tree,
+    // so its changes show up as STAGED — exactly `git reset --soft HEAD@{1}`.
 
     // ── VERIFY: HEAD resolves to the target ──────────────────
     let new_head = repo
@@ -6793,4 +6833,118 @@ pub fn execute_redo(
     after: &CommitId,
 ) -> Result<HistoryMoveOutcome, GitError> {
     execute_history_move(repo, "Redo", branch, before, after)
+}
+
+/// Maximum number of reflog entries to seed the undo/redo history with.
+const REFLOG_SEED_MAX: usize = 50;
+
+/// Infer the [`OperationKind`] of a ref move from its reflog message prefix
+/// (ADR-0084). git writes a stable prefix per operation (e.g. `"commit:"`,
+/// `"commit (amend):"`, `"merge feature:"`). The undo/redo mechanics are
+/// identical for every kind — this only tailors the preview label.
+fn infer_kind_from_reflog(msg: &str) -> kagi_domain::history::OperationKind {
+    use kagi_domain::history::OperationKind;
+    // Order matters: the more-specific "commit (...)" prefixes must be checked
+    // before the bare "commit" prefix.
+    if msg.starts_with("commit (amend)") {
+        OperationKind::Amend
+    } else if msg.starts_with("commit (merge)") || msg.starts_with("merge") {
+        OperationKind::Merge
+    } else if msg.starts_with("revert") {
+        OperationKind::Revert
+    } else if msg.starts_with("cherry-pick") {
+        OperationKind::CherryPick
+    } else if msg.starts_with("commit") {
+        OperationKind::Commit
+    } else if msg.starts_with("reset") {
+        // A reset (incl. our own soft undo) is a generic ref move.
+        OperationKind::UndoCommit
+    } else {
+        OperationKind::Commit
+    }
+}
+
+/// Read the current branch's reflog and build an undo/redo history seed
+/// (ADR-0084 §2). Returns entries **oldest → newest** (the order
+/// [`kagi_domain::history::OperationHistory::seeded`] expects: cursor = len so
+/// `peek_undo` targets the most-recent ref move).
+///
+/// The reflog of `refs/heads/<branch>` records every ref move as
+/// `(old_oid, new_oid, message)`, newest-first. We:
+/// - skip no-op entries where `old == new`,
+/// - keep only the **leading chained run** (`entry[i].before == entry[i+1].after`
+///   in newest-first order) so unrelated branch noise / GC boundaries can't leak
+///   in, stopping at the first break or after [`REFLOG_SEED_MAX`] entries,
+/// - then reverse into oldest→newest for `seeded`.
+///
+/// On a detached HEAD (no branch) this returns an empty Vec.
+pub fn history_from_reflog(
+    repo: &Repository,
+) -> Result<Vec<kagi_domain::history::HistoryEntry>, GitError> {
+    use kagi_domain::history::HistoryEntry;
+
+    // Resolve the current branch short name; bail (empty) if HEAD is detached.
+    let head_ref = match repo.head() {
+        Ok(h) => h,
+        Err(_) => return Ok(Vec::new()),
+    };
+    if !head_ref.is_branch() {
+        return Ok(Vec::new());
+    }
+    let branch = match head_ref.shorthand() {
+        Ok(b) => b.to_string(),
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    let refname = format!("refs/heads/{}", branch);
+    let reflog = match repo.reflog(&refname) {
+        Ok(r) => r,
+        // No reflog (e.g. brand-new branch) → nothing to seed.
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    // Collect chained entries newest-first.
+    let mut newest_first: Vec<HistoryEntry> = Vec::new();
+    let mut expected_after: Option<git2::Oid> = None;
+    for i in 0..reflog.len() {
+        if newest_first.len() >= REFLOG_SEED_MAX {
+            break;
+        }
+        let entry = match reflog.get(i) {
+            Some(e) => e,
+            None => break,
+        };
+        let old = entry.id_old();
+        let new = entry.id_new();
+        // Skip no-op moves (old == new); they carry no undoable diff.
+        if old == new {
+            continue;
+        }
+        // Enforce the chain: each entry's `after` must equal the previous
+        // (newer) entry's `before`. Stop at the first break.
+        if let Some(exp) = expected_after {
+            if new != exp {
+                break;
+            }
+        }
+        let msg = entry.message().ok().flatten().unwrap_or("");
+        let after_short = new.to_string();
+        let after_short = &after_short[..after_short.len().min(8)];
+        newest_first.push(HistoryEntry {
+            kind: infer_kind_from_reflog(msg),
+            branch: branch.clone(),
+            before: CommitId(old.to_string()),
+            after: CommitId(new.to_string()),
+            summary: if msg.is_empty() {
+                format!("{} {}", branch, after_short)
+            } else {
+                format!("{} {}", after_short, msg)
+            },
+        });
+        expected_after = Some(old);
+    }
+
+    // `seeded` wants oldest → newest (cursor = len).
+    newest_first.reverse();
+    Ok(newest_first)
 }

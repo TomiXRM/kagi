@@ -326,6 +326,31 @@ pub fn init_compact_graph() {
     eprintln!("[kagi] graph_compact: {}", compact_graph());
 }
 
+/// Background auto-fetch flag. Defaults to **on** (periodic + on-focus fetch so
+/// the commit graph and ahead/behind counts stay fresh without manual fetches).
+static AUTO_FETCH: AtomicBool = AtomicBool::new(true);
+
+/// The currently-active auto-fetch flag (read by the auto-fetch ticker).
+#[inline]
+pub fn auto_fetch() -> bool {
+    AUTO_FETCH.load(Ordering::Relaxed)
+}
+
+/// Set + persist the auto-fetch flag to `settings.json` (key `auto_fetch`).
+pub fn set_auto_fetch(on: bool) {
+    AUTO_FETCH.store(on, Ordering::Relaxed);
+    write_setting("auto_fetch", Some(if on { "true" } else { "false" }));
+}
+
+/// Initialise the auto-fetch flag at startup from `settings.json`
+/// (`"auto_fetch"`). Missing → on; only an explicit `"false"` disables it.
+pub fn init_auto_fetch() {
+    if let Some(raw) = read_setting("auto_fetch") {
+        AUTO_FETCH.store(raw.trim() != "false", Ordering::Relaxed);
+    }
+    eprintln!("[kagi] auto_fetch: {}", auto_fetch());
+}
+
 /// Look up a theme index by slug.
 pub fn index_of(slug: &str) -> Option<usize> {
     THEMES.iter().position(|t| t.slug == slug)
@@ -443,10 +468,12 @@ fn settings_escape(s: &str) -> String {
 
 /// All known string-valued `settings.json` keys.  Listed so [`write_setting`]
 /// can round-trip every key it doesn't recognise as the current target.
-const SETTINGS_KEYS: [&str; 15] = [
+const SETTINGS_KEYS: [&str; 16] = [
     "theme",
     "lang",
     "ui_zoom",
+    // Background auto-fetch toggle (periodic + on-focus). Defaults on.
+    "auto_fetch",
     // T-SETTINGS-001: compact commit-graph row height toggle.
     "graph_compact",
     "smart_commit_llm_enabled",

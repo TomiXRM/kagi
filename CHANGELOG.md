@@ -3,6 +3,16 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.10] — 2026-06-15
+
+### Fixed
+- **Linux AppImage installer now works with no arguments.** The zip nested the
+  install script under `scripts/` while the AppImage and icon sat at the root, so
+  `install_linux_desktop.sh` couldn't find them and only printed its usage
+  message. The zip is now **flat** (script next to the AppImage + icon, per
+  ADR-0047), and the script's auto-detect also searches the unzip root — so
+  `unzip … && bash install_linux_desktop.sh` registers Kagi under `~/.local`.
+
 ## [0.3.9] — 2026-06-15
 
 ### Added

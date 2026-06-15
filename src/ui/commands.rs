@@ -198,6 +198,8 @@ pub struct MenuSection {
     pub items: &'static [MenuNode],
     /// macOS-only section (relies on the responder chain).  Linux skips it
     /// entirely — see ADR-0085 §4 (the intentional Edit-menu OS difference).
+    /// Only read by `linux_menu_sections` (dead on non-Linux targets).
+    #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
     pub mac_only: bool,
 }
 
@@ -337,6 +339,7 @@ pub const MENU_BAR: &[MenuSection] = &[
 /// minus the `mac_only` sections (the Edit menu — ADR-0085 §3/§4).  Heads and
 /// the open dropdown both iterate this so their indices (and the dropdown's
 /// left offset) stay aligned.
+#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
 pub fn linux_menu_sections() -> impl Iterator<Item = &'static MenuSection> {
     MENU_BAR.iter().filter(|s| !s.mac_only)
 }
@@ -344,6 +347,7 @@ pub fn linux_menu_sections() -> impl Iterator<Item = &'static MenuSection> {
 /// The ordered theme command ids, as they appear under View → Theme.  Used by
 /// the Linux dropdown to inline-expand `DynSubmenu::Theme` (macOS nests
 /// [`theme_submenu`] instead).  These mirror the registry's `theme.*` ids.
+#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
 pub const THEME_COMMAND_IDS: &[&str] = &[
     "theme.catppuccin",
     "theme.xcodeDark",
@@ -356,6 +360,7 @@ pub const THEME_COMMAND_IDS: &[&str] = &[
 /// The ordered language command ids, as they appear under View → Language.
 /// Used by the Linux dropdown to inline-expand `DynSubmenu::Language` (macOS
 /// nests [`lang_submenu`] instead).  These mirror the registry's `lang.*` ids.
+#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
 pub const LANG_COMMAND_IDS: &[&str] = &["lang.english", "lang.japanese"];
 
 // ──────────────────────────────────────────────────────────────────────────

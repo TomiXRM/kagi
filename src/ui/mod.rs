@@ -1124,7 +1124,9 @@ pub struct KagiApp {
     /// Keyboard Shortcuts).  `None` when no menu overlay is visible.
     pub menu_overlay: Option<commands::MenuOverlay>,
     /// Linux/FreeBSD client-side menu dropdown currently open from the in-app
-    /// menu bar. Native macOS menus are provided by `cx.set_menus`.
+    /// menu bar. Native macOS menus are provided by `cx.set_menus`, so this is
+    /// only read on Linux/FreeBSD (dead on other targets).
+    #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
     pub platform_menu_open: Option<usize>,
     // ── W6-TABSPEED: async tab loading + stale-while-revalidate cache ──
     /// Cache of snapshot-derived display data keyed by repository path
@@ -15941,6 +15943,12 @@ impl KagiApp {
         None
     }
 
+    // `cx` is only used by the Linux/FreeBSD branch (titlebar + menu dropdown);
+    // the other-target branch just returns `content`.
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "freebsd")),
+        allow(unused_variables)
+    )]
     fn platform_window_shell(
         &mut self,
         content: gpui::AnyElement,
@@ -15966,6 +15974,8 @@ impl KagiApp {
     }
 }
 
+// Only the Linux/FreeBSD in-app menu calls this (✓ marker for theme/lang).
+#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
 fn platform_menu_label(id: &str, fallback: &str) -> String {
     if let Some(slug) = commands::theme_slug_for_command(id) {
         if theme::theme().slug == slug {

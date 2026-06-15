@@ -496,6 +496,10 @@ impl TerminalRenderer {
         let num_lines = grid.screen_lines();
         let num_cols = grid.columns();
         let colors = term.colors();
+        // Scrollback: when the user has scrolled up, `display_offset` > 0; shift
+        // the grid line index by it so older history is painted. `Line` accepts
+        // negative indices that reach into the scrollback buffer.
+        let display_offset = grid.display_offset() as i32;
 
         // Calculate default background color
         let default_bg = self.palette.resolve(
@@ -553,7 +557,7 @@ impl TerminalRenderer {
 
         // Iterate over visible lines
         for line_idx in 0..num_lines {
-            let line = Line(line_idx as i32);
+            let line = Line(line_idx as i32 - display_offset);
 
             // Collect cells for this line
             let cells: Vec<(usize, Cell)> = (0..num_cols)
@@ -670,35 +674,38 @@ impl TerminalRenderer {
             }
         }
 
-        // Paint cursor
-        let cursor_point = grid.cursor.point;
-        let cursor_x = origin.x + self.cell_width * (cursor_point.column.0 as f32);
-        let cursor_y = origin.y + self.cell_height * (cursor_point.line.0 as f32);
+        // Paint cursor — only at the live screen (not while scrolled into
+        // history, where the cursor's row isn't visible / meaningful).
+        if display_offset == 0 {
+            let cursor_point = grid.cursor.point;
+            let cursor_x = origin.x + self.cell_width * (cursor_point.column.0 as f32);
+            let cursor_y = origin.y + self.cell_height * (cursor_point.line.0 as f32);
 
-        let cursor_color = self.palette.resolve(
-            Color::Named(alacritty_terminal::vte::ansi::NamedColor::Cursor),
-            colors,
-        );
+            let cursor_color = self.palette.resolve(
+                Color::Named(alacritty_terminal::vte::ansi::NamedColor::Cursor),
+                colors,
+            );
 
-        let cursor_bounds = Bounds {
-            origin: Point {
-                x: cursor_x,
-                y: cursor_y,
-            },
-            size: Size {
-                width: self.cell_width,
-                height: self.cell_height,
-            },
-        };
+            let cursor_bounds = Bounds {
+                origin: Point {
+                    x: cursor_x,
+                    y: cursor_y,
+                },
+                size: Size {
+                    width: self.cell_width,
+                    height: self.cell_height,
+                },
+            };
 
-        window.paint_quad(quad(
-            cursor_bounds,
-            px(0.0),
-            cursor_color,
-            Edges::<Pixels>::default(),
-            transparent_black(),
-            Default::default(),
-        ));
+            window.paint_quad(quad(
+                cursor_bounds,
+                px(0.0),
+                cursor_color,
+                Edges::<Pixels>::default(),
+                transparent_black(),
+                Default::default(),
+            ));
+        }
     }
 }
 

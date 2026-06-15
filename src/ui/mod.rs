@@ -9998,6 +9998,138 @@ impl KagiApp {
             .is_some_and(|fh| fh.is_focused(window))
     }
 
+    /// Enter while a modal is open: confirm/approve the active modal (highest
+    /// priority first). Returns `true` if a modal was open — the caller consumes
+    /// Enter and does NOT fall through to commit checkout. Each confirm method
+    /// self-guards on blockers, so a blocked plan stays open. View-only/multi-
+    /// choice overlays (update, menu/settings) are consumed but not actioned.
+    /// (User request: Enter approves a modal, Esc cancels it.)
+    fn confirm_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.discard_modal.is_some() {
+            self.start_discard(cx);
+        } else if self.conflict_continue_modal.is_some() {
+            self.confirm_conflict_continue(cx);
+        } else if self.history_modal.is_some() {
+            self.confirm_history();
+        } else if self.amend_modal.is_some() {
+            self.confirm_amend();
+        } else if self.undo_modal.is_some() {
+            self.confirm_undo();
+        } else if self.cherry_pick_modal.is_some() {
+            self.start_cherry_pick(cx);
+        } else if self.revert_modal.is_some() {
+            self.start_revert(cx);
+        } else if self.stash_apply_modal.is_some() {
+            self.confirm_stash_apply();
+        } else if self.stash_push_modal.is_some() {
+            self.confirm_stash_push(cx);
+        } else if self.create_worktree_modal.is_some() {
+            self.start_create_worktree(cx);
+        } else if self.create_branch_modal.is_some() {
+            self.confirm_create_branch();
+        } else if self.rename_branch_modal.is_some() {
+            self.start_rename_branch(cx);
+        } else if self.set_upstream_modal.is_some() {
+            self.start_set_upstream(cx);
+        } else if self.tracking_checkout_modal.is_some() {
+            self.start_tracking_checkout(cx);
+        } else if self.merge_modal.is_some() {
+            self.start_merge(cx);
+        } else if self.branch_plan_modal.is_some() {
+            self.start_branch_plan(cx);
+        } else if self.delete_branch_modal.is_some() {
+            self.confirm_delete_branch();
+        } else if self.pop_modal.is_some() {
+            self.confirm_pop();
+        } else if self.push_modal.is_some() {
+            self.confirm_push();
+        } else if self.pull_modal.is_some() {
+            self.confirm_pull();
+        } else if self.plan_modal.is_some() {
+            self.confirm_checkout();
+        } else if self.smart_commit.modal.is_some() {
+            self.confirm_smart_consent(cx);
+        } else if self
+            .commit_panel
+            .as_ref()
+            .is_some_and(|p| p.plan_modal.is_some())
+        {
+            self.start_commit(cx);
+        } else if self.update_modal_open || self.menu_overlay.is_some() {
+            // Open but no single confirm action — consume Enter (don't check out
+            // a commit), but take no action.
+            return true;
+        } else {
+            return false;
+        }
+        cx.notify();
+        true
+    }
+
+    /// Esc while a modal is open: cancel/close the active modal (same priority
+    /// order as `confirm_active_modal`). Returns `true` if a modal was open.
+    fn cancel_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.discard_modal.is_some() {
+            self.cancel_discard_modal();
+        } else if self.conflict_continue_modal.is_some() {
+            self.cancel_conflict_continue();
+        } else if self.history_modal.is_some() {
+            self.history_modal = None;
+        } else if self.amend_modal.is_some() {
+            self.cancel_amend_modal();
+        } else if self.undo_modal.is_some() {
+            self.cancel_undo_modal();
+        } else if self.cherry_pick_modal.is_some() {
+            self.cancel_cherry_pick_modal();
+        } else if self.revert_modal.is_some() {
+            self.cancel_revert_modal();
+        } else if self.stash_apply_modal.is_some() {
+            self.cancel_stash_apply_modal();
+        } else if self.stash_push_modal.is_some() {
+            self.cancel_stash_push_modal();
+        } else if self.create_worktree_modal.is_some() {
+            self.cancel_create_worktree_modal();
+        } else if self.create_branch_modal.is_some() {
+            self.cancel_create_branch_modal();
+        } else if self.rename_branch_modal.is_some() {
+            self.cancel_rename_branch_modal();
+        } else if self.set_upstream_modal.is_some() {
+            self.cancel_set_upstream_modal();
+        } else if self.tracking_checkout_modal.is_some() {
+            self.cancel_tracking_checkout_modal();
+        } else if self.merge_modal.is_some() {
+            self.cancel_merge_modal();
+        } else if self.branch_plan_modal.is_some() {
+            self.cancel_branch_plan_modal();
+        } else if self.delete_branch_modal.is_some() {
+            self.cancel_delete_branch_modal();
+        } else if self.pop_modal.is_some() {
+            self.cancel_pop_modal();
+        } else if self.push_modal.is_some() {
+            self.cancel_push_modal();
+        } else if self.pull_modal.is_some() {
+            self.cancel_pull_modal();
+        } else if self.plan_modal.is_some() {
+            self.cancel_modal();
+        } else if self.smart_commit.modal.is_some() {
+            self.cancel_smart_modal(cx);
+        } else if self
+            .commit_panel
+            .as_ref()
+            .is_some_and(|p| p.plan_modal.is_some())
+        {
+            self.cancel_commit_plan_modal();
+        } else if self.update_modal_open {
+            self.update_modal_open = false;
+        } else if self.menu_overlay.is_some() {
+            self.menu_overlay = None;
+        } else {
+            return false;
+        }
+        cx.notify();
+        true
+    }
+
     /// Enter on a selected commit: open the checkout plan for it
     /// (branch checkout when a local branch points here, otherwise a
     /// detached commit checkout). On a dirty working tree the confirm
@@ -10551,6 +10683,10 @@ impl Render for KagiApp {
 
         // T-UI-003: Esc closes the main diff view (no-op when main_diff is None).
         let close_main_diff = cx.listener(|this, _: &CloseMainDiff, _window, cx| {
+            // Esc cancels an open modal first (user request: Esc = cancel).
+            if this.cancel_active_modal(cx) {
+                return;
+            }
             if this.commit_menu.is_some() {
                 this.commit_menu = None;
                 cx.notify();
@@ -10647,7 +10783,11 @@ impl Render for KagiApp {
                     && !ks.modifiers.alt
                     && !ks.modifiers.shift
                 {
-                    this.checkout_selected_commit(window, cx);
+                    // Enter approves an open modal (user request); otherwise it
+                    // checks out the selected commit.
+                    if !this.confirm_active_modal(cx) {
+                        this.checkout_selected_commit(window, cx);
+                    }
                     cx.notify();
                 }
             }))

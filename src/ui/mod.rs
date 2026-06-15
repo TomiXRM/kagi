@@ -791,6 +791,10 @@ pub enum ToastKind {
     Success,
     /// Operation failed or was refused (red, 8s).
     Error,
+    /// Sync-flavoured info (blue, 4s): renders the same big spinning sync icon
+    /// as the busy snackbar, so "already up to date" reads consistently with
+    /// an in-flight pull/push. Used for the no-op pull/push snackbars.
+    Sync,
 }
 
 /// One snackbar entry, stacked bottom-right above the status bar.
@@ -3645,7 +3649,6 @@ impl KagiApp {
         self.busy_op = Some("create-worktree");
         self.create_worktree_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCreateWorktree.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedCreateWorktree.t());
         eprintln!("[kagi] async: create-worktree started");
 
         let branch_input = modal.branch_input.clone();
@@ -3803,7 +3806,6 @@ impl KagiApp {
         self.busy_op = Some("stash");
         self.stash_push_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStash.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedStash.t());
         eprintln!("[kagi] async: stash-push started");
 
         let msg_opt = if modal.input.is_empty() {
@@ -4127,7 +4129,6 @@ impl KagiApp {
         self.busy_op = Some("cherry-pick");
         self.cherry_pick_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCherryPick.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedCherryPick.t());
         eprintln!("[kagi] async: cherry-pick started");
 
         let plan = modal.plan.clone();
@@ -4269,7 +4270,6 @@ impl KagiApp {
         self.busy_op = Some("revert");
         self.revert_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyRevert.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedRevert.t());
         eprintln!("[kagi] async: revert started");
 
         let plan = modal.plan.clone();
@@ -4804,12 +4804,25 @@ impl KagiApp {
         }
 
         for toast in &self.toasts {
-            let (accent, icon) = match toast.kind {
+            let (accent, glyph) = match toast.kind {
                 ToastKind::Info => (theme().color_branch, "\u{27f3}"), // ⟳
                 ToastKind::Success => (theme().color_success, "\u{2713}"), // ✓
                 ToastKind::Error => (theme().color_blocker, "\u{2715}"), // ✕
+                ToastKind::Sync => (theme().color_branch, ""),
             };
             let id = toast.id;
+            let is_sync = toast.kind == ToastKind::Sync;
+            // Sync toasts reuse the busy snackbar's big spinning icon (user
+            // request: "already up to date" must match an in-flight op); the
+            // others keep the compact text glyph.
+            let icon_el: gpui::AnyElement = if is_sync {
+                self.big_sync_icon(accent, ("kagi-toast-sync", id))
+            } else {
+                div()
+                    .text_color(rgb(accent))
+                    .child(SharedString::from(glyph))
+                    .into_any_element()
+            };
             let leaving = toast.dismissing.is_some();
             let dismiss = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
                 this.start_toast_exit(id, cx);
@@ -4820,8 +4833,8 @@ impl KagiApp {
                 .w(theme::scaled_px(460.))
                 .flex()
                 .flex_row()
-                .items_start()
-                .gap_2()
+                .when(is_sync, |d| d.items_center().gap_3())
+                .when(!is_sync, |d| d.items_start().gap_2())
                 .px_4()
                 .py_3()
                 .rounded(theme::scaled_px(8.))
@@ -4830,12 +4843,7 @@ impl KagiApp {
                 .border_color(rgb(accent))
                 .text_base()
                 .text_color(rgb(theme().text_main))
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_color(rgb(accent))
-                        .child(SharedString::from(icon)),
-                )
+                .child(div().flex_shrink_0().child(icon_el))
                 .child(
                     div()
                         .flex_1()
@@ -4882,26 +4890,34 @@ impl KagiApp {
     /// icon + a friendly label (user request — a non-blocking alternative to a
     /// modal busy-spinner). Driven automatically by `busy_op`, so every async
     /// op gets one for free.
-    fn render_busy_snackbar(&self, op: &'static str) -> gpui::AnyElement {
+    /// The big spinning sync icon shared by the busy snackbar and the
+    /// sync-flavoured no-op toasts (`ToastKind::Sync`), so every sync-icon
+    /// snackbar looks identical. `key` keeps each animation instance distinct.
+    fn big_sync_icon(&self, accent: u32, key: impl Into<gpui::ElementId>) -> gpui::AnyElement {
         use gpui::AnimationExt as _;
         const SPIN_MS: u64 = 700;
-        let accent = theme().color_branch;
-        let icon = gpui::svg()
+        gpui::svg()
             .path("icons/refresh-cw.svg")
-            // ~2× the header spinner (user request) so the busy snackbar reads
+            // ~2× the header spinner (user request) so the snackbar reads
             // clearly as "working".
             .w(theme::scaled_px(32.0))
             .h(theme::scaled_px(32.0))
             .text_color(rgb(accent))
             .with_animation(
-                "kagi-busy-snackbar-spin",
+                key,
                 gpui::Animation::new(Duration::from_millis(SPIN_MS)).repeat(),
                 |svg, delta| {
                     svg.with_transformation(gpui::Transformation::rotate(gpui::radians(
                         delta * std::f32::consts::TAU,
                     )))
                 },
-            );
+            )
+            .into_any_element()
+    }
+
+    fn render_busy_snackbar(&self, op: &'static str) -> gpui::AnyElement {
+        let accent = theme().color_branch;
+        let icon = self.big_sync_icon(accent, "kagi-busy-snackbar-spin");
         div()
             .w(theme::scaled_px(460.))
             .flex()
@@ -5362,7 +5378,6 @@ impl KagiApp {
         self.busy_op = Some("checkout");
         self.plan_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCheckout.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedCheckout.t());
         eprintln!("[kagi] async: checkout started");
 
         let plan = modal.plan.clone();
@@ -5452,7 +5467,7 @@ impl KagiApp {
                     && plan.title.contains("up to date (local knowledge")
                 {
                     self.push_toast(
-                        ToastKind::Info,
+                        ToastKind::Sync,
                         SharedString::from(Msg::AlreadyUpToDatePull.t()),
                     );
                     self.status_footer = FooterStatus::Idle(SharedString::from(""));
@@ -5567,7 +5582,6 @@ impl KagiApp {
         self.busy_op = Some("pull");
         self.pull_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedPull.t());
         eprintln!("[kagi] async: pull started");
 
         let plan = modal.plan.clone();
@@ -5658,7 +5672,7 @@ impl KagiApp {
                     && plan.blockers.iter().all(|b| b.contains("nothing to push"))
                 {
                     self.push_toast(
-                        ToastKind::Info,
+                        ToastKind::Sync,
                         SharedString::from(Msg::AlreadyUpToDatePush.t()),
                     );
                     self.status_footer = FooterStatus::Idle(SharedString::from(""));
@@ -5771,7 +5785,6 @@ impl KagiApp {
         self.busy_op = Some("push");
         self.push_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPush.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedPush.t());
         eprintln!("[kagi] async: push started");
 
         let plan = modal.plan.clone();
@@ -6345,7 +6358,6 @@ impl KagiApp {
         self.busy_op = Some("merge");
         self.merge_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyMerge.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedMerge.t());
         eprintln!("[kagi] async: merge started");
 
         let plan = modal.plan.clone();
@@ -6497,7 +6509,6 @@ impl KagiApp {
         self.busy_op = Some("checkout");
         self.tracking_checkout_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCheckout.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedCheckout.t());
         eprintln!("[kagi] async: checkout-tracking started");
 
         let plan = modal.plan.clone();
@@ -7221,7 +7232,6 @@ impl KagiApp {
         self.busy_op = Some("amend");
         self.amend_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyAmend.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedAmend.t());
         eprintln!("[kagi] async: amend started");
 
         let plan = modal.plan.clone();
@@ -7449,7 +7459,6 @@ impl KagiApp {
         self.busy_op = Some("stash-pop");
         self.pop_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStashPop.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedStashPop.t());
         eprintln!("[kagi] async: stash-pop started");
 
         let plan = modal.plan.clone();
@@ -7692,7 +7701,6 @@ impl KagiApp {
         self.busy_op = Some("delete-branch");
         self.delete_branch_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranch.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedDeleteBranch.t());
         eprintln!("[kagi] async: delete-branch started");
 
         let plan = modal.plan.clone();
@@ -7905,7 +7913,6 @@ impl KagiApp {
         self.busy_op = Some("discard");
         self.discard_modal = None;
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDiscard.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedDiscard.t());
         eprintln!("[kagi] async: discard started");
 
         let plan = modal.plan.clone();
@@ -8838,7 +8845,6 @@ impl KagiApp {
 
         self.busy_op = Some("commit");
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCommit.t()));
-        self.push_toast(ToastKind::Info, Msg::StartedCommit.t());
         eprintln!("[kagi] async: commit started");
 
         let bg_path = repo_path.clone();

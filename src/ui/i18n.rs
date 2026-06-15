@@ -175,22 +175,11 @@ pub enum Msg {
     BusyCreateWorktree,
     BusyMerge,
 
-    // ── Operation-started toasts ────────────────────────────────────
-    StartedCheckout,
-    StartedPull,
-    StartedPush,
+    // ── Operation no-op toasts ──────────────────────────────────────
+    // (Per-op "started" toasts were removed: the unified busy snackbar —
+    // driven by `busy_op` with a spinning sync icon — now signals progress.)
     AlreadyUpToDatePull,
     AlreadyUpToDatePush,
-    StartedStash,
-    StartedStashPop,
-    StartedCherryPick,
-    StartedRevert,
-    StartedAmend,
-    StartedDeleteBranch,
-    StartedDiscard,
-    StartedCommit,
-    StartedCreateWorktree,
-    StartedMerge,
 
     // ── Toolbar guard reasons (domain words kept English) ───────────
     PullBusy,
@@ -463,37 +452,11 @@ impl Msg {
             (En, BusyMerge) => "merge in progress…",
             (Ja, BusyMerge) => "merge 実行中…",
 
-            // ── Started toasts ──────────────────────────────────────
-            (En, StartedCheckout) => "checkout: started",
-            (Ja, StartedCheckout) => "checkout: 開始しました",
-            (En, StartedPull) => "pull: started",
-            (Ja, StartedPull) => "pull: 開始しました",
-            (En, StartedPush) => "push: started",
-            (Ja, StartedPush) => "push: 開始しました",
+            // ── No-op toasts ─────────────────────────────────────────
             (En, AlreadyUpToDatePull) => "Already up to date — nothing to pull",
             (Ja, AlreadyUpToDatePull) => "すでに最新です — pull するものはありません",
             (En, AlreadyUpToDatePush) => "Already up to date — nothing to push",
             (Ja, AlreadyUpToDatePush) => "すでに最新です — push するものはありません",
-            (En, StartedStash) => "stash: started",
-            (Ja, StartedStash) => "stash: 開始しました",
-            (En, StartedStashPop) => "stash pop: started",
-            (Ja, StartedStashPop) => "stash pop: 開始しました",
-            (En, StartedCherryPick) => "cherry-pick: started",
-            (Ja, StartedCherryPick) => "cherry-pick: 開始しました",
-            (En, StartedRevert) => "revert: started",
-            (Ja, StartedRevert) => "revert: 開始しました",
-            (En, StartedAmend) => "amend: started",
-            (Ja, StartedAmend) => "amend: 開始しました",
-            (En, StartedDeleteBranch) => "delete-branch: started",
-            (Ja, StartedDeleteBranch) => "delete-branch: 開始しました",
-            (En, StartedDiscard) => "discard: started",
-            (Ja, StartedDiscard) => "discard: 開始しました",
-            (En, StartedCommit) => "commit: started",
-            (Ja, StartedCommit) => "commit: 開始しました",
-            (En, StartedCreateWorktree) => "create-worktree: started",
-            (Ja, StartedCreateWorktree) => "create-worktree: 開始しました",
-            (En, StartedMerge) => "merge: started",
-            (Ja, StartedMerge) => "merge: 開始しました",
 
             // ── Toolbar guards ──────────────────────────────────────
             (En, PullBusy) => "Pull: another operation is in progress",

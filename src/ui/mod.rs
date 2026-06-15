@@ -227,6 +227,13 @@ fn validate_merge_from_drag(
     Err(format!("Branch '{}' is not a branch.", source))
 }
 
+/// Bundled UI sans family (OFL Inter), loaded at startup via `add_fonts`, so the
+/// UI looks identical on every OS instead of relying on the platform default.
+pub const UI_FONT: &str = "Inter";
+/// Bundled monospace family (OFL JetBrains Mono) for the terminal / conflict
+/// editor / code — replaces the macOS-only "Menlo" fallback.
+pub const MONO_FONT: &str = "JetBrains Mono";
+
 // Sidebar / panel width limits.
 const SIDEBAR_MIN: f32 = 120.0;
 const SIDEBAR_MAX: f32 = 400.0;
@@ -10363,6 +10370,7 @@ impl Render for KagiApp {
                 .items_center()
                 .justify_center()
                 .size_full()
+                .font_family(UI_FONT)
                 .bg(rgb(theme().bg_base))
                 .child(
                     div()
@@ -10710,6 +10718,7 @@ impl Render for KagiApp {
             .flex()
             .flex_col()
             .size_full()
+            .font_family(UI_FONT)
             .bg(rgb(theme().bg_base))
             // Key events only dispatch along the focus path, so the root must
             // own (and initially hold) focus for window-wide actions to work.
@@ -15481,6 +15490,24 @@ pub fn run_app(app_state: KagiApp) {
     });
 
     application.run(move |cx: &mut App| {
+        // Bundle fonts so the UI + monospace look identical on every OS. Linux
+        // has no "Menlo"/SF and the platform default is inconsistent, which made
+        // fonts render broken on Ubuntu (user-reported). OFL: Inter (UI) +
+        // JetBrains Mono (terminal / conflict editor / code). The family names
+        // here MUST match the fonts' name tables (UI_FONT / MONO_FONT).
+        if let Err(e) = cx.text_system().add_fonts(vec![
+            std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-Regular.ttf")),
+            std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-Bold.ttf")),
+            std::borrow::Cow::Borrowed(include_bytes!(
+                "../../assets/fonts/JetBrainsMono-Regular.ttf"
+            )),
+            std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/JetBrainsMono-Bold.ttf")),
+        ]) {
+            eprintln!("[kagi] fonts: add_fonts failed (UI may fall back): {e}");
+        } else {
+            eprintln!("[kagi] fonts: loaded Inter + JetBrains Mono");
+        }
+
         // T025: initialize gpui-component (registers key bindings, themes, etc.)
         gpui_component::init(cx);
 

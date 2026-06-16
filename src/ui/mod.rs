@@ -4994,21 +4994,35 @@ impl KagiApp {
         let stash_lanes = self.stash_graph_lanes.clone();
         let rh = row_height(self.graph_compact);
 
+        // Lanes of connected stashes rendered *above* the current row, whose
+        // branch lines must keep passing straight down through this row (fixes
+        // the topmost stash's line vanishing at the next stash row).
+        let mut passing_lanes: Vec<usize> = Vec::new();
+
         self.stash_graph_rows
             .iter()
             .map(|sr| {
                 let index = sr.index;
                 let label = sr.label.clone();
                 let msg_for_menu = sr.label.to_string();
-                let edges: Vec<kagi::graph::GraphEdge> = if sr.connected {
-                    vec![kagi::graph::GraphEdge {
+                let mut edges: Vec<kagi::graph::GraphEdge> = passing_lanes
+                    .iter()
+                    .map(|&lane| kagi::graph::GraphEdge {
+                        from_lane: lane,
+                        to_lane: lane,
+                        kind: kagi::graph::EdgeKind::Pass,
+                    })
+                    .collect();
+                if sr.connected {
+                    // This stash's own line leaves its node downward; below this
+                    // row it becomes a pass-through for subsequent rows.
+                    edges.push(kagi::graph::GraphEdge {
                         from_lane: sr.lane,
                         to_lane: sr.lane,
                         kind: kagi::graph::EdgeKind::OutOfNode,
-                    }]
-                } else {
-                    Vec::new()
-                };
+                    });
+                    passing_lanes.push(sr.lane);
+                }
                 let pop = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
                     this.open_pop_modal(index);
                     cx.notify();

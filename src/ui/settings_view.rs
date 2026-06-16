@@ -37,6 +37,9 @@ pub fn render_settings_overlay(
     // — we must NOT `app.read(cx)` here because this renders *during* KagiApp's own
     // update, which would panic ("cannot read … while it is already being updated").
     theme_open: bool,
+    // Smart Commit state (detected models + current selection), passed in for the
+    // same reason — never `app.read(cx)` during this render.
+    smart: super::smart_commit::SmartCommitState,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
     let dismiss = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
@@ -107,7 +110,8 @@ pub fn render_settings_overlay(
                 .flex_col()
                 .gap_6()
                 .child(appearance_section(&app, theme_open))
-                .child(language_section(&app)),
+                .child(language_section(&app))
+                .child(smart_commit_section(&app, &smart)),
         );
 
     // Scrim + centred panel.
@@ -443,5 +447,79 @@ fn language_section(app: &Entity<KagiApp>) -> impl IntoElement {
             SharedString::from(Msg::SettingsInterfaceLang.t()),
             SharedString::from(Msg::SettingsInterfaceLangDesc.t()),
             chips.into_any_element(),
+        ))
+}
+
+// ────────────────────────────────────────────────────────────
+// Smart Commit (ADR-0090): pick the local LLM model used for commit messages.
+// ────────────────────────────────────────────────────────────
+
+fn smart_commit_section(
+    app: &Entity<KagiApp>,
+    smart: &super::smart_commit::SmartCommitState,
+) -> impl IntoElement {
+    let current = smart.model.clone();
+    let models = smart.detected_models.clone();
+
+    let control: AnyElement = if models.is_empty() {
+        let note = match &current {
+            Some(m) => format!("{} — start Ollama to switch", m),
+            None => "No local models detected — start Ollama".to_string(),
+        };
+        div()
+            .text_sm()
+            .text_color(rgb(theme().text_sub))
+            .child(SharedString::from(note))
+            .into_any_element()
+    } else {
+        let mut chips = div().flex().flex_row().flex_wrap().gap_2().justify_end();
+        for m in models {
+            let selected = current.as_deref() == Some(m.as_str());
+            let (bg, fg, border) = if selected {
+                (theme().selected, theme().text_main, theme().color_branch)
+            } else {
+                (theme().bg_base, theme().text_sub, theme().selected)
+            };
+            let app2 = app.clone();
+            let m_for_handler = m.clone();
+            let handler = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
+                let model = m_for_handler.clone();
+                app2.update(cx, |app, cx| {
+                    app.smart_commit.set_model(model);
+                    cx.notify();
+                });
+            };
+            chips = chips.child(
+                div()
+                    .id(SharedString::from(format!("sc-model-{}", m)))
+                    .px_3()
+                    .py_1()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(rgb(border))
+                    .bg(rgb(bg))
+                    .text_sm()
+                    .text_color(rgb(fg))
+                    .hover(|s| {
+                        s.bg(rgb(theme().selected))
+                            .text_color(rgb(theme().text_main))
+                            .cursor_pointer()
+                    })
+                    .on_click(handler)
+                    .child(SharedString::from(m.clone())),
+            );
+        }
+        chips.into_any_element()
+    };
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(section_header(SharedString::from("Smart Commit")))
+        .child(setting_row(
+            SharedString::from("LLM model"),
+            SharedString::from("Local Ollama model used to generate commit messages."),
+            control,
         ))
 }

@@ -8745,10 +8745,16 @@ impl KagiApp {
             Err(_) => return,
         };
         let files = repo.collect_staged_files();
+        // ADR-0090: style follows the mode (template → Conventional, else Plain).
+        let style = if self.commit_template_mode {
+            message_gen::Style::ConventionalCommits
+        } else {
+            message_gen::Style::Plain
+        };
         let gi = message_gen::GenInput {
             diff: String::new(),
             lang: self.smart_commit.lang,
-            style: self.smart_commit.style,
+            style,
         };
         let msg = message_gen::rule_based(&gi, &files);
         if std::env::var("KAGI_SMART_SUGGEST").as_deref() == Ok("1") {
@@ -8846,12 +8852,16 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
-        let (Some(model), lang, style) = (
-            self.smart_commit.model.clone(),
-            self.smart_commit.lang,
-            self.smart_commit.style,
-        ) else {
+        let (Some(model), lang) = (self.smart_commit.model.clone(), self.smart_commit.lang) else {
             return;
+        };
+        // ADR-0090: the standalone Style toggle is gone — derive it from the
+        // mode. Template mode needs a Conventional subject so it can be parsed
+        // into the type/scope/summary fields; plain mode uses a plain subject.
+        let style = if self.commit_template_mode {
+            message_gen::Style::ConventionalCommits
+        } else {
+            message_gen::Style::Plain
         };
         let host = smart_commit::SmartCommitState::ollama_host();
         let overwrite_ok = self.smart_commit_current_msg(cx).trim().is_empty();
@@ -10864,7 +10874,13 @@ impl Render for KagiApp {
         // is pushed into the commit-message Input here, where `&mut Window` is
         // available (set_value requires it).
         if let Some(msg) = self.pending_smart_msg.take() {
-            if let Some(input) = self.commit_input.clone() {
+            if self.commit_template_mode {
+                // Template mode: parse the generated Conventional subject into
+                // the type/scope/summary (+body) fields so each goes into its own
+                // box (ADR-0090).
+                let fields = kagi::git::parse_message(&msg);
+                self.set_template_inputs(&fields, window, cx);
+            } else if let Some(input) = self.commit_input.clone() {
                 input.update(cx, |state, cx| {
                     state.set_value(msg, window, cx);
                 });
@@ -15786,22 +15802,8 @@ fn render_commit_panel(
         )
         .on_click(lang_click);
 
-        // Style toggle (Conventional / Plain).
-        let style_label = match smart.style {
-            message_gen::Style::ConventionalCommits => "Style: CC",
-            message_gen::Style::Plain => "Style: Plain",
-        };
-        let style_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-            this.smart_commit.toggle_style();
-            cx.notify();
-        });
-        let style_btn = pill(
-            "cp-smart-style",
-            SharedString::from(style_label),
-            true,
-            theme().text_main,
-        )
-        .on_click(style_click);
+        // ADR-0090: the Style (CC vs Plain) toggle was removed — style now
+        // follows the commit-panel mode (template → Conventional, plain → Plain).
 
         let mut row = div()
             .flex()
@@ -15810,8 +15812,7 @@ fn render_commit_panel(
             .items_center()
             .gap_1()
             .child(suggest_btn)
-            .child(lang_btn)
-            .child(style_btn);
+            .child(lang_btn);
 
         // "Generate with Local LLM" is folded into Suggest (above). When the LLM
         // is detected but not yet enabled, offer an opt-in affordance so the user
@@ -16069,7 +16070,18 @@ fn render_commit_panel(
                         ))
                         .child(mode_toggle),
                 )
-                .child(msg_input_wrapper)
+                // Template mode stacks six fields and overflows the footer; bound
+                // its height and let it scroll so the commit button stays reachable.
+                .child(if template_mode {
+                    div()
+                        .id("cp-template-scroll")
+                        .max_h(theme::scaled_px(300.))
+                        .overflow_y_scroll()
+                        .child(msg_input_wrapper)
+                        .into_any_element()
+                } else {
+                    msg_input_wrapper
+                })
                 // Smart Commit Message toolbar (Suggest / Generate / toggles)
                 .child(smart_toolbar)
                 // Unstaged warning

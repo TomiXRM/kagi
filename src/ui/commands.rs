@@ -1515,6 +1515,7 @@ impl KagiApp {
             MenuOverlay::Settings => Some(super::settings_view::render_settings_overlay(
                 cx.entity(),
                 self.settings_theme_open,
+                self.smart_commit.clone(),
                 cx,
             )),
         }

@@ -18,8 +18,10 @@ pub use kagi_domain::message_gen::{
     Style, DEFAULT_OLLAMA_HOST, DIFF_TRUNCATE_BYTES,
 };
 
-/// Global timeout for a single Ollama HTTP request.
-const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
+/// Global timeout for a single Ollama HTTP request. Local models (especially
+/// larger ones) can take a while to load + generate even a short subject, so
+/// this is generous; the spinner keeps the UI responsive during the wait.
+const HTTP_TIMEOUT: Duration = Duration::from_secs(45);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Offline switch
@@ -240,7 +242,18 @@ fn ollama_generate(host: &str, model: &str, prompt: &str) -> Result<String, GenE
     // field so plain instruct models still work (ADR-0090).
     match ollama_generate_once(host, model, prompt, Some(false)) {
         Ok(msg) => Ok(msg),
-        Err(_) => ollama_generate_once(host, model, prompt, None),
+        Err(e) => {
+            // Only retry without `think` for a *quick rejection* (some plain
+            // instruct models 400 on the field). On a timeout, don't retry — it
+            // would just double the wait and re-enable the reasoning we're
+            // avoiding.
+            let is_timeout = matches!(&e, GenError::Http(m) if m.contains("timeout"));
+            if is_timeout {
+                Err(e)
+            } else {
+                ollama_generate_once(host, model, prompt, None)
+            }
+        }
     }
 }
 

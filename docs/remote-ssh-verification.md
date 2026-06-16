@@ -53,10 +53,22 @@ Branch: `claude/remote-git-ssh-client-eb5jox`.
         `Remote (read-only) — user@host:/path`.
   - [ ] Sidebar shows the remote **local branches / remote branches / tags**.
   - [ ] The toolbar/header shows the repo name + current HEAD branch.
+- [ ] A **tab appears** for the remote repo, marked with a ☁ cloud glyph.
 - [ ] Do this with **no local repo open** (graph shows instead of the Welcome
-      screen) **and** with a local repo already open (graph swaps to the remote).
+      screen) **and** with a local repo already open (a new ☁ tab is added).
+- [ ] **Tab switching works:** with both a local tab and a ☁ remote tab open,
+      click back and forth — the remote tab restores its graph instantly (no
+      re-fetch), the local tab restores its normal repo. Opening the same remote
+      repo again reuses its existing tab rather than adding a duplicate.
+- [ ] Closing the ☁ tab (×) removes it; closing the last tab returns to Welcome.
 
 ## 4. Commit inspection over SSH (Phase 2c)
+
+> Commit **metadata** (author / date / message / SHA) comes straight from the
+> already-loaded snapshot — it shows **immediately, with no SSH and no server**.
+> Only the **changed-files list and the file diff** need an SSH round-trip
+> (they're loaded off-thread). No "kagi server" is required for any of this; a
+> resident helper would only cut latency, not enable the feature.
 
 - [ ] Click a commit row → the detail panel shows author/date/message **and**,
       after a short SSH round-trip, the **changed-files** list populates.

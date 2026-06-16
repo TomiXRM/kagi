@@ -136,6 +136,7 @@ fn main() {
     app_state.tabs.push(ui::tabs::RepoTab {
         path: repo_path.clone(),
         name: info.name.clone(),
+        remote: None,
     });
     app_state.active_tab = 0;
     app_state.log_tabs();

@@ -317,11 +317,12 @@ fn test_push_detached_blocker() {
 /// include any force flag as a string literal value (not in comments).
 #[test]
 fn test_push_no_force_in_args() {
-    // Read the ops.rs source.
+    // Read the push-operation source (ops.rs was split into per-op modules; the
+    // push pipeline now lives in src/git/ops/pull_push.rs — issue #13 Phase 3).
     let src = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/git/ops.rs"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/git/ops/pull_push.rs"),
     )
-    .expect("could not read ops.rs");
+    .expect("could not read pull_push.rs");
 
     // Find the execute_push function section only (up to build_push_preview).
     let push_section_start = src

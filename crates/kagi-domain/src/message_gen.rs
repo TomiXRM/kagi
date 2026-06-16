@@ -103,6 +103,10 @@ pub struct GenInput {
     pub lang: Lang,
     /// Output style.
     pub style: Style,
+    /// Ask the model for a subject **and a short body** (used by template mode,
+    /// whose body field would otherwise stay empty). When false, subject only
+    /// (ADR-0090).
+    pub want_body: bool,
 }
 
 /// Failure modes of [`generate_message`] for the Ollama backend.
@@ -424,11 +428,24 @@ pub fn rule_based(input: &GenInput, files: &[FileStatus]) -> String {
 ///
 /// `{ "model": "...", "prompt": "...", "stream": false }` with `model` and
 /// `prompt` JSON-escaped.
-pub fn ollama_generate_request_body(model: &str, prompt: &str) -> String {
+pub fn ollama_generate_request_body(model: &str, prompt: &str, think: Option<bool>) -> String {
+    // Low temperature for deterministic, format-adherent commit subjects;
+    // `num_predict` bounds output. `think` (when Some) sets Ollama's reasoning
+    // toggle: for a *thinking* model we send `think:false` so it answers the
+    // subject directly instead of spending the whole budget reasoning (which
+    // yields an empty `response`). Non-thinking models may reject the field, so
+    // the caller retries with `None` on failure (ADR-0090).
+    let think_field = match think {
+        Some(true) => "\"think\":true,",
+        Some(false) => "\"think\":false,",
+        None => "",
+    };
     format!(
-        "{{\"model\":\"{}\",\"prompt\":\"{}\",\"stream\":false}}",
+        "{{\"model\":\"{}\",\"prompt\":\"{}\",\"stream\":false,{}\
+         \"options\":{{\"temperature\":0.2,\"top_p\":0.9,\"num_predict\":128}}}}",
         json_escape(model),
-        json_escape(prompt)
+        json_escape(prompt),
+        think_field
     )
 }
 
@@ -564,6 +581,36 @@ pub fn clean_llm_message(raw: &str) -> String {
     line.trim_matches('"').trim().to_string()
 }
 
+/// Tidy an LLM message but **keep the body** (subject + blank line + body).
+/// Used when `want_body` is set (template mode). Strips a wrapping code fence
+/// and a one-line preamble (e.g. "Here is the commit message:"), then trims.
+pub fn clean_llm_message_multiline(raw: &str) -> String {
+    let mut text = raw.trim().to_string();
+    // 1. Drop a single leading preamble line if the model added one despite the
+    //    "output only" instruction (e.g. "Here is the commit message:").
+    if let Some((first, rest)) = text.split_once('\n') {
+        let low = first.trim().to_lowercase();
+        let is_preamble = low.ends_with(':')
+            && (low.contains("commit message")
+                || low.starts_with("here")
+                || low.starts_with("sure"));
+        if is_preamble {
+            text = rest.trim_start().to_string();
+        }
+    }
+    // 2. Strip a wrapping ``` fence (now possibly the leading line).
+    if let Some(rest) = text.trim().strip_prefix("```") {
+        let rest = rest.split_once('\n').map(|x| x.1).unwrap_or("");
+        text = rest
+            .trim_end()
+            .strip_suffix("```")
+            .unwrap_or(rest)
+            .trim()
+            .to_string();
+    }
+    text.trim().to_string()
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Unit tests (pure logic)
 // ──────────────────────────────────────────────────────────────────────────
@@ -585,7 +632,20 @@ mod tests {
             diff: String::new(),
             lang,
             style,
+            want_body: false,
         }
+    }
+
+    #[test]
+    fn clean_multiline_keeps_body() {
+        let raw = "feat: add x\n\n- did a\n- did b";
+        assert_eq!(
+            clean_llm_message_multiline(raw),
+            "feat: add x\n\n- did a\n- did b"
+        );
+        // Fenced + preamble are stripped, body kept.
+        let raw2 = "Here is the commit message:\n```\nfix: y\n\nbody line\n```";
+        assert_eq!(clean_llm_message_multiline(raw2), "fix: y\n\nbody line");
     }
 
     #[test]
@@ -715,11 +775,16 @@ mod tests {
 
     #[test]
     fn request_body_escapes_quotes_and_newlines() {
-        let body = ollama_generate_request_body("gemma", "say \"hi\"\nnow");
+        let body = ollama_generate_request_body("gemma", "say \"hi\"\nnow", Some(false));
         assert!(body.contains("\\\"hi\\\""));
         assert!(body.contains("\\n"));
         assert!(body.contains("\"stream\":false"));
         assert!(body.contains("\"model\":\"gemma\""));
+        assert!(body.contains("\"think\":false"));
+        assert!(body.contains("\"temperature\":0.2"));
+        // `think:None` omits the field entirely (for the no-think retry).
+        let body2 = ollama_generate_request_body("gemma", "x", None);
+        assert!(!body2.contains("think"));
     }
 
     #[test]

@@ -19,7 +19,7 @@
 //!     models force a choice.  The chosen model is persisted to `settings.json`.
 //!   * `KAGI_OFFLINE=1` disables detection and generation entirely.
 
-use kagi::git::message_gen::{self, Lang, Style};
+use kagi::git::message_gen::{self, Lang};
 
 use super::theme;
 
@@ -30,7 +30,6 @@ use super::theme;
 const KEY_ENABLED: &str = "smart_commit_llm_enabled";
 const KEY_MODEL: &str = "smart_commit_model";
 const KEY_LANG: &str = "smart_commit_lang";
-const KEY_STYLE: &str = "smart_commit_style";
 
 // ──────────────────────────────────────────────────────────────────────────
 // Consent dialog text (ADR-0044 — these four lines MUST be present)
@@ -74,8 +73,6 @@ pub struct SmartCommitState {
     pub model: Option<String>,
     /// Output language (persisted; remembered like the draft per ADR-0042).
     pub lang: Lang,
-    /// Output style (persisted).
-    pub style: Style,
     /// Active modal, if any.
     pub modal: Option<SmartCommitModal>,
     /// True while a background generation is in flight (button shows "…").
@@ -92,7 +89,6 @@ impl Default for SmartCommitState {
             llm_enabled: false,
             model: None,
             lang: Lang::En,
-            style: Style::ConventionalCommits,
             modal: None,
             generating: false,
             status: None,
@@ -111,9 +107,6 @@ impl SmartCommitState {
             lang: theme::read_setting(KEY_LANG)
                 .map(|l| Lang::from_slug(&l))
                 .unwrap_or(Lang::En),
-            style: theme::read_setting(KEY_STYLE)
-                .map(|s| Style::from_slug(&s))
-                .unwrap_or(Style::ConventionalCommits),
             ..Default::default()
         }
     }
@@ -138,15 +131,6 @@ impl SmartCommitState {
             Lang::Ja => Lang::En,
         };
         theme::write_setting(KEY_LANG, Some(self.lang.slug()));
-    }
-
-    /// Toggle style and persist.
-    pub fn toggle_style(&mut self) {
-        self.style = match self.style {
-            Style::ConventionalCommits => Style::Plain,
-            Style::Plain => Style::ConventionalCommits,
-        };
-        theme::write_setting(KEY_STYLE, Some(self.style.slug()));
     }
 
     /// Whether the "Generate with Local LLM" button should be *offered* at all:
@@ -188,18 +172,15 @@ mod tests {
         assert!(s.model.is_none());
         assert!(!s.llm_offered());
         assert_eq!(s.lang, Lang::En);
-        assert_eq!(s.style, Style::ConventionalCommits);
     }
 
     #[test]
-    fn toggle_lang_and_style_flip() {
+    fn toggle_lang_flips() {
         let mut s = SmartCommitState::default();
         // Avoid touching real settings.json in CI: set a throwaway dir.
         std::env::set_var("KAGI_LOG_DIR", std::env::temp_dir().join("kagi-sc-test"));
         let _ = std::fs::create_dir_all(std::env::temp_dir().join("kagi-sc-test"));
         s.toggle_lang();
         assert_eq!(s.lang, Lang::Ja);
-        s.toggle_style();
-        assert_eq!(s.style, Style::Plain);
     }
 }

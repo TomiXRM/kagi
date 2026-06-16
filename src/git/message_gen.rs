@@ -13,13 +13,15 @@ use kagi_domain::status::{ChangeKind, FileStatus};
 use super::{resolve_head, Head};
 
 pub use kagi_domain::message_gen::{
-    clean_llm_message, file_summary, ollama_generate_request_body, parse_ollama_response,
-    parse_ollama_tags, rule_based, truncate_with_summary, GenError, GenInput, Lang, MessageBackend,
-    Style, DEFAULT_OLLAMA_HOST, DIFF_TRUNCATE_BYTES,
+    clean_llm_message, clean_llm_message_multiline, file_summary, ollama_generate_request_body,
+    parse_ollama_response, parse_ollama_tags, rule_based, truncate_with_summary, GenError,
+    GenInput, Lang, MessageBackend, Style, DEFAULT_OLLAMA_HOST, DIFF_TRUNCATE_BYTES,
 };
 
-/// Global timeout for a single Ollama HTTP request.
-const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
+/// Global timeout for a single Ollama HTTP request. Local models (especially
+/// larger ones) can take a while to load + generate even a short subject, so
+/// this is generous; the spinner keeps the UI responsive during the wait.
+const HTTP_TIMEOUT: Duration = Duration::from_secs(45);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Offline switch
@@ -167,7 +169,13 @@ pub fn generate_message(
             }
             let prompt = build_prompt(input, files);
             let raw = ollama_generate(host, model, &prompt)?;
-            let cleaned = clean_llm_message(&raw);
+            // Keep the body when the caller wants it (template mode); otherwise
+            // collapse to the subject line.
+            let cleaned = if input.want_body {
+                clean_llm_message_multiline(&raw)
+            } else {
+                clean_llm_message(&raw)
+            };
             if cleaned.is_empty() {
                 Err(GenError::EmptyResponse)
             } else {
@@ -184,23 +192,67 @@ pub fn generate_message(
 /// Build the LLM prompt: instruction (lang/style aware) + truncated diff +
 /// file summary.
 fn build_prompt(input: &GenInput, files: &[FileStatus]) -> String {
-    let style_line = match input.style {
-        Style::ConventionalCommits => "Use the Conventional Commits format: type(scope): summary.",
-        Style::Plain => "Use a concise plain one-line summary.",
+    // OpenCommit-inspired: a clear role, the Conventional Commits spec with the
+    // allowed types, concrete rules, and one worked example. Local models adhere
+    // far better to format + imperative mood with this structure than with a
+    // one-line instruction (ADR-0090).
+    let (format_rules, example) = match input.style {
+        Style::ConventionalCommits => (
+            "Format: <type>(<optional scope>): <subject>\n\
+             - Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.\n\
+             - Pick the single most appropriate type. The scope is optional and is a short noun (e.g. a module name).",
+            "feat(auth): refresh the access token on a 401 response",
+        ),
+        Style::Plain => (
+            "Format: a single concise subject line with no type prefix.",
+            "Refresh the access token on a 401 response",
+        ),
     };
     let lang_line = match input.lang {
-        Lang::Ja => "Write the commit message in Japanese.",
-        Lang::En => "Write the commit message in English.",
+        Lang::Ja => "Write it in Japanese. Keep the type and any code identifiers in English.",
+        Lang::En => "Write it in English.",
     };
     let summary = file_summary(files);
-    format!(
-        "Summarise the following staged git diff and produce ONE commit message.\n\
-         {style_line} {lang_line} Keep the subject under 72 characters. \
-         Respond with ONLY the commit message, no explanation, no code fences.\n\n\
-         {summary}\n\
-         --- staged diff ---\n{}\n--- end diff ---\n",
-        input.diff
-    )
+    if input.want_body {
+        format!(
+            "You are an expert software engineer writing a high-quality git commit message.\n\
+             Summarise the STAGED changes below into a commit message: a subject line, then a \
+             blank line, then a short body.\n\n\
+             Rules:\n\
+             - {format_rules}\n\
+             - Use the imperative mood: \"add\", not \"added\" or \"adds\".\n\
+             - Subject: specific, under 72 characters, no trailing period.\n\
+             - Body: 1–4 short bullet points (\"- …\") explaining WHAT changed and WHY. Be concise.\n\
+             - Do not invent changes that are not in the diff.\n\
+             - {lang_line}\n\
+             - Output ONLY the commit message (subject, blank line, then the body). No quotes, no \
+             code fences, no preamble, no explanation.\n\n\
+             Example of the exact output format:\n\
+             {example}\n\n\
+             - explain the main change in one line\n\
+             - note a secondary change if any\n\n\
+             {summary}\n\
+             --- staged diff ---\n{}\n--- end diff ---\n",
+            input.diff
+        )
+    } else {
+        format!(
+            "You are an expert software engineer writing a high-quality git commit message.\n\
+             Summarise the STAGED changes below into ONE commit message subject line.\n\n\
+             Rules:\n\
+             - {format_rules}\n\
+             - Use the imperative mood: \"add\", not \"added\" or \"adds\".\n\
+             - Say specifically WHAT changed; keep the subject under 72 characters.\n\
+             - No trailing period. Do not invent changes that are not in the diff.\n\
+             - {lang_line}\n\
+             - Output ONLY the commit subject. No quotes, no code fences, no preamble, no explanation.\n\n\
+             Example of the exact output format:\n\
+             {example}\n\n\
+             {summary}\n\
+             --- staged diff ---\n{}\n--- end diff ---\n",
+            input.diff
+        )
+    }
 }
 
 /// POST a generation request to a local Ollama server and return the raw
@@ -211,8 +263,37 @@ fn build_prompt(input: &GenInput, files: &[FileStatus]) -> String {
 /// on transport / status failure and `Err(GenError::EmptyResponse)` when the
 /// reply has no `response` field.
 fn ollama_generate(host: &str, model: &str, prompt: &str) -> Result<String, GenError> {
+    // First try with `think:false` so a *thinking* model answers the subject
+    // directly instead of burning its token budget on reasoning (which returns
+    // an empty `response`). A non-thinking model may reject the `think` field or
+    // simply ignore it; on any failure or empty reply, retry once WITHOUT the
+    // field so plain instruct models still work (ADR-0090).
+    match ollama_generate_once(host, model, prompt, Some(false)) {
+        Ok(msg) => Ok(msg),
+        Err(e) => {
+            // Only retry without `think` for a *quick rejection* (some plain
+            // instruct models 400 on the field). On a timeout, don't retry — it
+            // would just double the wait and re-enable the reasoning we're
+            // avoiding.
+            let is_timeout = matches!(&e, GenError::Http(m) if m.contains("timeout"));
+            if is_timeout {
+                Err(e)
+            } else {
+                ollama_generate_once(host, model, prompt, None)
+            }
+        }
+    }
+}
+
+/// One `/api/generate` round-trip with a specific `think` setting.
+fn ollama_generate_once(
+    host: &str,
+    model: &str,
+    prompt: &str,
+    think: Option<bool>,
+) -> Result<String, GenError> {
     let url = format!("http://{}/api/generate", host);
-    let body = ollama_generate_request_body(model, prompt);
+    let body = ollama_generate_request_body(model, prompt, think);
 
     let mut resp = ureq::post(&url)
         .header("Content-Type", "application/json")
@@ -305,6 +386,7 @@ mod tests {
             diff: String::new(),
             lang,
             style,
+            want_body: false,
         }
     }
 
@@ -452,6 +534,7 @@ mod tests {
                 diff: "diff --git a/x b/x".to_string(),
                 lang: Lang::En,
                 style: Style::ConventionalCommits,
+                want_body: false,
             },
             &files,
         );
@@ -555,7 +638,7 @@ mod tests {
 
     #[test]
     fn request_body_escapes_quotes_and_newlines() {
-        let body = ollama_generate_request_body("gemma", "say \"hi\"\nnow");
+        let body = ollama_generate_request_body("gemma", "say \"hi\"\nnow", Some(false));
         assert!(body.contains("\\\"hi\\\""));
         assert!(body.contains("\\n"));
         assert!(body.contains("\"stream\":false"));

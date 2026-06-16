@@ -8770,10 +8770,17 @@ impl KagiApp {
             Err(_) => return,
         };
         let files = repo.collect_staged_files();
+        // ADR-0090: style follows the mode (template → Conventional, else Plain).
+        let style = if self.commit_template_mode {
+            message_gen::Style::ConventionalCommits
+        } else {
+            message_gen::Style::Plain
+        };
         let gi = message_gen::GenInput {
             diff: String::new(),
             lang: self.smart_commit.lang,
-            style: self.smart_commit.style,
+            style,
+            want_body: self.commit_template_mode,
         };
         let msg = message_gen::rule_based(&gi, &files);
         if std::env::var("KAGI_SMART_SUGGEST").as_deref() == Ok("1") {
@@ -8871,13 +8878,19 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
-        let (Some(model), lang, style) = (
-            self.smart_commit.model.clone(),
-            self.smart_commit.lang,
-            self.smart_commit.style,
-        ) else {
+        let (Some(model), lang) = (self.smart_commit.model.clone(), self.smart_commit.lang) else {
             return;
         };
+        // ADR-0090: the standalone Style toggle is gone — derive it from the
+        // mode. Template mode needs a Conventional subject so it can be parsed
+        // into the type/scope/summary fields; plain mode uses a plain subject.
+        let style = if self.commit_template_mode {
+            message_gen::Style::ConventionalCommits
+        } else {
+            message_gen::Style::Plain
+        };
+        // Template mode wants a body too (its body field would otherwise be empty).
+        let want_body = self.commit_template_mode;
         let host = smart_commit::SmartCommitState::ollama_host();
         let overwrite_ok = self.smart_commit_current_msg(cx).trim().is_empty();
 
@@ -8892,7 +8905,12 @@ impl KagiApp {
             };
             let files = repo.collect_staged_files();
             let diff = repo.collect_staged_diff();
-            let gi = message_gen::GenInput { diff, lang, style };
+            let gi = message_gen::GenInput {
+                diff,
+                lang,
+                style,
+                want_body,
+            };
             // LLM first; on Err fall back to the rule-based draft (quietly).
             let backend = message_gen::MessageBackend::Ollama { host, model };
             let (msg, used_llm) = match message_gen::generate_message(&backend, &gi, &files) {
@@ -11303,7 +11321,13 @@ impl Render for KagiApp {
         // is pushed into the commit-message Input here, where `&mut Window` is
         // available (set_value requires it).
         if let Some(msg) = self.pending_smart_msg.take() {
-            if let Some(input) = self.commit_input.clone() {
+            if self.commit_template_mode {
+                // Template mode: parse the generated Conventional subject into
+                // the type/scope/summary (+body) fields so each goes into its own
+                // box (ADR-0090).
+                let fields = kagi::git::parse_message(&msg);
+                self.set_template_inputs(&fields, window, cx);
+            } else if let Some(input) = self.commit_input.clone() {
                 input.update(cx, |state, cx| {
                     state.set_value(msg, window, cx);
                 });
@@ -17143,33 +17167,66 @@ fn render_commit_panel(
         // otherwise the rule-based draft (blue). Shows "Generating…" while the
         // LLM runs. (The separate "Generate with Local LLM" button is gone.)
         let llm_on = smart.llm_offered();
-        let suggest_label = if smart.generating {
-            "Generating…"
-        } else {
-            "Suggest"
-        };
         let suggest_enabled = !staged_empty && !smart.generating;
         let suggest_color = if llm_on {
             theme().color_success
         } else {
             theme().color_branch
         };
-        let mut suggest_btn = pill(
-            "cp-smart-suggest",
-            SharedString::from(suggest_label),
-            suggest_enabled,
-            suggest_color,
-        );
-        if suggest_enabled {
-            let suggest_click = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
-                if llm_on {
-                    this.smart_generate(window, cx);
-                } else {
-                    this.smart_suggest(window, cx);
-                }
-            });
-            suggest_btn = suggest_btn.on_click(suggest_click);
-        }
+        let suggest_btn: gpui::AnyElement = if smart.generating {
+            // Animated braille "dots" spinner while the LLM generates (user
+            // request — the spinning-dots glyph). The whole panel re-renders each
+            // animation frame, so the closure rebuilds a fresh single-child div.
+            use gpui::AnimationExt as _;
+            const FRAMES: [&str; 10] = [
+                "\u{280B}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283C}", "\u{2834}", "\u{2826}",
+                "\u{2827}", "\u{2807}", "\u{280F}",
+            ];
+            let spinner = div()
+                .text_xs()
+                .text_color(rgb(suggest_color))
+                .with_animation(
+                    "cp-smart-spinner",
+                    gpui::Animation::new(Duration::from_millis(800)).repeat(),
+                    |el, delta| {
+                        let i = ((delta * FRAMES.len() as f32) as usize).min(FRAMES.len() - 1);
+                        el.child(SharedString::from(FRAMES[i]))
+                    },
+                );
+            div()
+                .id("cp-smart-suggest")
+                .px_1p5()
+                .py_px()
+                .rounded_sm()
+                .text_xs()
+                .bg(rgb(theme().surface))
+                .text_color(rgb(suggest_color))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .child(spinner)
+                .child(SharedString::from("Generating…"))
+                .into_any_element()
+        } else {
+            let mut b = pill(
+                "cp-smart-suggest",
+                SharedString::from("Suggest"),
+                suggest_enabled,
+                suggest_color,
+            );
+            if suggest_enabled {
+                let suggest_click = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+                    if llm_on {
+                        this.smart_generate(window, cx);
+                    } else {
+                        this.smart_suggest(window, cx);
+                    }
+                });
+                b = b.on_click(suggest_click);
+            }
+            b.into_any_element()
+        };
 
         // Lang toggle (En / 日本語).
         let lang_label = match smart.lang {
@@ -17188,22 +17245,8 @@ fn render_commit_panel(
         )
         .on_click(lang_click);
 
-        // Style toggle (Conventional / Plain).
-        let style_label = match smart.style {
-            message_gen::Style::ConventionalCommits => "Style: CC",
-            message_gen::Style::Plain => "Style: Plain",
-        };
-        let style_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-            this.smart_commit.toggle_style();
-            cx.notify();
-        });
-        let style_btn = pill(
-            "cp-smart-style",
-            SharedString::from(style_label),
-            true,
-            theme().text_main,
-        )
-        .on_click(style_click);
+        // ADR-0090: the Style (CC vs Plain) toggle was removed — style now
+        // follows the commit-panel mode (template → Conventional, plain → Plain).
 
         let mut row = div()
             .flex()
@@ -17212,8 +17255,7 @@ fn render_commit_panel(
             .items_center()
             .gap_1()
             .child(suggest_btn)
-            .child(lang_btn)
-            .child(style_btn);
+            .child(lang_btn);
 
         // "Generate with Local LLM" is folded into Suggest (above). When the LLM
         // is detected but not yet enabled, offer an opt-in affordance so the user
@@ -17471,7 +17513,18 @@ fn render_commit_panel(
                         ))
                         .child(mode_toggle),
                 )
-                .child(msg_input_wrapper)
+                // Template mode stacks six fields and overflows the footer; bound
+                // its height and let it scroll so the commit button stays reachable.
+                .child(if template_mode {
+                    div()
+                        .id("cp-template-scroll")
+                        .max_h(theme::scaled_px(300.))
+                        .overflow_y_scroll()
+                        .child(msg_input_wrapper)
+                        .into_any_element()
+                } else {
+                    msg_input_wrapper
+                })
                 // Smart Commit Message toolbar (Suggest / Generate / toggles)
                 .child(smart_toolbar)
                 // Unstaged warning

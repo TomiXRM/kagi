@@ -63,6 +63,7 @@ fn input(lang: Lang, style: Style) -> GenInput {
         diff: String::new(),
         lang,
         style,
+        want_body: false,
     }
 }
 
@@ -177,6 +178,7 @@ fn ollama_offline_errs_and_rule_based_recovers() {
         diff: collect_staged_diff(&repo),
         lang: Lang::En,
         style: Style::ConventionalCommits,
+        want_body: false,
     };
 
     // Force offline so the Ollama path never touches the network.

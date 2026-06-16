@@ -15,8 +15,8 @@
 //! (replacing the old always-on Metadata column of Parents / full SHA).
 
 use gpui::{
-    canvas, div, prelude::*, px, relative, rgb, App, Bounds, Context, IntoElement, Pixels,
-    SharedString, Window,
+    canvas, div, prelude::*, px, relative, rgb, App, Bounds, Context, IntoElement, MouseButton,
+    Pixels, SharedString, Window,
 };
 
 use kagi::git::{find_stat, parse_coauthors, ChangeKind, CommitId, FileDiffStat, FileStatus};
@@ -172,8 +172,16 @@ pub fn render_inspector(
                                 this.open_main_diff_inspector_file(fi);
                                 cx.notify();
                             });
+                        // ADR-0089 (导线 #2): right-click → Show File History.
+                        let history_click =
+                            cx.listener(move |this, _e: &gpui::MouseDownEvent, _window, cx| {
+                                this.open_file_history_inspector_file(fi, cx);
+                                cx.stop_propagation();
+                                cx.notify();
+                            });
                         div()
                             .id(("file-row", fi))
+                            .on_mouse_down(MouseButton::Right, history_click)
                             .flex()
                             .flex_row()
                             .items_center()
@@ -225,8 +233,16 @@ pub fn render_inspector(
                         this.open_main_diff_inspector_file(fi);
                         cx.notify();
                     });
+                    // ADR-0089 (导线 #2): right-click → Show File History.
+                    let history_click =
+                        cx.listener(move |this, _e: &gpui::MouseDownEvent, _window, cx| {
+                            this.open_file_history_inspector_file(fi, cx);
+                            cx.stop_propagation();
+                            cx.notify();
+                        });
                     div()
                         .id(("file-flat", fi))
+                        .on_mouse_down(MouseButton::Right, history_click)
                         .flex()
                         .flex_row()
                         .items_center()

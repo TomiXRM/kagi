@@ -106,6 +106,10 @@ impl KagiApp {
         self.active_tab = index;
         self.error = None;
 
+        // Leaving any remote read-only view (ADR-0089 Phase 2b) — a local repo
+        // is becoming active again.
+        self.remote_view = None;
+
         // Point repo_path at the new repo before any apply.
         self.repo_path = Some(tab.path.clone());
 
@@ -145,6 +149,82 @@ impl KagiApp {
 
         // Background (re)load to refresh / fill the cache.
         self.load_repo_async(tab.path.clone(), tab.name.clone(), generation, cx);
+    }
+
+    /// Show a **remote** repository (already snapshotted over SSH) in the main
+    /// graph/sidebar/detail views, read-only (ADR-0089 Phase 2b).
+    ///
+    /// Mirrors the local apply path — `reset_per_repo_ui` + `apply_tab_view` from
+    /// `build_tab_view(&snap, name)` — but sets no `repo_path` and no tab, so the
+    /// fs watcher stays disarmed and every local-path operation guards itself
+    /// off. `remote_view` keeps the workspace (not the welcome screen) visible.
+    pub fn enter_remote_view(
+        &mut self,
+        host: kagi_domain::remote::RemoteHost,
+        root: String,
+        snap: kagi::git::RepoSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        let name = root
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("remote")
+            .to_string();
+
+        // No local path: every `self.repo_path.as_ref()?` operation no-ops, and
+        // `arm_watcher` returns early.
+        self.repo_path = None;
+        self.reset_per_repo_ui();
+        // Supersede any in-flight local background load.
+        self.switch_generation = self.switch_generation.wrapping_add(1);
+
+        let view = super::build_tab_view(&snap, &name);
+        self.apply_tab_view(view);
+        self.loading_tab = None;
+
+        let label = host.label();
+        self.remote_view = Some(super::RemoteRepoView {
+            host,
+            root: root.clone(),
+        });
+        self.status_footer = FooterStatus::Idle(SharedString::from(format!(
+            "Remote (read-only) — {label}:{root}"
+        )));
+        eprintln!("[kagi] remote: entered read-only view {label}:{root}");
+        cx.notify();
+    }
+
+    /// Re-snapshot the currently-open remote repository over SSH and re-apply it
+    /// (ADR-0089 Phase 2b — the remote equivalent of `reload`/refresh). No-op
+    /// when no remote view is active.
+    pub fn refresh_remote_view(&mut self, cx: &mut Context<Self>) {
+        let (host, root) = match &self.remote_view {
+            Some(v) => (v.host.clone(), v.root.clone()),
+            None => return,
+        };
+        self.status_footer = FooterStatus::Busy(SharedString::from(format!(
+            "Refreshing {}:{root}\u{2026}",
+            host.label()
+        )));
+        cx.notify();
+
+        let (host_load, root_load) = (host.clone(), root.clone());
+        let task = cx.background_spawn(async move {
+            kagi::remote::remote_snapshot(&host_load, &root_load, 10_000).map_err(|e| e.to_string())
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| match result {
+                Ok(snap) => app.enter_remote_view(host, root, snap, cx),
+                Err(e) => {
+                    app.status_footer = FooterStatus::Failed(SharedString::from(e));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// Reset all per-repo transient UI state (selection / diffs / modals /

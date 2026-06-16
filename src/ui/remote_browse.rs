@@ -39,12 +39,10 @@ pub enum RemoteBrowseStage {
     Connect,
     /// Browsing a directory on the connected host.
     Browse,
-    /// Showing a read-only snapshot (commit log) of an opened remote repo.
-    Log,
 }
 
-/// Commit limit for the read-only remote log preview (ADR-0089 Phase 2).
-const REMOTE_LOG_LIMIT: usize = 1000;
+/// Commit limit for the remote snapshot loaded into the graph (ADR-0089).
+const REMOTE_SNAPSHOT_LIMIT: usize = 10_000;
 
 /// State for the "Connect to a remote host over SSH" flow — a connection form
 /// that, once connected, becomes a read-only remote directory browser that
@@ -70,11 +68,6 @@ pub struct RemoteBrowseModal {
     pub entries: Vec<RemoteDirEntry>,
     pub current_is_repo: bool,
     pub summary: Option<RemoteRepoSummary>,
-    /// Loaded read-only snapshot of the opened remote repo (Phase 2). `Some`
-    /// when [`RemoteBrowseStage::Log`] is showing.
-    pub snapshot: Option<kagi::git::RepoSnapshot>,
-    /// Path of the opened remote repository (for the Log-stage header).
-    pub repo_root: String,
     /// An SSH round-trip (connect / navigate / open) is in flight.
     pub busy: bool,
     pub error: Option<SharedString>,
@@ -95,8 +88,6 @@ impl RemoteBrowseModal {
             entries: Vec::new(),
             current_is_repo: false,
             summary: None,
-            snapshot: None,
-            repo_root: String::new(),
             busy: false,
             error: None,
         }
@@ -236,9 +227,10 @@ impl KagiApp {
         .detach();
     }
 
-    /// Open the current remote repository read-only: load a full `RepoSnapshot`
-    /// over SSH on a background thread and switch to the Log stage (ADR-0089
-    /// Phase 2). Read-only — no working tree, no operations.
+    /// Open the current remote repository read-only in the main graph/sidebar/
+    /// detail views (ADR-0089 Phase 2b): load a full `RepoSnapshot` over SSH on a
+    /// background thread, then hand it to [`KagiApp::enter_remote_view`] and close
+    /// the modal. Read-only — no working tree, no operations.
     pub fn start_remote_open_repo(&mut self, cx: &mut Context<Self>) {
         let (host, path) = match self.remote_browse_modal.as_ref() {
             Some(m) if m.current_is_repo && !m.busy => match m.host.clone() {
@@ -253,20 +245,23 @@ impl KagiApp {
         }
         cx.notify();
 
+        let view_host = host.clone();
         let task = cx.background_spawn(async move { remote_open_blocking(&host, &path) });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                if let Some(m) = app.remote_browse_modal.as_mut() {
-                    m.busy = false;
-                    match result {
-                        Ok((root, snap)) => {
-                            m.repo_root = root;
-                            m.snapshot = Some(snap);
-                            m.stage = RemoteBrowseStage::Log;
-                            m.error = None;
+                match result {
+                    Ok((root, snap)) => {
+                        // Close the modal and render the remote repo in the main
+                        // views.
+                        app.cancel_remote_browse_modal();
+                        app.enter_remote_view(view_host, root, snap, cx);
+                    }
+                    Err(e) => {
+                        if let Some(m) = app.remote_browse_modal.as_mut() {
+                            m.busy = false;
+                            m.error = Some(SharedString::from(e));
                         }
-                        Err(e) => m.error = Some(SharedString::from(e)),
                     }
                 }
                 cx.notify();
@@ -625,139 +620,6 @@ pub(crate) fn render_remote_browse_modal(
                 ),
             );
         }
-
-        // ── Read-only repo snapshot (commit log preview) ────────
-        RemoteBrowseStage::Log => {
-            let back = {
-                let app = app.clone();
-                move |_e: &ClickEvent, _w: &mut Window, cx: &mut App| {
-                    app.update(cx, |this, cx| {
-                        if let Some(m) = this.remote_browse_modal.as_mut() {
-                            m.stage = RemoteBrowseStage::Browse;
-                            m.error = None;
-                        }
-                        cx.notify();
-                    });
-                }
-            };
-
-            let (head_line, counts) = match modal.snapshot.as_ref() {
-                Some(s) => (
-                    s.head.display(),
-                    format!(
-                        "{} commits \u{b7} {} branches \u{b7} {} remote \u{b7} {} tags",
-                        s.commits.len(),
-                        s.branches.len(),
-                        s.remote_branches.len(),
-                        s.tags.len(),
-                    ),
-                ),
-                None => (String::new(), String::new()),
-            };
-
-            // Header: repo path + HEAD + Back.
-            card = card.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .text_color(rgb(current_theme().text_main))
-                                    .text_lg()
-                                    .child(SharedString::from(modal.repo_root.clone())),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(current_theme().text_sub))
-                                    .child(SharedString::from(head_line)),
-                            ),
-                    )
-                    .child(
-                        Button::new("remote-log-back")
-                            .label("Back")
-                            .ghost()
-                            .xsmall()
-                            .on_click(back),
-                    ),
-            );
-            card = card.child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(current_theme().text_muted))
-                    .child(SharedString::from(counts)),
-            );
-
-            // Commit list (read-only; clicking for diffs is Phase 2b).
-            let mut list = div()
-                .id("remote-log-list")
-                .flex()
-                .flex_col()
-                .gap_px()
-                .max_h(theme::scaled_px(320.))
-                .overflow_y_scroll();
-            if let Some(s) = modal.snapshot.as_ref() {
-                for c in &s.commits {
-                    list = list.child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .text_sm()
-                            .child(
-                                div()
-                                    .w(theme::scaled_px(72.))
-                                    .flex_shrink_0()
-                                    .text_color(rgb(current_theme().text_sub))
-                                    .child(SharedString::from(c.id.short().to_string())),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .truncate()
-                                    .text_color(rgb(current_theme().text_main))
-                                    .child(SharedString::from(c.summary.clone())),
-                            )
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_xs()
-                                    .text_color(rgb(current_theme().text_muted))
-                                    .child(SharedString::from(c.author.name.clone())),
-                            ),
-                    );
-                }
-            }
-            card = card.child(list);
-
-            if let Some(ref err) = modal.error {
-                card = card.child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().color_blocker))
-                        .overflow_hidden()
-                        .child(err.clone()),
-                );
-            }
-
-            card = card.child(
-                div().flex().flex_row().gap_2().justify_end().child(
-                    Button::new("remote-log-close")
-                        .label("Close")
-                        .ghost()
-                        .small()
-                        .on_click(cancel),
-                ),
-            );
-        }
     }
 
     // Escape cancels (mirrors the other input modals).
@@ -853,7 +715,7 @@ fn remote_open_blocking(
     host: &RemoteHost,
     path: &str,
 ) -> Result<(String, kagi::git::RepoSnapshot), String> {
-    let snap =
-        kagi::remote::remote_snapshot(host, path, REMOTE_LOG_LIMIT).map_err(|e| e.to_string())?;
+    let snap = kagi::remote::remote_snapshot(host, path, REMOTE_SNAPSHOT_LIMIT)
+        .map_err(|e| e.to_string())?;
     Ok((path.to_string(), snap))
 }

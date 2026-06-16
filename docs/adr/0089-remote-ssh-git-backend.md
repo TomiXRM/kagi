@@ -118,12 +118,19 @@ picker can grey-out non-repo dirs without treating them as connection errors.
   reads over SSH and parsing them with pure, unit-tested
   `kagi_domain::remote_snapshot` parsers (separator-framed `git` formats).
   Working-tree `status` and full `worktrees` are left minimal (a read-only view
-  does not need a porcelain parse yet). The remote browser's "Open repository
-  (read-only)" loads this snapshot and shows a commit-log preview. **Phase 2b:**
-  feed that snapshot through `build_tab_view` into the real graph/diff views
-  (factoring the read path behind a `GitBackend` trait — `LocalBackend` (git2) /
-  `RemoteSshBackend` (ssh+CLI)), with local-repo-only operations gated off while
-  a remote repo is open.
+  does not need a porcelain parse yet).
+- **Phase 2b — render the remote repo in the main views (done):** the remote
+  browser's "Open repository (read-only)" feeds the snapshot through
+  `build_tab_view`/`apply_tab_view` into the **real** graph/sidebar/detail views
+  via `KagiApp::enter_remote_view`. The gating is structural, not a thicket of
+  guards: a remote view sets `repo_path = None`, so every operation (already
+  written as `let p = self.repo_path.as_ref()?；`) and the fs watcher
+  (`arm_watcher` early-returns on `None`) disable themselves, and `command_state`
+  greys out the write commands (no `has_repo`). A `remote_view` marker keeps the
+  workspace (not the Welcome screen) visible with no local tab, and re-points
+  `Refresh` (cmd-r) at a re-snapshot over SSH. Switching to a local tab clears
+  it. Commit **file diffs** over SSH and a formal `GitBackend` trait
+  (`LocalBackend` git2 / `RemoteSshBackend` ssh+CLI) are the remaining Phase 2c.
 - **Phase 3 — remote operations:** writes via the `OperationController`
   pipeline; later, an optional resident helper for latency (the VS Code-server
   analogue) and connection multiplexing.

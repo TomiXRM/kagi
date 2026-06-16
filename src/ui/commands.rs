@@ -766,8 +766,16 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
                 Disabled(Msg::NoTabsOpen.t())
             }
         }
-        "file.openInTerminal" | "file.refresh" | "repo.openInFinder" => {
+        "file.openInTerminal" | "repo.openInFinder" => {
             if has_repo {
+                Enabled
+            } else {
+                Disabled(Msg::NoRepoOpen.t())
+            }
+        }
+        // Refresh also drives the remote read-only view's re-snapshot (ADR-0089).
+        "file.refresh" => {
+            if has_repo || app.remote_view.is_some() {
                 Enabled
             } else {
                 Disabled(Msg::NoRepoOpen.t())
@@ -1170,12 +1178,18 @@ impl KagiApp {
             "file.openInTerminal" => self.menu_open_terminal(window, cx),
             "file.connectRemote" => self.open_remote_browse_modal(cx),
             "file.refresh" => {
-                self.reload();
-                self.status_footer = FooterStatus::Idle(SharedString::from(Msg::Refreshed.t()));
-                self.push_toast(ToastKind::Success, Msg::Refreshed.t());
-                // Also fetch the remote (quiet) so changes pushed elsewhere show
-                // up — success reloads the graph, failure is silent.
-                self.fetch_async(true, cx);
+                // ADR-0089 Phase 2b: a remote read-only view re-snapshots over
+                // SSH instead of touching a local repo.
+                if self.remote_view.is_some() {
+                    self.refresh_remote_view(cx);
+                } else {
+                    self.reload();
+                    self.status_footer = FooterStatus::Idle(SharedString::from(Msg::Refreshed.t()));
+                    self.push_toast(ToastKind::Success, Msg::Refreshed.t());
+                    // Also fetch the remote (quiet) so changes pushed elsewhere
+                    // show up — success reloads the graph, failure is silent.
+                    self.fetch_async(true, cx);
+                }
             }
 
             // ── View ────────────────────────────────────────────────

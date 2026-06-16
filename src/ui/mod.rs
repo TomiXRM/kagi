@@ -950,6 +950,12 @@ pub struct KagiApp {
     /// When `Some`, the remote SSH connect / directory-browse modal is visible
     /// (ADR-0089 Phase 1).
     pub remote_browse_modal: Option<RemoteBrowseModal>,
+    /// When `Some`, the main views are showing a **remote** repository opened
+    /// read-only over SSH (ADR-0089 Phase 2b). `repo_path` is `None` in this
+    /// mode, so every local-path operation (checkout/commit/diff/watcher/…)
+    /// guards itself off automatically; this marker drives the read-only UI and
+    /// keeps the workspace (not the welcome screen) visible with no local tab.
+    pub remote_view: Option<RemoteRepoView>,
     /// Focus handle used to receive keyboard events for the create-branch modal.
     /// Allocated on demand when the modal is first opened.
     pub modal_focus: Option<FocusHandle>,
@@ -1317,6 +1323,18 @@ pub struct ConflictEditorInputs {
 /// built on a background thread (`cx.background_spawn`) and cached across tabs
 /// (`tab_cache`).  [`build_tab_view`] is the pure, `Send` builder;
 /// [`KagiApp::apply_tab_view`] does the main-thread assignment only.
+/// Marks the workspace as showing a remote repository opened read-only over SSH
+/// (ADR-0089 Phase 2b). Holds what's needed to identify/refresh it; the rendered
+/// data lives in the normal `rows`/`branches`/… fields (applied from a remote
+/// `RepoSnapshot` via [`KagiApp::apply_tab_view`]).
+#[derive(Debug, Clone)]
+pub struct RemoteRepoView {
+    /// The connected host.
+    pub host: kagi_domain::remote::RemoteHost,
+    /// Absolute path of the repository on the remote.
+    pub root: String,
+}
+
 #[derive(Clone)]
 pub struct TabViewState {
     pub header: SharedString,
@@ -1533,6 +1551,7 @@ impl KagiApp {
             create_branch_modal: None,
             create_worktree_modal: None,
             remote_browse_modal: None,
+            remote_view: None,
             modal_focus: None,
             stashes,
             is_dirty,
@@ -1683,6 +1702,7 @@ impl KagiApp {
             create_branch_modal: None,
             create_worktree_modal: None,
             remote_browse_modal: None,
+            remote_view: None,
             modal_focus: None,
             stashes: Vec::new(),
             is_dirty: false,
@@ -10962,8 +10982,10 @@ impl Render for KagiApp {
             );
         }
 
-        // W4-TABS / ADR-0028: no open tabs → Welcome screen.
-        if self.tabs.is_empty() {
+        // W4-TABS / ADR-0028: no open tabs → Welcome screen. A remote read-only
+        // view (ADR-0089 Phase 2b) has no local tab but still renders the
+        // workspace from its applied snapshot.
+        if self.tabs.is_empty() && self.remote_view.is_none() {
             let welcome = self.render_welcome(cx).into_any();
             return self.platform_window_shell(welcome, cx);
         }

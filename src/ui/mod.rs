@@ -24,6 +24,7 @@ pub mod i18n;
 pub mod inspector;
 pub mod modals;
 pub mod remote_browse;
+pub mod settings;
 pub mod settings_view;
 pub mod sidebar;
 pub mod smart_commit;
@@ -3023,7 +3024,7 @@ impl KagiApp {
             return;
         };
 
-        let template = match theme::read_setting("mergetool") {
+        let template = match settings::read_setting("mergetool") {
             Some(t) if !t.trim().is_empty() => t,
             _ => {
                 self.push_toast(ToastKind::Info, Msg::ConflictExternalToolUnset.t());
@@ -8722,10 +8723,10 @@ impl KagiApp {
         if message_gen::offline() {
             return;
         }
-        if theme::read_setting("update_auto_check").as_deref() == Some("false") {
+        if settings::read_setting("update_auto_check").as_deref() == Some("false") {
             return;
         }
-        let skipped = theme::read_setting("update_skipped");
+        let skipped = settings::read_setting("update_skipped");
         let task =
             cx.background_spawn(async move { kagi::update::check_for_update(skipped.as_deref()) });
         cx.spawn(async move |this, acx| {
@@ -8783,7 +8784,7 @@ impl KagiApp {
     /// "Skip this version" — persist the tag so the banner stays hidden for it.
     fn skip_this_update(&mut self, cx: &mut Context<Self>) {
         if let Some((plan, _)) = &self.update_available {
-            theme::write_setting("update_skipped", Some(&plan.tag));
+            settings::write_setting("update_skipped", Some(&plan.tag));
         }
         self.update_available = None;
         self.update_modal_open = false;

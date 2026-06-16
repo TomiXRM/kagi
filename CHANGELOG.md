@@ -3,6 +3,25 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.15] — 2026-06-17
+
+### Added
+- **Remote repositories over SSH (read-only).** Connect to a host over SSH from
+  **File → "Connect to Remote Host…"**, browse its directories, and open a repo
+  to inspect its graph/branches/tags/commits and per-commit file diffs — all
+  **read-only**. It is **agentless**: nothing is installed on the remote; Kagi
+  runs short read-only `git`/`ls` commands over the system `ssh`, so
+  `~/.ssh/config`, keys, ssh-agent, and `known_hosts` just work (set new or
+  password-only hosts up in a terminal first). Remote views are structurally
+  read-only — every write operation and the fs-watcher disable themselves
+  (ADR-0089).
+- **Per-file commit history.** A new view lists every commit that touched a
+  given file, with a resizable list/diff split (ADR-0089).
+- **Smart-commit: body generation in template mode** — the model now fills the
+  commit body field, plus a model picker in Settings and an OpenCommit-style
+  prompt (`think:false` for reasoning models); the Style toggle was dropped
+  (ADR-0090).
+
 ## [0.3.14] — 2026-06-16
 
 ### Added

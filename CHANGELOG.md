@@ -3,6 +3,20 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.13] — 2026-06-16
+
+### Changed
+- **Stash actions in the sidebar.** Left-clicking a stash now **pops** it
+  (apply + remove) instead of applying-and-keeping — so a stash you act on
+  actually goes away. Right-click opens a menu with **Pop**, **Apply** (keep),
+  and **Drop** (ADR-0087).
+
+### Added
+- **Drop a stash directly.** A new Drop action deletes a stash entry without
+  touching the working tree, behind a danger-confirm modal that shows how to
+  recover it (`git stash store <oid>`). The dropped commit is recorded in the
+  operation log (ADR-0087).
+
 ## [0.3.12] — 2026-06-16
 
 ### Added

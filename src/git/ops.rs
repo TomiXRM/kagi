@@ -1698,6 +1698,112 @@ fn stash_drop_internal(repo: &mut Repository, index: usize) -> Result<(), GitErr
 }
 
 // ────────────────────────────────────────────────────────────
+// plan_stash_drop / execute_stash_drop  (ADR-0087)
+// ────────────────────────────────────────────────────────────
+
+/// Analyse a standalone stash **drop** (delete the entry without applying it).
+///
+/// # ADR-0087 — standalone drop (amends ADR-0009)
+///
+/// ADR-0009 kept `stash_drop` private to prevent the "drop without apply"
+/// footgun. ADR-0087 re-exposes it as an **explicit, user-initiated Destructive
+/// op** gated behind a danger-confirmation modal (same class as discard / reset
+/// --hard). It does NOT touch the working tree — only the stash entry is removed
+/// — so the only blocker is an out-of-range index. The dropped stash commit
+/// stays reachable from the stash reflog until gc, so the recovery guidance
+/// records its OID for `git stash store`.
+pub fn plan_stash_drop(repo: &mut Repository, index: usize) -> Result<OperationPlan, GitError> {
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+    let stashes = collect_stash_entries_with_oid(repo)?;
+    let stash_count = stashes.len();
+
+    let head_display = head.display();
+    let dirty_parts: Vec<String> = [
+        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
+        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
+        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
+        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let dirty_display = if dirty_parts.is_empty() {
+        "clean".to_string()
+    } else {
+        dirty_parts.join(", ")
+    };
+    let current = StateSummary {
+        head: head_display.clone(),
+        dirty: dirty_display,
+    };
+
+    let mut blockers: Vec<String> = Vec::new();
+    if index >= stash_count {
+        blockers.push(format!(
+            "Stash index {} is out of range (only {} stash entr{} exist).",
+            index,
+            stash_count,
+            if stash_count == 1 { "y" } else { "ies" }
+        ));
+    }
+
+    let (stash_message, stash_oid) = stashes
+        .iter()
+        .find(|(i, _, _)| *i == index)
+        .map(|(_, msg, oid)| (msg.clone(), Some(*oid)))
+        .unwrap_or_else(|| (format!("stash@{{{}}}", index), None));
+
+    let predicted = StateSummary {
+        head: head_display,
+        dirty: format!("working tree unchanged (stash@{{{}}} entry deleted)", index),
+    };
+
+    let recovery = match stash_oid {
+        Some(oid) => format!(
+            "Drop removes the stash entry only — the working tree is NOT touched.\n\
+             The dropped stash commit {} stays reachable from the stash reflog until \
+             gc; restore it with:\n  git stash store -m \"{}\" {}\n\
+             To see remaining stash entries:  git stash list",
+            oid, stash_message, oid
+        ),
+        None => "Drop removes the stash entry only — the working tree is NOT touched.".to_string(),
+    };
+
+    Ok(OperationPlan {
+        title: format!("Stash drop — delete stash@{{{}}}", index),
+        current,
+        predicted,
+        warnings: Vec::new(),
+        blockers,
+        recovery,
+        head_at_plan: head,
+        stash_count_at_plan: stash_count,
+        preview_files: Vec::new(),
+        preview_commits: Vec::new(),
+        destructive: true,
+    })
+}
+
+/// Execute a standalone stash drop: delete the stash entry at `index` (ADR-0087).
+///
+/// Does **not** touch the working tree. Returns the dropped stash commit OID
+/// (as a hex string) so the caller can record it in the oplog as the recovery
+/// handle (`git stash store <oid>`).
+pub fn execute_stash_drop(repo: &mut Repository, index: usize) -> Result<String, GitError> {
+    // Capture the OID before dropping so the oplog keeps a recovery handle.
+    let oid = collect_stash_entries_with_oid(repo)?
+        .into_iter()
+        .find(|(i, _, _)| *i == index)
+        .map(|(_, _, oid)| oid.to_string());
+
+    repo.stash_drop(index)
+        .map_err(|e| GitError::Other(format!("stash drop failed: {}", e.message())))?;
+
+    Ok(oid.unwrap_or_default())
+}
+
+// ────────────────────────────────────────────────────────────
 // Internal helper: stash pop conflict prediction
 // ────────────────────────────────────────────────────────────
 

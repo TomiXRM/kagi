@@ -1115,13 +1115,22 @@ fn build_worktree_row(name: &str, path_label: &str, is_current: bool) -> gpui::A
         .into_any()
 }
 
-/// A stash leaf — click opens the stash apply modal.
+/// A stash leaf — left-click **pops** (apply + remove); right-click opens a
+/// menu (Apply / Drop). User request: clicking a stash should consume it.
 fn build_stash_row(index: usize, message: &str, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let raw_label = format!("stash@{{{}}}: {}", index, message);
     let full_name = SharedString::from(raw_label.clone());
     let click_handler = cx.listener(
         move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
-            this.open_stash_apply_modal(index);
+            this.open_pop_modal(index);
+            cx.notify();
+        },
+    );
+    let msg_for_menu = message.to_string();
+    let menu_handler = cx.listener(
+        move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
+            this.open_stash_menu(index, msg_for_menu.clone(), event.position);
+            cx.stop_propagation();
             cx.notify();
         },
     );
@@ -1136,6 +1145,7 @@ fn build_stash_row(index: usize, message: &str, cx: &mut Context<KagiApp>) -> gp
         .text_color(rgb(theme().color_warning))
         .overflow_hidden()
         .on_click(click_handler)
+        .on_mouse_down(gpui::MouseButton::Right, menu_handler)
         .hover(|style| style.bg(rgb(theme().surface)))
         .tooltip(name_tooltip(full_name))
         .child(

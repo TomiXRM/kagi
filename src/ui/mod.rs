@@ -25,6 +25,7 @@ pub mod modals;
 pub mod settings_view;
 pub mod sidebar;
 pub mod smart_commit;
+pub mod stash_menu;
 pub mod tabs;
 pub mod terminal;
 pub mod theme;
@@ -343,6 +344,7 @@ fn busy_label(op: &str) -> String {
         "discard" => "Discarding…",
         "stash" => "Stashing…",
         "stash-pop" => "Applying stash…",
+        "stash-drop" => "Dropping stash…",
         "create-worktree" => "Creating worktree…",
         "delete-branch" => "Deleting branch…",
         "rename-branch" => "Renaming branch…",
@@ -923,6 +925,8 @@ pub struct KagiApp {
     pub amend_modal: Option<AmendPlanModal>,
     /// When `Some`, the stash-pop confirmation modal is visible (T-HT-007).
     pub pop_modal: Option<PopPlanModal>,
+    /// When `Some`, the stash-drop confirmation modal is visible (ADR-0087).
+    pub stash_drop_modal: Option<StashDropModal>,
     /// When `Some`, the push plan confirmation modal is visible (T-HT-004).
     pub push_modal: Option<PushPlanModal>,
     pub branch_plan_modal: Option<BranchPlanModal>,
@@ -1148,6 +1152,7 @@ pub struct KagiApp {
     pub commit_menu: Option<CommitMenuState>,
     /// Branch sidebar context menu state (right-click anchor + target branch).
     pub branch_menu: Option<BranchMenuState>,
+    pub stash_menu: Option<stash_menu::StashMenuState>,
     /// Unstaged file-row context menu (right-click): (unstaged index, anchor).
     /// Offers Discard for eligible (tracked, non-conflicted) rows.
     pub file_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
@@ -1494,6 +1499,7 @@ impl KagiApp {
             undo_modal: None,
             amend_modal: None,
             pop_modal: None,
+            stash_drop_modal: None,
             push_modal: None,
             branch_plan_modal: None,
             set_upstream_modal: None,
@@ -1579,6 +1585,7 @@ impl KagiApp {
             discard_modal: None,
             commit_menu: None,
             branch_menu: None,
+            stash_menu: None,
             file_menu: None,
             // W5-MENU
             sidebar_visible: true,
@@ -1639,6 +1646,7 @@ impl KagiApp {
             undo_modal: None,
             amend_modal: None,
             pop_modal: None,
+            stash_drop_modal: None,
             push_modal: None,
             branch_plan_modal: None,
             set_upstream_modal: None,
@@ -1724,6 +1732,7 @@ impl KagiApp {
             discard_modal: None,
             commit_menu: None,
             branch_menu: None,
+            stash_menu: None,
             file_menu: None,
             // W5-MENU
             sidebar_visible: true,
@@ -1811,6 +1820,7 @@ impl KagiApp {
         self.undo_modal = None;
         self.amend_modal = None;
         self.pop_modal = None;
+        self.stash_drop_modal = None;
         self.branch_plan_modal = None;
         self.set_upstream_modal = None;
         self.rename_branch_modal = None;
@@ -1832,6 +1842,7 @@ impl KagiApp {
         let was_merge_commit_pending = self.conflict_merge_commit_pending;
         self.commit_menu = None;
         self.file_menu = None;
+        self.stash_menu = None;
         if !was_merge_commit_pending {
             // ADR-0068: a reload after commit / abort ends any continued-merge flow.
             self.conflict_merge_commit_pending = false;
@@ -7330,6 +7341,162 @@ impl KagiApp {
         self.pop_modal = None;
     }
 
+    /// Open the standalone stash-drop confirmation (ADR-0087, Destructive).
+    pub fn open_stash_drop_modal(&mut self, index: usize) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "drop: repo open error: {}",
+                    e
+                )));
+                return;
+            }
+        };
+        match repo.plan_stash_drop(index) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: stash-drop index={} blockers={}",
+                    index,
+                    plan.blockers.len()
+                );
+                self.stash_drop_modal = Some(StashDropModal {
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                    stash_index: index,
+                });
+            }
+            Err(e) => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("drop plan error: {}", e)));
+            }
+        }
+    }
+
+    pub fn cancel_stash_drop_modal(&mut self) {
+        self.stash_drop_modal = None;
+    }
+
+    /// Open the stash right-click context menu (Apply / Drop). Left-click on a
+    /// stash row pops instead (handled in the sidebar row builder).
+    pub fn open_stash_menu(
+        &mut self,
+        index: usize,
+        message: String,
+        position: gpui::Point<gpui::Pixels>,
+    ) {
+        self.commit_menu = None;
+        self.branch_menu = None;
+        self.stash_menu = Some(stash_menu::StashMenuState {
+            index,
+            message,
+            position,
+        });
+        eprintln!("[kagi] stash-menu: open index={}", index);
+    }
+
+    /// Dispatch a stash context-menu action.
+    pub fn dispatch_stash_action(
+        &mut self,
+        action: stash_menu::StashAction,
+        state: stash_menu::StashMenuState,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        match action {
+            stash_menu::StashAction::Pop => self.open_pop_modal(state.index),
+            stash_menu::StashAction::Apply => self.open_stash_apply_modal(state.index),
+            stash_menu::StashAction::Drop => self.open_stash_drop_modal(state.index),
+        }
+    }
+
+    /// Execute the stash drop on a background thread (Destructive, ADR-0087).
+    pub fn start_stash_drop(&mut self, cx: &mut Context<Self>) {
+        let modal = match self.stash_drop_modal.clone() {
+            Some(m) => m,
+            None => return,
+        };
+        if self.busy_op.is_some() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        if !modal.plan.blockers.is_empty() {
+            eprintln!("[kagi] refused: drop plan has blockers, not executing");
+            self.record_op(
+                "stash-drop",
+                modal.plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
+                &repo_path,
+            );
+            self.stash_drop_modal = None;
+            cx.notify();
+            return;
+        }
+
+        self.busy_op = Some("stash-drop");
+        self.stash_drop_modal = None;
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStashDrop.t()));
+        eprintln!("[kagi] async: stash-drop started");
+
+        let plan = modal.plan.clone();
+        let stash_index = modal.stash_index;
+        let bg_path = repo_path.clone();
+        let bg_plan = plan.clone();
+        let task = cx
+            .background_spawn(async move { stash_drop_blocking(&bg_path, &bg_plan, stash_index) });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok((summary, after)) => {
+                        eprintln!("[kagi] async: stash-drop finished");
+                        app.record_op(
+                            "stash-drop",
+                            plan.current.clone(),
+                            OpOutcome::Success { after },
+                            &repo_path,
+                        );
+                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                            "stash drop: {}",
+                            summary
+                        )));
+                        app.reload();
+                    }
+                    Err(err_msg) => {
+                        eprintln!("[kagi] async: stash-drop failed — {}", err_msg);
+                        app.record_op(
+                            "stash-drop",
+                            plan.current.clone(),
+                            OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
+                            &repo_path,
+                        );
+                        app.stash_drop_modal = Some(StashDropModal {
+                            plan: plan.clone(),
+                            error: Some(SharedString::from(err_msg)),
+                            stash_index,
+                        });
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     /// Confirm stash pop: preflight → apply-then-drop → oplog → reload.
     pub fn confirm_pop(&mut self) {
         let modal = match self.pop_modal.clone() {
@@ -9919,6 +10086,19 @@ impl KagiApp {
         ))
     }
 
+    fn render_stash_menu_overlay(
+        &self,
+        state: stash_menu::StashMenuState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        let groups = stash_menu::build_stash_menu();
+        let header = SharedString::from(format!("stash@{{{}}}: {}", state.index, state.message));
+        Some(stash_menu::render_stash_menu_overlay(
+            state, header, groups, window, cx,
+        ))
+    }
+
     pub fn dispatch_branch_action(
         &mut self,
         action: BranchAction,
@@ -10598,6 +10778,7 @@ impl Render for KagiApp {
         let history_modal = self.history_modal.clone();
         let amend_modal = self.amend_modal.clone();
         let pop_modal = self.pop_modal.clone();
+        let stash_drop_modal = self.stash_drop_modal.clone();
         let push_modal = self.push_modal.clone();
         let branch_plan_modal = self.branch_plan_modal.clone();
         let set_upstream_modal = self.set_upstream_modal.clone();
@@ -10652,6 +10833,10 @@ impl Render for KagiApp {
             .branch_menu
             .clone()
             .and_then(|state| self.render_branch_menu_overlay(state, window, cx));
+        let stash_menu_overlay = self
+            .stash_menu
+            .clone()
+            .and_then(|state| self.render_stash_menu_overlay(state, window, cx));
         // T-HT-001: clone toolbar/summary state for header render.
         // W3-NOTIFY: while a background git op runs, disable every git button
         // so operations never overlap.
@@ -11055,6 +11240,8 @@ impl Render for KagiApp {
             .children(commit_menu_overlay)
             // ── Branch context menu overlay (below modals) ─────
             .children(branch_menu_overlay)
+            // ── Stash context menu overlay (below modals) ──────
+            .children(stash_menu_overlay)
             // ── W5-MENU: menu-driven overlay (branch picker / About / shortcuts) ──
             .children(self.render_menu_overlay(cx))
             // ── Plan modal overlay (above everything) ──────
@@ -11081,6 +11268,10 @@ impl Render for KagiApp {
                 el.child(render_amend_modal(modal, cx))
             })
             .when_some(pop_modal, |el, modal| el.child(render_pop_modal(modal, cx)))
+            // ── Stash drop modal overlay (ADR-0087) ─────────
+            .when_some(stash_drop_modal, |el, modal| {
+                el.child(render_stash_drop_modal(modal, cx))
+            })
             // ── Push plan modal overlay (T-HT-004) ──────────
             .when_some(push_modal, |el, modal| {
                 el.child(render_push_modal(modal, cx))
@@ -13900,6 +14091,34 @@ fn stash_pop_blocking(
         dirty: "changes restored (stash removed)".to_string(),
     };
     Ok(("applied and dropped".to_string(), after))
+}
+
+/// Blocking part of standalone stash drop (ADR-0087). Deletes the stash entry
+/// without touching the working tree; returns the dropped stash commit OID as
+/// the oplog recovery handle.
+fn stash_drop_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    stash_index: usize,
+) -> Result<(String, StateSummary), String> {
+    let mut repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check_stash(plan, plan.stash_count_at_plan())
+        .map_err(|e| format!("Preflight failed: {}", e))?;
+
+    let dropped_oid = repo
+        .execute_stash_drop(stash_index)
+        .map_err(|e| format!("Drop failed: {}", e))?;
+    eprintln!(
+        "[kagi] executed: stash-drop index={} oid={}",
+        stash_index, dropped_oid
+    );
+
+    let after = StateSummary {
+        head: plan.current.head.clone(),
+        dirty: format!("stash@{{{}}} deleted (oid {})", stash_index, dropped_oid),
+    };
+    Ok(("entry deleted".to_string(), after))
 }
 
 /// Blocking part of discard (W17-DISCARD, ADR-0046). Backup-then-discard scales

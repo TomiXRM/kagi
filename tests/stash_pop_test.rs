@@ -14,7 +14,8 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi::git::{
-    execute_stash_apply, execute_stash_pop, execute_stash_push, plan_stash_pop, snapshot,
+    execute_stash_apply, execute_stash_drop, execute_stash_pop, execute_stash_push,
+    plan_stash_drop, plan_stash_pop, snapshot,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -112,6 +113,61 @@ fn test_stash_pop_normal_restores_and_removes_entry() {
     assert_eq!(
         content, "stashed content\n",
         "file content must match stashed content after pop"
+    );
+}
+
+// ────────────────────────────────────────────────────────────
+// TC-DROP-1: Standalone drop — entry removed, working tree NOT touched (ADR-0087)
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn test_stash_drop_removes_entry_without_touching_working_tree() {
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, mut repo) = build_clean_repo(&tmp);
+
+    // Two stashes so we can verify only the targeted one is dropped.
+    write_file(&repo_dir, "README.md", "first change\n");
+    execute_stash_push(&mut repo, Some("first"), true).expect("push 1 failed");
+    write_file(&repo_dir, "README.md", "second change\n");
+    execute_stash_push(&mut repo, Some("second"), true).expect("push 2 failed");
+
+    // Clean working tree, 2 stashes.
+    {
+        let snap = snapshot(&mut repo, 100).expect("snapshot");
+        assert!(!snap.status.is_dirty(), "clean after pushes");
+        assert_eq!(snap.stashes.len(), 2, "two stashes expected");
+    }
+
+    // Plan drop of stash@{0} — only blocker possible is out-of-range (none here).
+    let plan = plan_stash_drop(&mut repo, 0).expect("plan_stash_drop failed");
+    assert!(
+        plan.blockers.is_empty(),
+        "drop of a valid index should have no blockers, got: {:?}",
+        plan.blockers
+    );
+    assert!(plan.destructive, "drop plan must be marked destructive");
+
+    // Execute drop — returns the dropped stash commit OID.
+    let oid = execute_stash_drop(&mut repo, 0).expect("execute_stash_drop failed");
+    assert!(!oid.is_empty(), "drop should return the stash commit OID");
+
+    // After drop: one stash left, working tree STILL clean (drop never restores).
+    let snap_after = snapshot(&mut repo, 100).expect("snapshot after drop");
+    assert_eq!(
+        snap_after.stashes.len(),
+        1,
+        "exactly one stash entry must remain after drop"
+    );
+    assert!(
+        !snap_after.status.is_dirty(),
+        "drop must NOT touch the working tree (still clean)"
+    );
+
+    // The remaining stash is the older "first" entry (re-indexed to 0).
+    assert!(
+        snap_after.stashes[0].message.contains("first"),
+        "the remaining stash should be the older 'first' entry, got: {:?}",
+        snap_after.stashes[0].message
     );
 }
 

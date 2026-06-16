@@ -110,6 +110,15 @@ pub struct PopPlanModal {
     pub stash_index: usize,
 }
 
+/// State for a standalone stash **drop** confirmation (ADR-0087, Destructive).
+#[derive(Clone)]
+pub struct StashDropModal {
+    pub plan: std::sync::Arc<OperationPlan>,
+    pub error: Option<SharedString>,
+    /// Stash index the plan was built for.
+    pub stash_index: usize,
+}
+
 /// State for an in-progress push confirmation (T-HT-004).  Same shape as
 /// [`PullPlanModal`] but kept separate so the confirm path can't be mixed up.
 #[derive(Clone)]
@@ -829,6 +838,39 @@ pub(crate) fn render_pop_modal(modal: PopPlanModal, cx: &mut Context<KagiApp>) -
         modal.plan,
         modal.error,
         "Pop",
+        cancel_handler,
+        confirm_handler,
+        None,
+        cx,
+    )
+    .into_any_element()
+}
+
+/// Stash drop confirmation overlay (ADR-0087) — Destructive: deletes the
+/// stash entry without touching the working tree. Same card as Pop, wired to
+/// `start_stash_drop`.
+pub(crate) fn render_stash_drop_modal(
+    modal: StashDropModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.cancel_stash_drop_modal();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.start_stash_drop(cx);
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    render_plan_modal_card(
+        modal.plan,
+        modal.error,
+        "Drop",
         cancel_handler,
         confirm_handler,
         None,

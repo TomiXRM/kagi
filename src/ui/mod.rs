@@ -370,8 +370,8 @@ use kagi::git::{
         default_tracking_branch_name, validate_branch_rename, AmendMode, MergeKind, OperationPlan,
         PullOutcome, StateSummary,
     },
-    CommitId, DiffLineKind, FileDiffStat, FileStatus, Head, RemoteBranch, RepoSnapshot, Stash, Tag,
-    UpstreamInfo, Worktree,
+    CommitId, DiffLineKind, FileDiff, FileDiffStat, FileStatus, Head, RemoteBranch, RepoSnapshot,
+    Stash, Tag, UpstreamInfo, Worktree,
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -906,6 +906,9 @@ pub struct KagiApp {
     /// Cache of changed-files results keyed by row index.
     /// `None` value means the diff was attempted but failed (show unavailable).
     pub diff_cache: HashMap<usize, Option<Vec<FileStatus>>>,
+    /// Row indices whose remote changed-files load is in flight over SSH
+    /// (ADR-0089 Phase 2c), so the render trigger spawns it only once.
+    pub remote_diff_inflight: std::collections::HashSet<usize>,
     /// W16-DIFFSTAT: per-file additions/deletions for the selected commit,
     /// keyed by row index. Computed lazily alongside `diff_cache` and consumed
     /// by the Inspector changed-files list (truncated set only).
@@ -1531,6 +1534,7 @@ impl KagiApp {
             error: None,
             repo_path: None,
             diff_cache: HashMap::new(),
+            remote_diff_inflight: std::collections::HashSet::new(),
             diffstat_cache: HashMap::new(),
             main_diff: None,
             compare_view: None,
@@ -1682,6 +1686,7 @@ impl KagiApp {
             error: Some(SharedString::from(message.into())),
             repo_path: None,
             diff_cache: HashMap::new(),
+            remote_diff_inflight: std::collections::HashSet::new(),
             diffstat_cache: HashMap::new(),
             main_diff: None,
             compare_view: None,
@@ -1860,6 +1865,7 @@ impl KagiApp {
         // Per-repo transient state reset (unchanged behaviour).
         self.selected = None;
         self.diff_cache = HashMap::new();
+        self.remote_diff_inflight.clear();
         self.diffstat_cache = HashMap::new();
         self.main_diff = None;
         self.compare_view = None;
@@ -9461,8 +9467,13 @@ impl KagiApp {
             );
         }
 
-        // Fetch changed files on-demand (only once per row).
-        if !self.diff_cache.contains_key(&index) {
+        // Fetch changed files on-demand (only once per row). For a remote
+        // read-only view (ADR-0089 Phase 2c) the fetch is an SSH round-trip, so
+        // it is loaded asynchronously from the render trigger instead — leave
+        // the cache empty here so that trigger fires.
+        if self.remote_view.is_some() {
+            // no-op: the async remote load handles this row.
+        } else if !self.diff_cache.contains_key(&index) {
             let files_opt = self.fetch_changed_files(index);
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             eprintln!("[kagi] changed files: {}", n);
@@ -9605,8 +9616,12 @@ impl KagiApp {
         }
     }
 
-    pub fn open_main_diff_inspector_file(&mut self, file_index: usize) {
-        if self.compare_view.is_some() {
+    pub fn open_main_diff_inspector_file(&mut self, file_index: usize, cx: &mut Context<Self>) {
+        if self.remote_view.is_some() {
+            // Remote read-only view (ADR-0089 Phase 2c): the file diff is an SSH
+            // round-trip, loaded off-thread.
+            self.open_remote_main_diff(file_index, cx);
+        } else if self.compare_view.is_some() {
             self.open_main_diff_compare(file_index);
         } else {
             self.open_main_diff_commit(file_index);
@@ -9646,60 +9661,146 @@ impl KagiApp {
         };
 
         match repo.commit_file_diff(&id, &path) {
-            Ok(file_diff) => {
-                // Count added / removed lines for the log.
-                let added: usize = file_diff
-                    .hunks
-                    .iter()
-                    .flat_map(|h| h.lines.iter())
-                    .filter(|l| l.kind == DiffLineKind::Added)
-                    .count();
-                let removed: usize = file_diff
-                    .hunks
-                    .iter()
-                    .flat_map(|h| h.lines.iter())
-                    .filter(|l| l.kind == DiffLineKind::Removed)
-                    .count();
-                let hunks = file_diff.hunks.len();
-
-                // Legacy headless compat log (검증スクリプトを壊さない).
-                eprintln!(
-                    "[kagi] diff: {} hunks={} (+{} -{})",
-                    path.display(),
-                    hunks,
-                    added,
-                    removed,
-                );
-
-                let fdv = FileDiffView::from_file_diff(&file_diff, file_index);
-                let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
-                let title = fdv.file_name.clone();
-                let mut rows = fdv.rows;
-                let row_count = rows.len();
-
-                // T-UI-004: apply syntax highlighting once at open time.
-                let hl_lang = highlight_diff_rows(&mut rows, &path);
-                eprintln!(
-                    "[kagi] main-diff: open {} rows={} highlight={}",
-                    path.display(),
-                    row_count,
-                    hl_lang
-                );
-
-                self.main_diff = Some(MainDiffView {
-                    title,
-                    stats,
-                    rows,
-                    source: MainDiffSource::Commit {
-                        row_index: selected,
-                        file_index,
-                    },
-                });
-            }
+            Ok(file_diff) => self.set_commit_main_diff(&file_diff, &path, selected, file_index),
             Err(e) => {
                 eprintln!("[kagi] diff error: {}", e);
             }
         }
+    }
+
+    /// Build the full-width [`MainDiffView`] for a commit's file diff. Shared by
+    /// the local (`git2`) path and the remote (SSH) path so both render
+    /// identically.
+    fn set_commit_main_diff(
+        &mut self,
+        file_diff: &FileDiff,
+        path: &std::path::Path,
+        selected: usize,
+        file_index: usize,
+    ) {
+        let added: usize = file_diff
+            .hunks
+            .iter()
+            .flat_map(|h| h.lines.iter())
+            .filter(|l| l.kind == DiffLineKind::Added)
+            .count();
+        let removed: usize = file_diff
+            .hunks
+            .iter()
+            .flat_map(|h| h.lines.iter())
+            .filter(|l| l.kind == DiffLineKind::Removed)
+            .count();
+        eprintln!(
+            "[kagi] diff: {} hunks={} (+{} -{})",
+            path.display(),
+            file_diff.hunks.len(),
+            added,
+            removed,
+        );
+
+        let fdv = FileDiffView::from_file_diff(file_diff, file_index);
+        let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
+        let title = fdv.file_name.clone();
+        let mut rows = fdv.rows;
+        let row_count = rows.len();
+        let hl_lang = highlight_diff_rows(&mut rows, path);
+        eprintln!(
+            "[kagi] main-diff: open {} rows={} highlight={}",
+            path.display(),
+            row_count,
+            hl_lang
+        );
+
+        self.main_diff = Some(MainDiffView {
+            title,
+            stats,
+            rows,
+            source: MainDiffSource::Commit {
+                row_index: selected,
+                file_index,
+            },
+        });
+    }
+
+    /// Load the selected remote commit's changed files over SSH (ADR-0089 Phase
+    /// 2c) and cache them under `index`. Runs off the UI thread; idempotent via
+    /// `remote_diff_inflight`.
+    fn load_remote_changed_files(&mut self, index: usize, cx: &mut Context<Self>) {
+        let (host, root) = match &self.remote_view {
+            Some(v) => (v.host.clone(), v.root.clone()),
+            None => return,
+        };
+        let sha = match self.details.get(index) {
+            Some(d) => d.full_sha.as_ref().to_string(),
+            None => return,
+        };
+        self.remote_diff_inflight.insert(index);
+
+        let task = cx.background_spawn(async move {
+            kagi::remote::remote_commit_changed_files(&host, &root, &sha).map_err(|e| e.to_string())
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.remote_diff_inflight.remove(&index);
+                match result {
+                    Ok(files) => {
+                        app.diff_cache.insert(index, Some(files));
+                    }
+                    Err(e) => {
+                        eprintln!("[kagi] remote changed-files error: {e}");
+                        app.diff_cache.insert(index, None);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Open the full-width diff for a clicked file of the selected remote commit,
+    /// loading the unified diff over SSH off the UI thread (ADR-0089 Phase 2c).
+    fn open_remote_main_diff(&mut self, file_index: usize, cx: &mut Context<Self>) {
+        let (host, root) = match &self.remote_view {
+            Some(v) => (v.host.clone(), v.root.clone()),
+            None => return,
+        };
+        let selected = match self.selected {
+            Some(s) => s,
+            None => return,
+        };
+        let sha = match self.details.get(selected) {
+            Some(d) => d.full_sha.as_ref().to_string(),
+            None => return,
+        };
+        let path = match self
+            .diff_cache
+            .get(&selected)
+            .and_then(|v| v.as_ref())
+            .and_then(|files| files.get(file_index))
+        {
+            Some(f) => f.path.clone(),
+            None => return,
+        };
+        let path_str = path.to_string_lossy().into_owned();
+
+        let task = cx.background_spawn(async move {
+            kagi::remote::remote_commit_file_diff(&host, &root, &sha, &path_str)
+                .map_err(|e| e.to_string())
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                match result {
+                    Ok(file_diff) => {
+                        app.set_commit_main_diff(&file_diff, &path, selected, file_index)
+                    }
+                    Err(e) => eprintln!("[kagi] remote diff error: {e}"),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub fn open_main_diff_compare(&mut self, file_index: usize) {
@@ -10988,6 +11089,17 @@ impl Render for KagiApp {
         if self.tabs.is_empty() && self.remote_view.is_none() {
             let welcome = self.render_welcome(cx).into_any();
             return self.platform_window_shell(welcome, cx);
+        }
+
+        // ADR-0089 Phase 2c: in a remote view, lazily load the selected commit's
+        // changed files over SSH (once per row). The render trigger covers every
+        // selection path (click / keyboard / jump) uniformly.
+        if self.remote_view.is_some() {
+            if let Some(i) = selected {
+                if !self.diff_cache.contains_key(&i) && !self.remote_diff_inflight.contains(&i) {
+                    self.load_remote_changed_files(i, cx);
+                }
+            }
         }
 
         // ── Pre-fetch detail for panel (if any row is selected) ─

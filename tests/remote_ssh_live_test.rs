@@ -91,6 +91,43 @@ fn live_remote_read_path() {
             snap.commits.iter().any(|c| c.parents.len() <= 1),
             "linear history parses parents"
         );
+
+        // Phase 2c: changed files + unified file diff over SSH for a normal
+        // single-parent commit (merges have special first-parent diffs).
+        if let Some(commit) = snap.commits.iter().find(|c| c.parents.len() == 1) {
+            let sha = &commit.id.0;
+            let files = remote::remote_commit_changed_files(&host, &repo_path, sha)
+                .expect("remote_commit_changed_files should succeed");
+            eprintln!("[ok] changed_files({}) -> {} files", &sha[..8], files.len());
+            assert!(
+                !files.is_empty(),
+                "a non-merge content commit changes files"
+            );
+
+            let path = files[0].path.to_string_lossy().into_owned();
+            let diff = remote::remote_commit_file_diff(&host, &repo_path, sha, &path)
+                .expect("remote_commit_file_diff should succeed");
+            let lines: usize = diff.hunks.iter().map(|h| h.lines.len()).sum();
+            eprintln!(
+                "[ok] file_diff({path}) -> {} hunks, {} lines, binary={}",
+                diff.hunks.len(),
+                lines,
+                diff.is_binary
+            );
+            assert!(
+                diff.is_binary || !diff.hunks.is_empty(),
+                "text diff has hunks"
+            );
+        }
+
+        // Working-tree status parses (clean or dirty — just must not error).
+        eprintln!(
+            "[ok] status -> staged={} unstaged={} untracked={} conflicted={}",
+            snap.status.staged.len(),
+            snap.status.unstaged.len(),
+            snap.status.untracked.len(),
+            snap.status.conflicted.len(),
+        );
     }
 
     // 5) Repository detection — negative case (a non-repo dir is not an error).

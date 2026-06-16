@@ -233,6 +233,7 @@ impl KagiApp {
     fn reset_per_repo_ui(&mut self) {
         self.selected = None;
         self.diff_cache.clear();
+        self.remote_diff_inflight.clear();
         self.main_diff = None;
         self.plan_modal = None;
         self.pull_modal = None;
@@ -387,6 +388,7 @@ impl KagiApp {
         self.details = blank.details;
         self.selected = None;
         self.diff_cache.clear();
+        self.remote_diff_inflight.clear();
         self.main_diff = None;
         self.branches = blank.branches;
         self.remote_branches = blank.remote_branches;

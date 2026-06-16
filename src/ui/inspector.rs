@@ -169,7 +169,7 @@ pub fn render_inspector(
                             stat_for_index(truncated_files.as_ref(), changed_diffstat.as_ref(), fi);
                         let click =
                             cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                                this.open_main_diff_inspector_file(fi);
+                                this.open_main_diff_inspector_file(fi, cx);
                                 cx.notify();
                             });
                         div()
@@ -222,7 +222,7 @@ pub fn render_inspector(
                         .as_ref()
                         .and_then(|stats| find_stat(stats, &fs.path));
                     let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                        this.open_main_diff_inspector_file(fi);
+                        this.open_main_diff_inspector_file(fi, cx);
                         cx.notify();
                     });
                     div()

@@ -128,9 +128,21 @@ picker can grey-out non-repo dirs without treating them as connection errors.
   (`arm_watcher` early-returns on `None`) disable themselves, and `command_state`
   greys out the write commands (no `has_repo`). A `remote_view` marker keeps the
   workspace (not the Welcome screen) visible with no local tab, and re-points
-  `Refresh` (cmd-r) at a re-snapshot over SSH. Switching to a local tab clears
-  it. Commit **file diffs** over SSH and a formal `GitBackend` trait
-  (`LocalBackend` git2 / `RemoteSshBackend` ssh+CLI) are the remaining Phase 2c.
+  `Refresh` (cmd-r) at a re-snapshot over SSH. Switching to a local tab clears it.
+- **Phase 2c — remote diffs + working-tree status (done):** selecting a commit
+  in the remote graph loads its changed files (`git diff-tree --name-status -M`)
+  and clicking a file loads its unified diff (`git show -- <path>`), both **off
+  the UI thread** (the selection path triggers a one-shot async load guarded by a
+  `remote_diff_inflight` set; the file-diff path spawns on click) and rendered by
+  the same `MainDiffView` as local (shared `set_commit_main_diff`). Parsing is
+  pure + unit-tested in `kagi_domain::remote_diff` (name-status incl. renames;
+  unified-diff hunks with old/new line-number tracking; binary). `remote_snapshot`
+  now also fills working-tree `status` from a porcelain-v1 parse, so the
+  uncommitted-changes row reflects the remote tree. **Remaining:** a formal
+  `GitBackend` trait (`LocalBackend` git2 / `RemoteSshBackend` ssh+CLI) to replace
+  the `repo_path == None` dispatch — an internal refactor with no behaviour change,
+  deliberately deferred; per-file diffstat bars over SSH; and a resident helper to
+  collapse the per-read SSH round-trips (the VS Code-server analogue).
 - **Phase 3 — remote operations:** writes via the `OperationController`
   pipeline; later, an optional resident helper for latency (the VS Code-server
   analogue) and connection multiplexing.

@@ -16,9 +16,12 @@
 //! used on the wire and in the parser — keeping the two in lock-step and the
 //! parsers unit-testable from a literal string.
 
+use std::path::PathBuf;
+
 use crate::commit::{Commit, CommitId, Signature};
 use crate::head::Head;
 use crate::refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo};
+use crate::status::{ChangeKind, FileStatus, WorkingTreeStatus};
 
 /// ASCII unit separator — between fields of one record.
 pub const US: char = '\u{1f}';
@@ -285,6 +288,75 @@ fn stash_index(selector: &str) -> Option<usize> {
     inner.parse().ok()
 }
 
+// ── Working-tree status (`git status --porcelain`) ──────────────
+
+/// Parse `git status --porcelain` (v1) into a [`WorkingTreeStatus`].
+///
+/// Each line is `XY PATH` (or `XY ORIG -> PATH` for renames); `X` is the index
+/// (staged) state, `Y` the worktree (unstaged) state. `??` is untracked;
+/// unmerged combinations (`U?`/`?U`/`DD`/`AA`) are conflicts. A file changed in
+/// both index and worktree (e.g. `MM`) appears in *both* `staged` and
+/// `unstaged`, matching the local backend.
+pub fn parse_status_v1(text: &str) -> WorkingTreeStatus {
+    let mut status = WorkingTreeStatus::default();
+    for line in text.lines() {
+        if line.len() < 3 {
+            continue;
+        }
+        let bytes = line.as_bytes();
+        let x = bytes[0] as char;
+        let y = bytes[1] as char;
+        let rest = &line[3..];
+
+        if x == '?' && y == '?' {
+            status.untracked.push(PathBuf::from(rest));
+            continue;
+        }
+        if is_conflict(x, y) {
+            let path = rest.split_once(" -> ").map(|(_, p)| p).unwrap_or(rest);
+            status.conflicted.push(PathBuf::from(path));
+            continue;
+        }
+        // Rename arrow: `ORIG -> PATH`.
+        let (orig, path) = match rest.split_once(" -> ") {
+            Some((o, p)) => (Some(PathBuf::from(o)), p),
+            None => (None, rest),
+        };
+        if let Some(change) = change_for(x, &orig) {
+            status.staged.push(FileStatus {
+                path: PathBuf::from(path),
+                change,
+            });
+        }
+        if let Some(change) = change_for(y, &orig) {
+            status.unstaged.push(FileStatus {
+                path: PathBuf::from(path),
+                change,
+            });
+        }
+    }
+    status
+}
+
+fn is_conflict(x: char, y: char) -> bool {
+    x == 'U' || y == 'U' || (x == 'D' && y == 'D') || (x == 'A' && y == 'A')
+}
+
+/// Map a single porcelain status code to a [`ChangeKind`]; `' '`/`'?'` → `None`.
+fn change_for(code: char, orig: &Option<PathBuf>) -> Option<ChangeKind> {
+    match code {
+        'M' => Some(ChangeKind::Modified),
+        'A' => Some(ChangeKind::Added),
+        'D' => Some(ChangeKind::Deleted),
+        'T' => Some(ChangeKind::TypeChange),
+        'C' => Some(ChangeKind::Modified),
+        'R' => Some(ChangeKind::Renamed {
+            from: orig.clone().unwrap_or_default(),
+        }),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -392,6 +464,37 @@ mod tests {
         assert_eq!(t[0].name, "v1.0");
         assert_eq!(t[0].target.0, "light");
         assert_eq!(t[1].target.0, "peeledcommit");
+    }
+
+    #[test]
+    fn status_v1_parse() {
+        let out = " M src/a.rs\n\
+                   M  src/b.rs\n\
+                   MM src/c.rs\n\
+                   A  added.rs\n\
+                   ?? new.txt\n\
+                   UU conflict.rs\n\
+                   R  old.rs -> renamed.rs";
+        let s = parse_status_v1(out);
+        // staged: b (M), c (M), added (A), renamed (R)
+        assert_eq!(s.staged.len(), 4);
+        // unstaged: a (M), c (M)
+        assert_eq!(s.unstaged.len(), 2);
+        assert_eq!(s.untracked, vec![PathBuf::from("new.txt")]);
+        assert_eq!(s.conflicted, vec![PathBuf::from("conflict.rs")]);
+        assert!(s.is_dirty());
+        // rename carries the old path on the staged side
+        let renamed = s
+            .staged
+            .iter()
+            .find(|f| f.path == PathBuf::from("renamed.rs"))
+            .unwrap();
+        assert_eq!(
+            renamed.change,
+            ChangeKind::Renamed {
+                from: PathBuf::from("old.rs")
+            }
+        );
     }
 
     #[test]

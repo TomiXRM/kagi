@@ -29,10 +29,11 @@ use kagi_domain::refs::Worktree;
 use kagi_domain::remote::{
     self, RemoteDirEntry, RemoteHost, RemoteRepoSummary, RepoProbe, SSH_CONNECT_TIMEOUT_SECS,
 };
+use kagi_domain::remote_diff as rd;
 use kagi_domain::remote_snapshot as rs;
-use kagi_domain::status::WorkingTreeStatus;
+use kagi_domain::status::FileStatus;
 
-use crate::git::{Head, RepoSnapshot};
+use crate::git::{FileDiff, Head, RepoSnapshot};
 
 /// Whole-command backstop timeout. ssh's own `ConnectTimeout`
 /// ([`SSH_CONNECT_TIMEOUT_SECS`]) bounds the handshake; this bounds the entire
@@ -310,6 +311,12 @@ pub fn remote_snapshot(
         &["git", "-C", repo, "stash", "list", stash_fmt.as_str()],
     )?);
 
+    // Working-tree status (porcelain v1).
+    let status = rs::parse_status_v1(&run_lenient(
+        host,
+        &["git", "-C", repo, "status", "--porcelain"],
+    )?);
+
     let branch_name = match &head {
         Head::Attached { branch, .. } | Head::Unborn { branch } => Some(branch.clone()),
         Head::Detached { .. } => None,
@@ -328,10 +335,62 @@ pub fn remote_snapshot(
         branches,
         remote_branches,
         tags,
-        status: WorkingTreeStatus::default(),
+        status,
         stashes,
         worktrees,
     })
+}
+
+/// The files changed in commit `sha` of the remote repo (first-parent diff,
+/// rename-detected), via `git diff-tree … --name-status` (ADR-0089 Phase 2c).
+pub fn remote_commit_changed_files(
+    host: &RemoteHost,
+    repo: &str,
+    sha: &str,
+) -> Result<Vec<FileStatus>, RemoteError> {
+    let stdout = run_checked(
+        host,
+        &[
+            "git",
+            "-C",
+            repo,
+            "diff-tree",
+            "--no-commit-id",
+            "--first-parent",
+            "-r",
+            "-M",
+            "--root",
+            "--name-status",
+            sha,
+        ],
+    )?;
+    Ok(rd::parse_name_status(&stdout))
+}
+
+/// The unified diff of a single `path` in commit `sha` of the remote repo
+/// (first-parent), via `git show … -- <path>` (ADR-0089 Phase 2c).
+pub fn remote_commit_file_diff(
+    host: &RemoteHost,
+    repo: &str,
+    sha: &str,
+    path: &str,
+) -> Result<FileDiff, RemoteError> {
+    let stdout = run_checked(
+        host,
+        &[
+            "git",
+            "-C",
+            repo,
+            "show",
+            "--first-parent",
+            "-M",
+            "--format=",
+            sha,
+            "--",
+            path,
+        ],
+    )?;
+    Ok(rd::parse_file_diff(&stdout))
 }
 
 /// Heuristic: did the SSH transport itself fail (so we should surface an

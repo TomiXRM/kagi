@@ -116,9 +116,12 @@ picker can grey-out non-repo dirs without treating them as connection errors.
   `git2` backend produces — HEAD, commits (topo-order, parents), local branches
   (+ upstream ahead/behind), remote branches, tags, stashes — by running `git`
   reads over SSH and parsing them with pure, unit-tested
-  `kagi_domain::remote_snapshot` parsers (separator-framed `git` formats).
-  Working-tree `status` and full `worktrees` are left minimal (a read-only view
-  does not need a porcelain parse yet).
+  `kagi_domain::remote_snapshot` parsers (separator-framed `git` formats). The
+  commit walk matches the local backend's ref set exactly — `--branches --tags
+  --remotes` + the resolved HEAD, **not** `--all` (which would pull `refs/stash`
+  in and render stash commits as ordinary commits). Working-tree `status` and
+  full `worktrees` are left minimal (a read-only view does not need a porcelain
+  parse yet).
 - **Phase 2b — render the remote repo in the main views (done):** the remote
   browser's "Open repository (read-only)" feeds the snapshot through
   `build_tab_view`/`apply_tab_view` into the **real** graph/sidebar/detail views

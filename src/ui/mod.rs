@@ -8755,6 +8755,7 @@ impl KagiApp {
             diff: String::new(),
             lang: self.smart_commit.lang,
             style,
+            want_body: self.commit_template_mode,
         };
         let msg = message_gen::rule_based(&gi, &files);
         if std::env::var("KAGI_SMART_SUGGEST").as_deref() == Ok("1") {
@@ -8863,6 +8864,8 @@ impl KagiApp {
         } else {
             message_gen::Style::Plain
         };
+        // Template mode wants a body too (its body field would otherwise be empty).
+        let want_body = self.commit_template_mode;
         let host = smart_commit::SmartCommitState::ollama_host();
         let overwrite_ok = self.smart_commit_current_msg(cx).trim().is_empty();
 
@@ -8877,7 +8880,12 @@ impl KagiApp {
             };
             let files = repo.collect_staged_files();
             let diff = repo.collect_staged_diff();
-            let gi = message_gen::GenInput { diff, lang, style };
+            let gi = message_gen::GenInput {
+                diff,
+                lang,
+                style,
+                want_body,
+            };
             // LLM first; on Err fall back to the rule-based draft (quietly).
             let backend = message_gen::MessageBackend::Ollama { host, model };
             let (msg, used_llm) = match message_gen::generate_message(&backend, &gi, &files) {

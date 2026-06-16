@@ -13,9 +13,9 @@ use kagi_domain::status::{ChangeKind, FileStatus};
 use super::{resolve_head, Head};
 
 pub use kagi_domain::message_gen::{
-    clean_llm_message, file_summary, ollama_generate_request_body, parse_ollama_response,
-    parse_ollama_tags, rule_based, truncate_with_summary, GenError, GenInput, Lang, MessageBackend,
-    Style, DEFAULT_OLLAMA_HOST, DIFF_TRUNCATE_BYTES,
+    clean_llm_message, clean_llm_message_multiline, file_summary, ollama_generate_request_body,
+    parse_ollama_response, parse_ollama_tags, rule_based, truncate_with_summary, GenError,
+    GenInput, Lang, MessageBackend, Style, DEFAULT_OLLAMA_HOST, DIFF_TRUNCATE_BYTES,
 };
 
 /// Global timeout for a single Ollama HTTP request. Local models (especially
@@ -169,7 +169,13 @@ pub fn generate_message(
             }
             let prompt = build_prompt(input, files);
             let raw = ollama_generate(host, model, &prompt)?;
-            let cleaned = clean_llm_message(&raw);
+            // Keep the body when the caller wants it (template mode); otherwise
+            // collapse to the subject line.
+            let cleaned = if input.want_body {
+                clean_llm_message_multiline(&raw)
+            } else {
+                clean_llm_message(&raw)
+            };
             if cleaned.is_empty() {
                 Err(GenError::EmptyResponse)
             } else {
@@ -203,28 +209,50 @@ fn build_prompt(input: &GenInput, files: &[FileStatus]) -> String {
         ),
     };
     let lang_line = match input.lang {
-        Lang::Ja => {
-            "Write the subject in Japanese. Keep the type and any code identifiers in English."
-        }
-        Lang::En => "Write the subject in English.",
+        Lang::Ja => "Write it in Japanese. Keep the type and any code identifiers in English.",
+        Lang::En => "Write it in English.",
     };
     let summary = file_summary(files);
-    format!(
-        "You are an expert software engineer writing a high-quality git commit message.\n\
-         Summarise the STAGED changes below into ONE commit message subject line.\n\n\
-         Rules:\n\
-         - {format_rules}\n\
-         - Use the imperative mood: \"add\", not \"added\" or \"adds\".\n\
-         - Say specifically WHAT changed; keep the subject under 72 characters.\n\
-         - No trailing period. Do not invent changes that are not in the diff.\n\
-         - {lang_line}\n\
-         - Output ONLY the commit subject. No quotes, no code fences, no preamble, no explanation.\n\n\
-         Example of the exact output format:\n\
-         {example}\n\n\
-         {summary}\n\
-         --- staged diff ---\n{}\n--- end diff ---\n",
-        input.diff
-    )
+    if input.want_body {
+        format!(
+            "You are an expert software engineer writing a high-quality git commit message.\n\
+             Summarise the STAGED changes below into a commit message: a subject line, then a \
+             blank line, then a short body.\n\n\
+             Rules:\n\
+             - {format_rules}\n\
+             - Use the imperative mood: \"add\", not \"added\" or \"adds\".\n\
+             - Subject: specific, under 72 characters, no trailing period.\n\
+             - Body: 1–4 short bullet points (\"- …\") explaining WHAT changed and WHY. Be concise.\n\
+             - Do not invent changes that are not in the diff.\n\
+             - {lang_line}\n\
+             - Output ONLY the commit message (subject, blank line, then the body). No quotes, no \
+             code fences, no preamble, no explanation.\n\n\
+             Example of the exact output format:\n\
+             {example}\n\n\
+             - explain the main change in one line\n\
+             - note a secondary change if any\n\n\
+             {summary}\n\
+             --- staged diff ---\n{}\n--- end diff ---\n",
+            input.diff
+        )
+    } else {
+        format!(
+            "You are an expert software engineer writing a high-quality git commit message.\n\
+             Summarise the STAGED changes below into ONE commit message subject line.\n\n\
+             Rules:\n\
+             - {format_rules}\n\
+             - Use the imperative mood: \"add\", not \"added\" or \"adds\".\n\
+             - Say specifically WHAT changed; keep the subject under 72 characters.\n\
+             - No trailing period. Do not invent changes that are not in the diff.\n\
+             - {lang_line}\n\
+             - Output ONLY the commit subject. No quotes, no code fences, no preamble, no explanation.\n\n\
+             Example of the exact output format:\n\
+             {example}\n\n\
+             {summary}\n\
+             --- staged diff ---\n{}\n--- end diff ---\n",
+            input.diff
+        )
+    }
 }
 
 /// POST a generation request to a local Ollama server and return the raw
@@ -358,6 +386,7 @@ mod tests {
             diff: String::new(),
             lang,
             style,
+            want_body: false,
         }
     }
 
@@ -505,6 +534,7 @@ mod tests {
                 diff: "diff --git a/x b/x".to_string(),
                 lang: Lang::En,
                 style: Style::ConventionalCommits,
+                want_body: false,
             },
             &files,
         );

@@ -103,6 +103,10 @@ pub struct GenInput {
     pub lang: Lang,
     /// Output style.
     pub style: Style,
+    /// Ask the model for a subject **and a short body** (used by template mode,
+    /// whose body field would otherwise stay empty). When false, subject only
+    /// (ADR-0090).
+    pub want_body: bool,
 }
 
 /// Failure modes of [`generate_message`] for the Ollama backend.
@@ -577,6 +581,36 @@ pub fn clean_llm_message(raw: &str) -> String {
     line.trim_matches('"').trim().to_string()
 }
 
+/// Tidy an LLM message but **keep the body** (subject + blank line + body).
+/// Used when `want_body` is set (template mode). Strips a wrapping code fence
+/// and a one-line preamble (e.g. "Here is the commit message:"), then trims.
+pub fn clean_llm_message_multiline(raw: &str) -> String {
+    let mut text = raw.trim().to_string();
+    // 1. Drop a single leading preamble line if the model added one despite the
+    //    "output only" instruction (e.g. "Here is the commit message:").
+    if let Some((first, rest)) = text.split_once('\n') {
+        let low = first.trim().to_lowercase();
+        let is_preamble = low.ends_with(':')
+            && (low.contains("commit message")
+                || low.starts_with("here")
+                || low.starts_with("sure"));
+        if is_preamble {
+            text = rest.trim_start().to_string();
+        }
+    }
+    // 2. Strip a wrapping ``` fence (now possibly the leading line).
+    if let Some(rest) = text.trim().strip_prefix("```") {
+        let rest = rest.split_once('\n').map(|x| x.1).unwrap_or("");
+        text = rest
+            .trim_end()
+            .strip_suffix("```")
+            .unwrap_or(rest)
+            .trim()
+            .to_string();
+    }
+    text.trim().to_string()
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Unit tests (pure logic)
 // ──────────────────────────────────────────────────────────────────────────
@@ -598,7 +632,20 @@ mod tests {
             diff: String::new(),
             lang,
             style,
+            want_body: false,
         }
+    }
+
+    #[test]
+    fn clean_multiline_keeps_body() {
+        let raw = "feat: add x\n\n- did a\n- did b";
+        assert_eq!(
+            clean_llm_message_multiline(raw),
+            "feat: add x\n\n- did a\n- did b"
+        );
+        // Fenced + preamble are stripped, body kept.
+        let raw2 = "Here is the commit message:\n```\nfix: y\n\nbody line\n```";
+        assert_eq!(clean_llm_message_multiline(raw2), "fix: y\n\nbody line");
     }
 
     #[test]

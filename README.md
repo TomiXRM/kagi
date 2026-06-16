@@ -64,6 +64,14 @@ In the shot above, one branch moved the LED to the board's built-in pin and anot
 
 Colored lanes track each branch's history; ref badges and a HEAD ring mark where you are; merge nodes render inline; a live **WIP row** sits at the top; and **stashes are drawn right in the graph** — each with a line back to the commit it was created on. A label-to-node connector ties every branch and tag to its commit. Virtualized, so it stays smooth on repositories with 10k+ commits (the screenshots are real history — Zed above, a small fixture here).
 
+## Inspect any commit
+
+<div align="center">
+<img src="docs/images/diff.png" width="900" alt="Commit inspector — author and message, a changed-file tree with +N −M diffstat bars, and a syntax-highlighted, line-numbered diff" />
+</div>
+
+Select a commit to open the inspector: author, co-authors, and full message; a changed-file tree with per-file `+N −M` diffstat bars; and a syntax-highlighted, line-numbered diff with `+`/`−` hunks. Selecting a file jumps straight to its diff.
+
 ## And the rest of the daily driver
 
 - **Commit suite** — staging with `+N −M` diffstat bars, a pre-commit checklist (conflict markers / secrets / large binaries), per-branch draft autosave, `type(scope): summary` message templates, and amend with a SHA-change preview.

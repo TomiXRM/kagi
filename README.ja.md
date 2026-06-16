@@ -64,6 +64,14 @@ merge / rebase / cherry-pick / revert が conflict すると、Kagi は **Confli
 
 色分けされたレーンが各 branch の履歴を辿り、ref バッジと HEAD リングが現在地を示し、merge ノードがインラインで描かれ、先頭には WIP 行が常駐します。さらに **stash もグラフの中に描画**され、作成元の commit へ線で繋がります。ラベル → ノードのコネクタが各 branch / tag をその commit に結びます。仮想化されているので 1 万 commit 超でも軽快です(スクリーンショットは実際の履歴 — 上は Zed、ここは小さな fixture)。
 
+## どの commit でも詳しく見る
+
+<div align="center">
+<img src="docs/images/diff.png" width="900" alt="コミットインスペクタ — author とメッセージ、+N −M の diffstat バー付き変更ファイルツリー、シンタックスハイライト + 行番号付きの diff" />
+</div>
+
+commit を選ぶとインスペクタが開きます。author・co-author・メッセージ全文、ファイルごとの `+N −M` diffstat バー付き変更ファイルツリー、そして `+`/`−` ハンクをシンタックスハイライト + 行番号付きで表示する diff。ファイルを選べばその diff に直接ジャンプします。
+
 ## 日常使いの残り
 
 - **コミットスイート** — `+N −M` の diffstat バー付きステージング、pre-commit チェックリスト(conflict marker / secret / 巨大バイナリ)、branch ごとの draft 自動保存、`type(scope): summary` メッセージテンプレート、SHA 変化を見せる amend。

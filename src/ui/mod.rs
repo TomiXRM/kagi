@@ -5076,16 +5076,37 @@ impl KagiApp {
                                             .text_color(rgb(ct)),
                                     )
                                     .child(SharedString::from("stash")),
-                            ),
+                            )
+                            // Connector line into the BRANCH/TAG pane toward the
+                            // stash node (only when it connects to a base).
+                            .when(sr.connected, |el| {
+                                el.child(div().flex_1().h_full().flex().items_center().child(
+                                    div().w_full().h(theme::scaled_px(1.)).bg(rgb(stash_color)),
+                                ))
+                            }),
                     )
-                    // Inner divider spacer (badge|graph).
+                    // Inner divider spacer (badge|graph), bridged for the connector.
                     .child(
                         div()
+                            .relative()
                             .w(theme::scaled_px(INNER_DIV_W))
+                            .h_full()
                             .flex_shrink_0()
                             .flex()
+                            .items_center()
                             .justify_center()
-                            .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
+                            .child(div().w(px(1.)).h_full().bg(rgb(theme().surface)))
+                            .when(sr.connected, |el| {
+                                el.child(
+                                    div()
+                                        .absolute()
+                                        .top(px(rh / 2.0))
+                                        .left_0()
+                                        .w_full()
+                                        .h(theme::scaled_px(1.))
+                                        .bg(rgb(stash_color)),
+                                )
+                            }),
                     )
                     // Graph column: the stash node + line down to its base.
                     .child(

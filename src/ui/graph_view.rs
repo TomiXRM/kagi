@@ -326,7 +326,11 @@ pub fn graph_canvas(
                 // If the node is in lane 0 the line has zero length; only draw
                 // when there is meaningful horizontal distance.
                 if x_node > ox + 0.5 {
-                    let color = lane_color(node_lane);
+                    let color = if is_stash_lane(node_lane) {
+                        stash_color
+                    } else {
+                        lane_color(node_lane)
+                    };
                     let mut builder = PathBuilder::stroke(theme::scaled_px(1.0));
                     builder.move_to(point(px(ox), px(mid_y)));
                     builder.line_to(point(px(x_node), px(mid_y)));

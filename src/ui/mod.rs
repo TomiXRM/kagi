@@ -9605,7 +9605,7 @@ impl KagiApp {
             selected: 0,
             diff: None,
             diff_scroll: UniformListScrollHandle::new(),
-            split: 0.3,
+            split: 0.25,
             generation,
         });
 
@@ -9932,7 +9932,7 @@ impl KagiApp {
             selected: 0,
             diff: None,
             diff_scroll: UniformListScrollHandle::new(),
-            split: 0.3,
+            split: 0.25,
             generation,
         });
 

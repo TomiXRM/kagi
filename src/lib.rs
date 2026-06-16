@@ -2,4 +2,5 @@
 
 pub mod git;
 pub mod graph;
+pub mod remote;
 pub mod update;

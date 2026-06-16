@@ -23,6 +23,7 @@ pub mod graph_view;
 pub mod i18n;
 pub mod inspector;
 pub mod modals;
+pub mod remote_browse;
 pub mod settings_view;
 pub mod sidebar;
 pub mod smart_commit;
@@ -35,6 +36,7 @@ pub mod watcher;
 pub use diff_view::*;
 use i18n::Msg;
 pub use modals::*;
+pub use remote_browse::*;
 use theme::theme;
 
 use kagi::git::message_gen;
@@ -372,8 +374,8 @@ use kagi::git::{
         default_tracking_branch_name, validate_branch_rename, AmendMode, MergeKind, OperationPlan,
         PullOutcome, StateSummary,
     },
-    CommitId, DiffLineKind, FileDiffStat, FileStatus, Head, RemoteBranch, RepoSnapshot, Stash, Tag,
-    UpstreamInfo, Worktree,
+    CommitId, DiffLineKind, FileDiff, FileDiffStat, FileStatus, Head, RemoteBranch, RepoSnapshot,
+    Stash, Tag, UpstreamInfo, Worktree,
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -908,6 +910,9 @@ pub struct KagiApp {
     /// Cache of changed-files results keyed by row index.
     /// `None` value means the diff was attempted but failed (show unavailable).
     pub diff_cache: HashMap<usize, Option<Vec<FileStatus>>>,
+    /// Row indices whose remote changed-files load is in flight over SSH
+    /// (ADR-0089 Phase 2c), so the render trigger spawns it only once.
+    pub remote_diff_inflight: std::collections::HashSet<usize>,
     /// W16-DIFFSTAT: per-file additions/deletions for the selected commit,
     /// keyed by row index. Computed lazily alongside `diff_cache` and consumed
     /// by the Inspector changed-files list (truncated set only).
@@ -949,6 +954,15 @@ pub struct KagiApp {
     pub create_branch_modal: Option<CreateBranchModal>,
     /// When `Some`, the create-worktree modal is visible.
     pub create_worktree_modal: Option<CreateWorktreeModal>,
+    /// When `Some`, the remote SSH connect / directory-browse modal is visible
+    /// (ADR-0089 Phase 1).
+    pub remote_browse_modal: Option<RemoteBrowseModal>,
+    /// When `Some`, the main views are showing a **remote** repository opened
+    /// read-only over SSH (ADR-0089 Phase 2b). `repo_path` is `None` in this
+    /// mode, so every local-path operation (checkout/commit/diff/watcher/…)
+    /// guards itself off automatically; this marker drives the read-only UI and
+    /// keeps the workspace (not the welcome screen) visible with no local tab.
+    pub remote_view: Option<RemoteRepoView>,
     /// Focus handle used to receive keyboard events for the create-branch modal.
     /// Allocated on demand when the modal is first opened.
     pub modal_focus: Option<FocusHandle>,
@@ -1327,6 +1341,18 @@ pub struct ConflictEditorInputs {
 /// built on a background thread (`cx.background_spawn`) and cached across tabs
 /// (`tab_cache`).  [`build_tab_view`] is the pure, `Send` builder;
 /// [`KagiApp::apply_tab_view`] does the main-thread assignment only.
+/// Marks the workspace as showing a remote repository opened read-only over SSH
+/// (ADR-0089 Phase 2b). Holds what's needed to identify/refresh it; the rendered
+/// data lives in the normal `rows`/`branches`/… fields (applied from a remote
+/// `RepoSnapshot` via [`KagiApp::apply_tab_view`]).
+#[derive(Debug, Clone)]
+pub struct RemoteRepoView {
+    /// The connected host.
+    pub host: kagi_domain::remote::RemoteHost,
+    /// Absolute path of the repository on the remote.
+    pub root: String,
+}
+
 #[derive(Clone)]
 pub struct TabViewState {
     pub header: SharedString,
@@ -1523,6 +1549,7 @@ impl KagiApp {
             error: None,
             repo_path: None,
             diff_cache: HashMap::new(),
+            remote_diff_inflight: std::collections::HashSet::new(),
             diffstat_cache: HashMap::new(),
             main_diff: None,
             compare_view: None,
@@ -1542,6 +1569,8 @@ impl KagiApp {
             tracking_checkout_modal: None,
             create_branch_modal: None,
             create_worktree_modal: None,
+            remote_browse_modal: None,
+            remote_view: None,
             modal_focus: None,
             stashes,
             is_dirty,
@@ -1675,6 +1704,7 @@ impl KagiApp {
             error: Some(SharedString::from(message.into())),
             repo_path: None,
             diff_cache: HashMap::new(),
+            remote_diff_inflight: std::collections::HashSet::new(),
             diffstat_cache: HashMap::new(),
             main_diff: None,
             compare_view: None,
@@ -1694,6 +1724,8 @@ impl KagiApp {
             tracking_checkout_modal: None,
             create_branch_modal: None,
             create_worktree_modal: None,
+            remote_browse_modal: None,
+            remote_view: None,
             modal_focus: None,
             stashes: Vec::new(),
             is_dirty: false,
@@ -1854,6 +1886,7 @@ impl KagiApp {
         // Per-repo transient state reset (unchanged behaviour).
         self.selected = None;
         self.diff_cache = HashMap::new();
+        self.remote_diff_inflight.clear();
         self.diffstat_cache = HashMap::new();
         self.main_diff = None;
         self.compare_view = None;
@@ -4503,6 +4536,49 @@ impl KagiApp {
                 m.input = v;
                 m.error = None;
                 self.schedule_modal_replan(cx);
+            }
+        }
+
+        // ── Remote SSH connect form (host / port / identity) ─
+        if let Some(m) = self.remote_browse_modal.as_mut() {
+            if m.host_state.is_none() {
+                let st = cx.new(|cx| InputState::new(window, cx).placeholder("user@host"));
+                st.update(cx, |s, cx| s.focus(window, cx));
+                m.host_state = Some(st);
+            }
+            if m.port_state.is_none() {
+                m.port_state =
+                    Some(cx.new(|cx| InputState::new(window, cx).placeholder("22 (optional)")));
+            }
+            if m.identity_state.is_none() {
+                m.identity_state = Some(cx.new(|cx| {
+                    InputState::new(window, cx).placeholder("~/.ssh/id_ed25519 (optional)")
+                }));
+            }
+            let hv = m
+                .host_state
+                .as_ref()
+                .map(|st| st.read(cx).value().to_string())
+                .unwrap_or_default();
+            if hv != m.host_input {
+                m.host_input = hv;
+                m.error = None;
+            }
+            let pv = m
+                .port_state
+                .as_ref()
+                .map(|st| st.read(cx).value().to_string())
+                .unwrap_or_default();
+            if pv != m.port_input {
+                m.port_input = pv;
+            }
+            let iv = m
+                .identity_state
+                .as_ref()
+                .map(|st| st.read(cx).value().to_string())
+                .unwrap_or_default();
+            if iv != m.identity_input {
+                m.identity_input = iv;
             }
         }
 
@@ -9434,8 +9510,13 @@ impl KagiApp {
             );
         }
 
-        // Fetch changed files on-demand (only once per row).
-        if !self.diff_cache.contains_key(&index) {
+        // Fetch changed files on-demand (only once per row). For a remote
+        // read-only view (ADR-0089 Phase 2c) the fetch is an SSH round-trip, so
+        // it is loaded asynchronously from the render trigger instead — leave
+        // the cache empty here so that trigger fires.
+        if self.remote_view.is_some() {
+            // no-op: the async remote load handles this row.
+        } else if !self.diff_cache.contains_key(&index) {
             let files_opt = self.fetch_changed_files(index);
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             eprintln!("[kagi] changed files: {}", n);
@@ -9578,8 +9659,12 @@ impl KagiApp {
         }
     }
 
-    pub fn open_main_diff_inspector_file(&mut self, file_index: usize) {
-        if self.compare_view.is_some() {
+    pub fn open_main_diff_inspector_file(&mut self, file_index: usize, cx: &mut Context<Self>) {
+        if self.remote_view.is_some() {
+            // Remote read-only view (ADR-0089 Phase 2c): the file diff is an SSH
+            // round-trip, loaded off-thread.
+            self.open_remote_main_diff(file_index, cx);
+        } else if self.compare_view.is_some() {
             self.open_main_diff_compare(file_index);
         } else {
             self.open_main_diff_commit(file_index);
@@ -10033,60 +10118,146 @@ impl KagiApp {
         };
 
         match repo.commit_file_diff(&id, &path) {
-            Ok(file_diff) => {
-                // Count added / removed lines for the log.
-                let added: usize = file_diff
-                    .hunks
-                    .iter()
-                    .flat_map(|h| h.lines.iter())
-                    .filter(|l| l.kind == DiffLineKind::Added)
-                    .count();
-                let removed: usize = file_diff
-                    .hunks
-                    .iter()
-                    .flat_map(|h| h.lines.iter())
-                    .filter(|l| l.kind == DiffLineKind::Removed)
-                    .count();
-                let hunks = file_diff.hunks.len();
-
-                // Legacy headless compat log (검증スクリプトを壊さない).
-                eprintln!(
-                    "[kagi] diff: {} hunks={} (+{} -{})",
-                    path.display(),
-                    hunks,
-                    added,
-                    removed,
-                );
-
-                let fdv = FileDiffView::from_file_diff(&file_diff, file_index);
-                let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
-                let title = fdv.file_name.clone();
-                let mut rows = fdv.rows;
-                let row_count = rows.len();
-
-                // T-UI-004: apply syntax highlighting once at open time.
-                let hl_lang = highlight_diff_rows(&mut rows, &path);
-                eprintln!(
-                    "[kagi] main-diff: open {} rows={} highlight={}",
-                    path.display(),
-                    row_count,
-                    hl_lang
-                );
-
-                self.main_diff = Some(MainDiffView {
-                    title,
-                    stats,
-                    rows,
-                    source: MainDiffSource::Commit {
-                        row_index: selected,
-                        file_index,
-                    },
-                });
-            }
+            Ok(file_diff) => self.set_commit_main_diff(&file_diff, &path, selected, file_index),
             Err(e) => {
                 eprintln!("[kagi] diff error: {}", e);
             }
         }
+    }
+
+    /// Build the full-width [`MainDiffView`] for a commit's file diff. Shared by
+    /// the local (`git2`) path and the remote (SSH) path so both render
+    /// identically.
+    fn set_commit_main_diff(
+        &mut self,
+        file_diff: &FileDiff,
+        path: &std::path::Path,
+        selected: usize,
+        file_index: usize,
+    ) {
+        let added: usize = file_diff
+            .hunks
+            .iter()
+            .flat_map(|h| h.lines.iter())
+            .filter(|l| l.kind == DiffLineKind::Added)
+            .count();
+        let removed: usize = file_diff
+            .hunks
+            .iter()
+            .flat_map(|h| h.lines.iter())
+            .filter(|l| l.kind == DiffLineKind::Removed)
+            .count();
+        eprintln!(
+            "[kagi] diff: {} hunks={} (+{} -{})",
+            path.display(),
+            file_diff.hunks.len(),
+            added,
+            removed,
+        );
+
+        let fdv = FileDiffView::from_file_diff(file_diff, file_index);
+        let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
+        let title = fdv.file_name.clone();
+        let mut rows = fdv.rows;
+        let row_count = rows.len();
+        let hl_lang = highlight_diff_rows(&mut rows, path);
+        eprintln!(
+            "[kagi] main-diff: open {} rows={} highlight={}",
+            path.display(),
+            row_count,
+            hl_lang
+        );
+
+        self.main_diff = Some(MainDiffView {
+            title,
+            stats,
+            rows,
+            source: MainDiffSource::Commit {
+                row_index: selected,
+                file_index,
+            },
+        });
+    }
+
+    /// Load the selected remote commit's changed files over SSH (ADR-0089 Phase
+    /// 2c) and cache them under `index`. Runs off the UI thread; idempotent via
+    /// `remote_diff_inflight`.
+    fn load_remote_changed_files(&mut self, index: usize, cx: &mut Context<Self>) {
+        let (host, root) = match &self.remote_view {
+            Some(v) => (v.host.clone(), v.root.clone()),
+            None => return,
+        };
+        let sha = match self.details.get(index) {
+            Some(d) => d.full_sha.as_ref().to_string(),
+            None => return,
+        };
+        self.remote_diff_inflight.insert(index);
+
+        let task = cx.background_spawn(async move {
+            kagi::remote::remote_commit_changed_files(&host, &root, &sha).map_err(|e| e.to_string())
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.remote_diff_inflight.remove(&index);
+                match result {
+                    Ok(files) => {
+                        app.diff_cache.insert(index, Some(files));
+                    }
+                    Err(e) => {
+                        eprintln!("[kagi] remote changed-files error: {e}");
+                        app.diff_cache.insert(index, None);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Open the full-width diff for a clicked file of the selected remote commit,
+    /// loading the unified diff over SSH off the UI thread (ADR-0089 Phase 2c).
+    fn open_remote_main_diff(&mut self, file_index: usize, cx: &mut Context<Self>) {
+        let (host, root) = match &self.remote_view {
+            Some(v) => (v.host.clone(), v.root.clone()),
+            None => return,
+        };
+        let selected = match self.selected {
+            Some(s) => s,
+            None => return,
+        };
+        let sha = match self.details.get(selected) {
+            Some(d) => d.full_sha.as_ref().to_string(),
+            None => return,
+        };
+        let path = match self
+            .diff_cache
+            .get(&selected)
+            .and_then(|v| v.as_ref())
+            .and_then(|files| files.get(file_index))
+        {
+            Some(f) => f.path.clone(),
+            None => return,
+        };
+        let path_str = path.to_string_lossy().into_owned();
+
+        let task = cx.background_spawn(async move {
+            kagi::remote::remote_commit_file_diff(&host, &root, &sha, &path_str)
+                .map_err(|e| e.to_string())
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                match result {
+                    Ok(file_diff) => {
+                        app.set_commit_main_diff(&file_diff, &path, selected, file_index)
+                    }
+                    Err(e) => eprintln!("[kagi] remote diff error: {e}"),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub fn open_main_diff_compare(&mut self, file_index: usize) {
@@ -11375,10 +11546,23 @@ impl Render for KagiApp {
             );
         }
 
-        // W4-TABS / ADR-0028: no open tabs → Welcome screen.
-        if self.tabs.is_empty() {
+        // W4-TABS / ADR-0028: no open tabs → Welcome screen. A remote read-only
+        // view (ADR-0089 Phase 2b) has no local tab but still renders the
+        // workspace from its applied snapshot.
+        if self.tabs.is_empty() && self.remote_view.is_none() {
             let welcome = self.render_welcome(cx).into_any();
             return self.platform_window_shell(welcome, cx);
+        }
+
+        // ADR-0089 Phase 2c: in a remote view, lazily load the selected commit's
+        // changed files over SSH (once per row). The render trigger covers every
+        // selection path (click / keyboard / jump) uniformly.
+        if self.remote_view.is_some() {
+            if let Some(i) = selected {
+                if !self.diff_cache.contains_key(&i) && !self.remote_diff_inflight.contains(&i) {
+                    self.load_remote_changed_files(i, cx);
+                }
+            }
         }
 
         // ── Pre-fetch detail for panel (if any row is selected) ─
@@ -11443,6 +11627,7 @@ impl Render for KagiApp {
         let tracking_checkout_modal = self.tracking_checkout_modal.clone();
         let create_branch_modal = self.create_branch_modal.clone();
         let create_worktree_modal = self.create_worktree_modal.clone();
+        let remote_browse_modal = self.remote_browse_modal.clone();
         let delete_branch_modal = self.delete_branch_modal.clone();
         let discard_modal = self.discard_modal.clone();
         let file_menu = self.file_menu;
@@ -11985,6 +12170,10 @@ impl Render for KagiApp {
             .when_some(create_worktree_modal, |el, modal| {
                 el.child(render_create_worktree_modal(modal, modal_focus.clone(), cx))
             })
+            // ── Remote SSH browse modal overlay (ADR-0089) ───
+            .when_some(remote_browse_modal, |el, modal| {
+                el.child(render_remote_browse_modal(modal, modal_focus.clone(), cx))
+            })
             // ── Stash push modal overlay ─────────────────────
             .when_some(stash_push_modal, |el, modal| {
                 el.child(render_stash_push_modal(modal, stash_push_focus, cx))
@@ -12098,6 +12287,7 @@ impl KagiApp {
         let el = menu_act!(el, cmds::CloneRepository, "file.cloneRepository");
         let el = menu_act!(el, cmds::OpenRepository, "file.openRepository");
         let el = menu_act!(el, cmds::OpenInTerminal, "file.openInTerminal");
+        let el = menu_act!(el, cmds::ConnectRemote, "file.connectRemote");
         let el = menu_act!(el, cmds::RefreshRepository, "file.refresh");
         let el = menu_act!(el, cmds::ZoomIn, "view.zoomIn");
         let el = menu_act!(el, cmds::ZoomOut, "view.zoomOut");

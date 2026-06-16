@@ -208,6 +208,7 @@ fn draw_out_of_node(builder: &mut PathBuilder, x_node: f32, mid_y: f32, x_to: f3
 /// `has_badges` — whether the badge column holds any badge chips for this row.
 ///   When true a thin horizontal connector line is drawn from lane 0's left
 ///   edge to the node centre (W2-GRAPH item 5: label→node connection).
+#[allow(clippy::too_many_arguments)]
 pub fn graph_canvas(
     node_lane: usize,
     edges: Vec<GraphEdge>,
@@ -218,7 +219,12 @@ pub fn graph_canvas(
     // kagi: horizontal scroll offset in px — lanes hidden by a narrow column
     // can be brought into view by scrolling the graph column sideways.
     scroll_x: f32,
+    // ADR-0088: lanes that belong to stash branch lines. Nodes/edges on these
+    // lanes are painted in the stash colour (yellow) to stand out.
+    stash_lanes: Vec<usize>,
 ) -> Canvas<()> {
+    let stash_color: gpui::Hsla = gpui::rgb(theme().color_warning).into();
+    let is_stash_lane = move |lane: usize| stash_lanes.contains(&lane);
     canvas(
         // prepaint: nothing to measure
         move |_bounds: Bounds<Pixels>, _window: &mut Window, _cx: &mut App| {},
@@ -261,10 +267,14 @@ pub fn graph_canvas(
                     continue;
                 }
 
-                let color = match edge.kind {
-                    EdgeKind::IntoNode => lane_color(edge.from_lane),
-                    EdgeKind::OutOfNode => lane_color(edge.to_lane),
-                    EdgeKind::Pass => lane_color(edge.from_lane),
+                let color = if is_stash_lane(edge.from_lane) || is_stash_lane(edge.to_lane) {
+                    stash_color
+                } else {
+                    match edge.kind {
+                        EdgeKind::IntoNode => lane_color(edge.from_lane),
+                        EdgeKind::OutOfNode => lane_color(edge.to_lane),
+                        EdgeKind::Pass => lane_color(edge.from_lane),
+                    }
                 };
 
                 let mut builder = PathBuilder::stroke(theme::scaled_px(EDGE_W));
@@ -329,7 +339,11 @@ pub fn graph_canvas(
             // ── Draw node ● ─────────────────────────────────
             if lane_in(node_lane) {
                 let cx_abs = lane_x(node_lane);
-                let color = lane_color(node_lane);
+                let color = if is_stash_lane(node_lane) {
+                    stash_color
+                } else {
+                    lane_color(node_lane)
+                };
 
                 // W2-GRAPH: HEAD node gets a larger radius + outer ring.
                 // W2-GRAPH: merge node gets a double-circle (filled inner + stroked outer).

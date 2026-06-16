@@ -357,7 +357,7 @@ fn busy_label(op: &str) -> String {
 use branch_menu::{
     BranchAction, BranchConflictMode, BranchKind, BranchMenuContext, BranchMenuState,
 };
-use commit_list::{build_commit_rows, BadgeKind, CommitRow};
+use commit_list::{BadgeKind, CommitRow};
 use commit_panel::{status_badge, CommitPanelFileRef, CommitPanelState, CommitPlanModal};
 use context_menu::{CommitAction, CommitMenuState, MenuContext};
 use detail_panel::{build_commit_details, CommitDetail};
@@ -888,6 +888,11 @@ pub struct KagiApp {
     pub header: SharedString,
     /// Pre-computed commit rows (built once from the snapshot).
     pub rows: Vec<CommitRow>,
+    /// Stash nodes rendered in the graph below the WIP row (ADR-0088).
+    pub stash_graph_rows: Vec<commit_list::StashRow>,
+    /// Lanes used by stash branch lines (passed to the graph painter so those
+    /// nodes/edges are drawn in the stash colour).
+    pub stash_graph_lanes: Vec<usize>,
     /// Pre-computed detail panel data, parallel to `rows`.
     pub details: Vec<CommitDetail>,
     /// Currently selected row index (None = no selection).
@@ -1311,6 +1316,8 @@ pub struct ConflictEditorInputs {
 pub struct TabViewState {
     pub header: SharedString,
     pub rows: Vec<CommitRow>,
+    pub stash_graph_rows: Vec<commit_list::StashRow>,
+    pub stash_graph_lanes: Vec<usize>,
     pub details: Vec<CommitDetail>,
     pub branches: Vec<(String, bool)>,
     pub stashes: Vec<Stash>,
@@ -1359,13 +1366,19 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
         snap.commits.len()
     ));
 
-    let rows = build_commit_rows(snap);
+    let (rows, stash_graph_rows, stash_graph_lanes) =
+        commit_list::build_commit_rows_with_stashes(snap);
     let details = build_commit_details(snap);
 
     // T009: log lane count derived from the first row (all rows share the same value).
     let lane_count = rows.first().map(|r| r.lane_count).unwrap_or(0);
     eprintln!("[kagi] graph: lane_count={}", lane_count);
     eprintln!("[kagi] commit list rows: {}", rows.len());
+    eprintln!(
+        "[kagi] graph: stash rows={} lanes={:?}",
+        stash_graph_rows.len(),
+        stash_graph_lanes
+    );
 
     // Build branch list: (name, is_head).
     let head_branch = match &snap.head {
@@ -1434,6 +1447,8 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
     TabViewState {
         header,
         rows,
+        stash_graph_rows,
+        stash_graph_lanes,
         details,
         branches,
         stashes,
@@ -1466,6 +1481,8 @@ impl KagiApp {
         let TabViewState {
             header,
             rows,
+            stash_graph_rows,
+            stash_graph_lanes,
             details,
             branches,
             stashes,
@@ -1484,6 +1501,8 @@ impl KagiApp {
             root_focus: None,
             header,
             rows,
+            stash_graph_rows,
+            stash_graph_lanes,
             details,
             selected: None,
             error: None,
@@ -1631,6 +1650,8 @@ impl KagiApp {
             root_focus: None,
             header: SharedString::from("kagi"),
             rows: Vec::new(),
+            stash_graph_rows: Vec::new(),
+            stash_graph_lanes: Vec::new(),
             details: Vec::new(),
             selected: None,
             error: Some(SharedString::from(message.into())),
@@ -1924,6 +1945,8 @@ impl KagiApp {
     pub fn apply_tab_view(&mut self, view: TabViewState) {
         self.header = view.header;
         self.rows = view.rows;
+        self.stash_graph_rows = view.stash_graph_rows;
+        self.stash_graph_lanes = view.stash_graph_lanes;
         self.details = view.details;
         self.branches = view.branches;
         self.stashes = view.stashes;
@@ -4953,6 +4976,147 @@ impl KagiApp {
                     .child(SharedString::from(busy_label(op))),
             )
             .into_any()
+    }
+
+    /// Render the stash graph rows (ADR-0088): one fixed row per stash, shown
+    /// directly below the WIP row, in the stash colour with an inbox icon and a
+    /// graph node that connects down to the stash's base commit. Left-click pops,
+    /// right-click opens the stash menu (same as the sidebar).
+    fn render_stash_graph_rows(
+        &self,
+        badge_col_w: f32,
+        graph_col_w: f32,
+        graph_scroll_x: f32,
+        cx: &mut Context<Self>,
+    ) -> Vec<gpui::AnyElement> {
+        let visible_lanes = graph_view::lanes_for_width(graph_col_w);
+        let stash_color = theme().color_warning;
+        let stash_lanes = self.stash_graph_lanes.clone();
+        let rh = row_height(self.graph_compact);
+
+        self.stash_graph_rows
+            .iter()
+            .map(|sr| {
+                let index = sr.index;
+                let label = sr.label.clone();
+                let msg_for_menu = sr.label.to_string();
+                let edges: Vec<kagi::graph::GraphEdge> = if sr.connected {
+                    vec![kagi::graph::GraphEdge {
+                        from_lane: sr.lane,
+                        to_lane: sr.lane,
+                        kind: kagi::graph::EdgeKind::OutOfNode,
+                    }]
+                } else {
+                    Vec::new()
+                };
+                let pop = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+                    this.open_pop_modal(index);
+                    cx.notify();
+                });
+                let menu = cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {
+                    this.open_stash_menu(index, msg_for_menu.clone(), e.position);
+                    cx.stop_propagation();
+                    cx.notify();
+                });
+                let (cb, cbd, ct) = theme::badge_style(stash_color);
+                div()
+                    .id(("stash-graph-row", index))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .w_full()
+                    .px_3()
+                    .h(px(rh))
+                    .on_click(pop)
+                    .on_mouse_down(gpui::MouseButton::Right, menu)
+                    .hover(|s| s.bg(rgb(theme().selected)))
+                    // Badge column: a yellow stash chip with an inbox icon.
+                    .child(
+                        div()
+                            .w(theme::scaled_px(badge_col_w))
+                            .flex_shrink_0()
+                            .overflow_hidden()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .justify_start()
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap_1()
+                                    .px_1()
+                                    .rounded_sm()
+                                    .bg(gpui::rgba(cb))
+                                    .border_1()
+                                    .border_color(gpui::rgba(cbd))
+                                    .text_color(rgb(ct))
+                                    .text_sm()
+                                    .child(
+                                        gpui::svg()
+                                            .path("icons/inbox.svg")
+                                            .w(theme::scaled_px(12.))
+                                            .h(theme::scaled_px(12.))
+                                            .text_color(rgb(ct)),
+                                    )
+                                    .child(SharedString::from("stash")),
+                            ),
+                    )
+                    // Inner divider spacer (badge|graph).
+                    .child(
+                        div()
+                            .w(theme::scaled_px(INNER_DIV_W))
+                            .flex_shrink_0()
+                            .flex()
+                            .justify_center()
+                            .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
+                    )
+                    // Graph column: the stash node + line down to its base.
+                    .child(
+                        div()
+                            .w(theme::scaled_px(graph_col_w))
+                            .h_full()
+                            .flex_shrink_0()
+                            .overflow_hidden()
+                            .when(visible_lanes > 0, |el| {
+                                el.child(
+                                    graph_view::graph_canvas(
+                                        sr.lane,
+                                        edges,
+                                        visible_lanes,
+                                        false,
+                                        false,
+                                        true,
+                                        graph_scroll_x,
+                                        stash_lanes.clone(),
+                                    )
+                                    .size_full(),
+                                )
+                            }),
+                    )
+                    // Inner divider spacer (graph|message).
+                    .child(
+                        div()
+                            .w(theme::scaled_px(INNER_DIV_W))
+                            .flex_shrink_0()
+                            .flex()
+                            .justify_center()
+                            .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
+                    )
+                    // Message column: the stash label, in the stash colour.
+                    .child(
+                        div()
+                            .flex_1()
+                            .overflow_hidden()
+                            .truncate()
+                            .text_color(rgb(stash_color))
+                            .child(label),
+                    )
+                    .into_any()
+            })
+            .collect()
     }
 
     /// Read the current HEAD branch name + commit SHA from the open repo.
@@ -12228,6 +12392,10 @@ impl KagiApp {
                     .child(SharedString::from("MESSAGE")),
             );
 
+        // ADR-0088: stash graph rows, shown below the WIP row.
+        let stash_graph_row_els =
+            self.render_stash_graph_rows(badge_col_w, graph_col_w, self.graph_scroll_x, cx);
+
         let commit_list_col = div()
             .flex_1()
             .h_full()
@@ -12325,6 +12493,8 @@ impl KagiApp {
                         }),
                 )
             })
+            // ── Stash graph rows (ADR-0088), below WIP ───────
+            .children(stash_graph_row_els)
             // ── Virtualized commit list ──────────────
             .child({
                 // W12-GCADOPT (§2.10): keep a handle clone for the Scrollbar
@@ -12346,6 +12516,7 @@ impl KagiApp {
                                 this.graph_col_w,
                                 this.graph_compact,
                                 this.graph_scroll_x,
+                                &this.stash_graph_lanes,
                                 cx,
                             )
                         }),
@@ -13184,6 +13355,7 @@ impl KagiApp {
 /// `graph_compact` — when true use compact row height (18px) instead of 24px.
 /// `cx` — the `Context<KagiApp>` from the `cx.processor` closure;
 ///         used to build `cx.listener(...)` for the on_click handler.
+#[allow(clippy::too_many_arguments)]
 fn render_rows(
     rows: &[CommitRow],
     avatar_images: &HashMap<String, std::sync::Arc<gpui::Image>>,
@@ -13193,6 +13365,7 @@ fn render_rows(
     graph_col_w: f32,
     graph_compact: bool,
     graph_scroll_x: f32,
+    stash_lanes: &[usize],
     cx: &mut Context<KagiApp>,
 ) -> Vec<impl IntoElement> {
     let rh = row_height(graph_compact);
@@ -13307,6 +13480,7 @@ fn render_rows(
                                     row.is_merge,
                                     has_badges,
                                     graph_scroll_x,
+                                    stash_lanes.to_vec(),
                                 )
                                 .size_full(),
                             )

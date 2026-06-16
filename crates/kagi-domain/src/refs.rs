@@ -93,6 +93,10 @@ pub struct Stash {
     pub message: String,
     /// Commit OID of the stash entry.
     pub target: CommitId,
+    /// Base commit the stash was created on (the stash commit's first parent).
+    /// Used to draw the stash's branch line down to where it sprouted in the
+    /// commit graph (ADR-0088). `None` if the parent could not be resolved.
+    pub base: Option<CommitId>,
 }
 
 // ────────────────────────────────────────────────────────────

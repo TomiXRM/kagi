@@ -21,10 +21,10 @@
 
 use kagi::git::message_gen::{self, Lang};
 
-use super::theme;
+use super::settings;
 
 // ──────────────────────────────────────────────────────────────────────────
-// settings.json keys (string-valued; see theme::write_setting)
+// settings.json keys (string-valued; see settings::write_setting)
 // ──────────────────────────────────────────────────────────────────────────
 
 const KEY_ENABLED: &str = "smart_commit_llm_enabled";
@@ -102,9 +102,9 @@ impl SmartCommitState {
     /// thread never blocks on a probe.
     pub fn load() -> Self {
         SmartCommitState {
-            llm_enabled: theme::read_setting(KEY_ENABLED).as_deref() == Some("1"),
-            model: theme::read_setting(KEY_MODEL).filter(|m| !m.is_empty()),
-            lang: theme::read_setting(KEY_LANG)
+            llm_enabled: settings::read_setting(KEY_ENABLED).as_deref() == Some("1"),
+            model: settings::read_setting(KEY_MODEL).filter(|m| !m.is_empty()),
+            lang: settings::read_setting(KEY_LANG)
                 .map(|l| Lang::from_slug(&l))
                 .unwrap_or(Lang::En),
             ..Default::default()
@@ -114,13 +114,13 @@ impl SmartCommitState {
     /// Persist the opt-in flag.
     pub fn set_enabled(&mut self, on: bool) {
         self.llm_enabled = on;
-        theme::write_setting(KEY_ENABLED, Some(if on { "1" } else { "0" }));
+        settings::write_setting(KEY_ENABLED, Some(if on { "1" } else { "0" }));
     }
 
     /// Persist the selected model.
     pub fn set_model(&mut self, model: impl Into<String>) {
         let model = model.into();
-        theme::write_setting(KEY_MODEL, Some(&model));
+        settings::write_setting(KEY_MODEL, Some(&model));
         self.model = Some(model);
     }
 
@@ -130,7 +130,7 @@ impl SmartCommitState {
             Lang::En => Lang::Ja,
             Lang::Ja => Lang::En,
         };
-        theme::write_setting(KEY_LANG, Some(self.lang.slug()));
+        settings::write_setting(KEY_LANG, Some(self.lang.slug()));
     }
 
     /// Whether the "Generate with Local LLM" button should be *offered* at all:

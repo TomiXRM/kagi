@@ -628,6 +628,14 @@ impl Backend {
         ops::execute_stash_pop(&mut self.repo, index)
     }
 
+    pub fn plan_stash_drop(&mut self, index: usize) -> Result<OperationPlan, GitError> {
+        ops::plan_stash_drop(&mut self.repo, index)
+    }
+
+    pub fn execute_stash_drop(&mut self, index: usize) -> Result<String, GitError> {
+        ops::execute_stash_drop(&mut self.repo, index)
+    }
+
     pub fn preflight_check_stash(
         &mut self,
         plan: &OperationPlan,

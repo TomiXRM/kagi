@@ -5097,15 +5097,9 @@ impl KagiApp {
                             .justify_center()
                             .child(div().w(px(1.)).h_full().bg(rgb(theme().surface)))
                             .when(sr.connected, |el| {
-                                el.child(
-                                    div()
-                                        .absolute()
-                                        .top(px(rh / 2.0))
-                                        .left_0()
-                                        .w_full()
-                                        .h(theme::scaled_px(1.))
-                                        .bg(rgb(stash_color)),
-                                )
+                                el.child(div().absolute().inset_0().flex().items_center().child(
+                                    div().w_full().h(theme::scaled_px(1.)).bg(rgb(stash_color)),
+                                ))
                             }),
                     )
                     // Graph column: the stash node + line down to its base.
@@ -13507,14 +13501,16 @@ fn render_rows(
                         .justify_center()
                         .child(div().w(px(1.)).h_full().bg(rgb(theme().surface)))
                         .when_some(connector_color, |el, color| {
+                            // Fill height + items_center so the 1px line is
+                            // centred exactly like the badge-column and canvas
+                            // connectors (no 1px step at the boundary).
                             el.child(
                                 div()
                                     .absolute()
-                                    .top(px(rh / 2.0))
-                                    .left_0()
-                                    .w_full()
-                                    .h(theme::scaled_px(1.))
-                                    .bg(color),
+                                    .inset_0()
+                                    .flex()
+                                    .items_center()
+                                    .child(div().w_full().h(theme::scaled_px(1.)).bg(color)),
                             )
                         }),
                 )

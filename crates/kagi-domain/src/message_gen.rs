@@ -424,11 +424,24 @@ pub fn rule_based(input: &GenInput, files: &[FileStatus]) -> String {
 ///
 /// `{ "model": "...", "prompt": "...", "stream": false }` with `model` and
 /// `prompt` JSON-escaped.
-pub fn ollama_generate_request_body(model: &str, prompt: &str) -> String {
+pub fn ollama_generate_request_body(model: &str, prompt: &str, think: Option<bool>) -> String {
+    // Low temperature for deterministic, format-adherent commit subjects;
+    // `num_predict` bounds output. `think` (when Some) sets Ollama's reasoning
+    // toggle: for a *thinking* model we send `think:false` so it answers the
+    // subject directly instead of spending the whole budget reasoning (which
+    // yields an empty `response`). Non-thinking models may reject the field, so
+    // the caller retries with `None` on failure (ADR-0090).
+    let think_field = match think {
+        Some(true) => "\"think\":true,",
+        Some(false) => "\"think\":false,",
+        None => "",
+    };
     format!(
-        "{{\"model\":\"{}\",\"prompt\":\"{}\",\"stream\":false}}",
+        "{{\"model\":\"{}\",\"prompt\":\"{}\",\"stream\":false,{}\
+         \"options\":{{\"temperature\":0.2,\"top_p\":0.9,\"num_predict\":128}}}}",
         json_escape(model),
-        json_escape(prompt)
+        json_escape(prompt),
+        think_field
     )
 }
 
@@ -715,11 +728,16 @@ mod tests {
 
     #[test]
     fn request_body_escapes_quotes_and_newlines() {
-        let body = ollama_generate_request_body("gemma", "say \"hi\"\nnow");
+        let body = ollama_generate_request_body("gemma", "say \"hi\"\nnow", Some(false));
         assert!(body.contains("\\\"hi\\\""));
         assert!(body.contains("\\n"));
         assert!(body.contains("\"stream\":false"));
         assert!(body.contains("\"model\":\"gemma\""));
+        assert!(body.contains("\"think\":false"));
+        assert!(body.contains("\"temperature\":0.2"));
+        // `think:None` omits the field entirely (for the no-think retry).
+        let body2 = ollama_generate_request_body("gemma", "x", None);
+        assert!(!body2.contains("think"));
     }
 
     #[test]

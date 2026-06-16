@@ -15708,33 +15708,66 @@ fn render_commit_panel(
         // otherwise the rule-based draft (blue). Shows "Generating…" while the
         // LLM runs. (The separate "Generate with Local LLM" button is gone.)
         let llm_on = smart.llm_offered();
-        let suggest_label = if smart.generating {
-            "Generating…"
-        } else {
-            "Suggest"
-        };
         let suggest_enabled = !staged_empty && !smart.generating;
         let suggest_color = if llm_on {
             theme().color_success
         } else {
             theme().color_branch
         };
-        let mut suggest_btn = pill(
-            "cp-smart-suggest",
-            SharedString::from(suggest_label),
-            suggest_enabled,
-            suggest_color,
-        );
-        if suggest_enabled {
-            let suggest_click = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
-                if llm_on {
-                    this.smart_generate(window, cx);
-                } else {
-                    this.smart_suggest(window, cx);
-                }
-            });
-            suggest_btn = suggest_btn.on_click(suggest_click);
-        }
+        let suggest_btn: gpui::AnyElement = if smart.generating {
+            // Animated braille "dots" spinner while the LLM generates (user
+            // request — the spinning-dots glyph). The whole panel re-renders each
+            // animation frame, so the closure rebuilds a fresh single-child div.
+            use gpui::AnimationExt as _;
+            const FRAMES: [&str; 10] = [
+                "\u{280B}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283C}", "\u{2834}", "\u{2826}",
+                "\u{2827}", "\u{2807}", "\u{280F}",
+            ];
+            let spinner = div()
+                .text_xs()
+                .text_color(rgb(suggest_color))
+                .with_animation(
+                    "cp-smart-spinner",
+                    gpui::Animation::new(Duration::from_millis(800)).repeat(),
+                    |el, delta| {
+                        let i = ((delta * FRAMES.len() as f32) as usize).min(FRAMES.len() - 1);
+                        el.child(SharedString::from(FRAMES[i]))
+                    },
+                );
+            div()
+                .id("cp-smart-suggest")
+                .px_1p5()
+                .py_px()
+                .rounded_sm()
+                .text_xs()
+                .bg(rgb(theme().surface))
+                .text_color(rgb(suggest_color))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .child(spinner)
+                .child(SharedString::from("Generating…"))
+                .into_any_element()
+        } else {
+            let mut b = pill(
+                "cp-smart-suggest",
+                SharedString::from("Suggest"),
+                suggest_enabled,
+                suggest_color,
+            );
+            if suggest_enabled {
+                let suggest_click = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+                    if llm_on {
+                        this.smart_generate(window, cx);
+                    } else {
+                        this.smart_suggest(window, cx);
+                    }
+                });
+                b = b.on_click(suggest_click);
+            }
+            b.into_any_element()
+        };
 
         // Lang toggle (En / 日本語).
         let lang_label = match smart.lang {

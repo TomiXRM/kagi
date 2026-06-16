@@ -67,6 +67,7 @@ actions!(
         CloneRepository,
         OpenRepository,
         OpenInTerminal,
+        ConnectRemote,
         RefreshRepository,
         // View
         ZoomIn,
@@ -230,6 +231,7 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Command("file.cloneRepository"),
             MenuNode::Command("file.openRepository"),
             MenuNode::Command("file.openInTerminal"),
+            MenuNode::Command("file.connectRemote"),
             MenuNode::Separator,
             MenuNode::Command("file.refresh"),
         ],
@@ -443,6 +445,12 @@ pub const COMMANDS: &[Command] = &[
     Command {
         id: "file.openInTerminal",
         label: "Open Repository in Terminal",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "file.connectRemote",
+        label: "Connect to Remote Host\u{2026}",
         keystroke: None,
         dangerous: false,
     },
@@ -717,6 +725,8 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         | "app.quit"
         | "file.newTab"
         | "file.openRepository"
+        // Remote connect needs no open repo (ADR-0089) — always available.
+        | "file.connectRemote"
         // W27-UIPOLISH: zoom is global (rem-size scaling) — always available.
         | "view.zoomIn"
         | "view.zoomOut"
@@ -847,6 +857,7 @@ fn action_menu_item(id: &str) -> MenuItem {
         "file.cloneRepository" => MenuItem::action(label, CloneRepository),
         "file.openRepository" => MenuItem::action(label, OpenRepository),
         "file.openInTerminal" => MenuItem::action(label, OpenInTerminal),
+        "file.connectRemote" => MenuItem::action(label, ConnectRemote),
         "file.refresh" => MenuItem::action(label, RefreshRepository),
         // View
         "view.zoomIn" => MenuItem::action(label, ZoomIn),
@@ -1157,6 +1168,7 @@ impl KagiApp {
             }
             "file.cloneRepository" => { /* placeholder — disabled, never dispatched */ }
             "file.openInTerminal" => self.menu_open_terminal(window, cx),
+            "file.connectRemote" => self.open_remote_browse_modal(cx),
             "file.refresh" => {
                 self.reload();
                 self.status_footer = FooterStatus::Idle(SharedString::from(Msg::Refreshed.t()));

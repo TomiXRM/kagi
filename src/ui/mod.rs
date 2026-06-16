@@ -22,6 +22,7 @@ pub mod graph_view;
 pub mod i18n;
 pub mod inspector;
 pub mod modals;
+pub mod remote_browse;
 pub mod settings_view;
 pub mod sidebar;
 pub mod smart_commit;
@@ -34,6 +35,7 @@ pub mod watcher;
 pub use diff_view::*;
 use i18n::Msg;
 pub use modals::*;
+pub use remote_browse::*;
 use theme::theme;
 
 use kagi::git::message_gen;
@@ -945,6 +947,9 @@ pub struct KagiApp {
     pub create_branch_modal: Option<CreateBranchModal>,
     /// When `Some`, the create-worktree modal is visible.
     pub create_worktree_modal: Option<CreateWorktreeModal>,
+    /// When `Some`, the remote SSH connect / directory-browse modal is visible
+    /// (ADR-0089 Phase 1).
+    pub remote_browse_modal: Option<RemoteBrowseModal>,
     /// Focus handle used to receive keyboard events for the create-branch modal.
     /// Allocated on demand when the modal is first opened.
     pub modal_focus: Option<FocusHandle>,
@@ -1527,6 +1532,7 @@ impl KagiApp {
             tracking_checkout_modal: None,
             create_branch_modal: None,
             create_worktree_modal: None,
+            remote_browse_modal: None,
             modal_focus: None,
             stashes,
             is_dirty,
@@ -1676,6 +1682,7 @@ impl KagiApp {
             tracking_checkout_modal: None,
             create_branch_modal: None,
             create_worktree_modal: None,
+            remote_browse_modal: None,
             modal_focus: None,
             stashes: Vec::new(),
             is_dirty: false,
@@ -4478,6 +4485,49 @@ impl KagiApp {
                 m.input = v;
                 m.error = None;
                 self.schedule_modal_replan(cx);
+            }
+        }
+
+        // ── Remote SSH connect form (host / port / identity) ─
+        if let Some(m) = self.remote_browse_modal.as_mut() {
+            if m.host_state.is_none() {
+                let st = cx.new(|cx| InputState::new(window, cx).placeholder("user@host"));
+                st.update(cx, |s, cx| s.focus(window, cx));
+                m.host_state = Some(st);
+            }
+            if m.port_state.is_none() {
+                m.port_state =
+                    Some(cx.new(|cx| InputState::new(window, cx).placeholder("22 (optional)")));
+            }
+            if m.identity_state.is_none() {
+                m.identity_state = Some(cx.new(|cx| {
+                    InputState::new(window, cx).placeholder("~/.ssh/id_ed25519 (optional)")
+                }));
+            }
+            let hv = m
+                .host_state
+                .as_ref()
+                .map(|st| st.read(cx).value().to_string())
+                .unwrap_or_default();
+            if hv != m.host_input {
+                m.host_input = hv;
+                m.error = None;
+            }
+            let pv = m
+                .port_state
+                .as_ref()
+                .map(|st| st.read(cx).value().to_string())
+                .unwrap_or_default();
+            if pv != m.port_input {
+                m.port_input = pv;
+            }
+            let iv = m
+                .identity_state
+                .as_ref()
+                .map(|st| st.read(cx).value().to_string())
+                .unwrap_or_default();
+            if iv != m.identity_input {
+                m.identity_input = iv;
             }
         }
 
@@ -10980,6 +11030,7 @@ impl Render for KagiApp {
         let tracking_checkout_modal = self.tracking_checkout_modal.clone();
         let create_branch_modal = self.create_branch_modal.clone();
         let create_worktree_modal = self.create_worktree_modal.clone();
+        let remote_browse_modal = self.remote_browse_modal.clone();
         let delete_branch_modal = self.delete_branch_modal.clone();
         let discard_modal = self.discard_modal.clone();
         let file_menu = self.file_menu;
@@ -11492,6 +11543,10 @@ impl Render for KagiApp {
             .when_some(create_worktree_modal, |el, modal| {
                 el.child(render_create_worktree_modal(modal, modal_focus.clone(), cx))
             })
+            // ── Remote SSH browse modal overlay (ADR-0089) ───
+            .when_some(remote_browse_modal, |el, modal| {
+                el.child(render_remote_browse_modal(modal, modal_focus.clone(), cx))
+            })
             // ── Stash push modal overlay ─────────────────────
             .when_some(stash_push_modal, |el, modal| {
                 el.child(render_stash_push_modal(modal, stash_push_focus, cx))
@@ -11605,6 +11660,7 @@ impl KagiApp {
         let el = menu_act!(el, cmds::CloneRepository, "file.cloneRepository");
         let el = menu_act!(el, cmds::OpenRepository, "file.openRepository");
         let el = menu_act!(el, cmds::OpenInTerminal, "file.openInTerminal");
+        let el = menu_act!(el, cmds::ConnectRemote, "file.connectRemote");
         let el = menu_act!(el, cmds::RefreshRepository, "file.refresh");
         let el = menu_act!(el, cmds::ZoomIn, "view.zoomIn");
         let el = menu_act!(el, cmds::ZoomOut, "view.zoomOut");

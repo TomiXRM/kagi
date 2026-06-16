@@ -13428,6 +13428,15 @@ fn render_rows(
 
             // W2-GRAPH: badge presence flag for label→node connector line.
             let has_badges = !row.badges.is_empty();
+            // Connector colour for the badge→node line (extends into the
+            // BRANCH/TAG pane). Matches the node's lane colour; only when the
+            // graph isn't scrolled sideways (the canvas connector is gated the
+            // same way).
+            let connector_color: Option<gpui::Hsla> = if has_badges && graph_scroll_x < 0.5 {
+                Some(theme().lane_color(row.lane))
+            } else {
+                None
+            };
 
             div()
                 .id(ix)
@@ -13457,15 +13466,36 @@ fn render_rows(
                 // can be made draggable and the HeadBranch chip a drop target.
                 // Reborrow `cx` (the `.map()` closure already mutably borrows it
                 // for `cx.listener(...)` above) per row.
-                .child(render_badges_column(&row.badges, badge_col_w, &mut *cx))
+                .child(render_badges_column(
+                    &row.badges,
+                    badge_col_w,
+                    connector_color,
+                    &mut *cx,
+                ))
                 // ── Inner divider spacer (badge|graph handle width) ──
+                // When the row has a badge connector, bridge the 4px gap with a
+                // horizontal line so the badge→node connector stays continuous.
                 .child(
                     div()
+                        .relative()
                         .w(theme::scaled_px(INNER_DIV_W))
+                        .h_full()
                         .flex_shrink_0()
                         .flex()
+                        .items_center()
                         .justify_center()
-                        .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
+                        .child(div().w(px(1.)).h_full().bg(rgb(theme().surface)))
+                        .when_some(connector_color, |el, color| {
+                            el.child(
+                                div()
+                                    .absolute()
+                                    .top(px(rh / 2.0))
+                                    .left_0()
+                                    .w_full()
+                                    .h(theme::scaled_px(1.))
+                                    .bg(color),
+                            )
+                        }),
                 )
                 // ── Graph lane area (T030) ────────────────────────
                 // Always render the graph column at graph_col_w width.
@@ -13717,6 +13747,10 @@ fn badge_priority(kind: &BadgeKind) -> u8 {
 fn render_badges_column(
     badges: &[commit_list::RefBadge],
     badge_col_w: f32,
+    // When `Some`, draw a horizontal connector line filling the space between
+    // the badges and the right edge of the column, so the badge→node line is
+    // continuous *inside* the BRANCH/TAG pane (not stopping at the boundary).
+    connector_color: Option<gpui::Hsla>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     // Content is built to fit rather than relying on clipping:
@@ -13853,6 +13887,18 @@ fn render_badges_column(
         .items_center()
         .justify_start()
         .child(inner)
+        // Connector line: fills the remaining width up to the column's right
+        // edge so the line reaches into the BRANCH/TAG pane toward the badge.
+        .when_some(connector_color, |el, color| {
+            el.child(
+                div()
+                    .flex_1()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .child(div().w_full().h(theme::scaled_px(1.)).bg(color)),
+            )
+        })
 }
 
 // ──────────────────────────────────────────────────────────────

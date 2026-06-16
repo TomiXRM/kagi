@@ -3137,7 +3137,7 @@ dependencies = [
 
 [[package]]
 name = "kagi"
-version = "0.3.13"
+version = "0.3.14"
 dependencies = [
  "git2",
  "gpui",

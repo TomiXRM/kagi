@@ -259,17 +259,33 @@ fn collect_tags(repo: &Repository) -> Result<Vec<Tag>, GitError> {
 /// Requires `&mut Repository` as `git2::Repository::stash_foreach` takes
 /// `&mut self`.
 fn collect_stashes(repo: &mut Repository) -> Result<Vec<Stash>, GitError> {
-    let mut stashes = Vec::new();
-
+    // First pass: collect (index, message, oid). `stash_foreach` borrows `repo`
+    // mutably, so we can't look up the base commit inside the closure.
+    let mut raw: Vec<(usize, String, git2::Oid)> = Vec::new();
     repo.stash_foreach(|index, message, oid| {
-        stashes.push(Stash {
-            index,
-            message: message.to_owned(),
-            target: CommitId(oid.to_string()),
-        });
+        raw.push((index, message.to_owned(), *oid));
         true
     })
     .map_err(|e| GitError::Other(e.message().to_string()))?;
+
+    // Second pass: resolve the base commit (stash commit's first parent) so the
+    // graph can draw the stash's branch line down to where it sprouted.
+    let stashes = raw
+        .into_iter()
+        .map(|(index, message, oid)| {
+            let base = repo
+                .find_commit(oid)
+                .ok()
+                .and_then(|c| c.parent_id(0).ok())
+                .map(|p| CommitId(p.to_string()));
+            Stash {
+                index,
+                message,
+                target: CommitId(oid.to_string()),
+                base,
+            }
+        })
+        .collect();
 
     Ok(stashes)
 }

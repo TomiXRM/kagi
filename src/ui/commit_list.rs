@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use gpui::SharedString;
 
 use kagi::git::{Commit, CommitId, Head, RepoSnapshot};
-use kagi::graph::{layout, GraphEdge};
+use kagi::graph::{layout, EdgeKind, GraphEdge};
 
 // ──────────────────────────────────────────────────────────────
 // Helpers
@@ -186,6 +186,105 @@ pub fn build_commit_rows(snap: &RepoSnapshot) -> Vec<CommitRow> {
             )
         })
         .collect()
+}
+
+/// Render data for one stash node drawn in the graph (ADR-0088). Stash rows are
+/// shown as a fixed block directly below the WIP row; each connects down to its
+/// base commit via injected graph edges on a dedicated lane.
+#[derive(Debug, Clone)]
+pub struct StashRow {
+    pub index: usize,
+    /// `"stash@{N}: message"`.
+    pub label: SharedString,
+    /// Dedicated lane assigned to this stash node.
+    pub lane: usize,
+    /// All lanes (incl. stash lanes) — drives graph column width.
+    pub lane_count: usize,
+    /// True when the base commit is in view and a branch line was drawn down
+    /// to it; false when the base is out of the loaded window (node only).
+    pub connected: bool,
+}
+
+/// Build commit rows *and* stash graph rows (ADR-0088).
+///
+/// The main commit graph layout is computed exactly as before (so the mainline
+/// is undisturbed). Each stash is then given its **own extra lane** to the right
+/// of the mainline, and `Pass`/`IntoNode` edges are injected into the commit
+/// rows from the top down to the stash's base commit — so a branch line runs
+/// from the stash node (rendered above the list) down to where it sprouted.
+///
+/// Returns `(commit_rows, stash_rows, stash_lanes)`. `stash_lanes` is the set of
+/// lanes used by stashes, passed to the graph painter so those nodes/edges are
+/// drawn in the stash colour.
+pub fn build_commit_rows_with_stashes(
+    snap: &RepoSnapshot,
+) -> (Vec<CommitRow>, Vec<StashRow>, Vec<usize>) {
+    let mut rows = build_commit_rows(snap);
+    let base_lane_count = rows.first().map(|r| r.lane_count).unwrap_or(0);
+
+    // Map commit SHA → row index for base-commit lookup.
+    let mut index_of: HashMap<&str, usize> = HashMap::with_capacity(snap.commits.len());
+    for (i, c) in snap.commits.iter().enumerate() {
+        index_of.insert(c.id.0.as_str(), i);
+    }
+
+    let mut stash_rows: Vec<StashRow> = Vec::new();
+    let mut stash_lanes: Vec<usize> = Vec::new();
+    let mut next_lane = base_lane_count;
+
+    for s in &snap.stashes {
+        let lane = next_lane;
+        next_lane += 1;
+        stash_lanes.push(lane);
+        let label = SharedString::from(format!("stash@{{{}}}: {}", s.index, s.message));
+
+        // Resolve the base commit's row (if it's in the loaded window).
+        let base_idx = s
+            .base
+            .as_ref()
+            .and_then(|b| index_of.get(b.0.as_str()).copied());
+
+        let connected = if let Some(b) = base_idx {
+            let base_lane = rows[b].lane;
+            // Pass the stash lane straight down through every row above the base.
+            for r in rows.iter_mut().take(b) {
+                r.edges.push(GraphEdge {
+                    from_lane: lane,
+                    to_lane: lane,
+                    kind: EdgeKind::Pass,
+                });
+            }
+            // Curve into the base commit node.
+            rows[b].edges.push(GraphEdge {
+                from_lane: lane,
+                to_lane: base_lane,
+                kind: EdgeKind::IntoNode,
+            });
+            true
+        } else {
+            false
+        };
+
+        stash_rows.push(StashRow {
+            index: s.index,
+            label,
+            lane,
+            lane_count: 0, // patched below once the total is known
+            connected,
+        });
+    }
+
+    let total_lanes = next_lane.max(base_lane_count);
+    if total_lanes != base_lane_count {
+        for r in rows.iter_mut() {
+            r.lane_count = total_lanes;
+        }
+    }
+    for sr in stash_rows.iter_mut() {
+        sr.lane_count = total_lanes;
+    }
+
+    (rows, stash_rows, stash_lanes)
 }
 
 fn commit_to_row(

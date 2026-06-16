@@ -3,6 +3,20 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.14] — 2026-06-16
+
+### Added
+- **Stashes in the commit graph.** Each stash now appears as a row directly
+  below the WIP row, in yellow with a stash (inbox) icon, and draws a branch
+  line down to the commit it was created on — so you can see where each stash
+  sprouted from, even when its base is an older commit (ADR-0088). Left-click a
+  stash row to Pop, right-click for the Pop/Apply/Drop menu.
+
+### Fixed
+- The branch/tag (and stash) **label→node connector line now extends into the
+  BRANCH/TAG pane** instead of stopping at the column boundary, and runs level
+  across the divider (previously a ~1px step).
+
 ## [0.3.13] — 2026-06-16
 
 ### Changed

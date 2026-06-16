@@ -1099,6 +1099,11 @@ pub struct KagiApp {
     /// offsets cannot account for the variable-height header (caused a
     /// visible jump on drag start).
     pub inspector_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
+    /// ADR-0089: measured (top, bottom) screen-px bounds of the File History
+    /// list+diff split region, recorded by a paint-time canvas so the
+    /// list/diff divider drag maps the cursor to the real region (constant
+    /// offsets miss the variable-height header).
+    pub file_history_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     // ── W2-SIDEBAR: Repository Navigator ────────────────────────
     /// Remote-tracking branches from the snapshot (for REMOTE BRANCHES section).
     pub remote_branches: Vec<RemoteBranch>,
@@ -1587,6 +1592,7 @@ impl KagiApp {
             inspector_tree_view: true,
             inspector_split: INSPECTOR_SPLIT_DEFAULT,
             inspector_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
+            file_history_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: theme::compact_graph(),
             settings_theme_open: false,
             graph_scroll_x: 0.0,
@@ -1738,6 +1744,7 @@ impl KagiApp {
             inspector_tree_view: true,
             inspector_split: INSPECTOR_SPLIT_DEFAULT,
             inspector_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
+            file_history_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: theme::compact_graph(),
             settings_theme_open: false,
             graph_scroll_x: 0.0,
@@ -9598,7 +9605,7 @@ impl KagiApp {
             selected: 0,
             diff: None,
             diff_scroll: UniformListScrollHandle::new(),
-            split: 0.45,
+            split: 0.3,
             generation,
         });
 
@@ -9925,7 +9932,7 @@ impl KagiApp {
             selected: 0,
             diff: None,
             diff_scroll: UniformListScrollHandle::new(),
-            split: 0.45,
+            split: 0.3,
             generation,
         });
 
@@ -11634,22 +11641,24 @@ impl Render for KagiApp {
                         }
                     }
                     DividerKind::FileHistoryRows => {
-                        // ADR-0089: list/diff vertical split.  Approximate the
-                        // split region as (header bottom .. body bottom) in
-                        // screen space; convert the cursor to a fraction.  The
-                        // exact header height varies, so this uses a constant
-                        // top offset like the inspector's pre-paint fallback.
-                        let viewport_h = f32::from(window.viewport_size().height);
+                        // ADR-0089: list/diff vertical split. Use the region's
+                        // *measured* (top, bottom) screen bounds recorded by the
+                        // paint-time canvas in `render_fh_list_and_diff`, so the
+                        // cursor maps exactly. Falls back to a constant offset
+                        // until the first paint has run.
                         let cursor_y = f32::from(event.event.position.y);
-                        let bottom_taken = if this.bottom_panel_open {
-                            STATUS_BAR_H + this.bottom_panel_height + BOTTOM_PANEL_DIVIDER_H
+                        let (geom_top, geom_bottom) = this.file_history_geom.get();
+                        let (top, bottom) = if geom_bottom - geom_top > 1.0 {
+                            (geom_top, geom_bottom)
                         } else {
-                            STATUS_BAR_H
+                            let viewport_h = f32::from(window.viewport_size().height);
+                            let bottom_taken = if this.bottom_panel_open {
+                                STATUS_BAR_H + this.bottom_panel_height + BOTTOM_PANEL_DIVIDER_H
+                            } else {
+                                STATUS_BAR_H
+                            };
+                            (110.0 * z, viewport_h - bottom_taken * z)
                         };
-                        // ~70px chrome above the split region (titlebar+tabs+
-                        // header+toolbar), scaled into screen space.
-                        let top = 110.0 * z;
-                        let bottom = viewport_h - bottom_taken * z;
                         let span = bottom - top;
                         if span > 1.0 {
                             if let Some(fh) = this.file_history.as_mut() {
@@ -13073,11 +13082,13 @@ impl KagiApp {
                 .as_ref()
                 .expect("file_history_open implies file_history is Some");
             let fh_menu = self.file_history_menu;
+            let fh_geom = self.file_history_geom.clone();
             body_row = body_row.child(render_file_history_view(
                 fh_state,
                 fh_menu,
                 fh_branch,
                 panel_width,
+                fh_geom,
                 cx,
             ));
             return body_row;
@@ -14144,11 +14155,12 @@ fn render_loading_placeholder(label: SharedString) -> impl IntoElement {
 fn render_main_diff_view(
     view: MainDiffView,
     scroll_handle: UniformListScrollHandle,
-    // ADR-0089 (导线 #3): show the header "History" button. False when this
-    // renderer is reused inside the File History view (we're already there).
-    // Passed in by the caller — never read the KagiApp entity here, since this
-    // runs during render (the entity is already borrowed → panic).
-    show_history_btn: bool,
+    // Standalone main diff (true) vs reused inside the File History view
+    // (false). When embedded in File History, the header's Back and History
+    // buttons are hidden — the File History view has its own Back. Passed in by
+    // the caller — never read the KagiApp entity here, since this runs during
+    // render (the entity is already borrowed → panic).
+    standalone: bool,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let row_count = view.rows.len();
@@ -14185,20 +14197,23 @@ fn render_main_diff_view(
                 .py_1()
                 .gap_2()
                 .bg(rgb(theme().surface))
-                // ← Back button
-                .child(
-                    div()
-                        .id("main-diff-back")
-                        .px_2()
-                        .py_px()
-                        .rounded_sm()
-                        .bg(rgb(theme().bg_base))
-                        .text_sm()
-                        .text_color(rgb(theme().text_sub))
-                        .on_click(back_click)
-                        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
-                        .child(SharedString::from("\u{2190} Back")),
-                )
+                // ← Back button (only for the standalone main diff; the File
+                // History view embeds this diff and has its own Back).
+                .when(standalone, |el| {
+                    el.child(
+                        div()
+                            .id("main-diff-back")
+                            .px_2()
+                            .py_px()
+                            .rounded_sm()
+                            .bg(rgb(theme().bg_base))
+                            .text_sm()
+                            .text_color(rgb(theme().text_sub))
+                            .on_click(back_click)
+                            .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+                            .child(SharedString::from("\u{2190} Back")),
+                    )
+                })
                 // File name
                 .child(
                     div()
@@ -14209,7 +14224,7 @@ fn render_main_diff_view(
                         .child(title),
                 )
                 // History button (导线 #3)
-                .when(show_history_btn, |el| {
+                .when(standalone, |el| {
                     el.child(
                         div()
                             .id("main-diff-history")
@@ -14291,6 +14306,7 @@ fn render_file_history_view(
     file_history_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
     fh_branch: SharedString,
     panel_width: f32,
+    geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     // Extract the scalar/owned view data from the shared `state` borrow. Render
@@ -14425,11 +14441,12 @@ fn render_file_history_view(
             state,
             split,
             Some("This file is untracked. No commit history yet."),
+            geom,
             cx,
         )
         .into_any_element()
     } else {
-        render_fh_list_and_diff(state, split, None, cx).into_any_element()
+        render_fh_list_and_diff(state, split, None, geom, cx).into_any_element()
     };
 
     let center = div()
@@ -14544,6 +14561,7 @@ fn render_fh_list_and_diff(
     state: &file_history::FileHistoryState,
     split: f32,
     banner: Option<&'static str>,
+    geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let list = render_fh_commit_list(state, cx);
@@ -14641,12 +14659,32 @@ fn render_fh_list_and_diff(
                 .into_any_element(),
         });
 
+    // Paint-time canvas records the real (top, bottom) screen bounds of this
+    // list+diff region so the divider drag maps the cursor exactly (a constant
+    // top offset misses the variable-height header → the drag would jump).
+    let measure = {
+        let geom = geom.clone();
+        gpui::canvas(
+            move |_b: gpui::Bounds<gpui::Pixels>, _w: &mut Window, _cx: &mut gpui::App| {},
+            move |b: gpui::Bounds<gpui::Pixels>, _p: (), _w: &mut Window, _cx: &mut gpui::App| {
+                let top = f32::from(b.origin.y);
+                geom.set((top, top + f32::from(b.size.height)));
+            },
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+    };
+
     div()
+        .relative()
         .flex_1()
         .h_full()
         .flex()
         .flex_col()
         .min_h(px(0.))
+        .child(measure)
         .child(
             div()
                 .w_full()

@@ -20,13 +20,19 @@
 //! path exists yet — that goes through the `OperationController` pipeline in a
 //! later phase, never directly from here.
 
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
+use kagi_domain::refs::Worktree;
 use kagi_domain::remote::{
     self, RemoteDirEntry, RemoteHost, RemoteRepoSummary, RepoProbe, SSH_CONNECT_TIMEOUT_SECS,
 };
+use kagi_domain::remote_snapshot as rs;
+use kagi_domain::status::WorkingTreeStatus;
+
+use crate::git::{Head, RepoSnapshot};
 
 /// Whole-command backstop timeout. ssh's own `ConnectTimeout`
 /// ([`SSH_CONNECT_TIMEOUT_SECS`]) bounds the handshake; this bounds the entire
@@ -195,6 +201,137 @@ pub fn repo_summary(
         &["git", "-C", path, "log", "-1", "--format=%h%x1f%s%x1f%D"],
     )?;
     Ok(remote::parse_repo_summary(&stdout))
+}
+
+/// Run a remote read whose **non-zero exit is acceptable** (an empty repo makes
+/// `git log`/`for-each-ref`/`stash list` fail or print nothing). A real
+/// transport failure is still surfaced; any other non-zero is treated as empty
+/// output. Used by [`remote_snapshot`].
+fn run_lenient(host: &RemoteHost, remote_tokens: &[&str]) -> Result<String, RemoteError> {
+    let out = run_ssh(host, remote_tokens)?;
+    if out.code == 0 {
+        Ok(out.stdout)
+    } else if is_transport_failure(&out) {
+        Err(RemoteError::NonZero {
+            code: out.code,
+            stderr: out.stderr,
+        })
+    } else {
+        Ok(String::new())
+    }
+}
+
+/// Build a full [`RepoSnapshot`] for the remote repository at `repo` over SSH —
+/// the `GitBackend` read path for a remote repo (ADR-0089 Phase 2). It runs the
+/// same reads the local `git2` snapshot does (HEAD, log, branches, remote
+/// branches, tags, stashes) as `git` commands and assembles the identical
+/// domain types, so the existing graph/diff views can render it unchanged.
+///
+/// Working-tree `status` is left empty for now (a remote read-only view does not
+/// need a porcelain parse yet — a deliberate follow-up), and `worktrees` is the
+/// single main entry. Both are valid for the graph view.
+pub fn remote_snapshot(
+    host: &RemoteHost,
+    repo: &str,
+    commit_limit: usize,
+) -> Result<RepoSnapshot, RemoteError> {
+    // HEAD: branch (attached) + commit (exists?) → Head.
+    let branch_out = run_ssh(
+        host,
+        &["git", "-C", repo, "symbolic-ref", "-q", "--short", "HEAD"],
+    )?;
+    let branch = (branch_out.code == 0).then(|| branch_out.stdout.trim().to_string());
+    let sha_out = run_ssh(
+        host,
+        &["git", "-C", repo, "rev-parse", "-q", "--verify", "HEAD"],
+    )?;
+    let sha = (sha_out.code == 0).then(|| sha_out.stdout.trim().to_string());
+    let head = rs::head_from(branch.as_deref(), sha.as_deref());
+
+    // Commits (all refs, topological order, capped).
+    let limit_arg = format!("-{commit_limit}");
+    let log_fmt = format!("--pretty=format:{}", rs::LOG_FORMAT);
+    let commits = rs::parse_commits(&run_lenient(
+        host,
+        &[
+            "git",
+            "-C",
+            repo,
+            "log",
+            "--all",
+            "--topo-order",
+            limit_arg.as_str(),
+            log_fmt.as_str(),
+        ],
+    )?);
+
+    // Refs.
+    let branch_fmt = format!("--format={}", rs::BRANCH_FORMAT);
+    let branches = rs::parse_local_branches(&run_lenient(
+        host,
+        &[
+            "git",
+            "-C",
+            repo,
+            "for-each-ref",
+            branch_fmt.as_str(),
+            "refs/heads",
+        ],
+    )?);
+    let remote_fmt = format!("--format={}", rs::REMOTE_BRANCH_FORMAT);
+    let remote_branches = rs::parse_remote_branches(&run_lenient(
+        host,
+        &[
+            "git",
+            "-C",
+            repo,
+            "for-each-ref",
+            remote_fmt.as_str(),
+            "refs/remotes",
+        ],
+    )?);
+    let tag_fmt = format!("--format={}", rs::TAG_FORMAT);
+    let tags = rs::parse_tags(&run_lenient(
+        host,
+        &[
+            "git",
+            "-C",
+            repo,
+            "for-each-ref",
+            tag_fmt.as_str(),
+            "refs/tags",
+        ],
+    )?);
+
+    // Stashes.
+    let stash_fmt = format!("--format={}", rs::STASH_FORMAT);
+    let stashes = rs::parse_stashes(&run_lenient(
+        host,
+        &["git", "-C", repo, "stash", "list", stash_fmt.as_str()],
+    )?);
+
+    let branch_name = match &head {
+        Head::Attached { branch, .. } | Head::Unborn { branch } => Some(branch.clone()),
+        Head::Detached { .. } => None,
+    };
+    let worktrees = vec![Worktree {
+        name: "main".to_string(),
+        path: PathBuf::from(repo),
+        branch: branch_name,
+        is_current: true,
+        is_main: true,
+    }];
+
+    Ok(RepoSnapshot {
+        head,
+        commits,
+        branches,
+        remote_branches,
+        tags,
+        status: WorkingTreeStatus::default(),
+        stashes,
+        worktrees,
+    })
 }
 
 /// Heuristic: did the SSH transport itself fail (so we should surface an

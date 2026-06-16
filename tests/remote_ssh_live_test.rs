@@ -66,6 +66,31 @@ fn live_remote_read_path() {
         eprintln!("[ok] repo_summary -> {summary:?}");
         assert!(!summary.head_short.is_empty(), "HEAD short hash present");
         assert!(!summary.summary.is_empty(), "HEAD subject present");
+
+        // Phase 2: a full RepoSnapshot over SSH (same type the local git2
+        // backend produces).
+        let snap = remote::remote_snapshot(&host, &repo_path, 1000)
+            .expect("remote_snapshot should succeed");
+        eprintln!(
+            "[ok] remote_snapshot -> {} commits, {} branches, {} remote, {} tags, head={:?}",
+            snap.commits.len(),
+            snap.branches.len(),
+            snap.remote_branches.len(),
+            snap.tags.len(),
+            snap.head,
+        );
+        assert!(!snap.commits.is_empty(), "repo with commits has commits");
+        assert!(
+            !snap.branches.is_empty(),
+            "repo has at least one local branch"
+        );
+        // The newest commit's subject matches the one-line summary.
+        assert_eq!(snap.commits[0].summary, summary.summary);
+        // Parent links are populated (single-parent for a linear history).
+        assert!(
+            snap.commits.iter().any(|c| c.parents.len() <= 1),
+            "linear history parses parents"
+        );
     }
 
     // 5) Repository detection — negative case (a non-repo dir is not an error).

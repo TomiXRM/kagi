@@ -22,6 +22,7 @@ pub mod operation;
 pub mod plan;
 pub mod refs;
 pub mod remote;
+pub mod remote_snapshot;
 pub mod resolution;
 pub mod status;
 pub mod trailers;

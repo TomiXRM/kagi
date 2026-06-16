@@ -109,12 +109,21 @@ picker can grey-out non-repo dirs without treating them as connection errors.
   `src/remote/` — connect-check, home dir, directory listing, repo detection,
   HEAD summary. Pure parsers + argv are unit-tested in CI (no host needed); the
   `ssh`-spawning functions are covered by manual testing against a real host.
-- **Phase 1 — UI:** connection dialog + remote directory picker + remote repo
-  detail panel (branch, HEAD, last commit). Still read-only.
-- **Phase 2 — remote read snapshot:** lift the snapshot/log/diff reads to a
-  `GitBackend` trait (architecture.md §5) with `LocalBackend` (git2) and
-  `RemoteSshBackend` (ssh+CLI) implementations, so the existing graph/diff views
-  render a remote repo unchanged.
+- **Phase 1 — UI (done):** connection dialog + remote directory picker + remote
+  repo detail panel (branch, HEAD, last commit). Still read-only.
+- **Phase 2 — remote read snapshot (landed: engine + log preview):**
+  `kagi::remote::remote_snapshot()` builds the *same* `RepoSnapshot` the local
+  `git2` backend produces — HEAD, commits (topo-order, parents), local branches
+  (+ upstream ahead/behind), remote branches, tags, stashes — by running `git`
+  reads over SSH and parsing them with pure, unit-tested
+  `kagi_domain::remote_snapshot` parsers (separator-framed `git` formats).
+  Working-tree `status` and full `worktrees` are left minimal (a read-only view
+  does not need a porcelain parse yet). The remote browser's "Open repository
+  (read-only)" loads this snapshot and shows a commit-log preview. **Phase 2b:**
+  feed that snapshot through `build_tab_view` into the real graph/diff views
+  (factoring the read path behind a `GitBackend` trait — `LocalBackend` (git2) /
+  `RemoteSshBackend` (ssh+CLI)), with local-repo-only operations gated off while
+  a remote repo is open.
 - **Phase 3 — remote operations:** writes via the `OperationController`
   pipeline; later, an optional resident helper for latency (the VS Code-server
   analogue) and connection multiplexing.

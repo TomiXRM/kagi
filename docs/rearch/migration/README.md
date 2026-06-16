@@ -66,6 +66,22 @@ note why any destructive change was made.
 testability, extensibility). Remaining = incremental growth on the foundation (S5
 app-state model, finish S6 view decomposition, S3b worker thread, retire `KAGI_*`).
 
+## Issue #13 structural refactor (2026-06-17) — see ADR-0091
+GLM5.2 Max codebase-structure review (issue #13). Low-risk, behavior-preserving
+prefix of its roadmap done as verbatim physical splits, each `cargo test --workspace`
+green (739 tests):
+- **High-1 (P10):** `AGENTS.md` added at repo root (invariants + layering + conventions).
+- **High-2 (P1):** `src/ui/mod.rs` 18,510 → 12,368 LOC. Extracted `src/ui/types.rs`
+  (199) and `src/ui/render.rs` (5,983) as child modules — no visibility widening.
+- **High-3 (P4):** `src/ui/settings.rs` (174) carved out of `theme.rs`; callers in
+  i18n/tabs/smart_commit/mod switched to `settings::`.
+- **Medium-1 (P3):** `src/git/ops.rs` 7,071 LOC → `src/git/ops/` (9 per-op modules +
+  shared `mod.rs`); `src/git/mod.rs` re-exports unchanged.
+
+Deferred (bigger / behavioral): Phase 4 `src/ui/operations/` split, `ActiveModal`
+enum (P7/ADR-0076), ViewModel layer + log-protocol split (P5), `RepoSession`
+dual-state collapse (P2/ADR-0075), serde `Settings`.
+
 ## Tooling note
 Heavy mechanical-but-intricate extraction (S4, parts of S3/S6) may be delegated to
 Codex (GPT-5.5 high/xhigh) via the codex CLI / plugin, in well-scoped per-area

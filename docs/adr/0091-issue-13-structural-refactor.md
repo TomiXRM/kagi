@@ -58,10 +58,27 @@ behavioral changes deferred to follow-ups.
   (never narrowed); `src/git/mod.rs` is byte-for-byte unchanged.
 - The git2-confinement CI grep gate still passes (`src/ui` has zero `git2::`).
 
+## Phase 4 / P1 cont. — `src/ui/operations/` split (done)
+
+The operation-orchestration methods were moved verbatim out of `mod.rs`
+(**12,370 → 6,380 LOC**) into ten per-family submodules under
+`src/ui/operations/`, each an additional `impl KagiApp` block:
+
+- `conflict` (866), `branch` (1,279), `commit` (951), `history` (736),
+  `stash` (730), `checkout` (524), `pull_push` (416), `cherry_revert` (293),
+  `worktree` (235), `discard` (215).
+
+`src/ui/operations/mod.rs` only declares the submodules. As grandchildren of
+`crate::ui` the modules use `use crate::ui::*;` and keep access to `KagiApp`'s
+private fields/methods. Visibility was widened only to `pub(crate)` for ten
+helper methods called across module boundaries (`commit_title_for`,
+`replan_*`, `default_worktree_path`, `seed_history_from_reflog`,
+`set_template_inputs`, `effective_commit_message`); none narrowed. Behaviour,
+signatures, and the GPUI re-entrancy rule are unchanged. `cargo test
+--workspace` = 739 passed / 0 failed; git2 grep gate clean; fmt clean.
+
 ## Not done (deferred follow-ups, per the review)
 
-- **Phase 4 / P1 cont.** — move operation-orchestration methods into
-  `src/ui/operations/` (the remaining ~7k of `mod.rs`).
 - **Medium-2 / P7 / ADR-0076** — `ActiveModal` enum replacing ~25 `Option<XModal>`.
 - **Medium-3 / P5** — ViewModel layer so UI is unit-testable without the `KAGI_*`
   headless harness; then the log-protocol split (Low-1).

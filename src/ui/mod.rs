@@ -24,6 +24,7 @@ pub mod i18n;
 pub mod inspector;
 pub mod modals;
 pub mod remote_browse;
+mod render;
 pub mod settings;
 pub mod settings_view;
 pub mod sidebar;
@@ -31,18 +32,17 @@ pub mod smart_commit;
 pub mod stash_menu;
 pub mod tabs;
 pub mod terminal;
-mod render;
 pub mod theme;
 pub mod types;
 pub mod watcher;
 
 pub use diff_view::*;
-pub use types::*;
-pub(crate) use render::with_vertical_scrollbar;
 use i18n::Msg;
 pub use modals::*;
 pub use remote_browse::*;
+pub(crate) use render::with_vertical_scrollbar;
 use theme::theme;
+pub use types::*;
 
 use kagi::git::message_gen;
 
@@ -4743,7 +4743,6 @@ impl KagiApp {
         })
         .detach();
     }
-
 
     /// Read the current HEAD branch name + commit SHA from the open repo.
     /// Returns `None` for detached/unborn HEAD or any open/read failure — used
@@ -10280,7 +10279,6 @@ impl KagiApp {
         }
     }
 
-
     pub fn open_local_branch_menu(
         &mut self,
         branch_name: String,
@@ -10372,7 +10370,6 @@ impl KagiApp {
             current_branch,
         }
     }
-
 
     pub fn dispatch_branch_action(
         &mut self,

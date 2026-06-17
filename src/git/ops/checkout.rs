@@ -1,6 +1,5 @@
 use super::*;
 
-
 // ────────────────────────────────────────────────────────────
 // plan_checkout
 // ────────────────────────────────────────────────────────────
@@ -425,4 +424,3 @@ pub fn execute_checkout_commit(repo: &Repository, id: &CommitId) -> Result<(), G
 
     Ok(())
 }
-

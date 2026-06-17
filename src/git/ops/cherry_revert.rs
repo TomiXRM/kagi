@@ -530,7 +530,6 @@ pub fn execute_cherry_pick(repo: &Repository, id: &CommitId) -> Result<CommitId,
     Ok(CommitId(new_oid.to_string()))
 }
 
-
 /// Analyse whether reverting `id` on the current branch is safe and return an
 /// [`OperationPlan`] built from an in-memory revert index.
 ///
@@ -935,4 +934,3 @@ pub fn execute_revert(repo: &Repository, id: &CommitId) -> Result<CommitId, GitE
 // ────────────────────────────────────────────────────────────
 // plan_pull  (T-HT-003)
 // ────────────────────────────────────────────────────────────
-

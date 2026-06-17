@@ -336,7 +336,6 @@ fn execute_create_worktree_impl(
     Ok(())
 }
 
-
 /// Return the path of a registered worktree that currently has `branch`
 /// checked out, if any.
 pub fn branch_checked_out_worktree_path(
@@ -378,4 +377,3 @@ pub fn branch_checked_out_worktree_path(
     }
     Ok(None)
 }
-

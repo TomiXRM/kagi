@@ -815,4 +815,3 @@ fn collect_stash_entries_with_oid(
     .map_err(|e| GitError::Other(e.message().to_string()))?;
     Ok(entries)
 }
-

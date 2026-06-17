@@ -418,4 +418,3 @@ pub fn execute_merge_into_conflict(
     let conflict_files = conflict_paths_from_index(&mut index)?;
     Ok(conflict_files)
 }
-

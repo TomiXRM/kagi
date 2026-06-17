@@ -128,7 +128,6 @@ pub fn execute_checkout_tracking_branch(
 // plan_revert / execute_revert  (T-CM-034)
 // ────────────────────────────────────────────────────────────
 
-
 /// Analyse whether a pull is safe and return an [`OperationPlan`].
 ///
 /// # Blocker conditions (ADR-0009 Guarded policy)
@@ -1627,4 +1626,3 @@ pub fn execute_set_upstream(
         .map_err(|e| GitError::Other(format!("set upstream failed: {}", e.message())))?;
     Ok(())
 }
-

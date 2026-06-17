@@ -326,7 +326,10 @@ pub(crate) fn resolve_branch_commit<'repo>(
         .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", name, e.message())))
 }
 
-pub(crate) fn merge_dirty_warnings(status: &super::status::WorkingTreeStatus, op: &str) -> Vec<String> {
+pub(crate) fn merge_dirty_warnings(
+    status: &super::status::WorkingTreeStatus,
+    op: &str,
+) -> Vec<String> {
     let mut warnings = Vec::new();
     if !status.staged.is_empty() || !status.unstaged.is_empty() {
         let mut parts = Vec::new();
@@ -351,4 +354,3 @@ pub(crate) fn merge_dirty_warnings(status: &super::status::WorkingTreeStatus, op
     }
     warnings
 }
-

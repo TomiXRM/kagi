@@ -387,7 +387,6 @@ impl KagiApp {
             state, header, groups, window, cx,
         ))
     }
-
 }
 
 impl Render for KagiApp {
@@ -5980,4 +5979,3 @@ fn render_commit_panel(
                 }),
         )
 }
-

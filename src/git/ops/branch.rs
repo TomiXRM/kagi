@@ -177,7 +177,6 @@ pub fn execute_create_branch(repo: &Repository, name: &str, at: &CommitId) -> Re
     Ok(())
 }
 
-
 fn local_branch_names(repo: &Repository) -> Result<Vec<String>, GitError> {
     let mut names = Vec::new();
     let branches = repo
@@ -357,7 +356,6 @@ pub fn execute_rename_branch(
 // ────────────────────────────────────────────────────────────
 // plan_undo_commit  (T-HT-009)
 // ────────────────────────────────────────────────────────────
-
 
 /// Analyse whether deleting local branch `name` is safe and return an
 /// [`OperationPlan`].

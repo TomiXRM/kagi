@@ -17,7 +17,7 @@ impl KagiApp {
         if self.stash_push_focus.is_none() {
             self.stash_push_focus = Some(cx.focus_handle());
         }
-        self.stash_push_modal = Some(StashPushModal {
+        self.set_stash_push_modal(StashPushModal {
             input: String::new(),
             input_state: None, // lazy (render)
             plan: None,
@@ -28,12 +28,12 @@ impl KagiApp {
 
     /// Close the stash push modal without making any changes.
     pub fn cancel_stash_push_modal(&mut self) {
-        self.stash_push_modal = None;
+        self.clear_stash_push_modal();
     }
 
     /// Re-generate the live stash push plan from the current input.
     pub(crate) fn replan_stash_push(&mut self) {
-        let message_str = match self.stash_push_modal.as_ref() {
+        let message_str = match self.stash_push_modal() {
             Some(m) => m.input.clone(),
             None => return,
         };
@@ -60,7 +60,7 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
-                if let Some(ref mut modal) = self.stash_push_modal {
+                if let Some(modal) = self.stash_push_modal_mut() {
                     modal.plan = Some(std::sync::Arc::new(plan));
                 }
             }
@@ -81,7 +81,7 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let modal = match self.stash_push_modal.clone() {
+        let modal = match self.stash_push_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -112,7 +112,7 @@ impl KagiApp {
         // — minutes on big repos. Run it on a background thread (W3 pattern)
         // so the UI stays responsive instead of appearing frozen.
         self.busy_op = Some("stash");
-        self.stash_push_modal = None;
+        self.clear_stash_push_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStash.t()));
         eprintln!("[kagi] async: stash-push started");
 
@@ -189,7 +189,7 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
-                self.stash_apply_modal = Some(StashApplyModal {
+                self.set_stash_apply_modal(StashApplyModal {
                     index,
                     plan: std::sync::Arc::new(plan),
                     error: None,
@@ -203,7 +203,7 @@ impl KagiApp {
 
     /// Close the stash apply modal without making any changes.
     pub fn cancel_stash_apply_modal(&mut self) {
-        self.stash_apply_modal = None;
+        self.clear_stash_apply_modal();
     }
 
     /// Confirm the stash apply plan: run preflight, execute, then reload.
@@ -211,7 +211,7 @@ impl KagiApp {
     /// On failure the modal remains open and shows the error text.
     /// The stash entry is **never** removed (apply, not pop).
     pub fn confirm_stash_apply(&mut self) {
-        let modal = match self.stash_apply_modal.clone() {
+        let modal = match self.stash_apply_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -248,7 +248,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                if let Some(ref mut m) = self.stash_apply_modal {
+                if let Some(m) = self.stash_apply_modal_mut() {
                     m.error = Some(SharedString::from(err_msg));
                 }
                 return;
@@ -266,7 +266,7 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            if let Some(ref mut m) = self.stash_apply_modal {
+            if let Some(m) = self.stash_apply_modal_mut() {
                 m.error = Some(SharedString::from(err_msg));
             }
             return;
@@ -283,7 +283,7 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            if let Some(ref mut m) = self.stash_apply_modal {
+            if let Some(m) = self.stash_apply_modal_mut() {
                 m.error = Some(SharedString::from(err_msg));
             }
             return;
@@ -375,7 +375,7 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
-                self.pop_modal = Some(PopPlanModal {
+                self.set_pop_modal(PopPlanModal {
                     plan: std::sync::Arc::new(plan),
                     error: None,
                     stash_index: index,
@@ -389,7 +389,7 @@ impl KagiApp {
     }
 
     pub fn cancel_pop_modal(&mut self) {
-        self.pop_modal = None;
+        self.clear_pop_modal();
     }
 
     /// Open the standalone stash-drop confirmation (ADR-0087, Destructive).
@@ -415,7 +415,7 @@ impl KagiApp {
                     index,
                     plan.blockers.len()
                 );
-                self.stash_drop_modal = Some(StashDropModal {
+                self.set_stash_drop_modal(StashDropModal {
                     plan: std::sync::Arc::new(plan),
                     error: None,
                     stash_index: index,
@@ -429,7 +429,7 @@ impl KagiApp {
     }
 
     pub fn cancel_stash_drop_modal(&mut self) {
-        self.stash_drop_modal = None;
+        self.clear_stash_drop_modal();
     }
 
     /// Open the stash right-click context menu (Apply / Drop). Left-click on a
@@ -467,7 +467,7 @@ impl KagiApp {
 
     /// Execute the stash drop on a background thread (Destructive, ADR-0087).
     pub fn start_stash_drop(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.stash_drop_modal.clone() {
+        let modal = match self.stash_drop_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -489,13 +489,13 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            self.stash_drop_modal = None;
+            self.clear_stash_drop_modal();
             cx.notify();
             return;
         }
 
         self.busy_op = Some("stash-drop");
-        self.stash_drop_modal = None;
+        self.clear_stash_drop_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStashDrop.t()));
         eprintln!("[kagi] async: stash-drop started");
 
@@ -534,7 +534,7 @@ impl KagiApp {
                             },
                             &repo_path,
                         );
-                        app.stash_drop_modal = Some(StashDropModal {
+                        app.set_stash_drop_modal(StashDropModal {
                             plan: plan.clone(),
                             error: Some(SharedString::from(err_msg)),
                             stash_index,
@@ -550,7 +550,7 @@ impl KagiApp {
 
     /// Confirm stash pop: preflight → apply-then-drop → oplog → reload.
     pub fn confirm_pop(&mut self) {
-        let modal = match self.pop_modal.clone() {
+        let modal = match self.pop_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -582,7 +582,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                self.pop_modal = Some(PopPlanModal {
+                self.set_pop_modal(PopPlanModal {
                     plan: modal.plan.clone(),
                     error: Some(SharedString::from(err_msg)),
                     stash_index: modal.stash_index,
@@ -600,7 +600,7 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            self.pop_modal = Some(PopPlanModal {
+            self.set_pop_modal(PopPlanModal {
                 plan: modal.plan.clone(),
                 error: Some(SharedString::from(err_msg)),
                 stash_index: modal.stash_index,
@@ -610,7 +610,7 @@ impl KagiApp {
         match repo.execute_stash_pop(modal.stash_index) {
             Ok(()) => {
                 eprintln!("[kagi] executed: stash-pop index={}", modal.stash_index);
-                self.pop_modal = None;
+                self.clear_pop_modal();
                 let after = StateSummary {
                     head: modal.plan.current.head.clone(),
                     dirty: "changes restored (stash removed)".to_string(),
@@ -635,7 +635,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                self.pop_modal = Some(PopPlanModal {
+                self.set_pop_modal(PopPlanModal {
                     plan: modal.plan.clone(),
                     error: Some(SharedString::from(err_msg)),
                     stash_index: modal.stash_index,
@@ -647,7 +647,7 @@ impl KagiApp {
     /// W15-ASYNCOPS: UI-path stash-pop — background thread + start/finish toasts.
     /// Headless keeps `confirm_pop` (sync).
     pub fn start_pop(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.pop_modal.clone() {
+        let modal = match self.pop_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -669,13 +669,13 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            self.pop_modal = None;
+            self.clear_pop_modal();
             cx.notify();
             return;
         }
 
         self.busy_op = Some("stash-pop");
-        self.pop_modal = None;
+        self.clear_pop_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStashPop.t()));
         eprintln!("[kagi] async: stash-pop started");
 
@@ -714,7 +714,7 @@ impl KagiApp {
                             },
                             &repo_path,
                         );
-                        app.pop_modal = Some(PopPlanModal {
+                        app.set_pop_modal(PopPlanModal {
                             plan: plan.clone(),
                             error: Some(SharedString::from(err_msg)),
                             stash_index,

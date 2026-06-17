@@ -65,7 +65,7 @@ impl KagiApp {
                     "[kagi] plan: discard 1 target blockers={}",
                     plan.blockers.len()
                 );
-                self.discard_modal = Some(DiscardModal {
+                self.set_discard_modal(DiscardModal {
                     plan: std::sync::Arc::new(plan),
                     paths,
                     skipped: Vec::new(),
@@ -106,7 +106,7 @@ impl KagiApp {
                     plan.blockers.len(),
                     skipped.len()
                 );
-                self.discard_modal = Some(DiscardModal {
+                self.set_discard_modal(DiscardModal {
                     plan: std::sync::Arc::new(plan),
                     paths: eligible,
                     skipped,
@@ -123,13 +123,13 @@ impl KagiApp {
 
     /// Dismiss the discard modal without acting.
     pub fn cancel_discard_modal(&mut self) {
-        self.discard_modal = None;
+        self.clear_discard_modal();
     }
 
     /// Confirm the discard: run `discard_blocking` on a background thread
     /// (busy_op="discard"), then reload. Mirrors `start_pop`.
     pub fn start_discard(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.discard_modal.clone() {
+        let modal = match self.discard_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -151,13 +151,13 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            self.discard_modal = None;
+            self.clear_discard_modal();
             cx.notify();
             return;
         }
 
         self.busy_op = Some("discard");
-        self.discard_modal = None;
+        self.clear_discard_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDiscard.t()));
         eprintln!("[kagi] async: discard started");
 
@@ -197,7 +197,7 @@ impl KagiApp {
                             },
                             &repo_path,
                         );
-                        app.discard_modal = Some(DiscardModal {
+                        app.set_discard_modal(DiscardModal {
                             plan: plan.clone(),
                             paths: paths.clone(),
                             skipped: modal.skipped.clone(),

@@ -19,7 +19,7 @@ impl KagiApp {
             self.modal_focus = Some(cx.focus_handle());
         }
         let start_title = self.commit_title_for(&at);
-        self.create_branch_modal = Some(CreateBranchModal {
+        self.set_create_branch_modal(CreateBranchModal {
             at,
             start_title,
             input: String::new(),
@@ -50,12 +50,12 @@ impl KagiApp {
 
     /// Close the create-branch modal without making any changes.
     pub fn cancel_create_branch_modal(&mut self) {
-        self.create_branch_modal = None;
+        self.clear_create_branch_modal();
     }
 
     /// Re-generate the live plan from the current modal input.
     pub(crate) fn replan_create_branch(&mut self) {
-        let (at, name, checkout_after) = match self.create_branch_modal.as_ref() {
+        let (at, name, checkout_after) = match self.create_branch_modal() {
             Some(m) => (m.at.clone(), m.input.clone(), m.checkout_after),
             None => return,
         };
@@ -89,7 +89,7 @@ impl KagiApp {
                         .iter()
                         .map(|e| (e.to_string(), crate::ui::i18n::branch_name_error(e))),
                 );
-                if let Some(ref mut modal) = self.create_branch_modal {
+                if let Some(modal) = self.create_branch_modal_mut() {
                     modal.plan = Some(std::sync::Arc::new(plan));
                     modal.localized_blockers = localized;
                 }
@@ -107,7 +107,7 @@ impl KagiApp {
         // The live plan is debounced; rebuild it from the latest input so a
         // fast type-then-click can never execute a stale plan.
         self.run_modal_replans();
-        let modal = match self.create_branch_modal.clone() {
+        let modal = match self.create_branch_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -147,7 +147,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                if let Some(ref mut m) = self.create_branch_modal {
+                if let Some(m) = self.create_branch_modal_mut() {
                     m.error = Some(SharedString::from(err_msg));
                 }
                 return;
@@ -165,7 +165,7 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            if let Some(ref mut m) = self.create_branch_modal {
+            if let Some(m) = self.create_branch_modal_mut() {
                 m.error = Some(SharedString::from(err_msg));
             }
             return;
@@ -182,7 +182,7 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            if let Some(ref mut m) = self.create_branch_modal {
+            if let Some(m) = self.create_branch_modal_mut() {
                 m.error = Some(SharedString::from(err_msg));
             }
             return;
@@ -241,7 +241,7 @@ impl KagiApp {
                         },
                         &repo_path,
                     );
-                    if let Some(ref mut m) = self.create_branch_modal {
+                    if let Some(m) = self.create_branch_modal_mut() {
                         m.error = Some(SharedString::from(err_msg));
                     }
                     return;
@@ -256,7 +256,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                if let Some(ref mut m) = self.create_branch_modal {
+                if let Some(m) = self.create_branch_modal_mut() {
                     m.error = Some(SharedString::from(
                         "Branch created, but checkout was refused by the checkout plan.",
                     ));
@@ -273,7 +273,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                if let Some(ref mut m) = self.create_branch_modal {
+                if let Some(m) = self.create_branch_modal_mut() {
                     m.error = Some(SharedString::from(err_msg));
                 }
                 return;
@@ -288,7 +288,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                if let Some(ref mut m) = self.create_branch_modal {
+                if let Some(m) = self.create_branch_modal_mut() {
                     m.error = Some(SharedString::from(err_msg));
                 }
                 return;
@@ -334,7 +334,7 @@ impl KagiApp {
         };
         match plan_result {
             Ok(plan) => {
-                self.branch_plan_modal = Some(BranchPlanModal {
+                self.set_branch_plan_modal(BranchPlanModal {
                     kind,
                     branch_name,
                     plan: std::sync::Arc::new(plan),
@@ -351,7 +351,7 @@ impl KagiApp {
     }
 
     pub fn cancel_branch_plan_modal(&mut self) {
-        self.branch_plan_modal = None;
+        self.clear_branch_plan_modal();
     }
 
     pub fn start_branch_plan(&mut self, cx: &mut Context<Self>) {
@@ -359,7 +359,7 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let modal = match self.branch_plan_modal.clone() {
+        let modal = match self.branch_plan_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -381,13 +381,13 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            self.branch_plan_modal = None;
+            self.clear_branch_plan_modal();
             cx.notify();
             return;
         }
 
         self.busy_op = Some(op_name);
-        self.branch_plan_modal = None;
+        self.clear_branch_plan_modal();
         self.status_footer =
             FooterStatus::Busy(SharedString::from(format!("{} in progress...", op_name)));
         let bg_path = repo_path.clone();
@@ -422,7 +422,7 @@ impl KagiApp {
                             },
                             &repo_path,
                         );
-                        app.branch_plan_modal = Some(BranchPlanModal {
+                        app.set_branch_plan_modal(BranchPlanModal {
                             kind: modal.kind.clone(),
                             branch_name: modal.branch_name.clone(),
                             plan: modal.plan.clone(),
@@ -443,7 +443,7 @@ impl KagiApp {
             .get(&branch_name)
             .map(|u| u.remote_branch.clone())
             .unwrap_or_else(|| format!("origin/{}", branch_name));
-        self.set_upstream_modal = Some(SetUpstreamModal {
+        self.set_set_upstream_modal(SetUpstreamModal {
             branch_name,
             input,
             input_state: None,
@@ -454,11 +454,11 @@ impl KagiApp {
     }
 
     pub fn cancel_set_upstream_modal(&mut self) {
-        self.set_upstream_modal = None;
+        self.clear_set_upstream_modal();
     }
 
     pub(crate) fn replan_set_upstream(&mut self) {
-        let (branch_name, input) = match self.set_upstream_modal.as_ref() {
+        let (branch_name, input) = match self.set_upstream_modal() {
             Some(m) => (m.branch_name.clone(), m.input.clone()),
             None => return,
         };
@@ -472,12 +472,12 @@ impl KagiApp {
         };
         match repo.plan_set_upstream(&branch_name, &input) {
             Ok(plan) => {
-                if let Some(m) = self.set_upstream_modal.as_mut() {
+                if let Some(m) = self.set_upstream_modal_mut() {
                     m.plan = Some(std::sync::Arc::new(plan));
                 }
             }
             Err(e) => {
-                if let Some(m) = self.set_upstream_modal.as_mut() {
+                if let Some(m) = self.set_upstream_modal_mut() {
                     m.error = Some(SharedString::from(format!(
                         "Set upstream plan error: {}",
                         e
@@ -493,7 +493,7 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let modal = match self.set_upstream_modal.clone() {
+        let modal = match self.set_upstream_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -518,7 +518,7 @@ impl KagiApp {
         }
 
         self.busy_op = Some("set-upstream");
-        self.set_upstream_modal = None;
+        self.clear_set_upstream_modal();
         let branch_name = modal.branch_name.clone();
         let upstream = modal.input.clone();
         let bg_path = repo_path.clone();
@@ -549,7 +549,7 @@ impl KagiApp {
                             },
                             &repo_path,
                         );
-                        app.set_upstream_modal = Some(SetUpstreamModal {
+                        app.set_set_upstream_modal(SetUpstreamModal {
                             branch_name: modal.branch_name.clone(),
                             input: modal.input.clone(),
                             input_state: None,
@@ -568,7 +568,7 @@ impl KagiApp {
     pub fn open_rename_branch_modal(&mut self, branch_name: String) {
         let existing: Vec<String> = self.branches.iter().map(|(name, _)| name.clone()).collect();
         let validation = validate_branch_rename(&branch_name, &branch_name, &existing);
-        self.rename_branch_modal = Some(RenameBranchModal {
+        self.set_rename_branch_modal(RenameBranchModal {
             old_name: branch_name.clone(),
             input: branch_name,
             input_state: None,
@@ -580,11 +580,11 @@ impl KagiApp {
     }
 
     pub fn cancel_rename_branch_modal(&mut self) {
-        self.rename_branch_modal = None;
+        self.clear_rename_branch_modal();
     }
 
     pub(crate) fn replan_rename_branch(&mut self) {
-        let (old_name, input) = match self.rename_branch_modal.as_ref() {
+        let (old_name, input) = match self.rename_branch_modal() {
             Some(m) => (m.old_name.clone(), m.input.clone()),
             None => return,
         };
@@ -600,13 +600,13 @@ impl KagiApp {
         };
         match repo.plan_rename_branch(&old_name, &input) {
             Ok(plan) => {
-                if let Some(m) = self.rename_branch_modal.as_mut() {
+                if let Some(m) = self.rename_branch_modal_mut() {
                     m.validation = validation;
                     m.plan = Some(std::sync::Arc::new(plan));
                 }
             }
             Err(e) => {
-                if let Some(m) = self.rename_branch_modal.as_mut() {
+                if let Some(m) = self.rename_branch_modal_mut() {
                     m.validation = validation;
                     m.error = Some(SharedString::from(format!("Rename plan error: {}", e)));
                 }
@@ -620,7 +620,7 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let modal = match self.rename_branch_modal.clone() {
+        let modal = match self.rename_branch_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -644,7 +644,7 @@ impl KagiApp {
             return;
         }
         self.busy_op = Some("rename-branch");
-        self.rename_branch_modal = None;
+        self.clear_rename_branch_modal();
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let old_name = modal.old_name.clone();
@@ -675,7 +675,7 @@ impl KagiApp {
                             },
                             &repo_path,
                         );
-                        app.rename_branch_modal = Some(RenameBranchModal {
+                        app.set_rename_branch_modal(RenameBranchModal {
                             old_name: modal.old_name.clone(),
                             input: modal.input.clone(),
                             input_state: None,
@@ -739,7 +739,7 @@ impl KagiApp {
                             kind
                         );
                         app.status_footer = FooterStatus::Idle(SharedString::from(""));
-                        app.merge_modal = Some(MergePlanModal {
+                        app.set_merge_modal(MergePlanModal {
                             target,
                             into_branch,
                             plan: std::sync::Arc::new(plan),
@@ -761,7 +761,7 @@ impl KagiApp {
     }
 
     pub fn cancel_merge_modal(&mut self) {
-        self.merge_modal = None;
+        self.clear_merge_modal();
     }
 
     /// T-DNDMERGE-001 / ADR-0079 layer 2: the single entry point a branch
@@ -802,7 +802,7 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let modal = match self.merge_modal.clone() {
+        let modal = match self.merge_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -820,13 +820,13 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            self.merge_modal = None;
+            self.clear_merge_modal();
             cx.notify();
             return;
         }
 
         self.busy_op = Some("merge");
-        self.merge_modal = None;
+        self.clear_merge_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyMerge.t()));
         eprintln!("[kagi] async: merge started");
 
@@ -883,7 +883,7 @@ impl KagiApp {
                             },
                             &repo_path,
                         );
-                        app.merge_modal = Some(MergePlanModal {
+                        app.set_merge_modal(MergePlanModal {
                             target: modal.target.clone(),
                             into_branch: modal.into_branch.clone(),
                             plan: modal.plan.clone(),
@@ -928,7 +928,7 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
-                self.tracking_checkout_modal = Some(TrackingCheckoutPlanModal {
+                self.set_tracking_checkout_modal(TrackingCheckoutPlanModal {
                     remote_branch,
                     local_branch,
                     plan: std::sync::Arc::new(plan),
@@ -945,7 +945,7 @@ impl KagiApp {
     }
 
     pub fn cancel_tracking_checkout_modal(&mut self) {
-        self.tracking_checkout_modal = None;
+        self.clear_tracking_checkout_modal();
     }
 
     pub fn start_tracking_checkout(&mut self, cx: &mut Context<Self>) {
@@ -953,7 +953,7 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let modal = match self.tracking_checkout_modal.clone() {
+        let modal = match self.tracking_checkout_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -971,13 +971,13 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            self.tracking_checkout_modal = None;
+            self.clear_tracking_checkout_modal();
             cx.notify();
             return;
         }
 
         self.busy_op = Some("checkout");
-        self.tracking_checkout_modal = None;
+        self.clear_tracking_checkout_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCheckout.t()));
         eprintln!("[kagi] async: checkout-tracking started");
 
@@ -1013,7 +1013,7 @@ impl KagiApp {
                             },
                             &repo_path,
                         );
-                        app.tracking_checkout_modal = Some(TrackingCheckoutPlanModal {
+                        app.set_tracking_checkout_modal(TrackingCheckoutPlanModal {
                             remote_branch: modal.remote_branch.clone(),
                             local_branch: modal.local_branch.clone(),
                             plan: modal.plan.clone(),
@@ -1055,7 +1055,7 @@ impl KagiApp {
                     branch_name,
                     plan.blockers.len()
                 );
-                self.delete_branch_modal = Some(DeleteBranchModal {
+                self.set_delete_branch_modal(DeleteBranchModal {
                     branch_name,
                     plan: std::sync::Arc::new(plan),
                     error: None,
@@ -1071,12 +1071,12 @@ impl KagiApp {
     }
 
     pub fn cancel_delete_branch_modal(&mut self) {
-        self.delete_branch_modal = None;
+        self.clear_delete_branch_modal();
     }
 
     /// Confirm delete-branch: preflight → execute → oplog → reload.
     pub fn confirm_delete_branch(&mut self) {
-        let modal = match self.delete_branch_modal.clone() {
+        let modal = match self.delete_branch_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -1113,7 +1113,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                self.delete_branch_modal = Some(DeleteBranchModal {
+                self.set_delete_branch_modal(DeleteBranchModal {
                     branch_name: modal.branch_name.clone(),
                     plan: modal.plan.clone(),
                     error: Some(SharedString::from(err_msg)),
@@ -1132,7 +1132,7 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            self.delete_branch_modal = Some(DeleteBranchModal {
+            self.set_delete_branch_modal(DeleteBranchModal {
                 branch_name: modal.branch_name.clone(),
                 plan: modal.plan.clone(),
                 error: Some(SharedString::from(err_msg)),
@@ -1143,7 +1143,7 @@ impl KagiApp {
         match repo.execute_delete_branch(&modal.plan, &modal.branch_name) {
             Ok(()) => {
                 eprintln!("[kagi] executed: delete-branch {}", modal.branch_name);
-                self.delete_branch_modal = None;
+                self.clear_delete_branch_modal();
                 let after = kagi::git::ops::StateSummary {
                     head: modal.plan.current.head.clone(),
                     dirty: format!("branch '{}' deleted", modal.branch_name),
@@ -1171,7 +1171,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                self.delete_branch_modal = Some(DeleteBranchModal {
+                self.set_delete_branch_modal(DeleteBranchModal {
                     branch_name: modal.branch_name.clone(),
                     plan: modal.plan.clone(),
                     error: Some(SharedString::from(err_msg)),
@@ -1184,7 +1184,7 @@ impl KagiApp {
     /// toasts (ref delete is lightweight, but kept on the background path for a
     /// uniform busy/disabled experience). Headless keeps `confirm_delete_branch`.
     pub fn start_delete_branch(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.delete_branch_modal.clone() {
+        let modal = match self.delete_branch_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -1209,13 +1209,13 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            self.delete_branch_modal = None;
+            self.clear_delete_branch_modal();
             cx.notify();
             return;
         }
 
         self.busy_op = Some("delete-branch");
-        self.delete_branch_modal = None;
+        self.clear_delete_branch_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranch.t()));
         eprintln!("[kagi] async: delete-branch started");
 
@@ -1263,7 +1263,7 @@ impl KagiApp {
                             },
                             &repo_path,
                         );
-                        app.delete_branch_modal = Some(DeleteBranchModal {
+                        app.set_delete_branch_modal(DeleteBranchModal {
                             branch_name: branch_name.clone(),
                             plan: plan.clone(),
                             error: Some(SharedString::from(err_msg)),

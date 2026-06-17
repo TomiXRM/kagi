@@ -39,7 +39,7 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.preview_files.len()
                 );
-                self.cherry_pick_modal = Some(CherryPickModal {
+                self.set_cherry_pick_modal(CherryPickModal {
                     commit_id,
                     plan: std::sync::Arc::new(plan),
                     error: None,
@@ -53,13 +53,13 @@ impl KagiApp {
 
     /// Cancel and close the cherry-pick modal without making any changes.
     pub fn cancel_cherry_pick_modal(&mut self) {
-        self.cherry_pick_modal = None;
+        self.clear_cherry_pick_modal();
     }
 
     /// W15-ASYNCOPS: UI-path cherry-pick — background thread + start/finish
     /// toasts. The headless KAGI_* path executes `execute_cherry_pick` directly.
     pub fn start_cherry_pick(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.cherry_pick_modal.clone() {
+        let modal = match self.cherry_pick_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -79,7 +79,7 @@ impl KagiApp {
                     rp,
                 );
             }
-            self.cherry_pick_modal = None;
+            self.clear_cherry_pick_modal();
             cx.notify();
             return;
         }
@@ -89,7 +89,7 @@ impl KagiApp {
         };
 
         self.busy_op = Some("cherry-pick");
-        self.cherry_pick_modal = None;
+        self.clear_cherry_pick_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCherryPick.t()));
         eprintln!("[kagi] async: cherry-pick started");
 
@@ -138,7 +138,7 @@ impl KagiApp {
                             },
                             &repo_path,
                         );
-                        app.cherry_pick_modal = Some(CherryPickModal {
+                        app.set_cherry_pick_modal(CherryPickModal {
                             commit_id: commit_id.clone(),
                             plan: plan.clone(),
                             error: Some(SharedString::from(err_msg)),
@@ -178,7 +178,7 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.preview_files.len()
                 );
-                self.revert_modal = Some(RevertModal {
+                self.set_revert_modal(RevertModal {
                     commit_id,
                     plan: std::sync::Arc::new(plan),
                     error: None,
@@ -192,13 +192,13 @@ impl KagiApp {
 
     /// Cancel and close the revert modal without making any changes.
     pub fn cancel_revert_modal(&mut self) {
-        self.revert_modal = None;
+        self.clear_revert_modal();
     }
 
     /// W15-ASYNCOPS: UI-path revert — background thread + start/finish toasts.
     /// The headless KAGI_* path executes `execute_revert` directly.
     pub fn start_revert(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.revert_modal.clone() {
+        let modal = match self.revert_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -218,7 +218,7 @@ impl KagiApp {
                     rp,
                 );
             }
-            self.revert_modal = None;
+            self.clear_revert_modal();
             cx.notify();
             return;
         }
@@ -228,7 +228,7 @@ impl KagiApp {
         };
 
         self.busy_op = Some("revert");
-        self.revert_modal = None;
+        self.clear_revert_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyRevert.t()));
         eprintln!("[kagi] async: revert started");
 
@@ -277,7 +277,7 @@ impl KagiApp {
                             },
                             &repo_path,
                         );
-                        app.revert_modal = Some(RevertModal {
+                        app.set_revert_modal(RevertModal {
                             commit_id: commit_id.clone(),
                             plan: plan.clone(),
                             error: Some(SharedString::from(err_msg)),

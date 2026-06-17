@@ -48,9 +48,14 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
   `TabViewState` struct, `build_tab_view` (builds it from a snapshot), and
   `apply_tab_view` (copies it into the active `KagiApp` fields). Miss one and the
   field silently vanishes on tab switch.
-- Adding a modal currently requires 4 touch points: a `KagiApp` field, an `open_*`
-  method, a `cancel_*` method, and render routing. (ADR-0076 plans an `ActiveModal`
-  enum to collapse these — until then, follow the existing pattern exactly.)
+- Modals are a single `active_modal: Option<ActiveModal>` field on `KagiApp`
+  (ADR-0093 / ADR-0076; the "one modal at a time" invariant is now structural).
+  Adding a modal: add an `ActiveModal` variant in `src/ui/modals.rs`, the five
+  accessors in `src/ui/operations/modal_state.rs` (`X`/`X_mut`/`set_X`/`clear_X`/
+  `take_X`), an `open_*`/`cancel_*` method that uses `set_X`/`clear_X`, render
+  routing, and the entry in `confirm_active_modal`/`cancel_active_modal`. Use the
+  accessors — never reach into `active_modal` directly. (`CommitPanel` has its own
+  separate `plan_modal`; don't confuse it with the checkout `plan_modal` accessor.)
 
 ## Settings (`settings.json`) rules
 

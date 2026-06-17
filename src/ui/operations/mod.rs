@@ -11,6 +11,7 @@ pub mod commit;
 pub mod conflict;
 pub mod discard;
 pub mod history;
+pub mod modal_state;
 pub mod pull_push;
 pub mod stash;
 pub mod worktree;

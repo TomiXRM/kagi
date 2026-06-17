@@ -428,14 +428,14 @@ pub fn short_title_header(full_sha: &str, title: &str) -> SharedString {
 pub fn copy_full_sha(app: &mut KagiApp, full_sha: String, cx: &mut Context<KagiApp>) {
     let short: String = full_sha.chars().take(8).collect();
     cx.write_to_clipboard(ClipboardItem::new_string(full_sha));
-    eprintln!("[kagi] copy-sha: {}", short);
+    klog!("copy-sha: {}", short);
     app.status_footer = FooterStatus::Idle(SharedString::from("SHA copied"));
 }
 
 pub fn copy_short_sha(app: &mut KagiApp, full_sha: &str, cx: &mut Context<KagiApp>) {
     let short: String = full_sha.chars().take(8).collect();
     cx.write_to_clipboard(ClipboardItem::new_string(short.clone()));
-    eprintln!("[kagi] copy-short-sha: {}", short);
+    klog!("copy-short-sha: {}", short);
     app.status_footer = FooterStatus::Idle(SharedString::from("Short SHA copied"));
 }
 
@@ -443,7 +443,7 @@ pub fn copy_message(app: &mut KagiApp, full_sha: &str, message: String, cx: &mut
     let short: String = full_sha.chars().take(8).collect();
     let len = message.chars().count();
     cx.write_to_clipboard(ClipboardItem::new_string(message));
-    eprintln!("[kagi] copy-message: {} len={}", short, len);
+    klog!("copy-message: {} len={}", short, len);
     app.status_footer = FooterStatus::Idle(SharedString::from("Commit message copied"));
 }
 

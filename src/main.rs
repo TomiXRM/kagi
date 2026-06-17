@@ -1,3 +1,5 @@
+#[macro_use]
+mod klog;
 mod headless;
 mod ui;
 
@@ -39,7 +41,7 @@ fn main() {
     if args.is_empty() {
         // W4-TABS / ADR-0028: no argument → Welcome screen (tabs empty).
         // The usage error string is still emitted to stderr for headless compat.
-        eprintln!("[kagi] usage: kagi <repo-path>");
+        klog!("usage: kagi <repo-path>");
         let mut welcome = KagiApp::with_error("");
         // Session restore: a plain GUI launch (Kagi.app from Dock/Finder has
         // no argv) reopens the previous session's tabs instead of the Welcome
@@ -66,22 +68,22 @@ fn main() {
         Ok(info) => info,
         Err(e) => {
             let msg = format!("Error: {e}");
-            eprintln!("[kagi] {}", msg);
+            klog!("{}", msg);
             run_app(KagiApp::with_error(msg));
             return;
         }
     };
 
-    eprintln!("[kagi] repo: {}", info.name);
-    eprintln!("[kagi] path: {}", info.workdir.display());
-    eprintln!("[kagi] HEAD: {}", info.head.display());
+    klog!("repo: {}", info.name);
+    klog!("path: {}", info.workdir.display());
+    klog!("HEAD: {}", info.head.display());
 
     // ── Snapshot ─────────────────────────────────────────────
     let mut repo2 = match git2::Repository::open(&repo_path) {
         Ok(r) => r,
         Err(e) => {
             let msg = format!("repo open error: {}", e.message());
-            eprintln!("[kagi] {}", msg);
+            klog!("{}", msg);
             run_app(KagiApp::with_error(msg));
             return;
         }
@@ -91,7 +93,7 @@ fn main() {
         Ok(s) => s,
         Err(e) => {
             let msg = format!("snapshot error: {e}");
-            eprintln!("[kagi] {}", msg);
+            klog!("{}", msg);
             run_app(KagiApp::with_error(msg));
             return;
         }
@@ -108,24 +110,24 @@ fn main() {
             status.conflicted.len(),
         );
     } else {
-        eprintln!("[kagi] working tree clean");
+        klog!("working tree clean");
     }
 
     // HEAD-branch label for unborn repos.
     if let Head::Unborn { branch } = &snap.head {
-        eprintln!("[kagi] unborn HEAD on branch '{branch}', no commits");
+        klog!("unborn HEAD on branch '{branch}', no commits");
     }
 
-    eprintln!("[kagi] commits in snapshot: {}", snap.commits.len());
+    klog!("commits in snapshot: {}", snap.commits.len());
     for c in snap.commits.iter().take(3) {
-        eprintln!("[kagi]   {} {}", c.id.short(), c.summary);
+        klog!("  {} {}", c.id.short(), c.summary);
     }
 
-    eprintln!("[kagi] branches: {}", snap.branches.len());
-    eprintln!("[kagi] remote branches: {}", snap.remote_branches.len());
-    eprintln!("[kagi] tags: {}", snap.tags.len());
-    eprintln!("[kagi] stashes: {}", snap.stashes.len());
-    eprintln!("[kagi] worktrees: {}", snap.worktrees.len());
+    klog!("branches: {}", snap.branches.len());
+    klog!("remote branches: {}", snap.remote_branches.len());
+    klog!("tags: {}", snap.tags.len());
+    klog!("stashes: {}", snap.stashes.len());
+    klog!("worktrees: {}", snap.worktrees.len());
 
     // ── Build app state and launch window ────────────────────
     let mut app_state = KagiApp::from_snapshot(&info.name, &snap);

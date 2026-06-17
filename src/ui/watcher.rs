@@ -140,14 +140,14 @@ pub fn start_git_watcher(
             }
         }
         Err(e) => {
-            eprintln!("[kagi] watcher: notify error: {}", e);
+            klog!("watcher: notify error: {}", e);
         }
     });
 
     let mut watcher = match watcher_result {
         Ok(w) => w,
         Err(e) => {
-            eprintln!("[kagi] watcher: failed to create watcher: {}", e);
+            klog!("watcher: failed to create watcher: {}", e);
             return None;
         }
     };

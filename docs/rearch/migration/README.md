@@ -104,8 +104,13 @@ green (739 tests):
   `apply_tab_view` is now a one-line move (no field-by-field sync foot-gun). The
   behaviour-preserving slice of ADR-0075's RepoSession model.
 
-Deferred (bigger / behavioral): remaining VMs + log-protocol split (P5); the full
-`RepoSession`/`OperationController` zero-copy swap (ADR-0075, beyond the P2 slice).
+- **P5 / log-protocol seam (Low-1) — see ADR-0096:** all ~347 `[kagi]` contract
+  lines now route through the `klog!` macro (single greppable emission point),
+  separable from ad-hoc human logging. Byte-identical output; behaviour unchanged.
+
+Deferred (bigger / behavioral): remaining VMs + moving headless assertions onto VM
+unit tests (P5); the full `RepoSession`/`OperationController` zero-copy swap
+(ADR-0075, beyond the P2 slice).
 
 ## Tooling note
 Heavy mechanical-but-intricate extraction (S4, parts of S3/S6) may be delegated to

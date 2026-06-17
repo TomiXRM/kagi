@@ -172,7 +172,7 @@ impl KagiApp {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
-                eprintln!("[kagi] open_commit_panel: no repo_path set");
+                klog!("open_commit_panel: no repo_path set");
                 return;
             }
         };
@@ -195,7 +195,7 @@ impl KagiApp {
             if current.trim().is_empty() {
                 let branch = self.active_view.status_summary.branch.clone();
                 if let Some(d) = kagi::git::load_draft(&repo_path, &branch) {
-                    eprintln!("[kagi] draft: loaded {} (mode={})", branch, d.mode);
+                    klog!("draft: loaded {} (mode={})", branch, d.mode);
                     let entity = input_entity.clone();
                     if d.mode == "template" {
                         let fields = kagi::git::parse_message(&d.message);
@@ -250,7 +250,7 @@ impl KagiApp {
         self.smart_commit_detected_for = Some(repo_path);
 
         if message_gen::offline() {
-            eprintln!("[kagi] smart-commit: offline (detection skipped)");
+            klog!("smart-commit: offline (detection skipped)");
             return;
         }
 
@@ -334,7 +334,7 @@ impl KagiApp {
         };
         let msg = message_gen::rule_based(&gi, &files);
         if std::env::var("KAGI_SMART_SUGGEST").as_deref() == Ok("1") {
-            eprintln!("[kagi] smart-suggest: {}", msg);
+            klog!("smart-suggest: {}", msg);
         }
         let existing = self.smart_commit_current_msg(cx);
         if existing.trim().is_empty() {
@@ -391,7 +391,7 @@ impl KagiApp {
     pub fn confirm_smart_consent(&mut self, cx: &mut Context<Self>) {
         self.smart_commit.set_enabled(true);
         self.smart_commit.modal = None;
-        eprintln!("[kagi] smart-commit: llm enabled (consent given)");
+        klog!("smart-commit: llm enabled (consent given)");
         // Move on to picking a model (always confirm at least once per ADR).
         if self.smart_commit.model.is_none() {
             self.open_smart_model_picker(cx);
@@ -409,7 +409,7 @@ impl KagiApp {
     ) {
         self.smart_commit.set_model(model.clone());
         self.smart_commit.modal = None;
-        eprintln!("[kagi] smart-commit: model selected = {}", model);
+        klog!("smart-commit: model selected = {}", model);
         self.run_smart_generation(window, cx);
     }
 
@@ -466,7 +466,7 @@ impl KagiApp {
             let (msg, used_llm) = match message_gen::generate_message(&backend, &gi, &files) {
                 Ok(m) => (m, true),
                 Err(e) => {
-                    eprintln!("[kagi] smart-commit: llm failed ({}) → rule-based", e);
+                    klog!("smart-commit: llm failed ({}) → rule-based", e);
                     (message_gen::rule_based(&gi, &files), false)
                 }
             };
@@ -536,7 +536,7 @@ impl KagiApp {
         };
         match repo.stage_files(&paths) {
             Ok(n) => {
-                eprintln!("[kagi] staged-all: {} file(s)", n);
+                klog!("staged-all: {} file(s)", n);
                 if let Some(panel) = self.commit_panel.as_mut() {
                     panel.reload_status(&repo_path);
                 }
@@ -567,7 +567,7 @@ impl KagiApp {
         };
         match repo.unstage_files(&paths) {
             Ok(n) => {
-                eprintln!("[kagi] unstaged-all: {} file(s)", n);
+                klog!("unstaged-all: {} file(s)", n);
                 if let Some(panel) = self.commit_panel.as_mut() {
                     panel.reload_status(&repo_path);
                 }
@@ -595,14 +595,14 @@ impl KagiApp {
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] stage_file: repo open error: {}", e);
+                klog!("stage_file: repo open error: {}", e);
                 return;
             }
         };
         if let Err(e) = repo.stage_file(&path) {
-            eprintln!("[kagi] stage_file error: {}", e);
+            klog!("stage_file error: {}", e);
         } else {
-            eprintln!("[kagi] staged: {}", path.display());
+            klog!("staged: {}", path.display());
         }
         if let Some(ref mut panel) = self.commit_panel {
             panel.reload_status(&repo_path);
@@ -629,14 +629,14 @@ impl KagiApp {
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] unstage_file: repo open error: {}", e);
+                klog!("unstage_file: repo open error: {}", e);
                 return;
             }
         };
         if let Err(e) = repo.unstage_file(&path) {
-            eprintln!("[kagi] unstage_file error: {}", e);
+            klog!("unstage_file error: {}", e);
         } else {
-            eprintln!("[kagi] unstaged: {}", path.display());
+            klog!("unstaged: {}", path.display());
         }
         if let Some(ref mut panel) = self.commit_panel {
             panel.reload_status(&repo_path);
@@ -708,7 +708,7 @@ impl KagiApp {
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] plan_commit: repo open error: {}", e);
+                klog!("plan_commit: repo open error: {}", e);
                 return;
             }
         };
@@ -740,7 +740,7 @@ impl KagiApp {
                 }
             }
             Err(e) => {
-                eprintln!("[kagi] plan_commit error: {}", e);
+                klog!("plan_commit error: {}", e);
             }
         }
     }
@@ -782,7 +782,7 @@ impl KagiApp {
             None => return,
         };
         if !plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: commit plan has blockers");
+            klog!("refused: commit plan has blockers");
             return;
         }
 
@@ -798,7 +798,7 @@ impl KagiApp {
 
         self.busy_op = Some("commit");
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCommit.t()));
-        eprintln!("[kagi] async: commit started");
+        klog!("async: commit started");
 
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
@@ -819,11 +819,11 @@ impl KagiApp {
                 app.busy_op = None;
                 match result {
                     Ok((_new_short, after)) => {
-                        eprintln!("[kagi] async: commit finished");
+                        klog!("async: commit finished");
                         // A successful commit clears the branch draft (T-COMMIT-007).
                         let branch = app.active_view.status_summary.branch.clone();
                         let _ = kagi::git::clear_draft(&repo_path, &branch);
-                        eprintln!("[kagi] draft: cleared {}", branch);
+                        klog!("draft: cleared {}", branch);
                         app.last_draft_value = String::new();
 
                         app.record_op(
@@ -848,7 +848,7 @@ impl KagiApp {
                         app.reload();
                     }
                     Err(err_msg) => {
-                        eprintln!("[kagi] async: commit failed — {}", err_msg);
+                        klog!("async: commit failed — {}", err_msg);
                         app.record_op(
                             "commit",
                             plan.current.clone(),
@@ -904,7 +904,7 @@ impl KagiApp {
         };
         match repo.execute_merge_commit(message) {
             Ok(id) => {
-                eprintln!("[kagi] executed: merge commit {}", id.short());
+                klog!("executed: merge commit {}", id.short());
                 let _ = kagi::git::ResolutionBuffer::clear(&repo_path);
                 let branch = self.active_view.status_summary.branch.clone();
                 let _ = kagi::git::clear_draft(&repo_path, &branch);
@@ -930,7 +930,7 @@ impl KagiApp {
             }
             Err(e) => {
                 let err_msg = format!("{}", e);
-                eprintln!("[kagi] merge commit failed: {}", err_msg);
+                klog!("merge commit failed: {}", err_msg);
                 self.record_op(
                     "merge-commit",
                     plan.current.clone(),

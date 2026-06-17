@@ -281,7 +281,7 @@ pub fn build_terminal_view(
                 }
             })
             .with_exit_callback(move |_window, cx| {
-                eprintln!("[kagi] terminal: shell exited");
+                klog!("terminal: shell exited");
                 let _ = weak_app.update(cx, |app, cx| {
                     if let Some(session) = app.terminal_sessions.get_mut(&exit_repo_path) {
                         session.view = None;
@@ -384,7 +384,7 @@ pub fn ensure_terminal(
     }
 
     let shell = resolve_shell();
-    eprintln!("[kagi] terminal: starting shell={}", shell);
+    klog!("terminal: starting shell={}", shell);
 
     match build_terminal_view(&shell, &session.repo_path, cx) {
         Ok((view_entity, _master_arc, paste_writer)) => {
@@ -395,11 +395,11 @@ pub fn ensure_terminal(
             session.view = Some(view_entity);
             session.paste_writer = Some(paste_writer);
             session.start_error = None;
-            eprintln!("[kagi] terminal: started shell={}", shell);
+            klog!("terminal: started shell={}", shell);
             true
         }
         Err(e) => {
-            eprintln!("[kagi] terminal: start failed: {}", e);
+            klog!("terminal: start failed: {}", e);
             session.start_error = Some(e.clone());
             record_failure(e);
             false

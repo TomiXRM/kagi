@@ -456,7 +456,7 @@ impl Render for KagiApp {
             static N: AtomicU64 = AtomicU64::new(0);
             let n = N.fetch_add(1, O::Relaxed) + 1;
             if n.is_multiple_of(50) {
-                eprintln!("[kagi] render: {} frames", n);
+                klog!("render: {} frames", n);
             }
         }
 

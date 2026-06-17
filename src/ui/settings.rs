@@ -57,10 +57,10 @@ impl Settings {
         match serde_json::to_string_pretty(self) {
             Ok(json) => {
                 if let Err(e) = std::fs::write(&path, format!("{json}\n")) {
-                    eprintln!("[kagi] settings: write failed (non-fatal): {e}");
+                    klog!("settings: write failed (non-fatal): {e}");
                 }
             }
-            Err(e) => eprintln!("[kagi] settings: serialize failed (non-fatal): {e}"),
+            Err(e) => klog!("settings: serialize failed (non-fatal): {e}"),
         }
     }
 

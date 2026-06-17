@@ -18,7 +18,7 @@ impl KagiApp {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
-                eprintln!("[kagi] open_cherry_pick_modal: no repo_path set");
+                klog!("open_cherry_pick_modal: no repo_path set");
                 return;
             }
         };
@@ -26,7 +26,7 @@ impl KagiApp {
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] cherry-pick plan: repo open error: {}", e);
+                klog!("cherry-pick plan: repo open error: {}", e);
                 return;
             }
         };
@@ -46,7 +46,7 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                eprintln!("[kagi] cherry-pick plan: error: {}", e);
+                klog!("cherry-pick plan: error: {}", e);
             }
         }
     }
@@ -68,7 +68,7 @@ impl KagiApp {
             return;
         }
         if !modal.plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: cherry-pick plan has blockers, not executing");
+            klog!("refused: cherry-pick plan has blockers, not executing");
             if let Some(ref rp) = self.repo_path.clone() {
                 self.record_op(
                     "cherry-pick",
@@ -91,7 +91,7 @@ impl KagiApp {
         self.busy_op = Some("cherry-pick");
         self.clear_cherry_pick_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCherryPick.t()));
-        eprintln!("[kagi] async: cherry-pick started");
+        klog!("async: cherry-pick started");
 
         let plan = modal.plan.clone();
         let commit_id = modal.commit_id.clone();
@@ -108,7 +108,7 @@ impl KagiApp {
                 app.busy_op = None;
                 match result {
                     Ok((_summary, after)) => {
-                        eprintln!("[kagi] async: cherry-pick finished");
+                        klog!("async: cherry-pick finished");
                         app.record_op(
                             "cherry-pick",
                             plan.current.clone(),
@@ -129,7 +129,7 @@ impl KagiApp {
                         app.reload();
                     }
                     Err(err_msg) => {
-                        eprintln!("[kagi] async: cherry-pick failed — {}", err_msg);
+                        klog!("async: cherry-pick failed — {}", err_msg);
                         app.record_op(
                             "cherry-pick",
                             plan.current.clone(),
@@ -157,7 +157,7 @@ impl KagiApp {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
-                eprintln!("[kagi] open_revert_modal: no repo_path set");
+                klog!("open_revert_modal: no repo_path set");
                 return;
             }
         };
@@ -165,7 +165,7 @@ impl KagiApp {
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] revert plan: repo open error: {}", e);
+                klog!("revert plan: repo open error: {}", e);
                 return;
             }
         };
@@ -185,7 +185,7 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                eprintln!("[kagi] revert plan: error: {}", e);
+                klog!("revert plan: error: {}", e);
             }
         }
     }
@@ -207,7 +207,7 @@ impl KagiApp {
             return;
         }
         if !modal.plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: revert plan has blockers, not executing");
+            klog!("refused: revert plan has blockers, not executing");
             if let Some(ref rp) = self.repo_path.clone() {
                 self.record_op(
                     "revert",
@@ -230,7 +230,7 @@ impl KagiApp {
         self.busy_op = Some("revert");
         self.clear_revert_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyRevert.t()));
-        eprintln!("[kagi] async: revert started");
+        klog!("async: revert started");
 
         let plan = modal.plan.clone();
         let commit_id = modal.commit_id.clone();
@@ -247,7 +247,7 @@ impl KagiApp {
                 app.busy_op = None;
                 match result {
                     Ok((_summary, after)) => {
-                        eprintln!("[kagi] async: revert finished");
+                        klog!("async: revert finished");
                         app.record_op(
                             "revert",
                             plan.current.clone(),
@@ -268,7 +268,7 @@ impl KagiApp {
                         app.reload();
                     }
                     Err(err_msg) => {
-                        eprintln!("[kagi] async: revert failed — {}", err_msg);
+                        klog!("async: revert failed — {}", err_msg);
                         app.record_op(
                             "revert",
                             plan.current.clone(),

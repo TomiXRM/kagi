@@ -470,7 +470,7 @@ impl KagiApp {
         ) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] refused: {} blocked: {}", op_name, e);
+                klog!("refused: {} blocked: {}", op_name, e);
                 // Surface the specific (localized) blocking reason (ADR-0067).
                 if let Some(first) = repo.continue_blockers(&mode.session, &mode.buffer).first() {
                     self.push_toast(ToastKind::Error, conflict_view::blocker_msg(first).t());
@@ -504,7 +504,7 @@ impl KagiApp {
                 // this the commit panel shows nothing staged (Commit disabled) and
                 // execute_merge_commit refuses the still-conflicted index.
                 if let Err(e) = repo.stage_conflict_resolution(&mode.session, &mode.buffer) {
-                    eprintln!("[kagi] refused: {} stage failed: {}", op_name, e);
+                    klog!("refused: {} stage failed: {}", op_name, e);
                     self.push_toast(
                         ToastKind::Error,
                         SharedString::from(format!("Could not stage resolution: {}", e)),
@@ -571,7 +571,7 @@ impl KagiApp {
 
         match repo.execute_conflict_continue(&mode.session, &mode.buffer) {
             Ok(_outcome) => {
-                eprintln!("[kagi] executed: {}", op_name);
+                klog!("executed: {}", op_name);
                 let _ = kagi::git::ResolutionBuffer::clear(&repo_path);
                 let after = StateSummary {
                     head: plan.predicted.head.clone(),
@@ -588,7 +588,7 @@ impl KagiApp {
             }
             Err(e) => {
                 let err_msg = format!("{}", e);
-                eprintln!("[kagi] {} failed: {}", op_name, err_msg);
+                klog!("{} failed: {}", op_name, err_msg);
                 self.record_op(
                     &op_name,
                     plan.current.clone(),
@@ -648,7 +648,7 @@ impl KagiApp {
 
         match repo.execute_conflict_abort(&mode.session, &mode.buffer) {
             Ok(_outcome) => {
-                eprintln!("[kagi] executed: {}", op_name);
+                klog!("executed: {}", op_name);
                 let after = StateSummary {
                     head: plan.predicted.head.clone(),
                     dirty: "clean".to_string(),
@@ -663,7 +663,7 @@ impl KagiApp {
             }
             Err(e) => {
                 let err_msg = format!("{}", e);
-                eprintln!("[kagi] {} failed: {}", op_name, err_msg);
+                klog!("{} failed: {}", op_name, err_msg);
                 self.record_op(
                     &op_name,
                     plan.current.clone(),
@@ -688,7 +688,7 @@ impl KagiApp {
             if let Some(c) = self.conflict.as_mut() {
                 c.abort_armed = true;
             }
-            eprintln!("[kagi] conflict-mode: abort armed (second confirm required)");
+            klog!("conflict-mode: abort armed (second confirm required)");
             return;
         }
         // Armed → execute (conflict_abort re-detects and rebuilds the mode).
@@ -733,7 +733,7 @@ impl KagiApp {
 
         match repo.execute_conflict_skip(&mode.session, &mode.buffer) {
             Ok(_outcome) => {
-                eprintln!("[kagi] executed: {}", op_name);
+                klog!("executed: {}", op_name);
                 let after = StateSummary {
                     head: plan.predicted.head.clone(),
                     dirty: "current step dropped".to_string(),
@@ -748,7 +748,7 @@ impl KagiApp {
             }
             Err(e) => {
                 let err_msg = format!("{}", e);
-                eprintln!("[kagi] {} failed: {}", op_name, err_msg);
+                klog!("{} failed: {}", op_name, err_msg);
                 self.record_op(
                     &op_name,
                     plan.current.clone(),
@@ -799,7 +799,7 @@ impl KagiApp {
             .replace("$REMOTE", &merged_str)
             .replace("$MERGED", &merged_str);
 
-        eprintln!("[kagi] conflict-mode: launch external tool: {}", cmd);
+        klog!("conflict-mode: launch external tool: {}", cmd);
         match std::process::Command::new("sh")
             .arg("-c")
             .arg(&cmd)

@@ -96,7 +96,7 @@ impl KagiApp {
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] replan_create_worktree: repo open error: {}", e);
+                klog!("replan_create_worktree: repo open error: {}", e);
                 return;
             }
         };
@@ -135,7 +135,7 @@ impl KagiApp {
                 }
             }
             Err(e) => {
-                eprintln!("[kagi] plan: create-worktree error: {}", e);
+                klog!("plan: create-worktree error: {}", e);
             }
         }
     }
@@ -162,7 +162,7 @@ impl KagiApp {
             None => return,
         };
         if !plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: create-worktree plan has blockers, not executing");
+            klog!("refused: create-worktree plan has blockers, not executing");
             if let Some(ref rp) = self.repo_path.clone() {
                 self.record_op(
                     "create-worktree",
@@ -183,7 +183,7 @@ impl KagiApp {
         self.busy_op = Some("create-worktree");
         self.clear_create_worktree_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCreateWorktree.t()));
-        eprintln!("[kagi] async: create-worktree started");
+        klog!("async: create-worktree started");
 
         let branch_input = modal.branch_input.clone();
         let path_input = modal.path_input.clone();
@@ -207,7 +207,7 @@ impl KagiApp {
                 app.busy_op = None;
                 match result {
                     Ok(after) => {
-                        eprintln!("[kagi] async: create-worktree finished");
+                        klog!("async: create-worktree finished");
                         app.record_op(
                             "create-worktree",
                             plan.current.clone(),
@@ -217,7 +217,7 @@ impl KagiApp {
                         app.reload();
                     }
                     Err(err_msg) => {
-                        eprintln!("[kagi] async: create-worktree failed — {}", err_msg);
+                        klog!("async: create-worktree failed — {}", err_msg);
                         app.record_op(
                             "create-worktree",
                             plan.current.clone(),

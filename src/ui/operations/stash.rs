@@ -44,7 +44,7 @@ impl KagiApp {
         let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] replan_stash_push: repo open error: {}", e);
+                klog!("replan_stash_push: repo open error: {}", e);
                 return;
             }
         };
@@ -65,7 +65,7 @@ impl KagiApp {
                 }
             }
             Err(e) => {
-                eprintln!("[kagi] plan: stash-push error: {}", e);
+                klog!("plan: stash-push error: {}", e);
             }
         }
     }
@@ -90,7 +90,7 @@ impl KagiApp {
             None => return,
         };
         if !plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: stash-push plan has blockers, not executing");
+            klog!("refused: stash-push plan has blockers, not executing");
             if let Some(ref rp) = self.repo_path.clone() {
                 self.record_op(
                     "stash-push",
@@ -114,7 +114,7 @@ impl KagiApp {
         self.busy_op = Some("stash");
         self.clear_stash_push_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStash.t()));
-        eprintln!("[kagi] async: stash-push started");
+        klog!("async: stash-push started");
 
         let msg_opt = if modal.input.is_empty() {
             None
@@ -131,7 +131,7 @@ impl KagiApp {
                 app.busy_op = None;
                 match result {
                     Ok((summary, after)) => {
-                        eprintln!("[kagi] async: stash-push finished");
+                        klog!("async: stash-push finished");
                         app.record_op(
                             "stash-push",
                             plan.current.clone(),
@@ -145,7 +145,7 @@ impl KagiApp {
                         app.reload();
                     }
                     Err(err_msg) => {
-                        eprintln!("[kagi] async: stash-push failed — {}", err_msg);
+                        klog!("async: stash-push failed — {}", err_msg);
                         app.record_op(
                             "stash-push",
                             plan.current.clone(),
@@ -168,7 +168,7 @@ impl KagiApp {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
-                eprintln!("[kagi] open_stash_apply_modal: no repo_path set");
+                klog!("open_stash_apply_modal: no repo_path set");
                 return;
             }
         };
@@ -176,7 +176,7 @@ impl KagiApp {
         let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] plan: stash-apply repo open error: {}", e);
+                klog!("plan: stash-apply repo open error: {}", e);
                 return;
             }
         };
@@ -196,7 +196,7 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                eprintln!("[kagi] plan: stash-apply error: {}", e);
+                klog!("plan: stash-apply error: {}", e);
             }
         }
     }
@@ -218,7 +218,7 @@ impl KagiApp {
         let plan = modal.plan.clone();
         // Defence in depth: refuse if blockers exist.
         if !plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: stash-apply plan has blockers, not executing");
+            klog!("refused: stash-apply plan has blockers, not executing");
             if let Some(ref rp) = self.repo_path.clone() {
                 self.record_op(
                     "stash-apply",
@@ -289,13 +289,13 @@ impl KagiApp {
             return;
         }
 
-        eprintln!("[kagi] executed: stash-apply index={}", modal.index);
+        klog!("executed: stash-apply index={}", modal.index);
 
         // Verify: check working tree is dirty and stash entry still exists.
         let mut repo2 = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] verify: repo open error: {}", e);
+                klog!("verify: repo open error: {}", e);
                 self.reload();
                 return;
             }
@@ -305,9 +305,9 @@ impl KagiApp {
                 let is_dirty = snap.status.is_dirty();
                 let stash_count = snap.stashes.len();
                 if is_dirty {
-                    eprintln!("[kagi] verified: working tree dirty (stash applied)");
+                    klog!("verified: working tree dirty (stash applied)");
                 } else {
-                    eprintln!("[kagi] verify: working tree NOT dirty after stash-apply");
+                    klog!("verify: working tree NOT dirty after stash-apply");
                 }
                 // Stash must remain (apply, not pop).
                 if stash_count >= plan.stash_count_at_plan() {
@@ -332,7 +332,7 @@ impl KagiApp {
                 }
             }
             Err(e) => {
-                eprintln!("[kagi] verify: snapshot error: {}", e);
+                klog!("verify: snapshot error: {}", e);
                 plan.predicted.clone()
             }
         };
@@ -447,7 +447,7 @@ impl KagiApp {
             message,
             position,
         });
-        eprintln!("[kagi] stash-menu: open index={}", index);
+        klog!("stash-menu: open index={}", index);
     }
 
     /// Dispatch a stash context-menu action.
@@ -480,7 +480,7 @@ impl KagiApp {
             None => return,
         };
         if !modal.plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: drop plan has blockers, not executing");
+            klog!("refused: drop plan has blockers, not executing");
             self.record_op(
                 "stash-drop",
                 modal.plan.current.clone(),
@@ -497,7 +497,7 @@ impl KagiApp {
         self.busy_op = Some("stash-drop");
         self.clear_stash_drop_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStashDrop.t()));
-        eprintln!("[kagi] async: stash-drop started");
+        klog!("async: stash-drop started");
 
         let plan = modal.plan.clone();
         let stash_index = modal.stash_index;
@@ -511,7 +511,7 @@ impl KagiApp {
                 app.busy_op = None;
                 match result {
                     Ok((summary, after)) => {
-                        eprintln!("[kagi] async: stash-drop finished");
+                        klog!("async: stash-drop finished");
                         app.record_op(
                             "stash-drop",
                             plan.current.clone(),
@@ -525,7 +525,7 @@ impl KagiApp {
                         app.reload();
                     }
                     Err(err_msg) => {
-                        eprintln!("[kagi] async: stash-drop failed — {}", err_msg);
+                        klog!("async: stash-drop failed — {}", err_msg);
                         app.record_op(
                             "stash-drop",
                             plan.current.clone(),
@@ -559,7 +559,7 @@ impl KagiApp {
             None => return,
         };
         if !modal.plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: pop plan has blockers, not executing");
+            klog!("refused: pop plan has blockers, not executing");
             self.record_op(
                 "stash-pop",
                 modal.plan.current.clone(),
@@ -609,7 +609,7 @@ impl KagiApp {
         }
         match repo.execute_stash_pop(modal.stash_index) {
             Ok(()) => {
-                eprintln!("[kagi] executed: stash-pop index={}", modal.stash_index);
+                klog!("executed: stash-pop index={}", modal.stash_index);
                 self.clear_pop_modal();
                 let after = StateSummary {
                     head: modal.plan.current.head.clone(),
@@ -660,7 +660,7 @@ impl KagiApp {
             None => return,
         };
         if !modal.plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: pop plan has blockers, not executing");
+            klog!("refused: pop plan has blockers, not executing");
             self.record_op(
                 "stash-pop",
                 modal.plan.current.clone(),
@@ -677,7 +677,7 @@ impl KagiApp {
         self.busy_op = Some("stash-pop");
         self.clear_pop_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStashPop.t()));
-        eprintln!("[kagi] async: stash-pop started");
+        klog!("async: stash-pop started");
 
         let plan = modal.plan.clone();
         let stash_index = modal.stash_index;
@@ -691,7 +691,7 @@ impl KagiApp {
                 app.busy_op = None;
                 match result {
                     Ok((summary, after)) => {
-                        eprintln!("[kagi] async: stash-pop finished");
+                        klog!("async: stash-pop finished");
                         app.record_op(
                             "stash-pop",
                             plan.current.clone(),
@@ -705,7 +705,7 @@ impl KagiApp {
                         app.reload();
                     }
                     Err(err_msg) => {
-                        eprintln!("[kagi] async: stash-pop failed — {}", err_msg);
+                        klog!("async: stash-pop failed — {}", err_msg);
                         app.record_op(
                             "stash-pop",
                             plan.current.clone(),

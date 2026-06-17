@@ -273,7 +273,7 @@ pub fn init_zoom() {
         let z = clamp_zoom(permille as f32 / 1000.0);
         UI_ZOOM_PERMILLE.store((z * 1000.0).round() as usize, Ordering::Relaxed);
     }
-    eprintln!("[kagi] zoom: {:.2}x", zoom());
+    klog!("zoom: {:.2}x", zoom());
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -322,7 +322,7 @@ pub fn init_compact_graph() {
     if let Some(on) = Settings::load().graph_compact() {
         GRAPH_COMPACT.store(on, Ordering::Relaxed);
     }
-    eprintln!("[kagi] graph_compact: {}", compact_graph());
+    klog!("graph_compact: {}", compact_graph());
 }
 
 /// Background auto-fetch flag. Defaults to **on** (periodic + on-focus fetch so
@@ -347,7 +347,7 @@ pub fn init_auto_fetch() {
     if let Some(on) = Settings::load().auto_fetch() {
         AUTO_FETCH.store(on, Ordering::Relaxed);
     }
-    eprintln!("[kagi] auto_fetch: {}", auto_fetch());
+    klog!("auto_fetch: {}", auto_fetch());
 }
 
 /// Look up a theme index by slug.
@@ -400,7 +400,7 @@ pub fn init_active() {
         }
     }
     let t = theme();
-    eprintln!("[kagi] theme: {} dark={}", t.slug, t.dark);
+    klog!("theme: {} dark={}", t.slug, t.dark);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

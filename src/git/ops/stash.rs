@@ -576,6 +576,42 @@ fn stash_drop_internal(repo: &mut Repository, index: usize) -> Result<(), GitErr
 /// — so the only blocker is an out-of-range index. The dropped stash commit
 /// stays reachable from the stash reflog until gc, so the recovery guidance
 /// records its OID for `git stash store`.
+/// Build the danger-confirm plan for dropping a **remote** stash over SSH
+/// (ADR-0089 Phase 3). The remote read path has no local `Repository`, so this
+/// synthesises the [`OperationPlan`] the confirm modal needs — `destructive`,
+/// with an irreversible-action warning — without a git2 dry run. The actual drop
+/// runs via `kagi::remote::remote_stash_drop` in the UI layer. `head_summary` is
+/// taken from the remote snapshot (e.g. `"branch: master"`) for display only.
+pub fn plan_stash_drop_remote(stash_label: &str, head_summary: String) -> OperationPlan {
+    OperationPlan {
+        title: format!("Drop {stash_label}"),
+        current: StateSummary {
+            head: head_summary.clone(),
+            dirty: "remote (read-only view)".to_string(),
+        },
+        predicted: StateSummary {
+            head: head_summary,
+            dirty: "stash entry removed".to_string(),
+        },
+        warnings: vec![
+            "This permanently removes the stash entry on the remote host. \
+             It cannot be undone from Kagi."
+                .to_string(),
+        ],
+        blockers: Vec::new(),
+        recovery: "A dropped stash commit may remain reachable from the remote's \
+                   stash reflog until gc, but Kagi does not manage remote recovery."
+            .to_string(),
+        head_at_plan: Head::Unborn {
+            branch: String::new(),
+        },
+        stash_count_at_plan: 0,
+        preview_files: Vec::new(),
+        preview_commits: Vec::new(),
+        destructive: true,
+    }
+}
+
 pub fn plan_stash_drop(repo: &mut Repository, index: usize) -> Result<OperationPlan, GitError> {
     let head = resolve_head(repo)?;
     let status = working_tree_status(repo)?;
@@ -814,4 +850,22 @@ fn collect_stash_entries_with_oid(
     })
     .map_err(|e| GitError::Other(e.message().to_string()))?;
     Ok(entries)
+}
+
+#[cfg(test)]
+mod remote_drop_tests {
+    use super::*;
+
+    #[test]
+    fn plan_stash_drop_remote_is_destructive_with_no_blockers() {
+        let plan = plan_stash_drop_remote("stash@{0}: WIP on main: x", "branch: main".to_string());
+        assert!(plan.destructive, "remote stash drop must be Destructive");
+        assert!(
+            plan.blockers.is_empty(),
+            "no local blockers for a remote drop"
+        );
+        assert!(!plan.warnings.is_empty(), "must warn it is irreversible");
+        assert!(plan.title.contains("stash@{0}"), "title names the stash");
+        assert_eq!(plan.current.head, "branch: main");
+    }
 }

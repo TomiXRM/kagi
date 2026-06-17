@@ -394,6 +394,27 @@ impl KagiApp {
 
     /// Open the standalone stash-drop confirmation (ADR-0087, Destructive).
     pub fn open_stash_drop_modal(&mut self, index: usize) {
+        // Remote read-only view (ADR-0089 Phase 3): there is no local Repository
+        // to dry-run against, so synthesise the danger-confirm plan; the drop
+        // itself runs over SSH in `start_stash_drop`.
+        if self.remote_view.is_some() {
+            let label = self
+                .active_view
+                .stashes
+                .iter()
+                .find(|s| s.index == index)
+                .map(|s| format!("stash@{{{}}}: {}", s.index, s.message))
+                .unwrap_or_else(|| format!("stash@{{{index}}}"));
+            let head = self.active_view.header.to_string();
+            let plan = kagi::git::plan_stash_drop_remote(&label, head);
+            eprintln!("[kagi] plan: remote stash-drop index={index} blockers=0");
+            self.set_stash_drop_modal(StashDropModal {
+                plan: std::sync::Arc::new(plan),
+                error: None,
+                stash_index: index,
+            });
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -475,6 +496,73 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
+
+        // Remote read-only view (ADR-0089 Phase 3): drop over SSH, then
+        // re-snapshot. Same confirm + oplog discipline as the local path.
+        if let Some(rv) = self.remote_view.clone() {
+            let stash_index = modal.stash_index;
+            let plan = modal.plan.clone();
+            let before = plan.current.clone();
+            let oplog_path = std::path::PathBuf::from(format!("{}:{}", rv.host.label(), rv.root));
+            self.busy_op = Some("stash-drop");
+            self.clear_stash_drop_modal();
+            self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStashDrop.t()));
+            klog!("async: remote stash-drop started");
+            let (host, root) = (rv.host.clone(), rv.root.clone());
+            let task = cx.background_spawn(async move {
+                kagi::remote::remote_stash_drop(&host, &root, stash_index)
+                    .map_err(|e| e.to_string())
+            });
+            cx.spawn(async move |this, acx| {
+                let result = task.await;
+                let _ = this.update(acx, |app, cx| {
+                    app.busy_op = None;
+                    match result {
+                        Ok(summary) => {
+                            klog!("async: remote stash-drop finished");
+                            app.record_op(
+                                "stash-drop",
+                                before.clone(),
+                                OpOutcome::Success {
+                                    after: kagi::git::StateSummary {
+                                        head: before.head.clone(),
+                                        dirty: "stash entry removed".to_string(),
+                                    },
+                                },
+                                &oplog_path,
+                            );
+                            app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                                "stash drop: {summary}"
+                            )));
+                            // Re-snapshot the remote so the dropped entry and its
+                            // graph row disappear (indices shift; one drop at a time).
+                            app.refresh_remote_view(cx);
+                        }
+                        Err(err_msg) => {
+                            klog!("async: remote stash-drop failed — {err_msg}");
+                            app.record_op(
+                                "stash-drop",
+                                before.clone(),
+                                OpOutcome::Failed {
+                                    error: err_msg.clone(),
+                                },
+                                &oplog_path,
+                            );
+                            app.set_stash_drop_modal(StashDropModal {
+                                plan: plan.clone(),
+                                error: Some(SharedString::from(err_msg)),
+                                stash_index,
+                            });
+                        }
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+            cx.notify();
+            return;
+        }
+
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,

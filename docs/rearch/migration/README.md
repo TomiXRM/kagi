@@ -78,9 +78,15 @@ green (739 tests):
 - **Medium-1 (P3):** `src/git/ops.rs` 7,071 LOC → `src/git/ops/` (9 per-op modules +
   shared `mod.rs`); `src/git/mod.rs` re-exports unchanged.
 
-Deferred (bigger / behavioral): Phase 4 `src/ui/operations/` split, `ActiveModal`
-enum (P7/ADR-0076), ViewModel layer + log-protocol split (P5), `RepoSession`
-dual-state collapse (P2/ADR-0075), serde `Settings`.
+- **Phase 4 (P1 cont.):** `src/ui/mod.rs` 12,370 → 6,380 LOC. Operation-orchestration
+  methods moved verbatim into `src/ui/operations/` (10 per-family submodules:
+  conflict/branch/commit/history/stash/checkout/pull_push/cherry_revert/worktree/
+  discard), each an `impl KagiApp` block using `use crate::ui::*;`. Only `pub(crate)`
+  widening for 10 cross-module helpers.
+
+Deferred (bigger / behavioral): `ActiveModal` enum (P7/ADR-0076), ViewModel layer +
+log-protocol split (P5), `RepoSession` dual-state collapse (P2/ADR-0075), serde
+`Settings`.
 
 ## Tooling note
 Heavy mechanical-but-intricate extraction (S4, parts of S3/S6) may be delegated to

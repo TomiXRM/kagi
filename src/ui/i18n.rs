@@ -29,7 +29,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::theme::{read_setting, write_setting};
+use super::settings::{read_setting, write_setting};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Lang + active-language atomic

@@ -394,11 +394,11 @@ impl KagiApp {
             .collect::<Vec<_>>()
             .join("\u{1f}");
         if joined.is_empty() {
-            super::theme::write_setting("session_repos", None);
-            super::theme::write_setting("session_active", None);
+            super::settings::write_setting("session_repos", None);
+            super::settings::write_setting("session_active", None);
         } else {
-            super::theme::write_setting("session_repos", Some(&joined));
-            super::theme::write_setting("session_active", Some(&self.active_tab.to_string()));
+            super::settings::write_setting("session_repos", Some(&joined));
+            super::settings::write_setting("session_active", Some(&self.active_tab.to_string()));
         }
     }
 
@@ -794,7 +794,7 @@ impl KagiApp {
 /// longer exist or fail to open are skipped silently; with zero valid paths
 /// the app stays on the Welcome screen.
 pub fn restore_saved_session(app: &mut super::KagiApp) {
-    let saved = match super::theme::read_setting("session_repos") {
+    let saved = match super::settings::read_setting("session_repos") {
         Some(s) if !s.is_empty() => s,
         _ => return,
     };
@@ -817,7 +817,7 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
     if app.tabs.is_empty() {
         return;
     }
-    let active = super::theme::read_setting("session_active")
+    let active = super::settings::read_setting("session_active")
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(0)
         .min(app.tabs.len() - 1);

@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use gpui::{hsla, rgb, App, Hsla};
 
-use super::settings::{read_setting, write_setting};
+use super::settings::{read_setting, write_setting, Settings};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Theme struct
@@ -269,11 +269,9 @@ pub fn set_zoom(z: f32) -> f32 {
 /// stored as a permille integer). Missing / unparsable / out-of-range values
 /// fall back to 1.0×.
 pub fn init_zoom() {
-    if let Some(raw) = read_setting("ui_zoom") {
-        if let Ok(permille) = raw.trim().parse::<u32>() {
-            let z = clamp_zoom(permille as f32 / 1000.0);
-            UI_ZOOM_PERMILLE.store((z * 1000.0).round() as usize, Ordering::Relaxed);
-        }
+    if let Some(permille) = Settings::load().ui_zoom_permille() {
+        let z = clamp_zoom(permille as f32 / 1000.0);
+        UI_ZOOM_PERMILLE.store((z * 1000.0).round() as usize, Ordering::Relaxed);
     }
     eprintln!("[kagi] zoom: {:.2}x", zoom());
 }
@@ -321,8 +319,8 @@ pub fn set_compact_graph(on: bool) {
 /// Initialise the compact-graph flag at startup from `settings.json`
 /// (`"graph_compact"`, `"true"`/`"false"`). Missing/invalid → off.
 pub fn init_compact_graph() {
-    if let Some(raw) = read_setting("graph_compact") {
-        GRAPH_COMPACT.store(raw.trim() == "true", Ordering::Relaxed);
+    if let Some(on) = Settings::load().graph_compact() {
+        GRAPH_COMPACT.store(on, Ordering::Relaxed);
     }
     eprintln!("[kagi] graph_compact: {}", compact_graph());
 }
@@ -346,8 +344,8 @@ pub fn set_auto_fetch(on: bool) {
 /// Initialise the auto-fetch flag at startup from `settings.json`
 /// (`"auto_fetch"`). Missing → on; only an explicit `"false"` disables it.
 pub fn init_auto_fetch() {
-    if let Some(raw) = read_setting("auto_fetch") {
-        AUTO_FETCH.store(raw.trim() != "false", Ordering::Relaxed);
+    if let Some(on) = Settings::load().auto_fetch() {
+        AUTO_FETCH.store(on, Ordering::Relaxed);
     }
     eprintln!("[kagi] auto_fetch: {}", auto_fetch());
 }
@@ -376,7 +374,7 @@ pub fn set_active(slug: &str) -> bool {
 
 /// Read the persisted theme slug from `settings.json`, if present and valid.
 pub fn load_settings_slug() -> Option<String> {
-    read_setting("theme")
+    Settings::load().theme()
 }
 
 /// Persist the theme slug to `settings.json` (preserving other keys).

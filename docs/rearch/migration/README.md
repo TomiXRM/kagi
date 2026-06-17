@@ -84,9 +84,13 @@ green (739 tests):
   discard), each an `impl KagiApp` block using `use crate::ui::*;`. Only `pub(crate)`
   widening for 10 cross-module helpers.
 
+- **serde `Settings` (P4 second half) — see ADR-0092:** `settings.json` now parses via
+  `serde_json` into a typed `Settings` struct. On-disk flat string format unchanged;
+  `write_setting` preserves unknown keys (the `SETTINGS_KEYS`-drop foot-gun and the
+  hand-written `parse_string_value` are gone). `theme.rs` reads via typed accessors.
+
 Deferred (bigger / behavioral): `ActiveModal` enum (P7/ADR-0076), ViewModel layer +
-log-protocol split (P5), `RepoSession` dual-state collapse (P2/ADR-0075), serde
-`Settings`.
+log-protocol split (P5), `RepoSession` dual-state collapse (P2/ADR-0075).
 
 ## Tooling note
 Heavy mechanical-but-intricate extraction (S4, parts of S3/S6) may be delegated to

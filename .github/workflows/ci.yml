@@ -1,17 +1,18 @@
 name: ci
 
 # ADR-0077 (v1.0 re-architecture): the project had NO test CI before this — only
-# release.yml. This workflow gates the re-architecture: `cargo test --workspace`
-# must stay green, and the ADR-0072/0078 invariant (the UI never calls git2) is
-# enforced by a grep gate. fmt/clippy and the Linux test leg are ADVISORY for now
+# release.yml. This workflow gates `main` (and the `develop` integration branch):
+# `cargo test --workspace` must stay green, and the ADR-0072/0078 invariant (the
+# UI never calls git2) is enforced by a grep gate. fmt/clippy and the Linux test
+# leg are ADVISORY for now
 # (the v0.2.0 tree carries pre-existing fmt/clippy debt; making them blocking would
 # red the board on day one — they are tracked for cleanup in S7).
 
 on:
   push:
-    branches: [main, re-architecture]
+    branches: [main, develop]
   pull_request:
-    branches: [main, re-architecture]
+    branches: [main, develop]
   workflow_dispatch:
 
 permissions:

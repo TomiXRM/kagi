@@ -146,7 +146,7 @@ impl KagiApp {
                 let Some(rp) = app.repo_path.clone() else {
                     return;
                 };
-                let branch = app.status_summary.branch.clone();
+                let branch = app.active_view.status_summary.branch.clone();
                 let msg = app.last_draft_value.clone();
                 if msg.trim().is_empty() {
                     let _ = kagi::git::clear_draft(&rp, &branch);
@@ -193,7 +193,7 @@ impl KagiApp {
         if let Some(ref input_entity) = self.commit_input {
             let current = input_entity.read(cx).value().to_string();
             if current.trim().is_empty() {
-                let branch = self.status_summary.branch.clone();
+                let branch = self.active_view.status_summary.branch.clone();
                 if let Some(d) = kagi::git::load_draft(&repo_path, &branch) {
                     eprintln!("[kagi] draft: loaded {} (mode={})", branch, d.mode);
                     let entity = input_entity.clone();
@@ -821,7 +821,7 @@ impl KagiApp {
                     Ok((_new_short, after)) => {
                         eprintln!("[kagi] async: commit finished");
                         // A successful commit clears the branch draft (T-COMMIT-007).
-                        let branch = app.status_summary.branch.clone();
+                        let branch = app.active_view.status_summary.branch.clone();
                         let _ = kagi::git::clear_draft(&repo_path, &branch);
                         eprintln!("[kagi] draft: cleared {}", branch);
                         app.last_draft_value = String::new();
@@ -906,7 +906,7 @@ impl KagiApp {
             Ok(id) => {
                 eprintln!("[kagi] executed: merge commit {}", id.short());
                 let _ = kagi::git::ResolutionBuffer::clear(&repo_path);
-                let branch = self.status_summary.branch.clone();
+                let branch = self.active_view.status_summary.branch.clone();
                 let _ = kagi::git::clear_draft(&repo_path, &branch);
                 self.last_draft_value = String::new();
                 let after = StateSummary {

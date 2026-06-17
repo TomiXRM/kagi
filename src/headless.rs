@@ -263,7 +263,9 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
 
     // KAGI_SELECT_FIRST=1: auto-select row 0 at startup for headless
     // verification of the detail panel render path (T010).
-    if std::env::var("KAGI_SELECT_FIRST").as_deref() == Ok("1") && !app_state.rows.is_empty() {
+    if std::env::var("KAGI_SELECT_FIRST").as_deref() == Ok("1")
+        && !app_state.active_view.rows.is_empty()
+    {
         app_state.select(0);
     }
 
@@ -530,6 +532,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
     if let Ok(row_str) = std::env::var("KAGI_CHECKOUT_COMMIT") {
         let row_index: usize = row_str.parse().unwrap_or(usize::MAX);
         let commit_id = app_state
+            .active_view
             .details
             .get(row_index)
             .map(|detail| kagi::git::CommitId(detail.full_sha.as_ref().to_string()));
@@ -1307,7 +1310,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
     // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, execute immediately.
     if let Ok(sha_str) = std::env::var("KAGI_REVERT") {
         let commit_id = match sha_str.parse::<usize>() {
-            Ok(row) => match app_state.details.get(row) {
+            Ok(row) => match app_state.active_view.details.get(row) {
                 Some(detail) => {
                     eprintln!(
                         "[kagi] KAGI_REVERT: row {} -> {}",

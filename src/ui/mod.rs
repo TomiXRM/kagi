@@ -757,31 +757,12 @@ pub struct KagiApp {
     /// Used to render the sidebar.  The first element of the tuple is the
     /// branch name; the second is whether it is the current HEAD branch.
     pub branches: Vec<(String, bool)>,
-    /// When `Some`, the plan confirmation modal is visible.
-    pub plan_modal: Option<CheckoutPlanModal>,
-    /// When `Some`, the pull plan confirmation modal is visible (T-HT-003).
-    pub pull_modal: Option<PullPlanModal>,
-    /// When `Some`, the undo-commit confirmation modal is visible (T-HT-009).
-    pub undo_modal: Option<UndoPlanModal>,
-    /// When `Some`, the amend confirmation modal is visible (T-COMMIT-011).
-    pub amend_modal: Option<AmendPlanModal>,
-    /// When `Some`, the stash-pop confirmation modal is visible (T-HT-007).
-    pub pop_modal: Option<PopPlanModal>,
-    /// When `Some`, the stash-drop confirmation modal is visible (ADR-0087).
-    pub stash_drop_modal: Option<StashDropModal>,
-    /// When `Some`, the push plan confirmation modal is visible (T-HT-004).
-    pub push_modal: Option<PushPlanModal>,
-    pub branch_plan_modal: Option<BranchPlanModal>,
-    pub set_upstream_modal: Option<SetUpstreamModal>,
-    pub rename_branch_modal: Option<RenameBranchModal>,
-    /// When `Some`, the merge plan confirmation modal is visible.
-    pub merge_modal: Option<MergePlanModal>,
-    /// When `Some`, the remote tracking checkout plan modal is visible.
-    pub tracking_checkout_modal: Option<TrackingCheckoutPlanModal>,
-    /// When `Some`, the create-branch modal is visible.
-    pub create_branch_modal: Option<CreateBranchModal>,
-    /// When `Some`, the create-worktree modal is visible.
-    pub create_worktree_modal: Option<CreateWorktreeModal>,
+    /// The single active modal (ADR-0076 / issue #13 P7). At most one modal is
+    /// open at a time; this replaces the ~22 mutually-exclusive `Option<XModal>`
+    /// fields that used to live here. Access goes through the generated
+    /// accessor methods (`plan_modal()`, `set_plan_modal()`, `clear_plan_modal()`,
+    /// `take_plan_modal()`, …) so existing call sites keep their per-modal names.
+    pub active_modal: Option<ActiveModal>,
     /// When `Some`, the remote SSH connect / directory-browse modal is visible
     /// (ADR-0089 Phase 1).
     pub remote_browse_modal: Option<RemoteBrowseModal>,
@@ -798,16 +779,8 @@ pub struct KagiApp {
     pub stashes: Vec<Stash>,
     /// Whether the working tree is dirty (used to show/hide the Stash button).
     pub is_dirty: bool,
-    /// When `Some`, the stash push confirmation modal is visible.
-    pub stash_push_modal: Option<StashPushModal>,
-    /// When `Some`, the stash apply confirmation modal is visible.
-    pub stash_apply_modal: Option<StashApplyModal>,
     /// Focus handle for the stash push modal text input.
     pub stash_push_focus: Option<FocusHandle>,
-    /// When `Some`, the cherry-pick plan modal is visible (T016).
-    pub cherry_pick_modal: Option<CherryPickModal>,
-    /// When `Some`, the revert plan modal is visible (T-CM-034).
-    pub revert_modal: Option<RevertModal>,
     /// Status footer message (T017): the result of the most recent operation.
     pub status_footer: FooterStatus,
     /// Current sidebar width in pixels (T023: user-resizable).
@@ -903,7 +876,7 @@ pub struct KagiApp {
     pub history_seed_attempted: bool,
     /// Set while an Undo/Redo plan modal is open; carries the entry being
     /// previewed and whether it is an undo (`true`) or redo (`false`).
-    pub history_modal: Option<HistoryPlanModal>,
+    /// (Stored in `active_modal` — see the `history_modal()` accessor.)
     // ── T-BP-007 / W4-TABS: Terminal sessions ────────────────────
     /// Terminal sessions keyed by repository path so each tab keeps its own
     /// live PTY across tab switches (W4-TABS / ADR-0027).  A session is created
@@ -999,11 +972,6 @@ pub struct KagiApp {
     /// and new plan modals are refused so operations never overlap.
     pub busy_op: Option<&'static str>,
     // ── W2-DELETE: Delete-branch modal ───────────────────────
-    /// When `Some`, the delete-branch confirmation modal is visible.
-    pub delete_branch_modal: Option<DeleteBranchModal>,
-    // ── W17-DISCARD: discard confirmation modal ──────────────
-    /// When `Some`, the discard (danger) confirmation modal is visible.
-    pub discard_modal: Option<DiscardModal>,
     /// Commit row context menu state (right-click anchor + target row).
     pub commit_menu: Option<CommitMenuState>,
     /// Branch sidebar context menu state (right-click anchor + target branch).
@@ -1135,7 +1103,7 @@ pub struct KagiApp {
     pub conflict_ab_scroll_handle: UniformListScrollHandle,
     /// T-CONFLICT-FLOW-032 (ADR-0068): sequencer `<op> --continue` confirmation
     /// modal, shown when Continue routes a rebase / cherry-pick / revert.
-    pub conflict_continue_modal: Option<ConflictContinuePlanModal>,
+    /// (Stored in `active_modal` — see the `conflict_continue_modal()` accessor.)
     /// ADR-0089: File History view state.  `Some` while the dedicated
     /// single-file history view occupies the center+right area; `None` shows
     /// the normal commit graph / diff body.
@@ -1383,30 +1351,13 @@ impl KagiApp {
             compare_view: None,
             main_diff_scroll_handle: UniformListScrollHandle::new(),
             branches,
-            plan_modal: None,
-            pull_modal: None,
-            undo_modal: None,
-            amend_modal: None,
-            pop_modal: None,
-            stash_drop_modal: None,
-            push_modal: None,
-            branch_plan_modal: None,
-            set_upstream_modal: None,
-            rename_branch_modal: None,
-            merge_modal: None,
-            tracking_checkout_modal: None,
-            create_branch_modal: None,
-            create_worktree_modal: None,
+            active_modal: None,
             remote_browse_modal: None,
             remote_view: None,
             modal_focus: None,
             stashes,
             is_dirty,
-            stash_push_modal: None,
-            stash_apply_modal: None,
             stash_push_focus: None,
-            cherry_pick_modal: None,
-            revert_modal: None,
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
             sidebar_width: SIDEBAR_DEFAULT,
             panel_width: PANEL_DEFAULT,
@@ -1441,7 +1392,6 @@ impl KagiApp {
             oplog_expanded: None,
             operation_history: kagi::git::OperationHistory::new(),
             history_seed_attempted: false,
-            history_modal: None,
             terminal_sessions: HashMap::new(),
             tabs: Vec::new(),
             active_tab: 0,
@@ -1473,8 +1423,6 @@ impl KagiApp {
             draft_save_gen: 0,
             refresh_spin_started: None,
             // W2-DELETE
-            delete_branch_modal: None,
-            discard_modal: None,
             commit_menu: None,
             branch_menu: None,
             stash_menu: None,
@@ -1513,7 +1461,6 @@ impl KagiApp {
             last_working_status: None,
             conflict_selected_hunk: 0,
             conflict_ab_scroll_handle: UniformListScrollHandle::new(),
-            conflict_continue_modal: None,
             file_history: None,
             file_history_menu: None,
         }
@@ -1538,30 +1485,13 @@ impl KagiApp {
             compare_view: None,
             main_diff_scroll_handle: UniformListScrollHandle::new(),
             branches: Vec::new(),
-            plan_modal: None,
-            pull_modal: None,
-            undo_modal: None,
-            amend_modal: None,
-            pop_modal: None,
-            stash_drop_modal: None,
-            push_modal: None,
-            branch_plan_modal: None,
-            set_upstream_modal: None,
-            rename_branch_modal: None,
-            merge_modal: None,
-            tracking_checkout_modal: None,
-            create_branch_modal: None,
-            create_worktree_modal: None,
+            active_modal: None,
             remote_browse_modal: None,
             remote_view: None,
             modal_focus: None,
             stashes: Vec::new(),
             is_dirty: false,
-            stash_push_modal: None,
-            stash_apply_modal: None,
             stash_push_focus: None,
-            cherry_pick_modal: None,
-            revert_modal: None,
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
             sidebar_width: SIDEBAR_DEFAULT,
             panel_width: PANEL_DEFAULT,
@@ -1596,7 +1526,6 @@ impl KagiApp {
             oplog_expanded: None,
             operation_history: kagi::git::OperationHistory::new(),
             history_seed_attempted: false,
-            history_modal: None,
             terminal_sessions: HashMap::new(),
             tabs: Vec::new(),
             active_tab: 0,
@@ -1628,8 +1557,6 @@ impl KagiApp {
             draft_save_gen: 0,
             refresh_spin_started: None,
             // W2-DELETE
-            delete_branch_modal: None,
-            discard_modal: None,
             commit_menu: None,
             branch_menu: None,
             stash_menu: None,
@@ -1668,7 +1595,6 @@ impl KagiApp {
             last_working_status: None,
             conflict_selected_hunk: 0,
             conflict_ab_scroll_handle: UniformListScrollHandle::new(),
-            conflict_continue_modal: None,
             file_history: None,
             file_history_menu: None,
         }
@@ -1722,25 +1648,25 @@ impl KagiApp {
         // re-spawn the async re-load, so callers that want to keep it open use
         // `reload_external` / `refresh_file_history` (which do have `cx`).
         self.file_history = None;
-        self.plan_modal = None;
-        self.pull_modal = None;
-        self.undo_modal = None;
-        self.amend_modal = None;
-        self.pop_modal = None;
-        self.stash_drop_modal = None;
-        self.branch_plan_modal = None;
-        self.set_upstream_modal = None;
-        self.rename_branch_modal = None;
-        self.discard_modal = None;
-        self.create_branch_modal = None;
-        self.create_worktree_modal = None;
+        self.clear_plan_modal();
+        self.clear_pull_modal();
+        self.clear_undo_modal();
+        self.clear_amend_modal();
+        self.clear_pop_modal();
+        self.clear_stash_drop_modal();
+        self.clear_branch_plan_modal();
+        self.clear_set_upstream_modal();
+        self.clear_rename_branch_modal();
+        self.clear_discard_modal();
+        self.clear_create_branch_modal();
+        self.clear_create_worktree_modal();
         self.modal_focus = None;
-        self.stash_push_modal = None;
-        self.stash_apply_modal = None;
+        self.clear_stash_push_modal();
+        self.clear_stash_apply_modal();
         self.stash_push_focus = None;
-        self.cherry_pick_modal = None;
-        self.revert_modal = None;
-        self.conflict_continue_modal = None;
+        self.clear_cherry_pick_modal();
+        self.clear_revert_modal();
+        self.clear_conflict_continue_modal();
         // A merge that has been continued to the commit panel triggers its own
         // FS-watcher reload (staging writes the working tree + index). Preserve
         // the commit panel + merge message across that self-induced reload so the
@@ -2153,7 +2079,7 @@ impl KagiApp {
 
     /// Cancel and close the checkout plan modal without making any changes.
     pub fn cancel_modal(&mut self) {
-        self.plan_modal = None;
+        self.clear_plan_modal();
     }
 
     // ── Create-branch modal (T014) ───────────────────────────
@@ -2238,19 +2164,19 @@ impl KagiApp {
     /// Re-plan whichever input-bearing modal is open (used by the debounce
     /// timer and as a freshness guard right before confirm).
     fn run_modal_replans(&mut self) {
-        if self.create_branch_modal.is_some() {
+        if self.create_branch_modal().is_some() {
             self.replan_create_branch();
         }
-        if self.create_worktree_modal.is_some() {
+        if self.create_worktree_modal().is_some() {
             self.replan_create_worktree();
         }
-        if self.stash_push_modal.is_some() {
+        if self.stash_push_modal().is_some() {
             self.replan_stash_push();
         }
-        if self.set_upstream_modal.is_some() {
+        if self.set_upstream_modal().is_some() {
             self.replan_set_upstream();
         }
-        if self.rename_branch_modal.is_some() {
+        if self.rename_branch_modal().is_some() {
             self.replan_rename_branch();
         }
     }
@@ -2266,7 +2192,7 @@ impl KagiApp {
     /// field is kept in sync for the plan/confirm/headless paths.
     fn sync_modal_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // ── Create-branch ───────────────────────────────────
-        if let Some(m) = self.create_branch_modal.as_mut() {
+        if let Some(m) = self.create_branch_modal_mut() {
             if m.input_state.is_none() {
                 let st = cx.new(|cx| InputState::new(window, cx).placeholder("branch-name"));
                 st.update(cx, |s, cx| s.focus(window, cx));
@@ -2331,7 +2257,7 @@ impl KagiApp {
         // Auto-path: while the user has not touched the path field, it
         // follows the branch name (same behaviour as before).
         let mut set_path: Option<String> = None;
-        if let Some(m) = self.create_worktree_modal.as_mut() {
+        if let Some(m) = self.create_worktree_modal_mut() {
             if m.branch_state.is_none() {
                 let st = cx.new(|cx| InputState::new(window, cx).placeholder("branch-name"));
                 st.update(cx, |s, cx| s.focus(window, cx));
@@ -2384,7 +2310,7 @@ impl KagiApp {
             } else {
                 &branch
             });
-            if let Some(m) = self.create_worktree_modal.as_mut() {
+            if let Some(m) = self.create_worktree_modal_mut() {
                 m.path_input = auto.clone();
                 if let Some(st) = m.path_state.clone() {
                     st.update(cx, |s, cx| s.set_value(auto, window, cx));
@@ -2437,7 +2363,7 @@ impl KagiApp {
         }
 
         // ── Stash push (message) ────────────────────────────
-        if let Some(m) = self.stash_push_modal.as_mut() {
+        if let Some(m) = self.stash_push_modal_mut() {
             if m.input_state.is_none() {
                 let st = cx
                     .new(|cx| InputState::new(window, cx).placeholder("stash message (optional)"));
@@ -2456,7 +2382,7 @@ impl KagiApp {
             }
         }
 
-        if let Some(m) = self.set_upstream_modal.as_mut() {
+        if let Some(m) = self.set_upstream_modal_mut() {
             if m.input_state.is_none() {
                 let initial = m.input.clone();
                 let st = cx.new(|cx| {
@@ -2479,7 +2405,7 @@ impl KagiApp {
             }
         }
 
-        if let Some(m) = self.rename_branch_modal.as_mut() {
+        if let Some(m) = self.rename_branch_modal_mut() {
             if m.input_state.is_none() {
                 let initial = m.input.clone();
                 let st = cx.new(|cx| {
@@ -4517,8 +4443,7 @@ impl KagiApp {
                 self.open_create_branch_modal(target, cx);
                 eprintln!(
                     "[kagi] context-menu: create-branch {}",
-                    self.create_branch_modal
-                        .as_ref()
+                    self.create_branch_modal()
                         .map(|m| m.at.short())
                         .unwrap_or_default()
                 );
@@ -4527,8 +4452,7 @@ impl KagiApp {
                 self.open_create_worktree_modal(target, cx);
                 eprintln!(
                     "[kagi] context-menu: create-worktree {}",
-                    self.create_worktree_modal
-                        .as_ref()
+                    self.create_worktree_modal()
                         .map(|m| m.at.short())
                         .unwrap_or_default()
                 );
@@ -4577,47 +4501,47 @@ impl KagiApp {
     /// choice overlays (update, menu/settings) are consumed but not actioned.
     /// (User request: Enter approves a modal, Esc cancels it.)
     fn confirm_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.discard_modal.is_some() {
+        if self.discard_modal().is_some() {
             self.start_discard(cx);
-        } else if self.conflict_continue_modal.is_some() {
+        } else if self.conflict_continue_modal().is_some() {
             self.confirm_conflict_continue(cx);
-        } else if self.history_modal.is_some() {
+        } else if self.history_modal().is_some() {
             self.confirm_history();
-        } else if self.amend_modal.is_some() {
+        } else if self.amend_modal().is_some() {
             self.confirm_amend();
-        } else if self.undo_modal.is_some() {
+        } else if self.undo_modal().is_some() {
             self.confirm_undo();
-        } else if self.cherry_pick_modal.is_some() {
+        } else if self.cherry_pick_modal().is_some() {
             self.start_cherry_pick(cx);
-        } else if self.revert_modal.is_some() {
+        } else if self.revert_modal().is_some() {
             self.start_revert(cx);
-        } else if self.stash_apply_modal.is_some() {
+        } else if self.stash_apply_modal().is_some() {
             self.confirm_stash_apply();
-        } else if self.stash_push_modal.is_some() {
+        } else if self.stash_push_modal().is_some() {
             self.confirm_stash_push(cx);
-        } else if self.create_worktree_modal.is_some() {
+        } else if self.create_worktree_modal().is_some() {
             self.start_create_worktree(cx);
-        } else if self.create_branch_modal.is_some() {
+        } else if self.create_branch_modal().is_some() {
             self.confirm_create_branch();
-        } else if self.rename_branch_modal.is_some() {
+        } else if self.rename_branch_modal().is_some() {
             self.start_rename_branch(cx);
-        } else if self.set_upstream_modal.is_some() {
+        } else if self.set_upstream_modal().is_some() {
             self.start_set_upstream(cx);
-        } else if self.tracking_checkout_modal.is_some() {
+        } else if self.tracking_checkout_modal().is_some() {
             self.start_tracking_checkout(cx);
-        } else if self.merge_modal.is_some() {
+        } else if self.merge_modal().is_some() {
             self.start_merge(cx);
-        } else if self.branch_plan_modal.is_some() {
+        } else if self.branch_plan_modal().is_some() {
             self.start_branch_plan(cx);
-        } else if self.delete_branch_modal.is_some() {
+        } else if self.delete_branch_modal().is_some() {
             self.confirm_delete_branch();
-        } else if self.pop_modal.is_some() {
+        } else if self.pop_modal().is_some() {
             self.confirm_pop();
-        } else if self.push_modal.is_some() {
+        } else if self.push_modal().is_some() {
             self.confirm_push();
-        } else if self.pull_modal.is_some() {
+        } else if self.pull_modal().is_some() {
             self.confirm_pull();
-        } else if self.plan_modal.is_some() {
+        } else if self.plan_modal().is_some() {
             self.confirm_checkout();
         } else if self.smart_commit.modal.is_some() {
             self.confirm_smart_consent(cx);
@@ -4641,47 +4565,47 @@ impl KagiApp {
     /// Esc while a modal is open: cancel/close the active modal (same priority
     /// order as `confirm_active_modal`). Returns `true` if a modal was open.
     fn cancel_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.discard_modal.is_some() {
+        if self.discard_modal().is_some() {
             self.cancel_discard_modal();
-        } else if self.conflict_continue_modal.is_some() {
+        } else if self.conflict_continue_modal().is_some() {
             self.cancel_conflict_continue();
-        } else if self.history_modal.is_some() {
-            self.history_modal = None;
-        } else if self.amend_modal.is_some() {
+        } else if self.history_modal().is_some() {
+            self.clear_history_modal();
+        } else if self.amend_modal().is_some() {
             self.cancel_amend_modal();
-        } else if self.undo_modal.is_some() {
+        } else if self.undo_modal().is_some() {
             self.cancel_undo_modal();
-        } else if self.cherry_pick_modal.is_some() {
+        } else if self.cherry_pick_modal().is_some() {
             self.cancel_cherry_pick_modal();
-        } else if self.revert_modal.is_some() {
+        } else if self.revert_modal().is_some() {
             self.cancel_revert_modal();
-        } else if self.stash_apply_modal.is_some() {
+        } else if self.stash_apply_modal().is_some() {
             self.cancel_stash_apply_modal();
-        } else if self.stash_push_modal.is_some() {
+        } else if self.stash_push_modal().is_some() {
             self.cancel_stash_push_modal();
-        } else if self.create_worktree_modal.is_some() {
+        } else if self.create_worktree_modal().is_some() {
             self.cancel_create_worktree_modal();
-        } else if self.create_branch_modal.is_some() {
+        } else if self.create_branch_modal().is_some() {
             self.cancel_create_branch_modal();
-        } else if self.rename_branch_modal.is_some() {
+        } else if self.rename_branch_modal().is_some() {
             self.cancel_rename_branch_modal();
-        } else if self.set_upstream_modal.is_some() {
+        } else if self.set_upstream_modal().is_some() {
             self.cancel_set_upstream_modal();
-        } else if self.tracking_checkout_modal.is_some() {
+        } else if self.tracking_checkout_modal().is_some() {
             self.cancel_tracking_checkout_modal();
-        } else if self.merge_modal.is_some() {
+        } else if self.merge_modal().is_some() {
             self.cancel_merge_modal();
-        } else if self.branch_plan_modal.is_some() {
+        } else if self.branch_plan_modal().is_some() {
             self.cancel_branch_plan_modal();
-        } else if self.delete_branch_modal.is_some() {
+        } else if self.delete_branch_modal().is_some() {
             self.cancel_delete_branch_modal();
-        } else if self.pop_modal.is_some() {
+        } else if self.pop_modal().is_some() {
             self.cancel_pop_modal();
-        } else if self.push_modal.is_some() {
+        } else if self.push_modal().is_some() {
             self.cancel_push_modal();
-        } else if self.pull_modal.is_some() {
+        } else if self.pull_modal().is_some() {
             self.cancel_pull_modal();
-        } else if self.plan_modal.is_some() {
+        } else if self.plan_modal().is_some() {
             self.cancel_modal();
         } else if self.smart_commit.modal.is_some() {
             self.cancel_smart_modal(cx);

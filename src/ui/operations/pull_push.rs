@@ -53,7 +53,7 @@ impl KagiApp {
                     self.status_footer = FooterStatus::Idle(SharedString::from(""));
                     return;
                 }
-                self.pull_modal = Some(PullPlanModal {
+                self.set_pull_modal(PullPlanModal {
                     plan: std::sync::Arc::new(plan),
                     error: None,
                 });
@@ -67,7 +67,7 @@ impl KagiApp {
 
     /// Close the pull modal without executing.
     pub fn cancel_pull_modal(&mut self) {
-        self.pull_modal = None;
+        self.clear_pull_modal();
     }
 
     /// Confirm the pull plan synchronously: preflight, fetch via CLI, then
@@ -75,7 +75,7 @@ impl KagiApp {
     /// KAGI_PULL path (no event loop). The UI button uses `start_pull`,
     /// which runs the same blocking core on a background thread (W3-NOTIFY).
     pub fn confirm_pull(&mut self) {
-        let modal = match self.pull_modal.clone() {
+        let modal = match self.pull_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -99,7 +99,7 @@ impl KagiApp {
 
         match pull_blocking(&repo_path, &modal.plan) {
             Ok((summary, after_summary)) => {
-                self.pull_modal = None;
+                self.clear_pull_modal();
                 self.record_op(
                     "pull",
                     modal.plan.current.clone(),
@@ -121,7 +121,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                self.pull_modal = Some(PullPlanModal {
+                self.set_pull_modal(PullPlanModal {
                     plan: modal.plan.clone(),
                     error: Some(SharedString::from(err_msg)),
                 });
@@ -136,7 +136,7 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let modal = match self.pull_modal.clone() {
+        let modal = match self.pull_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -154,13 +154,13 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            self.pull_modal = None;
+            self.clear_pull_modal();
             cx.notify();
             return;
         }
 
         self.busy_op = Some("pull");
-        self.pull_modal = None;
+        self.clear_pull_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
         eprintln!("[kagi] async: pull started");
 
@@ -256,7 +256,7 @@ impl KagiApp {
                     self.status_footer = FooterStatus::Idle(SharedString::from(""));
                     return;
                 }
-                self.push_modal = Some(PushPlanModal {
+                self.set_push_modal(PushPlanModal {
                     plan: std::sync::Arc::new(plan),
                     error: None,
                 });
@@ -270,14 +270,14 @@ impl KagiApp {
 
     /// Close the push modal without executing.
     pub fn cancel_push_modal(&mut self) {
-        self.push_modal = None;
+        self.clear_push_modal();
     }
 
     /// Confirm the push plan synchronously: preflight, execute push via CLI.
     /// Used by the headless KAGI_PUSH path. The UI button uses `start_push`
     /// (background thread + toasts, W3-NOTIFY).
     pub fn confirm_push(&mut self) {
-        let modal = match self.push_modal.clone() {
+        let modal = match self.push_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -301,7 +301,7 @@ impl KagiApp {
 
         match push_blocking(&repo_path, &modal.plan) {
             Ok((summary, after_summary)) => {
-                self.push_modal = None;
+                self.clear_push_modal();
                 self.record_op(
                     "push",
                     modal.plan.current.clone(),
@@ -323,7 +323,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                self.push_modal = Some(PushPlanModal {
+                self.set_push_modal(PushPlanModal {
                     plan: modal.plan.clone(),
                     error: Some(SharedString::from(err_msg)),
                 });
@@ -337,7 +337,7 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let modal = match self.push_modal.clone() {
+        let modal = match self.push_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -355,13 +355,13 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            self.push_modal = None;
+            self.clear_push_modal();
             cx.notify();
             return;
         }
 
         self.busy_op = Some("push");
-        self.push_modal = None;
+        self.clear_push_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPush.t()));
         eprintln!("[kagi] async: push started");
 

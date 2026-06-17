@@ -39,7 +39,7 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
-                self.plan_modal = Some(CheckoutPlanModal {
+                self.set_plan_modal(CheckoutPlanModal {
                     stash_first: false,
                     target: CheckoutPlanTarget::Branch(branch.clone()),
                     plan: std::sync::Arc::new(plan),
@@ -78,7 +78,7 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
-                self.plan_modal = Some(CheckoutPlanModal {
+                self.set_plan_modal(CheckoutPlanModal {
                     stash_first: false,
                     target: CheckoutPlanTarget::Commit(commit_id),
                     plan: std::sync::Arc::new(plan),
@@ -106,7 +106,7 @@ impl KagiApp {
         let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                if let Some(m) = self.plan_modal.as_mut() {
+                if let Some(m) = self.plan_modal_mut() {
                     m.error = Some(SharedString::from(format!("stash: repo open error: {}", e)));
                 }
                 return false;
@@ -116,7 +116,7 @@ impl KagiApp {
         let plan = match repo.plan_stash_push(Some(msg), true) {
             Ok(p) => p,
             Err(e) => {
-                if let Some(m) = self.plan_modal.as_mut() {
+                if let Some(m) = self.plan_modal_mut() {
                     m.error = Some(SharedString::from(format!("stash plan error: {}", e)));
                 }
                 return false;
@@ -132,7 +132,7 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            if let Some(m) = self.plan_modal.as_mut() {
+            if let Some(m) = self.plan_modal_mut() {
                 m.error = Some(SharedString::from(format!(
                     "stash refused: {}",
                     plan.blockers.join(" / ")
@@ -164,7 +164,7 @@ impl KagiApp {
                     OpOutcome::Failed { error: err.clone() },
                     &repo_path,
                 );
-                if let Some(m) = self.plan_modal.as_mut() {
+                if let Some(m) = self.plan_modal_mut() {
                     m.error = Some(SharedString::from(err));
                 }
                 false
@@ -173,7 +173,7 @@ impl KagiApp {
     }
 
     pub fn confirm_checkout(&mut self) {
-        let modal = match self.plan_modal.clone() {
+        let modal = match self.plan_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -221,7 +221,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                self.plan_modal = Some(CheckoutPlanModal {
+                self.set_plan_modal(CheckoutPlanModal {
                     stash_first: false,
                     target: modal.target.clone(),
                     plan: modal.plan.clone(),
@@ -242,7 +242,7 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            self.plan_modal = Some(CheckoutPlanModal {
+            self.set_plan_modal(CheckoutPlanModal {
                 stash_first: false,
                 target: modal.target.clone(),
                 plan: modal.plan.clone(),
@@ -266,7 +266,7 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            self.plan_modal = Some(CheckoutPlanModal {
+            self.set_plan_modal(CheckoutPlanModal {
                 stash_first: false,
                 target: modal.target.clone(),
                 plan: modal.plan.clone(),
@@ -348,7 +348,7 @@ impl KagiApp {
     /// thread so a large `checkout_tree` write never freezes the window. The
     /// headless `KAGI_CHECKOUT*` path keeps using `confirm_checkout` (sync).
     pub fn start_checkout(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.plan_modal.clone() {
+        let modal = match self.plan_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -375,7 +375,7 @@ impl KagiApp {
                     rp,
                 );
             }
-            self.plan_modal = None;
+            self.clear_plan_modal();
             cx.notify();
             return;
         }
@@ -389,7 +389,7 @@ impl KagiApp {
         };
 
         self.busy_op = Some("checkout");
-        self.plan_modal = None;
+        self.clear_plan_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCheckout.t()));
         eprintln!("[kagi] async: checkout started");
 
@@ -425,7 +425,7 @@ impl KagiApp {
                             },
                             &repo_path,
                         );
-                        app.plan_modal = Some(CheckoutPlanModal {
+                        app.set_plan_modal(CheckoutPlanModal {
                             stash_first: false,
                             target: target.clone(),
                             plan: plan.clone(),
@@ -454,25 +454,25 @@ impl KagiApp {
             return;
         }
         // Ignore Enter while any overlay / panel / text input is active.
-        if self.plan_modal.is_some()
-            || self.pull_modal.is_some()
-            || self.push_modal.is_some()
-            || self.branch_plan_modal.is_some()
-            || self.set_upstream_modal.is_some()
-            || self.rename_branch_modal.is_some()
-            || self.merge_modal.is_some()
-            || self.tracking_checkout_modal.is_some()
-            || self.undo_modal.is_some()
-            || self.history_modal.is_some()
-            || self.amend_modal.is_some()
-            || self.pop_modal.is_some()
-            || self.create_branch_modal.is_some()
-            || self.create_worktree_modal.is_some()
-            || self.stash_push_modal.is_some()
-            || self.stash_apply_modal.is_some()
-            || self.cherry_pick_modal.is_some()
-            || self.delete_branch_modal.is_some()
-            || self.discard_modal.is_some()
+        if self.plan_modal().is_some()
+            || self.pull_modal().is_some()
+            || self.push_modal().is_some()
+            || self.branch_plan_modal().is_some()
+            || self.set_upstream_modal().is_some()
+            || self.rename_branch_modal().is_some()
+            || self.merge_modal().is_some()
+            || self.tracking_checkout_modal().is_some()
+            || self.undo_modal().is_some()
+            || self.history_modal().is_some()
+            || self.amend_modal().is_some()
+            || self.pop_modal().is_some()
+            || self.create_branch_modal().is_some()
+            || self.create_worktree_modal().is_some()
+            || self.stash_push_modal().is_some()
+            || self.stash_apply_modal().is_some()
+            || self.cherry_pick_modal().is_some()
+            || self.delete_branch_modal().is_some()
+            || self.discard_modal().is_some()
             || self.commit_menu.is_some()
             || self.commit_panel_open
         {
@@ -510,7 +510,7 @@ impl KagiApp {
             None => self.open_checkout_commit_modal(id),
         }
         if dirty {
-            if let Some(m) = self.plan_modal.as_mut() {
+            if let Some(m) = self.plan_modal_mut() {
                 m.stash_first = true;
                 // Surface it in the plan card's warnings.
                 let mut plan = (*m.plan).clone();

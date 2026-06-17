@@ -31,7 +31,7 @@ impl KagiApp {
             branch_input.as_str()
         };
         let path_input = self.default_worktree_path(default_branch);
-        self.create_worktree_modal = Some(CreateWorktreeModal {
+        self.set_create_worktree_modal(CreateWorktreeModal {
             at,
             start_title,
             branch_input,
@@ -49,7 +49,7 @@ impl KagiApp {
     }
 
     pub fn cancel_create_worktree_modal(&mut self) {
-        self.create_worktree_modal = None;
+        self.clear_create_worktree_modal();
     }
 
     pub(crate) fn default_worktree_path(&self, branch: &str) -> String {
@@ -80,7 +80,7 @@ impl KagiApp {
     }
 
     pub(crate) fn replan_create_worktree(&mut self) {
-        let (at, branch, path, allow_existing_branch) = match self.create_worktree_modal.as_ref() {
+        let (at, branch, path, allow_existing_branch) = match self.create_worktree_modal() {
             Some(m) => (
                 m.at.clone(),
                 m.branch_input.clone(),
@@ -129,7 +129,7 @@ impl KagiApp {
                     keyed.push((e.to_string(), crate::ui::i18n::worktree_path_error(&e)));
                 }
                 let localized = localize_plan_blockers(&plan.blockers, keyed.into_iter());
-                if let Some(ref mut modal) = self.create_worktree_modal {
+                if let Some(modal) = self.create_worktree_modal_mut() {
                     modal.plan = Some(std::sync::Arc::new(plan));
                     modal.localized_blockers = localized;
                 }
@@ -153,7 +153,7 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let modal = match self.create_worktree_modal.clone() {
+        let modal = match self.create_worktree_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -181,7 +181,7 @@ impl KagiApp {
         };
 
         self.busy_op = Some("create-worktree");
-        self.create_worktree_modal = None;
+        self.clear_create_worktree_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCreateWorktree.t()));
         eprintln!("[kagi] async: create-worktree started");
 

@@ -532,7 +532,7 @@ impl KagiApp {
                     "[kagi] {}: opening continue confirmation (sequencer)",
                     op_name
                 );
-                self.conflict_continue_modal = Some(ConflictContinuePlanModal {
+                self.set_conflict_continue_modal(ConflictContinuePlanModal {
                     plan: std::sync::Arc::new(*plan),
                     error: None,
                 });
@@ -552,7 +552,7 @@ impl KagiApp {
         let Some(mode) = self.conflict.clone() else {
             return;
         };
-        let Some(modal) = self.conflict_continue_modal.clone() else {
+        let Some(modal) = self.conflict_continue_modal().cloned() else {
             return;
         };
         let plan = modal.plan;
@@ -583,7 +583,7 @@ impl KagiApp {
                     OpOutcome::Success { after },
                     &repo_path,
                 );
-                self.conflict_continue_modal = None;
+                self.clear_conflict_continue_modal();
                 self.reload();
             }
             Err(e) => {
@@ -597,7 +597,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                if let Some(modal) = self.conflict_continue_modal.as_mut() {
+                if let Some(modal) = self.conflict_continue_modal_mut() {
                     modal.error = Some(SharedString::from(err_msg));
                 }
             }
@@ -607,7 +607,7 @@ impl KagiApp {
 
     /// Cancel the sequencer continue confirmation modal.
     pub fn cancel_conflict_continue(&mut self) {
-        self.conflict_continue_modal = None;
+        self.clear_conflict_continue_modal();
     }
 
     /// Abort the in-progress operation through the existing plan pipeline:

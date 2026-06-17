@@ -79,10 +79,9 @@ signatures, and the GPUI re-entrancy rule are unchanged. `cargo test
 
 ## Not done (deferred follow-ups, per the review)
 
-- **Medium-2 / P7 / ADR-0076** — `ActiveModal` enum replacing ~25 `Option<XModal>`.
 - **Medium-3 / P5** — ViewModel layer so UI is unit-testable without the `KAGI_*`
   headless harness; then the log-protocol split (Low-1).
 - **P2 / ADR-0075** — collapse active-vs-`tab_cache` dual state into `RepoSession`.
 
 (Done since: Phase 4 `src/ui/operations/` split — see above; serde-backed `Settings`,
-P4 second half — see ADR-0092.)
+P4 second half — see ADR-0092; `ActiveModal` enum / P7 — see ADR-0093.)

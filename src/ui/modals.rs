@@ -491,7 +491,7 @@ pub(crate) fn render_history_modal(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.history_modal = None;
+        this.clear_history_modal();
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh);
         }
@@ -1894,7 +1894,7 @@ pub(crate) fn render_create_branch_modal(
     let toggle_checkout = move |new_checked: &bool, _window: &mut Window, cx: &mut App| {
         let new_checked = *new_checked;
         app_entity.update(cx, |this, cx| {
-            if let Some(ref mut modal) = this.create_branch_modal {
+            if let Some(modal) = this.create_branch_modal_mut() {
                 modal.checkout_after = new_checked;
                 modal.error = None;
             }
@@ -3818,4 +3818,37 @@ pub(crate) fn render_update_modal(
                 .child(card),
         )
         .into_any_element()
+}
+
+// ──────────────────────────────────────────────────────────────
+// ActiveModal — single active-modal enum (ADR-0076 / issue #13 P7)
+// ──────────────────────────────────────────────────────────────
+
+/// The single active modal (ADR-0076 / issue #13 P7). At most one modal is
+/// open at a time; this enum makes that invariant structural instead of
+/// relying on ~22 mutually-exclusive `Option` fields.
+#[derive(Clone)]
+pub enum ActiveModal {
+    Checkout(CheckoutPlanModal),
+    Pull(PullPlanModal),
+    Undo(UndoPlanModal),
+    Amend(AmendPlanModal),
+    Pop(PopPlanModal),
+    StashDrop(StashDropModal),
+    Push(PushPlanModal),
+    BranchPlan(BranchPlanModal),
+    SetUpstream(SetUpstreamModal),
+    RenameBranch(RenameBranchModal),
+    Merge(MergePlanModal),
+    TrackingCheckout(TrackingCheckoutPlanModal),
+    CreateBranch(CreateBranchModal),
+    CreateWorktree(CreateWorktreeModal),
+    StashPush(StashPushModal),
+    StashApply(StashApplyModal),
+    CherryPick(CherryPickModal),
+    Revert(RevertModal),
+    History(HistoryPlanModal),
+    DeleteBranch(DeleteBranchModal),
+    Discard(DiscardModal),
+    ConflictContinue(ConflictContinuePlanModal),
 }

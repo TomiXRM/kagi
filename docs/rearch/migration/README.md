@@ -89,8 +89,13 @@ green (739 tests):
   `write_setting` preserves unknown keys (the `SETTINGS_KEYS`-drop foot-gun and the
   hand-written `parse_string_value` are gone). `theme.rs` reads via typed accessors.
 
-Deferred (bigger / behavioral): `ActiveModal` enum (P7/ADR-0076), ViewModel layer +
-log-protocol split (P5), `RepoSession` dual-state collapse (P2/ADR-0075).
+- **P7 / `ActiveModal` enum — see ADR-0093:** the ~22 `Option<XModal>` fields on
+  `KagiApp` collapsed into one `active_modal: Option<ActiveModal>` with per-modal
+  accessors in `src/ui/operations/modal_state.rs`. Implements the ActiveModal half of
+  ADR-0076.
+
+Deferred (bigger / behavioral): ViewModel layer + log-protocol split (P5),
+`RepoSession` dual-state collapse (P2/ADR-0075).
 
 ## Tooling note
 Heavy mechanical-but-intricate extraction (S4, parts of S3/S6) may be delegated to

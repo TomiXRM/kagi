@@ -321,7 +321,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
 
         let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
         if auto_confirm {
-            if let Some(ref modal) = app_state.pull_modal.clone() {
+            if let Some(ref modal) = app_state.pull_modal().cloned() {
                 if modal.plan.blockers.is_empty() {
                     // confirm_pull runs preflight → fetch → FF/merge and logs
                     // [kagi] executed: pull / [kagi] verified: entries.
@@ -354,7 +354,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
 
         let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
         if auto_confirm {
-            if let Some(ref modal) = app_state.push_modal.clone() {
+            if let Some(ref modal) = app_state.push_modal().cloned() {
                 if modal.plan.blockers.is_empty() {
                     // confirm_push runs preflight → execute_push and logs
                     // [kagi] executed: push / [kagi] verified: entries.
@@ -381,7 +381,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
     if std::env::var("KAGI_UNDO").as_deref() == Ok("1") {
         app_state.open_undo_modal();
         if std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1") {
-            if let Some(ref modal) = app_state.undo_modal.clone() {
+            if let Some(ref modal) = app_state.undo_modal().cloned() {
                 if modal.plan.blockers.is_empty() {
                     app_state.confirm_undo();
                 } else {
@@ -397,7 +397,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
         let index: usize = idx.parse().unwrap_or(0);
         app_state.open_pop_modal(index);
         if std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1") {
-            if let Some(ref modal) = app_state.pop_modal.clone() {
+            if let Some(ref modal) = app_state.pop_modal().cloned() {
                 if modal.plan.blockers.is_empty() {
                     app_state.confirm_pop();
                 } else {
@@ -434,7 +434,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                 let message = std::env::var("KAGI_AMEND_MSG").unwrap_or_default();
                 app_state.open_amend_modal_with_message(mode, message);
                 if std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1") {
-                    if let Some(modal) = app_state.amend_modal.clone() {
+                    if let Some(modal) = app_state.amend_modal().cloned() {
                         if modal.plan.blockers.is_empty() {
                             // Stage 1: arm the two-stage confirm.
                             app_state.confirm_amend();
@@ -467,7 +467,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
 
         let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
         if auto_confirm {
-            if let Some(ref modal) = app_state.delete_branch_modal.clone() {
+            if let Some(ref modal) = app_state.delete_branch_modal().cloned() {
                 if modal.plan.blockers.is_empty() {
                     app_state.confirm_delete_branch();
                 } else {
@@ -501,7 +501,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
         if auto_confirm {
             // confirm_checkout runs preflight → execute → reload and logs
             // [kagi] executed: and [kagi] verified: entries.
-            if let Some(ref modal) = app_state.plan_modal.clone() {
+            if let Some(ref modal) = app_state.plan_modal().cloned() {
                 if modal.plan.blockers.is_empty() {
                     app_state.confirm_checkout();
                 } else {
@@ -540,7 +540,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
 
                 let auto_confirm = std::env::var("KAGI_AUTO_CONFIRM").as_deref() == Ok("1");
                 if auto_confirm {
-                    if let Some(ref modal) = app_state.plan_modal.clone() {
+                    if let Some(ref modal) = app_state.plan_modal().cloned() {
                         if modal.plan.blockers.is_empty() {
                             app_state.confirm_checkout();
                         } else {
@@ -604,7 +604,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                         if !auto_confirm {
                             // Without auto-confirm, surface the modal itself so
                             // the create-branch UI can be inspected headlessly.
-                            app_state.create_branch_modal = Some(ui::CreateBranchModal {
+                            app_state.set_create_branch_modal(ui::CreateBranchModal {
                                 input_state: None,
                                 at: at.clone(),
                                 start_title: String::new(),
@@ -958,7 +958,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                     }
                 } else {
                     // Without auto-confirm, surface the modal so it can be inspected headlessly.
-                    app_state.stash_push_modal = Some(StashPushModal {
+                    app_state.set_stash_push_modal(StashPushModal {
                         input_state: None,
                         input: String::new(),
                         plan: Some(std::sync::Arc::new(plan)),
@@ -1110,7 +1110,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                     }
                 } else {
                     // Without auto-confirm, surface the modal.
-                    app_state.stash_apply_modal = Some(StashApplyModal {
+                    app_state.set_stash_apply_modal(StashApplyModal {
                         index,
                         plan: std::sync::Arc::new(plan),
                         error: None,
@@ -1289,7 +1289,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                     }
                 } else {
                     // Without auto-confirm, surface the cherry-pick modal.
-                    app_state.cherry_pick_modal = Some(CherryPickModal {
+                    app_state.set_cherry_pick_modal(CherryPickModal {
                         commit_id,
                         plan: std::sync::Arc::new(plan),
                         error: None,
@@ -1479,7 +1479,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                         );
                     }
                 } else {
-                    app_state.revert_modal = Some(RevertModal {
+                    app_state.set_revert_modal(RevertModal {
                         commit_id,
                         plan: std::sync::Arc::new(plan),
                         error: None,

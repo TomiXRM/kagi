@@ -32,7 +32,7 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
-                self.undo_modal = Some(UndoPlanModal {
+                self.set_undo_modal(UndoPlanModal {
                     plan: std::sync::Arc::new(plan),
                     error: None,
                 });
@@ -45,12 +45,12 @@ impl KagiApp {
     }
 
     pub fn cancel_undo_modal(&mut self) {
-        self.undo_modal = None;
+        self.clear_undo_modal();
     }
 
     /// Confirm undo: preflight → execute (ref-only) → oplog → reload.
     pub fn confirm_undo(&mut self) {
-        let modal = match self.undo_modal.clone() {
+        let modal = match self.undo_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -82,7 +82,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                self.undo_modal = Some(UndoPlanModal {
+                self.set_undo_modal(UndoPlanModal {
                     plan: modal.plan.clone(),
                     error: Some(SharedString::from(err_msg)),
                 });
@@ -99,7 +99,7 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            self.undo_modal = Some(UndoPlanModal {
+            self.set_undo_modal(UndoPlanModal {
                 plan: modal.plan.clone(),
                 error: Some(SharedString::from(err_msg)),
             });
@@ -112,7 +112,7 @@ impl KagiApp {
                     outcome.undone.short(),
                     outcome.now_at.short()
                 );
-                self.undo_modal = None;
+                self.clear_undo_modal();
                 let after = StateSummary {
                     head: format!("branch @ {}", outcome.now_at.short()),
                     dirty: "changes staged".to_string(),
@@ -152,7 +152,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                self.undo_modal = Some(UndoPlanModal {
+                self.set_undo_modal(UndoPlanModal {
                     plan: modal.plan.clone(),
                     error: Some(SharedString::from(err_msg)),
                 });
@@ -277,7 +277,7 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
-                self.history_modal = Some(HistoryPlanModal {
+                self.set_history_modal(HistoryPlanModal {
                     plan: std::sync::Arc::new(plan),
                     entry,
                     is_undo,
@@ -299,7 +299,7 @@ impl KagiApp {
     /// reload. On a stale entry (preflight failure) the entry is left in place
     /// and the error is surfaced.
     pub fn confirm_history(&mut self) {
-        let modal = match self.history_modal.clone() {
+        let modal = match self.history_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -322,7 +322,7 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            self.history_modal = None;
+            self.clear_history_modal();
             return;
         }
 
@@ -338,7 +338,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                self.history_modal = Some(HistoryPlanModal {
+                self.set_history_modal(HistoryPlanModal {
                     error: Some(SharedString::from(err_msg)),
                     ..modal
                 });
@@ -356,7 +356,7 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            self.history_modal = Some(HistoryPlanModal {
+            self.set_history_modal(HistoryPlanModal {
                 error: Some(SharedString::from(err_msg)),
                 ..modal
             });
@@ -377,7 +377,7 @@ impl KagiApp {
                 } else {
                     self.operation_history.redo();
                 }
-                self.history_modal = None;
+                self.clear_history_modal();
                 let after = StateSummary {
                     head: format!("branch '{}' @ {}", outcome.branch, outcome.to.short()),
                     dirty: "index reset to target (working tree preserved)".to_string(),
@@ -410,7 +410,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                self.history_modal = Some(HistoryPlanModal {
+                self.set_history_modal(HistoryPlanModal {
                     error: Some(SharedString::from(err_msg)),
                     ..modal
                 });
@@ -470,7 +470,7 @@ impl KagiApp {
                     plan.warnings.len(),
                     plan.destructive
                 );
-                self.amend_modal = Some(AmendPlanModal {
+                self.set_amend_modal(AmendPlanModal {
                     plan: std::sync::Arc::new(plan),
                     error: None,
                     mode,
@@ -487,13 +487,13 @@ impl KagiApp {
 
     /// Cancel the amend modal (also disarms the two-stage confirm).
     pub fn cancel_amend_modal(&mut self) {
-        self.amend_modal = None;
+        self.clear_amend_modal();
     }
 
     /// First stage of the two-stage confirm: arm the action.  If already armed
     /// this is the final stage and executes the amend (ADR-0023 history-rewrite).
     pub fn confirm_amend(&mut self) {
-        let modal = match self.amend_modal.clone() {
+        let modal = match self.amend_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -518,7 +518,7 @@ impl KagiApp {
 
         // ── Two-stage confirm: first click only arms ─────────
         if !modal.confirm_armed {
-            self.amend_modal = Some(AmendPlanModal {
+            self.set_amend_modal(AmendPlanModal {
                 confirm_armed: true,
                 ..modal
             });
@@ -539,7 +539,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                self.amend_modal = Some(AmendPlanModal {
+                self.set_amend_modal(AmendPlanModal {
                     error: Some(SharedString::from(err_msg)),
                     ..modal
                 });
@@ -556,7 +556,7 @@ impl KagiApp {
                 },
                 &repo_path,
             );
-            self.amend_modal = Some(AmendPlanModal {
+            self.set_amend_modal(AmendPlanModal {
                 error: Some(SharedString::from(err_msg)),
                 ..modal
             });
@@ -578,7 +578,7 @@ impl KagiApp {
                     outcome.old.short(),
                     outcome.new.short()
                 );
-                self.amend_modal = None;
+                self.clear_amend_modal();
                 let after = StateSummary {
                     head: format!(
                         "branch @ {} (was {})",
@@ -622,7 +622,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                self.amend_modal = Some(AmendPlanModal {
+                self.set_amend_modal(AmendPlanModal {
                     error: Some(SharedString::from(err_msg)),
                     ..modal
                 });
@@ -635,7 +635,7 @@ impl KagiApp {
     /// build + commit replace) runs on a background thread. Headless keeps
     /// `confirm_amend` (sync).
     pub fn start_amend(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.amend_modal.clone() {
+        let modal = match self.amend_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -660,7 +660,7 @@ impl KagiApp {
 
         // First click only arms (main thread) — matches confirm_amend exactly.
         if !modal.confirm_armed {
-            self.amend_modal = Some(AmendPlanModal {
+            self.set_amend_modal(AmendPlanModal {
                 confirm_armed: true,
                 ..modal
             });
@@ -675,7 +675,7 @@ impl KagiApp {
         }
 
         self.busy_op = Some("amend");
-        self.amend_modal = None;
+        self.clear_amend_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyAmend.t()));
         eprintln!("[kagi] async: amend started");
 
@@ -718,7 +718,7 @@ impl KagiApp {
                             },
                             &repo_path,
                         );
-                        app.amend_modal = Some(AmendPlanModal {
+                        app.set_amend_modal(AmendPlanModal {
                             plan: plan.clone(),
                             error: Some(SharedString::from(err_msg)),
                             mode,

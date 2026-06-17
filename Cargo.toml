@@ -37,3 +37,12 @@ serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
+
+# Distributed/release builds run compute-heavy paths (tree-sitter highlighting,
+# git2 diffs, commit-graph layout), so tune past Cargo's default release profile
+# (opt-level=3, lto=off, codegen-units=16) for faster runtime + a smaller binary.
+# Trade-off: longer link time in CI. Applies workspace-wide (this is the root).
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

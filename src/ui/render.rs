@@ -2092,6 +2092,13 @@ impl KagiApp {
 
         let commit_list_col = div()
             .flex_1()
+            // Allow the center column to shrink below its longest commit
+            // message's intrinsic width so the right-hand inspector panel always
+            // keeps its space (flex min-width defaults to content size, which for
+            // repos with long commit/merge messages pushes the inspector
+            // off-screen — user report, remote SSH repos with long branch names).
+            .min_w(px(0.))
+            .overflow_hidden()
             .h_full()
             .flex()
             .flex_col()

@@ -3,6 +3,37 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.16] — 2026-06-17
+
+### Added
+- **Remote stash drop over SSH.** The stash context-menu **Drop** now works in
+  the read-only remote view (ADR-0089 Phase 3): the same danger-confirm modal and
+  oplog as local, executing `git stash drop` on the host over the system-`ssh`
+  transport, then re-snapshotting (ADR-0097).
+- **Remote pull over SSH.** The **Pull** button now works in the remote view —
+  `git pull` runs on the host (its own credentials reach its `origin`), so
+  fast-forward and clean-merge pulls complete; a conflict is surfaced for
+  resolution on the host. Same confirm + oplog discipline as local pull (ADR-0098).
+
+### Fixed
+- **Commit detail panel no longer hidden on repos with long commit messages.**
+  The center commit-list column had no flex `min-width`, so a long commit/merge
+  message could push the right-hand Inspector off-screen (most visible on remote
+  dev repos with long branch names): clicking a commit selected it but showed no
+  detail. The column now shrinks and truncates so the Inspector keeps its width.
+- **Stash graph connection lines were drawn off-screen on wide graphs** (many
+  branches). Stash lanes are now packed from the lane count in use near the top
+  of history instead of the global maximum, so the stash nodes and their
+  connection lines stay visible (ADR-0088).
+
+### Changed (internal)
+- **Codebase structural refactor (issue #13).** Added `AGENTS.md`; split the
+  `ui/mod.rs` god-file into `types.rs` / `render.rs` / `operations/` and
+  `git/ops.rs` into per-op modules; extracted `settings.rs`; introduced an
+  `ActiveModal` enum, a `view_models` layer, an `active_view` single source of
+  truth, and a `klog!` log-contract macro (ADRs 0091–0096). Behaviour-preserving;
+  no user-facing change.
+
 ## [0.3.15] — 2026-06-17
 
 ### Added

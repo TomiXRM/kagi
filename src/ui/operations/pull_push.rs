@@ -16,6 +16,43 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
+        // Remote read-only view (ADR-0089 Phase 3): synthesise the plan from the
+        // snapshot's ahead/behind; the pull runs over SSH in `start_pull`.
+        if self.remote_view.is_some() {
+            let s = &self.active_view.status_summary;
+            let branch = s.branch.clone();
+            let behind = s.behind.unwrap_or(0);
+            let ahead = s.ahead.unwrap_or(0);
+            // Nothing to pull by local knowledge → snackbar, no modal (as local).
+            if behind == 0 {
+                self.push_toast(
+                    ToastKind::Sync,
+                    SharedString::from(Msg::AlreadyUpToDatePull.t()),
+                );
+                self.status_footer = FooterStatus::Idle(SharedString::from(""));
+                return;
+            }
+            let upstream = self
+                .active_view
+                .branch_upstream_info
+                .get(&branch)
+                .map(|u| u.remote_branch.clone())
+                .unwrap_or_else(|| "upstream".to_string());
+            let plan = kagi::git::plan_pull_remote(
+                &branch,
+                &upstream,
+                behind,
+                ahead,
+                s.is_dirty,
+                self.active_view.header.to_string(),
+            );
+            eprintln!("[kagi] plan: remote pull branch={branch} behind={behind} ahead={ahead}");
+            self.set_pull_modal(PullPlanModal {
+                plan: std::sync::Arc::new(plan),
+                error: None,
+            });
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -140,6 +177,67 @@ impl KagiApp {
             Some(m) => m,
             None => return,
         };
+
+        // Remote read-only view (ADR-0089 Phase 3): pull over SSH (runs
+        // `git pull` on the host), then re-snapshot. Same confirm + oplog path.
+        if let Some(rv) = self.remote_view.clone() {
+            let before = modal.plan.current.clone();
+            let oplog_path = std::path::PathBuf::from(format!("{}:{}", rv.host.label(), rv.root));
+            self.busy_op = Some("pull");
+            self.clear_pull_modal();
+            self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
+            klog!("async: remote pull started");
+            let (host, root) = (rv.host.clone(), rv.root.clone());
+            let task = cx.background_spawn(async move {
+                kagi::remote::remote_pull(&host, &root).map_err(|e| e.to_string())
+            });
+            cx.spawn(async move |this, acx| {
+                let result = task.await;
+                let _ = this.update(acx, |app, cx| {
+                    app.busy_op = None;
+                    match result {
+                        Ok(summary) => {
+                            klog!("async: remote pull finished — {summary}");
+                            app.record_op(
+                                "pull",
+                                before.clone(),
+                                OpOutcome::Success {
+                                    after: kagi::git::StateSummary {
+                                        head: before.head.clone(),
+                                        dirty: summary.clone(),
+                                    },
+                                },
+                                &oplog_path,
+                            );
+                            app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                                "pull: {summary}"
+                            )));
+                            app.refresh_remote_view(cx);
+                        }
+                        Err(err_msg) => {
+                            klog!("async: remote pull failed — {err_msg}");
+                            app.record_op(
+                                "pull",
+                                before.clone(),
+                                OpOutcome::Failed {
+                                    error: err_msg.clone(),
+                                },
+                                &oplog_path,
+                            );
+                            app.set_pull_modal(PullPlanModal {
+                                plan: modal.plan.clone(),
+                                error: Some(SharedString::from(err_msg)),
+                            });
+                        }
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+            cx.notify();
+            return;
+        }
+
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,

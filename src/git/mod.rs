@@ -82,13 +82,13 @@ pub use ops::{
     execute_undo_commit, fetch_remote, plan_amend, plan_checkout, plan_checkout_commit,
     plan_checkout_tracking_branch, plan_cherry_pick, plan_create_branch,
     plan_create_branch_with_checkout, plan_create_worktree, plan_delete_branch, plan_discard,
-    plan_merge_branch, plan_open_worktree_for_branch, plan_pull, plan_pull_branch_ff, plan_push,
-    plan_push_branch, plan_redo, plan_rename_branch, plan_revert, plan_set_upstream,
-    plan_stash_apply, plan_stash_drop, plan_stash_pop, plan_stash_push, plan_undo,
-    plan_undo_commit, preflight_check, preflight_check_stash, validate_branch_rename,
-    validate_worktree_path, AmendMode, AmendOutcome, BranchRenameValidation, DiscardBackup,
-    DiscardOutcome, FetchOutcome, HistoryMoveOutcome, MergeKind, OperationPlan, PullOutcome,
-    PushOutcome, StateSummary, UndoOutcome,
+    plan_merge_branch, plan_open_worktree_for_branch, plan_pull, plan_pull_branch_ff,
+    plan_pull_remote, plan_push, plan_push_branch, plan_redo, plan_rename_branch, plan_revert,
+    plan_set_upstream, plan_stash_apply, plan_stash_drop, plan_stash_drop_remote, plan_stash_pop,
+    plan_stash_push, plan_undo, plan_undo_commit, preflight_check, preflight_check_stash,
+    validate_branch_rename, validate_worktree_path, AmendMode, AmendOutcome,
+    BranchRenameValidation, DiscardBackup, DiscardOutcome, FetchOutcome, HistoryMoveOutcome,
+    MergeKind, OperationPlan, PullOutcome, PushOutcome, StateSummary, UndoOutcome,
 };
 #[allow(unused_imports)]
 pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};

@@ -1345,7 +1345,7 @@ pub struct ConflictEditorInputs {
 /// (ADR-0089 Phase 2b). Holds what's needed to identify/refresh it; the rendered
 /// data lives in the normal `rows`/`branches`/… fields (applied from a remote
 /// `RepoSnapshot` via [`KagiApp::apply_tab_view`]).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteRepoView {
     /// The connected host.
     pub host: kagi_domain::remote::RemoteHost,
@@ -10183,6 +10183,11 @@ impl KagiApp {
     /// 2c) and cache them under `index`. Runs off the UI thread; idempotent via
     /// `remote_diff_inflight`.
     fn load_remote_changed_files(&mut self, index: usize, cx: &mut Context<Self>) {
+        // Idempotent: skip if already loaded or a load is in flight, so it is
+        // safe to call from both the click handler and the render trigger.
+        if self.diff_cache.contains_key(&index) || self.remote_diff_inflight.contains(&index) {
+            return;
+        }
         let (host, root) = match &self.remote_view {
             Some(v) => (v.host.clone(), v.root.clone()),
             None => return,
@@ -14140,6 +14145,12 @@ fn render_rows(
             let click_handler = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
                 this.commit_menu = None;
                 this.select(ix);
+                // ADR-0089 Phase 2c: kick off the remote changed-files load now
+                // that we have `cx` (the render trigger is a fallback for
+                // keyboard navigation). Idempotent.
+                if this.remote_view.is_some() && this.selected == Some(ix) {
+                    this.load_remote_changed_files(ix, cx);
+                }
                 cx.notify();
             });
             let context_click_handler =

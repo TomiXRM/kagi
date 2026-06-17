@@ -219,6 +219,7 @@ pub(crate) fn init_tab(app: &mut KagiApp, path: &PathBuf) {
     app.tabs.push(ui::tabs::RepoTab {
         path: path.clone(),
         name: info.name.clone(),
+        remote: None,
     });
     app.active_tab = app.tabs.len() - 1;
     app.repo_path = Some(path.clone());

@@ -29,10 +29,15 @@ use super::{FooterStatus, KagiApp, ToastKind};
 /// Lightweight descriptor for one open repository tab (ADR-0027).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepoTab {
-    /// Absolute path to the repository working tree root.
+    /// Absolute path to the repository working tree root. For a **remote** tab
+    /// (ADR-0089 Phase 2b) this is a synthetic identity key (`<host>:<root>`),
+    /// not a local path — `remote` is `Some` in that case.
     pub path: PathBuf,
     /// Display name (working-tree directory name).
     pub name: String,
+    /// `Some` for a remote read-only repository opened over SSH; `None` for a
+    /// normal local repository.
+    pub remote: Option<super::RemoteRepoView>,
 }
 
 /// Height of the tab strip in pixels. The strip doubles as the themed title bar
@@ -82,6 +87,7 @@ impl KagiApp {
         let tab = RepoTab {
             path: path.clone(),
             name: info.name.clone(),
+            remote: None,
         };
         self.tabs.push(tab);
         let new_idx = self.tabs.len() - 1;
@@ -105,6 +111,28 @@ impl KagiApp {
         };
         self.active_tab = index;
         self.error = None;
+
+        // ── Remote tab (ADR-0089 Phase 2b): re-enter the read-only view from
+        //    the cached snapshot. No local path, no Backend, no watcher. ──
+        if let Some(rv) = tab.remote.clone() {
+            self.repo_path = None;
+            self.remote_view = Some(rv);
+            self.reset_per_repo_ui();
+            self.switch_generation = self.switch_generation.wrapping_add(1);
+            if let Some(view) = self.tab_cache.get(&tab.path).cloned() {
+                self.loading_tab = None;
+                self.apply_tab_view(view);
+            } else {
+                // No cache (e.g. restored session): drop the stale tab rather
+                // than show an empty view; the user can reconnect.
+                self.loading_tab = None;
+            }
+            self.save_session();
+            self.log_tabs();
+            self.arm_watcher(cx); // returns early — repo_path is None
+            cx.notify();
+            return;
+        }
 
         // Leaving any remote read-only view (ADR-0089 Phase 2b) — a local repo
         // is becoming active again.
@@ -155,9 +183,12 @@ impl KagiApp {
     /// graph/sidebar/detail views, read-only (ADR-0089 Phase 2b).
     ///
     /// Mirrors the local apply path — `reset_per_repo_ui` + `apply_tab_view` from
-    /// `build_tab_view(&snap, name)` — but sets no `repo_path` and no tab, so the
-    /// fs watcher stays disarmed and every local-path operation guards itself
-    /// off. `remote_view` keeps the workspace (not the welcome screen) visible.
+    /// `build_tab_view(&snap, name)` — but with no `repo_path` (so the fs watcher
+    /// stays disarmed and every local-path operation guards itself off). Unlike a
+    /// local repo there is no working tree, so the tab carries a `remote` marker
+    /// and a **synthetic identity path** (`<host>:<root>`) used as the tab-cache
+    /// key and for de-duplication; `remote_view` keeps the workspace visible and
+    /// drives the read-only UI.
     pub fn enter_remote_view(
         &mut self,
         host: kagi_domain::remote::RemoteHost,
@@ -172,6 +203,12 @@ impl KagiApp {
             .filter(|s| !s.is_empty())
             .unwrap_or("remote")
             .to_string();
+        let label = host.label();
+        let key = PathBuf::from(format!("{label}:{root}"));
+        let rv = super::RemoteRepoView {
+            host,
+            root: root.clone(),
+        };
 
         // No local path: every `self.repo_path.as_ref()?` operation no-ops, and
         // `arm_watcher` returns early.
@@ -180,19 +217,37 @@ impl KagiApp {
         // Supersede any in-flight local background load.
         self.switch_generation = self.switch_generation.wrapping_add(1);
 
+        // Build + cache the view (so switching back to this tab is instant), then
+        // apply it.
         let view = super::build_tab_view(&snap, &name);
+        self.tab_cache.insert(key.clone(), view.clone());
         self.apply_tab_view(view);
         self.loading_tab = None;
 
-        let label = host.label();
-        self.remote_view = Some(super::RemoteRepoView {
-            host,
-            root: root.clone(),
-        });
+        // Reuse an existing tab for the same remote repo, else open a new one.
+        let idx = match self.tabs.iter().position(|t| t.path == key) {
+            Some(i) => {
+                self.tabs[i].remote = Some(rv.clone());
+                i
+            }
+            None => {
+                self.tabs.push(RepoTab {
+                    path: key.clone(),
+                    name: name.clone(),
+                    remote: Some(rv.clone()),
+                });
+                self.tabs.len() - 1
+            }
+        };
+        self.active_tab = idx;
+        self.remote_view = Some(rv);
+
         self.status_footer = FooterStatus::Idle(SharedString::from(format!(
             "Remote (read-only) — {label}:{root}"
         )));
-        eprintln!("[kagi] remote: entered read-only view {label}:{root}");
+        eprintln!("[kagi] remote: entered read-only view {label}:{root} (tab {idx})");
+        self.save_session();
+        self.log_tabs();
         cx.notify();
     }
 
@@ -329,9 +384,12 @@ impl KagiApp {
         if std::env::var("KAGI_NO_RESTORE").as_deref() == Ok("1") {
             return;
         }
+        // Remote tabs (ADR-0089) are ephemeral SSH views with synthetic paths —
+        // never persist them (they'd fail to reopen as local repos on restart).
         let joined = self
             .tabs
             .iter()
+            .filter(|t| t.remote.is_none())
             .map(|t| t.path.to_string_lossy().into_owned())
             .collect::<Vec<_>>()
             .join("\u{1f}");
@@ -358,6 +416,9 @@ impl KagiApp {
             // Last tab closed → Welcome screen.
             self.active_tab = 0;
             self.repo_path = None;
+            // Clear any remote view so the Welcome gate (tabs empty &&
+            // remote_view none) actually shows the Welcome screen (ADR-0089).
+            self.remote_view = None;
             self.show_welcome();
             self.save_session();
             self.log_tabs();
@@ -588,8 +649,13 @@ impl KagiApp {
             let full_path = tab.path.display().to_string();
 
             // chars()-based truncation is handled by `.truncate()` on the label
-            // div (the byte-slice approach panics on multi-byte names).
-            let label = SharedString::from(tab.name.clone());
+            // div (the byte-slice approach panics on multi-byte names). Remote
+            // tabs (ADR-0089) get a small SSH/cloud marker so they're distinct.
+            let label = SharedString::from(if tab.remote.is_some() {
+                format!("\u{2601} {}", tab.name) // ☁ name
+            } else {
+                tab.name.clone()
+            });
 
             let switch = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
                 this.switch_repo(i, cx);
@@ -742,6 +808,7 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
                 app.tabs.push(RepoTab {
                     path: path.clone(),
                     name: info.name.clone(),
+                    remote: None,
                 });
             }
             Err(e) => eprintln!("[kagi] session: skip {} ({})", path.display(), e),

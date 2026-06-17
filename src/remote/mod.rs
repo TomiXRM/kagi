@@ -249,22 +249,29 @@ pub fn remote_snapshot(
     let sha = (sha_out.code == 0).then(|| sha_out.stdout.trim().to_string());
     let head = rs::head_from(branch.as_deref(), sha.as_deref());
 
-    // Commits (all refs, topological order, capped).
+    // Commits, topological order, capped. Match the local `git2` backend's ref
+    // set exactly — branches + tags + remote-tracking branches + HEAD — and in
+    // particular do NOT use `--all`, which would pull in `refs/stash` and render
+    // stash commits as ordinary commits (parity bug; ADR-0089). HEAD is passed as
+    // its resolved SHA (when one exists) so an unborn HEAD can't fail the command.
     let limit_arg = format!("-{commit_limit}");
     let log_fmt = format!("--pretty=format:{}", rs::LOG_FORMAT);
-    let commits = rs::parse_commits(&run_lenient(
-        host,
-        &[
-            "git",
-            "-C",
-            repo,
-            "log",
-            "--all",
-            "--topo-order",
-            limit_arg.as_str(),
-            log_fmt.as_str(),
-        ],
-    )?);
+    let mut log_args: Vec<&str> = vec![
+        "git",
+        "-C",
+        repo,
+        "log",
+        "--topo-order",
+        limit_arg.as_str(),
+        log_fmt.as_str(),
+        "--branches",
+        "--tags",
+        "--remotes",
+    ];
+    if let Some(s) = sha.as_deref() {
+        log_args.push(s);
+    }
+    let commits = rs::parse_commits(&run_lenient(host, &log_args)?);
 
     // Refs.
     let branch_fmt = format!("--format={}", rs::BRANCH_FORMAT);

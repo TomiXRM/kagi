@@ -35,6 +35,7 @@ pub mod tabs;
 pub mod terminal;
 pub mod theme;
 pub mod types;
+pub mod view_models;
 pub mod watcher;
 
 pub use diff_view::*;

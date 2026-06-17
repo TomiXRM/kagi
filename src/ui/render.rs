@@ -2804,112 +2804,12 @@ impl KagiApp {
             ),
         };
 
-        // ── Branch label ───────────────────────────────────────
-        let branch_text = SharedString::from(summary.branch.clone());
-
-        // ── Dirty bullet ──────────────────────────────────────
-        let dirty_chip = if summary.is_dirty {
-            Some(
-                div()
-                    .ml(theme::scaled_px(4.))
-                    .text_color(rgb(theme().color_warning))
-                    .flex_shrink_0()
-                    .child(SharedString::from("\u{25cf}")), // ●
-            )
-        } else {
-            None
-        };
-
-        // ── Staged / unstaged counts ───────────────────────────
-        let staged_chip = if summary.staged > 0 {
-            Some(
-                div()
-                    .ml(theme::scaled_px(4.))
-                    .text_color(rgb(theme().color_success))
-                    .flex_shrink_0()
-                    .child(SharedString::from(format!("+{}", summary.staged))),
-            )
-        } else {
-            None
-        };
-        let unstaged_chip = if summary.unstaged > 0 {
-            Some(
-                div()
-                    .ml(theme::scaled_px(4.))
-                    .text_color(rgb(theme().color_warning))
-                    .flex_shrink_0()
-                    .child(SharedString::from(format!("~{}", summary.unstaged))),
-            )
-        } else {
-            None
-        };
-
-        // ── Conflict count (W2-STATUS) ─────────────────────────
-        let conflict_chip = if summary.conflict_count > 0 {
-            Some(
-                div()
-                    .ml(theme::scaled_px(4.))
-                    .text_color(rgb(theme().color_blocker))
-                    .flex_shrink_0()
-                    .child(SharedString::from(format!("!{}", summary.conflict_count))),
-            )
-        } else {
-            None
-        };
-
-        // ── Stash count (W2-STATUS) ────────────────────────────
-        let stash_chip = if summary.stash_count > 0 {
-            Some(
-                div()
-                    .ml(theme::scaled_px(4.))
-                    .text_color(rgb(theme().text_sub))
-                    .flex_shrink_0()
-                    .child(SharedString::from(format!(
-                        "\u{2691}{}",
-                        summary.stash_count
-                    ))), // ⚑N
-            )
-        } else {
-            None
-        };
-
-        // ── Upstream name (W2-STATUS) ──────────────────────────
-        let upstream_name_chip = if !summary.upstream_name.is_empty() {
-            Some(
-                div()
-                    .ml(theme::scaled_px(6.))
-                    .text_color(rgb(theme().text_muted))
-                    .flex_shrink_0()
-                    .child(SharedString::from(format!(
-                        "\u{2192} {}",
-                        summary.upstream_name
-                    ))), // → origin/main
-            )
-        } else {
-            None
-        };
-
-        // ── Ahead / behind / no upstream ──────────────────────
-        let upstream_chip = match (summary.ahead, summary.behind) {
-            (Some(a), Some(b)) => {
-                let label = format!("\u{2191}{} \u{2193}{}", a, b); // ↑A ↓B
-                Some(
-                    div()
-                        .ml(theme::scaled_px(6.))
-                        .text_color(rgb(theme().text_sub))
-                        .flex_shrink_0()
-                        .child(SharedString::from(label)),
-                )
-            }
-            _ if summary.no_upstream => Some(
-                div()
-                    .ml(theme::scaled_px(6.))
-                    .text_color(rgb(theme().text_muted))
-                    .flex_shrink_0()
-                    .child(SharedString::from("no upstream")),
-            ),
-            _ => None, // detached HEAD or unborn: nothing shown
-        };
+        // ── Status chips (view-model — ADR-0076 / issue #13 P5) ──
+        // The pure StatusBarVM owns the presentation decisions (which chips,
+        // their labels, and order); the view below maps each role to a theme
+        // colour + margin. Unit-tested without a window in view_models.
+        let status_vm = view_models::StatusBarVM::from_summary(&summary);
+        let branch_text = SharedString::from(status_vm.branch.clone());
 
         // ── Last refresh time ──────────────────────────────────
         let refresh_label = if summary.last_refresh_secs > 0 {
@@ -3015,30 +2915,27 @@ impl KagiApp {
                     .child(branch_text),
             );
 
-        // Dirty bullet
-        if let Some(chip) = dirty_chip {
-            bar = bar.child(chip);
-        }
-        // Staged/unstaged counts
-        if let Some(chip) = staged_chip {
-            bar = bar.child(chip);
-        }
-        if let Some(chip) = unstaged_chip {
-            bar = bar.child(chip);
-        }
-        // Conflict / stash counts (W2-STATUS)
-        if let Some(chip) = conflict_chip {
-            bar = bar.child(chip);
-        }
-        if let Some(chip) = stash_chip {
-            bar = bar.child(chip);
-        }
-        // Upstream ahead/behind + tracking-ref name
-        if let Some(chip) = upstream_chip {
-            bar = bar.child(chip);
-        }
-        if let Some(chip) = upstream_name_chip {
-            bar = bar.child(chip);
+        // Status chips (dirty bullet, staged/unstaged, conflict/stash,
+        // ahead-behind, upstream name) — order and labels come from StatusBarVM.
+        for chip in &status_vm.chips {
+            use view_models::StatusChipRole::*;
+            let (color, margin) = match chip.role {
+                Dirty => (theme().color_warning, 4.),
+                Staged => (theme().color_success, 4.),
+                Unstaged => (theme().color_warning, 4.),
+                Conflict => (theme().color_blocker, 4.),
+                Stash => (theme().text_sub, 4.),
+                AheadBehind => (theme().text_sub, 6.),
+                NoUpstream => (theme().text_muted, 6.),
+                UpstreamName => (theme().text_muted, 6.),
+            };
+            bar = bar.child(
+                div()
+                    .ml(theme::scaled_px(margin))
+                    .text_color(rgb(color))
+                    .flex_shrink_0()
+                    .child(SharedString::from(chip.text.clone())),
+            );
         }
         // Refresh time
         if let Some(chip) = refresh_label {

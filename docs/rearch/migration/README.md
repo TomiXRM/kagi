@@ -94,7 +94,12 @@ green (739 tests):
   accessors in `src/ui/operations/modal_state.rs`. Implements the ActiveModal half of
   ADR-0076.
 
-Deferred (bigger / behavioral): ViewModel layer + log-protocol split (P5),
+- **P5 / ViewModel layer foundation — see ADR-0094:** new `src/ui/view_models/`
+  module with `StatusBarVM` (pure, window-free unit tests); `render_status_bar`
+  consumes it. First slice of ADR-0076's VM layer; further VMs + the log-protocol
+  split (Low-1) continue from here.
+
+Deferred (bigger / behavioral): remaining VMs + log-protocol split (P5),
 `RepoSession` dual-state collapse (P2/ADR-0075).
 
 ## Tooling note

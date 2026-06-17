@@ -3,6 +3,26 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.17] — 2026-06-17
+
+### Fixed
+- **Branch-picker dialog could swallow a row click.** The overlay's clickable
+  rows were not occluded, so a mouse-down on a branch propagated to the
+  full-screen dismiss scrim beneath it and closed the overlay before the row's
+  click completed — selecting a branch silently did nothing. The panel now
+  occludes, matching every other menu/modal.
+
+### Changed (internal)
+- **Tuned the release build profile** (`lto = "thin"`, `codegen-units = 1`,
+  `strip = true`). Kagi's interactive cost is dominated by tree-sitter
+  highlighting, git2 diffs and commit-graph layout, so this makes distributed
+  release builds faster at runtime and noticeably smaller. (If Kagi ever feels
+  sluggish during development, make sure you are running a `--release` build —
+  debug builds are 10–50× slower on these paths. See `docs/linux-development.md`.)
+- **Added a Linux/Ubuntu development & testing guide** (`docs/linux-development.md`):
+  system dependencies, debug-vs-release performance, Wayland/XWayland, Blade/Vulkan
+  device selection, the test suite, and bundling.
+
 ## [0.3.16] — 2026-06-17
 
 ### Added

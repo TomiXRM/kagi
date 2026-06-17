@@ -1,5 +1,74 @@
 use super::*;
 
+/// Build the confirm plan for pulling a **remote** branch over SSH (ADR-0089
+/// Phase 3 / ADR-0097). There is no local `Repository`, so this synthesises the
+/// [`OperationPlan`] the modal needs from the snapshot's ahead/behind counts
+/// rather than a git2 dry run; the pull itself runs via `kagi::remote::remote_pull`
+/// in the UI layer. `head_summary` and `upstream` are display-only.
+pub fn plan_pull_remote(
+    branch: &str,
+    upstream: &str,
+    behind: usize,
+    ahead: usize,
+    remote_dirty: bool,
+    head_summary: String,
+) -> OperationPlan {
+    let title = if behind == 0 {
+        format!("Pull {branch} — up to date (local knowledge)")
+    } else {
+        format!("Pull {branch} from {upstream} — {behind} commit(s) behind")
+    };
+
+    let mut warnings: Vec<String> = Vec::new();
+    if ahead > 0 && behind > 0 {
+        warnings.push(format!(
+            "{branch} has diverged ({ahead} ahead, {behind} behind); \
+             the pull will create a merge commit on the remote."
+        ));
+    }
+    if remote_dirty {
+        warnings.push(
+            "The remote working tree has uncommitted changes; the pull may fail \
+             or produce conflicts that must be resolved on the host."
+                .to_string(),
+        );
+    }
+
+    OperationPlan {
+        title,
+        current: StateSummary {
+            head: head_summary.clone(),
+            dirty: if remote_dirty {
+                "remote tree dirty".to_string()
+            } else {
+                "remote (read-only view)".to_string()
+            },
+        },
+        predicted: StateSummary {
+            head: head_summary,
+            dirty: if behind == 0 {
+                "no change".to_string()
+            } else if ahead > 0 {
+                "merged on remote".to_string()
+            } else {
+                "fast-forwarded on remote".to_string()
+            },
+        },
+        warnings,
+        blockers: Vec::new(),
+        recovery: "Runs `git pull` on the host using its own credentials. \
+                   Conflicts are left for resolution on the host."
+            .to_string(),
+        head_at_plan: Head::Unborn {
+            branch: String::new(),
+        },
+        stash_count_at_plan: 0,
+        preview_files: Vec::new(),
+        preview_commits: Vec::new(),
+        destructive: false,
+    }
+}
+
 // ────────────────────────────────────────────────────────────
 // plan_checkout_tracking_branch / execute_checkout_tracking_branch (T-BCM-061)
 // ────────────────────────────────────────────────────────────
@@ -1625,4 +1694,39 @@ pub fn execute_set_upstream(
         .set_upstream(Some(upstream))
         .map_err(|e| GitError::Other(format!("set upstream failed: {}", e.message())))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod remote_pull_tests {
+    use super::*;
+
+    #[test]
+    fn plan_pull_remote_ff_has_no_blockers() {
+        let plan = plan_pull_remote(
+            "main",
+            "origin/main",
+            3,
+            0,
+            false,
+            "branch: main".to_string(),
+        );
+        assert!(plan.blockers.is_empty());
+        assert!(!plan.destructive);
+        assert!(plan.title.contains("3 commit"));
+        assert!(plan.predicted.dirty.contains("fast-forward"));
+    }
+
+    #[test]
+    fn plan_pull_remote_diverged_warns_merge() {
+        let plan = plan_pull_remote(
+            "main",
+            "origin/main",
+            2,
+            1,
+            false,
+            "branch: main".to_string(),
+        );
+        assert!(plan.warnings.iter().any(|w| w.contains("diverged")));
+        assert!(plan.predicted.dirty.contains("merge"));
+    }
 }

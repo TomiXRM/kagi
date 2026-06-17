@@ -420,6 +420,33 @@ pub fn remote_stash_drop(
     Ok(stdout.trim().to_string())
 }
 
+/// Pull the current branch of the remote repository over SSH (ADR-0089 Phase 3).
+/// Runs `git -C <repo> pull` *on the host*, so the host's own credentials,
+/// network, and config reach its `origin` — Kagi only carries the command over
+/// the system-ssh transport. Returns git's summary (`Fast-forward`,
+/// `Already up to date.`, merge text) on success. A non-zero exit (no upstream,
+/// auth failure, or a merge conflict that leaves the host mid-merge) is surfaced
+/// as a [`RemoteError`] for the UI to show; the user resolves conflicts on the
+/// host (a remote conflict editor is out of scope for this slice).
+pub fn remote_pull(host: &RemoteHost, repo: &str) -> Result<String, RemoteError> {
+    // Combine stdout+stderr in the message: git prints progress to stderr but
+    // the "Fast-forward" / "Already up to date." summary to stdout.
+    let out = run_ssh(host, &["git", "-C", repo, "pull"])?;
+    if out.code == 0 {
+        let summary = out.stdout.trim();
+        Ok(if summary.is_empty() {
+            "pull complete".to_string()
+        } else {
+            summary.lines().last().unwrap_or(summary).to_string()
+        })
+    } else {
+        Err(RemoteError::NonZero {
+            code: out.code,
+            stderr: out.stderr,
+        })
+    }
+}
+
 /// Heuristic: did the SSH transport itself fail (so we should surface an
 /// error), versus the remote `git` running and reporting "not a repository"?
 ///

@@ -1565,6 +1565,12 @@ impl KagiApp {
         };
 
         let mut panel = div()
+            // Without occlude, a mouse-down on a branch row propagates through to
+            // the full-screen dismiss scrim beneath (wrap_overlay), which unmounts
+            // the overlay before the row's on_click (down+up on the same element)
+            // can complete — the click silently does nothing. Same fix as the
+            // context/branch/stash menus (see context_menu.rs).
+            .occlude()
             .w(theme::scaled_px(360.0))
             .max_h(theme::scaled_px(420.0))
             .overflow_hidden()

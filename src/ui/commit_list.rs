@@ -230,7 +230,29 @@ pub fn build_commit_rows_with_stashes(
 
     let mut stash_rows: Vec<StashRow> = Vec::new();
     let mut stash_lanes: Vec<usize> = Vec::new();
-    let mut next_lane = base_lane_count;
+    // ADR-0088: place stash lanes just to the right of the lanes actually in use
+    // near the TOP of history (the stash rows + the visible viewport), NOT past
+    // the global max lane count. On wide repos the global max occurs deep in
+    // history (many concurrent branches), so `base_lane_count` would push the
+    // stash nodes and their connection lines off the right edge of the graph
+    // column — the connection looked broken (user report, remote SSH repo with
+    // 24 lanes / 11 stashes). The top of history is usually narrow, so packing
+    // from there keeps the stash node and the visible part of its line on-screen.
+    // Deep-base lines still run downward off the viewport (= "connects below").
+    // For small repos the window covers the whole graph, so this equals the old
+    // `base_lane_count` (no change).
+    const STASH_TOP_WINDOW: usize = 64;
+    let top_lane_count = rows
+        .iter()
+        .take(STASH_TOP_WINDOW)
+        .flat_map(|r| {
+            std::iter::once(r.lane).chain(r.edges.iter().flat_map(|e| [e.from_lane, e.to_lane]))
+        })
+        .max()
+        .map(|m| m + 1)
+        .unwrap_or(base_lane_count)
+        .min(base_lane_count);
+    let mut next_lane = top_lane_count;
 
     for s in &snap.stashes {
         let lane = next_lane;

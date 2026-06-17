@@ -116,9 +116,12 @@ picker can grey-out non-repo dirs without treating them as connection errors.
   `git2` backend produces — HEAD, commits (topo-order, parents), local branches
   (+ upstream ahead/behind), remote branches, tags, stashes — by running `git`
   reads over SSH and parsing them with pure, unit-tested
-  `kagi_domain::remote_snapshot` parsers (separator-framed `git` formats).
-  Working-tree `status` and full `worktrees` are left minimal (a read-only view
-  does not need a porcelain parse yet).
+  `kagi_domain::remote_snapshot` parsers (separator-framed `git` formats). The
+  commit walk matches the local backend's ref set exactly — `--branches --tags
+  --remotes` + the resolved HEAD, **not** `--all` (which would pull `refs/stash`
+  in and render stash commits as ordinary commits). Working-tree `status` and
+  full `worktrees` are left minimal (a read-only view does not need a porcelain
+  parse yet).
 - **Phase 2b — render the remote repo in the main views (done):** the remote
   browser's "Open repository (read-only)" feeds the snapshot through
   `build_tab_view`/`apply_tab_view` into the **real** graph/sidebar/detail views
@@ -126,9 +129,12 @@ picker can grey-out non-repo dirs without treating them as connection errors.
   guards: a remote view sets `repo_path = None`, so every operation (already
   written as `let p = self.repo_path.as_ref()?；`) and the fs watcher
   (`arm_watcher` early-returns on `None`) disable themselves, and `command_state`
-  greys out the write commands (no `has_repo`). A `remote_view` marker keeps the
-  workspace (not the Welcome screen) visible with no local tab, and re-points
-  `Refresh` (cmd-r) at a re-snapshot over SSH. Switching to a local tab clears it.
+  greys out the write commands (no `has_repo`). A remote repo gets a **real tab**
+  (a `RepoTab` carrying a `remote` marker + a synthetic `<host>:<root>` identity
+  path, its view cached for instant tab-switching) so it appears in the strip and
+  can be switched to/from like any repo; a `remote_view` marker drives the
+  read-only UI and keeps the workspace visible. `Refresh` (cmd-r) re-points at a
+  re-snapshot over SSH. Switching to a local tab clears the remote view.
 - **Phase 2c — remote diffs + working-tree status (done):** selecting a commit
   in the remote graph loads its changed files (`git diff-tree --name-status -M`)
   and clicking a file loads its unified diff (`git show -- <path>`), both **off

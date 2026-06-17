@@ -3111,6 +3111,12 @@ fn render_rows(
             let click_handler = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
                 this.commit_menu = None;
                 this.select(ix);
+                // ADR-0089 Phase 2c: kick off the remote changed-files load now
+                // that we have `cx` (the render trigger is a fallback for
+                // keyboard navigation). Idempotent.
+                if this.remote_view.is_some() && this.selected == Some(ix) {
+                    this.load_remote_changed_files(ix, cx);
+                }
                 cx.notify();
             });
             let context_click_handler =

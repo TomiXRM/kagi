@@ -54,14 +54,17 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 
 ## Settings (`settings.json`) rules
 
-- Settings live in `src/ui/settings.rs` — `read_setting` / `write_setting` /
-  `settings_path` / `parse_string_value`, and the `SETTINGS_KEYS` array which is the
-  source of truth for which keys persist.
-- **Adding a key requires adding it to `SETTINGS_KEYS`** — a key not in the array is
-  dropped on the next save of any other key.
-- The parser is hand-written flat string-KV (not serde): bool/number values are stored
-  as strings (`"1"`/`"0"`). Don't assume typed values.
-- Access only through `read_setting`/`write_setting`. `theme.rs` is for theme tokens only.
+- Settings live in `src/ui/settings.rs`, parsed with `serde_json` into the typed
+  `Settings` struct (issue #13 P4 / ADR-0091). On disk it stays a **flat object of
+  string values** (`"auto_fetch": "true"`, `"ui_zoom": "1000"`) — keep writing strings
+  so existing settings files load.
+- `write_setting` round-trips the **whole object**, so unknown keys are preserved — no
+  `SETTINGS_KEYS` array to maintain, and adding a key needs no registration.
+- Prefer the typed `Settings` accessors (`Settings::load().theme()` / `ui_zoom_permille()`
+  / `graph_compact()` / `auto_fetch()`); add a new typed accessor for a new typed read.
+  The string `read_setting` / `write_setting` API remains for ad-hoc keys.
+- Access only through `settings::` (typed `Settings` or `read_setting`/`write_setting`).
+  `theme.rs` is for theme tokens only.
 
 ## Error handling
 

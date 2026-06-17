@@ -29,6 +29,11 @@ ureq = { version = "3", default-features = false, features = ["rustls"] }
 # tempfiles for the download staging area (also used by tests).
 sha2 = "0.10"
 tempfile = "3"
+# Typed settings persistence (issue #13 P4, ADR-0091): a real JSON parser for
+# settings.json replaces the hand-rolled string scanner and preserves unknown
+# keys on write. Both crates are already in the tree via gpui.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"

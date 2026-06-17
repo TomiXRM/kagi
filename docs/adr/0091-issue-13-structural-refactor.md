@@ -83,4 +83,6 @@ signatures, and the GPUI re-entrancy rule are unchanged. `cargo test
 - **Medium-3 / P5** — ViewModel layer so UI is unit-testable without the `KAGI_*`
   headless harness; then the log-protocol split (Low-1).
 - **P2 / ADR-0075** — collapse active-vs-`tab_cache` dual state into `RepoSession`.
-- **serde-backed `Settings`** (P4 second half).
+
+(Done since: Phase 4 `src/ui/operations/` split — see above; serde-backed `Settings`,
+P4 second half — see ADR-0092.)

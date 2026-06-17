@@ -3146,6 +3146,8 @@ dependencies = [
  "kagi-domain",
  "notify",
  "portable-pty",
+ "serde",
+ "serde_json",
  "sha2",
  "tempfile",
  "ureq",

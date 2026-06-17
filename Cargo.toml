@@ -6,7 +6,7 @@ members = ["xtask", "crates/kagi-domain"]
 
 [package]
 name = "kagi"
-version = "0.3.15"
+version = "0.3.16"
 license = "MIT"
 edition = "2021"
 

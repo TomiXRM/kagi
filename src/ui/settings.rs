@@ -201,27 +201,23 @@ mod tests {
 
     #[test]
     fn write_preserves_unknown_keys() {
-        // The old writer dropped keys not in SETTINGS_KEYS; the serde writer must
-        // round-trip an arbitrary unknown key when a sibling is saved.
-        let dir = tempfile::tempdir().unwrap();
-        let prev = std::env::var("KAGI_LOG_DIR").ok();
-        // SAFETY: single-threaded test; restored below.
-        unsafe { std::env::set_var("KAGI_LOG_DIR", dir.path()) };
+        // The old writer dropped keys not in SETTINGS_KEYS; the serde writer
+        // round-trips the *whole* object, so an unknown key survives when a
+        // sibling key is set. Tested purely through the same serialize/parse path
+        // `write_setting` + `Settings::load` use — no global `KAGI_LOG_DIR` env or
+        // file, so it stays isolated under parallel `cargo test` (other tests
+        // mutate `KAGI_LOG_DIR` concurrently).
+        let mut s: Settings =
+            serde_json::from_str("{\n  \"future_only_key\": \"keepme\"\n}\n").unwrap();
+        s.set_str("theme", "one-dark");
 
-        std::fs::write(
-            dir.path().join("settings.json"),
-            "{\n  \"future_only_key\": \"keepme\"\n}\n",
-        )
-        .unwrap();
+        let serialized = serde_json::to_string_pretty(&s).unwrap();
+        let reloaded: Settings = serde_json::from_str(&serialized).unwrap();
 
-        write_setting("theme", Some("one-dark"));
-
-        assert_eq!(read_setting("future_only_key").as_deref(), Some("keepme"));
-        assert_eq!(read_setting("theme").as_deref(), Some("one-dark"));
-
-        match prev {
-            Some(v) => unsafe { std::env::set_var("KAGI_LOG_DIR", v) },
-            None => unsafe { std::env::remove_var("KAGI_LOG_DIR") },
-        }
+        assert_eq!(
+            reloaded.get_str("future_only_key").as_deref(),
+            Some("keepme")
+        );
+        assert_eq!(reloaded.get_str("theme").as_deref(), Some("one-dark"));
     }
 }

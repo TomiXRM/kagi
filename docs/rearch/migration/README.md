@@ -99,8 +99,13 @@ green (739 tests):
   consumes it. First slice of ADR-0076's VM layer; further VMs + the log-protocol
   split (Low-1) continue from here.
 
-Deferred (bigger / behavioral): remaining VMs + log-protocol split (P5),
-`RepoSession` dual-state collapse (P2/ADR-0075).
+- **P2 / per-tab dual-state collapse — see ADR-0095:** the ~16 duplicated top-level
+  `KagiApp` view fields replaced by a single `active_view: TabViewState`;
+  `apply_tab_view` is now a one-line move (no field-by-field sync foot-gun). The
+  behaviour-preserving slice of ADR-0075's RepoSession model.
+
+Deferred (bigger / behavioral): remaining VMs + log-protocol split (P5); the full
+`RepoSession`/`OperationController` zero-copy swap (ADR-0075, beyond the P2 slice).
 
 ## Tooling note
 Heavy mechanical-but-intricate extraction (S4, parts of S3/S6) may be delegated to

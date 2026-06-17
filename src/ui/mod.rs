@@ -720,16 +720,15 @@ pub struct KagiApp {
     /// so window-wide actions like cmd-j would silently do nothing.
     pub root_focus: Option<gpui::FocusHandle>,
     /// One-line header text: repo name + HEAD + status summary.
-    pub header: SharedString,
+    /// The active tab's snapshot-derived view data (single source of
+    /// truth; ADR-0075 P2). Inactive tabs live in `tab_cache`. Adding a
+    /// field to `TabViewState` no longer needs an `apply_tab_view` edit.
+    pub active_view: TabViewState,
     /// Pre-computed commit rows (built once from the snapshot).
-    pub rows: Vec<CommitRow>,
     /// Stash nodes rendered in the graph below the WIP row (ADR-0088).
-    pub stash_graph_rows: Vec<commit_list::StashRow>,
     /// Lanes used by stash branch lines (passed to the graph painter so those
     /// nodes/edges are drawn in the stash colour).
-    pub stash_graph_lanes: Vec<usize>,
     /// Pre-computed detail panel data, parallel to `rows`.
-    pub details: Vec<CommitDetail>,
     /// Currently selected row index (None = no selection).
     pub selected: Option<usize>,
     /// Error or informational message shown instead of the commit list.
@@ -757,7 +756,6 @@ pub struct KagiApp {
     /// Local branch names from the snapshot, ordered by name.
     /// Used to render the sidebar.  The first element of the tuple is the
     /// branch name; the second is whether it is the current HEAD branch.
-    pub branches: Vec<(String, bool)>,
     /// The single active modal (ADR-0076 / issue #13 P7). At most one modal is
     /// open at a time; this replaces the ~22 mutually-exclusive `Option<XModal>`
     /// fields that used to live here. Access goes through the generated
@@ -777,9 +775,7 @@ pub struct KagiApp {
     /// Allocated on demand when the modal is first opened.
     pub modal_focus: Option<FocusHandle>,
     /// Stash entries from the snapshot, ordered by index (newest = index 0).
-    pub stashes: Vec<Stash>,
     /// Whether the working tree is dirty (used to show/hide the Stash button).
-    pub is_dirty: bool,
     /// Focus handle for the stash push modal text input.
     pub stash_push_focus: Option<FocusHandle>,
     /// Status footer message (T017): the result of the most recent operation.
@@ -845,18 +841,14 @@ pub struct KagiApp {
     pub cp_staged_scroll_handle: UniformListScrollHandle,
     /// Maps local branch name → the CommitId it points to.
     /// Built at snapshot time; used by jump_to_branch.
-    pub branch_targets: HashMap<String, CommitId>,
-    /// Maps CommitId → row index in `self.rows`.
+    /// Maps CommitId → row index in `self.active_view.rows`.
     /// Built at snapshot time; used by jump_to_branch.
-    pub commit_row_index: HashMap<CommitId, usize>,
     // ── T-BP-003: StatusBar summary ──────────────────────────────
     /// Pre-computed status bar data (branch, ahead/behind, staged, unstaged).
     /// Updated on every reload; rendered by `render_status_bar`.
-    pub status_summary: StatusBarSummary,
     // ── T-HT-001: Toolbar state ──────────────────────────────────
     /// Pre-computed toolbar button enabled/disabled flags.
     /// Updated on every reload; rendered by `render_header_slot`.
-    pub toolbar_state: ToolbarState,
     // ── T-BP-004: Operation Log entries ─────────────────────────
     /// In-memory operation log ring-buffer (max 500, newest at index 0).
     pub op_entries: VecDeque<OpLogEntry>,
@@ -922,13 +914,9 @@ pub struct KagiApp {
     pub file_history_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     // ── W2-SIDEBAR: Repository Navigator ────────────────────────
     /// Remote-tracking branches from the snapshot (for REMOTE BRANCHES section).
-    pub remote_branches: Vec<RemoteBranch>,
     /// Tags from the snapshot (for TAGS section).
-    pub tags: Vec<Tag>,
     /// Worktrees from the snapshot (for WORKTREES section).
-    pub worktrees: Vec<Worktree>,
     /// Upstream info per local branch name (for ↑A ↓B display).
-    pub branch_upstream_info: HashMap<String, UpstreamInfo>,
     /// Collapsed sections in the sidebar (HashSet of section keys).
     /// Preserved across reloads so the user's collapse state survives checkout.
     pub sidebar_collapsed: HashSet<&'static str>,
@@ -1150,7 +1138,7 @@ pub struct RemoteRepoView {
     pub root: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct TabViewState {
     pub header: SharedString,
     pub rows: Vec<CommitRow>,
@@ -1316,32 +1304,9 @@ impl KagiApp {
         // T-BP-004: load up to 100 entries from the oplog file at startup.
         let op_entries: VecDeque<OpLogEntry> = read_oplog_tail(OP_ENTRIES_LOAD).into();
 
-        let TabViewState {
-            header,
-            rows,
-            stash_graph_rows,
-            stash_graph_lanes,
-            details,
-            branches,
-            stashes,
-            is_dirty,
-            branch_targets,
-            commit_row_index,
-            status_summary,
-            toolbar_state,
-            remote_branches,
-            tags,
-            branch_upstream_info,
-            worktrees,
-        } = view;
-
         KagiApp {
             root_focus: None,
-            header,
-            rows,
-            stash_graph_rows,
-            stash_graph_lanes,
-            details,
+            active_view: view,
             selected: None,
             error: None,
             repo_path: None,
@@ -1351,13 +1316,10 @@ impl KagiApp {
             main_diff: None,
             compare_view: None,
             main_diff_scroll_handle: UniformListScrollHandle::new(),
-            branches,
             active_modal: None,
             remote_browse_modal: None,
             remote_view: None,
             modal_focus: None,
-            stashes,
-            is_dirty,
             stash_push_focus: None,
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
             sidebar_width: SIDEBAR_DEFAULT,
@@ -1384,10 +1346,6 @@ impl KagiApp {
             sidebar_rows: Vec::new(),
             cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
             cp_staged_scroll_handle: UniformListScrollHandle::new(),
-            branch_targets,
-            commit_row_index,
-            status_summary,
-            toolbar_state,
             op_entries,
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
@@ -1405,10 +1363,6 @@ impl KagiApp {
             settings_theme_open: false,
             graph_scroll_x: 0.0,
             // W2-SIDEBAR
-            remote_branches,
-            tags,
-            worktrees,
-            branch_upstream_info,
             sidebar_collapsed: HashSet::new(),
             branch_groups_collapsed: HashSet::new(),
             sidebar_filter: None,
@@ -1471,11 +1425,10 @@ impl KagiApp {
     pub fn with_error(message: impl Into<String>) -> Self {
         KagiApp {
             root_focus: None,
-            header: SharedString::from("kagi"),
-            rows: Vec::new(),
-            stash_graph_rows: Vec::new(),
-            stash_graph_lanes: Vec::new(),
-            details: Vec::new(),
+            active_view: TabViewState {
+                header: SharedString::from("kagi"),
+                ..Default::default()
+            },
             selected: None,
             error: Some(SharedString::from(message.into())),
             repo_path: None,
@@ -1485,13 +1438,10 @@ impl KagiApp {
             main_diff: None,
             compare_view: None,
             main_diff_scroll_handle: UniformListScrollHandle::new(),
-            branches: Vec::new(),
             active_modal: None,
             remote_browse_modal: None,
             remote_view: None,
             modal_focus: None,
-            stashes: Vec::new(),
-            is_dirty: false,
             stash_push_focus: None,
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
             sidebar_width: SIDEBAR_DEFAULT,
@@ -1518,10 +1468,6 @@ impl KagiApp {
             sidebar_rows: Vec::new(),
             cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
             cp_staged_scroll_handle: UniformListScrollHandle::new(),
-            branch_targets: HashMap::new(),
-            commit_row_index: HashMap::new(),
-            status_summary: StatusBarSummary::default(),
-            toolbar_state: ToolbarState::default(),
             op_entries: VecDeque::new(),
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
@@ -1539,10 +1485,6 @@ impl KagiApp {
             settings_theme_open: false,
             graph_scroll_x: 0.0,
             // W2-SIDEBAR
-            remote_branches: Vec::new(),
-            tags: Vec::new(),
-            worktrees: Vec::new(),
-            branch_upstream_info: HashMap::new(),
             sidebar_collapsed: HashSet::new(),
             branch_groups_collapsed: HashSet::new(),
             sidebar_filter: None,
@@ -1756,26 +1698,10 @@ impl KagiApp {
     /// async tab switches).  It deliberately does *not* touch transient UI
     /// state (selection / modals / panels); callers reset those as needed.
     pub fn apply_tab_view(&mut self, view: TabViewState) {
-        self.header = view.header;
-        self.rows = view.rows;
-        self.stash_graph_rows = view.stash_graph_rows;
-        self.stash_graph_lanes = view.stash_graph_lanes;
-        self.details = view.details;
-        self.branches = view.branches;
-        self.stashes = view.stashes;
-        self.is_dirty = view.is_dirty;
-        // T028: refresh branch/commit lookup maps so jump works after checkout.
-        self.branch_targets = view.branch_targets;
-        self.commit_row_index = view.commit_row_index;
-        // T-BP-003 / T-HT-001: update StatusBarSummary + ToolbarState
-        // (already logged by build_tab_view).
-        self.status_summary = view.status_summary;
-        self.toolbar_state = view.toolbar_state;
-        // W2-SIDEBAR: refresh remote_branches, tags, and upstream info.
-        self.remote_branches = view.remote_branches;
-        self.tags = view.tags;
-        self.worktrees = view.worktrees;
-        self.branch_upstream_info = view.branch_upstream_info;
+        // ADR-0075 P2: the active tab's view data is a single `TabViewState`, so
+        // applying a freshly-built (or cached) view is one move — there is no
+        // field-by-field copy to keep in sync when `TabViewState` gains a field.
+        self.active_view = view;
     }
 
     /// Reload triggered by an external git change (T029: FS watcher).
@@ -1791,7 +1717,7 @@ impl KagiApp {
         // `details[idx].full_sha` is the canonical commit hash string.
         let prev_commit_id: Option<CommitId> = self
             .selected
-            .and_then(|idx| self.details.get(idx))
+            .and_then(|idx| self.active_view.details.get(idx))
             .map(|detail| CommitId(detail.full_sha.to_string()));
 
         // Delegate to the core reload logic (resets self.selected to None).
@@ -1799,7 +1725,7 @@ impl KagiApp {
 
         // Attempt to restore selection by CommitId.
         if let Some(ref cid) = prev_commit_id {
-            if let Some(&new_idx) = self.commit_row_index.get(cid) {
+            if let Some(&new_idx) = self.active_view.commit_row_index.get(cid) {
                 self.selected = Some(new_idx);
             }
             // If the commit is no longer present, selected stays None.
@@ -1847,10 +1773,10 @@ impl KagiApp {
                 // the graph and closes the commit panel). Branch / ahead-behind are
                 // unchanged by a working-tree edit, so only the dirty/count fields
                 // and the commit panel's file lists need refreshing.
-                app.status_summary.is_dirty = new_status.is_dirty();
-                app.status_summary.staged = new_status.staged.len();
-                app.status_summary.unstaged = new_status.unstaged.len();
-                app.is_dirty = new_status.is_dirty();
+                app.active_view.status_summary.is_dirty = new_status.is_dirty();
+                app.active_view.status_summary.staged = new_status.staged.len();
+                app.active_view.status_summary.unstaged = new_status.unstaged.len();
+                app.active_view.is_dirty = new_status.is_dirty();
                 app.last_working_status = Some(new_status);
                 // Refresh the open commit panel's lists in place (keeps it open).
                 if app.commit_panel.is_some() {
@@ -1936,7 +1862,7 @@ impl KagiApp {
             .unwrap_or_else(|| kagi::git::ResolutionBuffer::new(&repo_path));
 
         // Current branch short name (for the side_labels left role).
-        let current_branch = self.status_summary.branch.clone();
+        let current_branch = self.active_view.status_summary.branch.clone();
 
         // Recompute per-file status from the buffer (detection seeds Unresolved).
         let mut session = session;
@@ -2040,7 +1966,7 @@ impl KagiApp {
         // Distinct author emails across the loaded commit rows.
         let mut seen: HashSet<String> = HashSet::new();
         let mut emails: Vec<String> = Vec::new();
-        for row in &self.rows {
+        for row in &self.active_view.rows {
             if !row.author_email.is_empty() && seen.insert(row.author_email.clone()) {
                 emails.push(row.author_email.clone());
             }
@@ -2348,7 +2274,7 @@ impl KagiApp {
                             let Some(rp) = app.repo_path.clone() else {
                                 return;
                             };
-                            let branch = app.status_summary.branch.clone();
+                            let branch = app.active_view.status_summary.branch.clone();
                             let msg = app.last_draft_value.clone();
                             if msg.trim().is_empty() {
                                 let _ = kagi::git::clear_draft(&rp, &branch);
@@ -2538,7 +2464,12 @@ impl KagiApp {
         if dx.abs() < 0.01 {
             return;
         }
-        let lane_count = self.rows.first().map(|r| r.lane_count).unwrap_or(0);
+        let lane_count = self
+            .active_view
+            .rows
+            .first()
+            .map(|r| r.lane_count)
+            .unwrap_or(0);
         // W28: scroll content extent uses the scaled lane pitch so a fully
         // zoomed graph can still be scrolled to reveal its rightmost lanes.
         let max = (lane_count as f32 * graph_view::lane_w() - self.graph_col_w).max(0.0);
@@ -2868,7 +2799,7 @@ impl KagiApp {
         self.main_diff = None;
         self.compare_view = None;
 
-        if let Some(detail) = self.details.get(index) {
+        if let Some(detail) = self.active_view.details.get(index) {
             let parent_count = detail.parent_ids.len();
             eprintln!(
                 "[kagi] selected: {} parents={}",
@@ -3069,7 +3000,7 @@ impl KagiApp {
             .map(|fh| fh.generation + 1)
             .unwrap_or(0);
 
-        let branch = SharedString::from(self.status_summary.branch.clone());
+        let branch = SharedString::from(self.active_view.status_summary.branch.clone());
         self.file_history = Some(file_history::FileHistoryState {
             rel_path: rel_path.clone(),
             branch,
@@ -3396,7 +3327,7 @@ impl KagiApp {
             .as_ref()
             .map(|fh| fh.generation + 1)
             .unwrap_or(0);
-        let branch = SharedString::from(self.status_summary.branch.clone());
+        let branch = SharedString::from(self.active_view.status_summary.branch.clone());
         self.file_history = Some(file_history::FileHistoryState {
             rel_path: rel_path.clone(),
             branch,
@@ -3467,7 +3398,7 @@ impl KagiApp {
             Some(p) => p.clone(),
             None => return,
         };
-        let detail = match self.details.get(selected) {
+        let detail = match self.active_view.details.get(selected) {
             Some(d) => d,
             None => return,
         };
@@ -3563,7 +3494,7 @@ impl KagiApp {
             Some(v) => (v.host.clone(), v.root.clone()),
             None => return,
         };
-        let sha = match self.details.get(index) {
+        let sha = match self.active_view.details.get(index) {
             Some(d) => d.full_sha.as_ref().to_string(),
             None => return,
         };
@@ -3602,7 +3533,7 @@ impl KagiApp {
             Some(s) => s,
             None => return,
         };
-        let sha = match self.details.get(selected) {
+        let sha = match self.active_view.details.get(selected) {
             Some(d) => d.full_sha.as_ref().to_string(),
             None => return,
         };
@@ -3829,7 +3760,7 @@ impl KagiApp {
         use kagi::git::CommitId;
 
         let repo_path = self.repo_path.as_ref()?;
-        let detail = self.details.get(index)?;
+        let detail = self.active_view.details.get(index)?;
         let id = CommitId(detail.full_sha.as_ref().to_string());
 
         let repo = kagi::git::Backend::open(repo_path).ok()?;
@@ -3842,7 +3773,7 @@ impl KagiApp {
         use kagi::git::CommitId;
 
         let repo_path = self.repo_path.as_ref()?;
-        let detail = self.details.get(index)?;
+        let detail = self.active_view.details.get(index)?;
         let id = CommitId(detail.full_sha.as_ref().to_string());
 
         let repo = kagi::git::Backend::open(repo_path).ok()?;
@@ -4015,7 +3946,7 @@ impl KagiApp {
     ///   `commit_row_index`), logs a warning and returns without crashing.
     pub fn jump_to_branch(&mut self, branch_name: &str) {
         // Look up the CommitId the branch points to.
-        let target = match self.branch_targets.get(branch_name) {
+        let target = match self.active_view.branch_targets.get(branch_name) {
             Some(t) => t.clone(),
             None => {
                 eprintln!(
@@ -4027,7 +3958,7 @@ impl KagiApp {
         };
 
         // Look up the row index for that commit.
-        let row_ix = match self.commit_row_index.get(&target) {
+        let row_ix = match self.active_view.commit_row_index.get(&target) {
             Some(&ix) => ix,
             None => {
                 eprintln!(
@@ -4061,7 +3992,7 @@ impl KagiApp {
     /// Used for remote branch and tag clicks where there is no branch name.
     /// Scrolls the commit list to the row and selects it.
     pub fn jump_to_commit(&mut self, target: &CommitId) {
-        let row_ix = match self.commit_row_index.get(target) {
+        let row_ix = match self.active_view.commit_row_index.get(target) {
             Some(&ix) => ix,
             None => {
                 eprintln!(
@@ -4087,7 +4018,7 @@ impl KagiApp {
     /// Open the commit context menu for a row, selecting the row first without
     /// toggling off an already-selected row.
     pub fn open_commit_menu(&mut self, row_index: usize, position: gpui::Point<gpui::Pixels>) {
-        if self.rows.get(row_index).is_none() {
+        if self.active_view.rows.get(row_index).is_none() {
             return;
         }
         if self.selected != Some(row_index) {
@@ -4103,7 +4034,7 @@ impl KagiApp {
 
     /// Headless path for KAGI_CONTEXT_MENU=<row>.
     pub fn open_commit_menu_headless(&mut self, row_index: usize) {
-        if self.rows.get(row_index).is_none() {
+        if self.active_view.rows.get(row_index).is_none() {
             eprintln!("[kagi] context-menu: row={} out of range", row_index);
             return;
         }
@@ -4115,21 +4046,27 @@ impl KagiApp {
     }
 
     fn commit_id_for_row(&self, row_index: usize) -> Option<CommitId> {
-        self.details
+        self.active_view
+            .details
             .get(row_index)
             .map(|detail| CommitId(detail.full_sha.as_ref().to_string()))
     }
 
     fn row_for_commit_id(&self, target: &CommitId) -> Option<usize> {
-        self.commit_row_index.get(target).copied().or_else(|| {
-            self.details
-                .iter()
-                .position(|detail| detail.full_sha.as_ref() == target.0)
-        })
+        self.active_view
+            .commit_row_index
+            .get(target)
+            .copied()
+            .or_else(|| {
+                self.active_view
+                    .details
+                    .iter()
+                    .position(|detail| detail.full_sha.as_ref() == target.0)
+            })
     }
 
     fn menu_context(&self, row_index: usize) -> Option<MenuContext> {
-        let row = self.rows.get(row_index)?;
+        let row = self.active_view.rows.get(row_index)?;
         let target = self.commit_id_for_row(row_index)?;
         let is_ancestor_of_head = if row.is_head {
             true
@@ -4145,11 +4082,16 @@ impl KagiApp {
             is_head: row.is_head,
             is_ancestor_of_head,
             is_merge: row.is_merge,
-            dirty: self.is_dirty,
-            detached: self.status_summary.is_detached,
-            has_local_changes: self.is_dirty,
+            dirty: self.active_view.is_dirty,
+            detached: self.active_view.status_summary.is_detached,
+            has_local_changes: self.active_view.is_dirty,
             refs_here: row.badges.clone(),
-            local_branches: self.branches.iter().map(|(n, _)| n.clone()).collect(),
+            local_branches: self
+                .active_view
+                .branches
+                .iter()
+                .map(|(n, _)| n.clone())
+                .collect(),
         })
     }
 
@@ -4165,7 +4107,7 @@ impl KagiApp {
         branch_name: String,
         position: gpui::Point<gpui::Pixels>,
     ) {
-        let target = match self.branch_targets.get(&branch_name) {
+        let target = match self.active_view.branch_targets.get(&branch_name) {
             Some(target) => target.clone(),
             None => {
                 eprintln!(
@@ -4205,21 +4147,24 @@ impl KagiApp {
 
     fn branch_menu_context(&self, state: &BranchMenuState) -> BranchMenuContext {
         let upstream = if matches!(state.kind, BranchKind::Local) {
-            self.branch_upstream_info.get(&state.name)
+            self.active_view.branch_upstream_info.get(&state.name)
         } else {
             None
         };
         let is_current = matches!(state.kind, BranchKind::Local)
             && self
+                .active_view
                 .branches
                 .iter()
                 .any(|(name, current)| name == &state.name && *current);
         let current_branch = self
+            .active_view
             .branches
             .iter()
             .find_map(|(name, current)| current.then(|| name.clone()));
         let checked_out_worktree_path = if matches!(state.kind, BranchKind::Local) {
-            self.worktrees
+            self.active_view
+                .worktrees
                 .iter()
                 .find(|wt| wt.branch.as_deref() == Some(state.name.as_str()))
                 .map(|wt| wt.path.display().to_string())
@@ -4235,8 +4180,8 @@ impl KagiApp {
             upstream_name: upstream.map(|u| u.remote_branch.clone()),
             ahead: upstream.map(|u| u.ahead).unwrap_or(0),
             behind: upstream.map(|u| u.behind).unwrap_or(0),
-            dirty: self.status_summary.is_dirty,
-            conflict_mode: if self.status_summary.conflict_count > 0 {
+            dirty: self.active_view.status_summary.is_dirty,
+            conflict_mode: if self.active_view.status_summary.conflict_count > 0 {
                 BranchConflictMode::Conflicted
             } else {
                 BranchConflictMode::None
@@ -4246,7 +4191,7 @@ impl KagiApp {
             checked_out_worktree_path,
             merged_into_current: false,
             is_pushed: upstream.is_some(),
-            detached_head: self.status_summary.is_detached,
+            detached_head: self.active_view.status_summary.is_detached,
             busy: self.busy_op.is_some(),
             current_branch,
         }
@@ -4268,6 +4213,7 @@ impl KagiApp {
             }
             BranchAction::CopyUpstreamName => {
                 let upstream = self
+                    .active_view
                     .branch_upstream_info
                     .get(&state.name)
                     .map(|u| u.remote_branch.clone());
@@ -4296,6 +4242,7 @@ impl KagiApp {
             BranchAction::Pull => {
                 if matches!(state.kind, BranchKind::Local) {
                     let is_current = self
+                        .active_view
                         .branches
                         .iter()
                         .any(|(name, current)| name == &state.name && *current);
@@ -4309,6 +4256,7 @@ impl KagiApp {
             BranchAction::Push => {
                 if matches!(state.kind, BranchKind::Local) {
                     let is_current = self
+                        .active_view
                         .branches
                         .iter()
                         .any(|(name, current)| name == &state.name && *current);
@@ -4336,6 +4284,7 @@ impl KagiApp {
             }
             BranchAction::OpenWorktreeFromBranch => {
                 let existing_path = self
+                    .active_view
                     .worktrees
                     .iter()
                     .find(|wt| wt.branch.as_deref() == Some(state.name.as_str()))
@@ -4388,7 +4337,7 @@ impl KagiApp {
             }
             CommitAction::CopySha => {
                 if let Some(row_index) = self.row_for_commit_id(&target) {
-                    if let Some(detail) = self.details.get(row_index) {
+                    if let Some(detail) = self.active_view.details.get(row_index) {
                         let full_sha = detail.full_sha.as_ref().to_string();
                         let short: String = full_sha.chars().take(8).collect();
                         context_menu::copy_full_sha(self, full_sha, cx);
@@ -4401,7 +4350,7 @@ impl KagiApp {
             }
             CommitAction::CopyShortSha => {
                 if let Some(row_index) = self.row_for_commit_id(&target) {
-                    if let Some(detail) = self.details.get(row_index) {
+                    if let Some(detail) = self.active_view.details.get(row_index) {
                         let full_sha = detail.full_sha.as_ref().to_string();
                         context_menu::copy_short_sha(self, &full_sha, cx);
                     }
@@ -4409,7 +4358,7 @@ impl KagiApp {
             }
             CommitAction::CopyMessage => {
                 if let Some(row_index) = self.row_for_commit_id(&target) {
-                    if let Some(detail) = self.details.get(row_index) {
+                    if let Some(detail) = self.active_view.details.get(row_index) {
                         let full_sha = detail.full_sha.as_ref().to_string();
                         context_menu::copy_message(
                             self,
@@ -4630,14 +4579,14 @@ impl KagiApp {
     /// Move the commit selection up/down by `delta` rows (arrow keys).
     /// No selection yet → selects the first row. Idempotent at the ends.
     pub fn step_commit_selection(&mut self, delta: i64) {
-        if self.rows.is_empty() {
+        if self.active_view.rows.is_empty() {
             return;
         }
         let next = match self.selected {
             None => 0,
             Some(cur) => {
                 let n = cur as i64 + delta;
-                n.clamp(0, self.rows.len() as i64 - 1) as usize
+                n.clamp(0, self.active_view.rows.len() as i64 - 1) as usize
             }
         };
         if self.selected != Some(next) {

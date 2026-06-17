@@ -806,8 +806,11 @@ fn build_local_branch_leaf(
     indented: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let upstream_label: Option<SharedString> =
-        this.branch_upstream_info.get(branch_name).and_then(|u| {
+    let upstream_label: Option<SharedString> = this
+        .active_view
+        .branch_upstream_info
+        .get(branch_name)
+        .and_then(|u| {
             if u.ahead > 0 || u.behind > 0 {
                 Some(SharedString::from(format!(
                     "\u{2191}{} \u{2193}{}",
@@ -988,7 +991,7 @@ fn build_remote_leaf(
     depth: u8,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let can_jump = this.commit_row_index.contains_key(&rb_target);
+    let can_jump = this.active_view.commit_row_index.contains_key(&rb_target);
     let full_name = SharedString::from(display.to_string());
     let label = SharedString::from(display_label.to_string());
     let drag_name = display.to_string();
@@ -1059,7 +1062,7 @@ fn build_tag_row(
 ) -> gpui::AnyElement {
     let tag_label = SharedString::from(tag_name.to_string());
     let full_name = SharedString::from(tag_name.to_string());
-    let can_jump = this.commit_row_index.contains_key(&tag_target);
+    let can_jump = this.active_view.commit_row_index.contains_key(&tag_target);
     let base = div()
         .id(SharedString::from(format!("sidebar-tag-{}", tag_name)))
         .h(theme::scaled_px(SIDEBAR_ROW_H))

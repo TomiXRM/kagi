@@ -42,12 +42,14 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 - `src/ui/mod.rs` and `src/git/ops.rs` are known oversized god-files mid-split;
   prefer adding new code to a focused sibling module over growing them.
 
-## State-update rules (current reality — see ADR-0075 for the planned fix)
+## State-update rules
 
-- Adding a field to per-tab view data requires updating **3 places**: the
-  `TabViewState` struct, `build_tab_view` (builds it from a snapshot), and
-  `apply_tab_view` (copies it into the active `KagiApp` fields). Miss one and the
-  field silently vanishes on tab switch.
+- Per-tab view data is a single `active_view: TabViewState` field on `KagiApp`
+  (ADR-0075 P2 / ADR-0095). Inactive tabs live in `tab_cache`. Adding a field to
+  per-tab data needs **2 places**: the `TabViewState` struct and `build_tab_view`
+  (builds it from a snapshot). `apply_tab_view` is a whole-struct move, so it no
+  longer has to be updated — and the field can't silently vanish on tab switch.
+  Read active per-tab data via `self.active_view.<field>`.
 - Modals are a single `active_modal: Option<ActiveModal>` field on `KagiApp`
   (ADR-0093 / ADR-0076; the "one modal at a time" invariant is now structural).
   Adding a modal: add an `ActiveModal` variant in `src/ui/modals.rs`, the five

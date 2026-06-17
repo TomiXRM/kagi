@@ -1241,8 +1241,8 @@ impl KagiApp {
             "branch.new" => {
                 let at = self
                     .selected
-                    .and_then(|i| self.details.get(i))
-                    .or_else(|| self.details.first())
+                    .and_then(|i| self.active_view.details.get(i))
+                    .or_else(|| self.active_view.details.first())
                     .map(|d| CommitId(d.full_sha.to_string()));
                 if let Some(id) = at {
                     self.open_create_branch_modal(id, cx);
@@ -1349,6 +1349,7 @@ impl KagiApp {
             None => return,
         };
         let target = match self
+            .active_view
             .details
             .get(row)
             .map(|d| CommitId(d.full_sha.to_string()))
@@ -1496,7 +1497,12 @@ impl KagiApp {
 
     /// Open the branch picker overlay listing local branches.
     fn open_branch_picker(&mut self, mode: BranchPickerMode) {
-        let branches: Vec<String> = self.branches.iter().map(|(n, _)| n.clone()).collect();
+        let branches: Vec<String> = self
+            .active_view
+            .branches
+            .iter()
+            .map(|(n, _)| n.clone())
+            .collect();
         eprintln!(
             "[kagi] menu: branch-picker mode={:?} n={}",
             mode,

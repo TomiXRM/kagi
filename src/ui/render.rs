@@ -187,7 +187,7 @@ impl KagiApp {
     ) -> Vec<gpui::AnyElement> {
         let visible_lanes = graph_view::lanes_for_width(graph_col_w);
         let stash_color = theme().color_warning;
-        let stash_lanes = self.stash_graph_lanes.clone();
+        let stash_lanes = self.active_view.stash_graph_lanes.clone();
         let rh = row_height(self.graph_compact);
 
         // Lanes of connected stashes rendered *above* the current row, whose
@@ -195,7 +195,8 @@ impl KagiApp {
         // the topmost stash's line vanishing at the next stash row).
         let mut passing_lanes: Vec<usize> = Vec::new();
 
-        self.stash_graph_rows
+        self.active_view
+            .stash_graph_rows
             .iter()
             .map(|sr| {
                 let index = sr.index;
@@ -350,7 +351,7 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        let detail = self.details.get(state.row_index)?;
+        let detail = self.active_view.details.get(state.row_index)?;
         let target = self.commit_id_for_row(state.row_index)?;
         let ctx = self.menu_context(state.row_index)?;
         let groups = context_menu::build_commit_menu(&ctx);
@@ -480,7 +481,12 @@ impl Render for KagiApp {
         // count so the offset self-heals after tab switches and column
         // resizes.
         {
-            let lane_count = self.rows.first().map(|r| r.lane_count).unwrap_or(0);
+            let lane_count = self
+                .active_view
+                .rows
+                .first()
+                .map(|r| r.lane_count)
+                .unwrap_or(0);
             // W28: clamp against the scaled lane pitch (matches scroll_graph_by).
             let max = (lane_count as f32 * graph_view::lane_w() - self.graph_col_w).max(0.0);
             if self.graph_scroll_x > max {
@@ -488,7 +494,7 @@ impl Render for KagiApp {
             }
         }
 
-        let row_count = self.rows.len();
+        let row_count = self.active_view.rows.len();
         let selected = self.selected;
 
         // W4-TABS / ADR-0028: a non-empty error string still shows the error
@@ -537,7 +543,9 @@ impl Render for KagiApp {
         }
 
         // ── Pre-fetch detail for panel (if any row is selected) ─
-        let detail = selected.and_then(|i| self.details.get(i)).cloned();
+        let detail = selected
+            .and_then(|i| self.active_view.details.get(i))
+            .cloned();
         // Clone cached changed-files list for the render closure.
         // `None` outer = no selection; `Some(None)` = diff unavailable; `Some(Some(v))` = files.
         let changed_files: Option<Option<Vec<FileStatus>>> =
@@ -547,7 +555,7 @@ impl Render for KagiApp {
             selected.and_then(|i| self.diffstat_cache.get(&i).cloned());
         // W2-INSPECTOR: badges for the selected commit row and tree-view toggle state.
         let selected_badges: Vec<commit_list::RefBadge> = selected
-            .and_then(|i| self.rows.get(i))
+            .and_then(|i| self.active_view.rows.get(i))
             .map(|r| r.badges.clone())
             .unwrap_or_default();
         let inspector_tree_view = self.inspector_tree_view;
@@ -558,7 +566,7 @@ impl Render for KagiApp {
         let main_diff_scroll_handle = self.main_diff_scroll_handle.clone();
 
         // Clone modal state for render.
-        let is_dirty = self.is_dirty;
+        let is_dirty = self.active_view.is_dirty;
         // PERF-SIDEBAR-VIRT: the navigator data (branches/remotes/tags/…) is no
         // longer cloned for render_sidebar — it's flattened into
         // `self.sidebar_rows` below and read by the virtualized list processor.
@@ -572,11 +580,11 @@ impl Render for KagiApp {
             .map(|ent| ent.read(cx).value().to_lowercase())
             .unwrap_or_default();
         self.sidebar_rows = sidebar::build_sidebar_rows(
-            &self.branches,
-            &self.remote_branches,
-            &self.tags,
-            &self.stashes,
-            &self.worktrees,
+            &self.active_view.branches,
+            &self.active_view.remote_branches,
+            &self.active_view.tags,
+            &self.active_view.stashes,
+            &self.active_view.worktrees,
             &self.sidebar_collapsed,
             &self.branch_groups_collapsed,
             &sidebar_filter_text,
@@ -652,7 +660,7 @@ impl Render for KagiApp {
         // T-HT-001: clone toolbar/summary state for header render.
         // W3-NOTIFY: while a background git op runs, disable every git button
         // so operations never overlap.
-        let mut toolbar_state = self.toolbar_state.clone();
+        let mut toolbar_state = self.active_view.toolbar_state.clone();
         if self.busy_op.is_some() {
             toolbar_state.pull_on = false;
             toolbar_state.push_on = false;
@@ -660,7 +668,7 @@ impl Render for KagiApp {
             toolbar_state.pop_on = false;
             toolbar_state.undo_on = false;
         }
-        let status_summary = self.status_summary.clone();
+        let status_summary = self.active_view.status_summary.clone();
 
         // T023: pane widths for divider rendering.
         let sidebar_width = self.sidebar_width;
@@ -1020,7 +1028,7 @@ impl Render for KagiApp {
             .child(self.render_header_slot(
                 toolbar_state,
                 status_summary,
-                self.rows.first().map(|r| r.summary.to_string()),
+                self.active_view.rows.first().map(|r| r.summary.to_string()),
                 cx,
             ))
             // ── W30-CONFLICT-UI: persistent conflict banner (under header) ──
@@ -1329,11 +1337,11 @@ impl KagiApp {
             } else {
                 let reason = if this.busy_op.is_some() {
                     Msg::PullBusy.t()
-                } else if this.status_summary.is_detached {
+                } else if this.active_view.status_summary.is_detached {
                     Msg::PullDetached.t()
-                } else if this.status_summary.is_unborn {
+                } else if this.active_view.status_summary.is_unborn {
                     Msg::PullUnborn.t()
-                } else if this.status_summary.no_upstream {
+                } else if this.active_view.status_summary.no_upstream {
                     Msg::PullNoUpstream.t()
                 } else {
                     Msg::PullNothing.t()
@@ -1351,11 +1359,13 @@ impl KagiApp {
             } else {
                 let reason = if this.busy_op.is_some() {
                     Msg::PushBusy.t()
-                } else if this.status_summary.is_detached {
+                } else if this.active_view.status_summary.is_detached {
                     Msg::PushDetached.t()
-                } else if this.status_summary.is_unborn {
+                } else if this.active_view.status_summary.is_unborn {
                     Msg::PushUnborn.t()
-                } else if this.status_summary.no_upstream && !this.status_summary.has_remote {
+                } else if this.active_view.status_summary.no_upstream
+                    && !this.active_view.status_summary.has_remote
+                {
                     Msg::PushNoRemote.t()
                 } else {
                     Msg::PushNothing.t()
@@ -1370,11 +1380,12 @@ impl KagiApp {
             // Resolve target commit: selected row → HEAD commit (first detail).
             let at = this
                 .selected
-                .and_then(|i| this.details.get(i))
+                .and_then(|i| this.active_view.details.get(i))
                 .map(|d| CommitId(d.full_sha.to_string()))
                 .or_else(|| {
                     // Fall back to HEAD commit (first detail entry).
-                    this.details
+                    this.active_view
+                        .details
                         .first()
                         .map(|d| CommitId(d.full_sha.to_string()))
                 });
@@ -2166,7 +2177,8 @@ impl KagiApp {
                         )
                         // Summary area: change counts, styled like a row message.
                         .child({
-                            let total = self.status_summary.staged + self.status_summary.unstaged;
+                            let total = self.active_view.status_summary.staged
+                                + self.active_view.status_summary.unstaged;
                             div()
                                 .flex_1()
                                 .text_color(rgb(theme().text_muted))
@@ -2191,7 +2203,7 @@ impl KagiApp {
                         row_count,
                         cx.processor(move |this, range, _window, cx| {
                             render_rows(
-                                &this.rows,
+                                &this.active_view.rows,
                                 &this.avatar_images,
                                 range,
                                 selected,
@@ -2199,7 +2211,7 @@ impl KagiApp {
                                 this.graph_col_w,
                                 this.graph_compact,
                                 this.graph_scroll_x,
-                                &this.stash_graph_lanes,
+                                &this.active_view.stash_graph_lanes,
                                 cx,
                             )
                         }),
@@ -2790,7 +2802,7 @@ impl KagiApp {
         bottom_panel_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let summary = self.status_summary.clone();
+        let summary = self.active_view.status_summary.clone();
         let bottom_tab = self.bottom_tab;
 
         // ── Footer message colour ──────────────────────────────

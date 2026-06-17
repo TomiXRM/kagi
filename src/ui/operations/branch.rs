@@ -35,7 +35,7 @@ impl KagiApp {
 
     pub(crate) fn commit_title_for(&self, at: &CommitId) -> String {
         self.row_for_commit_id(at)
-            .and_then(|idx| self.details.get(idx))
+            .and_then(|idx| self.active_view.details.get(idx))
             .map(|detail| {
                 detail
                     .full_message
@@ -439,6 +439,7 @@ impl KagiApp {
 
     pub fn open_set_upstream_modal(&mut self, branch_name: String) {
         let input = self
+            .active_view
             .branch_upstream_info
             .get(&branch_name)
             .map(|u| u.remote_branch.clone())
@@ -566,7 +567,12 @@ impl KagiApp {
     }
 
     pub fn open_rename_branch_modal(&mut self, branch_name: String) {
-        let existing: Vec<String> = self.branches.iter().map(|(name, _)| name.clone()).collect();
+        let existing: Vec<String> = self
+            .active_view
+            .branches
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
         let validation = validate_branch_rename(&branch_name, &branch_name, &existing);
         self.set_rename_branch_modal(RenameBranchModal {
             old_name: branch_name.clone(),
@@ -588,7 +594,12 @@ impl KagiApp {
             Some(m) => (m.old_name.clone(), m.input.clone()),
             None => return,
         };
-        let existing: Vec<String> = self.branches.iter().map(|(name, _)| name.clone()).collect();
+        let existing: Vec<String> = self
+            .active_view
+            .branches
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
         let validation = validate_branch_rename(&old_name, &input, &existing);
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
@@ -704,6 +715,7 @@ impl KagiApp {
         // Current (checked-out) branch = the merge destination, captured on the
         // main thread for the modal's into-branch label (ADR-0079).
         let into_branch = self
+            .active_view
             .branches
             .iter()
             .find(|(_, is_head)| *is_head)
@@ -777,11 +789,17 @@ impl KagiApp {
     /// dirty-WT / ff / conflict prediction).
     pub fn start_merge_from_drag(&mut self, source: String, cx: &mut Context<Self>) {
         let remotes: Vec<String> = self
+            .active_view
             .remote_branches
             .iter()
             .map(|rb| format!("{}/{}", rb.remote, rb.name))
             .collect();
-        match validate_merge_from_drag(&source, &self.branches, &remotes, self.busy_op.is_some()) {
+        match validate_merge_from_drag(
+            &source,
+            &self.active_view.branches,
+            &remotes,
+            self.busy_op.is_some(),
+        ) {
             Ok(()) => {
                 eprintln!(
                     "[kagi] drag-merge: start merge from drag — source={}",

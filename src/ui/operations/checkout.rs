@@ -180,7 +180,10 @@ impl KagiApp {
         // Enter-checkout on a dirty tree: stash the changes first (plan
         // pipeline; refused/failed stash aborts the checkout with the error
         // shown in the modal).
-        if modal.stash_first && self.status_summary.is_dirty && !self.stash_before_checkout() {
+        if modal.stash_first
+            && self.active_view.status_summary.is_dirty
+            && !self.stash_before_checkout()
+        {
             return;
         }
         // Defence in depth: the UI never renders the confirm button when
@@ -359,7 +362,10 @@ impl KagiApp {
         // Enter-checkout on a dirty tree: stash the changes first (synchronous;
         // armed/two-stage style state stays on the main thread). A refused/failed
         // auto-stash aborts the checkout with the error shown in the modal.
-        if modal.stash_first && self.status_summary.is_dirty && !self.stash_before_checkout() {
+        if modal.stash_first
+            && self.active_view.status_summary.is_dirty
+            && !self.stash_before_checkout()
+        {
             return;
         }
         // Defence in depth: never execute a blocked plan.
@@ -496,7 +502,7 @@ impl KagiApp {
         let Some(id) = self.commit_id_for_row(ix) else {
             return;
         };
-        let dirty = self.status_summary.is_dirty;
+        let dirty = self.active_view.status_summary.is_dirty;
 
         // Prefer a local branch pointing at the commit; fall back to a
         // detached commit checkout.

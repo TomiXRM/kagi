@@ -121,7 +121,7 @@ impl CommitPanelState {
         let backend = match Backend::open(repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] commit_panel: repo open error: {}", e);
+                klog!("commit_panel: repo open error: {}", e);
                 return;
             }
         };
@@ -174,7 +174,7 @@ impl CommitPanelState {
                 self.rebuild_derived();
             }
             Err(e) => {
-                eprintln!("[kagi] commit_panel: working_tree_status error: {}", e);
+                klog!("commit_panel: working_tree_status error: {}", e);
             }
         }
     }

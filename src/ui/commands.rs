@@ -1075,7 +1075,7 @@ pub fn register_keybindings(cx: &mut App) {
 /// inspected headlessly).  Format (ADR/ticket §5):
 /// `[kagi] menu: <id> label="…" key=<ks|-> state=enabled|disabled(<reason>)`
 pub fn dump_menu_states(app: &KagiApp) {
-    eprintln!("[kagi] menu: dump begin n={}", COMMANDS.len());
+    klog!("menu: dump begin n={}", COMMANDS.len());
     for cmd in COMMANDS {
         let ks = cmd.keystroke.unwrap_or("-");
         let state = match command_state(app, cmd.id) {
@@ -1088,7 +1088,7 @@ pub fn dump_menu_states(app: &KagiApp) {
             cmd.id, cmd.label, ks, cmd.dangerous, state
         );
     }
-    eprintln!("[kagi] menu: dump end");
+    klog!("menu: dump end");
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1156,7 +1156,7 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        eprintln!("[kagi] menu: invoke {}", id);
+        klog!("menu: invoke {}", id);
         match id {
             // ── kagi ────────────────────────────────────────────────
             "app.about" => self.open_about_overlay(),
@@ -1198,24 +1198,24 @@ impl KagiApp {
             // to settings.json by `set_zoom`.
             "view.zoomIn" => {
                 let z = theme::set_zoom(theme::zoom() + theme::ZOOM_STEP);
-                eprintln!("[kagi] zoom: {:.2}x", z);
+                klog!("zoom: {:.2}x", z);
             }
             "view.zoomOut" => {
                 let z = theme::set_zoom(theme::zoom() - theme::ZOOM_STEP);
-                eprintln!("[kagi] zoom: {:.2}x", z);
+                klog!("zoom: {:.2}x", z);
             }
             "view.zoomReset" => {
                 let z = theme::set_zoom(1.0);
-                eprintln!("[kagi] zoom: {:.2}x", z);
+                klog!("zoom: {:.2}x", z);
             }
             "view.fullScreen" => window.toggle_fullscreen(),
             "view.toggleSidebar" => {
                 self.sidebar_visible = !self.sidebar_visible;
-                eprintln!("[kagi] menu: sidebar_visible={}", self.sidebar_visible);
+                klog!("menu: sidebar_visible={}", self.sidebar_visible);
             }
             "view.toggleTerminal" => {
                 self.bottom_panel_open = !self.bottom_panel_open;
-                eprintln!("[kagi] menu: bottom_panel_open={}", self.bottom_panel_open);
+                klog!("menu: bottom_panel_open={}", self.bottom_panel_open);
                 if self.bottom_panel_open {
                     self.bottom_tab = BottomTab::Terminal;
                     self.ensure_terminal(window, cx);
@@ -1223,7 +1223,7 @@ impl KagiApp {
             }
             "view.toggleCommitDetails" => {
                 self.inspector_visible = !self.inspector_visible;
-                eprintln!("[kagi] menu: inspector_visible={}", self.inspector_visible);
+                klog!("menu: inspector_visible={}", self.inspector_visible);
             }
             "view.toggleDiffView" => {
                 if self.main_diff.is_some() {
@@ -1305,7 +1305,7 @@ impl KagiApp {
             return;
         }
         let t = theme::theme();
-        eprintln!("[kagi] theme: {} dark={}", t.slug, t.dark);
+        klog!("theme: {} dark={}", t.slug, t.dark);
 
         // W12-GCADOPT: push the new kagi palette into gpui-component's global
         // ThemeColor so adopted widgets (Input, Tooltip, Scrollbar, Checkbox)
@@ -1336,7 +1336,7 @@ impl KagiApp {
     ///    `lang()` live) repaints in the new language.
     pub fn set_lang(&mut self, l: Lang, cx: &mut Context<Self>) {
         i18n::set_lang(l);
-        eprintln!("[kagi] lang: {}", l.slug());
+        klog!("lang: {}", l.slug());
         cx.set_menus(build_menus());
         cx.notify();
     }
@@ -1385,7 +1385,7 @@ impl KagiApp {
         };
         match std::process::Command::new("open").arg(&path).spawn() {
             Ok(_) => {
-                eprintln!("[kagi] menu: open-in-finder {}", path.display());
+                klog!("menu: open-in-finder {}", path.display());
                 self.status_footer =
                     FooterStatus::Idle(SharedString::from(Msg::OpenedInFinder.t()));
             }
@@ -1419,7 +1419,7 @@ impl KagiApp {
         self.fetch_in_flight = true;
         if !silent {
             self.refresh_spin_started = Some(Instant::now());
-            eprintln!("[kagi] fetch: start");
+            klog!("fetch: start");
         }
         let task = cx.background_spawn(async move {
             let backend = kagi::git::Backend::open(&repo_path)
@@ -1434,7 +1434,7 @@ impl KagiApp {
                     Ok(outcome) => {
                         app.reload();
                         if silent {
-                            eprintln!("[kagi] auto-fetch: ok remote={}", outcome.remote);
+                            klog!("auto-fetch: ok remote={}", outcome.remote);
                         } else {
                             app.status_footer = FooterStatus::Success(SharedString::from(format!(
                                 "Fetched {}",
@@ -1448,7 +1448,7 @@ impl KagiApp {
                     }
                     Err(e) => {
                         if silent {
-                            eprintln!("[kagi] auto-fetch: failed (silent): {e}");
+                            klog!("auto-fetch: failed (silent): {e}");
                         } else {
                             app.status_footer = FooterStatus::Failed(SharedString::from(format!(
                                 "Fetch failed: {e}"

@@ -18,7 +18,7 @@ impl KagiApp {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
-                eprintln!("[kagi] open_plan_modal: no repo_path set");
+                klog!("open_plan_modal: no repo_path set");
                 return;
             }
         };
@@ -26,7 +26,7 @@ impl KagiApp {
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] plan: repo open error: {}", e);
+                klog!("plan: repo open error: {}", e);
                 return;
             }
         };
@@ -47,7 +47,7 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                eprintln!("[kagi] plan: error: {}", e);
+                klog!("plan: error: {}", e);
             }
         }
     }
@@ -57,7 +57,7 @@ impl KagiApp {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
-                eprintln!("[kagi] open_checkout_commit_modal: no repo_path set");
+                klog!("open_checkout_commit_modal: no repo_path set");
                 return;
             }
         };
@@ -65,7 +65,7 @@ impl KagiApp {
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] checkout-commit plan: repo open error: {}", e);
+                klog!("checkout-commit plan: repo open error: {}", e);
                 return;
             }
         };
@@ -86,7 +86,7 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                eprintln!("[kagi] checkout-commit plan: error: {}", e);
+                klog!("checkout-commit plan: error: {}", e);
             }
         }
     }
@@ -123,7 +123,7 @@ impl KagiApp {
             }
         };
         if !plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: auto-stash has blockers, checkout aborted");
+            klog!("refused: auto-stash has blockers, checkout aborted");
             self.record_op(
                 "stash-push",
                 plan.current.clone(),
@@ -142,7 +142,7 @@ impl KagiApp {
         }
         match repo.execute_stash_push(Some(msg), true) {
             Ok(()) => {
-                eprintln!("[kagi] executed: auto-stash before checkout");
+                klog!("executed: auto-stash before checkout");
                 self.record_op(
                     "stash-push",
                     plan.current.clone(),
@@ -190,7 +190,7 @@ impl KagiApp {
         // blockers exist, but refuse here too so no code path can execute a
         // blocked plan.
         if !modal.plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: plan has blockers, not executing");
+            klog!("refused: plan has blockers, not executing");
             if let Some(ref rp) = self.repo_path.clone() {
                 self.record_op(
                     "checkout",
@@ -279,9 +279,9 @@ impl KagiApp {
         }
 
         match &modal.target {
-            CheckoutPlanTarget::Branch(branch) => eprintln!("[kagi] executed: checkout {}", branch),
+            CheckoutPlanTarget::Branch(branch) => klog!("executed: checkout {}", branch),
             CheckoutPlanTarget::Commit(commit_id) => {
-                eprintln!("[kagi] executed: checkout-commit {}", commit_id.short())
+                klog!("executed: checkout-commit {}", commit_id.short())
             }
         }
 
@@ -289,7 +289,7 @@ impl KagiApp {
         let mut repo2 = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] verify: repo open error: {}", e);
+                klog!("verify: repo open error: {}", e);
                 self.reload();
                 return;
             }
@@ -304,12 +304,12 @@ impl KagiApp {
                             ..
                         },
                     ) if actual_branch == branch => {
-                        eprintln!("[kagi] verified: HEAD={}", actual_branch);
+                        klog!("verified: HEAD={}", actual_branch);
                     }
                     (CheckoutPlanTarget::Commit(commit_id), Head::Detached { target })
                         if target == &commit_id.0 =>
                     {
-                        eprintln!("[kagi] verified: detached HEAD={}", commit_id.short());
+                        klog!("verified: detached HEAD={}", commit_id.short());
                     }
                     other => {
                         eprintln!(
@@ -328,7 +328,7 @@ impl KagiApp {
                 }
             }
             Err(e) => {
-                eprintln!("[kagi] verify: snapshot error: {}", e);
+                klog!("verify: snapshot error: {}", e);
                 modal.plan.predicted.clone()
             }
         };
@@ -370,7 +370,7 @@ impl KagiApp {
         }
         // Defence in depth: never execute a blocked plan.
         if !modal.plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: plan has blockers, not executing");
+            klog!("refused: plan has blockers, not executing");
             if let Some(ref rp) = self.repo_path.clone() {
                 self.record_op(
                     "checkout",
@@ -397,7 +397,7 @@ impl KagiApp {
         self.busy_op = Some("checkout");
         self.clear_plan_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCheckout.t()));
-        eprintln!("[kagi] async: checkout started");
+        klog!("async: checkout started");
 
         let plan = modal.plan.clone();
         let target = modal.target.clone();
@@ -412,7 +412,7 @@ impl KagiApp {
                 app.busy_op = None;
                 match result {
                     Ok((_summary, after)) => {
-                        eprintln!("[kagi] async: checkout finished");
+                        klog!("async: checkout finished");
                         app.record_op(
                             op_name,
                             plan.current.clone(),
@@ -422,7 +422,7 @@ impl KagiApp {
                         app.reload();
                     }
                     Err(err_msg) => {
-                        eprintln!("[kagi] async: checkout failed — {}", err_msg);
+                        klog!("async: checkout failed — {}", err_msg);
                         app.record_op(
                             op_name,
                             plan.current.clone(),

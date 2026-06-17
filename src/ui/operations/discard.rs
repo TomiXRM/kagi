@@ -142,7 +142,7 @@ impl KagiApp {
             None => return,
         };
         if !modal.plan.blockers.is_empty() || modal.paths.is_empty() {
-            eprintln!("[kagi] refused: discard plan has blockers / no targets");
+            klog!("refused: discard plan has blockers / no targets");
             self.record_op(
                 "discard",
                 modal.plan.current.clone(),
@@ -159,7 +159,7 @@ impl KagiApp {
         self.busy_op = Some("discard");
         self.clear_discard_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDiscard.t()));
-        eprintln!("[kagi] async: discard started");
+        klog!("async: discard started");
 
         let plan = modal.plan.clone();
         let paths = modal.paths.clone();
@@ -174,7 +174,7 @@ impl KagiApp {
                 app.busy_op = None;
                 match result {
                     Ok((summary, after)) => {
-                        eprintln!("[kagi] async: discard finished");
+                        klog!("async: discard finished");
                         app.record_op(
                             "discard",
                             plan.current.clone(),
@@ -188,7 +188,7 @@ impl KagiApp {
                         app.reload();
                     }
                     Err(err_msg) => {
-                        eprintln!("[kagi] async: discard failed — {}", err_msg);
+                        klog!("async: discard failed — {}", err_msg);
                         app.record_op(
                             "discard",
                             plan.current.clone(),

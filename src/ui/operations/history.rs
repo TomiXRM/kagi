@@ -59,7 +59,7 @@ impl KagiApp {
             None => return,
         };
         if !modal.plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: undo plan has blockers, not executing");
+            klog!("refused: undo plan has blockers, not executing");
             self.record_op(
                 "undo-commit",
                 modal.plan.current.clone(),
@@ -182,7 +182,7 @@ impl KagiApp {
                 }
             }
             Err(e) => {
-                eprintln!("[kagi] history: reflog seed failed: {}", e);
+                klog!("history: reflog seed failed: {}", e);
             }
         }
     }
@@ -504,7 +504,7 @@ impl KagiApp {
 
         // Defence: never execute with blockers present.
         if !modal.plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: amend plan has blockers, not executing");
+            klog!("refused: amend plan has blockers, not executing");
             self.record_op(
                 "amend",
                 modal.plan.current.clone(),
@@ -522,7 +522,7 @@ impl KagiApp {
                 confirm_armed: true,
                 ..modal
             });
-            eprintln!("[kagi] amend: armed (second confirm required — history rewrite)");
+            klog!("amend: armed (second confirm required — history rewrite)");
             return;
         }
 
@@ -646,7 +646,7 @@ impl KagiApp {
 
         // Defence: never execute with blockers present.
         if !modal.plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: amend plan has blockers, not executing");
+            klog!("refused: amend plan has blockers, not executing");
             self.record_op(
                 "amend",
                 modal.plan.current.clone(),
@@ -664,7 +664,7 @@ impl KagiApp {
                 confirm_armed: true,
                 ..modal
             });
-            eprintln!("[kagi] amend: armed (second confirm required — history rewrite)");
+            klog!("amend: armed (second confirm required — history rewrite)");
             return;
         }
 
@@ -677,7 +677,7 @@ impl KagiApp {
         self.busy_op = Some("amend");
         self.clear_amend_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyAmend.t()));
-        eprintln!("[kagi] async: amend started");
+        klog!("async: amend started");
 
         let plan = modal.plan.clone();
         let mode = modal.mode;
@@ -693,7 +693,7 @@ impl KagiApp {
                 app.busy_op = None;
                 match result {
                     Ok((after, old, new)) => {
-                        eprintln!("[kagi] async: amend finished");
+                        klog!("async: amend finished");
                         app.record_op(
                             "amend",
                             plan.current.clone(),
@@ -709,7 +709,7 @@ impl KagiApp {
                         app.reload();
                     }
                     Err(err_msg) => {
-                        eprintln!("[kagi] async: amend failed — {}", err_msg);
+                        klog!("async: amend failed — {}", err_msg);
                         app.record_op(
                             "amend",
                             plan.current.clone(),

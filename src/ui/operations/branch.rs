@@ -66,7 +66,7 @@ impl KagiApp {
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] replan_create_branch: repo open error: {}", e);
+                klog!("replan_create_branch: repo open error: {}", e);
                 return;
             }
         };
@@ -95,7 +95,7 @@ impl KagiApp {
                 }
             }
             Err(e) => {
-                eprintln!("[kagi] plan: create-branch error: {}", e);
+                klog!("plan: create-branch error: {}", e);
             }
         }
     }
@@ -117,7 +117,7 @@ impl KagiApp {
         };
         // Defence in depth: refuse if blockers exist.
         if !plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: create-branch plan has blockers, not executing");
+            klog!("refused: create-branch plan has blockers, not executing");
             if let Some(ref rp) = self.repo_path.clone() {
                 self.record_op(
                     "create-branch",
@@ -198,14 +198,14 @@ impl KagiApp {
         let repo2 = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] verify: repo open error: {}", e);
+                klog!("verify: repo open error: {}", e);
                 self.reload();
                 return;
             }
         };
         let branch_exists = repo2.local_branch_exists(&modal.input);
         if branch_exists {
-            eprintln!("[kagi] verified: branch '{}' exists", modal.input);
+            klog!("verified: branch '{}' exists", modal.input);
         } else {
             eprintln!(
                 "[kagi] verify: branch '{}' NOT found after create",
@@ -293,7 +293,7 @@ impl KagiApp {
                 }
                 return;
             }
-            eprintln!("[kagi] executed: checkout {}", modal.input);
+            klog!("executed: checkout {}", modal.input);
             self.record_op(
                 "checkout",
                 checkout_plan.current.clone(),
@@ -727,7 +727,7 @@ impl KagiApp {
         // freeze. `busy_op` drives the spinning sync icon + blocks re-entry.
         self.busy_op = Some("merge-plan");
         self.status_footer = FooterStatus::Busy(SharedString::from("Planning merge…"));
-        eprintln!("[kagi] async: merge plan started for {}", target);
+        klog!("async: merge plan started for {}", target);
         let bg_path = repo_path.clone();
         let bg_target = target.clone();
         let task = cx.background_spawn(async move {
@@ -808,7 +808,7 @@ impl KagiApp {
                 self.open_merge_modal(source, cx);
             }
             Err(reason) => {
-                eprintln!("[kagi] drag-merge: rejected — {}", reason);
+                klog!("drag-merge: rejected — {}", reason);
                 self.status_footer = FooterStatus::Idle(SharedString::from(reason));
             }
         }
@@ -829,7 +829,7 @@ impl KagiApp {
             None => return,
         };
         if !modal.plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: merge plan has blockers, not executing");
+            klog!("refused: merge plan has blockers, not executing");
             self.record_op(
                 "merge",
                 modal.plan.current.clone(),
@@ -846,7 +846,7 @@ impl KagiApp {
         self.busy_op = Some("merge");
         self.clear_merge_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyMerge.t()));
-        eprintln!("[kagi] async: merge started");
+        klog!("async: merge started");
 
         let plan = modal.plan.clone();
         let target = modal.target.clone();
@@ -863,7 +863,7 @@ impl KagiApp {
                 app.busy_op = None;
                 match result {
                     Ok((summary, after)) => {
-                        eprintln!("[kagi] async: merge finished — {}", summary);
+                        klog!("async: merge finished — {}", summary);
                         app.record_op(
                             "merge",
                             modal.plan.current.clone(),
@@ -892,7 +892,7 @@ impl KagiApp {
                         app.reload();
                     }
                     Err(err_msg) => {
-                        eprintln!("[kagi] async: merge failed — {}", err_msg);
+                        klog!("async: merge failed — {}", err_msg);
                         app.record_op(
                             "merge",
                             modal.plan.current.clone(),
@@ -980,7 +980,7 @@ impl KagiApp {
             None => return,
         };
         if !modal.plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: checkout-tracking plan has blockers, not executing");
+            klog!("refused: checkout-tracking plan has blockers, not executing");
             self.record_op(
                 "checkout-tracking",
                 modal.plan.current.clone(),
@@ -997,7 +997,7 @@ impl KagiApp {
         self.busy_op = Some("checkout");
         self.clear_tracking_checkout_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCheckout.t()));
-        eprintln!("[kagi] async: checkout-tracking started");
+        klog!("async: checkout-tracking started");
 
         let plan = modal.plan.clone();
         let remote_branch = modal.remote_branch.clone();
@@ -1012,7 +1012,7 @@ impl KagiApp {
                 app.busy_op = None;
                 match result {
                     Ok((summary, after)) => {
-                        eprintln!("[kagi] async: checkout-tracking finished — {}", summary);
+                        klog!("async: checkout-tracking finished — {}", summary);
                         app.record_op(
                             "checkout-tracking",
                             modal.plan.current.clone(),
@@ -1022,7 +1022,7 @@ impl KagiApp {
                         app.reload();
                     }
                     Err(err_msg) => {
-                        eprintln!("[kagi] async: checkout-tracking failed — {}", err_msg);
+                        klog!("async: checkout-tracking failed — {}", err_msg);
                         app.record_op(
                             "checkout-tracking",
                             modal.plan.current.clone(),
@@ -1052,7 +1052,7 @@ impl KagiApp {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
-                eprintln!("[kagi] open_delete_branch_modal: no repo_path set");
+                klog!("open_delete_branch_modal: no repo_path set");
                 return;
             }
         };
@@ -1160,7 +1160,7 @@ impl KagiApp {
 
         match repo.execute_delete_branch(&modal.plan, &modal.branch_name) {
             Ok(()) => {
-                eprintln!("[kagi] executed: delete-branch {}", modal.branch_name);
+                klog!("executed: delete-branch {}", modal.branch_name);
                 self.clear_delete_branch_modal();
                 let after = kagi::git::ops::StateSummary {
                     head: modal.plan.current.head.clone(),
@@ -1235,7 +1235,7 @@ impl KagiApp {
         self.busy_op = Some("delete-branch");
         self.clear_delete_branch_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranch.t()));
-        eprintln!("[kagi] async: delete-branch started");
+        klog!("async: delete-branch started");
 
         let plan = modal.plan.clone();
         let branch_name = modal.branch_name.clone();
@@ -1252,7 +1252,7 @@ impl KagiApp {
                 app.busy_op = None;
                 match result {
                     Ok(after) => {
-                        eprintln!("[kagi] async: delete-branch finished");
+                        klog!("async: delete-branch finished");
                         let recovery_line = plan
                             .recovery
                             .lines()
@@ -1272,7 +1272,7 @@ impl KagiApp {
                         app.reload();
                     }
                     Err(err_msg) => {
-                        eprintln!("[kagi] async: delete-branch failed — {}", err_msg);
+                        klog!("async: delete-branch failed — {}", err_msg);
                         app.record_op(
                             "delete-branch",
                             plan.current.clone(),

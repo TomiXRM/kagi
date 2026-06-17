@@ -1198,8 +1198,8 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
 
     // T009: log lane count derived from the first row (all rows share the same value).
     let lane_count = rows.first().map(|r| r.lane_count).unwrap_or(0);
-    eprintln!("[kagi] graph: lane_count={}", lane_count);
-    eprintln!("[kagi] commit list rows: {}", rows.len());
+    klog!("graph: lane_count={}", lane_count);
+    klog!("commit list rows: {}", rows.len());
     eprintln!(
         "[kagi] graph: stash rows={} lanes={:?}",
         stash_graph_rows.len(),
@@ -1557,14 +1557,14 @@ impl KagiApp {
         let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] reload: repo open error: {}", e);
+                klog!("reload: repo open error: {}", e);
                 return;
             }
         };
         let snap = match repo.snapshot(10_000) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("[kagi] reload: snapshot error: {}", e);
+                klog!("reload: snapshot error: {}", e);
                 return;
             }
         };
@@ -1732,7 +1732,7 @@ impl KagiApp {
         }
 
         // Emit the required log line and update the footer.
-        eprintln!("[kagi] refreshed (external change)");
+        klog!("refreshed (external change)");
         self.status_footer =
             FooterStatus::Idle(SharedString::from("[kagi] refreshed (external change)"));
 
@@ -1768,7 +1768,7 @@ impl KagiApp {
                 if app.last_working_status.as_ref() == Some(&new_status) {
                     return; // working-tree status unchanged → nothing to do.
                 }
-                eprintln!("[kagi] watcher: working-tree changed — refreshing WIP");
+                klog!("watcher: working-tree changed — refreshing WIP");
                 // In-place WIP/status update — do NOT full-reload (that re-snapshots
                 // the graph and closes the commit panel). Branch / ahead-behind are
                 // unchanged by a working-tree edit, so only the dirty/count fields
@@ -1833,7 +1833,7 @@ impl KagiApp {
             Some(s) => s,
             None => {
                 if self.conflict.is_some() {
-                    eprintln!("[kagi] conflict-mode: cleared");
+                    klog!("conflict-mode: cleared");
                 }
                 self.conflict = None;
                 self.conflict_editing = None;
@@ -1847,7 +1847,7 @@ impl KagiApp {
         // editor.  Without this the FS-watcher reload that staging triggers would
         // re-enter Conflict Mode with zero files and clobber the commit panel.
         if matches!(session.op, kagi::git::ConflictOp::Merge { .. }) && session.files.is_empty() {
-            eprintln!("[kagi] conflict-mode: merge resolved — ready to commit");
+            klog!("conflict-mode: merge resolved — ready to commit");
             self.merge_commit_ready = true;
             self.conflict = None;
             self.conflict_editing = None;
@@ -2280,7 +2280,7 @@ impl KagiApp {
                                 let _ = kagi::git::clear_draft(&rp, &branch);
                             } else {
                                 let _ = kagi::git::save_draft(&rp, &branch, &msg, &mode);
-                                eprintln!("[kagi] draft: saved {}", branch);
+                                klog!("draft: saved {}", branch);
                             }
                         });
                     })
@@ -2577,7 +2577,7 @@ impl KagiApp {
         let entry = OpLogEntry::new(op, &repo_str, before, outcome);
 
         if let Err(e) = append_oplog(&entry) {
-            eprintln!("[kagi] oplog: write failed (non-fatal): {}", e);
+            klog!("oplog: write failed (non-fatal): {}", e);
         }
 
         // T-BP-004: push to in-memory ring-buffer (newest at front).
@@ -2592,14 +2592,14 @@ impl KagiApp {
         if is_failed {
             self.bottom_panel_open = true;
             self.bottom_tab = BottomTab::OperationLog;
-            eprintln!("[kagi] bottom-panel: open (Failed auto-open)");
+            klog!("bottom-panel: open (Failed auto-open)");
         }
 
         if footer_ok {
-            eprintln!("[kagi] footer: {}", footer_msg);
+            klog!("footer: {}", footer_msg);
             self.status_footer = FooterStatus::Success(footer_msg);
         } else {
-            eprintln!("[kagi] footer: {}", footer_msg);
+            klog!("footer: {}", footer_msg);
             self.status_footer = FooterStatus::Failed(footer_msg);
         }
     }
@@ -2617,7 +2617,7 @@ impl KagiApp {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
-                eprintln!("[kagi] terminal: no repo_path — cannot start terminal");
+                klog!("terminal: no repo_path — cannot start terminal");
                 return;
             }
         };
@@ -2711,8 +2711,8 @@ impl KagiApp {
                     app.update_available = Some((plan, release));
                     cx.notify();
                 }
-                Ok(None) => eprintln!("[kagi] update: up to date"),
-                Err(e) => eprintln!("[kagi] update: check failed (ignored): {e}"),
+                Ok(None) => klog!("update: up to date"),
+                Err(e) => klog!("update: check failed (ignored): {e}"),
             });
         })
         .detach();
@@ -2731,17 +2731,17 @@ impl KagiApp {
         self.update_status = Some(SharedString::from("Downloading & verifying…"));
         cx.notify();
         let task = cx.background_spawn(async move {
-            kagi::update::install(&plan, &release, &|m| eprintln!("[kagi] update: {m}"))
+            kagi::update::install(&plan, &release, &|m| klog!("update: {m}"))
         });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| match result {
                 Ok(relaunch) => {
-                    eprintln!("[kagi] update: installed — relaunching");
+                    klog!("update: installed — relaunching");
                     relaunch.spawn_and_exit();
                 }
                 Err(e) => {
-                    eprintln!("[kagi] update: failed: {e}");
+                    klog!("update: failed: {e}");
                     app.update_installing = false;
                     app.update_status = Some(SharedString::from(format!("Update failed: {e}")));
                     cx.notify();
@@ -2821,7 +2821,7 @@ impl KagiApp {
         } else if !self.diff_cache.contains_key(&index) {
             let files_opt = self.fetch_changed_files(index);
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
-            eprintln!("[kagi] changed files: {}", n);
+            klog!("changed files: {}", n);
             self.diff_cache.insert(index, files_opt);
             // W16-DIFFSTAT: aggregate per-file additions/deletions alongside.
             if let Some(stats) = self.fetch_diffstat(index) {
@@ -2835,7 +2835,7 @@ impl KagiApp {
                 .and_then(|v| v.as_ref())
                 .map(|v| v.len())
                 .unwrap_or(0);
-            eprintln!("[kagi] changed files: {}", n);
+            klog!("changed files: {}", n);
         }
 
         // T018: emit tree structure log when KAGI_SELECT_FIRST=1
@@ -2847,7 +2847,7 @@ impl KagiApp {
                 for row in &rows {
                     match row {
                         file_tree::TreeRow::Dir { depth, name } => {
-                            eprintln!("[kagi] tree: {}DIR  {}", "  ".repeat(*depth), name);
+                            klog!("tree: {}DIR  {}", "  ".repeat(*depth), name);
                         }
                         file_tree::TreeRow::File {
                             depth,
@@ -2993,7 +2993,7 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
-        eprintln!("[kagi] file-history: open {}", rel_path.display());
+        klog!("file-history: open {}", rel_path.display());
         let generation = self
             .file_history
             .as_ref()
@@ -3195,7 +3195,7 @@ impl KagiApp {
                 })
             }
             Err(e) => {
-                eprintln!("[kagi] file-history diff error: {}", e);
+                klog!("file-history diff error: {}", e);
                 None
             }
         };
@@ -3321,7 +3321,7 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
-        eprintln!("[kagi] file-history: open {}", rel_path.display());
+        klog!("file-history: open {}", rel_path.display());
         let generation = self
             .file_history
             .as_ref()
@@ -3422,7 +3422,7 @@ impl KagiApp {
         match repo.commit_file_diff(&id, &path) {
             Ok(file_diff) => self.set_commit_main_diff(&file_diff, &path, selected, file_index),
             Err(e) => {
-                eprintln!("[kagi] diff error: {}", e);
+                klog!("diff error: {}", e);
             }
         }
     }
@@ -3512,7 +3512,7 @@ impl KagiApp {
                         app.diff_cache.insert(index, Some(files));
                     }
                     Err(e) => {
-                        eprintln!("[kagi] remote changed-files error: {e}");
+                        klog!("remote changed-files error: {e}");
                         app.diff_cache.insert(index, None);
                     }
                 }
@@ -3559,7 +3559,7 @@ impl KagiApp {
                     Ok(file_diff) => {
                         app.set_commit_main_diff(&file_diff, &path, selected, file_index)
                     }
-                    Err(e) => eprintln!("[kagi] remote diff error: {e}"),
+                    Err(e) => klog!("remote diff error: {e}"),
                 }
                 cx.notify();
             });
@@ -3650,7 +3650,7 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                eprintln!("[kagi] compare diff error: {}", e);
+                klog!("compare diff error: {}", e);
             }
         }
     }
@@ -3743,7 +3743,7 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                eprintln!("[kagi] commit-panel diff error: {}", e);
+                klog!("commit-panel diff error: {}", e);
             }
         }
     }
@@ -3796,7 +3796,7 @@ impl KagiApp {
         } else if !self.diff_cache.contains_key(&row_index) {
             let files_opt = self.fetch_changed_files(row_index);
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
-            eprintln!("[kagi] changed files: {}", n);
+            klog!("changed files: {}", n);
             self.diff_cache.insert(row_index, files_opt);
             if let Some(stats) = self.fetch_diffstat(row_index) {
                 self.diffstat_cache.insert(row_index, stats);
@@ -3820,14 +3820,14 @@ impl KagiApp {
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] compare: repo open error: {}", e);
+                klog!("compare: repo open error: {}", e);
                 return;
             }
         };
         let head = match repo.head_commit_id() {
             Some(id) => id,
             None => {
-                eprintln!("[kagi] compare: HEAD unavailable");
+                klog!("compare: HEAD unavailable");
                 return;
             }
         };
@@ -3849,7 +3849,7 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                eprintln!("[kagi] compare: error: {}", e);
+                klog!("compare: error: {}", e);
                 self.status_footer =
                     FooterStatus::Failed(SharedString::from(format!("Compare failed: {}", e)));
             }
@@ -3872,7 +3872,7 @@ impl KagiApp {
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[kagi] compare: repo open error: {}", e);
+                klog!("compare: repo open error: {}", e);
                 return;
             }
         };
@@ -3887,7 +3887,7 @@ impl KagiApp {
                 return;
             }
             Err(e) => {
-                eprintln!("[kagi] compare: status error: {}", e);
+                klog!("compare: status error: {}", e);
                 return;
             }
             _ => {}
@@ -3913,7 +3913,7 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                eprintln!("[kagi] compare: error: {}", e);
+                klog!("compare: error: {}", e);
                 self.status_footer =
                     FooterStatus::Failed(SharedString::from(format!("Compare failed: {}", e)));
             }
@@ -3923,14 +3923,14 @@ impl KagiApp {
     pub fn open_compare_with_head_row(&mut self, row_index: usize) {
         match self.commit_id_for_row(row_index) {
             Some(target) => self.open_compare_with_head(target),
-            None => eprintln!("[kagi] compare: row={} out of range", row_index),
+            None => klog!("compare: row={} out of range", row_index),
         }
     }
 
     pub fn open_compare_with_working_tree_row(&mut self, row_index: usize) {
         match self.commit_id_for_row(row_index) {
             Some(target) => self.open_compare_with_working_tree(target),
-            None => eprintln!("[kagi] compare: row={} out of range", row_index),
+            None => klog!("compare: row={} out of range", row_index),
         }
     }
 
@@ -3974,7 +3974,7 @@ impl KagiApp {
             }
         };
 
-        eprintln!("[kagi] jump: {} -> row {}", branch_name, row_ix);
+        klog!("jump: {} -> row {}", branch_name, row_ix);
 
         // Scroll the list so the row is visible (centered in viewport).
         self.commit_scroll_handle
@@ -4006,7 +4006,7 @@ impl KagiApp {
                 return;
             }
         };
-        eprintln!("[kagi] jump: commit {} -> row {}", target.short(), row_ix);
+        klog!("jump: commit {} -> row {}", target.short(), row_ix);
         self.commit_scroll_handle
             .scroll_to_item(row_ix, ScrollStrategy::Center);
         // `select` toggles on a repeated index; a jump must stay selected.
@@ -4028,20 +4028,20 @@ impl KagiApp {
             row_index,
             position,
         });
-        eprintln!("[kagi] context-menu: open row={}", row_index);
+        klog!("context-menu: open row={}", row_index);
         self.log_commit_menu(row_index);
     }
 
     /// Headless path for KAGI_CONTEXT_MENU=<row>.
     pub fn open_commit_menu_headless(&mut self, row_index: usize) {
         if self.active_view.rows.get(row_index).is_none() {
-            eprintln!("[kagi] context-menu: row={} out of range", row_index);
+            klog!("context-menu: row={} out of range", row_index);
             return;
         }
         if self.selected != Some(row_index) {
             self.select(row_index);
         }
-        eprintln!("[kagi] context-menu: open row={}", row_index);
+        klog!("context-menu: open row={}", row_index);
         self.log_commit_menu(row_index);
     }
 
@@ -4125,7 +4125,7 @@ impl KagiApp {
             kind: BranchKind::Local,
             position,
         });
-        eprintln!("[kagi] branch-menu: open local {}", branch_name);
+        klog!("branch-menu: open local {}", branch_name);
     }
 
     pub fn open_remote_branch_menu(
@@ -4142,7 +4142,7 @@ impl KagiApp {
             kind: BranchKind::Remote,
             position,
         });
-        eprintln!("[kagi] branch-menu: open remote {}", display_name);
+        klog!("branch-menu: open remote {}", display_name);
     }
 
     fn branch_menu_context(&self, state: &BranchMenuState) -> BranchMenuContext {
@@ -4418,7 +4418,7 @@ impl KagiApp {
             CommitAction::ResetToCommit => {
                 self.status_footer =
                     FooterStatus::Idle(SharedString::from(Msg::ResetUnimplemented.t()));
-                eprintln!("[kagi] context-menu: stub Reset {}", target.short());
+                klog!("context-menu: stub Reset {}", target.short());
             }
             CommitAction::CompareWithHead => {
                 self.open_compare_with_head(target);
@@ -4653,12 +4653,12 @@ fn stash_push_blocking(
     let after = match repo.working_tree_status() {
         Ok(status) => {
             if !status.is_dirty() {
-                eprintln!("[kagi] verified: working tree clean after stash-push");
+                klog!("verified: working tree clean after stash-push");
             } else {
-                eprintln!("[kagi] verify: working tree NOT clean after stash-push");
+                klog!("verify: working tree NOT clean after stash-push");
             }
             let count = repo.stash_count().unwrap_or(0);
-            eprintln!("[kagi] verified: stash count={}", count);
+            klog!("verified: stash count={}", count);
             // resolve_head is crate-private; the predicted head from the
             // plan is accurate here (stash does not move HEAD).
             let head = plan.predicted.head.clone();
@@ -4700,11 +4700,11 @@ fn pull_blocking(
         PullOutcome::FastForward { to } => format!("fast-forward to {}", to.short()),
         PullOutcome::Merged { commit } => format!("merge commit {}", commit.short()),
     };
-    eprintln!("[kagi] executed: pull — {}", summary);
+    klog!("executed: pull — {}", summary);
 
     // Verify: re-snapshot for the after-state.
     let after_summary = verify_after_snapshot(repo_path, plan);
-    eprintln!("[kagi] verified: pull after = {}", after_summary.head);
+    klog!("verified: pull after = {}", after_summary.head);
     Ok((summary, after_summary))
 }
 
@@ -4727,10 +4727,10 @@ fn push_blocking(
     } else {
         format!("pushed {} commit(s)", outcome.pushed)
     };
-    eprintln!("[kagi] executed: push — {}", summary);
+    klog!("executed: push — {}", summary);
 
     let after_summary = verify_after_snapshot(repo_path, plan);
-    eprintln!("[kagi] verified: push after = {}", after_summary.head);
+    klog!("verified: push after = {}", after_summary.head);
     Ok((summary, after_summary))
 }
 
@@ -4783,11 +4783,11 @@ fn checkout_blocking(
 
     let summary = match target {
         CheckoutPlanTarget::Branch(branch) => {
-            eprintln!("[kagi] executed: checkout {}", branch);
+            klog!("executed: checkout {}", branch);
             format!("checkout {}", branch)
         }
         CheckoutPlanTarget::Commit(commit_id) => {
-            eprintln!("[kagi] executed: checkout-commit {}", commit_id.short());
+            klog!("executed: checkout-commit {}", commit_id.short());
             format!("detached: {}", commit_id.short())
         }
     };
@@ -4804,12 +4804,12 @@ fn checkout_blocking(
                             ..
                         },
                     ) if actual_branch == branch => {
-                        eprintln!("[kagi] verified: HEAD={}", actual_branch);
+                        klog!("verified: HEAD={}", actual_branch);
                     }
                     (CheckoutPlanTarget::Commit(commit_id), Head::Detached { target: t })
                         if t == &commit_id.0 =>
                     {
-                        eprintln!("[kagi] verified: detached HEAD={}", commit_id.short());
+                        klog!("verified: detached HEAD={}", commit_id.short());
                     }
                     other => {
                         eprintln!(
@@ -4828,12 +4828,12 @@ fn checkout_blocking(
                 }
             }
             Err(e) => {
-                eprintln!("[kagi] verify: snapshot error: {}", e);
+                klog!("verify: snapshot error: {}", e);
                 plan.predicted.clone()
             }
         },
         Err(e) => {
-            eprintln!("[kagi] verify: repo open error: {}", e);
+            klog!("verify: repo open error: {}", e);
             plan.predicted.clone()
         }
     };
@@ -4874,10 +4874,10 @@ fn merge_blocking(
             let new_head = repo
                 .execute_merge_branch(target)
                 .map_err(|e| format!("Merge failed: {}", e))?;
-            eprintln!("[kagi] executed: merge {} -> {}", target, new_head.short());
+            klog!("executed: merge {} -> {}", target, new_head.short());
 
             let after = verify_after_snapshot(repo_path, plan);
-            eprintln!("[kagi] verified: merge after = {}", after.head);
+            klog!("verified: merge after = {}", after.head);
             Ok((format!("merge {}", target), after))
         }
     }
@@ -4902,7 +4902,7 @@ fn checkout_tracking_blocking(
     );
 
     let after = verify_after_snapshot(repo_path, plan);
-    eprintln!("[kagi] verified: checkout-tracking after = {}", after.head);
+    klog!("verified: checkout-tracking after = {}", after.head);
     Ok((format!("checkout {}", local_branch), after))
 }
 
@@ -4970,7 +4970,7 @@ fn commit_blocking(
     let new_id = repo
         .execute_commit(message)
         .map_err(|e| format!("Commit failed: {}", e))?;
-    eprintln!("[kagi] executed: commit {}", new_id.short());
+    klog!("executed: commit {}", new_id.short());
 
     // Verify: re-snapshot, check HEAD is the new commit, unstaged remain.
     let after = match kagi::git::Backend::open(repo_path) {
@@ -4984,7 +4984,7 @@ fn commit_blocking(
                             branch
                         );
                     } else {
-                        eprintln!("[kagi] verify: HEAD mismatch after commit");
+                        klog!("verify: HEAD mismatch after commit");
                     }
                 }
                 let is_dirty = snap.status.is_dirty();
@@ -5006,12 +5006,12 @@ fn commit_blocking(
                 }
             }
             Err(e) => {
-                eprintln!("[kagi] verify: snapshot error: {}", e);
+                klog!("verify: snapshot error: {}", e);
                 plan.predicted.clone()
             }
         },
         Err(e) => {
-            eprintln!("[kagi] verify: repo open error: {}", e);
+            klog!("verify: repo open error: {}", e);
             plan.predicted.clone()
         }
     };
@@ -5032,7 +5032,7 @@ fn stash_pop_blocking(
 
     repo.execute_stash_pop(stash_index)
         .map_err(|e| format!("Pop failed: {}", e))?;
-    eprintln!("[kagi] executed: stash-pop index={}", stash_index);
+    klog!("executed: stash-pop index={}", stash_index);
 
     let after = StateSummary {
         head: plan.current.head.clone(),
@@ -5085,7 +5085,7 @@ fn discard_blocking(
         .execute_discard(plan, paths)
         .map_err(|e| format!("Discard failed: {}", e))?;
     let summary = outcome.oplog_summary();
-    eprintln!("[kagi] executed: {}", summary);
+    klog!("executed: {}", summary);
 
     // Verify: re-read status; targets must have left the unstaged set.
     let dirty = match repo.working_tree_status() {
@@ -5102,13 +5102,13 @@ fn discard_blocking(
                     paths.len()
                 );
             } else {
-                eprintln!("[kagi] verify: {} target(s) still unstaged", leftover);
+                klog!("verify: {} target(s) still unstaged", leftover);
             }
             // Record the recovery handle (path→blob list) in the oplog after-state.
             summary.clone()
         }
         Err(e) => {
-            eprintln!("[kagi] verify: status error: {}", e);
+            klog!("verify: status error: {}", e);
             summary.clone()
         }
     };
@@ -5178,7 +5178,7 @@ fn delete_branch_blocking(
 
     repo.execute_delete_branch(plan, branch_name)
         .map_err(|e| format!("Delete failed: {}", e))?;
-    eprintln!("[kagi] executed: delete-branch {}", branch_name);
+    klog!("executed: delete-branch {}", branch_name);
 
     Ok(StateSummary {
         head: plan.current.head.clone(),
@@ -5316,7 +5316,7 @@ fn create_worktree_blocking(
                 head.unwrap_or_else(|| "?".to_string())
             );
         }
-        Err(e) => eprintln!("[kagi] verify: worktree open error: {}", e),
+        Err(e) => klog!("verify: worktree open error: {}", e),
     }
 
     Ok(plan.predicted.clone())
@@ -5368,12 +5368,12 @@ fn verify_new_commit_snapshot(
                 }
             }
             Err(e) => {
-                eprintln!("[kagi] verify: snapshot error: {}", e);
+                klog!("verify: snapshot error: {}", e);
                 plan.predicted.clone()
             }
         },
         Err(e) => {
-            eprintln!("[kagi] verify: repo open error: {}", e);
+            klog!("verify: repo open error: {}", e);
             plan.predicted.clone()
         }
     }
@@ -5421,9 +5421,9 @@ pub fn run_app(app_state: KagiApp) {
             )),
             std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/JetBrainsMono-Bold.ttf")),
         ]) {
-            eprintln!("[kagi] fonts: add_fonts failed (UI may fall back): {e}");
+            klog!("fonts: add_fonts failed (UI may fall back): {e}");
         } else {
-            eprintln!("[kagi] fonts: loaded Inter + JetBrains Mono");
+            klog!("fonts: loaded Inter + JetBrains Mono");
         }
 
         // T025: initialize gpui-component (registers key bindings, themes, etc.)

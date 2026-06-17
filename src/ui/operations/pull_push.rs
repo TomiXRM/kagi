@@ -85,7 +85,7 @@ impl KagiApp {
         };
         // Defence in depth: refuse blocked plans even if a code path slips through.
         if !modal.plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: pull plan has blockers, not executing");
+            klog!("refused: pull plan has blockers, not executing");
             self.record_op(
                 "pull",
                 modal.plan.current.clone(),
@@ -145,7 +145,7 @@ impl KagiApp {
             None => return,
         };
         if !modal.plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: pull plan has blockers, not executing");
+            klog!("refused: pull plan has blockers, not executing");
             self.record_op(
                 "pull",
                 modal.plan.current.clone(),
@@ -162,7 +162,7 @@ impl KagiApp {
         self.busy_op = Some("pull");
         self.clear_pull_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
-        eprintln!("[kagi] async: pull started");
+        klog!("async: pull started");
 
         let plan = modal.plan.clone();
         let bg_path = repo_path.clone();
@@ -188,7 +188,7 @@ impl KagiApp {
         self.busy_op = None;
         match result {
             Ok((summary, after_summary)) => {
-                eprintln!("[kagi] async: pull finished — {}", summary);
+                klog!("async: pull finished — {}", summary);
                 self.record_op(
                     "pull",
                     modal.plan.current.clone(),
@@ -202,7 +202,7 @@ impl KagiApp {
                 self.reload();
             }
             Err(err_msg) => {
-                eprintln!("[kagi] async: pull failed — {}", err_msg);
+                klog!("async: pull failed — {}", err_msg);
                 self.record_op(
                     "pull",
                     modal.plan.current.clone(),
@@ -287,7 +287,7 @@ impl KagiApp {
         };
         // Defence in depth: refuse blocked plans even if a code path slips through.
         if !modal.plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: push plan has blockers, not executing");
+            klog!("refused: push plan has blockers, not executing");
             self.record_op(
                 "push",
                 modal.plan.current.clone(),
@@ -346,7 +346,7 @@ impl KagiApp {
             None => return,
         };
         if !modal.plan.blockers.is_empty() {
-            eprintln!("[kagi] refused: push plan has blockers, not executing");
+            klog!("refused: push plan has blockers, not executing");
             self.record_op(
                 "push",
                 modal.plan.current.clone(),
@@ -363,7 +363,7 @@ impl KagiApp {
         self.busy_op = Some("push");
         self.clear_push_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPush.t()));
-        eprintln!("[kagi] async: push started");
+        klog!("async: push started");
 
         let plan = modal.plan.clone();
         let bg_path = repo_path.clone();
@@ -389,7 +389,7 @@ impl KagiApp {
         self.busy_op = None;
         match result {
             Ok((summary, after_summary)) => {
-                eprintln!("[kagi] async: push finished — {}", summary);
+                klog!("async: push finished — {}", summary);
                 self.record_op(
                     "push",
                     modal.plan.current.clone(),
@@ -403,7 +403,7 @@ impl KagiApp {
                 self.reload();
             }
             Err(err_msg) => {
-                eprintln!("[kagi] async: push failed — {}", err_msg);
+                klog!("async: push failed — {}", err_msg);
                 self.record_op(
                     "push",
                     modal.plan.current.clone(),

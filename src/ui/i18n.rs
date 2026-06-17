@@ -135,7 +135,7 @@ pub fn resolve_lang() -> Lang {
 pub fn init_lang() {
     let l = resolve_lang();
     ACTIVE.store(l.index(), Ordering::Relaxed);
-    eprintln!("[kagi] lang: {}", l.slug());
+    klog!("lang: {}", l.slug());
 }
 
 // ──────────────────────────────────────────────────────────────────────────

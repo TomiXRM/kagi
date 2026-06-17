@@ -76,7 +76,7 @@ impl KagiApp {
             Ok(info) => info,
             Err(e) => {
                 let msg = format!("Error: {e}");
-                eprintln!("[kagi] open: {}", msg);
+                klog!("open: {}", msg);
                 self.status_footer = FooterStatus::Failed(SharedString::from(msg.clone()));
                 self.push_toast(ToastKind::Error, msg);
                 cx.notify();
@@ -245,7 +245,7 @@ impl KagiApp {
         self.status_footer = FooterStatus::Idle(SharedString::from(format!(
             "Remote (read-only) — {label}:{root}"
         )));
-        eprintln!("[kagi] remote: entered read-only view {label}:{root} (tab {idx})");
+        klog!("remote: entered read-only view {label}:{root} (tab {idx})");
         self.save_session();
         self.log_tabs();
         cx.notify();
@@ -354,13 +354,13 @@ impl KagiApp {
                             app.status_footer =
                                 FooterStatus::Idle(SharedString::from(Msg::Ready.t()));
                         }
-                        eprintln!("[kagi] tab-load: {} rows={}", name, rows);
+                        klog!("tab-load: {} rows={}", name, rows);
                         cx.notify();
                     }
                     Err(err) => {
                         app.loading_tab = None;
                         let msg = format!("Error: {err}");
-                        eprintln!("[kagi] tab-load: {} error: {}", name, err);
+                        klog!("tab-load: {} error: {}", name, err);
                         app.status_footer = FooterStatus::Failed(SharedString::from(msg));
                         cx.notify();
                     }
@@ -811,7 +811,7 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
                     remote: None,
                 });
             }
-            Err(e) => eprintln!("[kagi] session: skip {} ({})", path.display(), e),
+            Err(e) => klog!("session: skip {} ({})", path.display(), e),
         }
     }
     if app.tabs.is_empty() {
@@ -825,5 +825,5 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
     app.repo_path = Some(app.tabs[active].path.clone());
     app.error = None;
     app.reload();
-    eprintln!("[kagi] session: restored {} tab(s)", app.tabs.len());
+    klog!("session: restored {} tab(s)", app.tabs.len());
 }

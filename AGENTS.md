@@ -79,15 +79,18 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
   outside tests.
 - User-facing errors must surface via the oplog **and** a modal — never swallowed.
 
-## Logging rules (important — read before touching any `eprintln!`)
+## Logging rules (important — read before touching any log line)
 
-- `[kagi]` prefixed `eprintln!` lines are a **test contract**. The `KAGI_*` headless
-  harness (`src/headless.rs`) greps stderr to verify behavior. Do not change the
-  format, wording, or ordering of existing `[kagi]` lines.
-- New features that need headless coverage must add `[kagi]` log lines in the same
-  established format (see `docs/tickets/` T-* specs).
-- Do not "clean up" or normalize these logs. (A proper VM/logging split is deferred —
-  see issue #13 / ADR roadmap.)
+- The `[kagi] …` lines are a **test contract**. The `KAGI_*` headless harness
+  (`src/headless.rs`) greps stderr to verify behavior. Do not change the format,
+  wording, or ordering of existing `[kagi]` lines.
+- Emit every contract line through the **`klog!`** macro (`src/klog.rs`, ADR-0096):
+  `klog!("refreshed")`, `klog!("plan: {} → {}", a, b)` — the `[kagi] ` prefix is
+  added by the macro. This is the single, greppable contract channel.
+- Use plain `eprintln!`/`tracing` only for ad-hoc human/diagnostic output — never the
+  `[kagi]` prefix by hand, and never route a `klog!` contract line through `eprintln!`.
+- New features that need headless coverage add `klog!` lines in the established format
+  (see `docs/tickets/` T-* specs). Do not "clean up" or reword existing contract lines.
 
 ## Adding a new feature
 

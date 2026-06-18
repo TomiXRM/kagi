@@ -3,6 +3,39 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.20] — 2026-06-19
+
+### Added
+- **Smart Commit can use the Claude Code / Codex CLIs.** If you have the `claude`
+  or `codex` CLI installed and logged in, you can pick it as the commit-message
+  provider in Settings (in addition to local Ollama). kagi runs it
+  non-interactively and **read-only** (it can never modify the repo) and shows a
+  clear warning that your staged diff is sent to that external CLI and consumes
+  your own account's usage/quota. Opt-in; off by default. (ADR-0099)
+- **Connect to an SSH remote from the Welcome screen.** A *Connect to SSH remote…*
+  button sits next to *Open Repository…* when no repo is open.
+- **Recent repositories on the Welcome screen.** A list of recently-opened repos
+  (name + path); click to reopen. Missing paths are dropped automatically.
+- **New colour themes:** Pinky Boo, Catppuccin Latte, and Dracula.
+
+### Fixed
+- **In-app update now works for the AppImage build** (issue #29). The updater
+  replaces the writable `.AppImage` file itself (download → verify → swap →
+  relaunch) instead of bailing out. The tar.gz install path is unchanged.
+- **Smart Commit LLM settings.** You can now enable Smart Commit's LLM and pick
+  the Ollama model from Settings — the enable toggle was missing and the model
+  picker didn't populate unless the commit panel had been opened first.
+- **Update dialog is readable for long release notes** — wider (0.8× the window),
+  the notes scroll, the markdown is sized down, and it follows the dark theme.
+
+### Changed
+- **The theme list is sorted alphabetically** (the default, Catppuccin Mocha,
+  stays first) so the Settings picker stays tidy as themes are added.
+
+### Docs
+- Added a research note on GitHub pull-request integration (how GitButler/Fork
+  do it; recommended approach for kagi) for a future feature.
+
 ## [0.3.19] — 2026-06-19
 
 ### Added

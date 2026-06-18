@@ -321,9 +321,12 @@ pub(crate) fn render_main_diff_rows(
                     DiffLineKind::Removed => theme::theme().diff_removed_bg,
                     DiffLineKind::Context => theme::theme().bg_base,
                 };
+                // Theme tokens (not hardcoded hex): light themes tune these to
+                // dark green/red so the text stays readable on the light diff
+                // backgrounds — the old fixed light-green/red washed out there.
                 let text_color = match kind {
-                    DiffLineKind::Added => 0xa6e3a1u32,   // green
-                    DiffLineKind::Removed => 0xf38ba8u32, // red
+                    DiffLineKind::Added => theme::theme().change_added,
+                    DiffLineKind::Removed => theme::theme().change_deleted,
                     DiffLineKind::Context => theme::theme().text_main,
                 };
                 // Format line numbers: 5 chars fixed width, muted colour.

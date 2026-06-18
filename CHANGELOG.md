@@ -3,6 +3,34 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.19] — 2026-06-19
+
+### Added
+- **Switch branches without a forced stash.** Branch checkout no longer blocks on
+  *any* uncommitted change — it only blocks when your local changes actually
+  collide with the target branch (a path that differs between the two and is
+  locally modified). Non-conflicting changes are carried over to the target
+  branch with a heads-up warning, matching how commit checkout already behaved.
+
+### Fixed
+- **Stage/Unstage button colours.** The buttons used gpui-component's filled
+  `success`/`warning` variants whose hover/foreground colours kagi never mapped,
+  so the white label washed out (and gpui-component 0.5.1 hardcodes the hover
+  text colour). They now use a translucent, theme-tinted style that reads like
+  the branch-list rows.
+- **The commit panel no longer closes when you stage/unstage a file.** Staging
+  writes `.git/index`, which the file watcher treated as a graph change and
+  triggered a full reload ~0.3 s after the click, closing the panel. Index-only
+  changes now do a light in-place refresh that keeps the panel open.
+- **Arrow keys now navigate the File History view.** In the per-file history
+  view, up/down moved the (hidden) main commit list instead of the history
+  entries, so the selection and diff never changed. They now move the history
+  selection and update the diff.
+- **File History selection highlight.** A hovered row used the selection colour,
+  so the row the mouse was left on after a click looked "still selected" while
+  the arrows moved the real selection — now hover uses a subtle tint and exactly
+  one row reads as selected.
+
 ## [0.3.18] — 2026-06-18
 
 ### Added

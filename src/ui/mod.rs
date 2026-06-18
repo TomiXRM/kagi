@@ -3111,6 +3111,32 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// Move the file-history entry selection up/down by `delta` (arrow keys),
+    /// clamped to the entry list. Loads the newly-selected entry's diff via
+    /// [`file_history_select`] so the row highlight AND the diff pane both update
+    /// (the arrows previously fell through to the main commit list, so the file
+    /// history view's selection/diff never moved).
+    pub fn step_file_history_selection(&mut self, delta: i64, cx: &mut Context<Self>) {
+        let len = self
+            .file_history
+            .as_ref()
+            .and_then(|fh| fh.history.as_ref())
+            .map(|h| h.entries.len())
+            .unwrap_or(0);
+        if len == 0 {
+            return;
+        }
+        let cur = self
+            .file_history
+            .as_ref()
+            .map(|fh| fh.selected)
+            .unwrap_or(0);
+        let next = (cur as i64 + delta).clamp(0, len as i64 - 1) as usize;
+        if next != cur {
+            self.file_history_select(next, cx);
+        }
+    }
+
     /// Build the `MainDiffView` for the currently-selected entry, reusing the
     /// existing diff renderer pipeline (`FileDiffView::from_file_diff` +
     /// highlight).  Single-file diffs are cheap, so this runs synchronously like

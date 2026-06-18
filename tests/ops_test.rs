@@ -133,45 +133,101 @@ fn test_execute_clean_repo_moves_head() {
 }
 
 // ────────────────────────────────────────────────────────────
-// Test 2: dirty repo (unstaged modified) — plan has blocker
+// Test 2: dirty repo — non-overlapping changes carry over (no blocker);
+//         only changes that collide with the checkout block.
 // ────────────────────────────────────────────────────────────
 
+// README.md is identical on `main` and `feature/one` (feature only adds
+// feat.txt), so a local edit to it does NOT overlap the checkout. The user
+// should be able to switch directly: no blocker, a "carried over" warning, and
+// a safe checkout that preserves the edit and moves HEAD.
 #[test]
-fn test_plan_dirty_unstaged_has_blocker() {
+fn test_plan_dirty_unstaged_non_overlapping_no_blocker_carries_over() {
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo) = build_two_branch_repo(&tmp);
 
-    // Modify README.md without staging.
+    // Modify README.md without staging (not part of the main→feature/one diff).
     write_file(&repo_dir, "README.md", "modified content\n");
 
     let plan = plan_checkout(&repo, "feature/one").expect("plan_checkout failed");
 
     assert!(
-        !plan.blockers.is_empty(),
-        "dirty repo (unstaged) should have at least one blocker"
-    );
-    let has_stash_mention = plan.blockers.iter().any(|b| b.contains("stash"));
-    assert!(
-        has_stash_mention,
-        "blocker should mention 'stash', got: {:?}",
+        plan.blockers.is_empty(),
+        "non-overlapping dirty change should NOT block, got: {:?}",
         plan.blockers
+    );
+    assert!(
+        plan.warnings.iter().any(|w| w.contains("carried over")),
+        "should warn that changes carry over, got: {:?}",
+        plan.warnings
+    );
+
+    // And the safe checkout actually succeeds, preserving the edit + moving HEAD.
+    preflight_check(&repo, &plan).expect("preflight failed");
+    execute_checkout(&repo, "feature/one").expect("execute failed");
+    assert_eq!(
+        std::fs::read_to_string(repo_dir.join("README.md")).unwrap(),
+        "modified content\n",
+        "local edit should carry over to feature/one"
+    );
+    let repo2 = Repository::open(&repo_dir).expect("re-open");
+    assert_eq!(
+        repo2.head().unwrap().shorthand().unwrap_or(""),
+        "feature/one",
+        "HEAD should be on feature/one"
     );
 }
 
+// A newly-staged file that does not exist on the target branch cannot collide
+// with the checkout either → no blocker.
 #[test]
-fn test_plan_dirty_staged_has_blocker() {
+fn test_plan_dirty_staged_non_overlapping_no_blocker() {
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo) = build_two_branch_repo(&tmp);
 
-    // Stage a new file.
+    // Stage a new file (absent from both trees → not in the checkout diff).
     write_file(&repo_dir, "staged.txt", "staged\n");
     git(&repo_dir, &["add", "staged.txt"]);
 
     let plan = plan_checkout(&repo, "feature/one").expect("plan_checkout failed");
 
     assert!(
+        plan.blockers.is_empty(),
+        "non-overlapping staged change should NOT block, got: {:?}",
+        plan.blockers
+    );
+}
+
+// When a locally-modified tracked file IS part of the checkout diff, a safe
+// checkout would be refused — so the plan must block and point at stash.
+#[test]
+fn test_plan_dirty_overlapping_has_blocker() {
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, _repo) = build_two_branch_repo(&tmp);
+
+    // Make README.md differ between main and feature/one.
+    git(&repo_dir, &["checkout", "-q", "feature/one"]);
+    write_file(&repo_dir, "README.md", "feature version\n");
+    git(&repo_dir, &["commit", "-aqm", "feature edits README"]);
+    git(&repo_dir, &["checkout", "-q", "main"]);
+
+    // Now locally modify README.md on main → overlaps the main→feature diff.
+    write_file(&repo_dir, "README.md", "my local edit\n");
+
+    // Re-open after the external commit so git2's ODB sees the new feature tip.
+    let repo = Repository::open(&repo_dir).expect("reopen repo");
+    let plan = plan_checkout(&repo, "feature/one").expect("plan_checkout failed");
+
+    assert!(
         !plan.blockers.is_empty(),
-        "dirty repo (staged) should have at least one blocker"
+        "overlapping dirty change must block"
+    );
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|b| b.to_lowercase().contains("stash")),
+        "blocker should point at stash, got: {:?}",
+        plan.blockers
     );
 }
 

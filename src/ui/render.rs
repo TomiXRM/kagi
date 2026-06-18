@@ -10,7 +10,30 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::*;
-use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+
+/// A translucent, theme-tinted button variant for the Stage/Unstage row actions.
+///
+/// The gpui-component `.success()`/`.warning()` *filled* variants painted a solid
+/// accent block, and kagi's theme sync (`theme.rs`) maps only the `success`/
+/// `warning` background — not their `_foreground`/`_hover` — so the gpui-component
+/// defaults leaked in and the label washed out (white text vanished on the light
+/// hover fill). Build the variant from kagi's own palette instead: a low-opacity
+/// accent tint that reads like the branch-list rows (translucent in dark), with
+/// the accent colour as the label and a slightly stronger tint on hover/active.
+fn tinted_action_variant(base: u32, cx: &gpui::App) -> ButtonCustomVariant {
+    let c = gpui::Hsla::from(rgb(base));
+    let (rest, hover, active) = if theme().dark {
+        (0.16, 0.26, 0.34)
+    } else {
+        (0.14, 0.22, 0.30)
+    };
+    ButtonCustomVariant::new(cx)
+        .color(c.opacity(rest))
+        .foreground(c)
+        .hover(c.opacity(hover))
+        .active(c.opacity(active))
+}
 
 impl KagiApp {
     /// Render the toast stack as an absolute overlay (bottom-right, above
@@ -945,7 +968,11 @@ impl Render for KagiApp {
                 if !this.root_has_focus(window) {
                     return;
                 }
-                if this.main_diff.is_some() {
+                // File-history view is its own full overlay with its own entry
+                // list + diff pane — navigate that, not the main commit list.
+                if this.file_history.is_some() {
+                    this.step_file_history_selection(-1, cx);
+                } else if this.main_diff.is_some() {
                     this.main_diff_step(-1);
                 } else {
                     this.step_commit_selection(-1);
@@ -956,7 +983,9 @@ impl Render for KagiApp {
                 if !this.root_has_focus(window) {
                     return;
                 }
-                if this.main_diff.is_some() {
+                if this.file_history.is_some() {
+                    this.step_file_history_selection(1, cx);
+                } else if this.main_diff.is_some() {
                     this.main_diff_step(1);
                 } else {
                     this.step_commit_selection(1);
@@ -3914,7 +3943,15 @@ fn render_fh_row(
         .bg(rgb(row_bg))
         .on_click(click)
         .on_mouse_down(MouseButton::Right, ctx)
-        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+        .cursor_pointer()
+        // Hover uses the subtle `surface` tint (like the commit panel / branch
+        // list), NOT `selected` — using the selection colour made a hovered row
+        // indistinguishable from the selected one, so the row the mouse was left
+        // on after a click looked "still selected" while the arrows moved the
+        // real selection elsewhere. The selected row keeps its colour on hover.
+        .when(!is_selected, |el| {
+            el.hover(|s| s.bg(rgb(theme().surface)))
+        })
         // change-type letter
         .child(
             div()
@@ -4668,7 +4705,7 @@ fn render_unstaged_flat_row(
         file_row = file_row.child(
             Button::new(("cp-us-flat-stage-btn", fi))
                 .label("Stage")
-                .success()
+                .custom(tinted_action_variant(theme().color_success, cx))
                 .small()
                 .ml_2()
                 .flex_shrink_0()
@@ -4799,7 +4836,7 @@ fn render_unstaged_tree_row(
                 file_row = file_row.child(
                     Button::new(("cp-us-stage-btn", fi))
                         .label("Stage")
-                        .success()
+                        .custom(tinted_action_variant(theme().color_success, cx))
                         .small()
                         .ml_2()
                         .flex_shrink_0()
@@ -4895,7 +4932,7 @@ fn render_staged_flat_row(
             .child(
                 Button::new(("cp-st-flat-unstage-btn", fi))
                     .label("Unstage")
-                    .warning()
+                    .custom(tinted_action_variant(theme().color_warning, cx))
                     .small()
                     .ml_2()
                     .flex_shrink_0()
@@ -4995,7 +5032,7 @@ fn render_staged_tree_row(
                     .child(
                         Button::new(("cp-st-unstage-btn", fi))
                             .label("Unstage")
-                            .warning()
+                            .custom(tinted_action_variant(theme().color_warning, cx))
                             .small()
                             .ml_2()
                             .flex_shrink_0()

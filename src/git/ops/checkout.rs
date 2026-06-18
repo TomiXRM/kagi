@@ -11,11 +11,15 @@ use super::*;
 /// - Target branch does not exist in the repository.
 /// - Target branch is already the current HEAD branch (no-op would be confusing).
 /// - Repository is in a conflict state (`status.conflicted` is non-empty).
-/// - Staged **or** unstaged changes exist — checking out could lose work.
-///   The user is instructed to stash their changes first.
+/// - Staged / unstaged changes exist **and** overlap the files the checkout must
+///   rewrite (the HEAD-tree → target-tree diff). Only then would a safe-mode
+///   checkout actually be refused; the user is pointed at stash. Non-overlapping
+///   changes are carried over to the target branch and merely warned about.
 ///
 /// # Warning conditions
 ///
+/// - Staged / unstaged changes that do **not** overlap the checkout — git carries
+///   them over to the target branch; the user is told so.
 /// - Untracked files exist.  The checkout itself will not touch them but users
 ///   are reminded they remain after switching branches.
 ///
@@ -87,22 +91,36 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
         ));
     }
 
-    // Staged / unstaged changes — Guarded policy: block execution to prevent
-    // accidental loss of work.
-    if !status.staged.is_empty() || !status.unstaged.is_empty() {
-        let mut parts = Vec::new();
-        if !status.staged.is_empty() {
-            parts.push(format!("{} staged", status.staged.len()));
+    // Staged / unstaged changes — Guarded policy, but only a *real* collision
+    // blocks. A safe-mode `checkout_tree` carries local changes over to the
+    // target branch and refuses only when a locally-modified tracked path
+    // overlaps a path the checkout must rewrite (HEAD-tree → target-tree diff).
+    // So switch freely when nothing collides, and point at stash only when it
+    // does — mirroring `plan_checkout_commit` so the plan matches what execute
+    // actually does (no forced stash-before-every-switch).
+    if branch_exists && (!status.staged.is_empty() || !status.unstaged.is_empty()) {
+        let target_oid = repo
+            .find_branch(branch, BranchType::Local)
+            .ok()
+            .and_then(|b| b.get().peel_to_commit().ok())
+            .map(|c| c.id());
+        match target_oid.and_then(|oid| predict_checkout_conflict(repo, &head, oid, &status)) {
+            Some(blocker) => blockers.push(blocker),
+            None => {
+                let mut parts = Vec::new();
+                if !status.staged.is_empty() {
+                    parts.push(format!("{} staged", status.staged.len()));
+                }
+                if !status.unstaged.is_empty() {
+                    parts.push(format!("{} modified", status.unstaged.len()));
+                }
+                warnings.push(format!(
+                    "{} will be carried over to '{}'.",
+                    parts.join(", "),
+                    branch
+                ));
+            }
         }
-        if !status.unstaged.is_empty() {
-            parts.push(format!("{} modified", status.unstaged.len()));
-        }
-        blockers.push(format!(
-            "Working tree has {} — changes could be lost. \
-             Stash your changes before switching branches: \
-             `git stash push -u` then `git stash pop` after checkout.",
-            parts.join(", ")
-        ));
     }
 
     // Untracked files — warning only (safe checkout leaves them alone).
@@ -274,7 +292,7 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
         // rewrite (HEAD-tree → target-tree diff). If the dirty paths overlap that
         // set, the green "proceed" plan would error in the footer — promote the
         // warning to a blocker so the plan matches what execute actually does.
-        match predict_checkout_commit_conflict(repo, &head, target_oid, &status) {
+        match predict_checkout_conflict(repo, &head, target_oid, &status) {
             Some(blocker) => blockers.push(blocker),
             None => {
                 warnings.push(format!(
@@ -331,7 +349,8 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
 
 /// BUG-2 dry-run: predict whether a safe-mode checkout of `target_oid` would be
 /// refused because a locally-modified tracked path overlaps a path the checkout
-/// must rewrite.
+/// must rewrite. Used for **both** branch and commit checkout — the target is
+/// just a commit oid in either case (a branch's tip).
 ///
 /// Mirrors [`predict_stash_pop_conflict`] in spirit: pure in-memory analysis,
 /// **never** touches the working tree or HEAD. Returns `Some(blocker)` when the
@@ -340,7 +359,7 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
 /// ignored here (libgit2 leaves them in place). On any analysis failure we return
 /// `None` (fall back to the existing warning) — never invent a blocker we cannot
 /// substantiate.
-fn predict_checkout_commit_conflict(
+fn predict_checkout_conflict(
     repo: &Repository,
     head: &Head,
     target_oid: git2::Oid,
@@ -387,8 +406,8 @@ fn predict_checkout_commit_conflict(
     overlap.sort();
 
     Some(format!(
-        "Working tree has local changes to {} file(s) that the target commit also \
-         modifies: {}. Safe checkout would be refused (1 conflict prevents checkout). \
+        "Working tree has local changes to {} file(s) that the target also \
+         modifies: {}. Safe checkout would be refused (the conflict prevents checkout). \
          Stash or commit these changes first.",
         overlap.len(),
         overlap.join(", ")

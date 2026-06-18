@@ -3,6 +3,18 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.22] — 2026-06-19
+
+### Fixed
+- **Smart Commit now finds the Claude Code / Codex CLIs in the macOS app bundle.**
+  A `.app` launched from Finder/Dock doesn't inherit the login shell's `PATH`, so
+  CLIs installed via mise / Homebrew / `~/.local/bin` showed as "not on PATH"
+  (they worked from a terminal). kagi now resolves the login shell's PATH for
+  both detection and execution. (#44)
+
+### Docs
+- Added a **File History** section to the README (English + Japanese).
+
 ## [0.3.21] — 2026-06-19
 
 ### Changed

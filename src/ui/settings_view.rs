@@ -431,6 +431,27 @@ fn smart_commit_section(
     let current = smart.model.clone();
     let models = smart.detected_models.clone();
 
+    // ── Enable Smart Commit (LLM) toggle ──
+    // Wired to SmartCommitState::set_enabled (persists `smart_commit_llm_enabled`).
+    // Turning it on also re-probes Ollama so the model picker below populates
+    // without needing to open the commit panel first.
+    let enabled = smart.llm_enabled;
+    let app_en = app.clone();
+    let toggle_enabled = move |checked: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {
+        let on = *checked;
+        app_en.update(cx, |app, cx| {
+            app.smart_commit.set_enabled(on);
+            if on {
+                app.refresh_smart_commit_detection(cx);
+            }
+            cx.notify();
+        });
+    };
+    let enabled_ctl = Switch::new("smart-commit-enabled")
+        .checked(enabled)
+        .on_click(toggle_enabled)
+        .into_any_element();
+
     let control: AnyElement = if models.is_empty() {
         let note = match &current {
             Some(m) => format!("{} — start Ollama to switch", m),
@@ -487,6 +508,13 @@ fn smart_commit_section(
         .flex_col()
         .gap_2()
         .child(section_header(SharedString::from("Smart Commit")))
+        .child(setting_row(
+            SharedString::from("Enable Smart Commit (LLM)"),
+            SharedString::from(
+                "Use a local Ollama model to draft commit messages. Only the staged diff is sent, to localhost.",
+            ),
+            enabled_ctl,
+        ))
         .child(setting_row(
             SharedString::from("LLM model"),
             SharedString::from("Local Ollama model used to generate commit messages."),

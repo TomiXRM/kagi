@@ -240,7 +240,10 @@ impl KagiApp {
     /// **never** sent here.  Runs at most once per repo path, off the UI thread.
     /// On success the panel shows "Local LLM available".  No-op when
     /// `KAGI_OFFLINE=1`.
-    fn ensure_smart_commit_detection(&mut self, cx: &mut Context<Self>) {
+    ///
+    /// `pub(crate)` so other open paths (e.g. the Settings overlay) can ensure a
+    /// probe has run before they try to render the model picker.
+    pub(crate) fn ensure_smart_commit_detection(&mut self, cx: &mut Context<Self>) {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
@@ -278,6 +281,18 @@ impl KagiApp {
             });
         })
         .detach();
+    }
+
+    /// Force a fresh Ollama probe by clearing the per-repo run-once guard, then
+    /// running [`ensure_smart_commit_detection`].
+    ///
+    /// Used by the Settings overlay: the model picker is only usable once
+    /// `detected_models` is populated, and detection otherwise runs lazily from
+    /// the commit panel.  Re-probing also lets a server started *after* the panel
+    /// was first opened become visible without a restart.
+    pub(crate) fn refresh_smart_commit_detection(&mut self, cx: &mut Context<Self>) {
+        self.smart_commit_detected_for = None;
+        self.ensure_smart_commit_detection(cx);
     }
 
     /// Read the current commit-message Input value (UI) or headless `commit_msg`.

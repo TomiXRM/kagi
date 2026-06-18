@@ -1910,6 +1910,9 @@ impl KagiApp {
                         let settings_click =
                             cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
                                 this.menu_overlay = Some(commands::MenuOverlay::Settings);
+                                // Probe Ollama so the Smart Commit model picker is
+                                // usable without first opening the commit panel.
+                                this.refresh_smart_commit_detection(cx);
                                 cx.notify();
                             });
                         make_btn(

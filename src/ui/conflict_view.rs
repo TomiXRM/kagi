@@ -510,22 +510,14 @@ fn dash_counts(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
 }
 
 /// Small prev/next unresolved-file nav button.
-fn nav_button<H>(label: &str, handler: H) -> gpui::Stateful<gpui::Div>
+fn nav_button<H>(label: &str, handler: H) -> Button
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    div()
-        .id(SharedString::from(format!("conflict-nav-{}", label)))
-        .px(theme::scaled_px(6.))
-        .py(theme::scaled_px(2.))
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(theme().surface))
-        .text_size(theme::scaled_px(12.))
-        .text_color(rgb(theme().text_sub))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().selected)))
-        .child(SharedString::from(label.to_string()))
+    Button::new(SharedString::from(format!("conflict-nav-{}", label)))
+        .label(SharedString::from(label.to_string()))
+        .ghost()
+        .small()
         .on_click(handler)
 }
 

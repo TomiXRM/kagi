@@ -356,21 +356,11 @@ fn stepper_btn(
     label: &'static str,
     on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> impl IntoElement {
-    div()
-        .id(id)
-        .w(px(28.0))
-        .h(px(24.0))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(theme().selected))
-        .bg(rgb(theme().bg_base))
-        .text_color(rgb(theme().text_main))
-        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+    Button::new(id)
+        .label(label)
+        .outline()
+        .small()
         .on_click(on_click)
-        .child(SharedString::from(label))
 }
 
 // ────────────────────────────────────────────────────────────

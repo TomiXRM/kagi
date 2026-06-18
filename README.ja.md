@@ -94,12 +94,20 @@ author と co-author、メッセージ全文に加えて、ファイルごとに
 diff は `+`/`−` の hunk をシンタックスハイライトと行番号付きで表示します。
 ファイルを選べば、その diff へ直接ジャンプします。
 
+## ファイルの履歴をたどる
+
+<div align="center">
+<img src="docs/images/file-history.png" width="900" alt="File History ビュー。左にそのファイルを変更した全 commit(subject・author・日付)、右に選択中 commit のそのファイルの diff、Back / Copy Path / Open File / Follow Renames の操作付き" />
+</div>
+
+任意のファイルで **File History** を開くと、そのファイルを変更したすべての commit をたどれます。左にファイル単位の commit 一覧、右に選択中エントリのそのファイルの diff が出ます。矢印キーでエントリを移動でき、**rename を追跡**してファイルの過去まで遡り、パスのコピーやファイルを開く操作、終わったらグラフへ戻る、ができます。
+
 ## 日常作業のためのその他の機能
 
 - **commit まわり一式**：`+N −M` の diffstat バーが付いた staging、コミット前チェックリスト(conflict marker や secret、巨大バイナリ)、branch ごとの下書き自動保存、`type(scope): summary` のメッセージテンプレート、SHA の変化を見せる amend。
 - **commit メッセージの補助**：ルールベースの生成は常に使えます。**ローカルの Ollama LLM は明示的な opt-in のみ**で、対象は staged diff だけ、localhost のみ、利用には事前同意が必要です。
 - **すべて非同期**：checkout や commit、stash、pull、push、merge はどれも UI スレッドの外で実行され、処理中は回転するスナックバーが出ます。ウィンドウが固まることはありません。
-- **自分好みに調整できる**：6 種類のカラーテーマ、英語と日本語の UI(Git のドメイン語はどちらでも英語のまま)、内蔵ターミナル、リポジトリのタブ、branch のプレフィックスでまとめるツリーサイドバー、操作ログ、UI 全体を一括で変えるズーム。
+- **自分好みに調整できる**：11 種類のカラーテーマ、英語と日本語の UI(Git のドメイン語はどちらでも英語のまま)、内蔵ターミナル、リポジトリのタブ、branch のプレフィックスでまとめるツリーサイドバー、操作ログ、UI 全体を一括で変えるズーム。
 
 ## 📦 インストール
 

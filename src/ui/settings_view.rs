@@ -452,6 +452,123 @@ fn smart_commit_section(
         .on_click(toggle_enabled)
         .into_any_element();
 
+    // ── Provider selector (ADR-0099): Ollama / Claude Code / Codex ──
+    // Chips mirror the model-picker styling below. CLI providers are only
+    // selectable when detected on $PATH; undetected ones are shown disabled with
+    // a "not found on PATH" hint.
+    let provider = smart.provider;
+    let provider_chips = {
+        use super::smart_commit::SmartProvider;
+        let mut row = div().flex().flex_row().flex_wrap().gap_2().justify_end();
+        // (label, this-provider, available)
+        let entries: Vec<(String, SmartProvider, bool)> = {
+            let mut v = vec![("Ollama".to_string(), SmartProvider::Ollama, true)];
+            for p in kagi::git::message_gen::CliProvider::ALL {
+                v.push((
+                    p.display_name().to_string(),
+                    SmartProvider::Cli(p),
+                    smart.cli_available_for(p),
+                ));
+            }
+            v
+        };
+        for (label, this, available) in entries {
+            let selected = provider == this;
+            let (bg, fg, border) = if selected {
+                (theme().selected, theme().text_main, theme().color_branch)
+            } else if available {
+                (theme().bg_base, theme().text_sub, theme().selected)
+            } else {
+                // Disabled: dim, no selection affordance.
+                (theme().bg_base, theme().text_sub, theme().selected)
+            };
+            let hint = if available {
+                label.clone()
+            } else {
+                format!("{} (not found on PATH)", label)
+            };
+            let mut chip = div()
+                .id(SharedString::from(format!("sc-provider-{}", this.slug())))
+                .px_3()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(border))
+                .bg(rgb(bg))
+                .text_sm()
+                .text_color(rgb(fg))
+                .child(SharedString::from(hint));
+            if available {
+                let app2 = app.clone();
+                let handler =
+                    move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
+                        app2.update(cx, |app, cx| {
+                            app.smart_commit.set_provider(this);
+                            cx.notify();
+                        });
+                    };
+                chip = chip
+                    .hover(|s| {
+                        s.bg(rgb(theme().selected))
+                            .text_color(rgb(theme().text_main))
+                            .cursor_pointer()
+                    })
+                    .on_click(handler);
+            } else {
+                // Visually communicate "disabled".
+                chip = chip.opacity(0.5);
+            }
+            row = row.child(chip);
+        }
+        row.into_any_element()
+    };
+
+    // ── Prominent warning when a CLI provider is selected (ADR-0099) ──
+    // The user explicitly asked for an unmissable warning about cost / quota /
+    // privacy. Rendered in warning colour with a bordered block.
+    let cli_warning: Option<AnyElement> = match provider {
+        super::smart_commit::SmartProvider::Cli(p) => {
+            let name = p.display_name();
+            let bin = p.binary();
+            let lines = [
+                format!(
+                    "Your staged diff is sent to the external `{}` CLI — it leaves kagi's local-Ollama sandbox.",
+                    bin
+                ),
+                format!(
+                    "It uses YOUR {} account and consumes YOUR usage quota — each generation may incur cost.",
+                    name
+                ),
+                "kagi runs the CLI non-interactively in read-only mode; it can never modify your repository.".to_string(),
+                format!("Requires the `{}` CLI to be installed and logged in.", bin),
+            ];
+            let mut block = div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p_3()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(theme().color_warning))
+                .bg(rgb(theme().bg_base))
+                .text_sm()
+                .text_color(rgb(theme().color_warning))
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child(SharedString::from(format!(
+                            "⚠ {} sends your staged diff to an external service",
+                            name
+                        ))),
+                );
+            for l in lines {
+                block = block.child(div().child(SharedString::from(format!("• {}", l))));
+            }
+            Some(block.into_any_element())
+        }
+        super::smart_commit::SmartProvider::Ollama => None,
+    };
+
     let control: AnyElement = if models.is_empty() {
         let note = match &current {
             Some(m) => format!("{} — start Ollama to switch", m),
@@ -503,7 +620,10 @@ fn smart_commit_section(
         chips.into_any_element()
     };
 
-    div()
+    // The Ollama model picker is only relevant when Ollama is the provider.
+    let show_model_row = matches!(provider, super::smart_commit::SmartProvider::Ollama);
+
+    let mut section = div()
         .flex()
         .flex_col()
         .gap_2()
@@ -511,13 +631,29 @@ fn smart_commit_section(
         .child(setting_row(
             SharedString::from("Enable Smart Commit (LLM)"),
             SharedString::from(
-                "Use a local Ollama model to draft commit messages. Only the staged diff is sent, to localhost.",
+                "Use an LLM to draft commit messages. The local Ollama provider keeps the staged diff on localhost.",
             ),
             enabled_ctl,
         ))
         .child(setting_row(
+            SharedString::from("Provider"),
+            SharedString::from(
+                "Where commit messages are generated. Ollama is local; Claude Code / Codex use your installed CLI.",
+            ),
+            provider_chips,
+        ));
+
+    if let Some(warning) = cli_warning {
+        section = section.child(warning);
+    }
+
+    if show_model_row {
+        section = section.child(setting_row(
             SharedString::from("LLM model"),
             SharedString::from("Local Ollama model used to generate commit messages."),
             control,
-        ))
+        ));
+    }
+
+    section
 }

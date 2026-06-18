@@ -22,10 +22,66 @@ pub const DEFAULT_OLLAMA_HOST: &str = "localhost:11434";
 // Public types
 // ──────────────────────────────────────────────────────────────────────────
 
+/// A local agentic CLI used as a Smart Commit message backend (ADR-0099).
+///
+/// These shell out to the user's installed coding-agent CLI in a
+/// non-interactive, read-only mode (the staged diff is sent on stdin). Unlike
+/// the loopback Ollama backend, the diff leaves kagi's local sandbox and is sent
+/// to the provider via the user's own CLI auth, so selecting one requires an
+/// explicit opt-in and a prominent Settings warning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CliProvider {
+    /// Anthropic Claude Code CLI (`claude`).
+    ClaudeCode,
+    /// OpenAI Codex CLI (`codex`).
+    Codex,
+}
+
+impl CliProvider {
+    /// Every provider, in display order. Useful for building Settings pickers.
+    pub const ALL: [CliProvider; 2] = [CliProvider::ClaudeCode, CliProvider::Codex];
+
+    /// Stable lowercase slug used in `settings.json`
+    /// (`"claude-code"` / `"codex"`).
+    pub fn slug(self) -> &'static str {
+        match self {
+            CliProvider::ClaudeCode => "claude-code",
+            CliProvider::Codex => "codex",
+        }
+    }
+
+    /// Parse a slug back into a provider. Returns `None` for anything else
+    /// (including `"ollama"`).
+    pub fn from_slug(s: &str) -> Option<CliProvider> {
+        match s {
+            "claude-code" => Some(CliProvider::ClaudeCode),
+            "codex" => Some(CliProvider::Codex),
+            _ => None,
+        }
+    }
+
+    /// Human-readable name for the Settings UI.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            CliProvider::ClaudeCode => "Claude Code",
+            CliProvider::Codex => "Codex",
+        }
+    }
+
+    /// The executable name looked up on `$PATH`.
+    pub fn binary(self) -> &'static str {
+        match self {
+            CliProvider::ClaudeCode => "claude",
+            CliProvider::Codex => "codex",
+        }
+    }
+}
+
 /// Which backend generates the message.
 ///
-/// Plain enum dispatch (ADR-0044): no trait.  `External { .. }` is intentionally
-/// absent — remote APIs are out of MVP scope and require a separate ADR.
+/// Plain enum dispatch (ADR-0044): no trait.  Remote HTTP APIs are still
+/// intentionally absent; `Cli` (ADR-0099) shells out to a locally installed
+/// coding-agent CLI instead, reusing the user's existing auth.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageBackend {
     /// Local Ollama server (loopback).  `host` is `host:port`, `model` an
@@ -35,6 +91,12 @@ pub enum MessageBackend {
         host: String,
         /// Installed model name, e.g. `gemma:2b`.
         model: String,
+    },
+    /// A locally installed agentic CLI (Claude Code / Codex), run
+    /// non-interactively in read-only mode with the prompt on stdin (ADR-0099).
+    Cli {
+        /// Which provider's CLI to invoke.
+        provider: CliProvider,
     },
     /// Deterministic rule-based fallback.  Always available, always non-empty.
     RuleBased,
@@ -806,5 +868,25 @@ mod tests {
             Style::ConventionalCommits
         );
         assert_eq!(Style::from_slug("garbage"), Style::ConventionalCommits);
+    }
+
+    #[test]
+    fn cli_provider_slug_roundtrip() {
+        for p in CliProvider::ALL {
+            assert_eq!(CliProvider::from_slug(p.slug()), Some(p));
+        }
+        assert_eq!(
+            CliProvider::from_slug("claude-code"),
+            Some(CliProvider::ClaudeCode)
+        );
+        assert_eq!(CliProvider::from_slug("codex"), Some(CliProvider::Codex));
+        // Non-CLI / unknown slugs are not providers.
+        assert_eq!(CliProvider::from_slug("ollama"), None);
+        assert_eq!(CliProvider::from_slug("garbage"), None);
+        // Binaries / display names are stable.
+        assert_eq!(CliProvider::ClaudeCode.binary(), "claude");
+        assert_eq!(CliProvider::Codex.binary(), "codex");
+        assert_eq!(CliProvider::ClaudeCode.display_name(), "Claude Code");
+        assert_eq!(CliProvider::Codex.display_name(), "Codex");
     }
 }

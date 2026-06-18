@@ -4,8 +4,10 @@
 //! Ollama. Pure generation, truncation, and JSON helpers live in `kagi-domain`
 //! and are re-exported here for stable `kagi::git::message_gen::*` paths.
 
+use std::io::{Read as _, Write as _};
 use std::path::Path;
-use std::time::Duration;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use git2::{DiffOptions, Repository};
 use kagi_domain::status::{ChangeKind, FileStatus};
@@ -14,8 +16,8 @@ use super::{resolve_head, Head};
 
 pub use kagi_domain::message_gen::{
     clean_llm_message, clean_llm_message_multiline, file_summary, ollama_generate_request_body,
-    parse_ollama_response, parse_ollama_tags, rule_based, truncate_with_summary, GenError,
-    GenInput, Lang, MessageBackend, Style, DEFAULT_OLLAMA_HOST, DIFF_TRUNCATE_BYTES,
+    parse_ollama_response, parse_ollama_tags, rule_based, truncate_with_summary, CliProvider,
+    GenError, GenInput, Lang, MessageBackend, Style, DEFAULT_OLLAMA_HOST, DIFF_TRUNCATE_BYTES,
 };
 
 /// Global timeout for a single Ollama HTTP request. Local models (especially
@@ -171,6 +173,30 @@ pub fn generate_message(
             let raw = ollama_generate(host, model, &prompt)?;
             // Keep the body when the caller wants it (template mode); otherwise
             // collapse to the subject line.
+            let cleaned = if input.want_body {
+                clean_llm_message_multiline(&raw)
+            } else {
+                clean_llm_message(&raw)
+            };
+            if cleaned.is_empty() {
+                Err(GenError::EmptyResponse)
+            } else {
+                Ok(cleaned)
+            }
+        }
+        MessageBackend::Cli { provider } => {
+            // Mirror the Ollama arm exactly (ADR-0099): offline gating, the
+            // nothing-staged guard, the shared prompt, and the same cleanup.
+            // The only difference is the transport — we shell out to a local
+            // agentic CLI (prompt on stdin) instead of POSTing to Ollama.
+            if offline() {
+                return Err(GenError::Offline);
+            }
+            if files.is_empty() && input.diff.trim().is_empty() {
+                return Err(GenError::NoStagedChanges);
+            }
+            let prompt = build_prompt(input, files);
+            let raw = cli_generate(*provider, &prompt)?;
             let cleaned = if input.want_body {
                 clean_llm_message_multiline(&raw)
             } else {
@@ -366,6 +392,170 @@ pub fn ollama_list_models(host: &str) -> Vec<String> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Agentic CLI providers (Claude Code / Codex) — ADR-0099
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Kill-on-deadline budget for a single CLI generation. These remote models are
+/// fast, but the first request may pay a cold-start / auth-refresh cost, so the
+/// budget is generous; the spinner keeps the UI responsive during the wait.
+const CLI_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Poll interval while waiting for the child to exit.
+const CLI_POLL: Duration = Duration::from_millis(100);
+
+/// Generate a commit message by shelling out to a locally installed agentic CLI
+/// (ADR-0099).
+///
+/// The CLI is run **non-interactively, read-only, with the prompt on stdin**:
+///
+/// * **Claude Code**: `claude -p --output-format text` — print mode is
+///   non-interactive (no tool approvals are possible); the answer is read from
+///   stdout. We deliberately do NOT pass `--bare`, which would bypass the user's
+///   OAuth/subscription auth.
+/// * **Codex**: `codex exec -s read-only --color never -o <TMPFILE> -` — the
+///   trailing `-` makes codex read its instructions from stdin; `-s read-only`
+///   guarantees no repo writes; the final message is written to `<TMPFILE>`,
+///   which we read back as the result.
+///
+/// The prompt is written from a separate thread so a large diff can't deadlock
+/// against a full stdout pipe. The child is killed if it overruns
+/// [`CLI_TIMEOUT`]. Returns `Err(GenError::Http)` on spawn / timeout / non-zero
+/// exit, and `Err(GenError::EmptyResponse)` when the CLI produced no output.
+fn cli_generate(provider: CliProvider, prompt: &str) -> Result<String, GenError> {
+    // Codex writes its final answer to a file (`-o`); for Claude Code we read
+    // stdout directly. Keep the temp file alive for the whole call.
+    let out_file = match provider {
+        CliProvider::Codex => Some(
+            tempfile::NamedTempFile::new().map_err(|e| GenError::Http(format!("tempfile: {e}")))?,
+        ),
+        CliProvider::ClaudeCode => None,
+    };
+
+    let mut cmd = Command::new(provider.binary());
+    match provider {
+        CliProvider::ClaudeCode => {
+            cmd.args(["-p", "--output-format", "text"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+        }
+        CliProvider::Codex => {
+            let path = out_file.as_ref().expect("codex out_file set above").path();
+            cmd.arg("exec")
+                .args(["-s", "read-only", "--color", "never", "-o"])
+                .arg(path)
+                .arg("-")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+        }
+    }
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| GenError::Http(format!("spawn {}: {e}", provider.binary())))?;
+
+    // Write the prompt from a dedicated thread, then drop stdin to signal EOF.
+    // This avoids a pipe deadlock when the prompt is larger than the OS pipe
+    // buffer and the child is concurrently filling stdout.
+    if let Some(mut stdin) = child.stdin.take() {
+        let prompt_owned = prompt.to_string();
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(prompt_owned.as_bytes());
+            // `stdin` is dropped here → EOF.
+        });
+    }
+
+    // Poll for completion with a kill-on-deadline. (We can't both `wait()` and
+    // enforce a timeout without polling, since the std child API has no timed
+    // wait.)
+    let deadline = Instant::now() + CLI_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(GenError::Http("timeout".to_string()));
+                }
+                std::thread::sleep(CLI_POLL);
+            }
+            Err(e) => return Err(GenError::Http(format!("wait: {e}"))),
+        }
+    };
+
+    if !status.success() {
+        return Err(GenError::Http(format!(
+            "{} exited with {}",
+            provider.binary(),
+            status
+        )));
+    }
+
+    // Collect the answer: stdout for Claude Code, the `-o` file for Codex.
+    let raw = match provider {
+        CliProvider::ClaudeCode => {
+            let mut buf = String::new();
+            if let Some(mut stdout) = child.stdout.take() {
+                stdout
+                    .read_to_string(&mut buf)
+                    .map_err(|e| GenError::Http(format!("read stdout: {e}")))?;
+            }
+            buf
+        }
+        CliProvider::Codex => {
+            let file = out_file.expect("codex out_file set above");
+            std::fs::read_to_string(file.path())
+                .map_err(|e| GenError::Http(format!("read codex output: {e}")))?
+        }
+    };
+
+    if raw.trim().is_empty() {
+        Err(GenError::EmptyResponse)
+    } else {
+        Ok(raw)
+    }
+}
+
+/// Whether `provider`'s CLI binary is found on `$PATH`.
+///
+/// A pure filesystem scan of the `PATH` directories — it never spawns the binary
+/// (`--version` would be slow and side-effecty), so it is safe to call inline on
+/// the UI's detection path. Availability is just "is it installed"; the offline
+/// gate is applied later, at generate time.
+pub fn cli_available(provider: CliProvider) -> bool {
+    let bin = provider.binary();
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| {
+        if dir.as_os_str().is_empty() {
+            return false;
+        }
+        let candidate = dir.join(bin);
+        is_executable_file(&candidate)
+    })
+}
+
+/// True if `path` is a regular file the current user may execute.
+#[cfg(unix)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    match std::fs::metadata(path) {
+        Ok(md) => md.is_file() && (md.permissions().mode() & 0o111 != 0),
+        Err(_) => false,
+    }
+}
+
+/// True if `path` is a regular file (executability is implied by extension on
+/// non-Unix platforms; a plain `is_file()` check is sufficient for detection).
+#[cfg(not(unix))]
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Unit tests (no real network — ureq paths are not exercised here)
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -540,6 +730,32 @@ mod tests {
         );
         assert_eq!(out, Err(GenError::Offline));
         // restore
+        match prev {
+            Some(v) => std::env::set_var("KAGI_OFFLINE", v),
+            None => std::env::remove_var("KAGI_OFFLINE"),
+        }
+    }
+
+    #[test]
+    fn generate_cli_offline_is_err() {
+        // Force offline so no CLI is ever spawned (no quota is consumed); the
+        // Cli backend must Err so the caller falls back to rule_based.
+        let prev = std::env::var("KAGI_OFFLINE").ok();
+        std::env::set_var("KAGI_OFFLINE", "1");
+        let files = vec![fs("src/a.rs", ChangeKind::Modified)];
+        for provider in [CliProvider::ClaudeCode, CliProvider::Codex] {
+            let out = generate_message(
+                &MessageBackend::Cli { provider },
+                &GenInput {
+                    diff: "diff --git a/x b/x".to_string(),
+                    lang: Lang::En,
+                    style: Style::ConventionalCommits,
+                    want_body: false,
+                },
+                &files,
+            );
+            assert_eq!(out, Err(GenError::Offline));
+        }
         match prev {
             Some(v) => std::env::set_var("KAGI_OFFLINE", v),
             None => std::env::remove_var("KAGI_OFFLINE"),

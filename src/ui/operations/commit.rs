@@ -252,8 +252,17 @@ impl KagiApp {
         }
         self.smart_commit_detected_for = Some(repo_path);
 
+        // CLI availability is just a PATH scan (instant, no spawn, no network),
+        // so detect it inline even when offline — "is it installed" is unrelated
+        // to the offline gate, which is applied later at generate time (ADR-0099).
+        self.smart_commit.claude_available =
+            message_gen::cli_available(message_gen::CliProvider::ClaudeCode);
+        self.smart_commit.codex_available =
+            message_gen::cli_available(message_gen::CliProvider::Codex);
+
         if message_gen::offline() {
-            klog!("smart-commit: offline (detection skipped)");
+            klog!("smart-commit: offline (ollama detection skipped)");
+            cx.notify();
             return;
         }
 
@@ -273,9 +282,11 @@ impl KagiApp {
                 app.smart_commit.ollama_available = available;
                 app.smart_commit.detected_models = models;
                 eprintln!(
-                    "[kagi] smart-commit: ollama_available={} models={}",
+                    "[kagi] smart-commit: ollama_available={} models={} claude={} codex={}",
                     available,
-                    app.smart_commit.detected_models.len()
+                    app.smart_commit.detected_models.len(),
+                    app.smart_commit.claude_available,
+                    app.smart_commit.codex_available,
                 );
                 cx.notify();
             });
@@ -380,9 +391,13 @@ impl KagiApp {
             cx.notify();
             return;
         }
-        // Gate 2: model selection (1 model still needs confirmation, multiple
-        // must be chosen — both surface as the picker on first use).
-        if self.smart_commit.model.is_none() {
+        // Gate 2: model selection — Ollama only. CLI providers (ADR-0099) have no
+        // model picker; the provider itself is chosen in Settings.
+        if matches!(
+            self.smart_commit.provider,
+            smart_commit::SmartProvider::Ollama
+        ) && self.smart_commit.model.is_none()
+        {
             self.open_smart_model_picker(cx);
             return;
         }
@@ -443,8 +458,16 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
-        let (Some(model), lang) = (self.smart_commit.model.clone(), self.smart_commit.lang) else {
-            return;
+        let lang = self.smart_commit.lang;
+        // Only the Ollama backend needs a model; CLI providers ignore it. For
+        // Ollama, bail if no model has been chosen yet (the picker handles that
+        // upstream in `smart_generate`).
+        let model = match self.smart_commit.provider {
+            smart_commit::SmartProvider::Ollama => match self.smart_commit.model.clone() {
+                Some(m) => m,
+                None => return,
+            },
+            smart_commit::SmartProvider::Cli(_) => String::new(),
         };
         // ADR-0090: the standalone Style toggle is gone — derive it from the
         // mode. Template mode needs a Conventional subject so it can be parsed
@@ -457,10 +480,16 @@ impl KagiApp {
         // Template mode wants a body too (its body field would otherwise be empty).
         let want_body = self.commit_template_mode;
         let host = smart_commit::SmartCommitState::ollama_host();
+        let provider = self.smart_commit.provider;
         let overwrite_ok = self.smart_commit_current_msg(cx).trim().is_empty();
 
         self.smart_commit.generating = true;
-        self.smart_commit.status = Some("Generating with local LLM…".to_string());
+        self.smart_commit.status = Some(match provider {
+            smart_commit::SmartProvider::Ollama => "Generating with local LLM…".to_string(),
+            smart_commit::SmartProvider::Cli(p) => {
+                format!("Generating with {}…", p.display_name())
+            }
+        });
         cx.notify();
 
         let task = cx.background_spawn(async move {
@@ -477,7 +506,16 @@ impl KagiApp {
                 want_body,
             };
             // LLM first; on Err fall back to the rule-based draft (quietly).
-            let backend = message_gen::MessageBackend::Ollama { host, model };
+            // The selected provider decides the backend (ADR-0099): loopback
+            // Ollama, or shelling out to a local agentic CLI.
+            let backend = match provider {
+                smart_commit::SmartProvider::Ollama => {
+                    message_gen::MessageBackend::Ollama { host, model }
+                }
+                smart_commit::SmartProvider::Cli(provider) => {
+                    message_gen::MessageBackend::Cli { provider }
+                }
+            };
             let (msg, used_llm) = match message_gen::generate_message(&backend, &gi, &files) {
                 Ok(m) => (m, true),
                 Err(e) => {

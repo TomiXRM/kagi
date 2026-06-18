@@ -19,7 +19,7 @@
 //!     models force a choice.  The chosen model is persisted to `settings.json`.
 //!   * `KAGI_OFFLINE=1` disables detection and generation entirely.
 
-use kagi::git::message_gen::{self, Lang};
+use kagi::git::message_gen::{self, CliProvider, Lang};
 
 use super::settings;
 
@@ -30,6 +30,45 @@ use super::settings;
 const KEY_ENABLED: &str = "smart_commit_llm_enabled";
 const KEY_MODEL: &str = "smart_commit_model";
 const KEY_LANG: &str = "smart_commit_lang";
+/// Which generation backend is selected: `"ollama"` (default) | `"claude-code"`
+/// | `"codex"` (ADR-0099).
+const KEY_PROVIDER: &str = "smart_commit_provider";
+
+// ──────────────────────────────────────────────────────────────────────────
+// Provider selection (ADR-0099)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// The selected Smart Commit message-generation provider.
+///
+/// `Ollama` is the local, privacy-preserving default. The `Cli(..)` variants
+/// shell out to a locally installed coding-agent CLI (Claude Code / Codex):
+/// stronger models reusing the user's own auth, at the cost that the staged diff
+/// leaves kagi's local sandbox — hence the prominent Settings warning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SmartProvider {
+    /// Local loopback Ollama (default).
+    Ollama,
+    /// A locally installed agentic CLI (Claude Code / Codex).
+    Cli(CliProvider),
+}
+
+impl SmartProvider {
+    /// Stable slug for `settings.json` (`"ollama"` / `"claude-code"` / `"codex"`).
+    pub fn slug(self) -> &'static str {
+        match self {
+            SmartProvider::Ollama => "ollama",
+            SmartProvider::Cli(p) => p.slug(),
+        }
+    }
+
+    /// Parse a slug, defaulting to `Ollama` for anything unrecognised.
+    pub fn from_slug(s: &str) -> SmartProvider {
+        match CliProvider::from_slug(s) {
+            Some(p) => SmartProvider::Cli(p),
+            None => SmartProvider::Ollama,
+        }
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Consent dialog text (ADR-0044 — these four lines MUST be present)
@@ -67,6 +106,12 @@ pub struct SmartCommitState {
     pub ollama_available: bool,
     /// Models installed on the detected Ollama server (`/api/tags`).
     pub detected_models: Vec<String>,
+    /// Whether the Claude Code CLI (`claude`) was found on `$PATH` (ADR-0099).
+    pub claude_available: bool,
+    /// Whether the Codex CLI (`codex`) was found on `$PATH` (ADR-0099).
+    pub codex_available: bool,
+    /// Selected generation backend (persisted; ADR-0099). Default `Ollama`.
+    pub provider: SmartProvider,
     /// User has opted in to LLM generation (persisted).
     pub llm_enabled: bool,
     /// Selected model name (persisted); `None` until chosen.
@@ -86,6 +131,9 @@ impl Default for SmartCommitState {
         SmartCommitState {
             ollama_available: false,
             detected_models: Vec::new(),
+            claude_available: false,
+            codex_available: false,
+            provider: SmartProvider::Ollama,
             llm_enabled: false,
             model: None,
             lang: Lang::En,
@@ -107,6 +155,9 @@ impl SmartCommitState {
             lang: settings::read_setting(KEY_LANG)
                 .map(|l| Lang::from_slug(&l))
                 .unwrap_or(Lang::En),
+            provider: settings::read_setting(KEY_PROVIDER)
+                .map(|p| SmartProvider::from_slug(&p))
+                .unwrap_or(SmartProvider::Ollama),
             ..Default::default()
         }
     }
@@ -124,6 +175,20 @@ impl SmartCommitState {
         self.model = Some(model);
     }
 
+    /// Persist the selected generation provider (ADR-0099).
+    pub fn set_provider(&mut self, provider: SmartProvider) {
+        self.provider = provider;
+        settings::write_setting(KEY_PROVIDER, Some(provider.slug()));
+    }
+
+    /// Whether `provider`'s CLI was detected on `$PATH` (from the last probe).
+    pub fn cli_available_for(&self, provider: CliProvider) -> bool {
+        match provider {
+            CliProvider::ClaudeCode => self.claude_available,
+            CliProvider::Codex => self.codex_available,
+        }
+    }
+
     /// Toggle language and persist.
     pub fn toggle_lang(&mut self) {
         self.lang = match self.lang {
@@ -133,10 +198,20 @@ impl SmartCommitState {
         settings::write_setting(KEY_LANG, Some(self.lang.slug()));
     }
 
-    /// Whether the "Generate with Local LLM" button should be *offered* at all:
-    /// Ollama detected AND user enabled AND not offline.
+    /// Whether the "Generate with LLM" button should be *offered* at all.
+    ///
+    /// Always requires the opt-in (`llm_enabled`) and not-offline. The backend
+    /// requirement depends on the selected provider (ADR-0099):
+    /// * `Ollama` → a loopback Ollama server must be detected.
+    /// * `Cli(p)` → that provider's CLI must be found on `$PATH`.
     pub fn llm_offered(&self) -> bool {
-        self.ollama_available && self.llm_enabled && !message_gen::offline()
+        if !self.llm_enabled || message_gen::offline() {
+            return false;
+        }
+        match self.provider {
+            SmartProvider::Ollama => self.ollama_available,
+            SmartProvider::Cli(p) => self.cli_available_for(p),
+        }
     }
 
     /// The Ollama host (`host:port`).  Overridable via `KAGI_OLLAMA_HOST` for
@@ -172,6 +247,42 @@ mod tests {
         assert!(s.model.is_none());
         assert!(!s.llm_offered());
         assert_eq!(s.lang, Lang::En);
+    }
+
+    #[test]
+    fn provider_slug_roundtrip_defaults_ollama() {
+        assert_eq!(SmartProvider::from_slug("ollama"), SmartProvider::Ollama);
+        assert_eq!(
+            SmartProvider::from_slug("claude-code"),
+            SmartProvider::Cli(CliProvider::ClaudeCode)
+        );
+        assert_eq!(
+            SmartProvider::from_slug("codex"),
+            SmartProvider::Cli(CliProvider::Codex)
+        );
+        // Unknown → Ollama (safe local default).
+        assert_eq!(SmartProvider::from_slug("garbage"), SmartProvider::Ollama);
+        assert_eq!(SmartProvider::Ollama.slug(), "ollama");
+        assert_eq!(SmartProvider::Cli(CliProvider::Codex).slug(), "codex");
+    }
+
+    #[test]
+    fn llm_offered_requires_selected_backend() {
+        let mut s = SmartCommitState {
+            llm_enabled: true,
+            ..Default::default()
+        };
+        // Ollama selected but not detected → not offered.
+        assert!(!s.llm_offered());
+        s.ollama_available = true;
+        assert!(s.llm_offered());
+
+        // Switch to a CLI provider: ollama presence no longer matters; the CLI
+        // must be detected instead.
+        s.provider = SmartProvider::Cli(CliProvider::ClaudeCode);
+        assert!(!s.llm_offered());
+        s.claude_available = true;
+        assert!(s.llm_offered());
     }
 
     #[test]

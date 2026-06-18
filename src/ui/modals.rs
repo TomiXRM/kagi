@@ -4,7 +4,7 @@ use super::theme::{self, theme as current_theme};
 use super::{file_tree, smart_commit, KagiApp};
 
 use gpui::{
-    div, prelude::*, rgb, App, Context, Entity, FocusHandle, KeyDownEvent, SharedString, Window,
+    div, prelude::*, px, rgb, App, Context, Entity, FocusHandle, KeyDownEvent, SharedString, Window,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
@@ -3496,9 +3496,18 @@ pub(crate) fn render_update_modal(
         this.open_release_page();
     });
 
+    // Release notes can be long, so size the card to a fraction of the window
+    // (issue #29 comment): 0.8× viewport width, and the notes pane scrolls within
+    // ~half the viewport height. The notes text is rendered at ~0.7× the current
+    // UI zoom so more fits.
+    let viewport = window.viewport_size();
+    let card_w = px((f32::from(viewport.width) * 0.8).max(360.0));
+    let notes_h = px((f32::from(viewport.height) * 0.5).max(160.0));
+    let notes_font = px((theme::rem_size_px() * 0.7).max(9.0));
+
     let mut card =
         div()
-            .w(theme::scaled_px(480.))
+            .w(card_w)
             .bg(rgb(current_theme().modal))
             .rounded_lg()
             .p_4()
@@ -3546,23 +3555,44 @@ pub(crate) fn render_update_modal(
                     ))),
             );
 
-    // Release notes — rendered as Markdown (gpui-component TextView), scrollable.
+    // Release notes — rendered as Markdown (gpui-component TextView). The
+    // TextView scrolls itself (`.scrollable(true)`) inside a fixed-height pane;
+    // the earlier `overflow_y_scroll` wrapper did not actually scroll the async
+    // TextView. Heading/body sizes are scaled to ~0.7× the UI zoom, and the
+    // markdown style follows the active (dark) theme so code blocks render right.
     if !plan.notes.trim().is_empty() {
+        use gpui_component::text::TextViewStyle;
+        use gpui_component::ActiveTheme as _;
+
+        let highlight_theme = cx.theme().highlight_theme.clone();
+        let is_dark = cx.theme().mode.is_dark();
+        let tv_style = TextViewStyle {
+            heading_base_font_size: notes_font,
+            highlight_theme,
+            is_dark,
+            ..Default::default()
+        };
+
         card = card.child(
             div()
                 .id("update-notes")
-                .max_h(theme::scaled_px(220.))
-                .overflow_y_scroll()
+                .h(notes_h)
+                .w_full()
                 .p_2()
                 .rounded_md()
                 .bg(rgb(current_theme().bg_base))
                 .text_color(rgb(current_theme().text_main))
-                .child(gpui_component::text::TextView::markdown(
-                    "update-notes-md",
-                    SharedString::from(plan.notes.clone()),
-                    window,
-                    cx,
-                )),
+                .text_size(notes_font)
+                .child(
+                    gpui_component::text::TextView::markdown(
+                        "update-notes-md",
+                        SharedString::from(plan.notes.clone()),
+                        window,
+                        cx,
+                    )
+                    .scrollable(true)
+                    .style(tv_style),
+                ),
         );
     }
 

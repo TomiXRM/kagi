@@ -110,9 +110,19 @@ pub struct UpdatePlan {
 /// `os` = [`std::env::consts::OS`] (`"macos"`/`"linux"`/`"windows"`), `arch` =
 /// [`std::env::consts::ARCH`] (`"aarch64"`/`"x86_64"`). Mirrors the names emitted
 /// by `release.yml` (ADR-0047): `Kagi-<v>-arm64.dmg`, `kagi-<v>-<arch>.tar.gz`,
-/// `kagi-<v>-x86_64-windows.zip`. The Linux AppImage zip is intentionally not
-/// chosen (the tar.gz carries the bare binary, which is simplest to swap).
-pub fn pick_asset<'a>(assets: &'a [Asset], os: &str, arch: &str) -> Option<&'a Asset> {
+/// `kagi_Linux-AppImage_<arch>.zip`, `kagi-<v>-x86_64-windows.zip`.
+///
+/// On Linux, `appimage` selects which artifact to self-update from (issue #29):
+/// when running from an AppImage we must replace the writable `.AppImage` file
+/// itself, so pick `kagi_Linux-AppImage_<arch>.zip`; otherwise pick the
+/// `tar.gz` (its bare `bin/kagi` is the simplest atomic binary swap). The flag
+/// is ignored on macOS/Windows.
+pub fn pick_asset<'a>(
+    assets: &'a [Asset],
+    os: &str,
+    arch: &str,
+    appimage: bool,
+) -> Option<&'a Asset> {
     match os {
         "macos" => {
             let a = if arch == "aarch64" { "arm64" } else { "x86_64" };
@@ -129,9 +139,16 @@ pub fn pick_asset<'a>(assets: &'a [Asset], os: &str, arch: &str) -> Option<&'a A
             } else {
                 "x86_64"
             };
-            assets
-                .iter()
-                .find(|x| x.name.ends_with(".tar.gz") && x.name.contains(a))
+            if appimage {
+                // kagi_Linux-AppImage_<arch>.zip
+                assets.iter().find(|x| {
+                    x.name.contains("AppImage") && x.name.contains(a) && x.name.ends_with(".zip")
+                })
+            } else {
+                assets
+                    .iter()
+                    .find(|x| x.name.ends_with(".tar.gz") && x.name.contains(a))
+            }
         }
         _ => None,
     }
@@ -145,6 +162,7 @@ pub fn plan_update(
     release: &ReleaseInfo,
     os: &str,
     arch: &str,
+    appimage: bool,
     skipped: Option<&str>,
 ) -> Option<UpdatePlan> {
     if !release.version.is_stable() {
@@ -156,7 +174,7 @@ pub fn plan_update(
     if skipped == Some(release.tag.as_str()) {
         return None;
     }
-    let asset = pick_asset(&release.assets, os, arch)?.clone();
+    let asset = pick_asset(&release.assets, os, arch, appimage)?.clone();
     Some(UpdatePlan {
         current: current.clone(),
         latest: release.version.clone(),
@@ -416,6 +434,8 @@ mod tests {
             {"name":"kagi-0.3.4-x86_64.tar.gz","size":2222,"browser_download_url":"https://example.com/kagi-0.3.4-x86_64.tar.gz"},
             {"name":"kagi-0.3.4-aarch64.tar.gz","size":3333,"browser_download_url":"https://example.com/kagi-0.3.4-aarch64.tar.gz"},
             {"name":"kagi-0.3.4-x86_64-windows.zip","size":4444,"browser_download_url":"https://example.com/kagi-0.3.4-x86_64-windows.zip"},
+            {"name":"kagi_Linux-AppImage_x86_64.zip","size":5555,"browser_download_url":"https://example.com/kagi_Linux-AppImage_x86_64.zip"},
+            {"name":"kagi_Linux-AppImage_aarch64.zip","size":6666,"browser_download_url":"https://example.com/kagi_Linux-AppImage_aarch64.zip"},
             {"name":"SHA256SUMS-macos-arm64.txt","size":55,"browser_download_url":"https://example.com/SHA256SUMS-macos-arm64.txt"}
           ]
         }"#
@@ -429,7 +449,7 @@ mod tests {
         assert!(r.notes.contains("Line one\nLine two"));
         assert!(r.notes.contains("\"quote\""));
         assert!(r.notes.contains('🚀')); // \uXXXX decoded
-        assert_eq!(r.assets.len(), 5);
+        assert_eq!(r.assets.len(), 7);
         let dmg = r.assets.iter().find(|a| a.name.ends_with(".dmg")).unwrap();
         assert_eq!(dmg.url, "https://example.com/Kagi-0.3.4-arm64.dmg");
         assert_eq!(dmg.size, 1111);
@@ -438,22 +458,50 @@ mod tests {
     #[test]
     fn picks_per_platform_assets() {
         let r = parse_release_json(sample_json()).unwrap();
-        assert!(pick_asset(&r.assets, "macos", "aarch64")
+        assert!(pick_asset(&r.assets, "macos", "aarch64", false)
             .unwrap()
             .name
             .ends_with("arm64.dmg"));
         assert_eq!(
-            pick_asset(&r.assets, "linux", "x86_64").unwrap().name,
+            pick_asset(&r.assets, "linux", "x86_64", false)
+                .unwrap()
+                .name,
             "kagi-0.3.4-x86_64.tar.gz"
         );
         assert_eq!(
-            pick_asset(&r.assets, "linux", "aarch64").unwrap().name,
+            pick_asset(&r.assets, "linux", "aarch64", false)
+                .unwrap()
+                .name,
             "kagi-0.3.4-aarch64.tar.gz"
         );
         assert_eq!(
-            pick_asset(&r.assets, "windows", "x86_64").unwrap().name,
+            pick_asset(&r.assets, "windows", "x86_64", false)
+                .unwrap()
+                .name,
             "kagi-0.3.4-x86_64-windows.zip"
         );
+    }
+
+    #[test]
+    fn picks_appimage_when_running_as_appimage() {
+        // issue #29: when $APPIMAGE is set the updater must replace the writable
+        // .AppImage file, so it selects the AppImage zip, not the tar.gz.
+        let r = parse_release_json(sample_json()).unwrap();
+        assert_eq!(
+            pick_asset(&r.assets, "linux", "x86_64", true).unwrap().name,
+            "kagi_Linux-AppImage_x86_64.zip"
+        );
+        assert_eq!(
+            pick_asset(&r.assets, "linux", "aarch64", true)
+                .unwrap()
+                .name,
+            "kagi_Linux-AppImage_aarch64.zip"
+        );
+        // The AppImage flag is ignored off Linux.
+        assert!(pick_asset(&r.assets, "macos", "aarch64", true)
+            .unwrap()
+            .name
+            .ends_with("arm64.dmg"));
     }
 
     #[test]
@@ -461,17 +509,20 @@ mod tests {
         let r = parse_release_json(sample_json()).unwrap();
         let cur = Version::parse("0.3.3").unwrap();
         // newer → plan
-        assert!(plan_update(&cur, &r, "macos", "aarch64", None).is_some());
+        assert!(plan_update(&cur, &r, "macos", "aarch64", false, None).is_some());
         // up to date → none
         let same = Version::parse("0.3.4").unwrap();
-        assert!(plan_update(&same, &r, "macos", "aarch64", None).is_none());
+        assert!(plan_update(&same, &r, "macos", "aarch64", false, None).is_none());
         // newer current → none
         let ahead = Version::parse("0.4.0").unwrap();
-        assert!(plan_update(&ahead, &r, "macos", "aarch64", None).is_none());
+        assert!(plan_update(&ahead, &r, "macos", "aarch64", false, None).is_none());
         // skipped → none
-        assert!(plan_update(&cur, &r, "macos", "aarch64", Some("v0.3.4")).is_none());
+        assert!(plan_update(&cur, &r, "macos", "aarch64", false, Some("v0.3.4")).is_none());
         // unknown platform → none (no asset)
-        assert!(plan_update(&cur, &r, "freebsd", "x86_64", None).is_none());
+        assert!(plan_update(&cur, &r, "freebsd", "x86_64", false, None).is_none());
+        // AppImage plan picks the AppImage zip
+        let p = plan_update(&cur, &r, "linux", "x86_64", true, None).unwrap();
+        assert_eq!(p.asset.name, "kagi_Linux-AppImage_x86_64.zip");
     }
 
     #[test]
@@ -495,6 +546,6 @@ mod tests {
             "assets":[{"name":"kagi-0.4.0-x86_64.tar.gz","size":1,"browser_download_url":"https://e/x"}]}"#;
         let r = parse_release_json(json).unwrap();
         let cur = Version::parse("0.3.3").unwrap();
-        assert!(plan_update(&cur, &r, "linux", "x86_64", None).is_none());
+        assert!(plan_update(&cur, &r, "linux", "x86_64", false, None).is_none());
     }
 }

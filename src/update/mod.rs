@@ -46,6 +46,13 @@ pub fn current_version() -> Version {
     Version::parse(env!("CARGO_PKG_VERSION")).expect("CARGO_PKG_VERSION is valid semver")
 }
 
+/// `true` when running from a Linux AppImage. The AppImage runtime exports
+/// `$APPIMAGE` as the absolute path of the (writable) `.AppImage` file, which is
+/// what we self-update by replacing — see issue #29 and `install_platform`.
+fn running_as_appimage() -> bool {
+    std::env::var_os("APPIMAGE").is_some()
+}
+
 /// Fetch the latest GitHub release. Best-effort: any network/parse error is a
 /// `String` the caller logs and ignores (no update offered).
 pub fn check_latest() -> Result<ReleaseInfo, String> {
@@ -66,6 +73,7 @@ pub fn check_for_update(
         &release,
         std::env::consts::OS,
         std::env::consts::ARCH,
+        running_as_appimage(),
         skipped,
     );
     Ok(plan.map(|p| (p, release)))
@@ -183,12 +191,38 @@ fn install_platform(
     target: &Path,
     log: &dyn Fn(&str),
 ) -> Result<Relaunch, String> {
-    // Running from an AppImage mounts read-only — we can't swap in place.
-    if std::env::var_os("APPIMAGE").is_some() {
-        return Err(
-            "running as an AppImage — please download the new AppImage manually".to_string(),
-        );
+    // ── AppImage (issue #29) ──────────────────────────────────────────────
+    // The AppImage's internal binary (`current_exe()`) lives on a read-only
+    // squashfs mount and can't be swapped. But `$APPIMAGE` is the absolute path
+    // of the `.AppImage` *file*, a normal writable file — so replace that and
+    // relaunch through it. The asset is a `.zip` containing `Kagi-<arch>.AppImage`.
+    if let Some(appimage) = std::env::var_os("APPIMAGE") {
+        let appimage_path = std::path::PathBuf::from(appimage);
+        let out = staging.join("extract");
+        std::fs::create_dir_all(&out).map_err(|e| format!("mkdir extract: {e}"))?;
+        run(std::process::Command::new("unzip").args([
+            "-o",
+            archive.to_str().ok_or("non-utf8 archive path")?,
+            "-d",
+            out.to_str().ok_or("non-utf8 extract path")?,
+        ]))
+        .map_err(|e| format!("{e} (the AppImage asset is a .zip — `unzip` must be installed)"))?;
+        let new_appimage = find_file_ext(&out, "AppImage")
+            .ok_or("no .AppImage found inside the downloaded zip")?;
+        swap_file(&new_appimage, &appimage_path, log).map_err(|e| {
+            format!(
+                "{e} — could not replace {}. The AppImage location may not be writable \
+                 (e.g. a system dir); move it under your home directory or update manually.",
+                appimage_path.display()
+            )
+        })?;
+        return Ok(Relaunch {
+            program: appimage_path.to_string_lossy().into_owned(),
+            args: vec![],
+        });
     }
+
+    // ── tar.gz (bare binary) ──────────────────────────────────────────────
     run(std::process::Command::new("tar").args([
         "-xzf",
         archive.to_str().ok_or("non-utf8 archive path")?,
@@ -325,6 +359,30 @@ fn swap_dir(new: &Path, target: &Path, _log: &dyn Fn(&str)) -> Result<(), String
     }
     let _ = std::fs::remove_dir_all(&backup);
     Ok(())
+}
+
+/// Recursively find the first file whose name ends with `.<ext>` under `root`
+/// (case-sensitive). Used for the AppImage zip, which contains `Kagi-<arch>.AppImage`.
+#[cfg(target_os = "linux")]
+fn find_file_ext(root: &Path, ext: &str) -> Option<std::path::PathBuf> {
+    let suffix = format!(".{ext}");
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = std::fs::read_dir(&dir).ok()?;
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with(suffix.as_str()))
+            {
+                return Some(p);
+            }
+        }
+    }
+    None
 }
 
 /// Recursively find the first file named `name` under `root`.

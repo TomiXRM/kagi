@@ -227,7 +227,10 @@ mod tests {
         use super::{git_event_kind, WatchEvent};
         // A stage/unstage touches `.git/index` only — it must NOT be a graph
         // reload (which would close the commit panel), but a light Index refresh.
-        assert_eq!(git_event_kind(Path::new(".git/index")), Some(WatchEvent::Index));
+        assert_eq!(
+            git_event_kind(Path::new(".git/index")),
+            Some(WatchEvent::Index)
+        );
         // `index.lock` is a transient lock file, not the index itself.
         assert_eq!(git_event_kind(Path::new(".git/index.lock")), None);
     }

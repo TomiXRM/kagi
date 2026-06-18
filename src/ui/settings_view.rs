@@ -204,6 +204,7 @@ fn setting_row(
     control: AnyElement,
 ) -> impl IntoElement {
     div()
+        .w_full()
         .flex()
         .flex_row()
         .items_start()
@@ -215,6 +216,12 @@ fn setting_row(
                 .flex()
                 .flex_col()
                 .gap_1()
+                // `min_w_0` lets this column shrink below its content's intrinsic
+                // width so the right-hand control stays inside the pane. Without
+                // it, an unbreakable label/description (CJK text has no word
+                // boundaries) keeps its full width and pushes the control off the
+                // (overflow-hidden) panel edge, hiding it.
+                .min_w_0()
                 .flex_1()
                 .child(div().text_color(rgb(theme().text_main)).child(title))
                 .child(
@@ -245,6 +252,7 @@ fn appearance_section(
         Some(state) => Select::new(&state)
             .menu_width(px(220.0))
             .small()
+            .w(px(220.0))
             .into_any_element(),
         None => {
             let cur = theme().slug;

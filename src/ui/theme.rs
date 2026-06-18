@@ -538,18 +538,22 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// All built-in themes.  Index 0 (Catppuccin Mocha) is the default.
+// The default (Catppuccin Mocha) is pinned at index 0 — that invariant is relied
+// on by `theme()` (the default ACTIVE index), the docs, and tests. The remaining
+// themes are sorted alphabetically by display name so the picker stays tidy as
+// themes are added.
 pub static THEMES: &[Theme] = &[
     CATPPUCCIN_MOCHA,
-    XCODE_DARK,
-    XCODE_LIGHT,
-    ONE_DARK,
-    ONE_LIGHT,
-    MONOKAI,
-    TOKYO_NIGHT,
-    IBM_PC,
-    PINKY_BOO,
     CATPPUCCIN_LATTE,
     DRACULA,
+    IBM_PC,
+    MONOKAI,
+    ONE_DARK,
+    ONE_LIGHT,
+    PINKY_BOO,
+    TOKYO_NIGHT,
+    XCODE_DARK,
+    XCODE_LIGHT,
 ];
 
 // ── Catppuccin Mocha (default) ───────────────────────────────────────────

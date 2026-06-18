@@ -1,26 +1,16 @@
 //! Branch context menu model and overlay renderer.
 
-use gpui::{
-    div, prelude::*, px, rgb, ClipboardItem, Context, IntoElement, MouseButton, Pixels, Point,
-    SharedString, Window,
-};
-use gpui_component::tooltip::Tooltip;
+use gpui::{ClipboardItem, Context, Pixels, Point, SharedString, Window};
 
 use kagi::git::CommitId;
 
 use super::{
     context_menu::{ItemState, MenuGroup, MenuItem},
     i18n::{self, Msg},
-    theme::{self, theme},
-    KagiApp,
+    menu_overlay, KagiApp,
 };
 
 const MENU_W: f32 = 300.0;
-const MENU_MARGIN: f32 = 8.0;
-// W27-UIPOLISH: Zed-style compact density (kept in sync with context_menu.rs).
-const MENU_ROW_H: f32 = 24.0;
-const MENU_HEADER_H: f32 = 30.0;
-const MENU_GROUP_H: f32 = 18.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BranchKind {
@@ -306,138 +296,30 @@ pub fn render_branch_menu_overlay(
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let viewport = window.viewport_size();
-    let visible_items = groups
-        .iter()
-        .flat_map(|group| group.items.iter())
-        .filter(|item| item.state != ItemState::Hidden)
-        .count() as f32;
-    let visible_groups = groups
-        .iter()
-        .filter(|group| {
-            group
-                .items
-                .iter()
-                .any(|item| item.state != ItemState::Hidden)
-        })
-        .count() as f32;
-    // Box is rendered with `scaled_px`; clamp against the scaled footprint so
-    // the menu stays on-screen at non-1.0 zoom (mouse position is unscaled).
-    let z = theme::zoom();
-    let menu_w = MENU_W * z;
-    let menu_h =
-        (MENU_HEADER_H + visible_items * MENU_ROW_H + visible_groups * MENU_GROUP_H + 16.0) * z;
-    let viewport_w = f32::from(viewport.width);
-    let viewport_h = f32::from(viewport.height);
-    let raw_x = f32::from(state.position.x);
-    let raw_y = f32::from(state.position.y);
-    let x = if raw_x + menu_w + MENU_MARGIN > viewport_w {
-        (viewport_w - menu_w - MENU_MARGIN).max(MENU_MARGIN)
-    } else {
-        raw_x.max(MENU_MARGIN)
+    let position = state.position;
+    let on_dismiss = |this: &mut KagiApp, _w: &mut Window, _cx: &mut Context<KagiApp>| {
+        this.branch_menu = None;
     };
-    let y = if raw_y + menu_h + MENU_MARGIN > viewport_h {
-        (viewport_h - menu_h - MENU_MARGIN).max(MENU_MARGIN)
-    } else {
-        raw_y.max(MENU_MARGIN)
+    let on_select = move |this: &mut KagiApp,
+                          action: BranchAction,
+                          window: &mut Window,
+                          cx: &mut Context<KagiApp>| {
+        this.branch_menu = None;
+        this.dispatch_branch_action(action, state.clone(), window, cx);
     };
-
-    let dismiss_left = cx.listener(
-        |this: &mut KagiApp, _event: &gpui::MouseDownEvent, _window, cx| {
-            this.branch_menu = None;
-            cx.stop_propagation();
-            cx.notify();
-        },
-    );
-    let dismiss_right = cx.listener(
-        |this: &mut KagiApp, _event: &gpui::MouseDownEvent, _window, cx| {
-            this.branch_menu = None;
-            cx.stop_propagation();
-            cx.notify();
-        },
-    );
-
-    let mut menu = div()
-        .id("branch-context-menu")
-        .occlude()
-        .absolute()
-        .top(px(y))
-        .left(px(x))
-        .w(theme::scaled_px(MENU_W))
-        .max_h(px((viewport_h - MENU_MARGIN * 2.0).max(120.0)))
-        .overflow_hidden()
-        .rounded(theme::scaled_px(6.))
-        .border_1()
-        .border_color(rgb(theme().selected))
-        .bg(rgb(theme().modal))
-        .shadow_md()
-        .child(
-            div()
-                .h(theme::scaled_px(MENU_HEADER_H))
-                .px_3()
-                .flex()
-                .flex_row()
-                .items_center()
-                .border_b_1()
-                .border_color(rgb(theme().selected))
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .truncate()
-                .child(header),
-        );
-
-    for (group_ix, group) in groups.into_iter().enumerate() {
-        if !group
-            .items
-            .iter()
-            .any(|item| item.state != ItemState::Hidden)
-        {
-            continue;
-        }
-        if let Some(title) = group.title {
-            let title_color = if title == "Advanced / Dangerous" {
-                theme().color_warning
-            } else {
-                theme().text_muted
-            };
-            menu = menu.child(
-                div()
-                    .h(theme::scaled_px(MENU_GROUP_H))
-                    .px_3()
-                    .pt_1()
-                    .text_xs()
-                    .text_color(rgb(title_color))
-                    .child(SharedString::from(title)),
-            );
-        }
-        for (item_ix, item) in group.items.into_iter().enumerate() {
-            if item.state == ItemState::Hidden {
-                continue;
-            }
-            menu = menu.child(render_menu_item(group_ix, item_ix, state.clone(), item, cx));
-        }
-    }
-
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .occlude()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .occlude()
-                .bg(rgb(theme().modal_overlay))
-                .opacity(0.01)
-                .on_mouse_down(MouseButton::Left, dismiss_left)
-                .on_mouse_down(MouseButton::Right, dismiss_right),
-        )
-        .child(menu)
-        .into_any_element()
+    menu_overlay::render_menu_overlay(
+        "branch-context-menu",
+        "branch-menu-item",
+        MENU_W,
+        "Advanced / Dangerous",
+        position,
+        header,
+        groups,
+        on_dismiss,
+        on_select,
+        window,
+        cx,
+    )
 }
 
 pub fn copy_branch_name(app: &mut KagiApp, name: String, cx: &mut Context<KagiApp>) {
@@ -453,66 +335,6 @@ pub fn copy_head_sha(app: &mut KagiApp, sha: String, cx: &mut Context<KagiApp>) 
 pub fn copy_upstream_name(app: &mut KagiApp, upstream: String, cx: &mut Context<KagiApp>) {
     cx.write_to_clipboard(ClipboardItem::new_string(upstream.clone()));
     app.push_toast(super::ToastKind::Info, i18n::copied_fmt(&upstream));
-}
-
-fn render_menu_item(
-    group_ix: usize,
-    item_ix: usize,
-    state: BranchMenuState,
-    item: MenuItem<BranchAction>,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    let enabled = item.state == ItemState::Enabled;
-    let action = item.action.clone();
-    let label_color = match (&item.state, item.dangerous) {
-        (ItemState::Enabled, true) => theme().color_blocker,
-        (ItemState::Enabled, false) => theme().text_main,
-        (ItemState::Disabled(_), true) => theme().color_blocker_muted,
-        (ItemState::Disabled(_), false) => theme().text_muted,
-        (ItemState::Hidden, _) => theme().text_muted,
-    };
-    let text = if item.dangerous {
-        SharedString::from(format!("⚠ {}", item.label.as_ref()))
-    } else {
-        item.label.clone()
-    };
-
-    let click = cx.listener(
-        move |this: &mut KagiApp, _event: &gpui::ClickEvent, window, cx| {
-            this.branch_menu = None;
-            this.dispatch_branch_action(action.clone(), state.clone(), window, cx);
-            cx.notify();
-        },
-    );
-
-    let row = div()
-        .id(SharedString::from(format!(
-            "branch-menu-item-{}-{}",
-            group_ix, item_ix
-        )))
-        .h(theme::scaled_px(MENU_ROW_H))
-        .px_3()
-        .flex()
-        .flex_row()
-        .items_center()
-        .text_sm()
-        .text_color(rgb(label_color))
-        .overflow_hidden()
-        .child(div().flex_1().truncate().child(text));
-
-    let row = if enabled {
-        row.on_click(click)
-            .hover(|style| style.bg(rgb(theme().selected)).cursor_pointer())
-    } else {
-        row.hover(|style| style.bg(rgb(theme().surface)))
-    };
-
-    match item.state {
-        ItemState::Disabled(reason) => row
-            .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
-            .into_any_element(),
-        _ => row.into_any_element(),
-    }
 }
 
 fn item(

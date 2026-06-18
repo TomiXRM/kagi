@@ -22,6 +22,7 @@ pub mod file_tree;
 pub mod graph_view;
 pub mod i18n;
 pub mod inspector;
+pub mod menu_overlay;
 pub mod modals;
 mod operations;
 pub mod remote_browse;

@@ -110,8 +110,8 @@ pub fn render_settings_overlay(
     // content stays reachable by scrolling when zoomed), capped at the preferred
     // dimensions on large windows.
     let viewport = window.viewport_size();
-    let panel_w = (f32::from(viewport.width) * 0.8).min(640.0);
-    let panel_h = (f32::from(viewport.height) * 0.8).min(560.0);
+    let panel_w = (f32::from(viewport.width) * 0.85).min(820.0);
+    let panel_h = (f32::from(viewport.height) * 0.85).min(720.0);
 
     let panel = div()
         .w(px(panel_w))

@@ -4,9 +4,11 @@
 //! Ollama. Pure generation, truncation, and JSON helpers live in `kagi-domain`
 //! and are re-exported here for stable `kagi::git::message_gen::*` paths.
 
+use std::ffi::OsString;
 use std::io::{Read as _, Write as _};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use git2::{DiffOptions, Repository};
@@ -431,7 +433,14 @@ fn cli_generate(provider: CliProvider, prompt: &str) -> Result<String, GenError>
         CliProvider::ClaudeCode => None,
     };
 
-    let mut cmd = Command::new(provider.binary());
+    // Resolve the absolute binary path on the user's *real* PATH and spawn that,
+    // and hand the child the same PATH — a macOS `.app` launched from Finder gets
+    // only a minimal PATH, so both the lookup and the CLI's own subprocesses
+    // (node, mise shims, …) would otherwise fail (see `effective_path`).
+    let bin = resolve_binary(provider.binary())
+        .ok_or_else(|| GenError::Http(format!("{} not found on PATH", provider.binary())))?;
+    let mut cmd = Command::new(&bin);
+    cmd.env("PATH", effective_path());
     match provider {
         CliProvider::ClaudeCode => {
             cmd.args(["-p", "--output-format", "text"])
@@ -518,24 +527,103 @@ fn cli_generate(provider: CliProvider, prompt: &str) -> Result<String, GenError>
     }
 }
 
-/// Whether `provider`'s CLI binary is found on `$PATH`.
+/// Whether `provider`'s CLI binary is found on the user's effective `PATH`.
 ///
-/// A pure filesystem scan of the `PATH` directories — it never spawns the binary
-/// (`--version` would be slow and side-effecty), so it is safe to call inline on
+/// A filesystem scan of the [`effective_path`] directories — it never spawns the
+/// binary (`--version` would be slow and side-effecty), so it is safe to call on
 /// the UI's detection path. Availability is just "is it installed"; the offline
 /// gate is applied later, at generate time.
 pub fn cli_available(provider: CliProvider) -> bool {
-    let bin = provider.binary();
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&path).any(|dir| {
+    resolve_binary(provider.binary()).is_some()
+}
+
+/// Find `bin` on the user's effective `PATH` and return its absolute path.
+///
+/// Returning the absolute path lets callers spawn it directly, which is robust
+/// even when the process (a macOS `.app`) was launched without the login shell's
+/// PATH.
+fn resolve_binary(bin: &str) -> Option<PathBuf> {
+    std::env::split_paths(&effective_path()).find_map(|dir| {
         if dir.as_os_str().is_empty() {
-            return false;
+            return None;
         }
         let candidate = dir.join(bin);
-        is_executable_file(&candidate)
+        is_executable_file(&candidate).then_some(candidate)
     })
+}
+
+/// The user's real shell `PATH`, resolved once and cached.
+///
+/// A macOS `.app` launched from Finder/Dock/`open` does NOT inherit the login
+/// shell's `PATH` — it gets a minimal `/usr/bin:/bin:/usr/sbin:/sbin`. Tools
+/// installed via mise / Homebrew / `~/.local/bin` (e.g. `claude`, `codex`) are
+/// then invisible even though they work from a terminal (`cargo run`). Probe the
+/// login shell's PATH and prepend it to whatever we inherited; fall back to the
+/// inherited PATH when the probe fails (terminal / Linux launches already have
+/// the right PATH).
+fn effective_path() -> OsString {
+    static CACHE: OnceLock<OsString> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            let inherited = std::env::var_os("PATH").unwrap_or_default();
+            match login_shell_path() {
+                Some(shell_path) if !shell_path.is_empty() => {
+                    // shell PATH first, then anything inherited (dups are harmless).
+                    let mut dirs: Vec<PathBuf> = std::env::split_paths(&shell_path).collect();
+                    dirs.extend(std::env::split_paths(&inherited));
+                    std::env::join_paths(dirs).unwrap_or(shell_path)
+                }
+                _ => inherited,
+            }
+        })
+        .clone()
+}
+
+/// Ask the user's login + interactive shell to print its `PATH`.
+///
+/// `-i` (interactive) so mise/asdf activation in `.zshrc`/`.bashrc` applies; `-l`
+/// (login) for `.zprofile`/`.profile`. The value is sentinel-delimited so rc-file
+/// noise can't pollute it, and the probe is killed if it overruns (a hanging rc
+/// must not wedge detection). Returns `None` off Unix or on any failure.
+#[cfg(unix)]
+fn login_shell_path() -> Option<OsString> {
+    let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty())?;
+    let mut child = Command::new(&shell)
+        .args(["-ilc", "printf '__KAGI_PATH__%s__KAGI_END__' \"$PATH\""])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(CLI_POLL);
+            }
+            Err(_) => return None,
+        }
+    }
+
+    let mut buf = String::new();
+    child.stdout.take()?.read_to_string(&mut buf).ok()?;
+    let start = buf.find("__KAGI_PATH__")? + "__KAGI_PATH__".len();
+    let rest = &buf[start..];
+    let end = rest.find("__KAGI_END__")?;
+    let p = &rest[..end];
+    (!p.trim().is_empty()).then(|| OsString::from(p))
+}
+
+#[cfg(not(unix))]
+fn login_shell_path() -> Option<OsString> {
+    None
 }
 
 /// True if `path` is a regular file the current user may execute.

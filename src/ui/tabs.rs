@@ -16,10 +16,10 @@
 //! mismatch.  `arm_watcher` replaces the fixed spawn that used to live in
 //! `run_app`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use gpui::{div, prelude::*, rgb, Context, PathPromptOptions, SharedString, Timer, Window};
+use gpui::{div, prelude::*, px, rgb, Context, PathPromptOptions, SharedString, Timer, Window};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::Sizable as _;
@@ -85,6 +85,9 @@ impl KagiApp {
                 return false;
             }
         };
+
+        // Remember it for the Welcome screen's "Recent" list.
+        record_recent_repo(&path);
 
         let tab = RepoTab {
             path: path.clone(),
@@ -739,8 +742,12 @@ impl KagiApp {
         let open_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
             this.pick_repository(window, cx);
         });
+        let remote_click = cx.listener(|this, _: &gpui::ClickEvent, _w, cx| {
+            this.open_remote_browse_modal(cx);
+        });
 
-        let button = div()
+        // Primary action: open a local repository (filled accent button).
+        let open_button = div()
             .id("welcome-open")
             .px_4()
             .py_2()
@@ -756,7 +763,86 @@ impl KagiApp {
             .child(SharedString::from("Open Repository\u{2026}"))
             .on_click(open_click);
 
-        div()
+        // Secondary action: connect to a repository over SSH (reuses the
+        // existing remote-browse modal — the same flow as file.connectRemote).
+        let remote_button = div()
+            .id("welcome-remote")
+            .px_4()
+            .py_2()
+            .rounded_md()
+            .border_1()
+            .border_color(rgb(theme().selected))
+            .text_color(rgb(theme().text_main))
+            .text_lg()
+            .hover(|s| s.bg(rgb(theme().surface)))
+            .cursor(gpui::CursorStyle::PointingHand)
+            .child(SharedString::from("Connect to SSH remote\u{2026}"))
+            .on_click(remote_click);
+
+        let buttons = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_3()
+            .child(open_button)
+            .child(remote_button);
+
+        // Recently-opened repositories (most-recent first; missing paths drop).
+        let recent = recent_repos();
+        let recent_section = (!recent.is_empty()).then(|| {
+            let mut list = div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .w(px(420.))
+                .max_w(px(420.))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(theme().text_muted))
+                        .pb_1()
+                        .child(SharedString::from("Recent")),
+                );
+            for path in recent.into_iter().take(8) {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.to_string_lossy().into_owned());
+                let dir = path.to_string_lossy().into_owned();
+                let p = path.clone();
+                let click = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
+                    this.open_repository(p.clone(), cx);
+                });
+                list = list.child(
+                    div()
+                        .id(SharedString::from(format!("recent-{dir}")))
+                        .flex()
+                        .flex_col()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .cursor(gpui::CursorStyle::PointingHand)
+                        .hover(|s| s.bg(rgb(theme().surface)))
+                        .on_click(click)
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(rgb(theme().text_main))
+                                .child(SharedString::from(name)),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(theme().text_muted))
+                                .truncate()
+                                .child(SharedString::from(dir)),
+                        ),
+                );
+            }
+            list
+        });
+
+        let welcome = div()
             .flex()
             .flex_col()
             .items_center()
@@ -766,8 +852,8 @@ impl KagiApp {
             .font_family(super::UI_FONT)
             .bg(rgb(theme().bg_base))
             // Themed transparent title bar leaves no OS drag area, so let the
-            // (otherwise empty) welcome surface drag the window; the button's
-            // own click still takes precedence.
+            // (otherwise empty) welcome surface drag the window; the buttons'
+            // own clicks still take precedence.
             .window_control_area(gpui::WindowControlArea::Drag)
             .child(
                 div()
@@ -781,9 +867,59 @@ impl KagiApp {
                     .text_color(rgb(theme().text_muted))
                     .child(SharedString::from(Msg::NoRepositoryOpenWelcome.t())),
             )
-            .child(button)
+            .child(buttons)
+            .when_some(recent_section, |el, list| el.child(list));
+
+        // The Welcome screen short-circuits the normal render before the modal
+        // layer, so overlay the remote-browse modal here when it is open.
+        let modal_focus = self.modal_focus.clone();
+        welcome
+            .when_some(self.remote_browse_modal.clone(), |el, modal| {
+                el.child(super::remote_browse::render_remote_browse_modal(
+                    modal,
+                    modal_focus,
+                    cx,
+                ))
+            })
             .into_any()
     }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Recent repositories (Welcome screen)
+// ──────────────────────────────────────────────────────────────
+
+/// settings.json key holding the recent-repo list (`\u{1f}`-separated paths,
+/// most-recent first). Mirrors the `session_repos` encoding.
+const RECENT_REPOS_KEY: &str = "recent_repos";
+/// How many recent repositories to remember.
+const RECENT_REPOS_MAX: usize = 12;
+
+fn recent_repo_strings() -> Vec<String> {
+    match super::settings::read_setting(RECENT_REPOS_KEY) {
+        Some(s) if !s.is_empty() => s.split('\u{1f}').map(|x| x.to_string()).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Record `path` as the most-recently-opened repository (deduped, most-recent
+/// first, capped at [`RECENT_REPOS_MAX`]). Best-effort; persisted to settings.
+pub fn record_recent_repo(path: &Path) {
+    let p = path.to_string_lossy().to_string();
+    let mut list = recent_repo_strings();
+    list.retain(|x| x != &p);
+    list.insert(0, p);
+    list.truncate(RECENT_REPOS_MAX);
+    super::settings::write_setting(RECENT_REPOS_KEY, Some(&list.join("\u{1f}")));
+}
+
+/// Recently-opened repositories that still exist on disk (most-recent first).
+pub fn recent_repos() -> Vec<PathBuf> {
+    recent_repo_strings()
+        .into_iter()
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+        .collect()
 }
 
 /// Rebuild tabs from the saved session (`session_repos` / `session_active`).

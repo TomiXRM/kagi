@@ -1094,7 +1094,7 @@ impl Render for KagiApp {
             // ── Stash context menu overlay (below modals) ──────
             .children(stash_menu_overlay)
             // ── W5-MENU: menu-driven overlay (branch picker / About / shortcuts) ──
-            .children(self.render_menu_overlay(cx))
+            .children(self.render_menu_overlay(window, cx))
             // ── Plan modal overlay (above everything) ──────
             .when_some(plan_modal, |el, modal| {
                 el.child(render_plan_modal(modal, cx))

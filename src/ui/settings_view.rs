@@ -93,6 +93,7 @@ pub fn render_settings_overlay(
     // Smart Commit state (detected models + current selection), passed in for the
     // same reason — never `app.read(cx)` during this render.
     smart: super::smart_commit::SmartCommitState,
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
     let dismiss = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
@@ -105,9 +106,16 @@ pub fn render_settings_overlay(
         cx.notify();
     });
 
+    // Size the panel to a fraction of the window so it always fits (and so the
+    // content stays reachable by scrolling when zoomed), capped at the preferred
+    // dimensions on large windows.
+    let viewport = window.viewport_size();
+    let panel_w = (f32::from(viewport.width) * 0.8).min(640.0);
+    let panel_h = (f32::from(viewport.height) * 0.8).min(560.0);
+
     let panel = div()
-        .w(px(640.0))
-        .h(px(560.0))
+        .w(px(panel_w))
+        .h(px(panel_h))
         .flex()
         .flex_col()
         .overflow_hidden()
@@ -143,12 +151,16 @@ pub fn render_settings_overlay(
                         .on_click(close_click),
                 ),
         )
-        // ── Scrollable content: Appearance + Language sections ─────
+        // ── Scrollable content: Appearance + Language + Smart Commit ─────
+        // `overflow_y_scroll` (not hidden): when zoomed in the sections grow
+        // taller than the panel, so the lower ones (Smart Commit / LLM) must
+        // stay reachable by scrolling rather than being clipped.
         .child(
             div()
+                .id("settings-scroll")
                 .flex_1()
                 .min_h_0()
-                .overflow_hidden()
+                .overflow_y_scroll()
                 .px_5()
                 .py_4()
                 .flex()

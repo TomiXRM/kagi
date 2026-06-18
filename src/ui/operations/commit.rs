@@ -259,6 +259,11 @@ impl KagiApp {
             message_gen::cli_available(message_gen::CliProvider::ClaudeCode);
         self.smart_commit.codex_available =
             message_gen::cli_available(message_gen::CliProvider::Codex);
+        klog!(
+            "smart-commit: cli claude={} codex={}",
+            self.smart_commit.claude_available,
+            self.smart_commit.codex_available
+        );
 
         if message_gen::offline() {
             klog!("smart-commit: offline (ollama detection skipped)");

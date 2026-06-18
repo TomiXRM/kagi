@@ -536,9 +536,11 @@ impl KagiApp {
 
                 use super::watcher::WatchEvent;
                 let mut saw_git = false;
+                let mut saw_index = false;
                 let mut saw_worktree = false;
                 match rx.try_recv() {
                     Ok(WatchEvent::Git) => saw_git = true,
+                    Ok(WatchEvent::Index) => saw_index = true,
                     Ok(WatchEvent::WorkTree) => saw_worktree = true,
                     Err(_) => continue,
                 }
@@ -548,14 +550,20 @@ impl KagiApp {
                 while let Ok(ev) = rx.try_recv() {
                     match ev {
                         WatchEvent::Git => saw_git = true,
+                        WatchEvent::Index => saw_index = true,
                         WatchEvent::WorkTree => saw_worktree = true,
                     }
                 }
 
                 // Re-check generation after the debounce window — a switch may
-                // have happened while we slept. A git change re-snapshots the
-                // graph (full reload); a working-tree-only change does a cheap,
-                // background status check that reloads only if WIP actually changed.
+                // have happened while we slept. A graph-affecting git change
+                // re-snapshots the graph (full reload). An index-only stage/
+                // unstage or a working-tree edit does a cheap, in-place WIP +
+                // commit-panel refresh that keeps the commit panel OPEN — a full
+                // reload would close it (mod.rs `reload()`), so staging a file
+                // would bounce the user out of the panel ~`DEBOUNCE` after the
+                // click. (During a conflict / continued-merge flow, fall back to
+                // the full reload so conflict re-detection still runs.)
                 let result = acx.update(|cx| {
                     weak.update(cx, |app, cx| {
                         if app.watcher_generation != generation {
@@ -563,6 +571,12 @@ impl KagiApp {
                         }
                         if saw_git {
                             app.reload_external(cx);
+                        } else if saw_index {
+                            if app.conflict.is_some() || app.conflict_merge_commit_pending {
+                                app.reload_external(cx);
+                            } else {
+                                app.refresh_working_tree_external(cx);
+                            }
                         } else if saw_worktree {
                             app.refresh_working_tree_external(cx);
                         }

@@ -1,10 +1,12 @@
 //! T029: working-tree watcher for external-change auto-refresh.
 //!
 //! Spawns a `notify::RecommendedWatcher` on the repository **working tree** and
-//! classifies each event ([`classify`]): git state changes under `.git`
-//! (HEAD/refs/index → [`WatchEvent::Git`]) drive a full reload, while file edits
+//! classifies each event ([`classify`]): graph-affecting git state changes under
+//! `.git` (HEAD/refs/MERGE_HEAD → [`WatchEvent::Git`]) drive a full reload; an
+//! index-only stage/unstage (`.git/index` → [`WatchEvent::Index`]) and file edits
 //! outside `.git` ([`WatchEvent::WorkTree`]) drive a cheap working-tree status
-//! refresh so the WIP updates when files change on disk, not only on git ops.
+//! refresh that keeps the commit panel open, so the WIP updates when files change
+//! on disk (or are staged), not only on graph-moving git ops.
 //! A 500 ms debounce prevents event storms from multi-step operations.
 //!
 //! The gpui bridge works as follows:
@@ -24,16 +26,20 @@ use std::time::Duration;
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
-/// File-name components that indicate a relevant git state change.
-/// Events whose path does not match any of these are discarded.
+/// File-name components that indicate a **graph-affecting** git state change
+/// (commit / checkout / fetch / merge / rebase): the commit graph, HEAD or refs
+/// may have moved, so the view needs a full reload.
+///
+/// `index` is deliberately NOT here — an index-only change is a stage/unstage
+/// that leaves the graph untouched and is classified as [`WatchEvent::Index`]
+/// (a light WIP refresh that keeps the commit panel open) instead.
 ///
 /// We match against path *components* (not the full path) so that nested
 /// paths such as `.git/refs/heads/main` are caught by the `refs` entry.
-const RELEVANT_NAMES: &[&str] = &[
+const GIT_STATE_NAMES: &[&str] = &[
     "HEAD",
     "refs",
     "packed-refs",
-    "index",
     "MERGE_HEAD",
     "CHERRY_PICK_HEAD",
     "ORIG_HEAD",
@@ -54,9 +60,15 @@ const SKIP_COMPONENTS: &[&str] = &["objects", "worktrees", "modules"];
 /// What kind of change a filesystem event represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WatchEvent {
-    /// A git state change under `.git` (HEAD/refs/index/...): commit, checkout,
-    /// fetch, stage, etc. → the commit graph may have changed → full reload.
+    /// A graph-affecting git state change under `.git` (HEAD/refs/MERGE_HEAD/...):
+    /// commit, checkout, fetch, merge, rebase, etc. → the commit graph may have
+    /// moved → full reload.
     Git,
+    /// An index-only change under `.git/index`: a stage / unstage. The commit
+    /// graph is untouched, so a full reload would needlessly re-snapshot it and
+    /// close the commit panel (`reload()`), bouncing the user out ~`DEBOUNCE`
+    /// after the click. → a light WIP refresh that keeps the panel open.
+    Index,
     /// A working-tree file change (outside `.git`): edit/add/delete of a file.
     /// → only the WIP / working-tree status may have changed → light refresh.
     WorkTree,
@@ -72,16 +84,24 @@ fn classify(event: &Event) -> Option<WatchEvent> {
         _ => {}
     }
     let mut worktree = false;
+    let mut index = false;
     for p in &event.paths {
         if has_git_component(p) {
-            // Inside `.git`: relevant only for the tracked state names.
-            if path_is_relevant(p) {
-                return Some(WatchEvent::Git);
+            // Inside `.git`: a graph-affecting change wins outright; an index-only
+            // change is remembered (it only matters if nothing graph-affecting
+            // also fired in this event).
+            match git_event_kind(p) {
+                Some(WatchEvent::Git) => return Some(WatchEvent::Git),
+                Some(WatchEvent::Index) => index = true,
+                _ => {}
             }
         } else {
             // Outside `.git`: a working-tree change.
             worktree = true;
         }
+    }
+    if index {
+        return Some(WatchEvent::Index);
     }
     worktree.then_some(WatchEvent::WorkTree)
 }
@@ -92,19 +112,31 @@ fn has_git_component(p: &Path) -> bool {
     p.components().any(|c| c.as_os_str() == ".git")
 }
 
-fn path_is_relevant(p: &Path) -> bool {
+/// Classify a `.git`-internal path: a graph-affecting state change
+/// ([`WatchEvent::Git`]), an index-only stage/unstage ([`WatchEvent::Index`]),
+/// or irrelevant (`None`). A skipped subtree (`objects`/`worktrees`/`modules`)
+/// short-circuits to `None` before any name match deeper in the path (e.g.
+/// `.git/worktrees/x/HEAD` is skipped, not matched on `HEAD`).
+fn git_event_kind(p: &Path) -> Option<WatchEvent> {
     for component in p.components() {
         let s = component.as_os_str().to_string_lossy();
-        // A skipped subtree short-circuits before any RELEVANT_NAMES match deeper
-        // in the path (e.g. `.git/worktrees/x/HEAD` is skipped, not matched on HEAD).
         if SKIP_COMPONENTS.contains(&s.as_ref()) {
-            return false;
+            return None;
         }
-        if RELEVANT_NAMES.contains(&s.as_ref()) {
-            return true;
+        if GIT_STATE_NAMES.contains(&s.as_ref()) {
+            return Some(WatchEvent::Git);
+        }
+        if s == "index" {
+            return Some(WatchEvent::Index);
         }
     }
-    false
+    None
+}
+
+/// Whether `p` is a git-internal path the view reacts to at all (graph change or
+/// index stage/unstage). Thin wrapper over [`git_event_kind`].
+fn path_is_relevant(p: &Path) -> bool {
+    git_event_kind(p).is_some()
 }
 
 /// Start watching the repository **working tree** (recursively) for changes.
@@ -188,6 +220,45 @@ mod tests {
         ] {
             assert!(path_is_relevant(Path::new(p)), "{p} should be relevant");
         }
+    }
+
+    #[test]
+    fn index_change_is_index_kind_not_full_reload() {
+        use super::{git_event_kind, WatchEvent};
+        // A stage/unstage touches `.git/index` only — it must NOT be a graph
+        // reload (which would close the commit panel), but a light Index refresh.
+        assert_eq!(git_event_kind(Path::new(".git/index")), Some(WatchEvent::Index));
+        // `index.lock` is a transient lock file, not the index itself.
+        assert_eq!(git_event_kind(Path::new(".git/index.lock")), None);
+    }
+
+    #[test]
+    fn graph_state_changes_are_git_kind() {
+        use super::{git_event_kind, WatchEvent};
+        for p in [
+            ".git/HEAD",
+            ".git/refs/heads/main",
+            ".git/packed-refs",
+            ".git/ORIG_HEAD",
+            ".git/MERGE_HEAD",
+        ] {
+            assert_eq!(
+                git_event_kind(Path::new(p)),
+                Some(WatchEvent::Git),
+                "{p} should be a graph reload"
+            );
+        }
+    }
+
+    #[test]
+    fn sibling_worktree_index_is_not_index_kind() {
+        use super::git_event_kind;
+        // A sibling worktree's own index write must be ignored entirely, not
+        // mistaken for a stage in this view.
+        assert_eq!(
+            git_event_kind(Path::new(".git/worktrees/some-wt/index")),
+            None
+        );
     }
 
     #[test]

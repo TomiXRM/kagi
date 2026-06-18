@@ -1,29 +1,18 @@
 //! Commit context menu model and overlay renderer.
 
-use gpui::{
-    div, prelude::*, px, rgb, ClipboardItem, Context, IntoElement, MouseButton, Pixels, Point,
-    SharedString, Window,
-};
-use gpui_component::tooltip::Tooltip;
+use gpui::{ClipboardItem, Context, Pixels, Point, SharedString, Window};
 
 use kagi::git::CommitId;
 
 use super::i18n::Msg;
-use super::theme::{self, theme};
 use super::{
     commit_list::{BadgeKind, RefBadge},
-    FooterStatus, KagiApp,
+    menu_overlay, FooterStatus, KagiApp,
 };
 
 // W9-THEME: all colours come from `theme()` (see theme.rs).
 
 const MENU_W: f32 = 280.0;
-const MENU_MARGIN: f32 = 8.0;
-// W27-UIPOLISH: Zed-style compact density — tighter rows, group headers, and
-// title bar than the previous 28/36/22 (≈14% shorter overall).
-const MENU_ROW_H: f32 = 24.0;
-const MENU_HEADER_H: f32 = 30.0;
-const MENU_GROUP_H: f32 = 18.0;
 
 #[derive(Clone, Debug)]
 pub struct CommitMenuState {
@@ -276,147 +265,29 @@ pub fn render_commit_menu_overlay(
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let viewport = window.viewport_size();
-    let visible_items = groups
-        .iter()
-        .flat_map(|group| group.items.iter())
-        .filter(|item| item.state != ItemState::Hidden)
-        .count() as f32;
-    let visible_groups = groups
-        .iter()
-        .filter(|group| {
-            group
-                .items
-                .iter()
-                .any(|item| item.state != ItemState::Hidden)
-        })
-        .count() as f32;
-    // The menu box is rendered with `scaled_px`, so its on-screen footprint is
-    // `zoom()`-scaled. Off-screen clamping happens in raw window pixels (mouse
-    // position is unscaled), so scale the menu's width/height here to match.
-    let z = theme::zoom();
-    let menu_w = MENU_W * z;
-    let menu_h =
-        (MENU_HEADER_H + visible_items * MENU_ROW_H + visible_groups * MENU_GROUP_H + 16.0) * z;
-    let viewport_w = f32::from(viewport.width);
-    let viewport_h = f32::from(viewport.height);
-    let raw_x = f32::from(state.position.x);
-    let raw_y = f32::from(state.position.y);
-    let x = if raw_x + menu_w + MENU_MARGIN > viewport_w {
-        (viewport_w - menu_w - MENU_MARGIN).max(MENU_MARGIN)
-    } else {
-        raw_x.max(MENU_MARGIN)
+    let on_dismiss = |this: &mut KagiApp, _w: &mut Window, _cx: &mut Context<KagiApp>| {
+        this.commit_menu = None;
     };
-    let y = if raw_y + menu_h + MENU_MARGIN > viewport_h {
-        (viewport_h - menu_h - MENU_MARGIN).max(MENU_MARGIN)
-    } else {
-        raw_y.max(MENU_MARGIN)
+    let on_select = move |this: &mut KagiApp,
+                          action: CommitAction,
+                          window: &mut Window,
+                          cx: &mut Context<KagiApp>| {
+        this.commit_menu = None;
+        this.dispatch_commit_action(action, target.clone(), window, cx);
     };
-
-    let dismiss_left = cx.listener(
-        |this: &mut KagiApp, _event: &gpui::MouseDownEvent, _window, cx| {
-            this.commit_menu = None;
-            cx.stop_propagation();
-            cx.notify();
-        },
-    );
-    let dismiss_right = cx.listener(
-        |this: &mut KagiApp, _event: &gpui::MouseDownEvent, _window, cx| {
-            this.commit_menu = None;
-            cx.stop_propagation();
-            cx.notify();
-        },
-    );
-
-    let mut menu = div()
-        .id("commit-context-menu")
-        // Block mouse events from reaching the dismiss backdrop below —
-        // without this, pressing a menu item fires the backdrop's
-        // on_mouse_down first, the menu unmounts, and the item's on_click
-        // (down+up on the same element) never completes (user-reported bug).
-        .occlude()
-        .absolute()
-        .top(px(y))
-        .left(px(x))
-        .w(theme::scaled_px(MENU_W))
-        .max_h(px((viewport_h - MENU_MARGIN * 2.0).max(120.0)))
-        .overflow_hidden()
-        .rounded(theme::scaled_px(6.))
-        .border_1()
-        .border_color(rgb(theme().selected))
-        .bg(rgb(theme().modal))
-        .shadow_md()
-        .child(
-            div()
-                .h(theme::scaled_px(MENU_HEADER_H))
-                .px_3()
-                .flex()
-                .flex_row()
-                .items_center()
-                .border_b_1()
-                .border_color(rgb(theme().selected))
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .truncate()
-                .child(header),
-        );
-
-    for (group_ix, group) in groups.into_iter().enumerate() {
-        if !group
-            .items
-            .iter()
-            .any(|item| item.state != ItemState::Hidden)
-        {
-            continue;
-        }
-        if let Some(title) = group.title {
-            let title_color = if title == "Advanced / Dangerous" {
-                theme().color_warning
-            } else {
-                theme().text_muted
-            };
-            menu = menu.child(
-                div()
-                    .h(theme::scaled_px(MENU_GROUP_H))
-                    .px_3()
-                    .pt_1()
-                    .text_xs()
-                    .text_color(rgb(title_color))
-                    .child(SharedString::from(title)),
-            );
-        }
-        for (item_ix, item) in group.items.into_iter().enumerate() {
-            if item.state == ItemState::Hidden {
-                continue;
-            }
-            menu = menu.child(render_menu_item(
-                group_ix,
-                item_ix,
-                target.clone(),
-                item,
-                cx,
-            ));
-        }
-    }
-
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .bg(rgb(theme().modal_overlay))
-                .opacity(0.01)
-                .on_mouse_down(MouseButton::Left, dismiss_left)
-                .on_mouse_down(MouseButton::Right, dismiss_right),
-        )
-        .child(menu)
-        .into_any_element()
+    menu_overlay::render_menu_overlay(
+        "commit-context-menu",
+        "commit-menu-item",
+        MENU_W,
+        "Advanced / Dangerous",
+        state.position,
+        header,
+        groups,
+        on_dismiss,
+        on_select,
+        window,
+        cx,
+    )
 }
 
 pub fn short_title_header(full_sha: &str, title: &str) -> SharedString {
@@ -445,66 +316,6 @@ pub fn copy_message(app: &mut KagiApp, full_sha: &str, message: String, cx: &mut
     cx.write_to_clipboard(ClipboardItem::new_string(message));
     klog!("copy-message: {} len={}", short, len);
     app.status_footer = FooterStatus::Idle(SharedString::from("Commit message copied"));
-}
-
-fn render_menu_item(
-    group_ix: usize,
-    item_ix: usize,
-    target: CommitId,
-    item: MenuItem,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    let enabled = item.state == ItemState::Enabled;
-    let action = item.action.clone();
-    let label_color = match (&item.state, item.dangerous) {
-        (ItemState::Enabled, true) => theme().color_blocker,
-        (ItemState::Enabled, false) => theme().text_main,
-        (ItemState::Disabled(_), true) => theme().color_blocker_muted,
-        (ItemState::Disabled(_), false) => theme().text_muted,
-        (ItemState::Hidden, _) => theme().text_muted,
-    };
-    let text = if item.dangerous {
-        SharedString::from(format!("⚠ {}", item.label.as_ref()))
-    } else {
-        item.label.clone()
-    };
-
-    let click = cx.listener(
-        move |this: &mut KagiApp, _event: &gpui::ClickEvent, window, cx| {
-            this.commit_menu = None;
-            this.dispatch_commit_action(action.clone(), target.clone(), window, cx);
-            cx.notify();
-        },
-    );
-
-    let row = div()
-        .id(SharedString::from(format!(
-            "commit-menu-item-{}-{}",
-            group_ix, item_ix
-        )))
-        .h(theme::scaled_px(MENU_ROW_H))
-        .px_3()
-        .flex()
-        .flex_row()
-        .items_center()
-        .text_sm()
-        .text_color(rgb(label_color))
-        .overflow_hidden()
-        .child(div().flex_1().truncate().child(text));
-
-    let row = if enabled {
-        row.on_click(click)
-            .hover(|style| style.bg(rgb(theme().selected)).cursor_pointer())
-    } else {
-        row.hover(|style| style.bg(rgb(theme().surface)))
-    };
-
-    match item.state {
-        ItemState::Disabled(reason) => row
-            .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
-            .into_any_element(),
-        _ => row.into_any_element(),
-    }
 }
 
 fn item(

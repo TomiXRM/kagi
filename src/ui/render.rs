@@ -10,6 +10,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::*;
+use gpui_component::button::{Button, ButtonVariants as _};
 
 impl KagiApp {
     /// Render the toast stack as an absolute overlay (bottom-right, above
@@ -1093,7 +1094,7 @@ impl Render for KagiApp {
             // ── Stash context menu overlay (below modals) ──────
             .children(stash_menu_overlay)
             // ── W5-MENU: menu-driven overlay (branch picker / About / shortcuts) ──
-            .children(self.render_menu_overlay(cx))
+            .children(self.render_menu_overlay(window, cx))
             // ── Plan modal overlay (above everything) ──────
             .when_some(plan_modal, |el, modal| {
                 el.child(render_plan_modal(modal, cx))
@@ -3308,17 +3309,11 @@ fn render_main_diff_view(
                 // History view embeds this diff and has its own Back).
                 .when(standalone, |el| {
                     el.child(
-                        div()
-                            .id("main-diff-back")
-                            .px_2()
-                            .py_px()
-                            .rounded_sm()
-                            .bg(rgb(theme().bg_base))
-                            .text_sm()
-                            .text_color(rgb(theme().text_sub))
-                            .on_click(back_click)
-                            .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
-                            .child(SharedString::from("\u{2190} Back")),
+                        Button::new("main-diff-back")
+                            .label("\u{2190} Back")
+                            .ghost()
+                            .small()
+                            .on_click(back_click),
                     )
                 })
                 // File name
@@ -3333,18 +3328,12 @@ fn render_main_diff_view(
                 // History button (导线 #3)
                 .when(standalone, |el| {
                     el.child(
-                        div()
-                            .id("main-diff-history")
-                            .px_2()
-                            .py_px()
-                            .rounded_sm()
-                            .bg(rgb(theme().bg_base))
-                            .text_sm()
+                        Button::new("main-diff-history")
+                            .label("History")
+                            .ghost()
+                            .small()
                             .flex_shrink_0()
-                            .text_color(rgb(theme().text_sub))
-                            .on_click(history_click)
-                            .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
-                            .child(SharedString::from("History")),
+                            .on_click(history_click),
                     )
                 })
                 // Stats: +N −M
@@ -3390,18 +3379,11 @@ fn fh_header_button(
         + 'static,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
-    div()
-        .id(id)
-        .px_2()
-        .py_px()
-        .rounded_sm()
-        .bg(rgb(theme().bg_base))
-        .text_sm()
-        .flex_shrink_0()
-        .text_color(rgb(theme().text_sub))
+    Button::new(id)
+        .label(label.into())
+        .ghost()
+        .small()
         .on_click(cx.listener(on_click))
-        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
-        .child(label.into())
 }
 
 /// Render the entire File History view (center + right detail pane), ADR-0089.
@@ -4684,19 +4666,13 @@ fn render_unstaged_flat_row(
         });
         file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
         file_row = file_row.child(
-            div()
-                .id(("cp-us-flat-stage-btn", fi))
+            Button::new(("cp-us-flat-stage-btn", fi))
+                .label("Stage")
+                .success()
+                .small()
                 .ml_2()
-                .px_1()
-                .py_px()
-                .rounded_sm()
                 .flex_shrink_0()
-                .bg(rgb(theme().color_success))
-                .text_xs()
-                .text_color(rgb(theme().bg_base))
-                .on_click(stage_click)
-                .hover(|s| s.opacity(0.8))
-                .child(SharedString::from("Stage")),
+                .on_click(stage_click),
         );
     } else {
         file_row = file_row.child(
@@ -4821,19 +4797,13 @@ fn render_unstaged_tree_row(
                 });
                 file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
                 file_row = file_row.child(
-                    div()
-                        .id(("cp-us-stage-btn", fi))
+                    Button::new(("cp-us-stage-btn", fi))
+                        .label("Stage")
+                        .success()
+                        .small()
                         .ml_2()
-                        .px_1()
-                        .py_px()
-                        .rounded_sm()
                         .flex_shrink_0()
-                        .bg(rgb(theme().color_success))
-                        .text_xs()
-                        .text_color(rgb(theme().bg_base))
-                        .on_click(stage_click)
-                        .hover(|s| s.opacity(0.8))
-                        .child(SharedString::from("Stage")),
+                        .on_click(stage_click),
                 );
             } else {
                 file_row = file_row.child(
@@ -4923,19 +4893,13 @@ fn render_staged_flat_row(
             )
             .child(diffstat_bar::diffstat_unit(fi + 100_000, stat.as_ref()))
             .child(
-                div()
-                    .id(("cp-st-flat-unstage-btn", fi))
+                Button::new(("cp-st-flat-unstage-btn", fi))
+                    .label("Unstage")
+                    .warning()
+                    .small()
                     .ml_2()
-                    .px_1()
-                    .py_px()
-                    .rounded_sm()
                     .flex_shrink_0()
-                    .bg(rgb(theme().color_warning))
-                    .text_xs()
-                    .text_color(rgb(theme().bg_base))
-                    .on_click(unstage_click)
-                    .hover(|s| s.opacity(0.8))
-                    .child(SharedString::from("Unstage")),
+                    .on_click(unstage_click),
             )
             .into_any_element(),
     )
@@ -5029,19 +4993,13 @@ fn render_staged_tree_row(
                     )
                     .child(diffstat_bar::diffstat_unit(fi + 100_000, stat.as_ref()))
                     .child(
-                        div()
-                            .id(("cp-st-unstage-btn", fi))
+                        Button::new(("cp-st-unstage-btn", fi))
+                            .label("Unstage")
+                            .warning()
+                            .small()
                             .ml_2()
-                            .px_1()
-                            .py_px()
-                            .rounded_sm()
                             .flex_shrink_0()
-                            .bg(rgb(theme().color_warning))
-                            .text_xs()
-                            .text_color(rgb(theme().bg_base))
-                            .on_click(unstage_click)
-                            .hover(|s| s.opacity(0.8))
-                            .child(SharedString::from("Unstage")),
+                            .on_click(unstage_click),
                     )
                     .into_any_element(),
             )
@@ -5415,23 +5373,17 @@ fn render_commit_panel(
             this.open_commit_plan_modal(cx);
             cx.notify();
         });
-        div()
-            .id("cp-commit-btn")
-            .mt_1()
-            .w_full()
-            .px_2()
-            .py_1()
-            .rounded_sm()
-            .bg(rgb(theme().color_branch))
-            .text_sm()
-            .text_color(rgb(theme().bg_base))
-            .on_click(commit_click)
-            .hover(|s| s.opacity(0.85))
-            .child(SharedString::from(format!(
+        Button::new("cp-commit-btn")
+            .label(SharedString::from(format!(
                 "Commit ({} file{})",
                 staged_count,
                 if staged_count == 1 { "" } else { "s" }
             )))
+            .primary()
+            .small()
+            .mt_1()
+            .w_full()
+            .on_click(commit_click)
             .into_any_element()
     } else {
         // Tell the user exactly why the button is disabled.

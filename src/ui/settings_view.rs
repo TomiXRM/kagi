@@ -26,20 +26,74 @@ use gpui::{
     ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
 };
 
+use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::radio::RadioGroup;
+use gpui_component::select::{Select, SelectItem, SelectState};
+use gpui_component::switch::Switch;
+use gpui_component::{IndexPath, Sizable as _};
+
 use super::i18n::{self, Lang, Msg};
 use super::theme::{self, theme};
 use super::KagiApp;
 
+/// The gpui-component `Select` state entity for the appearance theme picker.
+/// Held by [`KagiApp`] (built in the window context, see `ui::run`).
+pub type ThemeSelectState = SelectState<Vec<ThemeOption>>;
+
+/// One theme entry shown in the appearance-section `Select`. `Value` is the
+/// stable slug, which the `SelectEvent::Confirm` subscription feeds to
+/// `KagiApp::set_theme`.
+#[derive(Clone)]
+pub struct ThemeOption {
+    pub slug: &'static str,
+    pub name: &'static str,
+}
+
+impl SelectItem for ThemeOption {
+    type Value = &'static str;
+
+    fn title(&self) -> SharedString {
+        SharedString::from(self.name)
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.slug
+    }
+}
+
+/// All registered themes as `Select` options.
+pub fn theme_options() -> Vec<ThemeOption> {
+    theme::THEMES
+        .iter()
+        .map(|t| ThemeOption {
+            slug: t.slug,
+            name: t.name,
+        })
+        .collect()
+}
+
+/// `IndexPath` of the active theme within [`theme_options`] (defaults to row 0).
+pub fn current_theme_index() -> IndexPath {
+    let cur = theme().slug;
+    let row = theme::THEMES
+        .iter()
+        .position(|t| t.slug == cur)
+        .unwrap_or(0);
+    IndexPath::new(row)
+}
+
 /// Build the centred Settings overlay (panel over a click-to-dismiss scrim).
 pub fn render_settings_overlay(
     app: Entity<KagiApp>,
-    // Theme-dropdown expanded state. Passed in by the caller (which holds `&self`)
-    // — we must NOT `app.read(cx)` here because this renders *during* KagiApp's own
-    // update, which would panic ("cannot read … while it is already being updated").
-    theme_open: bool,
+    // The appearance-section theme picker's SelectState entity, passed in by the
+    // caller (which holds `&self`) — we must NOT `app.read(cx)` here because this
+    // renders *during* KagiApp's own update, which would panic ("cannot read …
+    // while it is already being updated").
+    theme_select: Option<Entity<ThemeSelectState>>,
     // Smart Commit state (detected models + current selection), passed in for the
     // same reason — never `app.read(cx)` during this render.
     smart: super::smart_commit::SmartCommitState,
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
     let dismiss = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
@@ -52,9 +106,16 @@ pub fn render_settings_overlay(
         cx.notify();
     });
 
+    // Size the panel to a fraction of the window so it always fits (and so the
+    // content stays reachable by scrolling when zoomed), capped at the preferred
+    // dimensions on large windows.
+    let viewport = window.viewport_size();
+    let panel_w = (f32::from(viewport.width) * 0.85).min(820.0);
+    let panel_h = (f32::from(viewport.height) * 0.85).min(720.0);
+
     let panel = div()
-        .w(px(640.0))
-        .h(px(560.0))
+        .w(px(panel_w))
+        .h(px(panel_h))
         .flex()
         .flex_col()
         .overflow_hidden()
@@ -83,33 +144,29 @@ pub fn render_settings_overlay(
                         .child(SharedString::from(Msg::SettingsTitle.t())),
                 )
                 .child(
-                    div()
-                        .id("settings-close")
-                        .px_2()
-                        .py_px()
-                        .rounded_md()
-                        .text_color(rgb(theme().text_sub))
-                        .hover(|s| {
-                            s.bg(rgb(theme().selected))
-                                .text_color(rgb(theme().text_main))
-                                .cursor_pointer()
-                        })
-                        .on_click(close_click)
-                        .child(SharedString::from("✕")),
+                    Button::new("settings-close")
+                        .label("✕")
+                        .ghost()
+                        .small()
+                        .on_click(close_click),
                 ),
         )
-        // ── Scrollable content: Appearance + Language sections ─────
+        // ── Scrollable content: Appearance + Language + Smart Commit ─────
+        // `overflow_y_scroll` (not hidden): when zoomed in the sections grow
+        // taller than the panel, so the lower ones (Smart Commit / LLM) must
+        // stay reachable by scrolling rather than being clipped.
         .child(
             div()
+                .id("settings-scroll")
                 .flex_1()
                 .min_h_0()
-                .overflow_hidden()
+                .overflow_y_scroll()
                 .px_5()
                 .py_4()
                 .flex()
                 .flex_col()
                 .gap_6()
-                .child(appearance_section(&app, theme_open))
+                .child(appearance_section(&app, theme_select))
                 .child(language_section(&app))
                 .child(smart_commit_section(&app, &smart)),
         );
@@ -159,6 +216,7 @@ fn setting_row(
     control: AnyElement,
 ) -> impl IntoElement {
     div()
+        .w_full()
         .flex()
         .flex_row()
         .items_start()
@@ -170,6 +228,12 @@ fn setting_row(
                 .flex()
                 .flex_col()
                 .gap_1()
+                // `min_w_0` lets this column shrink below its content's intrinsic
+                // width so the right-hand control stays inside the pane. Without
+                // it, an unbreakable label/description (CJK text has no word
+                // boundaries) keeps its full width and pushes the control off the
+                // (overflow-hidden) panel edge, hiding it.
+                .min_w_0()
                 .flex_1()
                 .child(div().text_color(rgb(theme().text_main)).child(title))
                 .child(
@@ -182,127 +246,40 @@ fn setting_row(
         .child(div().flex_shrink_0().child(control))
 }
 
-/// A small clickable chip; `selected` highlights the current value.
-fn chip(
-    id: &'static str,
-    label: SharedString,
-    selected: bool,
-    on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-) -> AnyElement {
-    let (bg, fg, border) = if selected {
-        (theme().selected, theme().text_main, theme().color_branch)
-    } else {
-        (theme().bg_base, theme().text_sub, theme().selected)
-    };
-    div()
-        .id(id)
-        .px_3()
-        .py_1()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(border))
-        .bg(rgb(bg))
-        .text_sm()
-        .text_color(rgb(fg))
-        .hover(|s| {
-            s.bg(rgb(theme().selected))
-                .text_color(rgb(theme().text_main))
-                .cursor_pointer()
-        })
-        .on_click(on_click)
-        .child(label)
-        .into_any_element()
-}
-
 // ────────────────────────────────────────────────────────────
 // Appearance
 // ────────────────────────────────────────────────────────────
 
-fn appearance_section(app: &Entity<KagiApp>, theme_open: bool) -> impl IntoElement {
-    let cur_slug = theme().slug;
-
-    // ── Theme dropdown (Kagi-native pull-down) ──
-    // Clickable "field" (current theme name + ▾ chevron) with an inline option
-    // list rendered directly below when `theme_open`. All colours from theme()
-    // to guarantee contrast under the Kagi theme bridge (no gpui Select widget).
-    let cur_name = theme::THEMES
-        .iter()
-        .find(|t| t.slug == cur_slug)
-        .map(|t| t.name)
-        .unwrap_or(cur_slug);
-
-    let app_toggle = app.clone();
-    let toggle_open = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
-        app_toggle.update(cx, |a, cx| {
-            a.settings_theme_open = !a.settings_theme_open;
-            cx.notify();
-        });
-    };
-
-    let field = div()
-        .id("theme-field")
-        .flex()
-        .flex_row()
-        .items_center()
-        .justify_between()
-        .gap_2()
-        .w(px(220.0))
-        .px_3()
-        .py_1()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(theme().selected))
-        .bg(rgb(theme().bg_base))
-        .text_sm()
-        .text_color(rgb(theme().text_main))
-        .hover(|s| s.border_color(rgb(theme().color_branch)).cursor_pointer())
-        .on_click(toggle_open)
-        .child(SharedString::from(cur_name))
-        .child(
-            div()
-                .text_color(rgb(theme().text_sub))
-                .child(SharedString::from("\u{25be}")),
-        );
-
-    let mut theme_dropdown = div().flex().flex_col().gap_1().items_end().child(field);
-
-    if theme_open {
-        let mut options = div()
-            .flex()
-            .flex_col()
+fn appearance_section(
+    app: &Entity<KagiApp>,
+    theme_select: Option<Entity<ThemeSelectState>>,
+) -> impl IntoElement {
+    // ── Theme picker (gpui-component Select) ──
+    // The SelectState entity is built in the window context and held on KagiApp;
+    // a `SelectEvent::Confirm` subscription applies + persists via set_theme.
+    // Colours come from the Kagi → gpui-component theme bridge (sync_gpui_
+    // component_theme). When the entity is absent (headless, pre-window) fall
+    // back to a static label so the row still renders.
+    let theme_dropdown = match theme_select {
+        Some(state) => Select::new(&state)
+            .menu_width(px(220.0))
+            .small()
             .w(px(220.0))
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(theme().selected))
-            .bg(rgb(theme().panel))
-            .overflow_hidden();
-        for t in theme::THEMES.iter() {
-            let slug = t.slug;
-            let is_cur = t.slug == cur_slug;
-            let app2 = app.clone();
-            let handler = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
-                app2.update(cx, |app, cx| {
-                    app.set_theme(slug, cx);
-                    app.settings_theme_open = false;
-                    cx.notify();
-                });
-            };
-            let mut row = div()
-                .id(t.slug)
-                .px_3()
-                .py_1()
+            .into_any_element(),
+        None => {
+            let cur = theme().slug;
+            let cur_name = theme::THEMES
+                .iter()
+                .find(|t| t.slug == cur)
+                .map(|t| t.name)
+                .unwrap_or(cur);
+            div()
                 .text_sm()
                 .text_color(rgb(theme().text_main))
-                .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
-                .on_click(handler)
-                .child(SharedString::from(t.name));
-            if is_cur {
-                row = row.bg(rgb(theme().selected));
-            }
-            options = options.child(row);
+                .child(SharedString::from(cur_name))
+                .into_any_element()
         }
-        theme_dropdown = theme_dropdown.child(options);
-    }
+    };
 
     // ── UI Zoom stepper:  [−]  110%  [+] ──
     let zoom = theme::zoom();
@@ -337,37 +314,33 @@ fn appearance_section(app: &Entity<KagiApp>, theme_open: bool) -> impl IntoEleme
     // ── Compact graph toggle ──
     let compact = theme::compact_graph();
     let app_c = app.clone();
-    let toggle = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
-        let on = !theme::compact_graph();
+    let toggle = move |checked: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {
+        let on = *checked;
         app_c.update(cx, |app, cx| {
             app.graph_compact = on;
             theme::set_compact_graph(on);
             cx.notify();
         });
     };
-    let compact_ctl = chip(
-        "compact-toggle",
-        SharedString::from(if compact { "On" } else { "Off" }),
-        compact,
-        toggle,
-    );
+    let compact_ctl = Switch::new("compact-toggle")
+        .checked(compact)
+        .on_click(toggle)
+        .into_any_element();
 
     // ── Auto-fetch toggle ──
     let auto_fetch = theme::auto_fetch();
     let app_f = app.clone();
-    let toggle_fetch = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
-        let on = !theme::auto_fetch();
+    let toggle_fetch = move |checked: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {
+        let on = *checked;
         app_f.update(cx, |_app, cx| {
             theme::set_auto_fetch(on);
             cx.notify();
         });
     };
-    let auto_fetch_ctl = chip(
-        "auto-fetch-toggle",
-        SharedString::from(if auto_fetch { "On" } else { "Off" }),
-        auto_fetch,
-        toggle_fetch,
-    );
+    let auto_fetch_ctl = Switch::new("auto-fetch-toggle")
+        .checked(auto_fetch)
+        .on_click(toggle_fetch)
+        .into_any_element();
 
     div()
         .flex()
@@ -403,21 +376,11 @@ fn stepper_btn(
     label: &'static str,
     on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> impl IntoElement {
-    div()
-        .id(id)
-        .w(px(28.0))
-        .h(px(24.0))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(theme().selected))
-        .bg(rgb(theme().bg_base))
-        .text_color(rgb(theme().text_main))
-        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+    Button::new(id)
+        .label(label)
+        .outline()
+        .small()
         .on_click(on_click)
-        .child(SharedString::from(label))
 }
 
 // ────────────────────────────────────────────────────────────
@@ -425,16 +388,23 @@ fn stepper_btn(
 // ────────────────────────────────────────────────────────────
 
 fn language_section(app: &Entity<KagiApp>) -> impl IntoElement {
+    // Two-way segmented choice → gpui-component RadioGroup (stateless). The
+    // on_click index maps back to the Lang ordering below.
+    const LANGS: [(Lang, &str); 2] = [(Lang::En, "English"), (Lang::Ja, "日本語")];
     let cur = i18n::lang();
-    let mut chips = div().flex().flex_row().gap_2().justify_end();
-    for (lang, label) in [(Lang::En, "English"), (Lang::Ja, "日本語")] {
-        let app2 = app.clone();
-        let handler = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
-            app2.update(cx, |app, cx| app.set_lang(lang, cx));
-        };
-        let id = lang.slug();
-        chips = chips.child(chip(id, SharedString::from(label), lang == cur, handler));
-    }
+    let selected = LANGS.iter().position(|(l, _)| *l == cur);
+    let app2 = app.clone();
+    let chips = RadioGroup::horizontal("settings-language")
+        .children(LANGS.map(|(_, label)| SharedString::from(label)))
+        .selected_index(selected)
+        .on_click(
+            move |index: &usize, _w: &mut gpui::Window, cx: &mut gpui::App| {
+                if let Some((lang, _)) = LANGS.get(*index) {
+                    let lang = *lang;
+                    app2.update(cx, |app, cx| app.set_lang(lang, cx));
+                }
+            },
+        );
 
     div()
         .flex()

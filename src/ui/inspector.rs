@@ -19,6 +19,9 @@ use gpui::{
     Pixels, SharedString, Window,
 };
 
+use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::Sizable as _;
+
 use kagi::git::{find_stat, parse_coauthors, ChangeKind, CommitId, FileDiffStat, FileStatus};
 
 use super::{
@@ -451,15 +454,11 @@ pub fn render_inspector(
                     ))),
             )
             .child(
-                div()
-                    .id("compare-close")
-                    .px_1()
-                    .rounded_sm()
-                    .text_sm()
-                    .text_color(rgb(theme().text_sub))
-                    .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
-                    .on_click(close_click)
-                    .child(SharedString::from("×")),
+                Button::new("compare-close")
+                    .label("×")
+                    .ghost()
+                    .small()
+                    .on_click(close_click),
             )
     });
 
@@ -932,17 +931,17 @@ fn action_button(
     color: u32,
     click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> impl IntoElement {
-    div()
-        .id(id)
-        .px(theme::scaled_px(6.))
-        .py(theme::scaled_px(2.))
-        .rounded_sm()
-        .bg(rgb(theme().surface))
-        .text_xs()
-        .text_color(rgb(color))
-        .on_click(click)
-        .hover(|style| style.bg(rgb(theme().selected)))
-        .child(SharedString::from(label))
+    let btn = Button::new(id)
+        .label(SharedString::from(label))
+        .small()
+        .on_click(click);
+    // `color_branch` is the only "primary" action here; the cherry-pick accent
+    // keeps the default (neutral) Button look.
+    if color == theme().color_branch {
+        btn.primary()
+    } else {
+        btn
+    }
 }
 
 /// W16-DIFFSTAT: look up the [`FileDiffStat`] for the file at `file_index` in

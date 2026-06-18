@@ -22,6 +22,7 @@ pub mod file_tree;
 pub mod graph_view;
 pub mod i18n;
 pub mod inspector;
+pub mod menu_overlay;
 pub mod modals;
 mod operations;
 pub mod remote_browse;
@@ -886,9 +887,11 @@ pub struct KagiApp {
     // ── W2-GRAPH: Compact graph mode ────────────────────────────
     /// When `true` row height is 18px (compact); `false` (default) = 24px.
     pub graph_compact: bool,
-    /// Settings overlay: whether the Theme dropdown (appearance section) is
-    /// expanded. The option list renders inline below the field when `true`.
-    pub settings_theme_open: bool,
+    /// Settings overlay: the appearance-section theme picker's gpui-component
+    /// `Select` state. Built in the window context (needs a `Window`) and `None`
+    /// until then / in headless paths; a `SelectEvent::Confirm` subscription
+    /// applies the chosen theme via `set_theme`.
+    pub theme_select: Option<Entity<settings_view::ThemeSelectState>>,
     /// Horizontal scroll offset (px) of the graph column. Lanes hidden by a
     /// narrow column width are revealed by horizontal scrolling (clamped in
     /// render against the current lane count).
@@ -1360,7 +1363,7 @@ impl KagiApp {
             inspector_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             file_history_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: theme::compact_graph(),
-            settings_theme_open: false,
+            theme_select: None,
             graph_scroll_x: 0.0,
             // W2-SIDEBAR
             sidebar_collapsed: HashSet::new(),
@@ -1482,7 +1485,7 @@ impl KagiApp {
             inspector_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             file_history_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: theme::compact_graph(),
-            settings_theme_open: false,
+            theme_select: None,
             graph_scroll_x: 0.0,
             // W2-SIDEBAR
             sidebar_collapsed: HashSet::new(),
@@ -5550,6 +5553,37 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
             if let Some(fh) = kagi.read(cx).root_focus.clone() {
                 window.focus(&fh);
             }
+
+            // Settings appearance theme picker: the gpui-component `Select` is an
+            // Entity that needs a `Window`, so it's built here rather than in
+            // KagiApp::new. A `Confirm` subscription applies + persists the chosen
+            // theme via set_theme (mirrors the old inline-dropdown click handler).
+            let theme_select = cx.new(|cx| {
+                settings_view::ThemeSelectState::new(
+                    settings_view::theme_options(),
+                    Some(settings_view::current_theme_index()),
+                    window,
+                    cx,
+                )
+            });
+            kagi.update(cx, |app, cx| {
+                cx.subscribe(
+                    &theme_select,
+                    |this,
+                     _state,
+                     event: &gpui_component::select::SelectEvent<
+                        Vec<settings_view::ThemeOption>,
+                    >,
+                     cx| {
+                        if let gpui_component::select::SelectEvent::Confirm(Some(slug)) = event {
+                            this.set_theme(slug, cx);
+                            cx.notify();
+                        }
+                    },
+                )
+                .detach();
+                app.theme_select = Some(theme_select);
+            });
             // Regression coverage for the Root::read crash: with
             // KAGI_COMMIT_PANEL=1, open the panel through the real
             // window-context path so the InputState + Input element

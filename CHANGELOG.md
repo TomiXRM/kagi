@@ -3,6 +3,37 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.18] — 2026-06-18
+
+### Added
+- **Settings theme picker is now a real dropdown** (gpui-component `Select`) with
+  keyboard navigation, replacing the hand-rolled inline option list. The On/Off
+  toggles (Compact graph, Auto-fetch) are proper `Switch`es and the language
+  choice is a `RadioGroup`.
+
+### Fixed
+- **Settings rows could overflow the panel.** Wide controls combined with
+  unbreakable (CJK) labels pushed the control past the panel's clipped edge,
+  hiding it; the label column now shrinks so the control stays inside.
+- **Settings could not scroll when zoomed in.** Lower sections (Smart Commit /
+  LLM) were clipped and unreachable; the content now scrolls, and the panel is
+  sized to a fraction of the window so it always fits.
+- **Diff text was hard to read on light themes.** Added/removed line text used a
+  fixed light green/red that washed out on the light diff backgrounds; it now
+  uses the per-theme colours, readable across all themes.
+
+### Changed (internal)
+- **Adopted gpui-component widgets across the UI.** Hand-rolled buttons throughout
+  the modals, conflict views, inspector, commit panel, file-history/diff headers,
+  and tab strip are now the shared `Button`; the conflict editor's icon button and
+  the diff/settings controls follow suit. Reduces bespoke styling and keeps the UI
+  consistent with the theme.
+- **Unified the commit/branch/stash context menus** into one generic overlay
+  renderer (they were three near-identical copies), removing ~260 lines.
+- **Sped up debug builds.** The dev profile raises the GPUI rendering/text-shaping/
+  layout crates to opt-level 3, so `cargo run` is no longer sluggish during
+  development without slowing incremental rebuilds.
+
 ## [0.3.17] — 2026-06-17
 
 ### Fixed

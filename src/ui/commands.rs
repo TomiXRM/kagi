@@ -1536,7 +1536,11 @@ impl KagiApp {
     }
 
     /// Render the active menu overlay, if any (returns `None` when closed).
-    pub fn render_menu_overlay(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+    pub fn render_menu_overlay(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
         match self.menu_overlay.clone()? {
             MenuOverlay::BranchPicker { mode, branches } => {
                 Some(self.render_branch_picker(mode, branches, cx))
@@ -1546,8 +1550,9 @@ impl KagiApp {
             // closures route apply/persist through the live `KagiApp` entity).
             MenuOverlay::Settings => Some(super::settings_view::render_settings_overlay(
                 cx.entity(),
-                self.settings_theme_open,
+                self.theme_select.clone(),
                 self.smart_commit.clone(),
+                window,
                 cx,
             )),
         }

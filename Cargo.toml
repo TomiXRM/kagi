@@ -6,7 +6,7 @@ members = ["xtask", "crates/kagi-domain"]
 
 [package]
 name = "kagi"
-version = "0.3.17"
+version = "0.3.18"
 license = "MIT"
 edition = "2021"
 
@@ -46,3 +46,21 @@ tempfile = "3"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# `cargo run` (debug) builds the whole GPUI rendering/text-shaping/layout stack
+# at opt-level 0, which makes the UI sluggish every frame even though our own
+# code compiles fast. Optimize only those hot lower-level crates to opt-level 3
+# (mirrors the gpui-component catalog) so debug runs stay snappy without slowing
+# incremental rebuilds of kagi's own code. First build recompiles these crates.
+[profile.dev.package]
+gpui        = { opt-level = 3 }
+taffy       = { opt-level = 3 }
+resvg       = { opt-level = 3 }
+rustybuzz   = { opt-level = 3 }
+ttf-parser  = { opt-level = 3 }
+cosmic-text = { opt-level = 3 }
+swash       = { opt-level = 3 }
+zeno        = { opt-level = 3 }
+smol        = { opt-level = 3 }
+tree-sitter = { opt-level = 3 }
+ropey       = { opt-level = 3 }

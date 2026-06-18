@@ -20,7 +20,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{div, prelude::*, rgb, Context, PathPromptOptions, SharedString, Timer, Window};
+use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::tooltip::Tooltip;
+use gpui_component::Sizable as _;
 
 use super::i18n::{self, Msg};
 use super::theme::{self, theme};
@@ -664,18 +666,11 @@ impl KagiApp {
                 this.close_tab(i, cx);
             });
 
-            let close_btn = div()
-                .id(("tab-close", i))
+            let close_btn = Button::new(("tab-close", i))
+                .label("\u{00d7}") // ×
+                .ghost()
+                .xsmall()
                 .ml(theme::scaled_px(4.))
-                .px(theme::scaled_px(3.))
-                .rounded_sm()
-                .text_color(rgb(theme().text_muted))
-                .hover(|s| {
-                    s.bg(rgb(theme().surface))
-                        .text_color(rgb(theme().text_main))
-                })
-                .cursor(gpui::CursorStyle::PointingHand)
-                .child(SharedString::from("\u{00d7}")) // ×
                 .on_click(close);
 
             let tab_el = div()
@@ -712,21 +707,11 @@ impl KagiApp {
         let plus = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
             this.pick_repository(window, cx);
         });
-        let plus_btn = div()
-            .id("tab-add")
-            .flex()
-            .items_center()
-            .justify_center()
-            .h_full()
-            .px_3()
-            .text_color(rgb(theme().text_sub))
-            .hover(|s| {
-                s.bg(rgb(theme().selected))
-                    .text_color(rgb(theme().text_main))
-            })
-            .cursor(gpui::CursorStyle::PointingHand)
-            .tooltip(|window, cx| Tooltip::new("Open Repository…").build(window, cx))
-            .child(SharedString::from("+"))
+        let plus_btn = Button::new("tab-add")
+            .label("+")
+            .ghost()
+            .small()
+            .tooltip("Open Repository…")
             .on_click(plus);
 
         strip = strip.child(plus_btn);

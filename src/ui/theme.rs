@@ -494,6 +494,17 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     // ── Drag handle (resizable dividers, future adoption) ───────
     gc.colors.drag_border = to_hsla(k.color_branch);
 
+    // ── Fonts ───────────────────────────────────────────────────
+    // gpui-component's default theme uses `.SystemUIFont` (a macOS alias) for
+    // `font_family` and a platform mono for `mono_font_family`. On Linux
+    // `.SystemUIFont` doesn't resolve, so gpui-component widgets (Button, Input,
+    // Tooltip, the commit-message editor, …) fell back to a system font while
+    // kagi's own `UI_FONT` text rendered in the bundled Inter — buttons/commit
+    // text looked like a different font (user-reported). Point gpui-component at
+    // the same bundled families kagi loads via `add_fonts` (UI_FONT / MONO_FONT).
+    gc.font_family = super::UI_FONT.into();
+    gc.mono_font_family = super::MONO_FONT.into();
+
     // ── Mode (drives dark/light-conditional logic inside gpui-component) ──
     gc.mode = if k.dark {
         gpui_component::ThemeMode::Dark

@@ -3309,17 +3309,11 @@ fn render_main_diff_view(
                 // History view embeds this diff and has its own Back).
                 .when(standalone, |el| {
                     el.child(
-                        div()
-                            .id("main-diff-back")
-                            .px_2()
-                            .py_px()
-                            .rounded_sm()
-                            .bg(rgb(theme().bg_base))
-                            .text_sm()
-                            .text_color(rgb(theme().text_sub))
-                            .on_click(back_click)
-                            .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
-                            .child(SharedString::from("\u{2190} Back")),
+                        Button::new("main-diff-back")
+                            .label("\u{2190} Back")
+                            .ghost()
+                            .small()
+                            .on_click(back_click),
                     )
                 })
                 // File name
@@ -3334,18 +3328,12 @@ fn render_main_diff_view(
                 // History button (导线 #3)
                 .when(standalone, |el| {
                     el.child(
-                        div()
-                            .id("main-diff-history")
-                            .px_2()
-                            .py_px()
-                            .rounded_sm()
-                            .bg(rgb(theme().bg_base))
-                            .text_sm()
+                        Button::new("main-diff-history")
+                            .label("History")
+                            .ghost()
+                            .small()
                             .flex_shrink_0()
-                            .text_color(rgb(theme().text_sub))
-                            .on_click(history_click)
-                            .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
-                            .child(SharedString::from("History")),
+                            .on_click(history_click),
                     )
                 })
                 // Stats: +N −M

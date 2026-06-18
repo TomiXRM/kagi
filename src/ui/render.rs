@@ -3949,9 +3949,7 @@ fn render_fh_row(
         // indistinguishable from the selected one, so the row the mouse was left
         // on after a click looked "still selected" while the arrows moved the
         // real selection elsewhere. The selected row keeps its colour on hover.
-        .when(!is_selected, |el| {
-            el.hover(|s| s.bg(rgb(theme().surface)))
-        })
+        .when(!is_selected, |el| el.hover(|s| s.bg(rgb(theme().surface))))
         // change-type letter
         .child(
             div()

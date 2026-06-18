@@ -547,6 +547,9 @@ pub static THEMES: &[Theme] = &[
     MONOKAI,
     TOKYO_NIGHT,
     IBM_PC,
+    PINKY_BOO,
+    CATPPUCCIN_LATTE,
+    DRACULA,
 ];
 
 // ── Catppuccin Mocha (default) ───────────────────────────────────────────
@@ -1225,6 +1228,250 @@ const IBM_PC: Theme = Theme {
     term_selection: (0x00, 0x00, 0xaa, 0xb3),
 };
 
+// ── Pinky Boo ───────────────────────────────────────────────────────────────
+//
+// Light theme ported from the "Pinky Boo" VS Code theme
+// (github.com/kissa1001/pinky-boo-vscode-theme): editor bg #fbfbfb, soft signature
+// pink #ffafeb (status bar / list selection), hot-pink accent #ff398d, neutral
+// grey text #5a5a5a, with the theme's exact ANSI terminal palette.
+const PINKY_BOO: Theme = Theme {
+    slug: "pinky-boo",
+    name: "Pinky Boo",
+    dark: false,
+
+    bg_base: 0xfbfbfb,
+    bg_row_alt: 0xf3f3f3,
+    surface: 0xf6eef5,
+    selected: 0xffafeb,
+    panel: 0xf3f3f3,
+    sidebar: 0xefefef,
+    modal: 0xffffff,
+    modal_overlay: 0x5a5a5a,
+
+    text_main: 0x5a5a5a,
+    text_sub: 0x6e6e6e,
+    text_muted: 0xa0a0a0,
+    text_label: 0x909090,
+
+    color_head: 0xff398d,   // hot pink
+    color_branch: 0x47b0e6, // blue
+    color_remote: 0x587c0c, // olive green
+    color_tag: 0xd56700,    // orange
+
+    color_success: 0x587c0c,
+    color_warning: 0x895503,
+    color_blocker: 0xad0707,
+    color_blocker_muted: 0xd99a9a,
+
+    diff_added_bg: 0xe8f0d0,
+    diff_removed_bg: 0xfde0e0,
+    diff_hunk: 0x47b0e6,
+
+    change_added: 0x587c0c,
+    change_modified: 0x895503,
+    change_deleted: 0xad0707,
+    change_renamed: 0x47b0e6,
+    change_typechange: 0xa0a0a0,
+    change_dir: 0x909090,
+
+    accent: 0xff398d, // hot pink
+
+    lane_hsl: [
+        (0.917, 0.95, 0.55), // pink
+        (0.489, 0.76, 0.45), // teal
+        (0.080, 0.99, 0.42), // orange
+        (0.558, 0.75, 0.50), // blue
+        (0.264, 0.40, 0.45), // green
+        (0.806, 0.55, 0.50), // purple
+    ],
+
+    avatar_sat: 0.50,
+    avatar_light: 0.50,
+
+    term_bg: (0xfb, 0xfb, 0xfb),
+    term_fg: (0x7d, 0x7d, 0x7d),
+    term_cursor: (0xf8, 0xae, 0xf0),
+    term_black: (0x74, 0x72, 0x73),
+    term_red: (0xcd, 0x31, 0x31),
+    term_green: (0x00, 0xbc, 0x00),
+    term_yellow: (0xf0, 0xe4, 0x3b),
+    term_blue: (0x7f, 0xb8, 0xf5),
+    term_magenta: (0xff, 0x13, 0xb9),
+    term_cyan: (0x05, 0x98, 0xbc),
+    term_white: (0xff, 0xaf, 0xeb),
+    term_bright_black: (0xb3, 0xb3, 0xb3),
+    term_bright_red: (0xe2, 0x55, 0x55),
+    term_bright_green: (0x14, 0xce, 0x14),
+    term_bright_yellow: (0xeb, 0xc1, 0x3f),
+    term_bright_blue: (0x7f, 0xb3, 0xec),
+    term_bright_magenta: (0xff, 0x71, 0xe2),
+    term_bright_cyan: (0x05, 0x98, 0xbc),
+    term_bright_white: (0xa5, 0xa5, 0xa5),
+    term_selection: (0xc9, 0xc9, 0xc9, 0x40),
+};
+
+// ── Catppuccin Latte ─────────────────────────────────────────────────────────
+//
+// Official light flavour of Catppuccin (catppuccin.com): Base #eff1f5, Text
+// #4c4f69, Mauve accent #8839ef. Token/terminal mapping mirrors the Mocha port
+// above, swapped to the Latte palette.
+const CATPPUCCIN_LATTE: Theme = Theme {
+    slug: "catppuccin-latte",
+    name: "Catppuccin Latte",
+    dark: false,
+
+    bg_base: 0xeff1f5,    // base
+    bg_row_alt: 0xe6e9ef, // mantle
+    surface: 0xccd0da,    // surface0
+    selected: 0xbcc0cc,   // surface1
+    panel: 0xe6e9ef,      // mantle
+    sidebar: 0xdce0e8,    // crust
+    modal: 0xccd0da,      // surface0
+    modal_overlay: 0x4c4f69,
+
+    text_main: 0x4c4f69,  // text
+    text_sub: 0x6c6f85,   // subtext0
+    text_muted: 0xacb0be, // surface2
+    text_label: 0x9ca0b0, // overlay0
+
+    color_head: 0xd20f39,   // red
+    color_branch: 0x1e66f5, // blue
+    color_remote: 0x40a02b, // green
+    color_tag: 0xfe640b,    // peach
+
+    color_success: 0x40a02b,
+    color_warning: 0xdf8e1d,
+    color_blocker: 0xd20f39,
+    color_blocker_muted: 0xd98a9a,
+
+    diff_added_bg: 0xdcf0d8,
+    diff_removed_bg: 0xfbdde1,
+    diff_hunk: 0x1e66f5,
+
+    change_added: 0x40a02b,
+    change_modified: 0xdf8e1d,
+    change_deleted: 0xd20f39,
+    change_renamed: 0x1e66f5,
+    change_typechange: 0xacb0be,
+    change_dir: 0x9ca0b0,
+
+    accent: 0x8839ef, // mauve
+
+    lane_hsl: [
+        (0.617, 0.90, 0.54), // blue
+        (0.317, 0.58, 0.40), // green
+        (0.064, 0.99, 0.52), // peach
+        (0.872, 0.74, 0.55), // pink
+        (0.737, 0.86, 0.58), // mauve
+        (0.506, 0.74, 0.34), // teal
+    ],
+
+    avatar_sat: 0.55,
+    avatar_light: 0.50,
+
+    term_bg: (0xef, 0xf1, 0xf5),
+    term_fg: (0x4c, 0x4f, 0x69),
+    term_cursor: (0xea, 0x76, 0xcb),
+    term_black: (0xbc, 0xc0, 0xcc),
+    term_red: (0xd2, 0x0f, 0x39),
+    term_green: (0x40, 0xa0, 0x2b),
+    term_yellow: (0xdf, 0x8e, 0x1d),
+    term_blue: (0x1e, 0x66, 0xf5),
+    term_magenta: (0x88, 0x39, 0xef),
+    term_cyan: (0x04, 0xa5, 0xe5),
+    term_white: (0x5c, 0x5f, 0x77),
+    term_bright_black: (0xac, 0xb0, 0xbe),
+    term_bright_red: (0xd2, 0x0f, 0x39),
+    term_bright_green: (0x40, 0xa0, 0x2b),
+    term_bright_yellow: (0xdf, 0x8e, 0x1d),
+    term_bright_blue: (0x1e, 0x66, 0xf5),
+    term_bright_magenta: (0x88, 0x39, 0xef),
+    term_bright_cyan: (0x04, 0xa5, 0xe5),
+    term_bright_white: (0x4c, 0x4f, 0x69),
+    term_selection: (0xac, 0xb0, 0xbe, 0x99),
+};
+
+// ── Dracula ──────────────────────────────────────────────────────────────────
+//
+// Official Dracula palette (draculatheme.com): Background #282a36, Foreground
+// #f8f8f2, Purple accent #bd93f9, with the project's canonical ANSI terminal
+// palette.
+const DRACULA: Theme = Theme {
+    slug: "dracula",
+    name: "Dracula",
+    dark: true,
+
+    bg_base: 0x282a36,
+    bg_row_alt: 0x21222c,
+    surface: 0x343746,
+    selected: 0x44475a,
+    panel: 0x21222c,
+    sidebar: 0x191a21,
+    modal: 0x343746,
+    modal_overlay: 0x000000,
+
+    text_main: 0xf8f8f2,
+    text_sub: 0xc8c8d4,
+    text_muted: 0x6272a4,
+    text_label: 0x7e84ad,
+
+    color_head: 0xff79c6,   // pink
+    color_branch: 0xbd93f9, // purple
+    color_remote: 0x50fa7b, // green
+    color_tag: 0xffb86c,    // orange
+
+    color_success: 0x50fa7b,
+    color_warning: 0xf1fa8c,
+    color_blocker: 0xff5555,
+    color_blocker_muted: 0x9a4d4d,
+
+    diff_added_bg: 0x1d3b2b,
+    diff_removed_bg: 0x3a1e22,
+    diff_hunk: 0x8be9fd,
+
+    change_added: 0x50fa7b,
+    change_modified: 0xf1fa8c,
+    change_deleted: 0xff5555,
+    change_renamed: 0x8be9fd,
+    change_typechange: 0x6272a4,
+    change_dir: 0x7e84ad,
+
+    accent: 0xbd93f9, // purple
+
+    lane_hsl: [
+        (0.515, 0.95, 0.72), // cyan
+        (0.379, 0.94, 0.65), // green
+        (0.172, 0.92, 0.70), // yellow
+        (0.894, 1.00, 0.74), // pink
+        (0.730, 0.89, 0.72), // purple
+        (0.083, 1.00, 0.71), // orange
+    ],
+
+    avatar_sat: 0.70,
+    avatar_light: 0.65,
+
+    term_bg: (0x28, 0x2a, 0x36),
+    term_fg: (0xf8, 0xf8, 0xf2),
+    term_cursor: (0xf8, 0xf8, 0xf2),
+    term_black: (0x21, 0x22, 0x2c),
+    term_red: (0xff, 0x55, 0x55),
+    term_green: (0x50, 0xfa, 0x7b),
+    term_yellow: (0xf1, 0xfa, 0x8c),
+    term_blue: (0xbd, 0x93, 0xf9),
+    term_magenta: (0xff, 0x79, 0xc6),
+    term_cyan: (0x8b, 0xe9, 0xfd),
+    term_white: (0xf8, 0xf8, 0xf2),
+    term_bright_black: (0x62, 0x72, 0xa4),
+    term_bright_red: (0xff, 0x6e, 0x6e),
+    term_bright_green: (0x69, 0xff, 0x94),
+    term_bright_yellow: (0xff, 0xff, 0xa5),
+    term_bright_blue: (0xd6, 0xac, 0xff),
+    term_bright_magenta: (0xff, 0x92, 0xdf),
+    term_bright_cyan: (0xa4, 0xff, 0xff),
+    term_bright_white: (0xff, 0xff, 0xff),
+    term_selection: (0x44, 0x47, 0x5a, 0x99),
+};
+
 // ──────────────────────────────────────────────────────────────────────────
 // Tests
 // ──────────────────────────────────────────────────────────────────────────
@@ -1235,11 +1482,11 @@ mod tests {
 
     #[test]
     fn six_themes_with_unique_slugs() {
-        assert_eq!(THEMES.len(), 8);
+        assert_eq!(THEMES.len(), 11);
         let mut slugs: Vec<&str> = THEMES.iter().map(|t| t.slug).collect();
         slugs.sort_unstable();
         slugs.dedup();
-        assert_eq!(slugs.len(), 8, "theme slugs must be unique");
+        assert_eq!(slugs.len(), 11, "theme slugs must be unique");
     }
 
     #[test]
@@ -1305,7 +1552,7 @@ mod tests {
         let dark = THEMES.iter().filter(|t| t.dark).count();
         let light = THEMES.iter().filter(|t| !t.dark).count();
         // catppuccin, xcode-dark, one-dark, monokai, tokyo-night, ibm-pc
-        assert_eq!(dark, 6);
-        assert_eq!(light, 2); // xcode-light, one-light
+        assert_eq!(dark, 7); // + dracula
+        assert_eq!(light, 4); // xcode-light, one-light, pinky-boo, catppuccin-latte
     }
 }

@@ -3943,7 +3943,15 @@ fn render_fh_row(
         .bg(rgb(row_bg))
         .on_click(click)
         .on_mouse_down(MouseButton::Right, ctx)
-        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+        .cursor_pointer()
+        // Hover uses the subtle `surface` tint (like the commit panel / branch
+        // list), NOT `selected` — using the selection colour made a hovered row
+        // indistinguishable from the selected one, so the row the mouse was left
+        // on after a click looked "still selected" while the arrows moved the
+        // real selection elsewhere. The selected row keeps its colour on hover.
+        .when(!is_selected, |el| {
+            el.hover(|s| s.bg(rgb(theme().surface)))
+        })
         // change-type letter
         .child(
             div()

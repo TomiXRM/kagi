@@ -760,7 +760,11 @@ pub(crate) fn render_amend_modal(
 
     if !has_blockers {
         // Stage 1 label = "Amend\u{2026}", stage 2 (armed) = red "Rewrite history".
-        let label = if armed { "Rewrite history" } else { "Amend\u{2026}" };
+        let label = if armed {
+            "Rewrite history"
+        } else {
+            "Amend\u{2026}"
+        };
         button_row = button_row.child(
             Button::new("amend-confirm")
                 .label(label)

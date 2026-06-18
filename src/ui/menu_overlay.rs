@@ -59,7 +59,12 @@ where
         .count() as f32;
     let visible_groups = groups
         .iter()
-        .filter(|group| group.items.iter().any(|item| item.state != ItemState::Hidden))
+        .filter(|group| {
+            group
+                .items
+                .iter()
+                .any(|item| item.state != ItemState::Hidden)
+        })
         .count() as f32;
 
     // The box is rendered with `scaled_px`, so its on-screen footprint is
@@ -132,7 +137,11 @@ where
         );
 
     for (group_ix, group) in groups.into_iter().enumerate() {
-        if !group.items.iter().any(|item| item.state != ItemState::Hidden) {
+        if !group
+            .items
+            .iter()
+            .any(|item| item.state != ItemState::Hidden)
+        {
             continue;
         }
         if let Some(title) = group.title {

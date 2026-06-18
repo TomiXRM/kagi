@@ -397,12 +397,14 @@ fn language_section(app: &Entity<KagiApp>) -> impl IntoElement {
     let chips = RadioGroup::horizontal("settings-language")
         .children(LANGS.map(|(_, label)| SharedString::from(label)))
         .selected_index(selected)
-        .on_click(move |index: &usize, _w: &mut gpui::Window, cx: &mut gpui::App| {
-            if let Some((lang, _)) = LANGS.get(*index) {
-                let lang = *lang;
-                app2.update(cx, |app, cx| app.set_lang(lang, cx));
-            }
-        });
+        .on_click(
+            move |index: &usize, _w: &mut gpui::Window, cx: &mut gpui::App| {
+                if let Some((lang, _)) = LANGS.get(*index) {
+                    let lang = *lang;
+                    app2.update(cx, |app, cx| app.set_lang(lang, cx));
+                }
+            },
+        );
 
     div()
         .flex()

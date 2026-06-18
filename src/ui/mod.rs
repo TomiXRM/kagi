@@ -5569,7 +5569,12 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
             kagi.update(cx, |app, cx| {
                 cx.subscribe(
                     &theme_select,
-                    |this, _state, event: &gpui_component::select::SelectEvent<Vec<settings_view::ThemeOption>>, cx| {
+                    |this,
+                     _state,
+                     event: &gpui_component::select::SelectEvent<
+                        Vec<settings_view::ThemeOption>,
+                    >,
+                     cx| {
                         if let gpui_component::select::SelectEvent::Confirm(Some(slug)) = event {
                             this.set_theme(slug, cx);
                             cx.notify();

@@ -7,8 +7,7 @@ use gpui::{Context, Pixels, Point, SharedString, Window};
 
 use super::{
     context_menu::{ItemState, MenuGroup, MenuItem},
-    menu_overlay,
-    KagiApp,
+    menu_overlay, KagiApp,
 };
 
 const MENU_W: f32 = 220.0;

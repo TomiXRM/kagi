@@ -6,9 +6,10 @@ use super::{file_tree, smart_commit, KagiApp};
 use gpui::{
     div, prelude::*, rgb, App, Context, Entity, FocusHandle, KeyDownEvent, SharedString, Window,
 };
+use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputState};
-use gpui_component::Sizable as _;
+use gpui_component::{Disableable as _, Sizable as _};
 use kagi::git::{
     ops::{AmendMode, BranchRenameValidation, MergeKind, OperationPlan},
     ChangeKind, CommitId,
@@ -750,38 +751,23 @@ pub(crate) fn render_amend_modal(
 
     // Buttons.
     let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        div()
-            .id("amend-cancel")
-            .px_3()
-            .py_1()
-            .rounded_sm()
-            .bg(rgb(current_theme().surface))
-            .text_sm()
-            .text_color(rgb(current_theme().text_main))
-            .on_click(cancel_handler)
-            .hover(|style| style.bg(rgb(current_theme().selected)))
-            .child(SharedString::from("Cancel")),
+        Button::new("amend-cancel")
+            .label("Cancel")
+            .ghost()
+            .small()
+            .on_click(cancel_handler),
     );
 
     if !has_blockers {
         // Stage 1 label = "Amend\u{2026}", stage 2 (armed) = red "Rewrite history".
-        let (label, bg) = if armed {
-            ("Rewrite history", current_theme().color_blocker)
-        } else {
-            ("Amend\u{2026}", current_theme().color_branch)
-        };
+        let label = if armed { "Rewrite history" } else { "Amend\u{2026}" };
         button_row = button_row.child(
-            div()
-                .id("amend-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(bg))
-                .text_sm()
-                .text_color(rgb(current_theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from(label)),
+            Button::new("amend-confirm")
+                .label(label)
+                .when(armed, |b| b.danger())
+                .when(!armed, |b| b.primary())
+                .small()
+                .on_click(confirm_handler),
         );
     }
 
@@ -1073,31 +1059,19 @@ pub(crate) fn render_input_plan_modal(
     }
 
     let mut buttons = div().flex().flex_row().gap_2().justify_end().child(
-        div()
-            .id("branch-input-cancel")
-            .px_3()
-            .py_1()
-            .rounded_sm()
-            .bg(rgb(current_theme().surface))
-            .text_sm()
-            .text_color(rgb(current_theme().text_main))
-            .on_click(cancel_handler)
-            .hover(|style| style.bg(rgb(current_theme().selected)))
-            .child(SharedString::from("Cancel")),
+        Button::new("branch-input-cancel")
+            .label("Cancel")
+            .ghost()
+            .small()
+            .on_click(cancel_handler),
     );
     if !has_blockers {
         buttons = buttons.child(
-            div()
-                .id("branch-input-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(current_theme().color_branch))
-                .text_sm()
-                .text_color(rgb(current_theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from(confirm_label)),
+            Button::new("branch-input-confirm")
+                .label(SharedString::from(confirm_label))
+                .primary()
+                .small()
+                .on_click(confirm_handler),
         );
     }
     card = card.child(buttons);
@@ -1474,31 +1448,19 @@ pub(crate) fn render_discard_modal(
 
     // ── Buttons ─────────────────────────────────────────────
     let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        div()
-            .id("discard-cancel")
-            .px_3()
-            .py_1()
-            .rounded_sm()
-            .bg(rgb(current_theme().surface))
-            .text_sm()
-            .text_color(rgb(current_theme().text_main))
-            .on_click(cancel_handler)
-            .hover(|style| style.bg(rgb(current_theme().selected)))
-            .child(SharedString::from("Cancel")),
+        Button::new("discard-cancel")
+            .label("Cancel")
+            .ghost()
+            .small()
+            .on_click(cancel_handler),
     );
     if can_discard {
         button_row = button_row.child(
-            div()
-                .id("discard-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(current_theme().color_blocker))
-                .text_sm()
-                .text_color(rgb(current_theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from("Discard")),
+            Button::new("discard-confirm")
+                .label("Discard")
+                .danger()
+                .small()
+                .on_click(confirm_handler),
         );
     }
     card = card.child(button_row);
@@ -1749,17 +1711,11 @@ pub(crate) fn render_plan_modal_card(
         .justify_end()
         // Cancel button (always present — safe default)
         .child(
-            div()
-                .id("plan-cancel")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(current_theme().surface))
-                .text_sm()
-                .text_color(rgb(current_theme().text_main))
-                .on_click(cancel_handler)
-                .hover(|style| style.bg(rgb(current_theme().selected)))
-                .child(SharedString::from("Cancel")),
+            Button::new("plan-cancel")
+                .label("Cancel")
+                .ghost()
+                .small()
+                .on_click(cancel_handler),
         );
 
     if let Some(commit_id) = create_branch_target {
@@ -1772,34 +1728,21 @@ pub(crate) fn render_plan_modal_card(
             cx.notify();
         });
         button_row = button_row.child(
-            div()
-                .id("plan-create-branch")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(current_theme().surface))
-                .text_sm()
-                .text_color(rgb(current_theme().text_main))
-                .on_click(create_handler)
-                .hover(|style| style.bg(rgb(current_theme().selected)))
-                .child(SharedString::from("Create branch here...")),
+            Button::new("plan-create-branch")
+                .label("Create branch here...")
+                .small()
+                .on_click(create_handler),
         );
     }
 
     // Checkout button: only shown when there are no blockers.
     if !has_blockers {
         button_row = button_row.child(
-            div()
-                .id("plan-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(current_theme().color_branch))
-                .text_sm()
-                .text_color(rgb(current_theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(confirm_label),
+            Button::new("plan-confirm")
+                .label(confirm_label)
+                .primary()
+                .small()
+                .on_click(confirm_handler),
         );
     }
 
@@ -2036,33 +1979,21 @@ pub(crate) fn render_create_branch_modal(
 
     // ── Buttons ───────────────────────────────────────────
     let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        div()
-            .id("create-branch-cancel")
-            .px_3()
-            .py_1()
-            .rounded_sm()
-            .bg(rgb(current_theme().surface))
-            .text_sm()
-            .text_color(rgb(current_theme().text_main))
-            .on_click(cancel_handler)
-            .hover(|style| style.bg(rgb(current_theme().selected)))
-            .child(SharedString::from("Cancel")),
+        Button::new("create-branch-cancel")
+            .label("Cancel")
+            .ghost()
+            .small()
+            .on_click(cancel_handler),
     );
 
     // Create button: only shown when there are no blockers.
     if !has_blockers {
         button_row = button_row.child(
-            div()
-                .id("create-branch-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(current_theme().color_success))
-                .text_sm()
-                .text_color(rgb(current_theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from("Create")),
+            Button::new("create-branch-confirm")
+                .label("Create")
+                .success()
+                .small()
+                .on_click(confirm_handler),
         );
     }
 
@@ -2292,31 +2223,19 @@ pub(crate) fn render_create_worktree_modal(
     }
 
     let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        div()
-            .id("create-worktree-cancel")
-            .px_3()
-            .py_1()
-            .rounded_sm()
-            .bg(rgb(current_theme().surface))
-            .text_sm()
-            .text_color(rgb(current_theme().text_main))
-            .on_click(cancel_handler)
-            .hover(|style| style.bg(rgb(current_theme().selected)))
-            .child(SharedString::from("Cancel")),
+        Button::new("create-worktree-cancel")
+            .label("Cancel")
+            .ghost()
+            .small()
+            .on_click(cancel_handler),
     );
     if !has_blockers {
         button_row = button_row.child(
-            div()
-                .id("create-worktree-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(current_theme().color_success))
-                .text_sm()
-                .text_color(rgb(current_theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from("Create")),
+            Button::new("create-worktree-confirm")
+                .label("Create")
+                .success()
+                .small()
+                .on_click(confirm_handler),
         );
     }
     card = card.child(button_row);
@@ -2552,32 +2471,20 @@ pub(crate) fn render_stash_push_modal(
 
     // ── Buttons ───────────────────────────────────────────
     let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        div()
-            .id("stash-push-cancel")
-            .px_3()
-            .py_1()
-            .rounded_sm()
-            .bg(rgb(current_theme().surface))
-            .text_sm()
-            .text_color(rgb(current_theme().text_main))
-            .on_click(cancel_handler)
-            .hover(|style| style.bg(rgb(current_theme().selected)))
-            .child(SharedString::from("Cancel")),
+        Button::new("stash-push-cancel")
+            .label("Cancel")
+            .ghost()
+            .small()
+            .on_click(cancel_handler),
     );
 
     if !has_blockers {
         button_row = button_row.child(
-            div()
-                .id("stash-push-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(current_theme().color_warning))
-                .text_sm()
-                .text_color(rgb(current_theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from("Stash")),
+            Button::new("stash-push-confirm")
+                .label("Stash")
+                .warning()
+                .small()
+                .on_click(confirm_handler),
         );
     }
 
@@ -2778,32 +2685,20 @@ pub(crate) fn render_stash_apply_modal(
 
     // ── Buttons ───────────────────────────────────────────
     let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        div()
-            .id("stash-apply-cancel")
-            .px_3()
-            .py_1()
-            .rounded_sm()
-            .bg(rgb(current_theme().surface))
-            .text_sm()
-            .text_color(rgb(current_theme().text_main))
-            .on_click(cancel_handler)
-            .hover(|style| style.bg(rgb(current_theme().selected)))
-            .child(SharedString::from("Cancel")),
+        Button::new("stash-apply-cancel")
+            .label("Cancel")
+            .ghost()
+            .small()
+            .on_click(cancel_handler),
     );
 
     if !has_blockers {
         button_row = button_row.child(
-            div()
-                .id("stash-apply-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(current_theme().color_success))
-                .text_sm()
-                .text_color(rgb(current_theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from("Apply")),
+            Button::new("stash-apply-confirm")
+                .label("Apply")
+                .success()
+                .small()
+                .on_click(confirm_handler),
         );
     }
 
@@ -3086,32 +2981,20 @@ pub(crate) fn render_cherry_pick_modal(
 
     // ── Buttons ───────────────────────────────────────────
     let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        div()
-            .id("cherry-pick-cancel")
-            .px_3()
-            .py_1()
-            .rounded_sm()
-            .bg(rgb(current_theme().surface))
-            .text_sm()
-            .text_color(rgb(current_theme().text_main))
-            .on_click(cancel_handler)
-            .hover(|style| style.bg(rgb(current_theme().selected)))
-            .child(SharedString::from("Cancel")),
+        Button::new("cherry-pick-cancel")
+            .label("Cancel")
+            .ghost()
+            .small()
+            .on_click(cancel_handler),
     );
 
     if !has_blockers {
         button_row = button_row.child(
-            div()
-                .id("cherry-pick-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(current_theme().accent)) // mauve accent
-                .text_sm()
-                .text_color(rgb(current_theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from("Cherry-pick")),
+            Button::new("cherry-pick-confirm")
+                .label("Cherry-pick")
+                .primary()
+                .small()
+                .on_click(confirm_handler),
         );
     }
 
@@ -3356,32 +3239,20 @@ pub(crate) fn render_commit_plan_modal(
     }
 
     let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        div()
-            .id("commit-plan-cancel")
-            .px_3()
-            .py_1()
-            .rounded_sm()
-            .bg(rgb(current_theme().surface))
-            .text_sm()
-            .text_color(rgb(current_theme().text_main))
-            .on_click(cancel_handler)
-            .hover(|style| style.bg(rgb(current_theme().selected)))
-            .child(SharedString::from("Cancel")),
+        Button::new("commit-plan-cancel")
+            .label("Cancel")
+            .ghost()
+            .small()
+            .on_click(cancel_handler),
     );
 
     if !has_blockers {
         button_row = button_row.child(
-            div()
-                .id("commit-plan-confirm")
-                .px_3()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(current_theme().color_branch))
-                .text_sm()
-                .text_color(rgb(current_theme().bg_base))
-                .on_click(confirm_handler)
-                .hover(|style| style.opacity(0.85))
-                .child(SharedString::from("Commit")),
+            Button::new("commit-plan-confirm")
+                .label("Commit")
+                .primary()
+                .small()
+                .on_click(confirm_handler),
         );
     }
 
@@ -3491,30 +3362,18 @@ pub(crate) fn render_smart_commit_modal(
                         .gap_2()
                         .justify_end()
                         .child(
-                            div()
-                                .id("smart-consent-cancel")
-                                .px_3()
-                                .py_1()
-                                .rounded_sm()
-                                .bg(rgb(current_theme().surface))
-                                .text_sm()
-                                .text_color(rgb(current_theme().text_main))
-                                .on_click(cancel)
-                                .hover(|s| s.bg(rgb(current_theme().selected)))
-                                .child(SharedString::from("Cancel")),
+                            Button::new("smart-consent-cancel")
+                                .label("Cancel")
+                                .ghost()
+                                .small()
+                                .on_click(cancel),
                         )
                         .child(
-                            div()
-                                .id("smart-consent-confirm")
-                                .px_3()
-                                .py_1()
-                                .rounded_sm()
-                                .bg(rgb(current_theme().color_success))
-                                .text_sm()
-                                .text_color(rgb(current_theme().bg_base))
-                                .on_click(confirm)
-                                .hover(|s| s.opacity(0.85))
-                                .child(SharedString::from("Enable & continue")),
+                            Button::new("smart-consent-confirm")
+                                .label("Enable & continue")
+                                .success()
+                                .small()
+                                .on_click(confirm),
                         ),
                 )
         }
@@ -3568,17 +3427,11 @@ pub(crate) fn render_smart_commit_modal(
                 .child(list)
                 .child(
                     div().flex().flex_row().justify_end().child(
-                        div()
-                            .id("smart-model-cancel")
-                            .px_3()
-                            .py_1()
-                            .rounded_sm()
-                            .bg(rgb(current_theme().surface))
-                            .text_sm()
-                            .text_color(rgb(current_theme().text_main))
-                            .on_click(cancel)
-                            .hover(|s| s.bg(rgb(current_theme().selected)))
-                            .child(SharedString::from("Cancel")),
+                        Button::new("smart-model-cancel")
+                            .label("Cancel")
+                            .ghost()
+                            .small()
+                            .on_click(cancel),
                     ),
                 )
         }
@@ -3638,20 +3491,6 @@ pub(crate) fn render_update_modal(
     let open_page = cx.listener(|this, _e: &gpui::ClickEvent, _w, _cx| {
         this.open_release_page();
     });
-
-    let btn = |id: &'static str, label: SharedString, accent: u32, fg: u32| {
-        div()
-            .id(id)
-            .px(theme::scaled_px(12.))
-            .py(theme::scaled_px(6.))
-            .rounded_md()
-            .bg(rgb(accent))
-            .text_color(rgb(fg))
-            .text_sm()
-            .cursor(gpui::CursorStyle::PointingHand)
-            .hover(|s| s.opacity(0.85))
-            .child(label)
-    };
 
     let mut card =
         div()
@@ -3739,53 +3578,44 @@ pub(crate) fn render_update_modal(
         .items_center()
         .gap_2()
         .child(
-            btn(
-                "update-skip",
-                SharedString::from("Skip this version"),
-                current_theme().surface,
-                current_theme().text_sub,
-            )
-            .on_click(skip),
+            Button::new("update-skip")
+                .label("Skip this version")
+                .ghost()
+                .small()
+                .on_click(skip),
         )
         .child(
-            btn(
-                "update-page",
-                SharedString::from("Release page"),
-                current_theme().surface,
-                current_theme().text_sub,
-            )
-            .on_click(open_page),
+            Button::new("update-page")
+                .label("Release page")
+                .ghost()
+                .small()
+                .on_click(open_page),
         )
         .child(div().flex_grow())
         .child(
-            btn(
-                "update-cancel",
-                SharedString::from("Later"),
-                current_theme().surface,
-                current_theme().text_main,
-            )
-            .on_click(cancel),
+            Button::new("update-cancel")
+                .label("Later")
+                .ghost()
+                .small()
+                .on_click(cancel),
         );
     if installing {
         actions = actions.child(
-            div()
-                .px(theme::scaled_px(12.))
-                .py(theme::scaled_px(6.))
-                .rounded_md()
-                .bg(rgb(current_theme().text_muted))
-                .text_color(rgb(current_theme().bg_base))
-                .text_sm()
-                .child(SharedString::from("Updating…")),
+            Button::new("update-now")
+                .label("Updating…")
+                .primary()
+                .small()
+                .loading(true)
+                .disabled(true)
+                .on_click(|_, _, _| {}),
         );
     } else {
         actions = actions.child(
-            btn(
-                "update-now",
-                SharedString::from("Update now"),
-                current_theme().color_branch,
-                current_theme().bg_base,
-            )
-            .on_click(update_now),
+            Button::new("update-now")
+                .label("Update now")
+                .primary()
+                .small()
+                .on_click(update_now),
         );
     }
     card = card.child(actions);

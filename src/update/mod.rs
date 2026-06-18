@@ -376,7 +376,7 @@ fn find_file_ext(root: &Path, ext: &str) -> Option<std::path::PathBuf> {
             } else if p
                 .file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| n.ends_with(&suffix))
+                .is_some_and(|n| n.ends_with(suffix.as_str()))
             {
                 return Some(p);
             }

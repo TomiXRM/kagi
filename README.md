@@ -72,12 +72,20 @@ Colored lanes track each branch's history; ref badges and a HEAD ring mark where
 
 Select a commit to open the inspector: author, co-authors, and full message; a changed-file tree with per-file `+N −M` diffstat bars; and a syntax-highlighted, line-numbered diff with `+`/`−` hunks. Selecting a file jumps straight to its diff.
 
+## Trace a file's history
+
+<div align="center">
+<img src="docs/images/file-history.png" width="900" alt="File History view — on the left, every commit that touched the file (subject, author, date); on the right, the selected commit's diff for that file; with Back, Copy Path, Open File, and Follow Renames controls" />
+</div>
+
+Open **File History** on any file to walk every commit that touched it: the per-file commit list on the left, the selected entry's diff for that file on the right. Step through entries with the arrow keys, **follow renames** back through the file's past, copy its path or open it, and return to the full graph when you're done.
+
 ## And the rest of the daily driver
 
 - **Commit suite** — staging with `+N −M` diffstat bars, a pre-commit checklist (conflict markers / secrets / large binaries), per-branch draft autosave, `type(scope): summary` message templates, and amend with a SHA-change preview.
 - **Smart commit messages** — rule-based generation always available; a **local Ollama LLM is strictly opt-in** (staged diff only, localhost only, explicit consent).
 - **Async everything** — checkout, commit, stash, pull/push, merge… run off the UI thread with a spinning busy snackbar; the window never freezes.
-- **Make yourself at home** — 6 color themes, English / Japanese UI (Git domain words stay English in both), an integrated terminal, repo tabs, a branch-prefix tree sidebar, an operation log, and uniform UI zoom.
+- **Make yourself at home** — 11 color themes, English / Japanese UI (Git domain words stay English in both), an integrated terminal, repo tabs, a branch-prefix tree sidebar, an operation log, and uniform UI zoom.
 
 ## 📦 Install
 

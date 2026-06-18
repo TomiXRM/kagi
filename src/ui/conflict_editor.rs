@@ -39,8 +39,10 @@ use gpui::{
     canvas, div, prelude::*, px, relative, rgb, uniform_list, AnyElement, Bounds, Context, Pixels,
     SharedString, UniformListScrollHandle, Window,
 };
+use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::Input;
 use gpui_component::scroll::Scrollbar;
+use gpui_component::Sizable as _;
 
 use kagi::git::resolution::{LineOrder, Region, SelectionSide, TriState};
 
@@ -183,23 +185,32 @@ fn render_toolbar(
         .into_any_element()
 }
 
-fn tool_button<H>(id: &str, label: &str, accent: u32, handler: H) -> gpui::Stateful<gpui::Div>
+/// Map a legacy accent colour (theme token) onto the nearest semantic
+/// gpui-component Button variant.
+fn accent_variant(btn: Button, accent: u32) -> Button {
+    let t = theme();
+    if accent == t.color_success {
+        btn.success()
+    } else if accent == t.color_warning {
+        btn.warning()
+    } else if accent == t.color_blocker {
+        btn.danger()
+    } else if accent == t.color_branch {
+        btn.primary()
+    } else {
+        btn.ghost()
+    }
+}
+
+fn tool_button<H>(id: &str, label: &str, accent: u32, handler: H) -> Button
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    div()
-        .id(SharedString::from(id.to_string()))
-        .px(theme::scaled_px(7.2))
-        .py(theme::scaled_px(3.2))
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(accent))
-        .text_size(theme::scaled_px(8.8))
-        .text_color(rgb(accent))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().selected)))
-        .child(SharedString::from(label.to_string()))
-        .on_click(handler)
+    let btn = Button::new(SharedString::from(id.to_string()))
+        .label(SharedString::from(label.to_string()))
+        .small()
+        .on_click(handler);
+    accent_variant(btn, accent)
 }
 
 /// An icon button with a compact text label beside the glyph (POLISH-040/041).

@@ -26,6 +26,9 @@ use gpui::{
     ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
 };
 
+use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::Sizable as _;
+
 use super::i18n::{self, Lang, Msg};
 use super::theme::{self, theme};
 use super::KagiApp;
@@ -83,19 +86,11 @@ pub fn render_settings_overlay(
                         .child(SharedString::from(Msg::SettingsTitle.t())),
                 )
                 .child(
-                    div()
-                        .id("settings-close")
-                        .px_2()
-                        .py_px()
-                        .rounded_md()
-                        .text_color(rgb(theme().text_sub))
-                        .hover(|s| {
-                            s.bg(rgb(theme().selected))
-                                .text_color(rgb(theme().text_main))
-                                .cursor_pointer()
-                        })
-                        .on_click(close_click)
-                        .child(SharedString::from("✕")),
+                    Button::new("settings-close")
+                        .label("✕")
+                        .ghost()
+                        .small()
+                        .on_click(close_click),
                 ),
         )
         // ── Scrollable content: Appearance + Language sections ─────

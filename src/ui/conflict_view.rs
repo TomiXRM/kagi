@@ -27,8 +27,10 @@ use std::path::PathBuf;
 use gpui::{
     div, prelude::*, px, rgb, Context, Entity, SharedString, UniformListScrollHandle, Window,
 };
+use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::InputState;
 use gpui_component::tooltip::Tooltip;
+use gpui_component::{Disableable as _, Sizable as _};
 
 use kagi::git::conflicts::{ConflictKind, ConflictOp, ConflictStatus, SideLabels};
 
@@ -817,38 +819,40 @@ fn dash_escape_hatch(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::An
 
 /// A dashboard action button.  `enabled == false` renders muted and attaches no
 /// click handler (e.g. the Continue gate).
-fn action_button<H>(
-    label: &str,
-    accent: u32,
-    enabled: bool,
-    handler: Option<H>,
-) -> gpui::Stateful<gpui::Div>
+/// Map a legacy accent colour (theme token) onto the nearest semantic
+/// gpui-component Button variant, so the conflict buttons keep their meaning
+/// (success/warning/danger/info) under the Button styling.
+fn accent_variant(btn: Button, accent: u32) -> Button {
+    let t = theme();
+    if accent == t.color_success {
+        btn.success()
+    } else if accent == t.color_warning {
+        btn.warning()
+    } else if accent == t.color_blocker {
+        btn.danger()
+    } else if accent == t.color_branch {
+        btn.primary()
+    } else if accent == t.color_remote {
+        btn.info()
+    } else {
+        btn.ghost()
+    }
+}
+
+fn action_button<H>(label: &str, accent: u32, enabled: bool, handler: Option<H>) -> Button
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
     let label = label.to_string();
-    let mut btn = div()
-        .id(SharedString::from(format!("conflict-act-{}", label)))
-        .px(theme::scaled_px(10.))
-        .py(theme::scaled_px(4.))
-        .rounded_md()
-        .border_1()
-        .text_size(theme::scaled_px(12.))
-        .child(SharedString::from(label));
-
+    let mut btn = Button::new(SharedString::from(format!("conflict-act-{}", label)))
+        .label(SharedString::from(label))
+        .small()
+        .disabled(!enabled);
+    btn = accent_variant(btn, accent);
     if enabled {
-        btn = btn
-            .border_color(rgb(accent))
-            .text_color(rgb(accent))
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(theme().selected)));
         if let Some(h) = handler {
             btn = btn.on_click(h);
         }
-    } else {
-        btn = btn
-            .border_color(rgb(theme().text_muted))
-            .text_color(rgb(theme().text_muted));
     }
     btn
 }
@@ -948,23 +952,15 @@ fn render_center(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyEle
         .into_any_element()
 }
 
-fn choose_button<H>(label: String, accent: u32, handler: H) -> gpui::Stateful<gpui::Div>
+fn choose_button<H>(label: String, accent: u32, handler: H) -> Button
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    div()
-        .id(SharedString::from(format!("conflict-choose-{}", label)))
-        .px(theme::scaled_px(10.))
-        .py(theme::scaled_px(5.))
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(accent))
-        .text_size(theme::scaled_px(12.))
-        .text_color(rgb(accent))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().selected)))
-        .child(SharedString::from(label))
-        .on_click(handler)
+    let btn = Button::new(SharedString::from(format!("conflict-choose-{}", label)))
+        .label(SharedString::from(label))
+        .small()
+        .on_click(handler);
+    accent_variant(btn, accent)
 }
 
 /// Result preview scroll box (MVP: plain text, no syntax / diff coloring).

@@ -134,7 +134,9 @@ fn git_event_kind(p: &Path) -> Option<WatchEvent> {
 }
 
 /// Whether `p` is a git-internal path the view reacts to at all (graph change or
-/// index stage/unstage). Thin wrapper over [`git_event_kind`].
+/// index stage/unstage). Thin wrapper over [`git_event_kind`]; used only by the
+/// tests (production code routes on the finer [`git_event_kind`] result).
+#[cfg(test)]
 fn path_is_relevant(p: &Path) -> bool {
     git_event_kind(p).is_some()
 }

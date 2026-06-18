@@ -3,6 +3,13 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.21] — 2026-06-19
+
+### Changed
+- **Refreshed the app icon.** Regenerated the macOS `.icns` and Linux PNGs from
+  an updated source image. Added `assets/README.md` documenting the icon
+  pipeline (`xtask icon` / `scripts/make_icon.sh`).
+
 ## [0.3.20] — 2026-06-19
 
 ### Added

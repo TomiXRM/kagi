@@ -214,40 +214,16 @@ where
 }
 
 /// An icon button with a compact text label beside the glyph (POLISH-040/041).
-fn icon_button<H>(
-    id: &str,
-    icon_path: &'static str,
-    label: &str,
-    accent: u32,
-    handler: H,
-) -> gpui::Stateful<gpui::Div>
+fn icon_button<H>(id: &str, icon_path: &'static str, label: &str, accent: u32, handler: H) -> Button
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    div()
-        .id(SharedString::from(id.to_string()))
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_1()
-        .px(theme::scaled_px(7.2))
-        .py(theme::scaled_px(3.2))
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(accent))
-        .text_size(theme::scaled_px(8.8))
-        .text_color(rgb(accent))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().selected)))
-        .child(
-            gpui::svg()
-                .path(icon_path)
-                .w(theme::scaled_px(10.4))
-                .h(theme::scaled_px(10.4))
-                .text_color(rgb(accent)),
-        )
-        .child(SharedString::from(label.to_string()))
-        .on_click(handler)
+    let btn = Button::new(SharedString::from(id.to_string()))
+        .icon(gpui_component::Icon::empty().path(icon_path))
+        .label(SharedString::from(label.to_string()))
+        .small()
+        .on_click(handler);
+    accent_variant(btn, accent)
 }
 
 // ────────────────────────────────────────────────────────────

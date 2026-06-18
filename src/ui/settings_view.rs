@@ -27,6 +27,7 @@ use gpui::{
 };
 
 use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::radio::RadioGroup;
 use gpui_component::select::{Select, SelectItem, SelectState};
 use gpui_component::switch::Switch;
 use gpui_component::{IndexPath, Sizable as _};
@@ -226,38 +227,6 @@ fn setting_row(
         .child(div().flex_shrink_0().child(control))
 }
 
-/// A small clickable chip; `selected` highlights the current value.
-fn chip(
-    id: &'static str,
-    label: SharedString,
-    selected: bool,
-    on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-) -> AnyElement {
-    let (bg, fg, border) = if selected {
-        (theme().selected, theme().text_main, theme().color_branch)
-    } else {
-        (theme().bg_base, theme().text_sub, theme().selected)
-    };
-    div()
-        .id(id)
-        .px_3()
-        .py_1()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(border))
-        .bg(rgb(bg))
-        .text_sm()
-        .text_color(rgb(fg))
-        .hover(|s| {
-            s.bg(rgb(theme().selected))
-                .text_color(rgb(theme().text_main))
-                .cursor_pointer()
-        })
-        .on_click(on_click)
-        .child(label)
-        .into_any_element()
-}
-
 // ────────────────────────────────────────────────────────────
 // Appearance
 // ────────────────────────────────────────────────────────────
@@ -409,16 +378,21 @@ fn stepper_btn(
 // ────────────────────────────────────────────────────────────
 
 fn language_section(app: &Entity<KagiApp>) -> impl IntoElement {
+    // Two-way segmented choice → gpui-component RadioGroup (stateless). The
+    // on_click index maps back to the Lang ordering below.
+    const LANGS: [(Lang, &str); 2] = [(Lang::En, "English"), (Lang::Ja, "日本語")];
     let cur = i18n::lang();
-    let mut chips = div().flex().flex_row().gap_2().justify_end();
-    for (lang, label) in [(Lang::En, "English"), (Lang::Ja, "日本語")] {
-        let app2 = app.clone();
-        let handler = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
-            app2.update(cx, |app, cx| app.set_lang(lang, cx));
-        };
-        let id = lang.slug();
-        chips = chips.child(chip(id, SharedString::from(label), lang == cur, handler));
-    }
+    let selected = LANGS.iter().position(|(l, _)| *l == cur);
+    let app2 = app.clone();
+    let chips = RadioGroup::horizontal("settings-language")
+        .children(LANGS.map(|(_, label)| SharedString::from(label)))
+        .selected_index(selected)
+        .on_click(move |index: &usize, _w: &mut gpui::Window, cx: &mut gpui::App| {
+            if let Some((lang, _)) = LANGS.get(*index) {
+                let lang = *lang;
+                app2.update(cx, |app, cx| app.set_lang(lang, cx));
+            }
+        });
 
     div()
         .flex()

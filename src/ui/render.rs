@@ -968,7 +968,11 @@ impl Render for KagiApp {
                 if !this.root_has_focus(window) {
                     return;
                 }
-                if this.main_diff.is_some() {
+                // File-history view is its own full overlay with its own entry
+                // list + diff pane — navigate that, not the main commit list.
+                if this.file_history.is_some() {
+                    this.step_file_history_selection(-1, cx);
+                } else if this.main_diff.is_some() {
                     this.main_diff_step(-1);
                 } else {
                     this.step_commit_selection(-1);
@@ -979,7 +983,9 @@ impl Render for KagiApp {
                 if !this.root_has_focus(window) {
                     return;
                 }
-                if this.main_diff.is_some() {
+                if this.file_history.is_some() {
+                    this.step_file_history_selection(1, cx);
+                } else if this.main_diff.is_some() {
                     this.main_diff_step(1);
                 } else {
                     this.step_commit_selection(1);

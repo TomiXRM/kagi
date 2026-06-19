@@ -391,6 +391,25 @@ pub enum Msg {
     SettingsInterfaceLang,
     /// Language → Interface language row description.
     SettingsInterfaceLangDesc,
+
+    // ── ADR-0090 / ADR-0099: Smart Commit section (prose localized; the
+    //    domain words "commit" / "LLM" / "Ollama" / "CLI" stay English) ──────
+    /// Smart Commit section header (product feature name — English in both arms).
+    SettingsSmartCommit,
+    /// Smart Commit → Enable toggle row title.
+    SettingsSmartEnable,
+    /// Smart Commit → Enable toggle row description.
+    SettingsSmartEnableDesc,
+    /// Smart Commit → Provider row title.
+    SettingsSmartProvider,
+    /// Smart Commit → Provider row description.
+    SettingsSmartProviderDesc,
+    /// Smart Commit → LLM model row title.
+    SettingsSmartModel,
+    /// Smart Commit → LLM model row description.
+    SettingsSmartModelDesc,
+    /// Smart Commit → model picker note when no local models are detected.
+    SettingsSmartNoModels,
 }
 
 impl Msg {
@@ -795,6 +814,38 @@ impl Msg {
             (Ja, SettingsInterfaceLangDesc) => {
                 "説明文の言語(Git の用語は英語のままです)。"
             }
+
+            // ── Smart Commit section (ADR-0090 / ADR-0099) ───────────
+            // "Smart Commit" is a product feature name and stays English.
+            (En, SettingsSmartCommit) | (Ja, SettingsSmartCommit) => "Smart Commit",
+            (En, SettingsSmartEnable) => "Enable Smart Commit (LLM)",
+            (Ja, SettingsSmartEnable) => "Smart Commit (LLM) を有効化",
+            (En, SettingsSmartEnableDesc) => {
+                "Use an LLM to draft commit messages. The local Ollama provider keeps the staged diff on localhost."
+            }
+            (Ja, SettingsSmartEnableDesc) => {
+                "LLM で commit メッセージの草案を作成します。ローカルの Ollama provider は staged な diff を localhost にとどめます。"
+            }
+            (En, SettingsSmartProvider) => "Provider",
+            (Ja, SettingsSmartProvider) => "プロバイダー",
+            (En, SettingsSmartProviderDesc) => {
+                "Where commit messages are generated. Ollama is local; Claude Code / Codex use your installed CLI."
+            }
+            (Ja, SettingsSmartProviderDesc) => {
+                "commit メッセージを生成する場所。Ollama はローカルで、Claude Code / Codex はインストール済みの CLI を使います。"
+            }
+            (En, SettingsSmartModel) => "LLM model",
+            (Ja, SettingsSmartModel) => "LLM モデル",
+            (En, SettingsSmartModelDesc) => {
+                "Local Ollama model used to generate commit messages."
+            }
+            (Ja, SettingsSmartModelDesc) => {
+                "commit メッセージの生成に使うローカルの Ollama モデル。"
+            }
+            (En, SettingsSmartNoModels) => "No local models detected — start Ollama",
+            (Ja, SettingsSmartNoModels) => {
+                "ローカルモデルが検出されませんでした — Ollama を起動してください"
+            }
         }
     }
 }
@@ -927,6 +978,66 @@ pub fn copied_fmt(value: &str) -> String {
     match lang() {
         Lang::En => format!("Copied {}", value),
         Lang::Ja => format!("{} をコピーしました", value),
+    }
+}
+
+/// Smart Commit model-picker note when a model is selected but Ollama is not
+/// running: "<model> — start Ollama to switch". The model name stays verbatim.
+pub fn smart_model_switch_note(model: &str) -> String {
+    match lang() {
+        Lang::En => format!("{} — start Ollama to switch", model),
+        Lang::Ja => format!("{} — 切り替えるには Ollama を起動してください", model),
+    }
+}
+
+/// Smart Commit provider chip hint when a CLI provider is not on `$PATH`:
+/// "<name> (not found on PATH)". The provider display name stays verbatim.
+pub fn provider_not_found_hint(name: &str) -> String {
+    match lang() {
+        Lang::En => format!("{} (not found on PATH)", name),
+        Lang::Ja => format!("{}(PATH に見つかりません)", name),
+    }
+}
+
+/// Smart Commit CLI-provider warning heading (ADR-0099). The provider display
+/// name stays verbatim.
+pub fn smart_cli_warning_title(name: &str) -> String {
+    match lang() {
+        Lang::En => format!("⚠ {} sends your staged diff to an external service", name),
+        Lang::Ja => format!("⚠ {} は staged な diff を外部サービスに送信します", name),
+    }
+}
+
+/// Smart Commit CLI-provider warning bullet lines (ADR-0099). `name` is the
+/// provider display name; `bin` its CLI binary — both stay verbatim.
+pub fn smart_cli_warning_lines(name: &str, bin: &str) -> [String; 4] {
+    match lang() {
+        Lang::En => [
+            format!(
+                "Your staged diff is sent to the external `{}` CLI — it leaves kagi's local-Ollama sandbox.",
+                bin
+            ),
+            format!(
+                "It uses YOUR {} account and consumes YOUR usage quota — each generation may incur cost.",
+                name
+            ),
+            "kagi runs the CLI non-interactively in read-only mode; it can never modify your repository."
+                .to_string(),
+            format!("Requires the `{}` CLI to be installed and logged in.", bin),
+        ],
+        Lang::Ja => [
+            format!(
+                "staged な diff は外部の `{}` CLI に送信され、kagi のローカル Ollama サンドボックスの外に出ます。",
+                bin
+            ),
+            format!(
+                "あなたの {} アカウントを使用し、あなたの利用量を消費します — 生成ごとに費用が発生する場合があります。",
+                name
+            ),
+            "kagi は CLI を非対話・読み取り専用で実行します。リポジトリを変更することはありません。"
+                .to_string(),
+            format!("`{}` CLI のインストールとログインが必要です。", bin),
+        ],
     }
 }
 

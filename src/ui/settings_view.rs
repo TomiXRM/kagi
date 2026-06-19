@@ -485,7 +485,7 @@ fn smart_commit_section(
             let hint = if available {
                 label.clone()
             } else {
-                format!("{} (not found on PATH)", label)
+                i18n::provider_not_found_hint(&label)
             };
             let mut chip = div()
                 .id(SharedString::from(format!("sc-provider-{}", this.slug())))
@@ -530,18 +530,7 @@ fn smart_commit_section(
         super::smart_commit::SmartProvider::Cli(p) => {
             let name = p.display_name();
             let bin = p.binary();
-            let lines = [
-                format!(
-                    "Your staged diff is sent to the external `{}` CLI — it leaves kagi's local-Ollama sandbox.",
-                    bin
-                ),
-                format!(
-                    "It uses YOUR {} account and consumes YOUR usage quota — each generation may incur cost.",
-                    name
-                ),
-                "kagi runs the CLI non-interactively in read-only mode; it can never modify your repository.".to_string(),
-                format!("Requires the `{}` CLI to be installed and logged in.", bin),
-            ];
+            let lines = i18n::smart_cli_warning_lines(name, bin);
             let mut block = div()
                 .flex()
                 .flex_col()
@@ -556,10 +545,7 @@ fn smart_commit_section(
                 .child(
                     div()
                         .font_weight(gpui::FontWeight::BOLD)
-                        .child(SharedString::from(format!(
-                            "⚠ {} sends your staged diff to an external service",
-                            name
-                        ))),
+                        .child(SharedString::from(i18n::smart_cli_warning_title(name))),
                 );
             for l in lines {
                 block = block.child(div().child(SharedString::from(format!("• {}", l))));
@@ -571,8 +557,8 @@ fn smart_commit_section(
 
     let control: AnyElement = if models.is_empty() {
         let note = match &current {
-            Some(m) => format!("{} — start Ollama to switch", m),
-            None => "No local models detected — start Ollama".to_string(),
+            Some(m) => i18n::smart_model_switch_note(m),
+            None => Msg::SettingsSmartNoModels.t().to_string(),
         };
         div()
             .text_sm()
@@ -627,19 +613,17 @@ fn smart_commit_section(
         .flex()
         .flex_col()
         .gap_2()
-        .child(section_header(SharedString::from("Smart Commit")))
+        .child(section_header(SharedString::from(
+            Msg::SettingsSmartCommit.t(),
+        )))
         .child(setting_row(
-            SharedString::from("Enable Smart Commit (LLM)"),
-            SharedString::from(
-                "Use an LLM to draft commit messages. The local Ollama provider keeps the staged diff on localhost.",
-            ),
+            SharedString::from(Msg::SettingsSmartEnable.t()),
+            SharedString::from(Msg::SettingsSmartEnableDesc.t()),
             enabled_ctl,
         ))
         .child(setting_row(
-            SharedString::from("Provider"),
-            SharedString::from(
-                "Where commit messages are generated. Ollama is local; Claude Code / Codex use your installed CLI.",
-            ),
+            SharedString::from(Msg::SettingsSmartProvider.t()),
+            SharedString::from(Msg::SettingsSmartProviderDesc.t()),
             provider_chips,
         ));
 
@@ -649,8 +633,8 @@ fn smart_commit_section(
 
     if show_model_row {
         section = section.child(setting_row(
-            SharedString::from("LLM model"),
-            SharedString::from("Local Ollama model used to generate commit messages."),
+            SharedString::from(Msg::SettingsSmartModel.t()),
+            SharedString::from(Msg::SettingsSmartModelDesc.t()),
             control,
         ));
     }

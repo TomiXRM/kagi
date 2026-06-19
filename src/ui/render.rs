@@ -1907,6 +1907,173 @@ impl KagiApp {
             )
     }
 
+    /// Render one WIP row for a single worktree (Model A+: every worktree's
+    /// uncommitted state is shown at once, each tinted in its own colour so the
+    /// rows are distinguishable at a glance — user request).
+    ///
+    /// The currently-open worktree's row opens the commit panel (stage/unstage)
+    /// and carries a live `+/-` diffstat; a linked worktree's row switches the
+    /// open repo to that worktree so its changes can be acted on there.
+    #[allow(clippy::too_many_arguments)]
+    fn render_wip_row(
+        &self,
+        color: gpui::Hsla,
+        label: SharedString,
+        change_count: usize,
+        diffstat: Option<WipDiffStat>,
+        click: WipRowClick,
+        commit_panel_open: bool,
+        badge_col_w: f32,
+        graph_col_w: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let is_commit_panel = matches!(click, WipRowClick::CommitPanel);
+        let dark = theme().dark;
+        // Tinted chip built from the worktree's lane colour (badge_style only
+        // takes a packed u32; lane_color is Hsla, so build the tint directly).
+        // Stronger fill than a ref badge so the WIP rows read loudly.
+        let chip_bg = gpui::hsla(color.h, color.s, color.l, if dark { 0.32 } else { 1.0 });
+        let chip_border = gpui::hsla(color.h, color.s, color.l, if dark { 0.60 } else { 1.0 });
+        let chip_text = if dark { rgb(0xffffff) } else { rgb(theme().bg_base) };
+        // Whole-row background: a subtle wash of the worktree colour so each WIP
+        // row is distinguishable at a glance (user request), with a bold colour
+        // stripe down the left edge for prominence.
+        let row_wash = gpui::hsla(color.h, color.s, color.l, if dark { 0.14 } else { 0.10 });
+
+        let note = if is_commit_panel {
+            i18n::wip_row_note(change_count)
+        } else {
+            i18n::wip_row_other(change_count)
+        };
+
+        // 🌳 ties the row to its worktree HEAD marker in the graph.
+        let chip_label = SharedString::from(format!("🌳 {label}"));
+
+        let mut row = div()
+            .id(SharedString::from(format!("wip-row-{label}")))
+            .flex()
+            .flex_row()
+            .items_center()
+            .w_full()
+            .pr_3()
+            .border_l(theme::scaled_px(3.))
+            .border_color(color)
+            .pl(theme::scaled_px(9.))
+            .h(px(row_height(self.graph_compact)));
+        row = if is_commit_panel && commit_panel_open {
+            row.bg(rgb(theme().selected))
+        } else {
+            row.bg(row_wash)
+        };
+        // Both row kinds are clickable: the open repo's row opens the commit
+        // panel; a linked worktree's row switches the open repo to it. The two
+        // closures are distinct types, so wire `on_click` inside each match arm.
+        row = match click {
+            WipRowClick::CommitPanel => {
+                row.on_click(cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+                    this.open_commit_panel(window, cx);
+                    cx.notify();
+                }))
+            }
+            WipRowClick::OpenWorktree(path) => {
+                row.on_click(cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
+                    this.open_repository(path.clone(), cx);
+                    cx.notify();
+                }))
+            }
+        };
+        row = row
+            .hover(|s| s.bg(rgb(theme().selected)))
+            .cursor_pointer();
+
+        row
+            // Badges column: worktree-coloured chip carrying a 🌳 + the branch
+            // name, left-aligned like the commit-row badges.
+            .child(
+                div()
+                    .w(theme::scaled_px(badge_col_w))
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_start()
+                    .gap_1()
+                    .child(
+                        div()
+                            .px_1()
+                            .rounded_sm()
+                            .bg(chip_bg)
+                            .border_1()
+                            .border_color(chip_border)
+                            .text_color(chip_text)
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .flex_shrink_0()
+                            .overflow_hidden()
+                            .truncate()
+                            .child(chip_label),
+                    ),
+            )
+            // Inner divider spacer (badge|graph handle width)
+            .child(
+                div()
+                    .w(theme::scaled_px(INNER_DIV_W))
+                    .flex_shrink_0()
+                    .flex()
+                    .justify_center()
+                    .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
+            )
+            // Graph column: hollow "not yet committed" node tinted in the
+            // worktree colour — visually continues the graph upward.
+            .child(
+                div()
+                    .w(theme::scaled_px(graph_col_w))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .child(
+                        div()
+                            .ml(theme::scaled_px(graph_view::LANE_W / 2.0 - 4.5))
+                            .w(theme::scaled_px(9.))
+                            .h(theme::scaled_px(9.))
+                            .rounded_full()
+                            .border_1()
+                            .border_color(color),
+                    ),
+            )
+            // Inner divider spacer (graph|message handle width)
+            .child(
+                div()
+                    .w(theme::scaled_px(INNER_DIV_W))
+                    .flex_shrink_0()
+                    .flex()
+                    .justify_center()
+                    .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
+            )
+            // Summary area: change-count note, with the +N/-M diffstat (when
+            // available, i.e. the current worktree) pushed to the right end.
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(rgb(theme().text_muted))
+                            .overflow_hidden()
+                            .truncate()
+                            .child(SharedString::from(note)),
+                    )
+                    .when_some(diffstat, |el, stat| el.child(render_wip_diffstat(stat))),
+            )
+            .into_any_element()
+    }
+
     /// Body slot — the main content area: sidebar | divider | commit list | optional panel.
     ///
     /// All parameters are pre-cloned values from `render`; no additional
@@ -1963,18 +2130,80 @@ impl KagiApp {
                 |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
             );
 
-        // ── WIP row (shown above the list when working tree is dirty) ──
-        let wip_click = cx.listener(move |this, _event: &gpui::ClickEvent, window, cx| {
-            this.open_commit_panel(window, cx);
-            cx.notify();
-        });
-        // Row-like background (NOT the header surface colour) so the WIP row
-        // reads as the next commit stacking onto the graph, not as part of
-        // the column-legend chrome (user feedback).
-        let wip_bg = if commit_panel_open {
-            theme().selected
-        } else {
-            theme().bg_row_alt
+        // ── WIP rows (Model A+: one per dirty worktree, each in its own colour) ──
+        // Built before the column so the closures don't conflict-borrow `self`:
+        // gather plain params first (cloning out of `self.active_view`), then map
+        // to elements via `render_wip_row`.
+        let wip_rows: Vec<gpui::AnyElement> = {
+            let live_total = self.active_view.status_summary.staged
+                + self.active_view.status_summary.unstaged;
+            let worktrees = &self.active_view.worktrees;
+            let cur_idx = worktrees.iter().position(|w| w.is_current);
+            let mut params: Vec<(gpui::Hsla, SharedString, usize, Option<WipDiffStat>, WipRowClick)> =
+                Vec::new();
+
+            // Open-repo row: ALWAYS driven by the live working-tree status (kept
+            // fresh by the watcher), independent of whether a worktree entry was
+            // flagged `is_current` — so clicking and the +/- diffstat keep working
+            // even when path canonicalization can't match the open repo. Clicking
+            // opens the commit panel (stage/unstage).
+            if is_dirty {
+                let color = theme().lane_color(cur_idx.unwrap_or(0));
+                let label = cur_idx
+                    .and_then(|i| worktrees[i].branch.clone())
+                    .or_else(|| {
+                        self.active_view
+                            .branches
+                            .iter()
+                            .find(|(_, is_head)| *is_head)
+                            .map(|(n, _)| n.clone())
+                    })
+                    .unwrap_or_else(|| "WIP".to_string());
+                params.push((
+                    color,
+                    SharedString::from(label),
+                    live_total,
+                    wip_diffstat,
+                    WipRowClick::CommitPanel,
+                ));
+            }
+
+            // Linked-worktree rows: from the snapshot's per-worktree wip. Clicking
+            // switches the open repo to that worktree so its changes can be acted on.
+            for (idx, wt) in worktrees.iter().enumerate() {
+                if wt.is_current {
+                    continue;
+                }
+                let Some(wip) = wt.wip else { continue };
+                if !wip.is_dirty() {
+                    continue;
+                }
+                let label = SharedString::from(wt.branch.clone().unwrap_or_else(|| wt.name.clone()));
+                params.push((
+                    theme().lane_color(idx),
+                    label,
+                    wip.total(),
+                    None,
+                    WipRowClick::OpenWorktree(wt.path.clone()),
+                ));
+            }
+
+            params
+                .into_iter()
+                .map(|(color, label, count, ds, click)| {
+                    self.render_wip_row(
+                        color,
+                        label,
+                        count,
+                        ds,
+                        click,
+                        commit_panel_open,
+                        badge_col_w,
+                        graph_col_w,
+                        cx,
+                    )
+                })
+                .collect()
         };
 
         // T030: column header row (fixed, above WIP and commit list).
@@ -2118,111 +2347,8 @@ impl KagiApp {
             .flex_col()
             // ── Column header row (T030) ──────────────
             .child(col_header)
-            // ── WIP row (only when dirty) ────────────
-            .when(is_dirty, |el| {
-                el.child(
-                    div()
-                        .id("wip-row")
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .w_full()
-                        .px_3()
-                        .h(px(row_height(self.graph_compact)))
-                        .bg(rgb(wip_bg))
-                        .on_click(wip_click)
-                        .hover(|s| s.bg(rgb(theme().selected)))
-                        // Badges column: tinted WIP chip, left-aligned like
-                        // the commit-row badges.
-                        .child({
-                            let (wb, wbd, wt) = theme::badge_style(theme().color_warning);
-                            div()
-                                .w(theme::scaled_px(badge_col_w))
-                                .flex_shrink_0()
-                                .overflow_hidden()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .justify_start()
-                                .gap_1()
-                                .child(
-                                    div()
-                                        .px_1()
-                                        .rounded_sm()
-                                        .bg(gpui::rgba(wb))
-                                        .border_1()
-                                        .border_color(gpui::rgba(wbd))
-                                        .text_color(rgb(wt))
-                                        .text_sm()
-                                        .flex_shrink_0()
-                                        .child(SharedString::from("WIP")),
-                                )
-                        })
-                        // Inner divider spacer (badge|graph handle width)
-                        .child(
-                            div()
-                                .w(theme::scaled_px(INNER_DIV_W))
-                                .flex_shrink_0()
-                                .flex()
-                                .justify_center()
-                                .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
-                        )
-                        // Graph column: hollow "not yet committed" node on
-                        // lane 0 — visually continues the graph upward.
-                        .child(
-                            div()
-                                .w(theme::scaled_px(graph_col_w))
-                                .flex_shrink_0()
-                                .flex()
-                                .items_center()
-                                .child(
-                                    // W28: centre the 9px hollow node on the
-                                    // (zoom-scaled) lane-0 centre so it lines up
-                                    // with the graph node drawn in rows below.
-                                    div()
-                                        .ml(theme::scaled_px(graph_view::LANE_W / 2.0 - 4.5))
-                                        .w(theme::scaled_px(9.))
-                                        .h(theme::scaled_px(9.))
-                                        .rounded_full()
-                                        .border_1()
-                                        .border_color(rgb(theme().color_warning)),
-                                ),
-                        )
-                        // Inner divider spacer (graph|message handle width)
-                        .child(
-                            div()
-                                .w(theme::scaled_px(INNER_DIV_W))
-                                .flex_shrink_0()
-                                .flex()
-                                .justify_center()
-                                .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
-                        )
-                        // Summary area: change counts, styled like a row message.
-                        // The +N/-M diffstat is pushed to the right end of the row.
-                        .child({
-                            let total = self.active_view.status_summary.staged
-                                + self.active_view.status_summary.unstaged;
-                            div()
-                                .flex_1()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap_2()
-                                .overflow_hidden()
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .text_color(rgb(theme().text_muted))
-                                        .overflow_hidden()
-                                        .truncate()
-                                        .child(SharedString::from(i18n::wip_row_note(total))),
-                                )
-                                .when_some(wip_diffstat, |el, stat| {
-                                    el.child(render_wip_diffstat(stat))
-                                })
-                        }),
-                )
-            })
+            // ── WIP rows (one per dirty worktree, each colour-coded) ──
+            .children(wip_rows)
             // ── Stash graph rows (ADR-0088), below WIP ───────
             .children(stash_graph_row_els)
             // ── Virtualized commit list ──────────────
@@ -4296,6 +4422,15 @@ fn badge_priority(kind: &BadgeKind) -> u8 {
         BadgeKind::Tag => 2,
         BadgeKind::Remote => 3,
     }
+}
+
+/// What clicking a WIP row does.
+enum WipRowClick {
+    /// Open the commit panel for the currently-open repo (stage/unstage).
+    CommitPanel,
+    /// Switch the open repo to this linked worktree so its changes can be acted
+    /// on there (the open repo's WIP row, in turn, opens the commit panel).
+    OpenWorktree(std::path::PathBuf),
 }
 
 fn render_wip_diffstat(stat: WipDiffStat) -> impl IntoElement {

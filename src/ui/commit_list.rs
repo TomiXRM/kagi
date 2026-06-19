@@ -67,11 +67,26 @@ pub fn build_badge_map(snap: &RepoSnapshot) -> HashMap<CommitId, Vec<RefBadge>> 
         _ => None,
     };
 
+    // Branches checked out in *some* worktree. Tips of these (other than the
+    // current HEAD branch) get a worktree glyph so the graph shows, at a glance,
+    // which branches are live in a linked worktree (Model A+ multi-HEAD markers).
+    let worktree_branches: std::collections::HashSet<&str> = snap
+        .worktrees
+        .iter()
+        .filter_map(|w| w.branch.as_deref())
+        .collect();
+
     // Local branches.
     for b in &snap.branches {
         let is_head_branch = head_branch_name == Some(b.name.as_str());
+        let in_other_worktree =
+            !is_head_branch && worktree_branches.contains(b.name.as_str());
         let label = if is_head_branch {
             SharedString::from(format!("{} ✓", b.name))
+        } else if in_other_worktree {
+            // 🌳 marks a branch checked out in another worktree (matches the
+            // worktree's WIP row marker).
+            SharedString::from(format!("🌳 {}", b.name))
         } else {
             SharedString::from(b.name.clone())
         };

@@ -816,6 +816,16 @@ pub fn wip_row_note(n: usize) -> String {
     }
 }
 
+/// WIP row note for a *linked* worktree (not the one kagi has open). Clicking
+/// the row switches the open repo to that worktree, so the note says so.
+pub fn wip_row_other(n: usize) -> String {
+    let plural = if n == 1 { "" } else { "s" };
+    match lang() {
+        Lang::En => format!("// WIP — {} change{} (click to open this worktree)", n, plural),
+        Lang::Ja => format!("// WIP — {} change{}(クリックで worktree を開く)", n, plural),
+    }
+}
+
 /// Commit-panel warning shown when unstaged changes exist and won't be included.
 /// Was the hardcoded `"⚠ N unstaged change(s) not included"`.
 pub fn unstaged_not_included(n: usize) -> String {

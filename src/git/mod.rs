@@ -130,6 +130,9 @@ pub struct RepoInfo {
     pub workdir: PathBuf,
     /// Current HEAD state.
     pub head: Head,
+    /// True when this path is a linked git worktree rather than the main
+    /// working tree — used to mark worktree tabs distinctly in the UI.
+    pub is_worktree: bool,
 }
 
 /// Errors that can occur when opening a repository.
@@ -213,6 +216,7 @@ pub fn open_repository(path: &Path) -> Result<RepoInfo, GitError> {
         name,
         workdir,
         head,
+        is_worktree: repo.is_worktree(),
     })
 }
 

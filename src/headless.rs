@@ -220,6 +220,8 @@ pub(crate) fn init_tab(app: &mut KagiApp, path: &PathBuf) {
         path: path.clone(),
         name: info.name.clone(),
         remote: None,
+        is_worktree: info.is_worktree,
+        wt_color_idx: None,
     });
     app.active_tab = app.tabs.len() - 1;
     app.repo_path = Some(path.clone());

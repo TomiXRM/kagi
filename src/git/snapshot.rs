@@ -11,7 +11,7 @@ use git2::{BranchType, Repository};
 
 use super::{
     log::{commit_log, Commit, CommitId},
-    refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree},
+    refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree, WorktreeWip},
     resolve_head,
     status::{working_tree_status, WorkingTreeStatus},
     GitError, Head,
@@ -302,14 +302,21 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<Worktree>, GitError> {
         current_path.clone()
     };
 
+    // Compare canonicalized paths: `repo.workdir()` is canonical while the
+    // registered worktree path may differ by symlink (e.g. macOS /var →
+    // /private/var) or trailing slash, which would otherwise leave NO worktree
+    // flagged `is_current` and break the interactive WIP row.
+    let current_canon = canon(&current_path);
+
     let mut worktrees = Vec::new();
     let main_branch = worktree_branch_name(&main_path);
     worktrees.push(Worktree {
         name: "main".to_string(),
         path: main_path.clone(),
         branch: main_branch,
-        is_current: current_path == main_path,
+        is_current: canon(&main_path) == current_canon,
         is_main: true,
+        wip: worktree_wip(&main_path),
     });
 
     let names = repo
@@ -325,12 +332,14 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<Worktree>, GitError> {
         };
         let path = wt.path().to_path_buf();
         let branch = worktree_branch_name(&path);
+        let wip = worktree_wip(&path);
         worktrees.push(Worktree {
             name: name.to_string(),
-            is_current: path == current_path,
+            is_current: canon(&path) == current_canon,
             path,
             branch,
             is_main: false,
+            wip,
         });
     }
 
@@ -343,8 +352,31 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<Worktree>, GitError> {
     Ok(worktrees)
 }
 
+/// Canonicalize `p` for identity comparison, falling back to the path as-is
+/// when it cannot be resolved (e.g. a stale/pruned worktree).
+fn canon(p: &std::path::Path) -> std::path::PathBuf {
+    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+}
+
 fn worktree_branch_name(path: &std::path::Path) -> Option<String> {
     let repo = Repository::open(path).ok()?;
     let head = repo.head().ok()?;
     head.shorthand().ok().map(str::to_string)
+}
+
+/// Read pending-change counts for the worktree rooted at `path`.
+///
+/// Opens the worktree as its own repository so the status reflects *that*
+/// working tree (each linked worktree has an independent index + workdir).
+/// Returns `None` when the worktree is clean or its status cannot be read, so
+/// the UI only draws a WIP row for worktrees that actually have changes.
+fn worktree_wip(path: &std::path::Path) -> Option<WorktreeWip> {
+    let repo = Repository::open(path).ok()?;
+    let status = working_tree_status(&repo).ok()?;
+    let wip = WorktreeWip {
+        staged: status.staged.len(),
+        unstaged: status.unstaged.len(),
+        untracked: status.untracked.len(),
+    };
+    wip.is_dirty().then_some(wip)
 }

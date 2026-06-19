@@ -40,6 +40,13 @@ pub struct RepoTab {
     /// `Some` for a remote read-only repository opened over SSH; `None` for a
     /// normal local repository.
     pub remote: Option<super::RemoteRepoView>,
+    /// True when this tab is a linked git worktree (shown with a 🌳 marker and a
+    /// distinct tab colour so it's not mistaken for the main repository).
+    pub is_worktree: bool,
+    /// Lane-colour index for a worktree tab, matching that worktree's WIP-row
+    /// colour (its rank in the repo's worktree list). Set when the tab's view is
+    /// applied; `None` until then / for non-worktree tabs.
+    pub wt_color_idx: Option<usize>,
 }
 
 /// Height of the tab strip in pixels. The strip doubles as the themed title bar
@@ -67,8 +74,17 @@ impl KagiApp {
         // to one tab.  Fall back to the original path if canonicalize fails.
         let path = std::fs::canonicalize(&path).unwrap_or(path);
 
-        // Already open? → switch to the existing tab.
-        if let Some(idx) = self.tabs.iter().position(|t| t.path == path) {
+        // Already open? → switch to the existing tab. Compare on canonicalized
+        // paths on BOTH sides so the same repo still maps to ONE tab even when an
+        // existing tab was created from a non-canonical path (e.g. a CLI/session
+        // `/tmp/...` vs this call's `/private/tmp/...` on macOS). Without this,
+        // opening the main repo from inside a worktree would spawn a second tab
+        // for the same repository (tab-driver dedup bug).
+        if let Some(idx) = self.tabs.iter().position(|t| {
+            t.remote.is_none()
+                && (t.path == path
+                    || std::fs::canonicalize(&t.path).map(|c| c == path).unwrap_or(false))
+        }) {
             self.switch_repo(idx, cx);
             return true;
         }
@@ -93,6 +109,8 @@ impl KagiApp {
             path: path.clone(),
             name: info.name.clone(),
             remote: None,
+            is_worktree: info.is_worktree,
+            wt_color_idx: None,
         };
         self.tabs.push(tab);
         let new_idx = self.tabs.len() - 1;
@@ -241,6 +259,8 @@ impl KagiApp {
                     path: key.clone(),
                     name: name.clone(),
                     remote: Some(rv.clone()),
+                    is_worktree: false,
+                    wt_color_idx: None,
                 });
                 self.tabs.len() - 1
             }
@@ -660,6 +680,9 @@ impl KagiApp {
 
         for (i, tab) in tabs.into_iter().enumerate() {
             let is_active = i == active;
+            let is_wt = tab.is_worktree;
+            // Match the tab colour to the worktree's WIP-row lane colour.
+            let wt_color = is_wt.then(|| theme().lane_color(tab.wt_color_idx.unwrap_or(0)));
             let bg = if is_active {
                 theme().selected
             } else {
@@ -674,9 +697,12 @@ impl KagiApp {
 
             // chars()-based truncation is handled by `.truncate()` on the label
             // div (the byte-slice approach panics on multi-byte names). Remote
-            // tabs (ADR-0089) get a small SSH/cloud marker so they're distinct.
+            // tabs (ADR-0089) get a ☁ marker; worktree tabs get a 🌳 marker so
+            // they're distinct from the main repository.
             let label = SharedString::from(if tab.remote.is_some() {
                 format!("\u{2601} {}", tab.name) // ☁ name
+            } else if is_wt {
+                format!("\u{1f333} {}", tab.name) // 🌳 name
             } else {
                 tab.name.clone()
             });
@@ -705,14 +731,23 @@ impl KagiApp {
                 .max_w(theme::scaled_px(TAB_MAX_W))
                 .px_2()
                 .gap_1()
-                .bg(rgb(bg))
+                // Worktree tabs are tinted with the SAME lane colour as that
+                // worktree's WIP row (user request), washed when inactive.
+                .when(!(is_wt && !is_active), |el| el.bg(rgb(bg)))
+                .when_some(
+                    wt_color.filter(|_| is_wt && !is_active),
+                    |el, c| el.bg(gpui::hsla(c.h, c.s, c.l, 0.20)),
+                )
                 .text_sm()
                 .text_color(rgb(fg))
                 .border_r_1()
                 .border_color(rgb(theme().panel))
-                .when(is_active, |el| {
+                // Top accent: the worktree's lane colour (always), or the normal
+                // blue accent for an active main-repo tab.
+                .when(is_active && !is_wt, |el| {
                     el.border_t_2().border_color(rgb(theme().color_branch))
                 })
+                .when_some(wt_color, |el, c| el.border_t_2().border_color(c))
                 .cursor(gpui::CursorStyle::PointingHand)
                 .tooltip({
                     let full = full_path.clone();
@@ -949,6 +984,8 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
                     path: path.clone(),
                     name: info.name.clone(),
                     remote: None,
+                    is_worktree: info.is_worktree,
+                    wt_color_idx: None,
                 });
             }
             Err(e) => klog!("session: skip {} ({})", path.display(), e),

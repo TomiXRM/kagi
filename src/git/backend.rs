@@ -50,10 +50,6 @@ impl Backend {
         &self.path
     }
 
-    pub fn repo(&self) -> &Repository {
-        &self.repo
-    }
-
     pub fn head_state(&self) -> Result<Head, GitError> {
         resolve_head(&self.repo)
     }

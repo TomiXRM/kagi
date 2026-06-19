@@ -40,7 +40,6 @@ impl KagiApp {
             path_state: None, // lazy (render)
             path_touched: false,
             allow_existing_branch,
-            active_field: WorktreeModalField::Branch,
             plan: None,
             error: None,
             localized_blockers: Vec::new(),

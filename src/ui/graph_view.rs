@@ -43,12 +43,6 @@ use crate::ui::theme::{self, theme};
 /// column-width <-> lane-count conversions go through [`lane_w`] so lane spacing
 /// tracks `theme::zoom()` uniformly with the row text/height.
 pub const LANE_W: f32 = 14.0;
-/// Default maximum lanes to render when no explicit width is given.
-/// T030: this is no longer the hard upper bound; `graph_canvas` now takes a
-/// `visible_lanes` argument that replaces MAX_LANES for per-row clipping.
-/// Retained for reference / GRAPH_COL_DEFAULT calculation.
-#[allow(dead_code)]
-pub const MAX_LANES: usize = 8;
 /// Row height in pixels (must match what uniform_list computes for each row).
 /// T008 rows use `py(px(3.))` (6 px total padding) plus text ≈ 18 px → 24 px.
 pub const ROW_H: f32 = 29.0; // 24.0 * 1.2 (user request: +20% row spacing)
@@ -82,20 +76,6 @@ fn lane_color(lane: usize) -> gpui::Hsla {
 // ──────────────────────────────────────────────────────────────
 // Graph area width computation
 // ──────────────────────────────────────────────────────────────
-
-/// Compute the pixel width of the graph area for a given lane count,
-/// using the default MAX_LANES cap (for legacy call sites).
-/// T030: kept for reference; render_rows now uses `graph_col_w` directly.
-#[allow(dead_code)]
-pub fn graph_width(lane_count: usize) -> f32 {
-    (lane_count.min(MAX_LANES) as f32) * lane_w()
-}
-
-/// Compute the pixel width for a given visible_lanes value (T030: column-resize aware).
-#[allow(dead_code)]
-pub fn graph_width_for_lanes(visible_lanes: usize) -> f32 {
-    (visible_lanes as f32) * lane_w()
-}
 
 /// Compute how many lanes fit in a given pixel width (T030).
 ///

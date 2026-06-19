@@ -4656,39 +4656,6 @@ fn render_badges_column(
         })
 }
 
-/// Render the 22px status footer bar at the bottom of the window.
-///
-/// - [`FooterStatus::Success`] — green text on dark background.
-/// - [`FooterStatus::Failed`] — red text on dark background.
-/// - [`FooterStatus::Idle`] — muted text (default: "Ready").
-#[allow(dead_code)]
-fn render_status_footer(status: FooterStatus) -> impl IntoElement {
-    let (text_color, text) = match &status {
-        FooterStatus::Success(msg) => (theme().color_success, msg.clone()),
-        FooterStatus::Failed(msg) => (theme().color_blocker, msg.clone()),
-        FooterStatus::Idle(msg) => (theme().text_muted, msg.clone()),
-        FooterStatus::Busy(msg) => (
-            theme().color_branch,
-            SharedString::from(format!("\u{27f3} {}", msg)), // ⟳ msg
-        ),
-    };
-
-    div()
-        .id("status-footer")
-        .flex()
-        .flex_row()
-        .items_center()
-        .w_full()
-        .h(theme::scaled_px(22.))
-        .flex_shrink_0()
-        .px_3()
-        .bg(rgb(theme().panel))
-        .text_xs()
-        .text_color(rgb(text_color))
-        .overflow_hidden()
-        .child(text)
-}
-
 /// W12-GCADOPT (§2.10): wrap a virtualized list in a relative flex column and
 /// overlay a `gpui_component::scroll::Scrollbar` driven by the list's existing
 /// `UniformListScrollHandle`.  The Scrollbar paints itself absolutely-positioned

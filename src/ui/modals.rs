@@ -199,13 +199,6 @@ pub struct CreateBranchModal {
     pub localized_blockers: Vec<SharedString>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // legacy hand-rolled input era; kept for struct compat
-pub enum WorktreeModalField {
-    Branch,
-    Path,
-}
-
 /// State for an in-progress create-worktree confirmation.
 #[derive(Clone)]
 pub struct CreateWorktreeModal {
@@ -226,10 +219,6 @@ pub struct CreateWorktreeModal {
     /// True when this modal attaches an existing local branch to a worktree
     /// instead of creating a new branch first.
     pub allow_existing_branch: bool,
-    /// Which field receives key input (legacy hand-rolled input era; the
-    /// real `InputState`s manage their own focus now).
-    #[allow(dead_code)]
-    pub active_field: WorktreeModalField,
     /// Live plan regenerated from branch/path/start.
     pub plan: Option<std::sync::Arc<OperationPlan>>,
     /// Error message to show if execute or preflight failed.

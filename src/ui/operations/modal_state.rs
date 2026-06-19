@@ -16,10 +16,11 @@ use super::super::modals::{
 };
 use super::super::KagiApp;
 
-// This is a complete, uniform generated accessor set (5 methods per modal). A
-// few variants (e.g. some `take_*`/`*_mut`) have no call site today but are kept
-// for API symmetry, so silence the unused-method lint for the whole block.
-#[allow(dead_code)]
+// Accessors for the single `active_modal: Option<ActiveModal>` field
+// (ADR-0076 / ADR-0093). Per-variant `*_modal()` (read), `set_*`, `clear_*`,
+// and (only where a mutating caller exists) `*_mut`. The `take_*` shape and
+// unused `*_mut` shims were removed in the 2026-06-20 rearch sweep; call sites
+// that need to consume match on `active_modal` directly.
 impl KagiApp {
     #[inline]
     pub fn plan_modal(&self) -> Option<&CheckoutPlanModal> {
@@ -46,25 +47,8 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_plan_modal(&mut self) -> Option<CheckoutPlanModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::Checkout(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn pull_modal(&self) -> Option<&PullPlanModal> {
         match &self.active_modal {
-            Some(ActiveModal::Pull(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn pull_modal_mut(&mut self) -> Option<&mut PullPlanModal> {
-        match &mut self.active_modal {
             Some(ActiveModal::Pull(m)) => Some(m),
             _ => None,
         }
@@ -80,25 +64,8 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_pull_modal(&mut self) -> Option<PullPlanModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::Pull(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn undo_modal(&self) -> Option<&UndoPlanModal> {
         match &self.active_modal {
-            Some(ActiveModal::Undo(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn undo_modal_mut(&mut self) -> Option<&mut UndoPlanModal> {
-        match &mut self.active_modal {
             Some(ActiveModal::Undo(m)) => Some(m),
             _ => None,
         }
@@ -114,25 +81,8 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_undo_modal(&mut self) -> Option<UndoPlanModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::Undo(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn amend_modal(&self) -> Option<&AmendPlanModal> {
         match &self.active_modal {
-            Some(ActiveModal::Amend(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn amend_modal_mut(&mut self) -> Option<&mut AmendPlanModal> {
-        match &mut self.active_modal {
             Some(ActiveModal::Amend(m)) => Some(m),
             _ => None,
         }
@@ -148,25 +98,8 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_amend_modal(&mut self) -> Option<AmendPlanModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::Amend(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn pop_modal(&self) -> Option<&PopPlanModal> {
         match &self.active_modal {
-            Some(ActiveModal::Pop(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn pop_modal_mut(&mut self) -> Option<&mut PopPlanModal> {
-        match &mut self.active_modal {
             Some(ActiveModal::Pop(m)) => Some(m),
             _ => None,
         }
@@ -182,25 +115,8 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_pop_modal(&mut self) -> Option<PopPlanModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::Pop(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn stash_drop_modal(&self) -> Option<&StashDropModal> {
         match &self.active_modal {
-            Some(ActiveModal::StashDrop(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn stash_drop_modal_mut(&mut self) -> Option<&mut StashDropModal> {
-        match &mut self.active_modal {
             Some(ActiveModal::StashDrop(m)) => Some(m),
             _ => None,
         }
@@ -216,25 +132,8 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_stash_drop_modal(&mut self) -> Option<StashDropModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::StashDrop(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn push_modal(&self) -> Option<&PushPlanModal> {
         match &self.active_modal {
-            Some(ActiveModal::Push(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn push_modal_mut(&mut self) -> Option<&mut PushPlanModal> {
-        match &mut self.active_modal {
             Some(ActiveModal::Push(m)) => Some(m),
             _ => None,
         }
@@ -250,25 +149,8 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_push_modal(&mut self) -> Option<PushPlanModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::Push(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn branch_plan_modal(&self) -> Option<&BranchPlanModal> {
         match &self.active_modal {
-            Some(ActiveModal::BranchPlan(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn branch_plan_modal_mut(&mut self) -> Option<&mut BranchPlanModal> {
-        match &mut self.active_modal {
             Some(ActiveModal::BranchPlan(m)) => Some(m),
             _ => None,
         }
@@ -281,16 +163,6 @@ impl KagiApp {
     pub fn clear_branch_plan_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::BranchPlan(_))) {
             self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn take_branch_plan_modal(&mut self) -> Option<BranchPlanModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::BranchPlan(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
         }
     }
     #[inline]
@@ -318,16 +190,6 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_set_upstream_modal(&mut self) -> Option<SetUpstreamModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::SetUpstream(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn rename_branch_modal(&self) -> Option<&RenameBranchModal> {
         match &self.active_modal {
             Some(ActiveModal::RenameBranch(m)) => Some(m),
@@ -352,25 +214,8 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_rename_branch_modal(&mut self) -> Option<RenameBranchModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::RenameBranch(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn merge_modal(&self) -> Option<&MergePlanModal> {
         match &self.active_modal {
-            Some(ActiveModal::Merge(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn merge_modal_mut(&mut self) -> Option<&mut MergePlanModal> {
-        match &mut self.active_modal {
             Some(ActiveModal::Merge(m)) => Some(m),
             _ => None,
         }
@@ -386,25 +231,8 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_merge_modal(&mut self) -> Option<MergePlanModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::Merge(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn tracking_checkout_modal(&self) -> Option<&TrackingCheckoutPlanModal> {
         match &self.active_modal {
-            Some(ActiveModal::TrackingCheckout(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn tracking_checkout_modal_mut(&mut self) -> Option<&mut TrackingCheckoutPlanModal> {
-        match &mut self.active_modal {
             Some(ActiveModal::TrackingCheckout(m)) => Some(m),
             _ => None,
         }
@@ -420,25 +248,8 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_tracking_checkout_modal(&mut self) -> Option<TrackingCheckoutPlanModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::TrackingCheckout(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn switch_to_latest_modal(&self) -> Option<&SwitchToLatestPlanModal> {
         match &self.active_modal {
-            Some(ActiveModal::SwitchToLatest(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn switch_to_latest_modal_mut(&mut self) -> Option<&mut SwitchToLatestPlanModal> {
-        match &mut self.active_modal {
             Some(ActiveModal::SwitchToLatest(m)) => Some(m),
             _ => None,
         }
@@ -451,16 +262,6 @@ impl KagiApp {
     pub fn clear_switch_to_latest_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::SwitchToLatest(_))) {
             self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn take_switch_to_latest_modal(&mut self) -> Option<SwitchToLatestPlanModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::SwitchToLatest(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
         }
     }
     #[inline]
@@ -488,16 +289,6 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_create_branch_modal(&mut self) -> Option<CreateBranchModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::CreateBranch(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn create_worktree_modal(&self) -> Option<&CreateWorktreeModal> {
         match &self.active_modal {
             Some(ActiveModal::CreateWorktree(m)) => Some(m),
@@ -519,16 +310,6 @@ impl KagiApp {
     pub fn clear_create_worktree_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::CreateWorktree(_))) {
             self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn take_create_worktree_modal(&mut self) -> Option<CreateWorktreeModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::CreateWorktree(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
         }
     }
     #[inline]
@@ -556,16 +337,6 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_stash_push_modal(&mut self) -> Option<StashPushModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::StashPush(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn stash_apply_modal(&self) -> Option<&StashApplyModal> {
         match &self.active_modal {
             Some(ActiveModal::StashApply(m)) => Some(m),
@@ -590,25 +361,8 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_stash_apply_modal(&mut self) -> Option<StashApplyModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::StashApply(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn cherry_pick_modal(&self) -> Option<&CherryPickModal> {
         match &self.active_modal {
-            Some(ActiveModal::CherryPick(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn cherry_pick_modal_mut(&mut self) -> Option<&mut CherryPickModal> {
-        match &mut self.active_modal {
             Some(ActiveModal::CherryPick(m)) => Some(m),
             _ => None,
         }
@@ -624,25 +378,8 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_cherry_pick_modal(&mut self) -> Option<CherryPickModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::CherryPick(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn revert_modal(&self) -> Option<&RevertModal> {
         match &self.active_modal {
-            Some(ActiveModal::Revert(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn revert_modal_mut(&mut self) -> Option<&mut RevertModal> {
-        match &mut self.active_modal {
             Some(ActiveModal::Revert(m)) => Some(m),
             _ => None,
         }
@@ -658,25 +395,8 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_revert_modal(&mut self) -> Option<RevertModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::Revert(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn history_modal(&self) -> Option<&HistoryPlanModal> {
         match &self.active_modal {
-            Some(ActiveModal::History(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn history_modal_mut(&mut self) -> Option<&mut HistoryPlanModal> {
-        match &mut self.active_modal {
             Some(ActiveModal::History(m)) => Some(m),
             _ => None,
         }
@@ -692,25 +412,8 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_history_modal(&mut self) -> Option<HistoryPlanModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::History(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn delete_branch_modal(&self) -> Option<&DeleteBranchModal> {
         match &self.active_modal {
-            Some(ActiveModal::DeleteBranch(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn delete_branch_modal_mut(&mut self) -> Option<&mut DeleteBranchModal> {
-        match &mut self.active_modal {
             Some(ActiveModal::DeleteBranch(m)) => Some(m),
             _ => None,
         }
@@ -726,25 +429,8 @@ impl KagiApp {
         }
     }
     #[inline]
-    pub fn take_delete_branch_modal(&mut self) -> Option<DeleteBranchModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::DeleteBranch(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
-        }
-    }
-    #[inline]
     pub fn discard_modal(&self) -> Option<&DiscardModal> {
         match &self.active_modal {
-            Some(ActiveModal::Discard(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn discard_modal_mut(&mut self) -> Option<&mut DiscardModal> {
-        match &mut self.active_modal {
             Some(ActiveModal::Discard(m)) => Some(m),
             _ => None,
         }
@@ -757,16 +443,6 @@ impl KagiApp {
     pub fn clear_discard_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::Discard(_))) {
             self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn take_discard_modal(&mut self) -> Option<DiscardModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::Discard(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
         }
     }
     #[inline]
@@ -791,16 +467,6 @@ impl KagiApp {
     pub fn clear_conflict_continue_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::ConflictContinue(_))) {
             self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn take_conflict_continue_modal(&mut self) -> Option<ConflictContinuePlanModal> {
-        match self.active_modal.take() {
-            Some(ActiveModal::ConflictContinue(m)) => Some(m),
-            other => {
-                self.active_modal = other;
-                None
-            }
         }
     }
 }

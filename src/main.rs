@@ -111,7 +111,11 @@ fn main() {
         return;
     }
 
-    let repo_path = PathBuf::from(&args[0]);
+    // Canonicalize so the initial tab's path matches what `open_repository`
+    // stores later (avoids a duplicate tab for the same repo via /tmp vs
+    // /private/tmp on macOS, and keeps `tab_cache` keyed consistently).
+    let repo_path =
+        std::fs::canonicalize(&args[0]).unwrap_or_else(|_| PathBuf::from(&args[0]));
 
     // ── Open repository ──────────────────────────────────────
     let info = match open_repository(&repo_path) {
@@ -190,6 +194,8 @@ fn main() {
         path: repo_path.clone(),
         name: info.name.clone(),
         remote: None,
+        is_worktree: info.is_worktree,
+        wt_color_idx: None,
     });
     app_state.active_tab = 0;
     app_state.log_tabs();

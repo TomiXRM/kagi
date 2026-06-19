@@ -103,6 +103,34 @@ pub struct Stash {
 // Worktree
 // ────────────────────────────────────────────────────────────
 
+/// Aggregate dirty-state counts for a single worktree's working tree.
+///
+/// Computed by the git backend (`collect_worktrees`) by running working-tree
+/// status in each worktree's own directory. This lets the commit graph render a
+/// WIP row *per worktree* (Model A+, all worktrees' uncommitted state at once),
+/// not just for the worktree kagi currently has open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WorktreeWip {
+    /// Files with staged (index-side) changes.
+    pub staged: usize,
+    /// Files with unstaged (workdir-side) changes.
+    pub unstaged: usize,
+    /// Untracked files.
+    pub untracked: usize,
+}
+
+impl WorktreeWip {
+    /// Total number of changed/untracked files — drives the WIP-row count.
+    pub fn total(&self) -> usize {
+        self.staged + self.unstaged + self.untracked
+    }
+
+    /// Whether the worktree has any pending change (i.e. a WIP row is warranted).
+    pub fn is_dirty(&self) -> bool {
+        self.total() > 0
+    }
+}
+
 /// A registered Git worktree shown in the Repository Navigator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Worktree {
@@ -116,4 +144,29 @@ pub struct Worktree {
     pub is_current: bool,
     /// True for the primary worktree rather than a linked worktree.
     pub is_main: bool,
+    /// Pending changes in this worktree, if any. `None` when clean or unread.
+    pub wip: Option<WorktreeWip>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WorktreeWip;
+
+    #[test]
+    fn wip_total_sums_all_buckets() {
+        let wip = WorktreeWip {
+            staged: 2,
+            unstaged: 3,
+            untracked: 1,
+        };
+        assert_eq!(wip.total(), 6);
+        assert!(wip.is_dirty());
+    }
+
+    #[test]
+    fn wip_default_is_clean() {
+        let wip = WorktreeWip::default();
+        assert_eq!(wip.total(), 0);
+        assert!(!wip.is_dirty());
+    }
 }

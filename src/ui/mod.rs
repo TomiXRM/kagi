@@ -1248,6 +1248,18 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
     let lane_count = rows.first().map(|r| r.lane_count).unwrap_or(0);
     klog!("graph: lane_count={}", lane_count);
     klog!("commit list rows: {}", rows.len());
+    // Model A+: one WIP row is drawn per dirty worktree. Report the totals so the
+    // headless harness can assert multi-worktree WIP rendering.
+    let dirty_worktrees = snap
+        .worktrees
+        .iter()
+        .filter(|w| w.wip.is_some_and(|s| s.is_dirty()))
+        .count();
+    klog!(
+        "worktrees: {} total, {} dirty",
+        snap.worktrees.len(),
+        dirty_worktrees
+    );
     eprintln!(
         "[kagi] graph: stash rows={} lanes={:?}",
         stash_graph_rows.len(),
@@ -1755,6 +1767,19 @@ impl KagiApp {
         // applying a freshly-built (or cached) view is one move — there is no
         // field-by-field copy to keep in sync when `TabViewState` gains a field.
         self.active_view = view;
+
+        // Tie a worktree tab's colour to its WIP-row colour: the WIP row uses
+        // lane_color(rank-in-worktrees-list), so record the same rank on the tab.
+        let wt_idx = self
+            .active_view
+            .worktrees
+            .iter()
+            .position(|w| w.is_current);
+        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+            if tab.is_worktree {
+                tab.wt_color_idx = wt_idx;
+            }
+        }
     }
 
     /// Reload triggered by an external git change (T029: FS watcher).

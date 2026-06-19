@@ -334,6 +334,7 @@ pub fn remote_snapshot(
         branch: branch_name,
         is_current: true,
         is_main: true,
+        wip: None,
     }];
 
     Ok(RepoSnapshot {

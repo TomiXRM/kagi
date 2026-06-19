@@ -3,6 +3,23 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.4.0] — 2026-06-19
+
+### Added
+- **Branch Solo focus mode.** Right-click a branch badge in the graph and choose
+  **Solo** to dim every commit that isn't in that branch's history; choose **Exit
+  Solo** to restore. History is walked via first-parent ancestry. (#47)
+- **Branch context menus on graph badges.** Right-clicking a local or remote
+  branch badge in the commit graph now opens the branch action menu directly.
+- **WIP-row diffstat.** The synthetic working-tree (WIP) row shows an aggregated
+  staged + unstaged `+N / -M` count, refreshed from the backend on load/reload.
+
+### Changed
+- The WIP-row diffstat is rendered at the **right end** of the row, larger and
+  bold, for better legibility.
+- Per-file **Stage / Unstage** buttons in the commit panel are slightly smaller
+  so they no longer exceed the file-row height.
+
 ## [0.3.22] — 2026-06-19
 
 ### Fixed

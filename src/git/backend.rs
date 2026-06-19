@@ -297,7 +297,44 @@ impl Backend {
         }
     }
 
-    pub fn execute(&self, op: &Operation) -> Result<OperationOutcome, GitError> {
+    /// The single enforced entry point for every mutating operation.
+    ///
+    /// Implements the product's central safety invariant
+    /// (`plan → confirm → preflight → execute → verify` — ADR-0104):
+    /// **every** caller that mutates the repository MUST go through `run`,
+    /// so the preflight check (HEAD / stash-count unchanged since the plan
+    /// was built) cannot be bypassed. The oplog/toast/footer recording stays
+    /// with the UI's `record_op`; `run`'s job is the safety gate + dispatch.
+    ///
+    /// `plan` must be a plan previously built via `plan(op)` and confirmed by
+    /// the user (the confirm modal is the UI's responsibility). Operations
+    /// whose plan also captures a stash count (StashApply/Pop/Drop) additionally
+    /// pass through `preflight_check_stash` so a concurrent stash push between
+    /// plan and execute cannot shift indices.
+    ///
+    /// Replaces the older `execute(op)` shortcut which dispatched straight to
+    /// `execute_*` without any preflight. `execute(op)` is retained below as a
+    /// deprecated back-compat shim that synthesizes a fresh plan (so at least
+    /// the preflight runs) — new code and all UI/headless paths must use `run`.
+    pub fn run(
+        &mut self,
+        op: &Operation,
+        plan: &OperationPlan,
+    ) -> Result<OperationOutcome, GitError> {
+        // ── Preflight: refuse if the repo changed between plan and execute. ──
+        match op {
+            Operation::StashApply { .. } | Operation::StashPop { .. } => {
+                // Stash ops also verify the stash list hasn't shifted.
+                self.preflight_check_stash(plan, plan.stash_count_at_plan())?;
+            }
+            // Discard/DeleteBranch already re-plan in the legacy execute path;
+            // keep a HEAD preflight for the rest. Commit is non-mutating of
+            // HEAD in a way the preflight detects (it advances HEAD), so it is
+            // also gated: a confirmed commit plan captures the pre-commit HEAD.
+            _ => self.preflight_check(plan)?,
+        }
+
+        // ── Dispatch (behaviour-identical to the former execute(op)). ──
         match op {
             Operation::Commit { message } => {
                 self.execute_commit(message).map(OperationOutcome::Commit)
@@ -335,24 +372,15 @@ impl Backend {
             Operation::StashPush {
                 message,
                 include_untracked,
-            } => {
-                let mut backend = Backend::open(&self.path)?;
-                backend
-                    .execute_stash_push(message.as_deref(), *include_untracked)
-                    .map(|()| OperationOutcome::Unit)
-            }
-            Operation::StashApply { index } => {
-                let mut backend = Backend::open(&self.path)?;
-                backend
-                    .execute_stash_apply(*index)
-                    .map(|()| OperationOutcome::Unit)
-            }
-            Operation::StashPop { index } => {
-                let mut backend = Backend::open(&self.path)?;
-                backend
-                    .execute_stash_pop(*index)
-                    .map(|()| OperationOutcome::Unit)
-            }
+            } => self
+                .execute_stash_push(message.as_deref(), *include_untracked)
+                .map(|()| OperationOutcome::Unit),
+            Operation::StashApply { index } => self
+                .execute_stash_apply(*index)
+                .map(|()| OperationOutcome::Unit),
+            Operation::StashPop { index } => self
+                .execute_stash_pop(*index)
+                .map(|()| OperationOutcome::Unit),
             Operation::CherryPick { id } => {
                 self.execute_cherry_pick(id).map(OperationOutcome::Commit)
             }
@@ -371,55 +399,54 @@ impl Backend {
             Operation::SwitchToLatestBranch {
                 branch_name,
                 remote_branch,
-            } => {
-                let plan = self.plan_switch_to_latest(branch_name, remote_branch)?;
-                self.execute_switch_to_latest(&plan, branch_name, remote_branch)
-                    .map(|()| OperationOutcome::Unit)
-            }
+            } => self
+                .execute_switch_to_latest(plan, branch_name, remote_branch)
+                .map(|()| OperationOutcome::Unit),
             Operation::Revert { id } => self.execute_revert(id).map(OperationOutcome::Commit),
             Operation::Pull => self.execute_pull().map(OperationOutcome::Pull),
             Operation::Push => self.execute_push().map(OperationOutcome::Push),
-            Operation::PullBranchFf { branch_name } => {
-                let plan = self.plan_pull_branch_ff(branch_name)?;
-                self.execute_pull_branch_ff(&plan, branch_name)
-                    .map(OperationOutcome::Pull)
-            }
+            Operation::PullBranchFf { branch_name } => self
+                .execute_pull_branch_ff(plan, branch_name)
+                .map(OperationOutcome::Pull),
             Operation::PushBranch {
                 branch_name,
                 set_upstream,
-            } => {
-                let plan = self.plan_push_branch(branch_name, *set_upstream)?;
-                self.execute_push_branch(&plan, branch_name, *set_upstream)
-                    .map(OperationOutcome::Push)
-            }
+            } => self
+                .execute_push_branch(plan, branch_name, *set_upstream)
+                .map(OperationOutcome::Push),
             Operation::SetUpstream {
                 branch_name,
                 upstream,
-            } => {
-                let plan = self.plan_set_upstream(branch_name, upstream)?;
-                self.execute_set_upstream(&plan, branch_name, upstream)
-                    .map(|()| OperationOutcome::Unit)
-            }
-            Operation::RenameBranch { old_name, new_name } => {
-                let plan = self.plan_rename_branch(old_name, new_name)?;
-                self.execute_rename_branch(&plan, old_name, new_name)
-                    .map(|()| OperationOutcome::Unit)
-            }
+            } => self
+                .execute_set_upstream(plan, branch_name, upstream)
+                .map(|()| OperationOutcome::Unit),
+            Operation::RenameBranch { old_name, new_name } => self
+                .execute_rename_branch(plan, old_name, new_name)
+                .map(|()| OperationOutcome::Unit),
             Operation::UndoCommit => self.execute_undo_commit().map(OperationOutcome::Undo),
             Operation::Amend { mode, message } => self
                 .execute_amend(*mode, message.as_deref())
                 .map(OperationOutcome::Amend),
-            Operation::DeleteBranch { name } => {
-                let plan = self.plan_delete_branch(name)?;
-                self.execute_delete_branch(&plan, name)
-                    .map(|()| OperationOutcome::Unit)
-            }
-            Operation::Discard { paths } => {
-                let plan = self.plan_discard(paths)?;
-                self.execute_discard(&plan, paths)
-                    .map(OperationOutcome::Discard)
-            }
+            Operation::DeleteBranch { name } => self
+                .execute_delete_branch(plan, name)
+                .map(|()| OperationOutcome::Unit),
+            Operation::Discard { paths } => self
+                .execute_discard(plan, paths)
+                .map(OperationOutcome::Discard),
         }
+    }
+
+    /// Deprecated back-compat entry point (ADR-0104).
+    ///
+    /// Retained so existing callers compile while they migrate to `run`. It
+    /// synthesizes a fresh plan via `plan(op)` and forwards to `run`, so the
+    /// preflight still runs — but **the whole point of the plan→confirm→execute
+    /// pipeline is the user confirming the predicted state**. Calling this
+    /// skips the confirm step; new code MUST use `run(op, &confirmed_plan)`.
+    #[deprecated(note = "use run(op, &confirmed_plan) — ADR-0104 enforces preflight")]
+    pub fn execute(&mut self, op: &Operation) -> Result<OperationOutcome, GitError> {
+        let plan = self.plan(op)?;
+        self.run(op, &plan)
     }
 
     pub fn plan_commit(&self, message: &str) -> Result<OperationPlan, GitError> {

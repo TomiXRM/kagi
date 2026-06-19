@@ -10,30 +10,8 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::*;
-use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
-
-/// A translucent, theme-tinted button variant for the Stage/Unstage row actions.
-///
-/// The gpui-component `.success()`/`.warning()` *filled* variants painted a solid
-/// accent block, and kagi's theme sync (`theme.rs`) maps only the `success`/
-/// `warning` background — not their `_foreground`/`_hover` — so the gpui-component
-/// defaults leaked in and the label washed out (white text vanished on the light
-/// hover fill). Build the variant from kagi's own palette instead: a low-opacity
-/// accent tint that reads like the branch-list rows (translucent in dark), with
-/// the accent colour as the label and a slightly stronger tint on hover/active.
-fn tinted_action_variant(base: u32, cx: &gpui::App) -> ButtonCustomVariant {
-    let c = gpui::Hsla::from(rgb(base));
-    let (rest, hover, active) = if theme().dark {
-        (0.16, 0.26, 0.34)
-    } else {
-        (0.14, 0.22, 0.30)
-    };
-    ButtonCustomVariant::new(cx)
-        .color(c.opacity(rest))
-        .foreground(c)
-        .hover(c.opacity(hover))
-        .active(c.opacity(active))
-}
+use crate::ui::button_style::KagiButton;
+use gpui_component::button::{Button, ButtonVariants as _};
 
 impl KagiApp {
     /// Render the toast stack as an absolute overlay (bottom-right, above
@@ -4704,13 +4682,16 @@ fn render_unstaged_flat_row(
         });
         file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
         file_row = file_row.child(
-            Button::new(("cp-us-flat-stage-btn", fi))
-                .label("Stage")
-                .custom(tinted_action_variant(theme().color_success, cx))
-                .small()
-                .ml_2()
-                .flex_shrink_0()
-                .on_click(stage_click),
+            KagiButton::accent(
+                ("cp-us-flat-stage-btn", fi),
+                "Stage",
+                theme().color_success,
+                cx,
+            )
+            .small()
+            .ml_2()
+            .flex_shrink_0()
+            .on_click(stage_click),
         );
     } else {
         file_row = file_row.child(
@@ -4835,9 +4816,7 @@ fn render_unstaged_tree_row(
                 });
                 file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
                 file_row = file_row.child(
-                    Button::new(("cp-us-stage-btn", fi))
-                        .label("Stage")
-                        .custom(tinted_action_variant(theme().color_success, cx))
+                    KagiButton::accent(("cp-us-stage-btn", fi), "Stage", theme().color_success, cx)
                         .small()
                         .ml_2()
                         .flex_shrink_0()
@@ -4931,13 +4910,16 @@ fn render_staged_flat_row(
             )
             .child(diffstat_bar::diffstat_unit(fi + 100_000, stat.as_ref()))
             .child(
-                Button::new(("cp-st-flat-unstage-btn", fi))
-                    .label("Unstage")
-                    .custom(tinted_action_variant(theme().color_warning, cx))
-                    .small()
-                    .ml_2()
-                    .flex_shrink_0()
-                    .on_click(unstage_click),
+                KagiButton::accent(
+                    ("cp-st-flat-unstage-btn", fi),
+                    "Unstage",
+                    theme().color_warning,
+                    cx,
+                )
+                .small()
+                .ml_2()
+                .flex_shrink_0()
+                .on_click(unstage_click),
             )
             .into_any_element(),
     )
@@ -5031,13 +5013,16 @@ fn render_staged_tree_row(
                     )
                     .child(diffstat_bar::diffstat_unit(fi + 100_000, stat.as_ref()))
                     .child(
-                        Button::new(("cp-st-unstage-btn", fi))
-                            .label("Unstage")
-                            .custom(tinted_action_variant(theme().color_warning, cx))
-                            .small()
-                            .ml_2()
-                            .flex_shrink_0()
-                            .on_click(unstage_click),
+                        KagiButton::accent(
+                            ("cp-st-unstage-btn", fi),
+                            "Unstage",
+                            theme().color_warning,
+                            cx,
+                        )
+                        .small()
+                        .ml_2()
+                        .flex_shrink_0()
+                        .on_click(unstage_click),
                     )
                     .into_any_element(),
             )

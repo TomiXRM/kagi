@@ -39,13 +39,14 @@ use gpui::{
     canvas, div, prelude::*, px, relative, rgb, uniform_list, AnyElement, Bounds, Context, Pixels,
     SharedString, UniformListScrollHandle, Window,
 };
-use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::button::Button;
 use gpui_component::input::Input;
 use gpui_component::scroll::Scrollbar;
 use gpui_component::Sizable as _;
 
 use kagi::git::resolution::{LineOrder, Region, SelectionSide, TriState};
 
+use super::button_style::KagiButton;
 use super::conflict_view::ConflictMode;
 use super::conflict_view::EditorChrome;
 use super::i18n::Msg;
@@ -152,12 +153,14 @@ fn render_toolbar(
             Msg::EditorPrevHunk.t(),
             theme().text_sub,
             prev,
+            cx,
         ))
         .child(tool_button(
             "editor-next",
             Msg::EditorNextHunk.t(),
             theme().text_sub,
             next,
+            cx,
         ))
         .child(icon_button(
             "editor-open-external",
@@ -165,6 +168,7 @@ fn render_toolbar(
             Msg::EditorOpenExternal.t(),
             theme().text_sub,
             open_ext,
+            cx,
         ))
         // Reset all — destructive: trash icon, armed → blocker colour + confirm label.
         .child(icon_button(
@@ -181,49 +185,46 @@ fn render_toolbar(
                 theme().color_warning
             },
             reset,
+            cx,
         ))
         .into_any_element()
 }
 
-/// Map a legacy accent colour (theme token) onto the nearest semantic
-/// gpui-component Button variant.
-fn accent_variant(btn: Button, accent: u32) -> Button {
-    let t = theme();
-    if accent == t.color_success {
-        btn.success()
-    } else if accent == t.color_warning {
-        btn.warning()
-    } else if accent == t.color_blocker {
-        btn.danger()
-    } else if accent == t.color_branch {
-        btn.primary()
-    } else {
-        btn.ghost()
-    }
-}
-
-fn tool_button<H>(id: &str, label: &str, accent: u32, handler: H) -> Button
+fn tool_button<H>(id: &str, label: &str, accent: u32, handler: H, cx: &gpui::App) -> Button
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    let btn = Button::new(SharedString::from(id.to_string()))
-        .label(SharedString::from(label.to_string()))
-        .small()
-        .on_click(handler);
-    accent_variant(btn, accent)
+    KagiButton::accent(
+        SharedString::from(id.to_string()),
+        SharedString::from(label.to_string()),
+        accent,
+        cx,
+    )
+    .small()
+    .on_click(handler)
 }
 
 /// An icon button with a compact text label beside the glyph (POLISH-040/041).
-fn icon_button<H>(id: &str, icon_path: &'static str, label: &str, accent: u32, handler: H) -> Button
+fn icon_button<H>(
+    id: &str,
+    icon_path: &'static str,
+    label: &str,
+    accent: u32,
+    handler: H,
+    cx: &gpui::App,
+) -> Button
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    let btn = Button::new(SharedString::from(id.to_string()))
-        .icon(gpui_component::Icon::empty().path(icon_path))
-        .label(SharedString::from(label.to_string()))
-        .small()
-        .on_click(handler);
-    accent_variant(btn, accent)
+    KagiButton::accent_icon(
+        SharedString::from(id.to_string()),
+        icon_path,
+        SharedString::from(label.to_string()),
+        accent,
+        cx,
+    )
+    .small()
+    .on_click(handler)
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1003,6 +1004,7 @@ fn render_result_pane(
             Msg::EditorSave.t(),
             theme().color_success,
             save,
+            cx,
         ));
 
     // Body: Preview renders custom monospace rows that exactly match the A/B

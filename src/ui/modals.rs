@@ -1,3 +1,4 @@
+use super::button_style::KagiButton;
 use super::commit_panel::{status_badge, CommitPlanModal};
 use super::i18n::Msg;
 use super::theme::{self, theme as current_theme};
@@ -765,14 +766,12 @@ pub(crate) fn render_amend_modal(
         } else {
             "Amend\u{2026}"
         };
-        button_row = button_row.child(
-            Button::new("amend-confirm")
-                .label(label)
-                .when(armed, |b| b.danger())
-                .when(!armed, |b| b.primary())
-                .small()
-                .on_click(confirm_handler),
-        );
+        let confirm = if armed {
+            KagiButton::accent("amend-confirm", label, current_theme().color_blocker, cx)
+        } else {
+            Button::new("amend-confirm").label(label).primary()
+        };
+        button_row = button_row.child(confirm.small().on_click(confirm_handler));
     }
 
     card = card.child(button_row);
@@ -1460,11 +1459,14 @@ pub(crate) fn render_discard_modal(
     );
     if can_discard {
         button_row = button_row.child(
-            Button::new("discard-confirm")
-                .label("Discard")
-                .danger()
-                .small()
-                .on_click(confirm_handler),
+            KagiButton::accent(
+                "discard-confirm",
+                "Discard",
+                current_theme().color_blocker,
+                cx,
+            )
+            .small()
+            .on_click(confirm_handler),
         );
     }
     card = card.child(button_row);
@@ -1993,11 +1995,14 @@ pub(crate) fn render_create_branch_modal(
     // Create button: only shown when there are no blockers.
     if !has_blockers {
         button_row = button_row.child(
-            Button::new("create-branch-confirm")
-                .label("Create")
-                .success()
-                .small()
-                .on_click(confirm_handler),
+            KagiButton::accent(
+                "create-branch-confirm",
+                "Create",
+                current_theme().color_success,
+                cx,
+            )
+            .small()
+            .on_click(confirm_handler),
         );
     }
 
@@ -2235,11 +2240,14 @@ pub(crate) fn render_create_worktree_modal(
     );
     if !has_blockers {
         button_row = button_row.child(
-            Button::new("create-worktree-confirm")
-                .label("Create")
-                .success()
-                .small()
-                .on_click(confirm_handler),
+            KagiButton::accent(
+                "create-worktree-confirm",
+                "Create",
+                current_theme().color_success,
+                cx,
+            )
+            .small()
+            .on_click(confirm_handler),
         );
     }
     card = card.child(button_row);
@@ -2484,11 +2492,14 @@ pub(crate) fn render_stash_push_modal(
 
     if !has_blockers {
         button_row = button_row.child(
-            Button::new("stash-push-confirm")
-                .label("Stash")
-                .warning()
-                .small()
-                .on_click(confirm_handler),
+            KagiButton::accent(
+                "stash-push-confirm",
+                "Stash",
+                current_theme().color_warning,
+                cx,
+            )
+            .small()
+            .on_click(confirm_handler),
         );
     }
 
@@ -2698,11 +2709,14 @@ pub(crate) fn render_stash_apply_modal(
 
     if !has_blockers {
         button_row = button_row.child(
-            Button::new("stash-apply-confirm")
-                .label("Apply")
-                .success()
-                .small()
-                .on_click(confirm_handler),
+            KagiButton::accent(
+                "stash-apply-confirm",
+                "Apply",
+                current_theme().color_success,
+                cx,
+            )
+            .small()
+            .on_click(confirm_handler),
         );
     }
 
@@ -3373,11 +3387,14 @@ pub(crate) fn render_smart_commit_modal(
                                 .on_click(cancel),
                         )
                         .child(
-                            Button::new("smart-consent-confirm")
-                                .label("Enable & continue")
-                                .success()
-                                .small()
-                                .on_click(confirm),
+                            KagiButton::accent(
+                                "smart-consent-confirm",
+                                "Enable & continue",
+                                current_theme().color_success,
+                                cx,
+                            )
+                            .small()
+                            .on_click(confirm),
                         ),
                 )
         }

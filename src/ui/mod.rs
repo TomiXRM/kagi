@@ -8,6 +8,7 @@ pub mod assets;
 pub mod avatar;
 pub mod avatar_fetch;
 pub mod branch_menu;
+pub mod button_style;
 pub mod commands;
 pub mod commit_list;
 pub mod commit_panel;

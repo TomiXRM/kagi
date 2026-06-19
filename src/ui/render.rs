@@ -1938,7 +1938,11 @@ impl KagiApp {
         // Stronger fill than a ref badge so the WIP rows read loudly.
         let chip_bg = gpui::hsla(color.h, color.s, color.l, if dark { 0.32 } else { 1.0 });
         let chip_border = gpui::hsla(color.h, color.s, color.l, if dark { 0.60 } else { 1.0 });
-        let chip_text = if dark { rgb(0xffffff) } else { rgb(theme().bg_base) };
+        let chip_text = if dark {
+            rgb(0xffffff)
+        } else {
+            rgb(theme().bg_base)
+        };
         // Whole-row background: a subtle wash of the worktree colour so each WIP
         // row is distinguishable at a glance (user request), with a bold colour
         // stripe down the left edge for prominence.
@@ -1979,16 +1983,14 @@ impl KagiApp {
                     cx.notify();
                 }))
             }
-            WipRowClick::OpenWorktree(path) => {
-                row.on_click(cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
+            WipRowClick::OpenWorktree(path) => row.on_click(cx.listener(
+                move |this, _e: &gpui::ClickEvent, _window, cx| {
                     this.open_repository(path.clone(), cx);
                     cx.notify();
-                }))
-            }
+                },
+            )),
         };
-        row = row
-            .hover(|s| s.bg(rgb(theme().selected)))
-            .cursor_pointer();
+        row = row.hover(|s| s.bg(rgb(theme().selected))).cursor_pointer();
 
         row
             // Badges column: worktree-coloured chip carrying a 🌳 + the branch
@@ -2139,12 +2141,17 @@ impl KagiApp {
         // gather plain params first (cloning out of `self.active_view`), then map
         // to elements via `render_wip_row`.
         let wip_rows: Vec<gpui::AnyElement> = {
-            let live_total = self.active_view.status_summary.staged
-                + self.active_view.status_summary.unstaged;
+            let live_total =
+                self.active_view.status_summary.staged + self.active_view.status_summary.unstaged;
             let worktrees = &self.active_view.worktrees;
             let cur_idx = worktrees.iter().position(|w| w.is_current);
-            let mut params: Vec<(gpui::Hsla, SharedString, usize, Option<WipDiffStat>, WipRowClick)> =
-                Vec::new();
+            let mut params: Vec<(
+                gpui::Hsla,
+                SharedString,
+                usize,
+                Option<WipDiffStat>,
+                WipRowClick,
+            )> = Vec::new();
 
             // Open-repo row: ALWAYS driven by the live working-tree status (kept
             // fresh by the watcher), independent of whether a worktree entry was
@@ -2182,7 +2189,8 @@ impl KagiApp {
                 if !wip.is_dirty() {
                     continue;
                 }
-                let label = SharedString::from(wt.branch.clone().unwrap_or_else(|| wt.name.clone()));
+                let label =
+                    SharedString::from(wt.branch.clone().unwrap_or_else(|| wt.name.clone()));
                 params.push((
                     theme().lane_color(idx),
                     label,

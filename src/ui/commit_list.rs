@@ -79,8 +79,7 @@ pub fn build_badge_map(snap: &RepoSnapshot) -> HashMap<CommitId, Vec<RefBadge>> 
     // Local branches.
     for b in &snap.branches {
         let is_head_branch = head_branch_name == Some(b.name.as_str());
-        let in_other_worktree =
-            !is_head_branch && worktree_branches.contains(b.name.as_str());
+        let in_other_worktree = !is_head_branch && worktree_branches.contains(b.name.as_str());
         let label = if is_head_branch {
             SharedString::from(format!("{} ✓", b.name))
         } else if in_other_worktree {

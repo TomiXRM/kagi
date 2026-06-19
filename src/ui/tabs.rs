@@ -83,7 +83,9 @@ impl KagiApp {
         if let Some(idx) = self.tabs.iter().position(|t| {
             t.remote.is_none()
                 && (t.path == path
-                    || std::fs::canonicalize(&t.path).map(|c| c == path).unwrap_or(false))
+                    || std::fs::canonicalize(&t.path)
+                        .map(|c| c == path)
+                        .unwrap_or(false))
         }) {
             self.switch_repo(idx, cx);
             return true;
@@ -790,10 +792,9 @@ impl KagiApp {
                 // Worktree tabs are tinted with the SAME lane colour as that
                 // worktree's WIP row (user request), washed when inactive.
                 .when(!(is_wt && !is_active), |el| el.bg(rgb(bg)))
-                .when_some(
-                    wt_color.filter(|_| is_wt && !is_active),
-                    |el, c| el.bg(gpui::hsla(c.h, c.s, c.l, 0.20)),
-                )
+                .when_some(wt_color.filter(|_| is_wt && !is_active), |el, c| {
+                    el.bg(gpui::hsla(c.h, c.s, c.l, 0.20))
+                })
                 .text_sm()
                 .text_color(rgb(fg))
                 .border_r_1()

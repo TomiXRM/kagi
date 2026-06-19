@@ -875,8 +875,14 @@ pub fn wip_row_note(n: usize) -> String {
 pub fn wip_row_other(n: usize) -> String {
     let plural = if n == 1 { "" } else { "s" };
     match lang() {
-        Lang::En => format!("// WIP — {} change{} (click to open this worktree)", n, plural),
-        Lang::Ja => format!("// WIP — {} change{}(クリックで worktree を開く)", n, plural),
+        Lang::En => format!(
+            "// WIP — {} change{} (click to open this worktree)",
+            n, plural
+        ),
+        Lang::Ja => format!(
+            "// WIP — {} change{}(クリックで worktree を開く)",
+            n, plural
+        ),
     }
 }
 

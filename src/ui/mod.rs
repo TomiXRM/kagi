@@ -1770,11 +1770,7 @@ impl KagiApp {
 
         // Tie a worktree tab's colour to its WIP-row colour: the WIP row uses
         // lane_color(rank-in-worktrees-list), so record the same rank on the tab.
-        let wt_idx = self
-            .active_view
-            .worktrees
-            .iter()
-            .position(|w| w.is_current);
+        let wt_idx = self.active_view.worktrees.iter().position(|w| w.is_current);
         if let Some(tab) = self.tabs.get_mut(self.active_tab) {
             if tab.is_worktree {
                 tab.wt_color_idx = wt_idx;

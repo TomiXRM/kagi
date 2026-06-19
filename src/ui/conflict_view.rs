@@ -34,6 +34,7 @@ use gpui_component::{Disableable as _, Sizable as _};
 
 use kagi::git::conflicts::{ConflictKind, ConflictOp, ConflictStatus, SideLabels};
 
+use super::button_style::{apply_accent, KagiButton};
 use super::i18n::Msg;
 use super::theme::{self, theme};
 use super::KagiApp;
@@ -556,6 +557,7 @@ fn dash_actions(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElem
         } else {
             None
         },
+        cx,
     ));
 
     // Skip — sequencer ops only (hidden for merge).
@@ -569,6 +571,7 @@ fn dash_actions(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElem
             theme().color_warning,
             true,
             Some(skip_handler),
+            cx,
         ));
     }
 
@@ -583,6 +586,7 @@ fn dash_actions(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElem
         theme().color_blocker,
         true,
         Some(abort_handler),
+        cx,
     ));
 
     col = col.child(row);
@@ -783,12 +787,14 @@ fn dash_escape_hatch(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::An
             theme().text_sub,
             true,
             Some(ext_handler),
+            cx,
         ))
         .child(action_button(
             Msg::ConflictOpenTerminal.t(),
             theme().text_sub,
             true,
             Some(term_handler),
+            cx,
         ))
         .child(action_button(
             Msg::ConflictCopyPath.t(),
@@ -799,39 +805,27 @@ fn dash_escape_hatch(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::An
             } else {
                 None
             },
+            cx,
         ))
         .child(action_button(
             Msg::ConflictCopyGitCommand.t(),
             theme().text_sub,
             true,
             Some(copy_cmd_handler),
+            cx,
         ))
         .into_any_element()
 }
 
 /// A dashboard action button.  `enabled == false` renders muted and attaches no
 /// click handler (e.g. the Continue gate).
-/// Map a legacy accent colour (theme token) onto the nearest semantic
-/// gpui-component Button variant, so the conflict buttons keep their meaning
-/// (success/warning/danger/info) under the Button styling.
-fn accent_variant(btn: Button, accent: u32) -> Button {
-    let t = theme();
-    if accent == t.color_success {
-        btn.success()
-    } else if accent == t.color_warning {
-        btn.warning()
-    } else if accent == t.color_blocker {
-        btn.danger()
-    } else if accent == t.color_branch {
-        btn.primary()
-    } else if accent == t.color_remote {
-        btn.info()
-    } else {
-        btn.ghost()
-    }
-}
-
-fn action_button<H>(label: &str, accent: u32, enabled: bool, handler: Option<H>) -> Button
+fn action_button<H>(
+    label: &str,
+    accent: u32,
+    enabled: bool,
+    handler: Option<H>,
+    cx: &gpui::App,
+) -> Button
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
@@ -840,7 +834,7 @@ where
         .label(SharedString::from(label))
         .small()
         .disabled(!enabled);
-    btn = accent_variant(btn, accent);
+    btn = apply_accent(btn, accent, cx);
     if enabled {
         if let Some(h) = handler {
             btn = btn.on_click(h);
@@ -921,15 +915,22 @@ fn render_center(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyEle
             keep_current_label,
             theme().color_branch,
             keep_current,
+            cx,
         ))
         .child(choose_button(
             take_incoming_label,
             theme().color_remote,
             take_incoming,
+            cx,
         ));
 
     if !is_binary && file.kind == ConflictKind::Content {
-        choose_row = choose_row.child(choose_button(keep_both_label, theme().text_sub, keep_both));
+        choose_row = choose_row.child(choose_button(
+            keep_both_label,
+            theme().text_sub,
+            keep_both,
+            cx,
+        ));
     }
 
     let preview = render_preview(mode, &path, is_binary);
@@ -944,15 +945,18 @@ fn render_center(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyEle
         .into_any_element()
 }
 
-fn choose_button<H>(label: String, accent: u32, handler: H) -> Button
+fn choose_button<H>(label: String, accent: u32, handler: H, cx: &gpui::App) -> Button
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    let btn = Button::new(SharedString::from(format!("conflict-choose-{}", label)))
-        .label(SharedString::from(label))
-        .small()
-        .on_click(handler);
-    accent_variant(btn, accent)
+    KagiButton::accent(
+        SharedString::from(format!("conflict-choose-{}", label)),
+        SharedString::from(label),
+        accent,
+        cx,
+    )
+    .small()
+    .on_click(handler)
 }
 
 /// Result preview scroll box (MVP: plain text, no syntax / diff coloring).

@@ -678,7 +678,7 @@ impl KagiApp {
                 return;
             }
         };
-        if let Err(e) = repo.preflight_check(&modal.plan) {
+        if let Err(e) = repo.preflight_check_stash(&modal.plan, modal.plan.stash_count_at_plan()) {
             let err_msg = format!("Preflight failed: {}", e);
             self.record_op(
                 "stash-pop",

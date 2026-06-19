@@ -5250,7 +5250,12 @@ fn stash_pop_blocking(
 ) -> Result<(String, StateSummary), String> {
     let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
+    // ADR-0104 / T-REARCH-015: stash pop must verify BOTH that HEAD hasn't
+    // moved AND that the stash list hasn't shifted since planning — otherwise
+    // a concurrent stash push between plan and execute would pop the WRONG
+    // entry (indices shift). stash_pop_blocking previously only ran
+    // preflight_check (HEAD-only), missing the stash-count guard.
+    repo.preflight_check_stash(plan, plan.stash_count_at_plan())
         .map_err(|e| format!("Preflight failed: {}", e))?;
 
     repo.execute_stash_pop(stash_index)

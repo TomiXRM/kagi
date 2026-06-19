@@ -10,7 +10,7 @@
 //! | 3 | `test_pull_conflict_leaves_repo_untouched` | diverged with conflict → Err, HEAD/WT/index/state all untouched |
 //! | 4 | `test_pull_up_to_date` | equal tips → UpToDate |
 //! | 5 | `test_pull_ahead_only_up_to_date` | local ahead of upstream → UpToDate (nothing to merge) |
-//! | 6 | `test_plan_pull_dirty_blocker` | dirty WT → blocker |
+//! | 6 | `test_plan_pull_dirty_warning_no_blocker` | dirty WT → warning; execute does path-overlap check |
 //! | 7 | `test_plan_pull_no_upstream_blocker` | branch without upstream → blocker |
 //! | 8 | `test_pull_fetch_failure_untouched` | remote gone → Err mentions fetch, repo untouched |
 
@@ -42,7 +42,11 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
+    let path = dir.join(name);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("create parent dir failed");
+    }
+    std::fs::write(path, content).expect("write_file failed");
 }
 
 fn read_file(dir: &Path, name: &str) -> String {
@@ -252,16 +256,23 @@ fn test_pull_ahead_only_up_to_date() {
 }
 
 #[test]
-fn test_plan_pull_dirty_blocker() {
+fn test_plan_pull_dirty_warning_no_blocker() {
     let r = setup();
     write_file(&r.local, "base.txt", "dirty\n");
 
     let repo = Repository::open(&r.local).unwrap();
     let plan = plan_pull(&repo).expect("plan should succeed");
     assert!(
-        !plan.blockers.is_empty(),
-        "dirty WT must be a blocker, got: {:?}",
+        plan.blockers.is_empty(),
+        "dirty WT alone must not be a blocker, got: {:?}",
         plan.blockers
+    );
+    assert!(
+        plan.warnings
+            .iter()
+            .any(|w| w.contains("Working tree has") && w.contains("fetched changes")),
+        "dirty WT should produce path-overlap warning, got: {:?}",
+        plan.warnings
     );
 }
 
@@ -338,4 +349,97 @@ fn test_pull_merge_updates_modified_existing_file() {
         !st.is_dirty(),
         "WT must be clean after merge over modified file"
     );
+}
+
+#[test]
+fn test_pull_ff_allows_dirty_non_overlapping_file() {
+    let r = setup();
+    remote_commit(&r, "remote.txt", "from remote\n", "remote work");
+    write_file(&r.local, ".vscode/settings.json", "{ \"local\": true }\n");
+
+    let repo = Repository::open(&r.local).unwrap();
+    let outcome = execute_pull(&repo, &r.local).expect("pull should allow unrelated dirty file");
+    assert!(matches!(outcome, PullOutcome::FastForward { .. }));
+
+    assert_eq!(read_file(&r.local, "remote.txt"), "from remote\n");
+    assert_eq!(
+        read_file(&r.local, ".vscode/settings.json"),
+        "{ \"local\": true }\n"
+    );
+    let st = working_tree_status(&Repository::open(&r.local).unwrap()).unwrap();
+    assert!(
+        st.untracked
+            .iter()
+            .any(|p| p == Path::new(".vscode/settings.json")),
+        "unrelated dirty file should remain untracked: {:?}",
+        st.untracked
+    );
+}
+
+#[test]
+fn test_pull_ff_refuses_dirty_overlapping_modified_file() {
+    let r = setup();
+    remote_commit(&r, "base.txt", "updated upstream\n", "edit base");
+    write_file(&r.local, "base.txt", "local dirty\n");
+    let head_before = head_sha(&r.local);
+
+    let repo = Repository::open(&r.local).unwrap();
+    let err = execute_pull(&repo, &r.local).expect_err("pull must refuse dirty overlap");
+    let msg = format!("{}", err);
+    assert!(
+        msg.contains("dirty path") && msg.contains("base.txt"),
+        "error should name overlapping dirty path: {}",
+        msg
+    );
+
+    assert_eq!(head_sha(&r.local), head_before, "HEAD must not move");
+    assert_eq!(read_file(&r.local, "base.txt"), "local dirty\n");
+}
+
+#[test]
+fn test_pull_ff_refuses_untracked_overlapping_new_file() {
+    let r = setup();
+    remote_commit(
+        &r,
+        "generated/settings.json",
+        "from remote\n",
+        "add generated settings",
+    );
+    write_file(&r.local, "generated/settings.json", "local generated\n");
+    let head_before = head_sha(&r.local);
+
+    let repo = Repository::open(&r.local).unwrap();
+    let err = execute_pull(&repo, &r.local).expect_err("pull must refuse untracked overlap");
+    let msg = format!("{}", err);
+    assert!(
+        msg.contains("dirty path") && msg.contains("generated/settings.json"),
+        "error should name overlapping untracked path: {}",
+        msg
+    );
+
+    assert_eq!(head_sha(&r.local), head_before, "HEAD must not move");
+    assert_eq!(
+        read_file(&r.local, "generated/settings.json"),
+        "local generated\n"
+    );
+}
+
+#[test]
+fn test_pull_ff_refuses_dirty_overlapping_staged_rename_source() {
+    let r = setup();
+    remote_commit(&r, "base.txt", "updated upstream\n", "edit base");
+    git(&r.local, &["mv", "base.txt", "renamed-local.txt"]);
+    let head_before = head_sha(&r.local);
+
+    let repo = Repository::open(&r.local).unwrap();
+    let err = execute_pull(&repo, &r.local).expect_err("pull must refuse staged rename overlap");
+    let msg = format!("{}", err);
+    assert!(
+        msg.contains("dirty path") && msg.contains("base.txt"),
+        "error should name overlapping rename source: {}",
+        msg
+    );
+
+    assert_eq!(head_sha(&r.local), head_before, "HEAD must not move");
+    assert_eq!(read_file(&r.local, "renamed-local.txt"), "base\n");
 }

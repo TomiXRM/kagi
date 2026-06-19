@@ -204,7 +204,8 @@ pub fn execute_checkout_tracking_branch(
 /// - HEAD is detached or unborn.
 /// - No upstream is configured for the current branch.
 /// - Repository is in a conflict state.
-/// - Working tree has staged or unstaged changes (dirty).
+/// - Dirty paths that would be overwritten by the pull are checked at execute
+///   time, after fetch reveals the exact upstream tip.
 /// - (Plan-time) in-memory merge with the current upstream tip predicts a
 ///   conflict — shown as a **warning** at plan time (fetch may change things)
 ///   but still allows execution (the execute phase re-checks after fetch).
@@ -212,7 +213,8 @@ pub fn execute_checkout_tracking_branch(
 /// # Warnings
 ///
 /// - The behind count shown is local knowledge; fetch may reveal more commits.
-/// - Untracked files exist (they are not touched by merge/FF).
+/// - Staged, unstaged, or untracked files exist. Pull may proceed, but execute
+///   refuses if the fetched update would touch any dirty path.
 /// - Plan-time in-memory merge predicts a conflict (warning, not blocker —
 ///   re-evaluated after fetch).
 ///
@@ -273,7 +275,9 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         ));
     }
 
-    // Dirty working tree (staged / unstaged) — Guarded policy.
+    // Dirty working tree (staged / unstaged) — warning only. The exact pull
+    // target is known only after fetch, so execute re-checks dirty paths against
+    // the fetched tree and refuses only if they overlap.
     if !status.staged.is_empty() || !status.unstaged.is_empty() {
         let mut parts = Vec::new();
         if !status.staged.is_empty() {
@@ -282,16 +286,17 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         if !status.unstaged.is_empty() {
             parts.push(format!("{} modified", status.unstaged.len()));
         }
-        blockers.push(format!(
-            "Working tree has {} — stash your changes before pulling.",
+        warnings.push(format!(
+            "Working tree has {}. Pull will proceed only if fetched changes do not touch those paths.",
             parts.join(", ")
         ));
     }
 
-    // Untracked files — warning only.
+    // Untracked files — warning only, but execute refuses if pull would create
+    // or modify the same path.
     if !status.untracked.is_empty() {
         warnings.push(format!(
-            "{} untracked file(s) will remain untouched after pull.",
+            "{} untracked file(s) will remain untouched unless fetched changes need the same path.",
             status.untracked.len()
         ));
     }
@@ -336,12 +341,13 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
 
     let predicted = StateSummary {
         head: format!("branch: {}", branch_name),
-        dirty: "clean".to_string(),
+        dirty: current.dirty.clone(),
     };
 
     // ── 7. Recovery guidance ──────────────────────────────────
     let recovery = "Pull is non-destructive: fast-forward and clean merges do not lose work.\n\
-         If the merge would conflict, execute is blocked and the repo remains untouched.\n\
+         Dirty working-tree paths are checked against the fetched update before checkout.\n\
+         If the merge would conflict or overwrite dirty paths, execute is blocked and the repo remains untouched.\n\
          To undo a merge commit after execution:\n  git reset --hard HEAD~1\n\
          The reflog records every HEAD movement:\n  git reflog"
         .to_string();
@@ -440,6 +446,13 @@ pub fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOutcome, 
         return Ok(PullOutcome::UpToDate);
     }
 
+    let head_commit_for_safety = repo
+        .find_commit(head_oid)
+        .map_err(|e| GitError::Other(format!("HEAD commit lookup failed: {}", e.message())))?;
+    let head_tree_for_safety = head_commit_for_safety
+        .tree()
+        .map_err(|e| GitError::Other(format!("HEAD tree lookup failed: {}", e.message())))?;
+
     // ── 4. Fast-forward check ─────────────────────────────────
     // HEAD is an ancestor of upstream if upstream is a descendant of HEAD.
     let can_ff = repo
@@ -450,6 +463,11 @@ pub fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOutcome, 
         let upstream_commit = repo.find_commit(upstream_oid).map_err(|e| {
             GitError::Other(format!("upstream commit lookup failed: {}", e.message()))
         })?;
+        let upstream_tree = upstream_commit.tree().map_err(|e| {
+            GitError::Other(format!("upstream tree lookup failed: {}", e.message()))
+        })?;
+
+        ensure_pull_does_not_touch_dirty_paths(repo, &head_tree_for_safety, &upstream_tree)?;
 
         // ORDER MATTERS: check out the upstream tree while HEAD/index still
         // point at the OLD tree.  Safe checkout then sees old→new as the
@@ -487,9 +505,7 @@ pub fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOutcome, 
     }
 
     // ── 5. True merge (diverged) ──────────────────────────────
-    let head_commit = repo
-        .find_commit(head_oid)
-        .map_err(|e| GitError::Other(format!("HEAD commit lookup failed: {}", e.message())))?;
+    let head_commit = head_commit_for_safety;
     let upstream_commit = repo
         .find_commit(upstream_oid)
         .map_err(|e| GitError::Other(format!("upstream commit lookup failed: {}", e.message())))?;
@@ -533,6 +549,8 @@ pub fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOutcome, 
     let new_tree = repo
         .find_tree(new_tree_oid)
         .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?;
+
+    ensure_pull_does_not_touch_dirty_paths(repo, &head_tree_for_safety, &new_tree)?;
 
     // ── 7. Build merge commit ─────────────────────────────────
     let committer = build_signature(repo)?;
@@ -748,6 +766,70 @@ fn resolve_upstream_oid(
         .get()
         .target()
         .ok_or_else(|| GitError::Other("upstream ref has no target OID".to_string()))
+}
+
+fn ensure_pull_does_not_touch_dirty_paths(
+    repo: &Repository,
+    old_tree: &git2::Tree<'_>,
+    new_tree: &git2::Tree<'_>,
+) -> Result<(), GitError> {
+    let status = working_tree_status(repo)?;
+    if status.staged.is_empty() && status.unstaged.is_empty() && status.untracked.is_empty() {
+        return Ok(());
+    }
+
+    let mut dirty_paths: std::collections::HashSet<PathBuf> =
+        status.untracked.iter().cloned().collect();
+    for file in status.staged.iter().chain(status.unstaged.iter()) {
+        dirty_paths.insert(file.path.clone());
+        if let ChangeKind::Renamed { from } = &file.change {
+            dirty_paths.insert(from.clone());
+        }
+    }
+
+    let changed_paths = pull_changed_paths_between_trees(repo, old_tree, new_tree)?;
+    let mut overlapping: Vec<String> = changed_paths
+        .into_iter()
+        .filter(|path| dirty_paths.contains(path))
+        .map(|path| path.display().to_string())
+        .collect();
+    overlapping.sort();
+    overlapping.dedup();
+
+    if overlapping.is_empty() {
+        Ok(())
+    } else {
+        Err(GitError::Other(format!(
+            "pull would overwrite dirty path(s): {}. Stash or commit those paths, then pull again.",
+            overlapping.join(", ")
+        )))
+    }
+}
+
+fn pull_changed_paths_between_trees(
+    repo: &Repository,
+    old_tree: &git2::Tree<'_>,
+    new_tree: &git2::Tree<'_>,
+) -> Result<Vec<PathBuf>, GitError> {
+    let diff = repo
+        .diff_tree_to_tree(Some(old_tree), Some(new_tree), None)
+        .map_err(|e| {
+            GitError::Other(format!(
+                "diff_tree_to_tree for pull safety failed: {}",
+                e.message()
+            ))
+        })?;
+
+    let mut paths = Vec::new();
+    for delta in diff.deltas() {
+        if let Some(path) = delta.old_file().path() {
+            paths.push(path.to_path_buf());
+        }
+        if let Some(path) = delta.new_file().path() {
+            paths.push(path.to_path_buf());
+        }
+    }
+    Ok(paths)
 }
 
 /// Attempt an in-memory merge with the current upstream tip to predict conflicts.

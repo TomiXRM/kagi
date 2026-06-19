@@ -599,6 +599,62 @@ impl KagiApp {
     }
 
     // ──────────────────────────────────────────────────────────────────────
+    // Single-instance listener (ADR-0102)
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// Drain the single-instance accept-thread channel on the UI thread.
+    ///
+    /// Mirrors [`arm_watcher`]'s spawn/weak/update/notify shape: a background
+    /// `std::thread` (spawned in `main`) feeds an `mpsc` channel as secondary
+    /// `kagi …` invocations forward repo paths; this loop polls the receiver and
+    /// opens each path as a new tab (`open_repository`, Backend-backed — no git2
+    /// in UI) and raises the window via `cx.activate(true)` (the same call the
+    /// Dock-reopen handler uses).  A `None` message is a focus-only request
+    /// (bare `kagi`).  Called once from `open_main_window`; a no-op when the
+    /// receiver is absent (bind failed, or headless).
+    pub fn arm_single_instance_listener(&mut self, cx: &mut Context<Self>) {
+        let rx = match crate::single_instance::take_receiver() {
+            Some(rx) => rx,
+            None => return,
+        };
+
+        cx.spawn(async move |weak, acx| {
+            use std::sync::mpsc::TryRecvError;
+            loop {
+                Timer::after(Duration::from_millis(200)).await;
+                match rx.try_recv() {
+                    Ok(Some(path)) => {
+                        let result = acx.update(|cx| {
+                            cx.activate(true);
+                            weak.update(cx, |app, cx| {
+                                klog!("single-instance: open tab {}", path.display());
+                                app.open_repository(path.clone(), cx);
+                                cx.notify();
+                            })
+                        });
+                        if result.is_err() {
+                            break; // app gone
+                        }
+                    }
+                    Ok(None) => {
+                        // Focus-only request (bare `kagi`).
+                        if acx.update(|cx| cx.activate(true)).is_err() {
+                            break;
+                        }
+                        let _ = weak.update(acx, |_app, cx| {
+                            klog!("single-instance: focus");
+                            cx.notify();
+                        });
+                    }
+                    Err(TryRecvError::Empty) => continue,
+                    Err(TryRecvError::Disconnected) => break,
+                }
+            }
+        })
+        .detach();
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
     // Directory picker (ADR-0028)
     // ──────────────────────────────────────────────────────────────────────
 

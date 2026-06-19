@@ -1,12 +1,35 @@
 #[macro_use]
 mod klog;
 mod headless;
+mod single_instance;
 mod ui;
 
 use std::path::PathBuf;
 
 use kagi::git::{open_repository, snapshot, Head};
 use ui::{run_app, KagiApp};
+
+/// True when the process is running under the `KAGI_*` headless test harness.
+///
+/// The single-instance socket logic (ADR-0102) MUST be disabled here: the
+/// integration tests spawn the `kagi` binary in parallel (e.g. `tests/i18n_test`)
+/// and grep stderr, so a shared per-user socket would let one test forward to /
+/// focus another, breaking the `[kagi]` stderr contract and the oneshot exit.
+///
+/// `KAGI_LOG_DIR` is the test-isolation signal (every binary-spawning test sets
+/// it to keep settings.json out of the picture); the other vars cover the
+/// env-driven headless paths in `src/headless.rs`.  Real GUI launches set none
+/// of these, so single-instance stays on for users.
+fn headless_mode() -> bool {
+    const SIGNALS: &[&str] = &[
+        "KAGI_LOG_DIR",
+        "KAGI_OPEN_REPO",
+        "KAGI_MENU_DUMP",
+        "KAGI_SELECT_FIRST",
+        "KAGI_NO_SINGLE_INSTANCE",
+    ];
+    SIGNALS.iter().any(|k| std::env::var_os(k).is_some())
+}
 
 fn main() {
     // Collect CLI arguments (skip argv[0]).
@@ -37,6 +60,33 @@ fn main() {
     // W4-TABS: KAGI_OPEN_REPO=<path> opens a repo as a tab even when no CLI
     // arg is given (headless picker substitute, ADR-0027/0028).
     let env_open_repo = std::env::var("KAGI_OPEN_REPO").ok().map(PathBuf::from);
+
+    // ── Single-instance forwarding (ADR-0102) ────────────────
+    // If another Kagi instance is already running, forward the repo arg (or a
+    // focus-only request when bare `kagi`) to it and exit; that instance opens
+    // a new tab + raises its window.  Disabled under the headless test harness
+    // (parallel binary spawns must not share a socket).  Non-fatal: if no
+    // instance answers, fall through to a normal launch and become the primary.
+    let headless = headless_mode();
+    if !headless {
+        let forward_arg = args
+            .first()
+            .map(PathBuf::from)
+            .map(|p| std::fs::canonicalize(&p).unwrap_or(p));
+        if single_instance::try_forward(forward_arg) {
+            klog!("forwarded to running instance");
+            return;
+        }
+        // No instance answered → we are the primary.  Bind the listener and
+        // stash the receiver for the UI drain loop to pick up during window
+        // init.  Bind failure is non-fatal: run normally without single-instance.
+        #[cfg(unix)]
+        if let Some(listener) = single_instance::bind_listener() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            single_instance::spawn_accept_thread(listener, tx);
+            single_instance::store_receiver(rx);
+        }
+    }
 
     if args.is_empty() {
         // W4-TABS / ADR-0028: no argument → Welcome screen (tabs empty).

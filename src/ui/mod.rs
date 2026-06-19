@@ -5812,6 +5812,11 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
                 }
             });
 
+            // ADR-0102: drain the single-instance accept channel on the UI
+            // thread (opens forwarded repos as tabs + raises the window). No-op
+            // when no listener was bound (bind failed, or headless test mode).
+            kagi.update(cx, |app, cx| app.arm_single_instance_listener(cx));
+
             cx.new(|cx| gpui_component::Root::new(kagi, window, cx))
         },
     )

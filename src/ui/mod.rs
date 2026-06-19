@@ -1794,24 +1794,74 @@ impl KagiApp {
             .and_then(|idx| self.active_view.details.get(idx))
             .map(|detail| CommitId(detail.full_sha.to_string()));
 
-        // Delegate to the core reload logic (resets self.selected to None).
-        self.reload();
+        // ADR-0104 / performance: an external git event (HEAD/refs change from
+        // a terminal, sibling worktree, or auto-fetch) is NOT user-initiated,
+        // so freezing the UI frame for a full git2 snapshot (topological walk,
+        // full `git2::statuses` scan, ahead/behind for every branch) is the
+        // worst kind of jank — the user didn't ask for anything. Move the
+        // heavy git2 work (open + snapshot + wip diffstat) onto a background
+        // thread, then build the view data and apply it on the UI thread.
+        // (The synchronous `reload()` is still used by user-initiated paths
+        // where a short, expected wait is acceptable.)
+        let bg_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let task = cx.background_spawn(async move {
+            let mut backend = kagi::git::Backend::open(&bg_path).ok()?;
+            let snap = backend.snapshot(10_000).ok()?;
+            let wip = KagiApp::wip_diffstat_from_backend(&backend);
+            // RepoSnapshot is pure domain (Send); build_tab_view constructs
+            // SharedString-bearing TabViewState, so we return the raw pieces
+            // and build the view on the UI thread.
+            let repo_name = bg_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| bg_path.display().to_string());
+            Some((snap, wip, repo_name))
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                let Some((snap, wip, repo_name)) = result else {
+                    // Open or snapshot failed — log and bail without nuking
+                    // the existing view (better to show stale data than none).
+                    klog!("reload_external: snapshot failed (non-fatal)");
+                    app.status_footer = FooterStatus::Idle(SharedString::from(
+                        "[kagi] refresh skipped (snapshot failed)",
+                    ));
+                    cx.notify();
+                    return;
+                };
+                // Build the view data on the UI thread (cheap; heavy git2 work
+                // already done in the background) and apply it.
+                let view = build_tab_view(&snap, &repo_name);
+                app.apply_tab_view(view);
+                app.diff_cache = HashMap::new();
+                app.remote_diff_inflight.clear();
+                app.diffstat_cache = HashMap::new();
+                app.wip_diffstat = Some(wip);
+                app.main_diff = None;
+                app.compare_view = None;
+                app.file_history = None;
 
-        // Attempt to restore selection by CommitId.
-        if let Some(ref cid) = prev_commit_id {
-            if let Some(&new_idx) = self.active_view.commit_row_index.get(cid) {
-                self.selected = Some(new_idx);
-            }
-            // If the commit is no longer present, selected stays None.
-        }
+                // Attempt to restore selection by CommitId.
+                app.selected = None;
+                if let Some(ref cid) = prev_commit_id {
+                    if let Some(&new_idx) = app.active_view.commit_row_index.get(cid) {
+                        app.selected = Some(new_idx);
+                    }
+                    // If the commit is no longer present, selected stays None.
+                }
 
-        // Emit the required log line and update the footer.
-        klog!("refreshed (external change)");
-        self.status_footer =
-            FooterStatus::Idle(SharedString::from("[kagi] refreshed (external change)"));
-
-        // Notify gpui that state has changed so the window repaints.
-        cx.notify();
+                // Emit the required log line and update the footer.
+                klog!("refreshed (external change)");
+                app.status_footer =
+                    FooterStatus::Idle(SharedString::from("[kagi] refreshed (external change)"));
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Working-tree change refresh (FS watcher, [`watcher::WatchEvent::WorkTree`]).

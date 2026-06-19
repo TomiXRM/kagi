@@ -1,4 +1,4 @@
-# ADR-0101: Worktree-aware graph — multi-worktree WIP rows + HEAD markers
+# ADR-0103: Worktree-aware graph — multi-worktree WIP rows + HEAD markers
 
 - Status: Accepted
 - Date: 2026-06-19

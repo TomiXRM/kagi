@@ -64,6 +64,14 @@ In the shot above, one branch moved the LED to the board's built-in pin and anot
 
 Colored lanes track each branch's history; ref badges and a HEAD ring mark where you are; merge nodes render inline; a live **WIP row** sits at the top; and **stashes are drawn right in the graph** — each with a line back to the commit it was created on. A label-to-node connector ties every branch and tag to its commit. Virtualized, so it stays smooth on repositories with 10k+ commits (the screenshots are real history — Zed above, a small fixture here).
 
+## See every worktree at once
+
+<div align="center">
+<img src="docs/images/worktree.png" width="900" alt="Commit graph with one colored WIP row per worktree, each tinted in its own lane color with a 🌳 chip and change count, plus 🌳 markers on branches checked out in another worktree and a colored worktree tab" />
+</div>
+
+Most clients show one worktree at a time. Kagi draws **a WIP row for every worktree at once**, each tinted in its own lane color with a 🌳 chip and change count — so you can see what's uncommitted across all of them in a single glance. Branches checked out in another worktree carry a 🌳 marker in the graph. Click your current worktree's WIP row to stage and commit; click another's to **switch to that worktree** (it opens as a tab in the matching color, never a duplicate). Create new worktrees from any branch, all from the safe `plan → confirm → execute` path.
+
 ## Inspect any commit
 
 <div align="center">

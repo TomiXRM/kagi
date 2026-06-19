@@ -555,6 +555,7 @@ impl Render for KagiApp {
         // W16-DIFFSTAT: per-file additions/deletions for the selected commit.
         let changed_diffstat: Option<Vec<FileDiffStat>> =
             selected.and_then(|i| self.diffstat_cache.get(&i).cloned());
+        let wip_diffstat = self.wip_diffstat;
         // W2-INSPECTOR: badges for the selected commit row and tree-view toggle state.
         let selected_badges: Vec<commit_list::RefBadge> = selected
             .and_then(|i| self.active_view.rows.get(i))
@@ -1079,6 +1080,7 @@ impl Render for KagiApp {
                     commit_input.clone(),
                     commit_template_mode,
                     commit_template_inputs.clone(),
+                    wip_diffstat,
                     cx,
                 ))
             })
@@ -1939,6 +1941,7 @@ impl KagiApp {
         commit_input: Option<Entity<InputState>>,
         commit_template_mode: bool,
         commit_template_inputs: Option<[Entity<InputState>; 6]>,
+        wip_diffstat: Option<WipDiffStat>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // W11-AVATAR: snapshot the resolved avatar images so the inspector can
@@ -2141,6 +2144,7 @@ impl KagiApp {
                                 .flex_row()
                                 .items_center()
                                 .justify_start()
+                                .gap_1()
                                 .child(
                                     div()
                                         .px_1()
@@ -2194,15 +2198,28 @@ impl KagiApp {
                                 .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
                         )
                         // Summary area: change counts, styled like a row message.
+                        // The +N/-M diffstat is pushed to the right end of the row.
                         .child({
                             let total = self.active_view.status_summary.staged
                                 + self.active_view.status_summary.unstaged;
                             div()
                                 .flex_1()
-                                .text_color(rgb(theme().text_muted))
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_2()
                                 .overflow_hidden()
-                                .truncate()
-                                .child(SharedString::from(i18n::wip_row_note(total)))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .text_color(rgb(theme().text_muted))
+                                        .overflow_hidden()
+                                        .truncate()
+                                        .child(SharedString::from(i18n::wip_row_note(total))),
+                                )
+                                .when_some(wip_diffstat, |el, stat| {
+                                    el.child(render_wip_diffstat(stat))
+                                })
                         }),
                 )
             })
@@ -2230,6 +2247,10 @@ impl KagiApp {
                                 this.graph_compact,
                                 this.graph_scroll_x,
                                 &this.active_view.stash_graph_lanes,
+                                this.active_view
+                                    .branch_solo
+                                    .as_ref()
+                                    .map(|solo| &solo.visible_commits),
                                 cx,
                             )
                         }),
@@ -3009,6 +3030,7 @@ fn render_rows(
     graph_compact: bool,
     graph_scroll_x: f32,
     stash_lanes: &[usize],
+    solo_visible: Option<&HashSet<CommitId>>,
     cx: &mut Context<KagiApp>,
 ) -> Vec<impl IntoElement> {
     let rh = row_height(graph_compact);
@@ -3018,6 +3040,7 @@ fn render_rows(
         .map(|(ix, row)| {
             let row = row.clone();
             let is_selected = selected == Some(ix);
+            let is_dimmed = solo_visible.is_some_and(|visible| !visible.contains(&row.id));
 
             // Selected row gets a prominent surface highlight;
             // even/odd stripes apply otherwise.
@@ -3096,12 +3119,14 @@ fn render_rows(
                 .bg(rgb(row_bg))
                 .on_click(click_handler)
                 .on_mouse_down(MouseButton::Right, context_click_handler)
+                .when(is_dimmed, |el| el.opacity(0.32))
                 // ── Badges column: user-resizable width (T030) ──
                 // T-DNDMERGE-001: thread `cx` so each `BadgeKind::Branch` chip
                 // can be made draggable and the HeadBranch chip a drop target.
                 // Reborrow `cx` (the `.map()` closure already mutably borrows it
                 // for `cx.listener(...)` above) per row.
                 .child(render_badges_column(
+                    &row.id,
                     &row.badges,
                     badge_col_w,
                     connector_color,
@@ -4273,11 +4298,33 @@ fn badge_priority(kind: &BadgeKind) -> u8 {
     }
 }
 
+fn render_wip_diffstat(stat: WipDiffStat) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .flex_shrink_0()
+        .text_sm()
+        .font_weight(gpui::FontWeight::BOLD)
+        .child(
+            div()
+                .text_color(rgb(theme().change_added))
+                .child(SharedString::from(format!("+{}", stat.additions))),
+        )
+        .child(
+            div()
+                .text_color(rgb(theme().change_deleted))
+                .child(SharedString::from(format!("-{}", stat.deletions))),
+        )
+}
+
 /// Render the badges column: user-resizable width (T030), **left-aligned**
 /// (user request), `overflow_hidden`.  An empty badges list still occupies
 /// the full width so that all rows share the same graph start position
 /// (GitKraken layout, T021).  `badge_col_w` is the current column width.
 fn render_badges_column(
+    row_id: &CommitId,
     badges: &[commit_list::RefBadge],
     badge_col_w: f32,
     // When `Some`, draw a horizontal connector line filling the space between
@@ -4312,6 +4359,7 @@ fn render_badges_column(
 
     // Badges in priority order: primary (HEAD/branch) leftmost.
     for (i, badge) in shown.iter().enumerate() {
+        let target = row_id.clone();
         let color = match badge.kind {
             BadgeKind::HeadBranch => theme().color_head,
             BadgeKind::Branch => theme().color_branch,
@@ -4388,6 +4436,33 @@ fn render_badges_column(
                 .on_drop::<BranchDrag>(drop_handler)
             }
             BadgeKind::Tag => chip,
+        };
+        let chip = if let Some(branch_name) = context_branch_name(badge) {
+            let badge_kind = badge.kind.clone();
+            chip.on_mouse_down(
+                MouseButton::Right,
+                cx.listener(
+                    move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
+                        match badge_kind {
+                            BadgeKind::HeadBranch | BadgeKind::Branch => {
+                                this.open_local_branch_menu(branch_name.clone(), event.position);
+                            }
+                            BadgeKind::Remote => {
+                                this.open_remote_branch_menu(
+                                    branch_name.clone(),
+                                    target.clone(),
+                                    event.position,
+                                );
+                            }
+                            BadgeKind::Tag => {}
+                        }
+                        cx.stop_propagation();
+                        cx.notify();
+                    },
+                ),
+            )
+        } else {
+            chip
         };
         inner = inner.child(chip);
 
@@ -4688,7 +4763,7 @@ fn render_unstaged_flat_row(
                 theme().color_success,
                 cx,
             )
-            .small()
+            .xsmall()
             .ml_2()
             .flex_shrink_0()
             .on_click(stage_click),
@@ -4817,7 +4892,7 @@ fn render_unstaged_tree_row(
                 file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
                 file_row = file_row.child(
                     KagiButton::accent(("cp-us-stage-btn", fi), "Stage", theme().color_success, cx)
-                        .small()
+                        .xsmall()
                         .ml_2()
                         .flex_shrink_0()
                         .on_click(stage_click),
@@ -4916,7 +4991,7 @@ fn render_staged_flat_row(
                     theme().color_warning,
                     cx,
                 )
-                .small()
+                .xsmall()
                 .ml_2()
                 .flex_shrink_0()
                 .on_click(unstage_click),
@@ -5019,7 +5094,7 @@ fn render_staged_tree_row(
                             theme().color_warning,
                             cx,
                         )
-                        .small()
+                        .xsmall()
                         .ml_2()
                         .flex_shrink_0()
                         .on_click(unstage_click),

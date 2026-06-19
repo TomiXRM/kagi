@@ -97,6 +97,34 @@ fn draggable_branch_name(badge: &commit_list::RefBadge) -> Option<String> {
     }
 }
 
+/// Extract a branch ref name from a graph badge for context-menu actions.
+fn context_branch_name(badge: &commit_list::RefBadge) -> Option<String> {
+    match badge.kind {
+        BadgeKind::HeadBranch => Some(badge.label.trim_end_matches(" ✓").trim_end().to_string()),
+        BadgeKind::Branch | BadgeKind::Remote => Some(badge.label.to_string()),
+        BadgeKind::Tag => None,
+    }
+}
+
+fn collect_history_commits(
+    target: &CommitId,
+    parents_by_id: &HashMap<CommitId, Vec<CommitId>>,
+) -> HashSet<CommitId> {
+    let mut visible = HashSet::new();
+    let mut stack = vec![target.clone()];
+
+    while let Some(id) = stack.pop() {
+        if !visible.insert(id.clone()) {
+            continue;
+        }
+        if let Some(parents) = parents_by_id.get(&id) {
+            stack.extend(parents.iter().cloned());
+        }
+    }
+
+    visible
+}
+
 /// Pure validation for [`KagiApp::start_merge_from_drag`] (ADR-0079 layer 2),
 /// extracted so the rejection rules can be unit-tested without a `Window`/`cx`.
 ///
@@ -747,6 +775,8 @@ pub struct KagiApp {
     /// keyed by row index. Computed lazily alongside `diff_cache` and consumed
     /// by the Inspector changed-files list (truncated set only).
     pub diffstat_cache: HashMap<usize, Vec<FileDiffStat>>,
+    /// Aggregated staged + unstaged additions/deletions for the synthetic WIP row.
+    pub wip_diffstat: Option<WipDiffStat>,
     /// T-UI-003: When `Some`, the main pane shows this diff (full-width) instead
     /// of the commit graph list.  Cleared when `selected` changes or on reload.
     pub main_diff: Option<MainDiffView>,
@@ -1142,6 +1172,19 @@ pub struct RemoteRepoView {
     pub root: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BranchSolo {
+    pub name: String,
+    pub target: CommitId,
+    pub visible_commits: HashSet<CommitId>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WipDiffStat {
+    pub additions: usize,
+    pub deletions: usize,
+}
+
 #[derive(Clone, Default)]
 pub struct TabViewState {
     pub header: SharedString,
@@ -1160,6 +1203,7 @@ pub struct TabViewState {
     pub tags: Vec<Tag>,
     pub branch_upstream_info: HashMap<String, UpstreamInfo>,
     pub worktrees: Vec<Worktree>,
+    pub branch_solo: Option<BranchSolo>,
 }
 
 /// W6-TABSPEED: build the pure [`TabViewState`] from a snapshot.
@@ -1291,6 +1335,7 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
         tags,
         branch_upstream_info,
         worktrees: snap.worktrees.clone(),
+        branch_solo: None,
     }
 }
 
@@ -1317,6 +1362,7 @@ impl KagiApp {
             diff_cache: HashMap::new(),
             remote_diff_inflight: std::collections::HashSet::new(),
             diffstat_cache: HashMap::new(),
+            wip_diffstat: None,
             main_diff: None,
             compare_view: None,
             main_diff_scroll_handle: UniformListScrollHandle::new(),
@@ -1439,6 +1485,7 @@ impl KagiApp {
             diff_cache: HashMap::new(),
             remote_diff_inflight: std::collections::HashSet::new(),
             diffstat_cache: HashMap::new(),
+            wip_diffstat: None,
             main_diff: None,
             compare_view: None,
             main_diff_scroll_handle: UniformListScrollHandle::new(),
@@ -1572,6 +1619,7 @@ impl KagiApp {
                 return;
             }
         };
+        let wip_diffstat = Self::wip_diffstat_from_backend(&repo);
 
         // Derive repo name from path.
         let repo_name = repo_path
@@ -1589,6 +1637,7 @@ impl KagiApp {
         self.diff_cache = HashMap::new();
         self.remote_diff_inflight.clear();
         self.diffstat_cache = HashMap::new();
+        self.wip_diffstat = Some(wip_diffstat);
         self.main_diff = None;
         self.compare_view = None;
         // ADR-0089: drop any open File History view; reload() has no `cx` to
@@ -1759,17 +1808,22 @@ impl KagiApp {
         };
         let bg_path = repo_path.clone();
         let task = cx.background_spawn(async move {
-            kagi::git::Backend::open(&bg_path)
-                .ok()
-                .and_then(|b| b.working_tree_status().ok())
+            let backend = kagi::git::Backend::open(&bg_path).ok()?;
+            let status = backend.working_tree_status().ok()?;
+            let wip_diffstat = KagiApp::wip_diffstat_from_backend(&backend);
+            Some((status, wip_diffstat))
         });
         cx.spawn(async move |this, acx| {
-            let new_status = task.await;
+            let refreshed = task.await;
             let _ = this.update(acx, |app, cx| {
-                let Some(new_status) = new_status else {
+                let Some((new_status, wip_diffstat)) = refreshed else {
                     return;
                 };
                 if app.last_working_status.as_ref() == Some(&new_status) {
+                    if app.wip_diffstat != Some(wip_diffstat) {
+                        app.wip_diffstat = Some(wip_diffstat);
+                        cx.notify();
+                    }
                     return; // working-tree status unchanged → nothing to do.
                 }
                 klog!("watcher: working-tree changed — refreshing WIP");
@@ -1782,6 +1836,7 @@ impl KagiApp {
                 app.active_view.status_summary.unstaged = new_status.unstaged.len();
                 app.active_view.is_dirty = new_status.is_dirty();
                 app.last_working_status = Some(new_status);
+                app.wip_diffstat = Some(wip_diffstat);
                 // Refresh the open commit panel's lists in place (keeps it open).
                 if app.commit_panel.is_some() {
                     if let Some(rp) = app.repo_path.clone() {
@@ -3810,6 +3865,29 @@ impl KagiApp {
         repo.commit_diffstat(&id).ok()
     }
 
+    fn wip_diffstat_from_backend(repo: &kagi::git::Backend) -> WipDiffStat {
+        let mut out = WipDiffStat::default();
+        for stat in repo.staged_diffstat().unwrap_or_default() {
+            out.additions += stat.additions;
+            out.deletions += stat.deletions;
+        }
+        for stat in repo.unstaged_diffstat().unwrap_or_default() {
+            out.additions += stat.additions;
+            out.deletions += stat.deletions;
+        }
+        out
+    }
+
+    pub fn refresh_wip_diffstat(&mut self) {
+        let Some(repo_path) = self.repo_path.as_ref() else {
+            self.wip_diffstat = None;
+            return;
+        };
+        self.wip_diffstat = kagi::git::Backend::open(repo_path)
+            .ok()
+            .map(|repo| Self::wip_diffstat_from_backend(&repo));
+    }
+
     pub fn close_compare_view(&mut self) {
         self.compare_view = None;
         self.main_diff = None;
@@ -4224,7 +4302,46 @@ impl KagiApp {
             detached_head: self.active_view.status_summary.is_detached,
             busy: self.busy_op.is_some(),
             current_branch,
+            is_soloed: self
+                .active_view
+                .branch_solo
+                .as_ref()
+                .is_some_and(|solo| solo.name == state.name && solo.target == state.target),
         }
+    }
+
+    fn branch_history_commits(&self, target: &CommitId) -> HashSet<CommitId> {
+        let parents_by_id: HashMap<CommitId, Vec<CommitId>> = self
+            .active_view
+            .rows
+            .iter()
+            .map(|row| (row.id.clone(), row.parents.clone()))
+            .collect();
+        collect_history_commits(target, &parents_by_id)
+    }
+
+    pub fn toggle_branch_solo(&mut self, name: String, target: CommitId) {
+        let already_soloed = self
+            .active_view
+            .branch_solo
+            .as_ref()
+            .is_some_and(|solo| solo.name == name && solo.target == target);
+
+        if already_soloed {
+            self.active_view.branch_solo = None;
+            self.status_footer = FooterStatus::Idle(SharedString::from("Solo off"));
+            self.push_toast(ToastKind::Info, "Solo off");
+            return;
+        }
+
+        let visible_commits = self.branch_history_commits(&target);
+        self.active_view.branch_solo = Some(BranchSolo {
+            name: name.clone(),
+            target,
+            visible_commits,
+        });
+        self.status_footer = FooterStatus::Idle(SharedString::from(format!("Solo: {}", name)));
+        self.push_toast(ToastKind::Info, format!("Solo: {}", name));
     }
 
     pub fn dispatch_branch_action(
@@ -4253,6 +4370,9 @@ impl KagiApp {
             }
             BranchAction::RevealHead => {
                 self.jump_to_commit(&state.target);
+            }
+            BranchAction::ToggleSolo => {
+                self.toggle_branch_solo(state.name, state.target);
             }
             BranchAction::Checkout => {
                 if matches!(state.kind, BranchKind::Local) {
@@ -6123,8 +6243,10 @@ mod drag_merge_validation_tests {
 // ── T-DNDMERGE-001: graph ref-badge → drag payload name extraction ──
 #[cfg(test)]
 mod draggable_branch_name_tests {
-    use super::draggable_branch_name;
+    use super::{collect_history_commits, context_branch_name, draggable_branch_name};
     use crate::ui::commit_list::{BadgeKind, RefBadge};
+    use kagi::git::CommitId;
+    use std::collections::{HashMap, HashSet};
 
     fn badge(kind: BadgeKind, label: &str) -> RefBadge {
         RefBadge {
@@ -6168,5 +6290,39 @@ mod draggable_branch_name_tests {
             draggable_branch_name(&badge(BadgeKind::Tag, "v0.1.0")),
             None
         );
+    }
+
+    #[test]
+    fn context_menu_branch_names_include_head_and_remote_refs() {
+        assert_eq!(
+            context_branch_name(&badge(BadgeKind::HeadBranch, "main ✓")),
+            Some("main".to_string())
+        );
+        assert_eq!(
+            context_branch_name(&badge(BadgeKind::Branch, "feature")),
+            Some("feature".to_string())
+        );
+        assert_eq!(
+            context_branch_name(&badge(BadgeKind::Remote, "origin/feature")),
+            Some("origin/feature".to_string())
+        );
+        assert_eq!(context_branch_name(&badge(BadgeKind::Tag, "v0.1.0")), None);
+    }
+
+    #[test]
+    fn history_collection_follows_all_merge_parents() {
+        let tip = CommitId("m".to_string());
+        let a = CommitId("a".to_string());
+        let b = CommitId("b".to_string());
+        let root = CommitId("root".to_string());
+        let mut parents = HashMap::new();
+        parents.insert(tip.clone(), vec![a.clone(), b.clone()]);
+        parents.insert(a.clone(), vec![root.clone()]);
+        parents.insert(b.clone(), vec![root.clone()]);
+        parents.insert(root.clone(), vec![]);
+
+        let actual = collect_history_commits(&tip, &parents);
+        let expected = HashSet::from([tip, a, b, root]);
+        assert_eq!(actual, expected);
     }
 }

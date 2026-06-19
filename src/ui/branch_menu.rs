@@ -37,6 +37,7 @@ pub enum BranchAction {
     Checkout,
     OpenWorktreeFromBranch,
     RevealHead,
+    ToggleSolo,
     Pull,
     PullFfOnly,
     Push,
@@ -80,6 +81,7 @@ pub struct BranchMenuContext {
     pub detached_head: bool,
     pub busy: bool,
     pub current_branch: Option<String>,
+    pub is_soloed: bool,
 }
 
 pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<BranchAction>> {
@@ -121,6 +123,12 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
                 item(
                     BranchAction::RevealHead,
                     "Reveal branch HEAD in graph",
+                    ItemState::Enabled,
+                    false,
+                ),
+                item(
+                    BranchAction::ToggleSolo,
+                    if ctx.is_soloed { "Exit Solo" } else { "Solo" },
                     ItemState::Enabled,
                     false,
                 ),
@@ -619,6 +627,7 @@ mod tests {
             detached_head: false,
             busy: false,
             current_branch: Some("main".to_string()),
+            is_soloed: false,
         }
     }
 
@@ -671,6 +680,7 @@ mod tests {
         assert_enabled(&groups, BranchAction::SetUpstream);
         assert_enabled(&groups, BranchAction::RenameBranch);
         assert_enabled(&groups, BranchAction::RevealHead);
+        assert_enabled(&groups, BranchAction::ToggleSolo);
         assert_enabled(&groups, BranchAction::CreateBranchFromHere);
         assert_enabled(&groups, BranchAction::DeleteBranch);
         assert_enabled(&groups, BranchAction::CopyBranchName);
@@ -744,8 +754,26 @@ mod tests {
         assert_disabled_contains(&groups, BranchAction::RenameBranch, "operation");
         assert_disabled_contains(&groups, BranchAction::DeleteBranch, "operation");
         assert_enabled(&groups, BranchAction::RevealHead);
+        assert_enabled(&groups, BranchAction::ToggleSolo);
         assert_enabled(&groups, BranchAction::CopyBranchName);
         assert_enabled(&groups, BranchAction::CopyHeadSha);
+    }
+
+    #[test]
+    fn solo_item_toggles_label_when_active() {
+        let groups = branch_context_menu_items(&ctx());
+        assert_eq!(
+            item_for(&groups, BranchAction::ToggleSolo).label.as_ref(),
+            "Solo"
+        );
+
+        let mut c = ctx();
+        c.is_soloed = true;
+        let groups = branch_context_menu_items(&c);
+        assert_eq!(
+            item_for(&groups, BranchAction::ToggleSolo).label.as_ref(),
+            "Exit Solo"
+        );
     }
 
     #[test]

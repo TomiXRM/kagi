@@ -133,6 +133,7 @@ fn main() {
     let mut app_state = KagiApp::from_snapshot(&info.name, &snap);
     // T011: store repo path so the UI can fetch changed files on-demand.
     app_state.repo_path = Some(repo_path.clone());
+    app_state.refresh_wip_diffstat();
 
     // W4-TABS / ADR-0027: the CLI argument becomes the initial tab.
     app_state.tabs.push(ui::tabs::RepoTab {

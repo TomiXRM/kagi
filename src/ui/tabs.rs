@@ -172,6 +172,7 @@ impl KagiApp {
             self.status_footer =
                 FooterStatus::Busy(SharedString::from(i18n::loading_fmt(&tab.name)));
         }
+        self.refresh_wip_diffstat();
 
         // Re-arm the watcher for the new repo and repaint immediately so the
         // instant-apply / loading placeholder is visible this frame.
@@ -294,6 +295,7 @@ impl KagiApp {
         self.selected = None;
         self.diff_cache.clear();
         self.remote_diff_inflight.clear();
+        self.wip_diffstat = None;
         self.main_diff = None;
         self.clear_plan_modal();
         self.clear_pull_modal();
@@ -354,6 +356,7 @@ impl KagiApp {
                         let rows = view.rows.len();
                         app.tab_cache.insert(path.clone(), view.clone());
                         app.apply_tab_view(view);
+                        app.refresh_wip_diffstat();
                         app.loading_tab = None;
                         if matches!(app.status_footer, FooterStatus::Busy(_)) {
                             app.status_footer =
@@ -464,6 +467,8 @@ impl KagiApp {
         self.active_view.branch_targets = blank.active_view.branch_targets;
         self.active_view.commit_row_index = blank.active_view.commit_row_index;
         self.active_view.branch_upstream_info = blank.active_view.branch_upstream_info;
+        self.active_view.branch_solo = blank.active_view.branch_solo;
+        self.wip_diffstat = None;
         self.active_view.status_summary = blank.active_view.status_summary;
         self.active_view.toolbar_state = blank.active_view.toolbar_state;
         self.clear_plan_modal();

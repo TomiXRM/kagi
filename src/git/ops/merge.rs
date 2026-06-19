@@ -49,6 +49,31 @@ pub fn plan_merge_branch(
         ));
     }
 
+    // ADR-0105: dirty tracked working tree BLOCKS merge (mirrors cherry-pick /
+    // revert). Merge writes conflict markers into the working files when a real
+    // conflict occurs, which interleaves those markers with the user's
+    // uncommitted edits — `git merge --abort` would then discard both. Untracked
+    // files stay a warning (they don't participate in the merge).
+    if !status.staged.is_empty() || !status.unstaged.is_empty() {
+        let mut parts = Vec::new();
+        if !status.staged.is_empty() {
+            parts.push(format!("{} staged", status.staged.len()));
+        }
+        if !status.unstaged.is_empty() {
+            parts.push(format!("{} modified", status.unstaged.len()));
+        }
+        blockers.push(format!(
+            "Working tree has {} — stash or commit changes before merging.",
+            parts.join(", ")
+        ));
+        // The dirty-WT warning is now redundant with the blocker; drop it so the
+        // plan modal shows one clear message. Untracked-only warning survives.
+        warnings.retain(|w| {
+            !w.to_lowercase().contains("working tree has")
+                && !w.to_lowercase().contains("suggested command: git stash")
+        });
+    }
+
     let target_commit = resolve_branch_commit(repo, target)?;
     let target_oid = target_commit.id();
     if !current_branch.is_empty() && target == current_branch {

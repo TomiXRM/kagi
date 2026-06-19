@@ -598,6 +598,7 @@ impl KagiApp {
                 if let Some(panel) = self.commit_panel.as_mut() {
                     panel.reload_status(&repo_path);
                 }
+                self.refresh_wip_diffstat();
             }
             Err(e) => {
                 self.status_footer =
@@ -629,6 +630,7 @@ impl KagiApp {
                 if let Some(panel) = self.commit_panel.as_mut() {
                     panel.reload_status(&repo_path);
                 }
+                self.refresh_wip_diffstat();
             }
             Err(e) => {
                 self.status_footer =
@@ -670,6 +672,7 @@ impl KagiApp {
                 panel.staged.len()
             );
         }
+        self.refresh_wip_diffstat();
     }
 
     /// Unstage a single file in the commit panel.
@@ -704,6 +707,7 @@ impl KagiApp {
                 panel.staged.len()
             );
         }
+        self.refresh_wip_diffstat();
     }
 
     /// T-UI-003: Select a file in the commit panel and open it in the main diff pane.

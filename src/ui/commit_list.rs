@@ -128,6 +128,8 @@ pub fn build_badge_map(snap: &RepoSnapshot) -> HashMap<CommitId, Vec<RefBadge>> 
 /// them without re-allocating.
 #[derive(Clone)]
 pub struct CommitRow {
+    /// Full commit id for row-local features (menus, filtering, focus modes).
+    pub id: CommitId,
     /// Short (8-hex) commit id. Retained for Detail Panel / oplog (T021: not rendered in row).
     #[allow(dead_code)]
     pub short_id: SharedString,
@@ -148,6 +150,8 @@ pub struct CommitRow {
     pub edges: Vec<GraphEdge>,
     /// Total lane count across the entire graph (needed to compute graph width).
     pub lane_count: usize,
+    /// Parent commit ids, preserving Git's first-parent ordering.
+    pub parents: Vec<CommitId>,
     // ── Visual flags (W2-GRAPH) ───────────────────────────────
     /// Whether this commit is the current HEAD.
     pub is_head: bool,
@@ -337,6 +341,7 @@ fn commit_to_row(
     let badges = badge_map.get(&c.id).cloned().unwrap_or_default();
 
     CommitRow {
+        id: c.id.clone(),
         short_id,
         summary,
         author,
@@ -346,6 +351,7 @@ fn commit_to_row(
         lane,
         edges,
         lane_count,
+        parents: c.parents.clone(),
         is_head,
         is_merge,
     }

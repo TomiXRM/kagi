@@ -316,6 +316,7 @@ impl KagiApp {
     fn reset_per_repo_ui(&mut self) {
         self.selected = None;
         self.diff_cache.clear();
+        self.file_diff_cache.clear();
         self.remote_diff_inflight.clear();
         self.wip_diffstat = None;
         self.main_diff = None;
@@ -479,6 +480,7 @@ impl KagiApp {
         self.active_view.details = blank.active_view.details;
         self.selected = None;
         self.diff_cache.clear();
+        self.file_diff_cache.clear();
         self.remote_diff_inflight.clear();
         self.main_diff = None;
         self.active_view.branches = blank.active_view.branches;

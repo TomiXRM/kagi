@@ -768,6 +768,12 @@ pub struct KagiApp {
     /// Cache of changed-files results keyed by row index.
     /// `None` value means the diff was attempted but failed (show unavailable).
     pub diff_cache: HashMap<usize, Option<Vec<FileStatus>>>,
+    /// Per-(commit-row, file-index) cached `FileDiff` content (T-REARCH-031).
+    /// `diff_cache` above only holds the file *list*; without this content
+    /// cache, clicking between two commits to compare the same file recomputes
+    /// the full git2 tree-diff + hunk extraction on every toggle. The key is
+    /// `(selected_row, file_index)`; invalidated together with `diff_cache`.
+    pub file_diff_cache: HashMap<(usize, usize), std::sync::Arc<FileDiff>>,
     /// Row indices whose remote changed-files load is in flight over SSH
     /// (ADR-0089 Phase 2c), so the render trigger spawns it only once.
     pub remote_diff_inflight: std::collections::HashSet<usize>,
@@ -1372,6 +1378,7 @@ impl KagiApp {
             error: None,
             repo_path: None,
             diff_cache: HashMap::new(),
+            file_diff_cache: HashMap::new(),
             remote_diff_inflight: std::collections::HashSet::new(),
             diffstat_cache: HashMap::new(),
             wip_diffstat: None,
@@ -1495,6 +1502,7 @@ impl KagiApp {
             error: Some(SharedString::from(message.into())),
             repo_path: None,
             diff_cache: HashMap::new(),
+            file_diff_cache: HashMap::new(),
             remote_diff_inflight: std::collections::HashSet::new(),
             diffstat_cache: HashMap::new(),
             wip_diffstat: None,
@@ -1647,6 +1655,7 @@ impl KagiApp {
         // Per-repo transient state reset (unchanged behaviour).
         self.selected = None;
         self.diff_cache = HashMap::new();
+        self.file_diff_cache = HashMap::new();
         self.remote_diff_inflight.clear();
         self.diffstat_cache = HashMap::new();
         self.wip_diffstat = Some(wip_diffstat);
@@ -1838,6 +1847,7 @@ impl KagiApp {
                 let view = build_tab_view(&snap, &repo_name);
                 app.apply_tab_view(view);
                 app.diff_cache = HashMap::new();
+                app.file_diff_cache = HashMap::new();
                 app.remote_diff_inflight.clear();
                 app.diffstat_cache = HashMap::new();
                 app.wip_diffstat = Some(wip);
@@ -3570,13 +3580,26 @@ impl KagiApp {
         let id = CommitId(detail.full_sha.as_ref().to_string());
         let path = file_status.path.clone();
 
+        // T-REARCH-031: per-(row, file) content cache. Clicking between two
+        // commits to compare the same file previously recomputed the full git2
+        // tree-diff + hunk extraction on every toggle. Hit the cache first.
+        if let Some(cached) = self.file_diff_cache.get(&(selected, file_index)).cloned() {
+            self.set_commit_main_diff(&cached, &path, selected, file_index);
+            return;
+        }
+
         let repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(_) => return,
         };
 
         match repo.commit_file_diff(&id, &path) {
-            Ok(file_diff) => self.set_commit_main_diff(&file_diff, &path, selected, file_index),
+            Ok(file_diff) => {
+                let arc = std::sync::Arc::new(file_diff);
+                self.file_diff_cache
+                    .insert((selected, file_index), arc.clone());
+                self.set_commit_main_diff(&arc, &path, selected, file_index);
+            }
             Err(e) => {
                 klog!("diff error: {}", e);
             }

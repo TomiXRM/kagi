@@ -1046,6 +1046,135 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// Build a "switch to latest" plan (ADR-0101) and open the confirmation modal.
+    pub fn open_switch_to_latest_modal(&mut self, branch_name: String, remote_branch: String) {
+        if self.busy_op.is_some() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo = match kagi::git::Backend::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "switch-to-latest: repo open error: {}",
+                    e
+                )));
+                return;
+            }
+        };
+        match repo.plan_switch_to_latest(&branch_name, &remote_branch) {
+            Ok(plan) => {
+                klog!(
+                    "plan: switch-to-latest {} <- {} blockers={} warnings={}",
+                    branch_name,
+                    remote_branch,
+                    plan.blockers.len(),
+                    plan.warnings.len()
+                );
+                self.set_switch_to_latest_modal(SwitchToLatestPlanModal {
+                    branch_name,
+                    remote_branch,
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "switch-to-latest plan error: {}",
+                    e
+                )));
+            }
+        }
+    }
+
+    pub fn cancel_switch_to_latest_modal(&mut self) {
+        self.clear_switch_to_latest_modal();
+    }
+
+    pub fn start_switch_to_latest(&mut self, cx: &mut Context<Self>) {
+        if self.busy_op.is_some() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
+        let modal = match self.switch_to_latest_modal().cloned() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        if !modal.plan.blockers.is_empty() {
+            klog!("refused: switch-to-latest plan has blockers, not executing");
+            self.record_op(
+                "switch-to-latest",
+                modal.plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
+                &repo_path,
+            );
+            self.clear_switch_to_latest_modal();
+            cx.notify();
+            return;
+        }
+
+        self.busy_op = Some("switch");
+        self.clear_switch_to_latest_modal();
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusySwitchToLatest.t()));
+        klog!("async: switch-to-latest started");
+
+        let plan = modal.plan.clone();
+        let branch_name = modal.branch_name.clone();
+        let remote_branch = modal.remote_branch.clone();
+        let bg_path = repo_path.clone();
+        let task = cx.background_spawn(async move {
+            switch_to_latest_blocking(&bg_path, &plan, &branch_name, &remote_branch)
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok((summary, after)) => {
+                        klog!("async: switch-to-latest finished — {}", summary);
+                        app.record_op(
+                            "switch-to-latest",
+                            modal.plan.current.clone(),
+                            OpOutcome::Success { after },
+                            &repo_path,
+                        );
+                        app.reload();
+                    }
+                    Err(err_msg) => {
+                        klog!("async: switch-to-latest failed — {}", err_msg);
+                        app.record_op(
+                            "switch-to-latest",
+                            modal.plan.current.clone(),
+                            OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
+                            &repo_path,
+                        );
+                        app.set_switch_to_latest_modal(SwitchToLatestPlanModal {
+                            branch_name: modal.branch_name.clone(),
+                            remote_branch: modal.remote_branch.clone(),
+                            plan: modal.plan.clone(),
+                            error: Some(SharedString::from(err_msg)),
+                        });
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     /// Build a delete-branch plan for `branch_name` and open the confirmation modal.
     pub fn open_delete_branch_modal(&mut self, branch_name: impl Into<String>) {
         let branch_name = branch_name.into();

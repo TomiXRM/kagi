@@ -35,6 +35,7 @@ pub struct BranchMenuState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BranchAction {
     Checkout,
+    SwitchToLatest,
     OpenWorktreeFromBranch,
     RevealHead,
     ToggleSolo,
@@ -112,6 +113,12 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
                     BranchAction::Checkout,
                     checkout_label,
                     checkout_state(ctx),
+                    false,
+                ),
+                item(
+                    BranchAction::SwitchToLatest,
+                    switch_to_latest_label(ctx),
+                    switch_to_latest_state(ctx),
                     false,
                 ),
                 item(
@@ -396,6 +403,34 @@ fn checkout_state(ctx: &BranchMenuContext) -> ItemState {
         disabled(format!("{}: {}", Msg::BcmCheckedOutElsewhere.t(), path))
     } else {
         ItemState::Enabled
+    }
+}
+
+fn switch_to_latest_state(ctx: &BranchMenuContext) -> ItemState {
+    if ctx.busy {
+        disabled(Msg::BcmBusy.t())
+    } else if matches!(ctx.conflict_mode, BranchConflictMode::Conflicted) {
+        disabled(Msg::BcmConflictMode.t())
+    } else if matches!(ctx.kind, BranchKind::Local) && !ctx.has_upstream {
+        disabled(Msg::BcmNoUpstream.t())
+    } else {
+        ItemState::Enabled
+    }
+}
+
+fn switch_to_latest_label(ctx: &BranchMenuContext) -> String {
+    let local_name = match ctx.kind {
+        BranchKind::Local => ctx.name.clone(),
+        BranchKind::Remote => ctx
+            .name
+            .split_once('/')
+            .map(|(_, name)| name.to_string())
+            .unwrap_or_else(|| ctx.name.clone()),
+    };
+    if matches!(ctx.kind, BranchKind::Local) && ctx.has_upstream && ctx.behind > 0 {
+        format!("Switch to latest {} ↓{}", local_name, ctx.behind)
+    } else {
+        format!("Switch to latest {}", local_name)
     }
 }
 

@@ -61,6 +61,12 @@ pub enum Operation {
         remote_branch: String,
         local_branch: String,
     },
+    /// ADR-0101: fetch the remote, switch to `branch_name`, and fast-forward it
+    /// to `remote_branch` when safe. Creates the local branch if missing.
+    SwitchToLatestBranch {
+        branch_name: String,
+        remote_branch: String,
+    },
     Revert {
         id: CommitId,
     },

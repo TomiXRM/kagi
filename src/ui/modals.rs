@@ -159,6 +159,15 @@ pub struct TrackingCheckoutPlanModal {
     pub error: Option<SharedString>,
 }
 
+/// State for "Switch to latest `<branch>`" (ADR-0101): fetch + switch + ff-only.
+#[derive(Clone)]
+pub struct SwitchToLatestPlanModal {
+    pub branch_name: String,
+    pub remote_branch: String,
+    pub plan: std::sync::Arc<OperationPlan>,
+    pub error: Option<SharedString>,
+}
+
 // ──────────────────────────────────────────────────────────────
 // CreateBranchModal — state for the create-branch overlay (T014)
 // ──────────────────────────────────────────────────────────────
@@ -1241,6 +1250,37 @@ pub(crate) fn render_tracking_checkout_modal(
         modal.plan,
         modal.error,
         "Checkout",
+        cancel_handler,
+        confirm_handler,
+        None,
+        cx,
+    )
+    .into_any_element()
+}
+
+/// Switch-to-latest confirmation overlay (ADR-0101).
+pub(crate) fn render_switch_to_latest_modal(
+    modal: SwitchToLatestPlanModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+        this.cancel_switch_to_latest_modal();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+        this.start_switch_to_latest(cx);
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    render_plan_modal_card(
+        modal.plan,
+        modal.error,
+        "Switch",
         cancel_handler,
         confirm_handler,
         None,
@@ -3722,6 +3762,7 @@ pub enum ActiveModal {
     RenameBranch(RenameBranchModal),
     Merge(MergePlanModal),
     TrackingCheckout(TrackingCheckoutPlanModal),
+    SwitchToLatest(SwitchToLatestPlanModal),
     CreateBranch(CreateBranchModal),
     CreateWorktree(CreateWorktreeModal),
     StashPush(StashPushModal),

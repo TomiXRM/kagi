@@ -11,8 +11,8 @@ use super::super::modals::{
     AmendPlanModal, BranchPlanModal, CheckoutPlanModal, CherryPickModal, ConflictContinuePlanModal,
     CreateBranchModal, CreateWorktreeModal, DeleteBranchModal, DiscardModal, HistoryPlanModal,
     MergePlanModal, PopPlanModal, PullPlanModal, PushPlanModal, RenameBranchModal, RevertModal,
-    SetUpstreamModal, StashApplyModal, StashDropModal, StashPushModal, TrackingCheckoutPlanModal,
-    UndoPlanModal,
+    SetUpstreamModal, StashApplyModal, StashDropModal, StashPushModal, SwitchToLatestPlanModal,
+    TrackingCheckoutPlanModal, UndoPlanModal,
 };
 use super::super::KagiApp;
 
@@ -423,6 +423,40 @@ impl KagiApp {
     pub fn take_tracking_checkout_modal(&mut self) -> Option<TrackingCheckoutPlanModal> {
         match self.active_modal.take() {
             Some(ActiveModal::TrackingCheckout(m)) => Some(m),
+            other => {
+                self.active_modal = other;
+                None
+            }
+        }
+    }
+    #[inline]
+    pub fn switch_to_latest_modal(&self) -> Option<&SwitchToLatestPlanModal> {
+        match &self.active_modal {
+            Some(ActiveModal::SwitchToLatest(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn switch_to_latest_modal_mut(&mut self) -> Option<&mut SwitchToLatestPlanModal> {
+        match &mut self.active_modal {
+            Some(ActiveModal::SwitchToLatest(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn set_switch_to_latest_modal(&mut self, m: SwitchToLatestPlanModal) {
+        self.active_modal = Some(ActiveModal::SwitchToLatest(m));
+    }
+    #[inline]
+    pub fn clear_switch_to_latest_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::SwitchToLatest(_))) {
+            self.active_modal = None;
+        }
+    }
+    #[inline]
+    pub fn take_switch_to_latest_modal(&mut self) -> Option<SwitchToLatestPlanModal> {
+        match self.active_modal.take() {
+            Some(ActiveModal::SwitchToLatest(m)) => Some(m),
             other => {
                 self.active_modal = other;
                 None

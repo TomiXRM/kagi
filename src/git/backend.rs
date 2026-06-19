@@ -275,6 +275,10 @@ impl Backend {
                 remote_branch,
                 local_branch,
             } => self.plan_checkout_tracking_branch(remote_branch, local_branch),
+            Operation::SwitchToLatestBranch {
+                branch_name,
+                remote_branch,
+            } => self.plan_switch_to_latest(branch_name, remote_branch),
             Operation::Revert { id } => self.plan_revert(id),
             Operation::Pull => self.plan_pull(),
             Operation::Push => self.plan_push(),
@@ -368,6 +372,14 @@ impl Backend {
             } => self
                 .execute_checkout_tracking_branch(remote_branch, local_branch)
                 .map(|()| OperationOutcome::Unit),
+            Operation::SwitchToLatestBranch {
+                branch_name,
+                remote_branch,
+            } => {
+                let plan = self.plan_switch_to_latest(branch_name, remote_branch)?;
+                self.execute_switch_to_latest(&plan, branch_name, remote_branch)
+                    .map(|()| OperationOutcome::Unit)
+            }
             Operation::Revert { id } => self.execute_revert(id).map(OperationOutcome::Commit),
             Operation::Pull => self.execute_pull().map(OperationOutcome::Pull),
             Operation::Push => self.execute_push().map(OperationOutcome::Push),
@@ -686,6 +698,23 @@ impl Backend {
         local_branch: &str,
     ) -> Result<(), GitError> {
         ops::execute_checkout_tracking_branch(&self.repo, remote_branch, local_branch)
+    }
+
+    pub fn plan_switch_to_latest(
+        &self,
+        branch_name: &str,
+        remote_branch: &str,
+    ) -> Result<OperationPlan, GitError> {
+        ops::plan_switch_to_latest(&self.repo, branch_name, remote_branch)
+    }
+
+    pub fn execute_switch_to_latest(
+        &self,
+        plan: &OperationPlan,
+        branch_name: &str,
+        remote_branch: &str,
+    ) -> Result<(), GitError> {
+        ops::execute_switch_to_latest(&self.repo, &self.path, plan, branch_name, remote_branch)
     }
 
     pub fn plan_revert(&self, id: &CommitId) -> Result<OperationPlan, GitError> {

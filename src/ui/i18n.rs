@@ -162,6 +162,7 @@ pub enum Msg {
 
     // ── Busy footers (op in flight) ─────────────────────────────────
     BusyCheckout,
+    BusySwitchToLatest,
     BusyPull,
     BusyPush,
     BusyStash,
@@ -447,6 +448,8 @@ impl Msg {
             // ── Busy footers ────────────────────────────────────────
             (En, BusyCheckout) => "checkout in progress…",
             (Ja, BusyCheckout) => "checkout 実行中…",
+            (En, BusySwitchToLatest) => "switching to latest…",
+            (Ja, BusySwitchToLatest) => "最新へ切り替え中…",
             (En, BusyPull) => "pull in progress…",
             (Ja, BusyPull) => "pull 実行中…",
             (En, BusyPush) => "push in progress…",

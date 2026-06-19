@@ -14,7 +14,7 @@ pub mod conflicts;
 mod diff;
 mod diffstat;
 pub mod drafts;
-mod history;
+mod file_history;
 mod log;
 pub mod message_gen;
 pub mod message_template;
@@ -55,7 +55,7 @@ pub use diffstat::{
 #[allow(unused_imports)]
 pub use drafts::{clear_draft, load_draft, save_draft, Draft};
 #[allow(unused_imports)]
-pub use history::{
+pub use file_history::{
     file_history, CommitSummary, FileChangeSummary, FileChangeType, FileHistory, FileHistoryEntry,
     FileHistoryEntryKind, FileHistoryRequest,
 };

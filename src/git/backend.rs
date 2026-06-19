@@ -5,7 +5,7 @@ use kagi_domain::history::HistoryEntry;
 use kagi_domain::operation::{Operation, OperationOutcome};
 
 use super::{
-    conflicts, diff, diffstat, history, message_gen, ops, resolution::ResolutionBuffer,
+    conflicts, diff, diffstat, file_history, message_gen, ops, resolution::ResolutionBuffer,
     resolve_head, snapshot, staging, status, AmendMode, AmendOutcome, BranchRenameValidation,
     CommitId, CommitPreview, DiscardOutcome, FetchOutcome, FileDiff, FileDiffStat, FileHistory,
     FileHistoryRequest, FileStatus, GitError, Head, MergeKind, OperationPlan, PullOutcome,
@@ -207,10 +207,10 @@ impl Backend {
 
     /// Collect the change history of a single file (ADR-0089).
     ///
-    /// Backed by the `git` CLI (`history::file_history`); does not use
+    /// Backed by the `git` CLI (`file_history::file_history`); does not use
     /// `self.repo`, but lives on [`Backend`] so the UI can call it uniformly.
     pub fn file_history(&self, req: &FileHistoryRequest) -> Result<FileHistory, GitError> {
-        history::file_history(req)
+        file_history::file_history(req)
     }
 
     pub fn commit_preview(&self) -> Result<CommitPreview, GitError> {

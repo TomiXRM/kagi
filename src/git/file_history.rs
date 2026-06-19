@@ -1,4 +1,11 @@
-//! File History data layer (ADR-0089).
+//! File History data layer (ADR-0089, ADR-0108).
+//!
+//! **Name note (ADR-0108):** this module was renamed from `history.rs` to
+//! `file_history.rs` to resolve a filename collision with
+//! `kagi_domain::history`, which is the *operation* history (undo/redo stack).
+//! This module is the *file* history — the per-path commit log. The two
+//! modules describe different concepts and previously shared a filename,
+//! making it unclear which `history::Foo` a caller meant.
 //!
 //! Collects the per-commit change history of a single file via the `git` CLI
 //! (`cli::run_git`), with optional rename-following (`git log --follow`) and an

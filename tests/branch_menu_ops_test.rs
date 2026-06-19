@@ -8,7 +8,8 @@ use tempfile::TempDir;
 
 use kagi::git::ops::{
     default_tracking_branch_name, execute_checkout_tracking_branch, execute_merge_into_conflict,
-    plan_checkout_tracking_branch, plan_merge_branch, MergeKind,
+    execute_switch_to_latest, plan_checkout_tracking_branch, plan_merge_branch,
+    plan_switch_to_latest, MergeKind,
 };
 use kagi::git::{
     detect_conflict_session, execute_conflict_abort, plan_conflict_abort, ResolutionBuffer,
@@ -292,6 +293,134 @@ fn checkout_tracking_branch_plan_and_execute_from_file_remote() {
     assert_eq!(
         branch.upstream().unwrap().name().unwrap(),
         Some("origin/remote-only")
+    );
+}
+
+// ── ADR-0101: Switch to latest <branch> ──────────────────────────────────
+
+/// Set up `repo` with a bare `origin` and a pushed `topic` branch at C1.
+/// Returns (repo_tmp, remote_tmp, remote_url). HEAD left on `main`.
+fn repo_with_pushed_topic() -> (TempDir, TempDir, String) {
+    let repo_tmp = TempDir::new().unwrap();
+    let remote_tmp = TempDir::new().unwrap();
+    let dir = repo_tmp.path();
+    let _ = init_repo(&repo_tmp);
+    let remote_url = format!("file://{}", remote_tmp.path().display());
+
+    git(remote_tmp.path(), &["init", "-q", "--bare", "."]);
+    git(dir, &["remote", "add", "origin", &remote_url]);
+    git(dir, &["push", "-q", "-u", "origin", "main"]);
+    git(dir, &["checkout", "-qb", "topic"]);
+    write_file(dir, "topic.txt", "c1\n");
+    git(dir, &["add", "topic.txt"]);
+    git(dir, &["commit", "-qm", "topic c1"]);
+    git(dir, &["push", "-q", "-u", "origin", "topic"]);
+    git(dir, &["checkout", "-q", "main"]);
+    (repo_tmp, remote_tmp, remote_url)
+}
+
+#[test]
+fn switch_to_latest_creates_local_branch_when_missing() {
+    let (repo_tmp, _remote_tmp, _url) = repo_with_pushed_topic();
+    let dir = repo_tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    git(dir, &["branch", "-D", "topic"]);
+
+    let plan = plan_switch_to_latest(&repo, "topic", "origin/topic").expect("plan");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+    assert!(
+        plan.predicted.head.contains("new"),
+        "expected create plan, got {}",
+        plan.predicted.head
+    );
+
+    execute_switch_to_latest(&repo, dir, &plan, "topic", "origin/topic").expect("execute");
+
+    let repo2 = Repository::open(dir).unwrap();
+    assert_eq!(repo2.head().unwrap().shorthand().unwrap(), "topic");
+    let branch = repo2
+        .find_branch("topic", BranchType::Local)
+        .expect("branch");
+    assert_eq!(
+        branch.upstream().unwrap().name().unwrap(),
+        Some("origin/topic")
+    );
+}
+
+#[test]
+fn switch_to_latest_fast_forwards_behind_branch() {
+    let (repo_tmp, remote_tmp, remote_url) = repo_with_pushed_topic();
+    let dir = repo_tmp.path();
+    let repo = Repository::open(dir).unwrap();
+
+    // A second clone advances origin/topic to C2 behind our back.
+    let clone_tmp = TempDir::new().unwrap();
+    let clone_dir = clone_tmp.path().join("b");
+    git(
+        clone_tmp.path(),
+        &["clone", "-q", &remote_url, clone_dir.to_str().unwrap()],
+    );
+    git(&clone_dir, &["config", "user.name", "Test"]);
+    git(&clone_dir, &["config", "user.email", "test@example.com"]);
+    git(&clone_dir, &["checkout", "-q", "topic"]);
+    write_file(&clone_dir, "topic.txt", "c2\n");
+    git(&clone_dir, &["add", "topic.txt"]);
+    git(&clone_dir, &["commit", "-qm", "topic c2"]);
+    git(&clone_dir, &["push", "-q", "origin", "topic"]);
+    let c2 = git_rev_parse(&clone_dir, "HEAD");
+
+    // Local topic is still at C1; execute fetches then fast-forwards to C2.
+    let plan = plan_switch_to_latest(&repo, "topic", "origin/topic").expect("plan");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+    execute_switch_to_latest(&repo, dir, &plan, "topic", "origin/topic").expect("execute");
+
+    let repo2 = Repository::open(dir).unwrap();
+    assert_eq!(repo2.head().unwrap().shorthand().unwrap(), "topic");
+    assert_eq!(
+        git_rev_parse(dir, "HEAD"),
+        c2,
+        "local topic should be at C2"
+    );
+    // Keep the remote dir alive until the end.
+    let _ = remote_tmp;
+}
+
+#[test]
+fn switch_to_latest_ahead_branch_is_switch_only_warning() {
+    let (repo_tmp, _remote_tmp, _url) = repo_with_pushed_topic();
+    let dir = repo_tmp.path();
+    let repo = Repository::open(dir).unwrap();
+
+    // Add a local-only commit on topic so it is ahead of origin/topic.
+    git(dir, &["checkout", "-q", "topic"]);
+    write_file(dir, "topic.txt", "local-ahead\n");
+    git(dir, &["add", "topic.txt"]);
+    git(dir, &["commit", "-qm", "local ahead"]);
+    git(dir, &["checkout", "-q", "main"]);
+
+    let plan = plan_switch_to_latest(&repo, "topic", "origin/topic").expect("plan");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+    assert!(
+        plan.warnings.iter().any(|w| w.contains("ahead")),
+        "expected an 'ahead' warning, got {:?}",
+        plan.warnings
+    );
+}
+
+#[test]
+fn switch_to_latest_dirty_working_tree_is_blocker() {
+    let (repo_tmp, _remote_tmp, _url) = repo_with_pushed_topic();
+    let dir = repo_tmp.path();
+    let repo = Repository::open(dir).unwrap();
+
+    // Dirty the working tree (tracked modification).
+    write_file(dir, "base.txt", "dirty\n");
+
+    let plan = plan_switch_to_latest(&repo, "topic", "origin/topic").expect("plan");
+    assert!(
+        plan.blockers.iter().any(|b| b.contains("stash or commit")),
+        "expected a dirty blocker, got {:?}",
+        plan.blockers
     );
 }
 

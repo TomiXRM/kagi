@@ -607,6 +607,7 @@ impl Render for KagiApp {
         let rename_branch_modal = self.rename_branch_modal().cloned();
         let merge_modal = self.merge_modal().cloned();
         let tracking_checkout_modal = self.tracking_checkout_modal().cloned();
+        let switch_to_latest_modal = self.switch_to_latest_modal().cloned();
         let create_branch_modal = self.create_branch_modal().cloned();
         let create_worktree_modal = self.create_worktree_modal().cloned();
         let remote_browse_modal = self.remote_browse_modal.clone();
@@ -1150,6 +1151,9 @@ impl Render for KagiApp {
             })
             .when_some(tracking_checkout_modal, |el, modal| {
                 el.child(render_tracking_checkout_modal(modal, cx))
+            })
+            .when_some(switch_to_latest_modal, |el, modal| {
+                el.child(render_switch_to_latest_modal(modal, cx))
             })
             // ── Create-branch modal overlay (above everything) ──
             .when_some(create_branch_modal, |el, modal| {

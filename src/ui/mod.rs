@@ -4381,6 +4381,30 @@ impl KagiApp {
                     self.open_tracking_checkout_modal(state.name);
                 }
             }
+            BranchAction::SwitchToLatest => {
+                let (branch_name, remote_branch) = if matches!(state.kind, BranchKind::Local) {
+                    let upstream = self
+                        .active_view
+                        .branch_upstream_info
+                        .get(&state.name)
+                        .map(|u| u.remote_branch.clone());
+                    (state.name.clone(), upstream)
+                } else {
+                    (
+                        default_tracking_branch_name(&state.name),
+                        Some(state.name.clone()),
+                    )
+                };
+                match remote_branch {
+                    Some(remote_branch) => {
+                        self.open_switch_to_latest_modal(branch_name, remote_branch);
+                    }
+                    None => {
+                        self.status_footer =
+                            FooterStatus::Idle(SharedString::from(Msg::BcmNoUpstream.t()));
+                    }
+                }
+            }
             BranchAction::CreateBranchFromHere => {
                 self.open_create_branch_modal(state.target, cx);
             }
@@ -4629,6 +4653,8 @@ impl KagiApp {
             self.start_set_upstream(cx);
         } else if self.tracking_checkout_modal().is_some() {
             self.start_tracking_checkout(cx);
+        } else if self.switch_to_latest_modal().is_some() {
+            self.start_switch_to_latest(cx);
         } else if self.merge_modal().is_some() {
             self.start_merge(cx);
         } else if self.branch_plan_modal().is_some() {
@@ -4693,6 +4719,8 @@ impl KagiApp {
             self.cancel_set_upstream_modal();
         } else if self.tracking_checkout_modal().is_some() {
             self.cancel_tracking_checkout_modal();
+        } else if self.switch_to_latest_modal().is_some() {
+            self.cancel_switch_to_latest_modal();
         } else if self.merge_modal().is_some() {
             self.cancel_merge_modal();
         } else if self.branch_plan_modal().is_some() {
@@ -5054,6 +5082,30 @@ fn checkout_tracking_blocking(
     let after = verify_after_snapshot(repo_path, plan);
     klog!("verified: checkout-tracking after = {}", after.head);
     Ok((format!("checkout {}", local_branch), after))
+}
+
+fn switch_to_latest_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    branch_name: &str,
+    remote_branch: &str,
+) -> Result<(String, StateSummary), String> {
+    let repo =
+        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+    repo.preflight_check(plan)
+        .map_err(|e| format!("Preflight failed: {}", e))?;
+
+    repo.execute_switch_to_latest(plan, branch_name, remote_branch)
+        .map_err(|e| format!("Switch to latest failed: {}", e))?;
+    klog!(
+        "executed: switch-to-latest {} <- {}",
+        branch_name,
+        remote_branch
+    );
+
+    let after = verify_after_snapshot(repo_path, plan);
+    klog!("verified: switch-to-latest after = {}", after.head);
+    Ok((format!("switch {}", branch_name), after))
 }
 
 /// Blocking part of cherry-pick (in-memory index merge → commit → safe

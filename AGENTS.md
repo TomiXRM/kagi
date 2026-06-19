@@ -117,6 +117,12 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 ## Verifying changes
 
 - `cargo build` and `cargo test --workspace` must stay green at every step.
+- **Before committing/pushing, run `cargo fmt --all`.** CI's `fmt + clippy` job is
+  advisory (non-blocking) but `cargo fmt --check` exits non-zero on any diff, which
+  turns the job red. Run `cargo fmt --check` to confirm clean. Also run
+  `cargo clippy --workspace` and don't add *new* warnings (pre-existing v0.2.0 debt
+  is tolerated; clippy has no `-D warnings`, so warnings alone won't fail CI, but
+  keep your own diff clean — annotate justified cases with `#[allow(...)]`).
 - The GUI cannot be exercised by subagents — UI-affecting changes need a human (or the
   primary session) to launch the app and eyeball it. Build + tests passing is necessary
   but not sufficient for UI behavior.

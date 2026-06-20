@@ -5,6 +5,7 @@
 //! module can access `KagiApp` privates so no visibility was widened.
 
 #![allow(clippy::too_many_arguments)]
+use crate::ui::blocking_ops::*;
 
 use crate::ui::*;
 

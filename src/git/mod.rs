@@ -27,6 +27,7 @@ mod snapshot;
 mod staging;
 mod status;
 mod trailers;
+pub mod worker;
 
 #[allow(unused_imports)]
 pub use backend::Backend;

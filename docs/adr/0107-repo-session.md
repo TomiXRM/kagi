@@ -1,9 +1,18 @@
 # ADR-0107: RepoSession — one Backend owner per repo tab
 
-- Status: Accepted
+- Status: **Accepted (Phase 3 foundation delivered; read-path migration ongoing)**
 - Date: 2026-06-20
 - Implements: `/docs/refactor-plan.md` Phase 2 Step 2.1
 - Prerequisite for: ADR-0073 worker thread; Phase 3 perf caching
+
+> **Status (Phase 3 start):** `RepoSession` (`Rc<Backend>` wrapper) is
+> introduced and wired into `KagiApp` (same lifecycle as `repo_path`). 11
+> read-path `Backend::open` sites in `ui/mod.rs` (diff, wip, compare,
+> file-history) now use `session.backend()`. ~85 sites remain (32 read-path
+> in `operations/*` + 53 write/blocking paths that correctly re-open because
+> `run()`/`snapshot()` need `&mut self` and the session is `Rc`, not
+> `Arc+Mutex`). The migration is incremental — each read-path site is a
+> one-line `Backend::open` → `session.backend()` swap with no behavior change.
 
 ## Context
 

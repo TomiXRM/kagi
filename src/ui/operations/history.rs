@@ -11,17 +11,16 @@ use crate::ui::*;
 impl KagiApp {
     /// Build an undo-commit plan and open the confirmation modal.
     pub fn open_undo_modal(&mut self) {
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "undo: repo open error: {}",
-                    e
-                )));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from("undo: repo session unavailable"));
                 return;
             }
         };
@@ -70,7 +69,7 @@ impl KagiApp {
             );
             return;
         }
-        let repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
@@ -105,8 +104,10 @@ impl KagiApp {
             });
             return;
         }
-        match repo.execute_undo_commit() {
-            Ok(outcome) => {
+        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+        let undo_op = kagi::git::Operation::UndoCommit;
+        match repo.run(&undo_op, &modal.plan) {
+            Ok(kagi::git::OperationOutcome::Undo(outcome)) => {
                 eprintln!(
                     "[kagi] executed: undo {} -> now at {}",
                     outcome.undone.short(),
@@ -141,6 +142,10 @@ impl KagiApp {
                     outcome.undone.short()
                 )));
                 self.reload();
+            }
+            Ok(_) => {
+                // UndoCommit only yields OperationOutcome::Undo.
+                klog!("undo: unexpected outcome variant");
             }
             Err(e) => {
                 let err_msg = format!("Undo failed: {}", e);
@@ -248,17 +253,17 @@ impl KagiApp {
 
     /// Shared: build an undo/redo plan for `entry` and show the preview modal.
     fn open_history_modal(&mut self, entry: kagi::git::HistoryEntry, is_undo: bool) {
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "{}: repo open error: {}",
+                    "{}: repo session unavailable",
                     if is_undo { "undo" } else { "redo" },
-                    e
                 )));
                 return;
             }
@@ -326,10 +331,11 @@ impl KagiApp {
             return;
         }
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                let err_msg = format!("Repo open error: {}", e);
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                let err_msg = "repo session unavailable".to_string();
                 self.record_op(
                     &op_name,
                     modal.plan.current.clone(),
@@ -442,17 +448,16 @@ impl KagiApp {
     /// Build an amend plan from an explicit `message` (no `Context` needed).
     /// Used by the headless `KAGI_AMEND` path and by [`open_amend_modal`].
     pub fn open_amend_modal_with_message(&mut self, mode: AmendMode, message: String) {
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "amend: repo open error: {}",
-                    e
-                )));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from("amend: repo session unavailable"));
                 return;
             }
         };
@@ -527,7 +532,7 @@ impl KagiApp {
         }
 
         // ── Armed: proceed to preflight → execute ────────────
-        let repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
@@ -571,8 +576,13 @@ impl KagiApp {
         } else {
             Some(modal.message.as_str())
         };
-        match repo.execute_amend(modal.mode, msg_opt) {
-            Ok(outcome) => {
+        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+        let amend_op = kagi::git::Operation::Amend {
+            mode: modal.mode,
+            message: msg_opt.map(|s| s.to_string()),
+        };
+        match repo.run(&amend_op, &modal.plan) {
+            Ok(kagi::git::OperationOutcome::Amend(outcome)) => {
                 eprintln!(
                     "[kagi] executed: amend {} -> {}",
                     outcome.old.short(),
@@ -611,6 +621,10 @@ impl KagiApp {
                     outcome.old.short()
                 )));
                 self.reload();
+            }
+            Ok(_) => {
+                // Amend only yields OperationOutcome::Amend.
+                klog!("amend: unexpected outcome variant");
             }
             Err(e) => {
                 let err_msg = format!("Amend failed: {}", e);

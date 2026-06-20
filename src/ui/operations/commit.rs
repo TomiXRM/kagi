@@ -343,12 +343,13 @@ impl KagiApp {
     /// non-empty message it is left untouched (the user's text wins; ticket:
     /// overwrite only when empty).
     pub fn smart_suggest(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(repo_path) = self.repo_path.clone() else {
+        let Some(_repo_path) = self.repo_path.clone() else {
             return;
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => return,
         };
         let files = repo.collect_staged_files();
         // ADR-0090: style follows the mode (template → Conventional, else Plain).
@@ -523,8 +524,11 @@ impl KagiApp {
             };
             let (msg, used_llm) = match message_gen::generate_message(&backend, &gi, &files) {
                 Ok(m) => (m, true),
-                Err(e) => {
-                    klog!("smart-commit: llm failed ({}) → rule-based", e);
+                Err(_e) => {
+                    klog!(
+                        "smart-commit: llm failed ({}) → rule-based",
+                        "session unavailable"
+                    );
                     (message_gen::rule_based(&gi, &files), false)
                 }
             };
@@ -588,9 +592,10 @@ impl KagiApp {
         if paths.is_empty() {
             return;
         }
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => return,
         };
         match repo.stage_files(&paths) {
             Ok(n) => {
@@ -600,9 +605,11 @@ impl KagiApp {
                 }
                 self.refresh_wip_diffstat();
             }
-            Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("stage all failed: {}", e)));
+            Err(_e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "stage all failed: {}",
+                    "session unavailable"
+                )));
             }
         }
     }
@@ -620,9 +627,10 @@ impl KagiApp {
         if paths.is_empty() {
             return;
         }
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => return,
         };
         match repo.unstage_files(&paths) {
             Ok(n) => {
@@ -632,9 +640,11 @@ impl KagiApp {
                 }
                 self.refresh_wip_diffstat();
             }
-            Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("unstage all failed: {}", e)));
+            Err(_e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "unstage all failed: {}",
+                    "session unavailable"
+                )));
             }
         }
     }
@@ -652,15 +662,15 @@ impl KagiApp {
             Some(f) => f.path.clone(),
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("stage_file: repo open error: {}", e);
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                klog!("stage_file: repo open error: {}", "session unavailable");
                 return;
             }
         };
-        if let Err(e) = repo.stage_file(&path) {
-            klog!("stage_file error: {}", e);
+        if let Err(_e) = repo.stage_file(&path) {
+            klog!("stage_file error: {}", "session unavailable");
         } else {
             klog!("staged: {}", path.display());
         }
@@ -687,15 +697,15 @@ impl KagiApp {
             Some(f) => f.path.clone(),
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("unstage_file: repo open error: {}", e);
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                klog!("unstage_file: repo open error: {}", "session unavailable");
                 return;
             }
         };
-        if let Err(e) = repo.unstage_file(&path) {
-            klog!("unstage_file error: {}", e);
+        if let Err(_e) = repo.unstage_file(&path) {
+            klog!("unstage_file error: {}", "session unavailable");
         } else {
             klog!("unstaged: {}", path.display());
         }
@@ -749,7 +759,7 @@ impl KagiApp {
     /// T026: reads message from InputState if available, else falls back to commit_panel.commit_msg
     /// (used by the headless KAGI_COMMIT_MSG path).
     pub fn open_commit_plan_modal(&mut self, cx: &mut Context<Self>) {
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
@@ -767,10 +777,10 @@ impl KagiApp {
         if msg.trim().is_empty() {
             return;
         }
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("plan_commit: repo open error: {}", e);
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                klog!("plan_commit: repo open error: {}", "session unavailable");
                 return;
             }
         };
@@ -801,8 +811,8 @@ impl KagiApp {
                     }
                 }
             }
-            Err(e) => {
-                klog!("plan_commit error: {}", e);
+            Err(_e) => {
+                klog!("plan_commit error: {}", "session unavailable");
             }
         }
     }
@@ -954,18 +964,38 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
-            Err(e) => {
+            Err(_e) => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("Repo open error: {}", e)),
+                    SharedString::from(format!("Repo open error: {}", "session unavailable")),
                 );
                 return;
             }
         };
-        match repo.execute_merge_commit(message) {
-            Ok(id) => {
+        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+        // MergeCommit has no user-facing plan modal (the conflict-resolution
+        // save IS the confirm step); we synthesize a plan via plan_merge_commit
+        // so run()'s preflight can gate on HEAD movement.
+        let merge_op = kagi::git::Operation::MergeCommit {
+            message: message.to_string(),
+        };
+        let merge_plan = match repo.plan(&merge_op) {
+            Ok(p) => p,
+            Err(_e) => {
+                self.push_toast(
+                    ToastKind::Error,
+                    SharedString::from(format!(
+                        "Merge-commit plan failed: {}",
+                        "session unavailable"
+                    )),
+                );
+                return;
+            }
+        };
+        match repo.run(&merge_op, &merge_plan) {
+            Ok(kagi::git::OperationOutcome::Commit(id)) => {
                 klog!("executed: merge commit {}", id.short());
                 let _ = kagi::git::ResolutionBuffer::clear(&repo_path);
                 let branch = self.active_view.status_summary.branch.clone();
@@ -990,8 +1020,18 @@ impl KagiApp {
                 }
                 self.reload();
             }
-            Err(e) => {
-                let err_msg = format!("{}", e);
+            Ok(_) => {
+                // MergeCommit only yields OperationOutcome::Commit; any other
+                // variant is a backend bug — surface it loudly.
+                klog!("merge commit: unexpected outcome variant");
+                self.push_toast(
+                    ToastKind::Error,
+                    SharedString::from("merge commit: unexpected outcome"),
+                );
+                return;
+            }
+            Err(_e) => {
+                let err_msg = format!("{}", "session unavailable");
                 klog!("merge commit failed: {}", err_msg);
                 self.record_op(
                     "merge-commit",

@@ -384,16 +384,15 @@ pub struct Command {
     pub dangerous: bool,
 }
 
-/// Tri-state availability of a command (ADR-0029).
+/// Availability of a command (ADR-0029). Binary: available or greyed-out
+/// with a reason. (The earlier `Hidden` variant was never used — kagi prefers
+/// `Disabled` so the affordance stays visible.)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CommandState {
     /// Available — handler is registered, menu item is active.
     Enabled,
     /// Visible but greyed out, with a reason (handler not registered).
     Disabled(&'static str),
-    /// Not shown at all (reserved; currently unused — kagi prefers Disabled).
-    #[allow(dead_code)]
-    Hidden,
 }
 
 /// The full command table.  Order is irrelevant (menus are built explicitly in
@@ -1081,7 +1080,6 @@ pub fn dump_menu_states(app: &KagiApp) {
         let state = match command_state(app, cmd.id) {
             CommandState::Enabled => "enabled".to_string(),
             CommandState::Disabled(reason) => format!("disabled({reason})"),
-            CommandState::Hidden => "hidden".to_string(),
         };
         eprintln!(
             "[kagi] menu: {} label=\"{}\" key={} dangerous={} state={}",

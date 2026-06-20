@@ -14,7 +14,7 @@ pub mod conflicts;
 mod diff;
 mod diffstat;
 pub mod drafts;
-mod history;
+mod file_history;
 mod log;
 pub mod message_gen;
 pub mod message_template;
@@ -22,6 +22,7 @@ pub mod oplog;
 pub mod ops;
 mod refs;
 pub mod resolution;
+pub mod session;
 mod snapshot;
 mod staging;
 mod status;
@@ -55,7 +56,7 @@ pub use diffstat::{
 #[allow(unused_imports)]
 pub use drafts::{clear_draft, load_draft, save_draft, Draft};
 #[allow(unused_imports)]
-pub use history::{
+pub use file_history::{
     file_history, CommitSummary, FileChangeSummary, FileChangeType, FileHistory, FileHistoryEntry,
     FileHistoryEntryKind, FileHistoryRequest,
 };
@@ -120,6 +121,7 @@ use git2::Repository;
 pub use kagi_domain::head::Head;
 #[allow(unused_imports)]
 pub use kagi_domain::history::{HistoryEntry, OperationHistory, OperationKind};
+pub use kagi_domain::operation::{Operation, OperationOutcome};
 
 /// Basic information about an opened repository.
 #[derive(Debug, Clone)]

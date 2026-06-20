@@ -765,9 +765,23 @@ pub struct KagiApp {
     pub error: Option<SharedString>,
     /// Absolute path to the repository root; used for on-demand diff fetches.
     pub repo_path: Option<PathBuf>,
+    /// Per-tab repository session (ADR-0107): owns a `Backend` for the tab
+    /// lifetime so read paths don't re-open the repo on every interaction.
+    /// `None` when no repo is open (same lifecycle as `repo_path`). Cloning
+    /// is cheap (`Rc` bump); the underlying repository handle is opened once.
+    /// Mutating ops still open a fresh `Backend` (the `*_blocking` pattern)
+    /// because `run()` needs `&mut self` and the session is `Rc`, not
+    /// `Arc+Mutex` — that collapses when the worker thread (ADR-0073) lands.
+    pub repo_session: Option<kagi::git::session::RepoSession>,
     /// Cache of changed-files results keyed by row index.
     /// `None` value means the diff was attempted but failed (show unavailable).
     pub diff_cache: HashMap<usize, Option<Vec<FileStatus>>>,
+    /// Per-(commit-row, file-index) cached `FileDiff` content (T-REARCH-031).
+    /// `diff_cache` above only holds the file *list*; without this content
+    /// cache, clicking between two commits to compare the same file recomputes
+    /// the full git2 tree-diff + hunk extraction on every toggle. The key is
+    /// `(selected_row, file_index)`; invalidated together with `diff_cache`.
+    pub file_diff_cache: HashMap<(usize, usize), std::sync::Arc<FileDiff>>,
     /// Row indices whose remote changed-files load is in flight over SSH
     /// (ADR-0089 Phase 2c), so the render trigger spawns it only once.
     pub remote_diff_inflight: std::collections::HashSet<usize>,
@@ -1371,7 +1385,9 @@ impl KagiApp {
             selected: None,
             error: None,
             repo_path: None,
+            repo_session: None,
             diff_cache: HashMap::new(),
+            file_diff_cache: HashMap::new(),
             remote_diff_inflight: std::collections::HashSet::new(),
             diffstat_cache: HashMap::new(),
             wip_diffstat: None,
@@ -1494,7 +1510,9 @@ impl KagiApp {
             selected: None,
             error: Some(SharedString::from(message.into())),
             repo_path: None,
+            repo_session: None,
             diff_cache: HashMap::new(),
+            file_diff_cache: HashMap::new(),
             remote_diff_inflight: std::collections::HashSet::new(),
             diffstat_cache: HashMap::new(),
             wip_diffstat: None,
@@ -1647,6 +1665,7 @@ impl KagiApp {
         // Per-repo transient state reset (unchanged behaviour).
         self.selected = None;
         self.diff_cache = HashMap::new();
+        self.file_diff_cache = HashMap::new();
         self.remote_diff_inflight.clear();
         self.diffstat_cache = HashMap::new();
         self.wip_diffstat = Some(wip_diffstat);
@@ -1794,24 +1813,86 @@ impl KagiApp {
             .and_then(|idx| self.active_view.details.get(idx))
             .map(|detail| CommitId(detail.full_sha.to_string()));
 
-        // Delegate to the core reload logic (resets self.selected to None).
-        self.reload();
+        // ADR-0104 / performance: an external git event (HEAD/refs change from
+        // a terminal, sibling worktree, or auto-fetch) is NOT user-initiated,
+        // so freezing the UI frame for a full repo snapshot (topological walk,
+        // full working-tree status scan, ahead/behind for every branch) is the
+        // worst kind of jank — the user didn't ask for anything. Move the
+        // heavy git2 work (open + snapshot + wip diffstat) onto a background
+        // thread, then build the view data and apply it on the UI thread.
+        // (The synchronous `reload()` is still used by user-initiated paths
+        // where a short, expected wait is acceptable.)
+        let bg_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        // Capture the switch generation so the background result is discarded
+        // if the user switched tabs while the snapshot was in flight — without
+        // this guard the snapshot would overwrite the NEW tab's freshly-loaded
+        // view with the OLD tab's data (cross-review N4).
+        let gen_at_spawn = self.switch_generation;
+        let task = cx.background_spawn(async move {
+            let mut backend = kagi::git::Backend::open(&bg_path).ok()?;
+            let snap = backend.snapshot(10_000).ok()?;
+            let wip = KagiApp::wip_diffstat_from_backend(&backend);
+            // RepoSnapshot is pure domain (Send); build_tab_view constructs
+            // SharedString-bearing TabViewState, so we return the raw pieces
+            // and build the view on the UI thread.
+            let repo_name = bg_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| bg_path.display().to_string());
+            Some((snap, wip, repo_name))
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                // Generation guard (cross-review N4): if the user switched tabs
+                // while the snapshot was in flight, drop the result — applying
+                // it would clobber the now-current tab's view.
+                if app.switch_generation != gen_at_spawn {
+                    return;
+                }
+                let Some((snap, wip, repo_name)) = result else {
+                    // Open or snapshot failed — log and bail without nuking
+                    // the existing view (better to show stale data than none).
+                    klog!("reload_external: snapshot failed (non-fatal)");
+                    app.status_footer = FooterStatus::Idle(SharedString::from(
+                        "[kagi] refresh skipped (snapshot failed)",
+                    ));
+                    cx.notify();
+                    return;
+                };
+                // Build the view data on the UI thread (cheap; heavy git2 work
+                // already done in the background) and apply it.
+                let view = build_tab_view(&snap, &repo_name);
+                app.apply_tab_view(view);
+                app.diff_cache = HashMap::new();
+                app.file_diff_cache = HashMap::new();
+                app.remote_diff_inflight.clear();
+                app.diffstat_cache = HashMap::new();
+                app.wip_diffstat = Some(wip);
+                app.main_diff = None;
+                app.compare_view = None;
+                app.file_history = None;
 
-        // Attempt to restore selection by CommitId.
-        if let Some(ref cid) = prev_commit_id {
-            if let Some(&new_idx) = self.active_view.commit_row_index.get(cid) {
-                self.selected = Some(new_idx);
-            }
-            // If the commit is no longer present, selected stays None.
-        }
+                // Attempt to restore selection by CommitId.
+                app.selected = None;
+                if let Some(ref cid) = prev_commit_id {
+                    if let Some(&new_idx) = app.active_view.commit_row_index.get(cid) {
+                        app.selected = Some(new_idx);
+                    }
+                    // If the commit is no longer present, selected stays None.
+                }
 
-        // Emit the required log line and update the footer.
-        klog!("refreshed (external change)");
-        self.status_footer =
-            FooterStatus::Idle(SharedString::from("[kagi] refreshed (external change)"));
-
-        // Notify gpui that state has changed so the window repaints.
-        cx.notify();
+                // Emit the required log line and update the footer.
+                klog!("refreshed (external change)");
+                app.status_footer =
+                    FooterStatus::Idle(SharedString::from("[kagi] refreshed (external change)"));
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Working-tree change refresh (FS watcher, [`watcher::WatchEvent::WorkTree`]).
@@ -3500,7 +3581,7 @@ impl KagiApp {
             Some(s) => s,
             None => return,
         };
-        let repo_path = match self.repo_path.as_ref() {
+        let _repo_path = match self.repo_path.as_ref() {
             Some(p) => p.clone(),
             None => return,
         };
@@ -3520,13 +3601,27 @@ impl KagiApp {
         let id = CommitId(detail.full_sha.as_ref().to_string());
         let path = file_status.path.clone();
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => return,
+        // T-REARCH-031: per-(row, file) content cache. Clicking between two
+        // commits to compare the same file previously recomputed the full git2
+        // tree-diff + hunk extraction on every toggle. Hit the cache first.
+        if let Some(cached) = self.file_diff_cache.get(&(selected, file_index)).cloned() {
+            self.set_commit_main_diff(&cached, &path, selected, file_index);
+            return;
+        }
+
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let Some(session) = self.repo_session.as_ref() else {
+            return;
         };
+        let repo = session.backend();
 
         match repo.commit_file_diff(&id, &path) {
-            Ok(file_diff) => self.set_commit_main_diff(&file_diff, &path, selected, file_index),
+            Ok(file_diff) => {
+                let arc = std::sync::Arc::new(file_diff);
+                self.file_diff_cache
+                    .insert((selected, file_index), arc.clone());
+                self.set_commit_main_diff(&arc, &path, selected, file_index);
+            }
             Err(e) => {
                 klog!("diff error: {}", e);
             }
@@ -3674,7 +3769,7 @@ impl KagiApp {
     }
 
     pub fn open_main_diff_compare(&mut self, file_index: usize) {
-        let repo_path = match self.repo_path.as_ref() {
+        let _repo_path = match self.repo_path.as_ref() {
             Some(p) => p.clone(),
             None => return,
         };
@@ -3688,10 +3783,11 @@ impl KagiApp {
         };
         let path = file_status.path.clone();
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let Some(session) = self.repo_session.as_ref() else {
+            return;
         };
+        let repo = session.backend();
 
         let file_diff_result = match view.target {
             CompareTarget::Head => {
@@ -3763,7 +3859,7 @@ impl KagiApp {
 
     /// T-UI-003: Open the diff for a Commit Panel file in the full-width main pane.
     pub fn open_main_diff_wip(&mut self, file_ref: commit_panel::CommitPanelFileRef) {
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
@@ -3789,10 +3885,11 @@ impl KagiApp {
             }
         };
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let Some(session) = self.repo_session.as_ref() else {
+            return;
         };
+        let repo = session.backend();
 
         let file_diff_result = if is_staged {
             repo.staged_file_diff(&path)
@@ -3865,11 +3962,15 @@ impl KagiApp {
     fn fetch_changed_files(&self, index: usize) -> Option<Vec<FileStatus>> {
         use kagi::git::CommitId;
 
-        let repo_path = self.repo_path.as_ref()?;
+        // Early-exit if no repo is open (the session is None in that case too).
+        if self.repo_session.is_none() {
+            return None;
+        }
         let detail = self.active_view.details.get(index)?;
         let id = CommitId(detail.full_sha.as_ref().to_string());
 
-        let repo = kagi::git::Backend::open(repo_path).ok()?;
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = self.repo_session.as_ref()?.backend();
         repo.commit_changed_files(&id).ok()
     }
 
@@ -3900,13 +4001,12 @@ impl KagiApp {
     }
 
     pub fn refresh_wip_diffstat(&mut self) {
-        let Some(repo_path) = self.repo_path.as_ref() else {
-            self.wip_diffstat = None;
-            return;
-        };
-        self.wip_diffstat = kagi::git::Backend::open(repo_path)
-            .ok()
-            .map(|repo| Self::wip_diffstat_from_backend(&repo));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        // When no repo is open (session is None), wip_diffstat is cleared.
+        self.wip_diffstat = self
+            .repo_session
+            .as_ref()
+            .map(|s| Self::wip_diffstat_from_backend(s.backend()));
     }
 
     pub fn close_compare_view(&mut self) {
@@ -3942,17 +4042,11 @@ impl KagiApp {
             self.select(row_index);
         }
 
-        let repo_path = match self.repo_path.as_ref() {
-            Some(p) => p.clone(),
-            None => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let Some(session) = self.repo_session.as_ref() else {
+            return;
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("compare: repo open error: {}", e);
-                return;
-            }
-        };
+        let repo = session.backend();
         let head = match repo.head_commit_id() {
             Some(id) => id,
             None => {
@@ -3994,17 +4088,11 @@ impl KagiApp {
             self.select(row_index);
         }
 
-        let repo_path = match self.repo_path.as_ref() {
-            Some(p) => p.clone(),
-            None => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let Some(session) = self.repo_session.as_ref() else {
+            return;
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("compare: repo open error: {}", e);
-                return;
-            }
-        };
+        let repo = session.backend();
         match repo.working_tree_status() {
             Ok(status) if !status.is_dirty() => {
                 eprintln!(
@@ -4834,9 +4922,13 @@ fn stash_push_blocking(
     let t0 = Instant::now();
     let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check_stash(plan, plan.stash_count_at_plan())
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-    repo.execute_stash_push(message.as_deref(), true)
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
+    // (run uses preflight_check_stash for stash ops: HEAD + stash-count guard).
+    let op = kagi::git::Operation::StashPush {
+        message: message.clone(),
+        include_untracked: true,
+    };
+    repo.run(&op, plan)
         .map_err(|e| format!("Stash push failed: {}", e))?;
     let t_stash = t0.elapsed();
     eprintln!(
@@ -4886,14 +4978,14 @@ fn pull_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
 ) -> Result<(String, StateSummary), String> {
-    let repo =
+    let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    let outcome = repo
-        .execute_pull()
-        .map_err(|e| format!("Pull failed: {}", e))?;
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+    let outcome = match repo.run(&kagi::git::Operation::Pull, plan) {
+        Ok(kagi::git::OperationOutcome::Pull(o)) => o,
+        Ok(_) => return Err("pull: unexpected outcome".to_string()),
+        Err(e) => return Err(format!("Pull failed: {}", e)),
+    };
     let summary = match &outcome {
         PullOutcome::UpToDate => "already up to date".to_string(),
         PullOutcome::FastForward { to } => format!("fast-forward to {}", to.short()),
@@ -4913,14 +5005,14 @@ fn push_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
 ) -> Result<(String, StateSummary), String> {
-    let repo =
+    let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    let outcome = repo
-        .execute_push()
-        .map_err(|e| format!("Push failed: {}", e))?;
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+    let outcome = match repo.run(&kagi::git::Operation::Push, plan) {
+        Ok(kagi::git::OperationOutcome::Push(o)) => o,
+        Ok(_) => return Err("push: unexpected outcome".to_string()),
+        Err(e) => return Err(format!("Push failed: {}", e)),
+    };
     let summary = if outcome.set_upstream {
         format!("pushed {} commit(s), set upstream", outcome.pushed)
     } else {
@@ -4969,16 +5061,20 @@ fn checkout_blocking(
     plan: &OperationPlan,
     target: &CheckoutPlanTarget,
 ) -> Result<(String, StateSummary), String> {
-    let repo =
+    let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    let execute_result = match target {
-        CheckoutPlanTarget::Branch(branch) => repo.execute_checkout(branch),
-        CheckoutPlanTarget::Commit(commit_id) => repo.execute_checkout_commit(commit_id),
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
+    // in one place (run() calls preflight_check as its first line).
+    let op = match target {
+        CheckoutPlanTarget::Branch(branch) => kagi::git::Operation::Checkout {
+            branch: branch.clone(),
+        },
+        CheckoutPlanTarget::Commit(commit_id) => kagi::git::Operation::CheckoutCommit {
+            id: commit_id.clone(),
+        },
     };
-    execute_result.map_err(|e| format!("Checkout failed: {}", e))?;
+    repo.run(&op, plan)
+        .map_err(|e| format!("Checkout failed: {}", e))?;
 
     let summary = match target {
         CheckoutPlanTarget::Branch(branch) => {
@@ -5045,19 +5141,22 @@ fn merge_blocking(
     target: &str,
     kind: &MergeKind,
 ) -> Result<(String, StateSummary), String> {
-    let repo =
+    let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     match kind {
         MergeKind::Conflicts(_) => {
             // W31: perform the real conflicting merge — leaves markers + index
             // stages + MERGE_HEAD. No commit is created; Conflict Mode takes over
             // on the subsequent reload.
-            let files = repo
-                .execute_merge_into_conflict(target)
-                .map_err(|e| format!("Merge failed: {}", e))?;
+            let op = kagi::git::Operation::MergeIntoConflict {
+                target: target.to_string(),
+            };
+            let files = match repo.run(&op, plan) {
+                Ok(kagi::git::OperationOutcome::MergeIntoConflict(f)) => f,
+                Ok(_) => return Err("merge-into-conflict: unexpected outcome".to_string()),
+                Err(e) => return Err(format!("Merge failed: {}", e)),
+            };
             eprintln!(
                 "[kagi] executed: merge-into-conflict {} -> {} conflict(s)",
                 target,
@@ -5070,10 +5169,15 @@ fn merge_blocking(
             ))
         }
         MergeKind::FastForward | MergeKind::MergeCommit => {
-            let new_head = repo
-                .execute_merge_branch(target)
-                .map_err(|e| format!("Merge failed: {}", e))?;
-            klog!("executed: merge {} -> {}", target, new_head.short());
+            let op = kagi::git::Operation::MergeBranch {
+                target: target.to_string(),
+            };
+            let _new_head = match repo.run(&op, plan) {
+                Ok(kagi::git::OperationOutcome::Commit(c)) => c,
+                Ok(_) => return Err("merge: unexpected outcome".to_string()),
+                Err(e) => return Err(format!("Merge failed: {}", e)),
+            };
+            klog!("executed: merge {} -> {}", target, _new_head.short());
 
             let after = verify_after_snapshot(repo_path, plan);
             klog!("verified: merge after = {}", after.head);
@@ -5088,12 +5192,14 @@ fn checkout_tracking_blocking(
     remote_branch: &str,
     local_branch: &str,
 ) -> Result<(String, StateSummary), String> {
-    let repo =
+    let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    repo.execute_checkout_tracking_branch(remote_branch, local_branch)
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+    let op = kagi::git::Operation::CheckoutTrackingBranch {
+        remote_branch: remote_branch.to_string(),
+        local_branch: local_branch.to_string(),
+    };
+    repo.run(&op, plan)
         .map_err(|e| format!("Checkout tracking failed: {}", e))?;
     eprintln!(
         "[kagi] executed: checkout-tracking {} -> {}",
@@ -5111,12 +5217,14 @@ fn switch_to_latest_blocking(
     branch_name: &str,
     remote_branch: &str,
 ) -> Result<(String, StateSummary), String> {
-    let repo =
+    let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    repo.execute_switch_to_latest(plan, branch_name, remote_branch)
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+    let op = kagi::git::Operation::SwitchToLatestBranch {
+        branch_name: branch_name.to_string(),
+        remote_branch: remote_branch.to_string(),
+    };
+    repo.run(&op, plan)
         .map_err(|e| format!("Switch to latest failed: {}", e))?;
     klog!(
         "executed: switch-to-latest {} <- {}",
@@ -5136,14 +5244,17 @@ fn cherry_pick_blocking(
     plan: &OperationPlan,
     commit_id: &CommitId,
 ) -> Result<(String, StateSummary), String> {
-    let repo =
+    let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    let new_id = repo
-        .execute_cherry_pick(commit_id)
-        .map_err(|e| format!("Cherry-pick failed: {}", e))?;
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+    let op = kagi::git::Operation::CherryPick {
+        id: commit_id.clone(),
+    };
+    let new_id = match repo.run(&op, plan) {
+        Ok(kagi::git::OperationOutcome::Commit(c)) => c,
+        Ok(_) => return Err("cherry-pick: unexpected outcome".to_string()),
+        Err(e) => return Err(format!("Cherry-pick failed: {}", e)),
+    };
     eprintln!(
         "[kagi] executed: cherry-pick {} -> {}",
         commit_id.short(),
@@ -5161,14 +5272,17 @@ fn revert_blocking(
     plan: &OperationPlan,
     commit_id: &CommitId,
 ) -> Result<(String, StateSummary), String> {
-    let repo =
+    let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    let new_id = repo
-        .execute_revert(commit_id)
-        .map_err(|e| format!("Revert failed: {}", e))?;
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+    let op = kagi::git::Operation::Revert {
+        id: commit_id.clone(),
+    };
+    let new_id = match repo.run(&op, plan) {
+        Ok(kagi::git::OperationOutcome::Commit(c)) => c,
+        Ok(_) => return Err("revert: unexpected outcome".to_string()),
+        Err(e) => return Err(format!("Revert failed: {}", e)),
+    };
     eprintln!(
         "[kagi] executed: revert {} -> {}",
         commit_id.short(),
@@ -5187,12 +5301,19 @@ fn commit_blocking(
     plan: &OperationPlan,
     message: &str,
 ) -> Result<(String, StateSummary), String> {
-    let repo =
+    let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-
-    let new_id = repo
-        .execute_commit(message)
-        .map_err(|e| format!("Commit failed: {}", e))?;
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+    // (Commit's plan is a HEAD snapshot; preflight detects a checkout/commit
+    // between plan and execute.)
+    let op = kagi::git::Operation::Commit {
+        message: message.to_string(),
+    };
+    let new_id = match repo.run(&op, plan) {
+        Ok(kagi::git::OperationOutcome::Commit(c)) => c,
+        Ok(_) => return Err("commit: unexpected outcome".to_string()),
+        Err(e) => return Err(format!("Commit failed: {}", e)),
+    };
     klog!("executed: commit {}", new_id.short());
 
     // Verify: re-snapshot, check HEAD is the new commit, unstaged remain.
@@ -5250,10 +5371,12 @@ fn stash_pop_blocking(
 ) -> Result<(String, StateSummary), String> {
     let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    repo.execute_stash_pop(stash_index)
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
+    // in one place. run() runs preflight_check_stash (HEAD + stash count) for
+    // StashPop, so a concurrent stash push between plan and execute can't shift
+    // indices and pop the WRONG entry.
+    let op = kagi::git::Operation::StashPop { index: stash_index };
+    repo.run(&op, plan)
         .map_err(|e| format!("Pop failed: {}", e))?;
     klog!("executed: stash-pop index={}", stash_index);
 
@@ -5272,6 +5395,11 @@ fn stash_drop_blocking(
     plan: &OperationPlan,
     stash_index: usize,
 ) -> Result<(String, StateSummary), String> {
+    // StashDrop is not yet an Operation variant (drop is admin-only and goes
+    // through execute_stash_drop directly); we run preflight_check_stash inline
+    // here with the same two-axis guard (HEAD + stash count) that run() uses
+    // for StashPop/StashApply. When StashDrop joins Operation, this becomes a
+    // plain run() call.
     let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
     repo.preflight_check_stash(plan, plan.stash_count_at_plan())
@@ -5301,12 +5429,20 @@ fn discard_blocking(
     plan: &OperationPlan,
     paths: &[String],
 ) -> Result<(String, StateSummary), String> {
-    let repo =
+    let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
 
-    let outcome = repo
-        .execute_discard(plan, paths)
-        .map_err(|e| format!("Discard failed: {}", e))?;
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+    // run() returns OperationOutcome::Discard(DiscardOutcome) which carries the
+    // backup-blob list (recovery handle) into the oplog.
+    let op = kagi::git::Operation::Discard {
+        paths: paths.to_vec(),
+    };
+    let outcome = match repo.run(&op, plan) {
+        Ok(kagi::git::OperationOutcome::Discard(d)) => d,
+        Ok(_) => return Err("discard: unexpected outcome variant".to_string()),
+        Err(e) => return Err(format!("Discard failed: {}", e)),
+    };
     let summary = outcome.oplog_summary();
     klog!("executed: {}", summary);
 
@@ -5357,19 +5493,22 @@ fn amend_blocking(
     mode: AmendMode,
     message: &str,
 ) -> Result<(StateSummary, CommitId, CommitId), String> {
-    let repo =
+    let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    let msg_opt = if message.trim().is_empty() {
-        None
-    } else {
-        Some(message)
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+    let op = kagi::git::Operation::Amend {
+        mode,
+        message: if message.trim().is_empty() {
+            None
+        } else {
+            Some(message.to_string())
+        },
     };
-    let outcome = repo
-        .execute_amend(mode, msg_opt)
-        .map_err(|e| format!("Amend failed: {}", e))?;
+    let outcome = match repo.run(&op, plan) {
+        Ok(kagi::git::OperationOutcome::Amend(o)) => o,
+        Ok(_) => return Err("amend: unexpected outcome".to_string()),
+        Err(e) => return Err(format!("Amend failed: {}", e)),
+    };
     eprintln!(
         "[kagi] executed: amend {} -> {}",
         outcome.old.short(),
@@ -5394,12 +5533,13 @@ fn delete_branch_blocking(
     plan: &OperationPlan,
     branch_name: &str,
 ) -> Result<StateSummary, String> {
-    let repo =
+    let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    repo.execute_delete_branch(plan, branch_name)
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+    let op = kagi::git::Operation::DeleteBranch {
+        name: branch_name.to_string(),
+    };
+    repo.run(&op, plan)
         .map_err(|e| format!("Delete failed: {}", e))?;
     klog!("executed: delete-branch {}", branch_name);
 
@@ -5413,13 +5553,19 @@ fn branch_plan_blocking(
     repo_path: &std::path::Path,
     modal: &BranchPlanModal,
 ) -> Result<StateSummary, String> {
-    let repo =
+    let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     match modal.kind {
         BranchPlanKind::PullFfOnly => {
-            let outcome = repo
-                .execute_pull_branch_ff(&modal.plan, &modal.branch_name)
-                .map_err(|e| format!("Pull failed: {}", e))?;
+            let op = kagi::git::Operation::PullBranchFf {
+                branch_name: modal.branch_name.clone(),
+            };
+            let outcome = match repo.run(&op, &modal.plan) {
+                Ok(kagi::git::OperationOutcome::Pull(o)) => o,
+                Ok(_) => return Err("pull-ff: unexpected outcome".to_string()),
+                Err(e) => return Err(format!("Pull failed: {}", e)),
+            };
             let dirty = match outcome {
                 PullOutcome::UpToDate => {
                     format!("branch '{}' already up to date", modal.branch_name)
@@ -5440,9 +5586,15 @@ fn branch_plan_blocking(
         }
         BranchPlanKind::Push | BranchPlanKind::PushSetUpstream => {
             let set_upstream = modal.kind == BranchPlanKind::PushSetUpstream;
-            let outcome = repo
-                .execute_push_branch(&modal.plan, &modal.branch_name, set_upstream)
-                .map_err(|e| format!("Push failed: {}", e))?;
+            let op = kagi::git::Operation::PushBranch {
+                branch_name: modal.branch_name.clone(),
+                set_upstream,
+            };
+            let outcome = match repo.run(&op, &modal.plan) {
+                Ok(kagi::git::OperationOutcome::Push(o)) => o,
+                Ok(_) => return Err("push-branch: unexpected outcome".to_string()),
+                Err(e) => return Err(format!("Push failed: {}", e)),
+            };
             Ok(StateSummary {
                 head: modal.plan.current.head.clone(),
                 dirty: format!(
@@ -5466,9 +5618,14 @@ fn set_upstream_blocking(
     branch_name: &str,
     upstream: &str,
 ) -> Result<StateSummary, String> {
-    let repo =
+    let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.execute_set_upstream(plan, branch_name, upstream)
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+    let op = kagi::git::Operation::SetUpstream {
+        branch_name: branch_name.to_string(),
+        upstream: upstream.to_string(),
+    };
+    repo.run(&op, plan)
         .map_err(|e| format!("Set upstream failed: {}", e))?;
     Ok(StateSummary {
         head: plan.current.head.clone(),
@@ -5482,9 +5639,14 @@ fn rename_branch_blocking(
     old_name: &str,
     new_name: &str,
 ) -> Result<StateSummary, String> {
-    let repo =
+    let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.execute_rename_branch(plan, old_name, new_name)
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+    let op = kagi::git::Operation::RenameBranch {
+        old_name: old_name.to_string(),
+        new_name: new_name.to_string(),
+    };
+    repo.run(&op, plan)
         .map_err(|e| format!("Rename failed: {}", e))?;
     Ok(StateSummary {
         head: plan.predicted.head.clone(),
@@ -5502,18 +5664,28 @@ fn create_worktree_blocking(
     at: &CommitId,
     allow_existing_branch: bool,
 ) -> Result<StateSummary, String> {
-    let repo =
+    let mut repo =
         kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    if allow_existing_branch {
-        repo.execute_open_worktree_for_branch(branch_input, path_input)
-            .map_err(|e| format!("Open worktree failed: {}", e))?;
+    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+    let op = if allow_existing_branch {
+        kagi::git::Operation::OpenWorktreeForBranch {
+            branch: branch_input.to_string(),
+            path: path_input.to_string(),
+        }
     } else {
-        repo.execute_create_worktree(branch_input, path_input, at)
-            .map_err(|e| format!("Create worktree failed: {}", e))?;
-    }
+        kagi::git::Operation::CreateWorktree {
+            branch: branch_input.to_string(),
+            path: path_input.to_string(),
+            start: at.clone(),
+        }
+    };
+    repo.run(&op, plan).map_err(|e| {
+        if allow_existing_branch {
+            format!("Open worktree failed: {}", e)
+        } else {
+            format!("Create worktree failed: {}", e)
+        }
+    })?;
     eprintln!(
         "[kagi] executed: create-worktree '{}' path='{}' @ {}",
         branch_input,

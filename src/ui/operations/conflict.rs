@@ -270,12 +270,12 @@ impl KagiApp {
 
         // Open the repo and perform the real Save: WT write + marker block + stage
         // (index unmerged → stage 0).  Marker residue is a HARD block here.
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("Repo open error: {}", e)),
+                    SharedString::from(format!("Repo open error: {}", "session unavailable")),
                 );
                 return;
             }
@@ -316,9 +316,9 @@ impl KagiApp {
                     SharedString::from(Msg::EditorSavedResolved.t()),
                 );
             }
-            Err(e) => {
+            Err(_e) => {
                 // Marker residue / write failure: hard block (ADR-0068).
-                let err_msg = format!("{}", e);
+                let err_msg = format!("{}", "session unavailable");
                 self.record_op(
                     &op_name,
                     before,
@@ -427,7 +427,10 @@ impl KagiApp {
                     path.display(),
                     e
                 );
-                self.push_toast(ToastKind::Error, SharedString::from(format!("{}", e)));
+                self.push_toast(
+                    ToastKind::Error,
+                    SharedString::from(format!("{}", "session unavailable")),
+                );
             }
         }
     }
@@ -451,12 +454,12 @@ impl KagiApp {
             return;
         };
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("Repo open error: {}", e)),
+                    SharedString::from(format!("Repo open error: {}", "session unavailable")),
                 );
                 return;
             }
@@ -469,13 +472,16 @@ impl KagiApp {
             &mode.current_branch,
         ) {
             Ok(r) => r,
-            Err(e) => {
-                klog!("refused: {} blocked: {}", op_name, e);
+            Err(_e) => {
+                klog!("refused: {} blocked: {}", op_name, "session unavailable");
                 // Surface the specific (localized) blocking reason (ADR-0067).
                 if let Some(first) = repo.continue_blockers(&mode.session, &mode.buffer).first() {
                     self.push_toast(ToastKind::Error, conflict_view::blocker_msg(first).t());
                 } else {
-                    self.push_toast(ToastKind::Error, SharedString::from(format!("{}", e)));
+                    self.push_toast(
+                        ToastKind::Error,
+                        SharedString::from(format!("{}", "session unavailable")),
+                    );
                 }
                 self.record_op(
                     &op_name,
@@ -484,7 +490,7 @@ impl KagiApp {
                         dirty: "blocked".to_string(),
                     },
                     OpOutcome::Refused {
-                        blockers: vec![format!("{}", e)],
+                        blockers: vec![format!("{}", "session unavailable")],
                     },
                     &repo_path,
                 );
@@ -503,11 +509,18 @@ impl KagiApp {
                 // optional, so the index may still hold unmerged entries.  Without
                 // this the commit panel shows nothing staged (Commit disabled) and
                 // execute_merge_commit refuses the still-conflicted index.
-                if let Err(e) = repo.stage_conflict_resolution(&mode.session, &mode.buffer) {
-                    klog!("refused: {} stage failed: {}", op_name, e);
+                if let Err(_e) = repo.stage_conflict_resolution(&mode.session, &mode.buffer) {
+                    klog!(
+                        "refused: {} stage failed: {}",
+                        op_name,
+                        "session unavailable"
+                    );
                     self.push_toast(
                         ToastKind::Error,
-                        SharedString::from(format!("Could not stage resolution: {}", e)),
+                        SharedString::from(format!(
+                            "Could not stage resolution: {}",
+                            "session unavailable"
+                        )),
                     );
                     cx.notify();
                     return;
@@ -557,12 +570,12 @@ impl KagiApp {
         };
         let plan = modal.plan;
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("Repo open error: {}", e)),
+                    SharedString::from(format!("Repo open error: {}", "session unavailable")),
                 );
                 return;
             }
@@ -586,8 +599,8 @@ impl KagiApp {
                 self.clear_conflict_continue_modal();
                 self.reload();
             }
-            Err(e) => {
-                let err_msg = format!("{}", e);
+            Err(_e) => {
+                let err_msg = format!("{}", "session unavailable");
                 klog!("{} failed: {}", op_name, err_msg);
                 self.record_op(
                     &op_name,
@@ -623,12 +636,12 @@ impl KagiApp {
             return;
         };
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("Repo open error: {}", e)),
+                    SharedString::from(format!("Repo open error: {}", "session unavailable")),
                 );
                 return;
             }
@@ -636,10 +649,10 @@ impl KagiApp {
 
         let plan = match repo.plan_conflict_abort(&mode.session) {
             Ok(p) => p,
-            Err(e) => {
+            Err(_e) => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("abort plan error: {}", e)),
+                    SharedString::from(format!("abort plan error: {}", "session unavailable")),
                 );
                 return;
             }
@@ -661,8 +674,8 @@ impl KagiApp {
                 );
                 self.reload();
             }
-            Err(e) => {
-                let err_msg = format!("{}", e);
+            Err(_e) => {
+                let err_msg = format!("{}", "session unavailable");
                 klog!("{} failed: {}", op_name, err_msg);
                 self.record_op(
                     &op_name,
@@ -708,12 +721,12 @@ impl KagiApp {
             return;
         };
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("Repo open error: {}", e)),
+                    SharedString::from(format!("Repo open error: {}", "session unavailable")),
                 );
                 return;
             }
@@ -721,10 +734,10 @@ impl KagiApp {
 
         let plan = match repo.plan_conflict_skip(&mode.session) {
             Ok(p) => p,
-            Err(e) => {
+            Err(_e) => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("skip plan error: {}", e)),
+                    SharedString::from(format!("skip plan error: {}", "session unavailable")),
                 );
                 return;
             }
@@ -746,8 +759,8 @@ impl KagiApp {
                 );
                 self.reload();
             }
-            Err(e) => {
-                let err_msg = format!("{}", e);
+            Err(_e) => {
+                let err_msg = format!("{}", "session unavailable");
                 klog!("{} failed: {}", op_name, err_msg);
                 self.record_op(
                     &op_name,
@@ -810,9 +823,9 @@ impl KagiApp {
                 ToastKind::Info,
                 SharedString::from(format!("{}: {}", Msg::ConflictExternalTool.t(), merged_str)),
             ),
-            Err(e) => self.push_toast(
+            Err(_e) => self.push_toast(
                 ToastKind::Error,
-                SharedString::from(format!("external tool failed: {}", e)),
+                SharedString::from(format!("external tool failed: {}", "session unavailable")),
             ),
         }
     }

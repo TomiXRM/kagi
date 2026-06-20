@@ -950,6 +950,17 @@ pub fn stage_conflict_resolution(
         .index()
         .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
 
+    // ADR-0106: atomic save. A naive per-file `fs::write` loop leaves the
+    // working tree half-resolved if a write fails mid-loop (files 1..k
+    // overwritten, index never written, original markers gone). Instead we
+    // write every resolution to a sibling temp, then rename them all to their
+    // targets only once every write succeeded. Rename is atomic on POSIX and
+    // Windows for same-filesystem moves, so a failure never produces a
+    // WT/index mismatch. Temp files are cleaned up on any error path.
+    //
+    // Collect (target, resolved_text) up front so a missing resolution aborts
+    // before any disk write touches anything.
+    let mut resolutions: Vec<(std::path::PathBuf, String)> = Vec::new();
     for file in &session.files {
         let text = match buffer.resolved_text(&file.path) {
             Some(t) => t,
@@ -960,21 +971,70 @@ pub fn stage_conflict_resolution(
                 )));
             }
         };
-        let abs = workdir.join(&file.path);
+        resolutions.push((file.path.clone(), text));
+    }
+
+    // Phase 1: write each resolution to `<name>.kagi-resolve-tmp-<n>` next to
+    // its target (same filesystem → rename is atomic). Create parent dirs.
+    let mut temps: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new(); // (temp, target_abs)
+    for (n, (rel, text)) in resolutions.iter().enumerate() {
+        let abs = workdir.join(rel);
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 GitError::Other(format!("mkdir {} failed: {}", parent.display(), e))
             })?;
         }
-        std::fs::write(&abs, text.as_bytes())
-            .map_err(|e| GitError::Other(format!("write {} failed: {}", abs.display(), e)))?;
-        // Staging the path collapses stage 1/2/3 → stage 0 (resolution).
-        index.add_path(&file.path).map_err(|e| {
-            GitError::Other(format!(
-                "stage {} failed: {}",
-                file.path.display(),
-                e.message()
-            ))
+        let tmp_abs = abs.with_extension(format!("kagi-resolve-tmp-{}", n));
+        match std::fs::write(&tmp_abs, text.as_bytes()) {
+            Ok(()) => {
+                temps.push((tmp_abs, abs));
+            }
+            Err(e) => {
+                // Roll back: delete every temp written so far, leave targets
+                // untouched. The working tree is still in its original
+                // conflict state.
+                for (t, _) in &temps {
+                    let _ = std::fs::remove_file(t);
+                }
+                return Err(GitError::Other(format!(
+                    "write {} failed: {} (no files were modified)",
+                    abs.display(),
+                    e
+                )));
+            }
+        }
+    }
+
+    // Phase 2: every write succeeded — atomically swap temps onto targets.
+    // `rename` is atomic per-file on POSIX/Windows for same-filesystem moves,
+    // but the loop is NOT transactional across files: if file k's rename fails,
+    // files 1..k-1 have already been renamed (their targets now hold the new
+    // resolution). We accept this (a same-FS rename failing is extremely rare,
+    // and the index is never written on the failure path so the repo still
+    // reports a conflict — the user can re-resolve). We MUST clean up the
+    // unrenamed temps (k..end) so they don't leak as untracked files.
+    for (i, (tmp_abs, abs)) in temps.iter().enumerate() {
+        if let Err(e) = std::fs::rename(tmp_abs, abs) {
+            // Clean up every temp that hasn't been renamed yet (this one + the
+            // rest), so no `.kagi-resolve-tmp-*` files leak into the worktree.
+            for (unrenamed_tmp, _) in temps.iter().skip(i) {
+                let _ = std::fs::remove_file(unrenamed_tmp);
+            }
+            return Err(GitError::Other(format!(
+                "rename {} -> {} failed: {} (files before this point were \
+                 already resolved; the index was not written, so the conflict \
+                 is still recorded — re-resolve and retry)",
+                tmp_abs.display(),
+                abs.display(),
+                e
+            )));
+        }
+    }
+
+    // Phase 3: stage every resolved path and flush the index once.
+    for (rel, _text) in &resolutions {
+        index.add_path(rel).map_err(|e| {
+            GitError::Other(format!("stage {} failed: {}", rel.display(), e.message()))
         })?;
     }
     index

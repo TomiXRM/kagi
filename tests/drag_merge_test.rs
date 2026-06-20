@@ -197,14 +197,17 @@ fn drag_merge_dirty_working_tree_warns_in_plan() {
 
     let backend = Backend::open(dir).expect("open backend");
     let (plan, _kind) = backend.plan_merge_branch("feature").expect("plan merge");
-    // ADR-0079 / plan_merge_branch behaviour: a dirty WT is surfaced as a
-    // warning (clean-rollback advice), not a hard blocker.
+    // ADR-0105: a dirty tracked working tree is now a BLOCKER (mirrors
+    // cherry-pick / revert) — merge writes conflict markers into the user's
+    // uncommitted edits, and `git merge --abort` would discard both. The plan
+    // must refuse execution rather than warn-and-allow.
     assert!(
-        plan.warnings
+        plan.blockers
             .iter()
-            .any(|w| w.to_lowercase().contains("working tree")),
-        "expected a dirty-working-tree warning, got warnings: {:?}",
-        plan.warnings
+            .any(|b| b.to_lowercase().contains("working tree has")
+                && b.to_lowercase().contains("stash or commit")),
+        "expected a dirty-working-tree BLOCKER, got blockers: {:?}",
+        plan.blockers
     );
 }
 

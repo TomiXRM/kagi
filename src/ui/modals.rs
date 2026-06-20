@@ -199,13 +199,6 @@ pub struct CreateBranchModal {
     pub localized_blockers: Vec<SharedString>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // legacy hand-rolled input era; kept for struct compat
-pub enum WorktreeModalField {
-    Branch,
-    Path,
-}
-
 /// State for an in-progress create-worktree confirmation.
 #[derive(Clone)]
 pub struct CreateWorktreeModal {
@@ -226,10 +219,6 @@ pub struct CreateWorktreeModal {
     /// True when this modal attaches an existing local branch to a worktree
     /// instead of creating a new branch first.
     pub allow_existing_branch: bool,
-    /// Which field receives key input (legacy hand-rolled input era; the
-    /// real `InputState`s manage their own focus now).
-    #[allow(dead_code)]
-    pub active_field: WorktreeModalField,
     /// Live plan regenerated from branch/path/start.
     pub plan: Option<std::sync::Arc<OperationPlan>>,
     /// Error message to show if execute or preflight failed.
@@ -366,6 +355,11 @@ pub struct RenameBranchModal {
 /// Danger modal: shows the target file list, any skipped (untracked/conflicted)
 /// files, the recovery note, and a red Discard button. `paths` is the exact set
 /// passed to `execute_discard` (untracked/conflicted already excluded).
+///
+/// Two-stage confirm (T-REARCH-014, mirrors `AmendPlanModal::confirm_armed`):
+/// the first click arms the red Discard button (label becomes the explicit
+/// "Permanently discard N files"); only the second click executes. Discard is
+/// the most destructive working-tree op (checkout -- + untracked deletion).
 #[derive(Clone)]
 pub struct DiscardModal {
     /// The computed plan (`destructive: true`).
@@ -378,6 +372,8 @@ pub struct DiscardModal {
     pub is_all: bool,
     /// Error message to show if preflight or execute failed.
     pub error: Option<SharedString>,
+    /// Two-stage confirm gate: `false` = first click pending, `true` = armed.
+    pub confirm_armed: bool,
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1335,6 +1331,8 @@ pub(crate) fn render_discard_modal(
     let has_blockers = !plan.blockers.is_empty();
     let target_count = modal.paths.len();
     let can_discard = !has_blockers && target_count > 0;
+    // Two-stage confirm (T-REARCH-014): first click arms, second executes.
+    let armed = modal.confirm_armed;
 
     let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.cancel_discard_modal();
@@ -1489,6 +1487,20 @@ pub(crate) fn render_discard_modal(
         );
     }
 
+    // ── Two-stage "what is lost" warning (armed second stage) ──
+    // Mirrors amend's armed notice (ADR-0023). Only shown after the first
+    // click armed the action, so the user sees an explicit final warning.
+    if armed && can_discard {
+        card = card.child(
+            div()
+                .text_sm()
+                .text_color(rgb(current_theme().color_blocker))
+                .child(SharedString::from(
+                    "\u{26a0} Working-tree changes will be lost. Click \u{201c}Permanently discard\u{201d} to confirm.",
+                )),
+        );
+    }
+
     // ── Buttons ─────────────────────────────────────────────
     let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
         Button::new("discard-cancel")
@@ -1498,15 +1510,19 @@ pub(crate) fn render_discard_modal(
             .on_click(cancel_handler),
     );
     if can_discard {
+        // Two-stage confirm (T-REARCH-014): first click arms the red Discard
+        // button (label becomes the explicit "Permanently discard N files");
+        // the second click executes. Mirrors amend's confirm_armed pattern.
+        // Both stages stay red — discard is always a destructive op.
+        let label = if armed {
+            format!("Permanently discard {} file(s)", target_count)
+        } else {
+            format!("Discard {} file(s)", target_count)
+        };
         button_row = button_row.child(
-            KagiButton::accent(
-                "discard-confirm",
-                "Discard",
-                current_theme().color_blocker,
-                cx,
-            )
-            .small()
-            .on_click(confirm_handler),
+            KagiButton::accent("discard-confirm", label, current_theme().color_blocker, cx)
+                .small()
+                .on_click(confirm_handler),
         );
     }
     card = card.child(button_row);

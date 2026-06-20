@@ -14,6 +14,13 @@ pub enum Operation {
     Commit {
         message: String,
     },
+    /// Finalize an in-progress merge after conflicts are resolved
+    /// (`git commit` with `MERGE_HEAD` present). Distinct from `Commit`
+    /// because it creates a 2-parent merge commit and has no separate plan
+    /// (the conflict-resolution save IS the plan).
+    MergeCommit {
+        message: String,
+    },
     Checkout {
         branch: String,
     },

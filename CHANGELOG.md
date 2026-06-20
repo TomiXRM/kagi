@@ -3,6 +3,60 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [Unreleased] — 2026-06-20 rearch sprint
+
+### Security & safety
+- **`Backend::run` scaffolds the enforced plan→preflight→execute pipeline**
+  (ADR-0104). A new single entry point runs `preflight_check` (or
+  `preflight_check_stash` for stash apply/pop) before dispatch, and the old
+  `execute(op)` shortcut is `#[deprecated]`. NOTE: as of this sprint `run` has
+  no callers yet — every real call path still uses `execute_*` directly. The
+  caller migration is deferred to Phase 2 (blocked on ADR-0107 RepoSession).
+  The concrete safety wins this sprint are the four wired-in changes below.
+- **Merge is blocked on a dirty working tree** (ADR-0105), mirroring the
+  cherry-pick / revert rule. Merge previously only warned, but it writes
+  conflict markers into the user's uncommitted files when a real conflict
+  occurs — `git merge --abort` would then discard both the merge AND the
+  pre-merge edits.
+- **`stage_conflict_resolution` is now atomic** (ADR-0106). A per-file write
+  loop previously left the working tree half-resolved on a mid-loop disk
+  failure (files 1..k overwritten, index never written, original markers
+  gone). It now writes all resolutions to sibling temps first and renames
+  them onto targets only once every write succeeded.
+- **Stash pop verifies the stash count at preflight** (T-REARCH-015). A
+  concurrent stash push between plan and execute previously shifted indices
+  and popped the WRONG entry.
+- **Discard now requires two-stage confirmation** (T-REARCH-014). The first
+  click arms the red "Discard N file(s)" button; the second click on the
+  relabeled "Permanently discard N file(s)" executes. Cancelling, reopening,
+  or a failed execute all reset the armed state. The armed path also re-runs
+  preflight before firing, so a repo change between the two clicks refuses
+  rather than executing a stale plan.
+
+### Performance
+- **External-change refresh no longer blocks the UI** (T-REARCH-030).
+  `reload_external` (triggered by a terminal `git commit`, a sibling worktree,
+  or auto-fetch) now runs the git2 snapshot on a background thread and applies
+  it on the UI thread. Previously a full status scan + topological walk froze
+  the frame for an event the user didn't initiate.
+- **Per-file diff content is cached** (T-REARCH-031). Clicking between two
+  commits to compare the same file previously recomputed the full tree-diff +
+  hunk extraction on every toggle; now the `FileDiff` is cached by
+  `(row, file_index)` and invalidated together with the file-list cache.
+
+### Changed
+- **`src/git/history.rs` renamed to `file_history.rs`** (ADR-0108). It
+  collided with `kagi_domain::history` (the undo/redo operation history); the
+  two describe different concepts and the collision made it unclear which
+  `history::Foo` a caller meant.
+
+### Removed
+- Dead code (Phase 0 sweep): `Backend::repo()` escape hatch (0 callers), the
+  redundant `tempfile` under `[dev-dependencies]`, 23 dead `take_*` and 15
+  dead `*_mut` modal accessors, the unused `CommandState::Hidden` variant,
+  `render_status_footer`, and the obsolete `MAX_LANES` / `graph_width*`
+  helpers (`modal_state.rs` 806→472 LOC).
+
 ## [0.4.0] — 2026-06-19
 
 ### Added

@@ -794,6 +794,15 @@ pub struct KagiApp {
     /// T-UI-003: When `Some`, the main pane shows this diff (full-width) instead
     /// of the commit graph list.  Cleared when `selected` changes or on reload.
     pub main_diff: Option<MainDiffView>,
+    /// Pending tree-sitter highlight result from a background task (ADR-0109).
+    /// When the off-thread `highlight_diff_rows_send` completes, the result is
+    /// stored here and applied to `main_diff` on the next `apply_pending_highlights`
+    /// call (from render or a notify). `None` = no pending highlight.
+    pub pending_diff_highlight: Option<(
+        usize,
+        usize,
+        Vec<(usize, Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>)>,
+    )>,
     /// ADR-0026: read-only compare mode shown in the inspector changed-files area.
     /// Cleared on selection change or reload to avoid stale path/diff state.
     pub compare_view: Option<CompareView>,
@@ -1392,6 +1401,7 @@ impl KagiApp {
             diffstat_cache: HashMap::new(),
             wip_diffstat: None,
             main_diff: None,
+            pending_diff_highlight: None,
             compare_view: None,
             main_diff_scroll_handle: UniformListScrollHandle::new(),
             active_modal: None,
@@ -1517,6 +1527,7 @@ impl KagiApp {
             diffstat_cache: HashMap::new(),
             wip_diffstat: None,
             main_diff: None,
+            pending_diff_highlight: None,
             compare_view: None,
             main_diff_scroll_handle: UniformListScrollHandle::new(),
             active_modal: None,
@@ -3037,7 +3048,7 @@ impl KagiApp {
     /// No-op if no commit is selected.
     /// Step the open main diff to the previous/next file (arrow keys).
     /// No-op when no diff is open or already at the list edge.
-    pub fn main_diff_step(&mut self, delta: i64) {
+    pub fn main_diff_step(&mut self, delta: i64, cx: &mut Context<Self>) {
         let source = match self.main_diff.as_ref() {
             Some(d) => d.source.clone(),
             None => return,
@@ -3058,7 +3069,7 @@ impl KagiApp {
                 }
                 let next = (file_index as i64 + delta).clamp(0, len as i64 - 1) as usize;
                 if next != file_index {
-                    self.open_main_diff_commit(next);
+                    self.open_main_diff_commit(next, cx);
                 }
             }
             MainDiffSource::Compare {
@@ -3130,7 +3141,7 @@ impl KagiApp {
         } else if self.compare_view.is_some() {
             self.open_main_diff_compare(file_index);
         } else {
-            self.open_main_diff_commit(file_index);
+            self.open_main_diff_commit(file_index, cx);
         }
     }
 
@@ -3574,7 +3585,25 @@ impl KagiApp {
         .detach();
     }
 
-    pub fn open_main_diff_commit(&mut self, file_index: usize) {
+    /// Open the first changed file's diff in the main pane (headless path).
+    /// Calls the synchronous highlight variant since headless has no cx and is
+    /// test-only (no UI latency concern).
+    pub fn open_main_diff_commit_headless(&mut self, file_index: usize) {
+        // Delegate to the shared open path with a dummy sync-highlight by
+        // calling set_commit_main_diff_sync directly after acquiring the diff.
+        self.open_main_diff_commit_inner(file_index, None);
+    }
+
+    /// Open the main diff with async highlight (UI path).
+    pub fn open_main_diff_commit(&mut self, file_index: usize, cx: &mut Context<Self>) {
+        self.open_main_diff_commit_inner(file_index, Some(cx));
+    }
+
+    fn open_main_diff_commit_inner(
+        &mut self,
+        file_index: usize,
+        mut cx: Option<&mut Context<Self>>,
+    ) {
         use kagi::git::CommitId;
 
         let selected = match self.selected {
@@ -3605,7 +3634,7 @@ impl KagiApp {
         // commits to compare the same file previously recomputed the full git2
         // tree-diff + hunk extraction on every toggle. Hit the cache first.
         if let Some(cached) = self.file_diff_cache.get(&(selected, file_index)).cloned() {
-            self.set_commit_main_diff(&cached, &path, selected, file_index);
+            self.set_commit_main_diff(&cached, &path, selected, file_index, cx.as_deref_mut());
             return;
         }
 
@@ -3620,7 +3649,7 @@ impl KagiApp {
                 let arc = std::sync::Arc::new(file_diff);
                 self.file_diff_cache
                     .insert((selected, file_index), arc.clone());
-                self.set_commit_main_diff(&arc, &path, selected, file_index);
+                self.set_commit_main_diff(&arc, &path, selected, file_index, cx.as_deref_mut());
             }
             Err(e) => {
                 klog!("diff error: {}", e);
@@ -3637,6 +3666,7 @@ impl KagiApp {
         path: &std::path::Path,
         selected: usize,
         file_index: usize,
+        cx: Option<&mut Context<Self>>,
     ) {
         let added: usize = file_diff
             .hunks
@@ -3661,25 +3691,92 @@ impl KagiApp {
         let fdv = FileDiffView::from_file_diff(file_diff, file_index);
         let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
         let title = fdv.file_name.clone();
-        let mut rows = fdv.rows;
-        let row_count = rows.len();
-        let hl_lang = highlight_diff_rows(&mut rows, path);
-        eprintln!(
-            "[kagi] main-diff: open {} rows={} highlight={}",
-            path.display(),
-            row_count,
-            hl_lang
-        );
 
-        self.main_diff = Some(MainDiffView {
-            title,
-            stats,
-            rows,
-            source: MainDiffSource::Commit {
-                row_index: selected,
+        match cx {
+            // UI path (cx present): render text-first, highlight off-thread.
+            Some(cx) => {
+                let rows = fdv.rows;
+                let row_count = rows.len();
+                let path_for_hl = path.to_path_buf();
+                let rows_snapshot = rows.clone();
+                let selected_for_hl = selected;
+                let file_index_for_hl = file_index;
+
+                self.main_diff = Some(MainDiffView {
+                    title,
+                    stats,
+                    rows,
+                    source: MainDiffSource::Commit {
+                        row_index: selected,
+                        file_index,
+                    },
+                });
+
+                // Spawn the highlight off-thread; store the result for swap-in.
+                cx.spawn(async move |this, acx| {
+                    let (hl_lang, highlights) =
+                        diff_view::highlight_diff_rows_send(&rows_snapshot, &path_for_hl);
+                    let _ = this.update(acx, |app, cx| {
+                        app.pending_diff_highlight =
+                            Some((selected_for_hl, file_index_for_hl, highlights));
+                        eprintln!(
+                            "[kagi] main-diff: highlight ready {} rows={} lang={}",
+                            path_for_hl.display(),
+                            row_count,
+                            hl_lang
+                        );
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            // Headless path (no cx): synchronous highlight (test-only, no UI).
+            None => {
+                let mut rows = fdv.rows;
+                let hl_lang = diff_view::highlight_diff_rows(&mut rows, path);
+                eprintln!(
+                    "[kagi] main-diff: open {} rows={} highlight={}",
+                    path.display(),
+                    rows.len(),
+                    hl_lang
+                );
+                self.main_diff = Some(MainDiffView {
+                    title,
+                    stats,
+                    rows,
+                    source: MainDiffSource::Commit {
+                        row_index: selected,
+                        file_index,
+                    },
+                });
+            }
+        }
+    }
+
+    /// Apply a pending background highlight result to `main_diff` if it still
+    /// matches the current view (same row/file index). Called from render so
+    /// the swap happens on the next frame after the background task completes.
+    /// Stale results (view changed) are discarded.
+    fn apply_pending_highlights(&mut self) {
+        let Some((row, file, highlights)) = self.pending_diff_highlight.take() else {
+            return;
+        };
+        let Some(view) = self.main_diff.as_mut() else {
+            return;
+        };
+        // Only apply if the view hasn't changed since the highlight was requested.
+        match view.source {
+            MainDiffSource::Commit {
+                row_index,
                 file_index,
-            },
-        });
+            } if row_index == row && file_index == file => {}
+            _ => return,
+        }
+        for (row_i, row_highlights) in highlights {
+            if let Some(DiffRow::Line { highlights: hl, .. }) = view.rows.get_mut(row_i) {
+                *hl = row_highlights;
+            }
+        }
     }
 
     /// Load the selected remote commit's changed files over SSH (ADR-0089 Phase
@@ -3758,7 +3855,7 @@ impl KagiApp {
             let _ = this.update(acx, |app, cx| {
                 match result {
                     Ok(file_diff) => {
-                        app.set_commit_main_diff(&file_diff, &path, selected, file_index)
+                        app.set_commit_main_diff(&file_diff, &path, selected, file_index, Some(cx))
                     }
                     Err(e) => klog!("remote diff error: {e}"),
                 }

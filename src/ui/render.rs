@@ -3197,19 +3197,20 @@ fn render_rows(
                 theme().bg_row_alt
             };
             // Swimlane lane band (Gitru-style): an inner horizontal strip drawn
-            // BEHIND the graph + message area and tinted by this row's lane
-            // colour. It is a separate absolute layer — NOT the row background —
-            // with vertical inset so adjacent bands don't touch and the row
-            // stays a neutral list. Gated on lane-compaction; skipped on the
+            // BEHIND the graph column only and tinted by this row's lane colour.
+            // It is a separate absolute layer — NOT the row background — with
+            // vertical inset so adjacent bands don't touch and the row stays a
+            // neutral list. The message column is intentionally left neutral so
+            // text stays readable. Gated on lane-compaction; skipped on the
             // selected row so the selection highlight always wins. Tuple =
             // (normal, hover) wash colours.
             let lane_band: Option<(gpui::Hsla, gpui::Hsla)> =
                 if theme::graph_lane_compact() && !is_selected {
                     let c = theme().lane_color(row.node_color);
                     let (na, ha) = if theme().dark {
-                        (0.10, 0.14)
+                        (0.18, 0.24)
                     } else {
-                        (0.06, 0.09)
+                        (0.11, 0.15)
                     };
                     Some((gpui::hsla(c.h, c.s, c.l, na), gpui::hsla(c.h, c.s, c.l, ha)))
                 } else {
@@ -3297,19 +3298,19 @@ fn render_rows(
                 .on_click(click_handler)
                 .on_mouse_down(MouseButton::Right, context_click_handler)
                 .when(is_dimmed, |el| el.opacity(0.32))
-                // ── Lane band (swimlane): absolute strip behind graph+message ──
+                // ── Lane band (swimlane): absolute strip behind the graph ──
                 // Declared before the column children so it paints under them
-                // (row bg → band → graph lines → nodes → pills → text). Left
-                // edge = graph-column start (= badge column + spacer), so the
-                // BRANCH/TAG column stays neutral; extends to the row's right
-                // edge through the message area. 3px top/bottom inset leaves a
-                // neutral gap between adjacent bands.
+                // (row bg → band → graph lines → nodes → text). Left edge =
+                // graph-column start (= badge column + spacer), so the BRANCH/TAG
+                // column stays neutral; width = the graph column only, so the
+                // message column also stays neutral and readable. 3px top/bottom
+                // inset leaves a neutral gap between adjacent bands.
                 .when_some(lane_band, |el, (band, band_hover)| {
                     el.child(
                         div()
                             .absolute()
                             .left(theme::scaled_px(badge_col_w + INNER_DIV_W))
-                            .right_0()
+                            .w(theme::scaled_px(graph_col_w))
                             .top(theme::scaled_px(3.))
                             .bottom(theme::scaled_px(3.))
                             .rounded(theme::scaled_px(3.))

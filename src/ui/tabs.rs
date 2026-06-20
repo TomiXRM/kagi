@@ -141,6 +141,7 @@ impl KagiApp {
         //    the cached snapshot. No local path, no Backend, no watcher. ──
         if let Some(rv) = tab.remote.clone() {
             self.repo_path = None;
+            self.repo_session = None;
             self.remote_view = Some(rv);
             self.reset_per_repo_ui();
             self.switch_generation = self.switch_generation.wrapping_add(1);
@@ -165,6 +166,10 @@ impl KagiApp {
 
         // Point repo_path at the new repo before any apply.
         self.repo_path = Some(tab.path.clone());
+        // ADR-0107: open (or re-use) a RepoSession for this tab so read paths
+        // don't re-open the repo per interaction. Failure is non-fatal — read
+        // paths fall back to Backend::open until the session succeeds.
+        self.repo_session = kagi::git::session::RepoSession::open(&tab.path).ok();
 
         // Reset every per-repo UI surface up-front so a cached instant-apply
         // never shows the previous tab's selection / modals (ADR-0027).
@@ -239,6 +244,7 @@ impl KagiApp {
         // No local path: every `self.repo_path.as_ref()?` operation no-ops, and
         // `arm_watcher` returns early.
         self.repo_path = None;
+        self.repo_session = None;
         self.reset_per_repo_ui();
         // Supersede any in-flight local background load.
         self.switch_generation = self.switch_generation.wrapping_add(1);
@@ -447,6 +453,7 @@ impl KagiApp {
             // Last tab closed → Welcome screen.
             self.active_tab = 0;
             self.repo_path = None;
+            self.repo_session = None;
             // Clear any remote view so the Welcome gate (tabs empty &&
             // remote_view none) actually shows the Welcome screen (ADR-0089).
             self.remote_view = None;
@@ -1059,6 +1066,7 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
         .min(app.tabs.len() - 1);
     app.active_tab = active;
     app.repo_path = Some(app.tabs[active].path.clone());
+    app.repo_session = kagi::git::session::RepoSession::open(&app.tabs[active].path).ok();
     app.error = None;
     app.reload();
     klog!("session: restored {} tab(s)", app.tabs.len());

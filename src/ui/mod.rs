@@ -765,6 +765,14 @@ pub struct KagiApp {
     pub error: Option<SharedString>,
     /// Absolute path to the repository root; used for on-demand diff fetches.
     pub repo_path: Option<PathBuf>,
+    /// Per-tab repository session (ADR-0107): owns a `Backend` for the tab
+    /// lifetime so read paths don't re-open the repo on every interaction.
+    /// `None` when no repo is open (same lifecycle as `repo_path`). Cloning
+    /// is cheap (`Rc` bump); the underlying `git2::Repository` is opened once.
+    /// Mutating ops still open a fresh `Backend` (the `*_blocking` pattern)
+    /// because `run()` needs `&mut self` and the session is `Rc`, not
+    /// `Arc+Mutex` — that collapses when the worker thread (ADR-0073) lands.
+    pub repo_session: Option<kagi::git::session::RepoSession>,
     /// Cache of changed-files results keyed by row index.
     /// `None` value means the diff was attempted but failed (show unavailable).
     pub diff_cache: HashMap<usize, Option<Vec<FileStatus>>>,
@@ -1377,6 +1385,7 @@ impl KagiApp {
             selected: None,
             error: None,
             repo_path: None,
+            repo_session: None,
             diff_cache: HashMap::new(),
             file_diff_cache: HashMap::new(),
             remote_diff_inflight: std::collections::HashSet::new(),
@@ -1501,6 +1510,7 @@ impl KagiApp {
             selected: None,
             error: Some(SharedString::from(message.into())),
             repo_path: None,
+            repo_session: None,
             diff_cache: HashMap::new(),
             file_diff_cache: HashMap::new(),
             remote_diff_inflight: std::collections::HashSet::new(),
@@ -3571,7 +3581,7 @@ impl KagiApp {
             Some(s) => s,
             None => return,
         };
-        let repo_path = match self.repo_path.as_ref() {
+        let _repo_path = match self.repo_path.as_ref() {
             Some(p) => p.clone(),
             None => return,
         };
@@ -3599,10 +3609,11 @@ impl KagiApp {
             return;
         }
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let Some(session) = self.repo_session.as_ref() else {
+            return;
         };
+        let repo = session.backend();
 
         match repo.commit_file_diff(&id, &path) {
             Ok(file_diff) => {
@@ -3758,7 +3769,7 @@ impl KagiApp {
     }
 
     pub fn open_main_diff_compare(&mut self, file_index: usize) {
-        let repo_path = match self.repo_path.as_ref() {
+        let _repo_path = match self.repo_path.as_ref() {
             Some(p) => p.clone(),
             None => return,
         };
@@ -3772,10 +3783,11 @@ impl KagiApp {
         };
         let path = file_status.path.clone();
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let Some(session) = self.repo_session.as_ref() else {
+            return;
         };
+        let repo = session.backend();
 
         let file_diff_result = match view.target {
             CompareTarget::Head => {
@@ -3847,7 +3859,7 @@ impl KagiApp {
 
     /// T-UI-003: Open the diff for a Commit Panel file in the full-width main pane.
     pub fn open_main_diff_wip(&mut self, file_ref: commit_panel::CommitPanelFileRef) {
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
@@ -3873,10 +3885,11 @@ impl KagiApp {
             }
         };
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let Some(session) = self.repo_session.as_ref() else {
+            return;
         };
+        let repo = session.backend();
 
         let file_diff_result = if is_staged {
             repo.staged_file_diff(&path)
@@ -3949,11 +3962,15 @@ impl KagiApp {
     fn fetch_changed_files(&self, index: usize) -> Option<Vec<FileStatus>> {
         use kagi::git::CommitId;
 
-        let repo_path = self.repo_path.as_ref()?;
+        // Early-exit if no repo is open (the session is None in that case too).
+        if self.repo_session.is_none() {
+            return None;
+        }
         let detail = self.active_view.details.get(index)?;
         let id = CommitId(detail.full_sha.as_ref().to_string());
 
-        let repo = kagi::git::Backend::open(repo_path).ok()?;
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = self.repo_session.as_ref()?.backend();
         repo.commit_changed_files(&id).ok()
     }
 
@@ -3984,13 +4001,12 @@ impl KagiApp {
     }
 
     pub fn refresh_wip_diffstat(&mut self) {
-        let Some(repo_path) = self.repo_path.as_ref() else {
-            self.wip_diffstat = None;
-            return;
-        };
-        self.wip_diffstat = kagi::git::Backend::open(repo_path)
-            .ok()
-            .map(|repo| Self::wip_diffstat_from_backend(&repo));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        // When no repo is open (session is None), wip_diffstat is cleared.
+        self.wip_diffstat = self
+            .repo_session
+            .as_ref()
+            .map(|s| Self::wip_diffstat_from_backend(s.backend()));
     }
 
     pub fn close_compare_view(&mut self) {
@@ -4026,17 +4042,11 @@ impl KagiApp {
             self.select(row_index);
         }
 
-        let repo_path = match self.repo_path.as_ref() {
-            Some(p) => p.clone(),
-            None => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let Some(session) = self.repo_session.as_ref() else {
+            return;
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("compare: repo open error: {}", e);
-                return;
-            }
-        };
+        let repo = session.backend();
         let head = match repo.head_commit_id() {
             Some(id) => id,
             None => {
@@ -4078,17 +4088,11 @@ impl KagiApp {
             self.select(row_index);
         }
 
-        let repo_path = match self.repo_path.as_ref() {
-            Some(p) => p.clone(),
-            None => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let Some(session) = self.repo_session.as_ref() else {
+            return;
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("compare: repo open error: {}", e);
-                return;
-            }
-        };
+        let repo = session.backend();
         match repo.working_tree_status() {
             Ok(status) if !status.is_dirty() => {
                 eprintln!(

@@ -22,6 +22,7 @@ pub mod oplog;
 pub mod ops;
 mod refs;
 pub mod resolution;
+pub mod session;
 mod snapshot;
 mod staging;
 mod status;

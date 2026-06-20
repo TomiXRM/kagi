@@ -3314,26 +3314,6 @@ fn render_rows(
                 .on_click(click_handler)
                 .on_mouse_down(MouseButton::Right, context_click_handler)
                 .when(is_dimmed, |el| el.opacity(0.32))
-                // ── Lane band (swimlane): absolute strip behind the graph ──
-                // Declared before the column children so it paints under them
-                // (row bg → band → graph lines → nodes → text). Left edge =
-                // graph-column start (= badge column + spacer), so the BRANCH/TAG
-                // column stays neutral; width = the graph column only, so the
-                // message column also stays neutral and readable. 3px top/bottom
-                // inset leaves a neutral gap between adjacent bands.
-                .when_some(lane_band, |el, (band, band_hover)| {
-                    el.child(
-                        div()
-                            .absolute()
-                            .left(theme::scaled_px(badge_col_w + INNER_DIV_W))
-                            .w(theme::scaled_px(graph_col_w))
-                            .top(theme::scaled_px(3.))
-                            .bottom(theme::scaled_px(3.))
-                            .rounded(theme::scaled_px(3.))
-                            .bg(band)
-                            .hover(|s| s.bg(band_hover)),
-                    )
-                })
                 // ── Badges column: user-resizable width (T030) ──
                 // T-DNDMERGE-001: thread `cx` so each `BadgeKind::Branch` chip
                 // can be made draggable and the HeadBranch chip a drop target.
@@ -3383,6 +3363,26 @@ fn render_rows(
                         .w(theme::scaled_px(graph_col_w))
                         .h_full()
                         .flex_shrink_0()
+                        // ── Lane band (swimlane) ──
+                        // A child of the GRAPH column (not the row) so it is
+                        // contained to the column and cannot reach into the
+                        // BRANCH/TAG label area. Absolute, inset 0 horizontally
+                        // (= the column width) with a 3px top/bottom inset so
+                        // adjacent bands don't touch; painted before the canvas
+                        // so it sits behind the lanes/nodes.
+                        .when_some(lane_band, |el, (band, band_hover)| {
+                            el.child(
+                                div()
+                                    .absolute()
+                                    .left_0()
+                                    .right_0()
+                                    .top(theme::scaled_px(3.))
+                                    .bottom(theme::scaled_px(3.))
+                                    .rounded(theme::scaled_px(3.))
+                                    .bg(band)
+                                    .hover(|s| s.bg(band_hover)),
+                            )
+                        })
                         // No overflow_hidden here: the avatar node may extend a
                         // couple of px past the column edges (lane 0 sits close
                         // to the left edge). The lanes are clipped by an inner

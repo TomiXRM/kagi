@@ -3170,6 +3170,21 @@ fn graph_lane_pad_l() -> f32 {
     }
 }
 
+/// A 1px horizontal connector line (branch label → graph node), filling its
+/// parent's width. Dashed in swimlane mode to match the dashed canvas
+/// connector; a solid bar in classic mode (unchanged).
+fn connector_line(color: gpui::Hsla) -> gpui::Div {
+    if theme::graph_lane_compact() {
+        div()
+            .w_full()
+            .border_b_1()
+            .border_dashed()
+            .border_color(color)
+    } else {
+        div().w_full().h(theme::scaled_px(1.)).bg(color)
+    }
+}
+
 /// Render commit rows for the given range.  Called by `uniform_list`
 /// with only the visible subset, so this must be cheap.
 ///
@@ -3370,7 +3385,7 @@ fn render_rows(
                                     .inset_0()
                                     .flex()
                                     .items_center()
-                                    .child(div().w_full().h(theme::scaled_px(1.)).bg(color)),
+                                    .child(connector_line(color)),
                             )
                         }),
                 )
@@ -4817,7 +4832,7 @@ fn render_badges_column(
                     .h_full()
                     .flex()
                     .items_center()
-                    .child(div().w_full().h(theme::scaled_px(1.)).bg(color)),
+                    .child(connector_line(color)),
             )
         })
 }

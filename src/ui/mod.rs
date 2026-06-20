@@ -30,6 +30,7 @@ mod operations;
 pub mod oplog_panel;
 pub mod remote_browse;
 mod render;
+mod render_helpers;
 pub mod settings;
 pub mod settings_view;
 pub mod sidebar;
@@ -47,7 +48,7 @@ pub use diff_view::*;
 use i18n::Msg;
 pub use modals::*;
 pub use remote_browse::*;
-pub(crate) use render::with_vertical_scrollbar;
+pub(crate) use render_helpers::with_vertical_scrollbar;
 use theme::theme;
 pub use types::*;
 

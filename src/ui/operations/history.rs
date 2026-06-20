@@ -147,7 +147,6 @@ impl KagiApp {
             Ok(_) => {
                 // UndoCommit only yields OperationOutcome::Undo.
                 klog!("undo: unexpected outcome variant");
-                return;
             }
             Err(e) => {
                 let err_msg = format!("Undo failed: {}", e);
@@ -627,7 +626,6 @@ impl KagiApp {
             Ok(_) => {
                 // Amend only yields OperationOutcome::Amend.
                 klog!("amend: unexpected outcome variant");
-                return;
             }
             Err(e) => {
                 let err_msg = format!("Amend failed: {}", e);

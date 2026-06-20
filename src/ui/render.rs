@@ -3383,7 +3383,11 @@ fn render_rows(
                         .w(theme::scaled_px(graph_col_w))
                         .h_full()
                         .flex_shrink_0()
-                        .overflow_hidden()
+                        // No overflow_hidden here: the avatar node may extend a
+                        // couple of px past the column edges (lane 0 sits close
+                        // to the left edge). The lanes are clipped by an inner
+                        // wrapper instead, so they still can't bleed into the
+                        // message column.
                         // Horizontal wheel/trackpad scroll reveals clipped
                         // lanes. Vertical deltas are left untouched so the
                         // commit list keeps scrolling normally.
@@ -3394,18 +3398,20 @@ fn render_rows(
                         ))
                         .when(visible_lanes > 0, |el| {
                             el.child(
-                                graph_canvas(
-                                    row.lane,
-                                    row.node_color,
-                                    row.edges.clone(),
-                                    visible_lanes,
-                                    row.is_head,
-                                    row.is_merge,
-                                    has_badges,
-                                    graph_scroll_x,
-                                    stash_lanes.to_vec(),
-                                )
-                                .size_full(),
+                                div().size_full().overflow_hidden().child(
+                                    graph_canvas(
+                                        row.lane,
+                                        row.node_color,
+                                        row.edges.clone(),
+                                        visible_lanes,
+                                        row.is_head,
+                                        row.is_merge,
+                                        has_badges,
+                                        graph_scroll_x,
+                                        stash_lanes.to_vec(),
+                                    )
+                                    .size_full(),
+                                ),
                             )
                         })
                         // Swimlane: avatar node, drawn over the canvas at the

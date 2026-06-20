@@ -3196,6 +3196,24 @@ fn render_rows(
             } else {
                 theme().bg_row_alt
             };
+            // Swimlane row tint (ADR-0104 follow-up): when lane-compaction is on,
+            // wash each non-selected row in its branch's lane colour so a branch
+            // reads as a horizontal band across the whole row (label → graph →
+            // message). Blended over the zebra base so striping survives; the
+            // selected/WIP highlight still wins (tint is skipped when selected).
+            let row_bg_fill: gpui::Rgba = if !is_selected && theme::graph_lane_compact() {
+                let base = rgb(row_bg);
+                let t: gpui::Rgba = theme().lane_color(row.node_color).into();
+                let a = if theme().dark { 0.18 } else { 0.14 };
+                gpui::Rgba {
+                    r: base.r * (1.0 - a) + t.r * a,
+                    g: base.g * (1.0 - a) + t.g * a,
+                    b: base.b * (1.0 - a) + t.b * a,
+                    a: 1.0,
+                }
+            } else {
+                rgb(row_bg)
+            };
 
             // ── Graph lane area (T030) ────────────────────────
             // visible_lanes = how many lanes fit in the current graph column width.
@@ -3261,7 +3279,7 @@ fn render_rows(
                 })
                 .when(!is_selected, |el| el.px_3())
                 .h(px(rh))
-                .bg(rgb(row_bg))
+                .bg(row_bg_fill)
                 .on_click(click_handler)
                 .on_mouse_down(MouseButton::Right, context_click_handler)
                 .when(is_dimmed, |el| el.opacity(0.32))

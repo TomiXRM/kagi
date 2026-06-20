@@ -6,12 +6,13 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [Unreleased] — 2026-06-20 rearch sprint
 
 ### Security & safety
-- **`Backend::run` enforces the plan→preflight→execute pipeline** (ADR-0104).
-  Every mutating operation now passes through a single entry point that runs
-  `preflight_check` (or `preflight_check_stash` for stash apply/pop) before
-  dispatch. The old `execute(op)` shortcut is deprecated and synthesizes a plan
-  so preflight still runs. This makes the product's central safety invariant a
-  backend guarantee rather than a UI convention.
+- **`Backend::run` scaffolds the enforced plan→preflight→execute pipeline**
+  (ADR-0104). A new single entry point runs `preflight_check` (or
+  `preflight_check_stash` for stash apply/pop) before dispatch, and the old
+  `execute(op)` shortcut is `#[deprecated]`. NOTE: as of this sprint `run` has
+  no callers yet — every real call path still uses `execute_*` directly. The
+  caller migration is deferred to Phase 2 (blocked on ADR-0107 RepoSession).
+  The concrete safety wins this sprint are the four wired-in changes below.
 - **Merge is blocked on a dirty working tree** (ADR-0105), mirroring the
   cherry-pick / revert rule. Merge previously only warned, but it writes
   conflict markers into the user's uncommitted files when a real conflict
@@ -28,7 +29,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 - **Discard now requires two-stage confirmation** (T-REARCH-014). The first
   click arms the red "Discard N file(s)" button; the second click on the
   relabeled "Permanently discard N file(s)" executes. Cancelling, reopening,
-  or a failed execute all reset the armed state.
+  or a failed execute all reset the armed state. The armed path also re-runs
+  preflight before firing, so a repo change between the two clicks refuses
+  rather than executing a stale plan.
 
 ### Performance
 - **External-change refresh no longer blocks the UI** (T-REARCH-030).

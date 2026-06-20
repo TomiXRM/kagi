@@ -325,6 +325,7 @@ impl KagiApp {
                                         false,
                                         true,
                                         graph_scroll_x,
+                                        graph_lane_pad_l(),
                                         stash_lanes.clone(),
                                     )
                                     .size_full(),
@@ -3157,6 +3158,18 @@ impl KagiApp {
 // Row renderer
 // ──────────────────────────────────────────────────────────────
 
+/// Left pad (px) applied to the graph lane geometry in swimlane mode so lane 0
+/// clears the column's left edge (room for the avatar node). 0 in classic mode,
+/// so the classic graph is unchanged. Must match between the main rows and the
+/// stash rows so their lanes line up.
+fn graph_lane_pad_l() -> f32 {
+    if theme::graph_lane_compact() {
+        theme::scaled(8.0)
+    } else {
+        0.0
+    }
+}
+
 /// Render commit rows for the given range.  Called by `uniform_list`
 /// with only the visible subset, so this must be cheap.
 ///
@@ -3282,8 +3295,9 @@ fn render_rows(
             // Left pad inside the graph: shifts the lanes + avatar node right so
             // lane 0's avatar sits fully inside the column with a sliver of the
             // lane band visible to its left (the band itself stays at the column
-            // edge). Applied identically to the canvas (`pl`) and the node x.
-            let graph_pad_l = theme::scaled(8.0);
+            // edge). Passed into the canvas (lane geometry) and used for the node
+            // x; 0 in classic mode.
+            let graph_pad_l = graph_lane_pad_l();
             let lane_lo = (graph_scroll_x / lane_w_px).floor().max(0.0) as usize;
             let avatar_in_graph = theme::graph_lane_compact()
                 && visible_lanes > 0
@@ -3401,8 +3415,12 @@ fn render_rows(
                             },
                         ))
                         .when(visible_lanes > 0, |el| {
+                            // The left pad is applied inside the canvas (lane
+                            // geometry) via `graph_pad_l`, NOT as a `pl` here, so
+                            // the label→node connector still starts at the column
+                            // edge and doesn't gap.
                             el.child(
-                                div().size_full().pl(px(graph_pad_l)).child(
+                                div().size_full().child(
                                     graph_canvas(
                                         row.lane,
                                         row.node_color,
@@ -3412,6 +3430,7 @@ fn render_rows(
                                         row.is_merge,
                                         has_badges,
                                         graph_scroll_x,
+                                        graph_pad_l,
                                         stash_lanes.to_vec(),
                                     )
                                     .size_full(),

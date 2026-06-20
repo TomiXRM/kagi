@@ -257,6 +257,11 @@ pub fn graph_canvas(
     // kagi: horizontal scroll offset in px — lanes hidden by a narrow column
     // can be brought into view by scrolling the graph column sideways.
     scroll_x: f32,
+    // kagi: left pad (px) applied to the lane geometry so lane 0 clears the
+    // column's left edge (room for the avatar node). The label→node connector
+    // still starts at the true left edge, so it doesn't gap with the
+    // badge-column connector.
+    pad_l: f32,
     // ADR-0088: lanes that belong to stash branch lines. Nodes/edges on these
     // lanes are painted in the stash colour (yellow) to stand out.
     stash_lanes: Vec<usize>,
@@ -285,8 +290,9 @@ pub fn graph_canvas(
 
             // Helper: x-centre of a lane in absolute coords (scroll-aware).
             // Shares `lane_center_x` with the unit tests so the drawn geometry
-            // and the asserted geometry are guaranteed identical.
-            let lane_x = |lane: usize| -> f32 { lane_center_x(ox, lane, scroll_x) };
+            // and the asserted geometry are guaranteed identical. `pad_l` shifts
+            // the lanes right; the connector below still anchors at `ox`.
+            let lane_x = |lane: usize| -> f32 { lane_center_x(ox + pad_l, lane, scroll_x) };
 
             // Visible lane window for the current scroll offset.  The canvas
             // paints outside its bounds in BOTH directions, so clipping is

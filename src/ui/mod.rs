@@ -25,6 +25,7 @@ pub mod graph_view;
 pub mod i18n;
 pub mod inspector;
 pub mod menu_overlay;
+mod modal_renderers;
 pub mod modals;
 mod operations;
 pub mod oplog_panel;

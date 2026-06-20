@@ -805,13 +805,13 @@ impl Msg {
             (Ja, SettingsCompact) => "graph をコンパクト表示",
             (En, SettingsCompactDesc) => "Use a tighter row height in the commit graph.",
             (Ja, SettingsCompactDesc) => "commit graph の行の高さを詰めて表示します。",
-            (En, SettingsLaneCompact) => "Swimlane graph",
-            (Ja, SettingsLaneCompact) => "グラフをスイムレーン表示",
+            (En, SettingsLaneCompact) => "Avatar commit nodes",
+            (Ja, SettingsLaneCompact) => "コミットノードをアバター表示",
             (En, SettingsLaneCompactDesc) => {
-                "On: freed lanes are reused so the graph stays narrow, each row gets a faint colour band for its branch behind the graph, the commit dot becomes the author's avatar ringed in the lane colour, and ref tags take the lane colour. Off: lanes are never reused (wider graph), plain coloured dots, and tags keep their fixed colours."
+                "On: each commit's dot becomes the author's avatar, ringed in its lane colour. The graph also reuses freed lanes (staying narrower), shows a faint branch-colour band behind each row, and colours branch/tag labels by lane. Off: plain coloured dots and fixed label colours."
             }
             (Ja, SettingsLaneCompactDesc) => {
-                "オン: 空いたレーンを再利用してグラフを細く保ち、各行の背後にブランチ色の帯を敷き、コミットのドットを著者アバター（レーン色の輪付き）にし、ブランチ/タグのラベルもレーン色になります。オフ: レーンを再利用せず（グラフが広め）、通常の色ドット、ラベルは固定色のままです。"
+                "オン: 各コミットのドットが著者アバター（レーン色の輪付き）になります。あわせて、空いたレーンを再利用してグラフを細くし、各行の背後にブランチ色の帯を敷き、ブランチ/タグのラベルをレーン色にします。オフ: 通常の色ドットと固定色のラベル。"
             }
             (En, SettingsAutoFetch) => "Auto-fetch",
             (Ja, SettingsAutoFetch) => "自動 fetch",

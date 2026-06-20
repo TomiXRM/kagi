@@ -1,14 +1,12 @@
-//! Per-tab repository session (ADR-0107).
+//! Per-tab repository session (ADR-0107 + ADR-0073).
 //!
-//! A `RepoSession` owns a [`Backend`] for the lifetime of a repository tab,
-//! eliminating the ~96 per-operation `Backend::open` sites that previously
-//! re-read config / re-walked `.git` resolution on every interaction
-//! (`docs/performance-review.md` §3.1).
+//! A `RepoSession` owns a [`Backend`] for read paths (opened once per tab) and
+//! an optional [`RepoWorker`] for write paths (a dedicated thread that owns its
+//! own `Backend`, eliminating per-operation re-opens for mutations).
 //!
-//! Today the session is foreground-only (`Rc`, single-thread). When the
-//! worker-thread consolidation (ADR-0073) lands, the session becomes the
-//! channel owner and the `Rc` swaps to `Arc` — that is a one-line change
-//! here, the only place it happens.
+//! Read paths use `session.backend()` (synchronous, `Rc`-shared).
+//! Write paths use `session.submit(op, plan)` (sends to the worker thread,
+//! returns a receiver for the result).
 //!
 //! The session is also the natural owner of future caches (snapshot, diff,
 //! graph layout) that Phase 3+ perf work hangs off it.
@@ -16,23 +14,31 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use super::{Backend, GitError};
+use super::worker::RepoWorker;
+use super::{Backend, GitError, OperationPlan};
+use kagi_domain::operation::{Operation, OperationOutcome};
+use std::sync::mpsc;
 
 /// One `Backend` owner per repository tab. Cloning is cheap (`Rc` bump);
-/// the underlying `git2::Repository` is opened exactly once.
+/// the underlying `git2::Repository` is opened exactly once (for reads) plus
+/// once for the worker thread (for writes).
 #[derive(Clone)]
 pub struct RepoSession {
     backend: Rc<Backend>,
+    /// Lazily-spawned worker thread for write operations (ADR-0073).
+    /// Shared via `Rc<RefCell>` so all clones of the session see the same
+    /// worker once spawned. `None` until the first `submit()` call.
+    worker: Rc<std::cell::RefCell<Option<RepoWorker>>>,
 }
 
 impl RepoSession {
     /// Open the repository at `path` and hold the `Backend` for the tab
-    /// lifetime. Subsequent `backend()` calls return the same handle without
-    /// re-opening.
+    /// lifetime. The worker thread is spawned lazily on first `submit()`.
     pub fn open(path: &Path) -> Result<Self, GitError> {
         let backend = Backend::open(path)?;
         Ok(Self {
             backend: Rc::new(backend),
+            worker: Rc::new(std::cell::RefCell::new(None)),
         })
     }
 
@@ -47,16 +53,33 @@ impl RepoSession {
         self.backend.path().to_path_buf()
     }
 
-    /// Shared handle to the `Backend`. Cloning the `Rc` is O(1); the
-    /// underlying `git2::Repository` is not re-opened.
-    ///
-    /// Note: `run()` (ADR-0104) takes `&mut self`, so callers that need to
-    /// mutate must hold their own `Backend` (the session is `Rc`, not `Arc`
-    /// + `Mutex`). Background-task callers open a fresh `Backend` via
-    /// `Backend::open(self.path())` for mutation — this is the same pattern
-    /// the `*_blocking` fns already use, and will collapse when the worker
-    /// thread lands.
+    /// Shared handle to the `Backend` for read paths. Cloning the `Rc` is O(1).
     pub fn backend(&self) -> &Backend {
         &self.backend
+    }
+
+    /// Submit a mutating operation to the worker thread (ADR-0073). Returns a
+    /// receiver for the `OperationOutcome`. The caller typically awaits this
+    /// inside a `cx.background_spawn` task.
+    ///
+    /// The worker thread owns its own `Backend` (opened once on spawn), so this
+    /// does NOT re-open the repo. The operation runs through `Backend::run`
+    /// (ADR-0104 enforced pipeline — preflight cannot be bypassed).
+    ///
+    /// On first call, spawns the worker thread. If the worker fails to spawn
+    /// (e.g. the repo disappeared), returns `Err`.
+    pub fn submit(
+        &self,
+        op: Operation,
+        plan: OperationPlan,
+    ) -> Result<mpsc::Receiver<Result<OperationOutcome, GitError>>, GitError> {
+        // Lazily spawn the worker if it doesn't exist yet.
+        let mut worker_slot = self.worker.borrow_mut();
+        if worker_slot.is_none() {
+            let w = RepoWorker::spawn(self.backend.path())?;
+            *worker_slot = Some(w);
+        }
+        let worker = worker_slot.as_ref().unwrap();
+        worker.submit(op, plan)
     }
 }

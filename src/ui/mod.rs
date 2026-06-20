@@ -26,6 +26,7 @@ pub mod inspector;
 pub mod menu_overlay;
 pub mod modals;
 mod operations;
+pub mod oplog_panel;
 pub mod remote_browse;
 mod render;
 pub mod settings;
@@ -180,8 +181,8 @@ const PANEL_MAX: f32 = 800.0;
 const SIDEBAR_DEFAULT: f32 = 200.0;
 const PANEL_DEFAULT: f32 = 360.0;
 
-// T-BP-004: Operation Log ring-buffer size and initial load count.
-const OP_ENTRIES_MAX: usize = 500;
+// T-BP-004: Operation Log initial load count from disk.
+// (Ring-buffer cap moved to oplog_panel::OP_ENTRIES_MAX, ADR-0111.)
 const OP_ENTRIES_LOAD: usize = 100;
 
 // T-BP-002: Bottom panel height limits and default.
@@ -900,8 +901,10 @@ pub struct KagiApp {
     /// Pre-computed toolbar button enabled/disabled flags.
     /// Updated on every reload; rendered by `render_header_slot`.
     // ── T-BP-004: Operation Log entries ─────────────────────────
-    /// In-memory operation log ring-buffer (max 500, newest at index 0).
-    pub op_entries: VecDeque<OpLogEntry>,
+    /// Operation log panel — self-contained ring buffer (ADR-0111 / Phase C).
+    /// Rc<RefCell> (same pattern as ToastStack) because record_op has ~30
+    /// callers without cx; Entity migration is a follow-up.
+    pub op_log: std::rc::Rc<std::cell::RefCell<oplog_panel::OpLogPanel>>,
     /// Scroll handle for the Operation Log uniform_list.
     pub oplog_scroll_handle: UniformListScrollHandle,
     /// Which row index (0 = newest) is currently expanded; None = none.
@@ -1389,6 +1392,9 @@ impl KagiApp {
         let op_entries: VecDeque<OpLogEntry> = read_oplog_tail(OP_ENTRIES_LOAD).into();
 
         KagiApp {
+            op_log: std::rc::Rc::new(std::cell::RefCell::new(
+                oplog_panel::OpLogPanel::from_entries(op_entries),
+            )),
             root_focus: None,
             active_view: view,
             selected: None,
@@ -1434,7 +1440,6 @@ impl KagiApp {
             sidebar_rows: Vec::new(),
             cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
             cp_staged_scroll_handle: UniformListScrollHandle::new(),
-            op_entries,
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
             operation_history: kagi::git::OperationHistory::new(),
@@ -1559,7 +1564,7 @@ impl KagiApp {
             sidebar_rows: Vec::new(),
             cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
             cp_staged_scroll_handle: UniformListScrollHandle::new(),
-            op_entries: VecDeque::new(),
+            op_log: std::rc::Rc::new(std::cell::RefCell::new(oplog_panel::OpLogPanel::new())),
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
             operation_history: kagi::git::OperationHistory::new(),
@@ -2726,10 +2731,7 @@ impl KagiApp {
         }
 
         // T-BP-004: push to in-memory ring-buffer (newest at front).
-        self.op_entries.push_front(entry);
-        if self.op_entries.len() > OP_ENTRIES_MAX {
-            self.op_entries.pop_back();
-        }
+        self.op_log.borrow_mut().push(entry);
         // Reset expanded state when new entries arrive.
         self.oplog_expanded = None;
 

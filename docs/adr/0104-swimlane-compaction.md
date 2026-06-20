@@ -29,7 +29,7 @@ Gitru は (a) 色をレーン構造体に載せ採番カウンタで決めてレ
 ### 1. レーン携帯の安定色（モード非依存・恒久）
 
 - 内部レーンを `struct Lane { target, color }` とし、`color` は単調カウンタ
-  `% NUM_COLORS`（=10）で**レーン誕生時に確定**、生存中（および列移動後も）保持。
+  `% NUM_COLORS`（=8）で**レーン誕生時に確定**、生存中（および列移動後も）保持。
 - `GraphRow.color`（ノード色）と `GraphEdge.color`（各エッジの枝色）を公開フィールドに追加。
   描画は列インデックスではなくこの安定色で塗る。これで ADR-0003 が先送りした色安定化を解消。
 - first parent は親の lane と色を継承する（枝の幹が色ごと安定）。
@@ -51,8 +51,12 @@ Gitru は (a) 色をレーン構造体に載せ採番カウンタで決めてレ
   **既定は `Stable`**（行高さ用の既存 `graph_compact` とは別キー）。
 - `CommitRow.node_color` を追加し、`graph_canvas(node_lane, node_color, …)` へ渡す。
   エッジ色は `GraphEdge.color` から直接読む。stash レーンは従来どおり stash 色で上書き。
-- パレットは当面 6 色のまま（`lane_color` が `% len` するため安定色は 6 色でも機能する）。
-  10 色固定 L/C パレットへの拡張は別 ADR の follow-up とする。
+- パレットは **8 色の固定 L/C パレット**（`src/ui/theme.rs` の `LANE_PALETTE_DARK` /
+  `LANE_PALETTE_LIGHT`）。Gitru の `oklch(0.77 0.174 H)`（明度・彩度を固定し色相だけ回す＝
+  等明度・等彩度のカテゴリカル配色）思想を踏襲し、GPUI は OKLCH を持たないため
+  **oklch → sRGB へオフライン変換した値を HSL で焼き込む**。色相は隣接インデックスが色相環上で
+  最大限離れる順（`(i*3 mod 8)*45°`）。明背景テーマは同じ色相・彩度を低明度（`L=0.58`）にした
+  別パレットでコントラストを確保。`NUM_COLORS`（=8）と UI パレット長は 1:1 で一致。
 
 ## Rationale
 

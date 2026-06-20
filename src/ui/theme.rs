@@ -97,9 +97,9 @@ pub struct Theme {
     /// Cherry-pick action button (Catppuccin mauve).
     pub accent: u32,
 
-    // ── Graph lane palette (6 cycling colours, HSLA components) ───
+    // ── Graph lane palette (8 cycling colours, HSLA components) ───
     /// `(hue, saturation, lightness)` for each lane; alpha is always 1.0.
-    pub lane_hsl: [(f32, f32, f32); 6],
+    pub lane_hsl: [(f32, f32, f32); 8],
 
     // ── Avatar fixed saturation / lightness ──────────────────────
     pub avatar_sat: f32,
@@ -130,7 +130,7 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// HSLA colour for graph lane `i` (cycles through the 6-colour palette).
+    /// HSLA colour for graph lane `i` (cycles through the 8-colour palette).
     pub fn lane_color(&self, i: usize) -> Hsla {
         let (h, s, l) = self.lane_hsl[i % self.lane_hsl.len()];
         hsla(h, s, l, 1.0)
@@ -562,6 +562,36 @@ pub static THEMES: &[Theme] = &[
 // lane HSL values reproduce the previous `graph_view::lane_color` palette;
 // avatar sat/light reproduce `avatar::avatar_color` (0.70 / 0.60); terminal
 // values reproduce `terminal.rs`.
+/// Lane colour palette for **dark-background** themes.
+///
+/// `oklch(0.77 0.174 H)` gamut-mapped to sRGB then stored as HSL. Lightness and
+/// chroma are fixed so every lane reads at equal brightness/vividness; only hue
+/// rotates, ordered so adjacent lane indices are maximally distinct (Gitru
+/// swimlane philosophy, see ADR-0104).
+const LANE_PALETTE_DARK: [(f32, f32, f32); 8] = [
+    (0.937, 1.0, 0.749),   // pink   #ff7fb0
+    (0.268, 0.546, 0.558), // green  #81cc51
+    (0.619, 1.0, 0.770),   // blue   #8aabff
+    (0.059, 1.0, 0.647),   // orange #ff8b4b
+    (0.477, 1.0, 0.421),   // teal   #00d7b8
+    (0.783, 1.0, 0.780),   // purple #dd8fff
+    (0.129, 1.0, 0.437),   // gold   #dfad00
+    (0.535, 1.0, 0.500),   // cyan   #00c9ff
+];
+
+/// Lane colour palette for **light-background** themes — same hues/chroma at a
+/// lower lightness (`oklch(0.58 0.174 H)`) for contrast on light surfaces.
+const LANE_PALETTE_LIGHT: [(f32, f32, f32); 8] = [
+    (0.935, 0.542, 0.519), // rose   #c74276
+    (0.250, 1.0, 0.281),   // green  #478f00
+    (0.634, 0.692, 0.603), // blue   #546fe0
+    (0.064, 1.0, 0.394),   // orange #c94e00
+    (0.471, 1.0, 0.300),   // teal   #00997e
+    (0.785, 0.460, 0.539), // purple #a053bf
+    (0.117, 1.0, 0.318),   // gold   #a27100
+    (0.550, 1.0, 0.389),   // blue2  #008bc6
+];
+
 const CATPPUCCIN_MOCHA: Theme = Theme {
     slug: "catppuccin",
     name: "Catppuccin Mocha",
@@ -604,14 +634,7 @@ const CATPPUCCIN_MOCHA: Theme = Theme {
 
     accent: 0xcba6f7, // mauve
 
-    lane_hsl: [
-        (0.583, 0.75, 0.65), // blue
-        (0.333, 0.75, 0.65), // green
-        (0.083, 0.75, 0.65), // yellow/gold
-        (0.917, 0.75, 0.65), // pink
-        (0.750, 0.75, 0.65), // purple
-        (0.500, 0.75, 0.65), // cyan
-    ],
+    lane_hsl: LANE_PALETTE_DARK,
 
     avatar_sat: 0.70,
     avatar_light: 0.60,
@@ -685,14 +708,7 @@ const XCODE_DARK: Theme = Theme {
 
     accent: 0xdabaff, // purple (keyword-ish)
 
-    lane_hsl: [
-        (0.585, 0.70, 0.66),
-        (0.430, 0.45, 0.60),
-        (0.130, 0.55, 0.66),
-        (0.020, 1.00, 0.72),
-        (0.770, 0.65, 0.74),
-        (0.500, 0.85, 0.70),
-    ],
+    lane_hsl: LANE_PALETTE_DARK,
 
     avatar_sat: 0.60,
     avatar_light: 0.58,
@@ -766,14 +782,7 @@ const XCODE_LIGHT: Theme = Theme {
 
     accent: 0x9b2393, // keyword magenta
 
-    lane_hsl: [
-        (0.585, 0.70, 0.45),
-        (0.380, 0.55, 0.38),
-        (0.090, 0.85, 0.42),
-        (0.940, 0.70, 0.48),
-        (0.800, 0.55, 0.48),
-        (0.520, 0.65, 0.42),
-    ],
+    lane_hsl: LANE_PALETTE_LIGHT,
 
     avatar_sat: 0.55,
     avatar_light: 0.45,
@@ -846,14 +855,7 @@ const ONE_DARK: Theme = Theme {
 
     accent: 0xc678dd, // purple
 
-    lane_hsl: [
-        (0.585, 0.80, 0.66),
-        (0.270, 0.42, 0.62),
-        (0.110, 0.66, 0.69),
-        (0.980, 0.70, 0.65),
-        (0.810, 0.62, 0.67),
-        (0.520, 0.45, 0.55),
-    ],
+    lane_hsl: LANE_PALETTE_DARK,
 
     avatar_sat: 0.55,
     avatar_light: 0.62,
@@ -927,14 +929,7 @@ const ONE_LIGHT: Theme = Theme {
 
     accent: 0xa626a4, // purple
 
-    lane_hsl: [
-        (0.605, 0.86, 0.60),
-        (0.330, 0.34, 0.47),
-        (0.090, 0.99, 0.38),
-        (0.020, 0.74, 0.59),
-        (0.825, 0.63, 0.40),
-        (0.545, 0.99, 0.37),
-    ],
+    lane_hsl: LANE_PALETTE_LIGHT,
 
     avatar_sat: 0.50,
     avatar_light: 0.48,
@@ -1035,14 +1030,7 @@ const MONOKAI: Theme = Theme {
 
     accent: 0xb08fff, // vivid purple (ref #af9cf4, boosted)
 
-    lane_hsl: [
-        (0.585, 1.00, 0.70), // blue   (sat +0.05, l -0.01)
-        (0.260, 0.65, 0.63), // green  (sat +0.10)
-        (0.085, 1.00, 0.63), // orange (l +0.01)
-        (0.945, 1.00, 0.70), // pink   (l -0.01)
-        (0.730, 0.90, 0.76), // purple (sat +0.06)
-        (0.510, 0.80, 0.70), // cyan   (sat +0.09)
-    ],
+    lane_hsl: LANE_PALETTE_DARK,
 
     avatar_sat: 0.68,
     avatar_light: 0.62,
@@ -1116,14 +1104,7 @@ const TOKYO_NIGHT: Theme = Theme {
 
     accent: 0xbb9af7, // magenta
 
-    lane_hsl: [
-        (0.600, 0.80, 0.72), // blue
-        (0.250, 0.55, 0.61), // green
-        (0.100, 0.63, 0.64), // yellow
-        (0.960, 0.85, 0.72), // red/pink
-        (0.740, 0.80, 0.78), // purple
-        (0.550, 0.90, 0.74), // cyan
-    ],
+    lane_hsl: LANE_PALETTE_DARK,
 
     avatar_sat: 0.65,
     avatar_light: 0.65,
@@ -1197,14 +1178,7 @@ const IBM_PC: Theme = Theme {
 
     accent: 0xff55ff, // bright magenta
 
-    lane_hsl: [
-        (0.667, 1.0, 0.67), // bright blue
-        (0.333, 1.0, 0.67), // bright green
-        (0.167, 1.0, 0.67), // yellow
-        (0.000, 1.0, 0.67), // bright red
-        (0.833, 1.0, 0.67), // bright magenta
-        (0.500, 1.0, 0.67), // bright cyan
-    ],
+    lane_hsl: LANE_PALETTE_DARK,
 
     avatar_sat: 1.0,
     avatar_light: 0.60,
@@ -1280,14 +1254,7 @@ const PINKY_BOO: Theme = Theme {
 
     accent: 0xff398d, // hot pink
 
-    lane_hsl: [
-        (0.917, 0.95, 0.55), // pink
-        (0.489, 0.76, 0.45), // teal
-        (0.080, 0.99, 0.42), // orange
-        (0.558, 0.75, 0.50), // blue
-        (0.264, 0.40, 0.45), // green
-        (0.806, 0.55, 0.50), // purple
-    ],
+    lane_hsl: LANE_PALETTE_LIGHT,
 
     avatar_sat: 0.50,
     avatar_light: 0.50,
@@ -1361,14 +1328,7 @@ const CATPPUCCIN_LATTE: Theme = Theme {
 
     accent: 0x8839ef, // mauve
 
-    lane_hsl: [
-        (0.617, 0.90, 0.54), // blue
-        (0.317, 0.58, 0.40), // green
-        (0.064, 0.99, 0.52), // peach
-        (0.872, 0.74, 0.55), // pink
-        (0.737, 0.86, 0.58), // mauve
-        (0.506, 0.74, 0.34), // teal
-    ],
+    lane_hsl: LANE_PALETTE_LIGHT,
 
     avatar_sat: 0.55,
     avatar_light: 0.50,
@@ -1442,14 +1402,7 @@ const DRACULA: Theme = Theme {
 
     accent: 0xbd93f9, // purple
 
-    lane_hsl: [
-        (0.515, 0.95, 0.72), // cyan
-        (0.379, 0.94, 0.65), // green
-        (0.172, 0.92, 0.70), // yellow
-        (0.894, 1.00, 0.74), // pink
-        (0.730, 0.89, 0.72), // purple
-        (0.083, 1.00, 0.71), // orange
-    ],
+    lane_hsl: LANE_PALETTE_DARK,
 
     avatar_sat: 0.70,
     avatar_light: 0.65,
@@ -1527,8 +1480,9 @@ mod tests {
     #[test]
     fn lane_color_cycles() {
         let t = &THEMES[0];
-        // lane 6 wraps to lane 0.
-        assert_eq!(t.lane_color(0), t.lane_color(6));
+        // 8-colour palette: lane 8 wraps back to lane 0.
+        assert_eq!(t.lane_color(0), t.lane_color(8));
+        assert_eq!(t.lane_color(3), t.lane_color(11));
     }
 
     #[test]

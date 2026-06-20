@@ -59,7 +59,11 @@ use crate::commit::{Commit, CommitId};
 /// **stable** colour (see [`GraphRow::color`] / [`GraphEdge::color`]). It is the
 /// domain-side palette size; the UI palette may be the same length or smaller
 /// (the renderer takes `color % palette_len`).
-pub const NUM_COLORS: usize = 10;
+///
+/// 8 colours: enough to keep concurrently-visible lanes distinct without
+/// over-cycling (lanes are short-lived, so same-colour coexistence is rare).
+/// The UI palette in `src/ui/theme.rs` matches this length 1:1.
+pub const NUM_COLORS: usize = 8;
 
 /// Which lane-assignment strategy [`layout_with`] uses.
 ///

@@ -325,6 +325,19 @@ pub fn init_compact_graph() {
     klog!("graph_compact: {}", compact_graph());
 }
 
+/// Log the persisted **lane-compaction** flag at startup (settings.json
+/// `"graph_lane_compact"`, `"true"`/`"false"`; missing → off).
+///
+/// This is the gitk-stable vs Gitru swimlane-compaction layout switch read by
+/// [`crate::ui::commit_list::build_commit_rows`] (`GraphLayoutMode`). Unlike
+/// `graph_compact` it needs no cached atomic — the renderer reads the setting
+/// directly — but the loaded value is logged here so the startup state is
+/// debuggable alongside the other settings lines.
+pub fn init_graph_lane_compact() {
+    let on = Settings::load().graph_lane_compact().unwrap_or(false);
+    klog!("graph_lane_compact: {}", on);
+}
+
 /// Background auto-fetch flag. Defaults to **on** (periodic + on-focus fetch so
 /// the commit graph and ahead/behind counts stay fresh without manual fetches).
 static AUTO_FETCH: AtomicBool = AtomicBool::new(true);

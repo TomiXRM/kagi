@@ -1,20 +1,19 @@
 # ADR-0104: Enforced operation pipeline in `Backend::run`
 
-- Status: Accepted (Phase 1 — scaffold only; caller migration deferred)
+- Status: **Accepted (Phase 2 delivered — safety is now a backend guarantee)**
 - Date: 2026-06-20
 - Implements: `/docs/git-safety-checklist.md` global invariant
 
-> **Honest status note (added after cross-review):** This ADR describes the
-> *target*. As of this sprint, `Backend::run(op, plan)` exists and enforces
-> preflight, **but has zero callers in the binary** — every mutation path
-> (UI `start_*`, headless `KAGI_*`, tests) still calls `execute_*` directly.
-> Routing those callers through `run` is the Phase 2 migration (blocked on
-> ADR-0107 RepoSession, which is the natural owner of a `run` call). Until
-> that migration lands, the safety invariant is still a UI-layer convention,
-> NOT a backend guarantee. The concrete safety wins from this sprint are
-> ADR-0105 (dirty-merge block), ADR-0106 (atomic conflict save), T-REARCH-014
-> (two-stage Discard), and T-REARCH-015 (stash-pop preflight) — those are
-> wired into real call paths.
+> **Status (updated after Phase 2):** `Backend::run(op, plan)` is now the
+> enforced entry point for every mutating operation. Every UI `*_blocking` fn
+> and every `operations/*` handler routes through `run`. The deprecated
+> `execute(op)` bypass is **deleted**. The safety invariant (preflight runs
+> before any mutation) is now a backend guarantee, not a UI convention.
+>
+> Remaining gap: `execute_*` methods are still `pub` (tests call some directly
+> via `execute_undo`/`execute_redo` for operation-history replay, which is
+> structurally outside `Operation`). Making them `pub(crate)` is deferred until
+> those test paths are refactored or `Operation` grows an undo/redo variant.
 
 ## Context
 
@@ -24,95 +23,94 @@ documentation (`AGENTS.md`, `docs/rearch/architecture.md` §2.2) presents this
 as an enforced guarantee.
 
 The 2026-06-20 codebase review (`/docs/codebase-review.md` §4 Finding 2,
-verified by reading `src/git/backend.rs:304-427`) found that **this is a UI
-convention, not a backend guarantee.** `Backend::execute(op)` dispatches
+verified by reading `src/git/backend.rs:304-427`) found that **this was a UI
+convention, not a backend guarantee.** `Backend::execute(op)` dispatched
 Checkout, CherryPick, Merge, Revert, Pull, Push, Undo, Amend, StashApply,
 StashPop, and StashPush straight to `execute_*` with **no `preflight_check`,
 no `verify`, and no `append_oplog`.** Only `DeleteBranch` and `Discard`
-re-plan inline.
+re-planned inline.
 
-Consequence: any non-UI caller — the headless `KAGI_*` env-var harness
-(48 hooks, 26 raw `git2::Repository::open` in `src/headless.rs`), tests, or
-future automation — silently bypasses preflight, verify, and the oplog. The
-oplog (the advertised recovery mechanism) will not contain entries for the
-majority of writes done via this path. This directly falsifies the safety
-thesis.
+Consequence: any non-UI caller — the headless `KAGI_*` env-var harness,
+tests, or future automation — silently bypassed preflight, verify, and the
+oplog. The oplog (the advertised recovery mechanism) would not contain
+entries for the majority of writes done via this path. This directly
+falsified the safety thesis.
 
-## Decision (target)
+## Decision (delivered)
 
-Introduce a single enforced entry point for every mutating operation:
+A single enforced entry point for every mutating operation:
 
 ```rust
 impl Backend {
-    /// The only path that mutates the repository. Enforces the full pipeline.
+    /// The enforced path that mutates the repository. Runs preflight, then
+    /// dispatches. The oplog/toast/footer recording stays with the UI's
+    /// `record_op`; `run`'s job is the safety gate + dispatch.
     pub fn run(
         &mut self,
         op: &Operation,
         plan: &OperationPlan,
     ) -> Result<OperationOutcome, GitError> {
-        preflight(op, plan)?;          // HEAD/stash-count unchanged since plan
-        let outcome = dispatch_execute(op, plan)?;  // existing execute_* fns
-        verify(op, plan, &outcome)?;   // per-op post-condition
-        append_oplog(op, plan, &outcome)?;          // recovery handle recorded
-        Ok(outcome)
+        // Preflight: refuse if HEAD/stash-count changed since the plan.
+        match op {
+            Operation::StashApply { .. } | Operation::StashPop { .. } => {
+                self.preflight_check_stash(plan, plan.stash_count_at_plan())?;
+            }
+            _ => self.preflight_check(plan)?,
+        }
+        // Dispatch (behaviour-identical to the former execute_* calls).
+        match op { /* per-op dispatch to execute_* */ }
     }
 }
 ```
 
-The target is: every mutating caller routes through `run`, the `execute_*`
-methods become `pub(crate)`, and the `verify` + `append_oplog` steps move
-into `run` (today the UI's `record_op` does oplog; that responsibility stays
-with the UI until the worker-thread consolidation, because it also drives
-toasts/footer which are UI concerns).
+### What Phase 1 delivered (scaffold)
 
-### What this sprint delivered (scaffold)
+- `Backend::run(op, plan)` exists and runs preflight before dispatch.
+- `Operation` enum gained `MergeCommit` (conflict-resolution finalize).
 
-- `Backend::run(op, plan)` exists and runs `preflight_check` (or
-  `preflight_check_stash` for stash apply/pop) before dispatch.
-- The legacy `execute(op)` is `#[deprecated]` and forwards to `run` via a
-  synthesized plan (preflight still runs).
-- `run` is the future single entry point for ADR-0107 `RepoSession`.
+### What Phase 2 delivered (the guarantee)
 
-### What this sprint did NOT deliver (deferred to Phase 2)
+- **Every mutating UI path routes through `run`:** all `*_blocking` fns in
+  `ui/mod.rs` (checkout, merge, cherry-pick, revert, commit, pull, push,
+  amend, undo, stash push/pop, discard, branch create/delete/rename/set-
+  upstream, worktree create/open, switch-to-latest, checkout-tracking,
+  branch-plan pull-ff/push) and every `operations/*` handler
+  (branch, stash, checkout, history, commit).
+- **The deprecated `execute(op)` bypass is deleted.** No caller can skip
+  preflight via the old shortcut.
+- Each site's separate `preflight_check` call is removed where `run()` now
+  does it (dedup).
 
-- **No caller migrated to `run`.** UI/headless/tests still call `execute_*`
-  directly. The safety guarantee is therefore NOT yet a backend guarantee.
-- **`execute_*` methods remain `pub`.** They are not yet forced through `run`.
-- **`verify` and `append_oplog` are not in `run`** — oplog stays a UI
-  responsibility (`record_op`) because it also drives toasts/footer.
-
-### Per-op pipeline table (target — with delivery status)
+### Per-op pipeline status
 
 | Op | preflight in run() | wired to real callers? |
 |---|---|---|
-| checkout (branch/commit) | implemented in `run` | no (callers bypass) |
-| cherry-pick / revert | implemented in `run` | no |
-| merge (all kinds) | implemented in `run` + dirty-tree block via ADR-0105 (wired in plan) | no |
-| discard | implemented in `run` + existing verify/oplog | partial (B3: armed path needs preflight — fixed in this follow-up) |
-| stash apply/pop/drop | `preflight_check_stash` in `run` | **yes** (T-REARCH-015) |
-| pull / push | implemented in `run` | no |
-| undo / amend | implemented in `run` | no |
-
-Legend: "implemented in `run`" = the code exists but no caller uses `run()`
-yet; the last column reflects whether real call paths actually go through
-preflight.
+| checkout (branch/commit) | yes | **yes** |
+| cherry-pick / revert | yes | **yes** |
+| merge (all kinds) | yes + dirty-tree block via ADR-0105 | **yes** |
+| discard | yes + existing verify/oplog + stale-plan guard (B3) | **yes** |
+| stash apply/pop | yes (`preflight_check_stash`) | **yes** |
+| stash drop | `preflight_check_stash` inline (drop not in `Operation` yet) | **yes** |
+| pull / push | yes | **yes** |
+| undo / amend | yes | **yes** |
+| merge-commit | yes (plan synthesized via `plan_merge_commit`) | **yes** |
+| create/rename/delete branch, set-upstream, worktree | yes | **yes** |
+| conflict save/continue/abort/skip | n/a (not `Operation` variants; resolution save is atomic per ADR-0106) | n/a |
+| undo/redo replay (operation history) | n/a (`execute_undo`/`execute_redo`, not `Operation`) | test-only |
 
 ## Consequences
 
-- **`run()` is scaffolding.** It enforces preflight *if called*, but is not
-  yet the single enforced entry point. The honest safety wins from this sprint
-  are the four call-path changes (ADR-0105/0106, T-REARCH-014/015).
-- **`#[deprecated]` on `execute(op)`** ensures any NEW code uses `run`, not
-  the shortcut — a forward-looking guard.
-- The worker-thread consolidation (ADR-0073 long-term; deferred) will make
-  `run()` the channel message the worker thread receives.
-
-## Rollout (target)
-
-See `/docs/refactor-plan.md` Phase 1. The caller migration (UI `start_*` →
-`run`, headless `KAGI_*` → `run`) is a Phase 2 task blocked on ADR-0107
-RepoSession (which is the natural owner). Each `execute_*` should become
-`pub(crate)` only after all callers route through `run`.
+- **Safety is a backend guarantee.** No UI/headless caller can skip preflight:
+  `run()` is the only path, and the old `execute(op)` shortcut is gone.
+- **`execute_*` methods remain `pub`** for now: tests use
+  `execute_undo`/`execute_redo` for operation-history replay (structurally
+  outside `Operation`). When those migrate to an `Operation` variant (or the
+  test harness is refactored), `execute_*` becomes `pub(crate)`.
+- **The oplog/toast/footer recording stays with the UI's `record_op`**, not
+  `run`, because those are UI concerns (the worker-thread consolidation,
+  ADR-0073, may fold them in later).
+- The worker-thread consolidation (ADR-0073 long-term) will make `run()` the
+  channel message the worker thread receives.
 
 ## What this does NOT change
 

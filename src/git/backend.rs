@@ -440,19 +440,6 @@ impl Backend {
         }
     }
 
-    /// Deprecated back-compat entry point (ADR-0104).
-    ///
-    /// Retained so existing callers compile while they migrate to `run`. It
-    /// synthesizes a fresh plan via `plan(op)` and forwards to `run`, so the
-    /// preflight still runs — but **the whole point of the plan→confirm→execute
-    /// pipeline is the user confirming the predicted state**. Calling this
-    /// skips the confirm step; new code MUST use `run(op, &confirmed_plan)`.
-    #[deprecated(note = "use run(op, &confirmed_plan) — ADR-0104 enforces preflight")]
-    pub fn execute(&mut self, op: &Operation) -> Result<OperationOutcome, GitError> {
-        let plan = self.plan(op)?;
-        self.run(op, &plan)
-    }
-
     pub fn plan_commit(&self, message: &str) -> Result<OperationPlan, GitError> {
         staging::plan_commit(&self.repo, message)
     }

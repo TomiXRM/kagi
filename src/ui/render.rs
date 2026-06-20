@@ -3279,19 +3279,13 @@ fn render_rows(
             // within the visible (horizontally-scrolled) lane window so it isn't
             // clipped to a wrong position.
             let lane_w_px = graph_view::lane_w();
-            // Left padding inside the GRAPH column: pushes lane 0 away from the
-            // column's left edge so the avatar node has room and never overflows
-            // into the BRANCH/TAG column. Applied identically to the canvas
-            // (via `pl`) and the avatar node x so the two stay aligned.
-            let graph_pad_l = theme::scaled(7.0);
             let lane_lo = (graph_scroll_x / lane_w_px).floor().max(0.0) as usize;
             let avatar_in_graph = theme::graph_lane_compact()
                 && visible_lanes > 0
                 && row.lane >= lane_lo
                 && row.lane < lane_lo + visible_lanes;
-            // Local x-centre of the node within the graph column (incl. left pad).
-            let node_cx =
-                graph_pad_l + (row.lane as f32) * lane_w_px + lane_w_px / 2.0 - graph_scroll_x;
+            // Local x-centre of the node within the graph column.
+            let node_cx = (row.lane as f32) * lane_w_px + lane_w_px / 2.0 - graph_scroll_x;
             let avatar_image_g = avatar_image.clone();
             let avatar_init_g = avatar_init.clone();
 
@@ -3389,11 +3383,11 @@ fn render_rows(
                         .w(theme::scaled_px(graph_col_w))
                         .h_full()
                         .flex_shrink_0()
-                        // Clip to the column so neither lanes nor the avatar node
-                        // bleed into the BRANCH/TAG or message columns. Room for
-                        // the avatar comes from `graph_pad_l` (a left pad on the
-                        // canvas + node x), not from overflowing the column.
-                        .overflow_hidden()
+                        // No overflow_hidden here: the avatar node may extend a
+                        // couple of px past the column edges (lane 0 sits close
+                        // to the left edge). The lanes are clipped by an inner
+                        // wrapper instead, so they still can't bleed into the
+                        // message column.
                         // Horizontal wheel/trackpad scroll reveals clipped
                         // lanes. Vertical deltas are left untouched so the
                         // commit list keeps scrolling normally.
@@ -3404,7 +3398,7 @@ fn render_rows(
                         ))
                         .when(visible_lanes > 0, |el| {
                             el.child(
-                                div().size_full().pl(px(graph_pad_l)).child(
+                                div().size_full().overflow_hidden().child(
                                     graph_canvas(
                                         row.lane,
                                         row.node_color,

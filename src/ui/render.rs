@@ -3196,23 +3196,34 @@ fn render_rows(
             } else {
                 theme().bg_row_alt
             };
-            // Swimlane row tint (ADR-0104 follow-up): when lane-compaction is on,
-            // wash each non-selected row in its branch's lane colour so a branch
-            // reads as a horizontal band across the whole row (label → graph →
-            // message). Blended over the zebra base so striping survives; the
-            // selected/WIP highlight still wins (tint is skipped when selected).
-            let row_bg_fill: gpui::Rgba = if !is_selected && theme::graph_lane_compact() {
-                let base = rgb(row_bg);
-                let t: gpui::Rgba = theme().lane_color(row.node_color).into();
-                let a = if theme().dark { 0.18 } else { 0.14 };
-                gpui::Rgba {
-                    r: base.r * (1.0 - a) + t.r * a,
-                    g: base.g * (1.0 - a) + t.g * a,
-                    b: base.b * (1.0 - a) + t.b * a,
-                    a: 1.0,
-                }
+            // Swimlane lane band (Gitru-style): an inner horizontal strip drawn
+            // BEHIND the graph + message area and tinted by this row's lane
+            // colour. It is a separate absolute layer — NOT the row background —
+            // with vertical inset so adjacent bands don't touch and the row
+            // stays a neutral list. Gated on lane-compaction; skipped on the
+            // selected row so the selection highlight always wins. Tuple =
+            // (normal, hover) wash colours.
+            let lane_band: Option<(gpui::Hsla, gpui::Hsla)> =
+                if theme::graph_lane_compact() && !is_selected {
+                    let c = theme().lane_color(row.node_color);
+                    let (na, ha) = if theme().dark {
+                        (0.10, 0.14)
+                    } else {
+                        (0.06, 0.09)
+                    };
+                    Some((gpui::hsla(c.h, c.s, c.l, na), gpui::hsla(c.h, c.s, c.l, ha)))
+                } else {
+                    None
+                };
+            // Lane-driven ref-pill colour (swimlane mode): every pill on this
+            // commit uses the commit's lane colour so pills agree with the graph
+            // line / node / band. Per-ref lanes aren't modelled, so the primary
+            // commit lane is the documented fallback. `None` = classic semantic
+            // (HEAD/branch/remote/tag) colours when swimlane mode is off.
+            let pill_lane: Option<u32> = if theme::graph_lane_compact() {
+                Some(theme::lane_color_u32(row.node_color))
             } else {
-                rgb(row_bg)
+                None
             };
 
             // ── Graph lane area (T030) ────────────────────────
@@ -3254,13 +3265,16 @@ fn render_rows(
             // graph isn't scrolled sideways (the canvas connector is gated the
             // same way).
             let connector_color: Option<gpui::Hsla> = if has_badges && graph_scroll_x < 0.5 {
-                Some(theme().lane_color(row.lane))
+                // Use the node's stable lane colour (matches the graph node / band
+                // / pills) rather than the bare lane index.
+                Some(theme().lane_color(row.node_color))
             } else {
                 None
             };
 
             div()
                 .id(ix)
+                .relative()
                 .flex()
                 .flex_row()
                 .items_center()
@@ -3279,10 +3293,30 @@ fn render_rows(
                 })
                 .when(!is_selected, |el| el.px_3())
                 .h(px(rh))
-                .bg(row_bg_fill)
+                .bg(rgb(row_bg))
                 .on_click(click_handler)
                 .on_mouse_down(MouseButton::Right, context_click_handler)
                 .when(is_dimmed, |el| el.opacity(0.32))
+                // ── Lane band (swimlane): absolute strip behind graph+message ──
+                // Declared before the column children so it paints under them
+                // (row bg → band → graph lines → nodes → pills → text). Left
+                // edge = graph-column start (= badge column + spacer), so the
+                // BRANCH/TAG column stays neutral; extends to the row's right
+                // edge through the message area. 3px top/bottom inset leaves a
+                // neutral gap between adjacent bands.
+                .when_some(lane_band, |el, (band, band_hover)| {
+                    el.child(
+                        div()
+                            .absolute()
+                            .left(theme::scaled_px(badge_col_w + INNER_DIV_W))
+                            .right_0()
+                            .top(theme::scaled_px(3.))
+                            .bottom(theme::scaled_px(3.))
+                            .rounded(theme::scaled_px(3.))
+                            .bg(band)
+                            .hover(|s| s.bg(band_hover)),
+                    )
+                })
                 // ── Badges column: user-resizable width (T030) ──
                 // T-DNDMERGE-001: thread `cx` so each `BadgeKind::Branch` chip
                 // can be made draggable and the HeadBranch chip a drop target.
@@ -3293,6 +3327,7 @@ fn render_rows(
                     &row.badges,
                     badge_col_w,
                     connector_color,
+                    pill_lane,
                     &mut *cx,
                 ))
                 // ── Inner divider spacer (badge|graph handle width) ──
@@ -4504,6 +4539,10 @@ fn render_badges_column(
     // the badges and the right edge of the column, so the badge→node line is
     // continuous *inside* the BRANCH/TAG pane (not stopping at the boundary).
     connector_color: Option<gpui::Hsla>,
+    // Swimlane mode: when `Some`, every pill uses this lane colour (`0xRRGGBB`)
+    // instead of its semantic HEAD/branch/remote/tag colour, so pills agree with
+    // the graph line / node / band. `None` = classic semantic colours.
+    lane_pill_color: Option<u32>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     // Content is built to fit rather than relying on clipping:
@@ -4533,11 +4572,14 @@ fn render_badges_column(
     // Badges in priority order: primary (HEAD/branch) leftmost.
     for (i, badge) in shown.iter().enumerate() {
         let target = row_id.clone();
-        let color = match badge.kind {
-            BadgeKind::HeadBranch => theme().color_head,
-            BadgeKind::Branch => theme().color_branch,
-            BadgeKind::Remote => theme().color_remote,
-            BadgeKind::Tag => theme().color_tag,
+        let color = match lane_pill_color {
+            Some(c) => c,
+            None => match badge.kind {
+                BadgeKind::HeadBranch => theme().color_head,
+                BadgeKind::Branch => theme().color_branch,
+                BadgeKind::Remote => theme().color_remote,
+                BadgeKind::Tag => theme().color_tag,
+            },
         };
         // Char-truncate long labels.
         let label: SharedString = if badge.label.chars().count() > MAX_BADGE_CHARS {

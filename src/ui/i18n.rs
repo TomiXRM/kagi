@@ -808,10 +808,10 @@ impl Msg {
             (En, SettingsLaneCompact) => "Compact lanes (swimlane)",
             (Ja, SettingsLaneCompact) => "lane をコンパクト表示 (swimlane)",
             (En, SettingsLaneCompactDesc) => {
-                "Compact freed lanes and wash each row in its branch colour so branches read as bands (Gitru-style). Off = classic gitk layout."
+                "Compact freed lanes and draw a soft lane band behind the graph/message so branches read as bands (Gitru-style). Off = classic gitk layout."
             }
             (Ja, SettingsLaneCompactDesc) => {
-                "空いた lane を詰め、各行をブランチ色で淡く染めて帯として見せます (Gitru 方式)。オフで従来の gitk レイアウト。"
+                "空いた lane を詰め、graph〜message の背後にブランチ色の帯を敷いて見やすくします (Gitru 方式)。オフで従来の gitk レイアウト。"
             }
             (En, SettingsAutoFetch) => "Auto-fetch",
             (Ja, SettingsAutoFetch) => "自動 fetch",

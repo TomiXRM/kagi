@@ -172,6 +172,15 @@ pub fn badge_style(color: u32) -> (u32, u32, u32) {
     }
 }
 
+/// The active theme's lane colour `i` packed as a `0xRRGGBB` u32, for feeding
+/// the lane hue into [`badge_style`] (lane-driven ref pills in swimlane mode).
+#[inline]
+pub fn lane_color_u32(i: usize) -> u32 {
+    let c: gpui::Rgba = theme().lane_color(i).into();
+    let q = |x: f32| -> u32 { (x.clamp(0.0, 1.0) * 255.0).round() as u32 };
+    (q(c.r) << 16) | (q(c.g) << 8) | q(c.b)
+}
+
 /// Index of the active theme (for the menu "✓" marker).
 #[inline]
 pub fn active_index() -> usize {

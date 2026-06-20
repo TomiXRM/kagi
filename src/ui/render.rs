@@ -394,6 +394,11 @@ impl KagiApp {
 
 impl Render for KagiApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // ADR-0109: swap in any pending background highlight result before
+        // painting, so the text-first diff gets its colors on the next frame
+        // after the tree-sitter parse completes off-thread.
+        self.apply_pending_highlights();
+
         // W27-UIPOLISH: apply the global UI zoom by scaling the window's rem
         // size. gpui's `text_*` helpers and rem-based lengths resolve through
         // `rem_size()`, so this zooms virtually all of kagi's text/layout like
@@ -953,7 +958,7 @@ impl Render for KagiApp {
                 if this.file_history.is_some() {
                     this.step_file_history_selection(-1, cx);
                 } else if this.main_diff.is_some() {
-                    this.main_diff_step(-1);
+                    this.main_diff_step(-1, cx);
                 } else {
                     this.step_commit_selection(-1);
                 }
@@ -966,7 +971,7 @@ impl Render for KagiApp {
                 if this.file_history.is_some() {
                     this.step_file_history_selection(1, cx);
                 } else if this.main_diff.is_some() {
-                    this.main_diff_step(1);
+                    this.main_diff_step(1, cx);
                 } else {
                     this.step_commit_selection(1);
                 }

@@ -3273,6 +3273,22 @@ fn render_rows(
                 None
             };
 
+            // Swimlane: render the author avatar AS the commit node inside the
+            // graph (ringed in the lane colour, Gitru-style), replacing the
+            // separate avatar in the message column. Only when the node's lane is
+            // within the visible (horizontally-scrolled) lane window so it isn't
+            // clipped to a wrong position.
+            let lane_w_px = graph_view::lane_w();
+            let lane_lo = (graph_scroll_x / lane_w_px).floor().max(0.0) as usize;
+            let avatar_in_graph = theme::graph_lane_compact()
+                && visible_lanes > 0
+                && row.lane >= lane_lo
+                && row.lane < lane_lo + visible_lanes;
+            // Local x-centre of the node within the graph column.
+            let node_cx = (row.lane as f32) * lane_w_px + lane_w_px / 2.0 - graph_scroll_x;
+            let avatar_image_g = avatar_image.clone();
+            let avatar_init_g = avatar_init.clone();
+
             div()
                 .id(ix)
                 .relative()
@@ -3363,6 +3379,7 @@ fn render_rows(
                 // Clip by visible_lanes to prevent bleed into message column.
                 .child(
                     div()
+                        .relative()
                         .w(theme::scaled_px(graph_col_w))
                         .h_full()
                         .flex_shrink_0()
@@ -3390,6 +3407,50 @@ fn render_rows(
                                 )
                                 .size_full(),
                             )
+                        })
+                        // Swimlane: avatar node, drawn over the canvas at the
+                        // node centre with a lane-colour ring (the coloured disc
+                        // shows as a ~1.5px ring around the inner avatar).
+                        .when(avatar_in_graph, |el| {
+                            let ring_d = theme::scaled(18.);
+                            let av_d = theme::scaled(15.);
+                            let inner = div()
+                                .w(px(av_d))
+                                .h(px(av_d))
+                                .rounded_full()
+                                .overflow_hidden();
+                            let inner = match avatar_image_g {
+                                Some(image) => inner.child(
+                                    gpui::img(gpui::ImageSource::Image(image))
+                                        .size_full()
+                                        .rounded_full(),
+                                ),
+                                None => inner
+                                    .bg(av_bg)
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(
+                                        div()
+                                            .text_color(gpui::white())
+                                            .text_xs()
+                                            .child(avatar_init_g),
+                                    ),
+                            };
+                            el.child(
+                                div()
+                                    .absolute()
+                                    .left(px(node_cx - ring_d / 2.))
+                                    .top(px(rh / 2. - ring_d / 2.))
+                                    .w(px(ring_d))
+                                    .h(px(ring_d))
+                                    .rounded_full()
+                                    .bg(theme().lane_color(row.node_color))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(inner),
+                            )
                         }),
                 )
                 // ── Inner divider spacer (graph|message handle width) ──
@@ -3404,29 +3465,36 @@ fn render_rows(
                 // ── Author avatar: 18px circle after graph ────────
                 // W11-AVATAR: when a GitHub avatar is resolved, show the image
                 // clipped to the circle; otherwise the initial-on-colour circle.
-                .child({
-                    // W28: avatar circle scales with zoom so it stays sized to
-                    // the (rem-scaled) row text and aligned with the graph node.
-                    let circle = div()
-                        .w(theme::scaled_px(18.))
-                        .h(theme::scaled_px(18.))
-                        .flex_shrink_0()
-                        .mr(theme::scaled_px(4.))
-                        .rounded_full()
-                        .overflow_hidden();
-                    match avatar_image {
-                        Some(image) => circle.child(
-                            gpui::img(gpui::ImageSource::Image(image))
-                                .size_full()
-                                .rounded_full(),
-                        ),
-                        None => circle
-                            .bg(av_bg)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(div().text_color(gpui::white()).text_xs().child(avatar_init)),
-                    }
+                // Skipped in swimlane mode — the avatar is drawn as the graph
+                // node instead (Gitru-style), so the message column starts with
+                // the summary text.
+                .when(!avatar_in_graph, |row_el| {
+                    row_el.child({
+                        // W28: avatar circle scales with zoom so it stays sized to
+                        // the (rem-scaled) row text and aligned with the graph node.
+                        let circle = div()
+                            .w(theme::scaled_px(18.))
+                            .h(theme::scaled_px(18.))
+                            .flex_shrink_0()
+                            .mr(theme::scaled_px(4.))
+                            .rounded_full()
+                            .overflow_hidden();
+                        match avatar_image {
+                            Some(image) => circle.child(
+                                gpui::img(gpui::ImageSource::Image(image))
+                                    .size_full()
+                                    .rounded_full(),
+                            ),
+                            None => circle
+                                .bg(av_bg)
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    div().text_color(gpui::white()).text_xs().child(avatar_init),
+                                ),
+                        }
+                    })
                 })
                 .child(
                     div()

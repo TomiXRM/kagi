@@ -768,7 +768,7 @@ pub struct KagiApp {
     /// Per-tab repository session (ADR-0107): owns a `Backend` for the tab
     /// lifetime so read paths don't re-open the repo on every interaction.
     /// `None` when no repo is open (same lifecycle as `repo_path`). Cloning
-    /// is cheap (`Rc` bump); the underlying `git2::Repository` is opened once.
+    /// is cheap (`Rc` bump); the underlying repository handle is opened once.
     /// Mutating ops still open a fresh `Backend` (the `*_blocking` pattern)
     /// because `run()` needs `&mut self` and the session is `Rc`, not
     /// `Arc+Mutex` — that collapses when the worker thread (ADR-0073) lands.

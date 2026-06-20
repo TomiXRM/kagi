@@ -954,7 +954,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.push_toast(
@@ -964,8 +964,25 @@ impl KagiApp {
                 return;
             }
         };
-        match repo.execute_merge_commit(message) {
-            Ok(id) => {
+        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+        // MergeCommit has no user-facing plan modal (the conflict-resolution
+        // save IS the confirm step); we synthesize a plan via plan_merge_commit
+        // so run()'s preflight can gate on HEAD movement.
+        let merge_op = kagi::git::Operation::MergeCommit {
+            message: message.to_string(),
+        };
+        let merge_plan = match repo.plan(&merge_op) {
+            Ok(p) => p,
+            Err(e) => {
+                self.push_toast(
+                    ToastKind::Error,
+                    SharedString::from(format!("Merge-commit plan failed: {}", e)),
+                );
+                return;
+            }
+        };
+        match repo.run(&merge_op, &merge_plan) {
+            Ok(kagi::git::OperationOutcome::Commit(id)) => {
                 klog!("executed: merge commit {}", id.short());
                 let _ = kagi::git::ResolutionBuffer::clear(&repo_path);
                 let branch = self.active_view.status_summary.branch.clone();
@@ -989,6 +1006,16 @@ impl KagiApp {
                     panel.plan_modal = None;
                 }
                 self.reload();
+            }
+            Ok(_) => {
+                // MergeCommit only yields OperationOutcome::Commit; any other
+                // variant is a backend bug — surface it loudly.
+                klog!("merge commit: unexpected outcome variant");
+                self.push_toast(
+                    ToastKind::Error,
+                    SharedString::from("merge commit: unexpected outcome"),
+                );
+                return;
             }
             Err(e) => {
                 let err_msg = format!("{}", e);

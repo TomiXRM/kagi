@@ -229,6 +229,7 @@ impl Backend {
     pub fn plan(&self, op: &Operation) -> Result<OperationPlan, GitError> {
         match op {
             Operation::Commit { message } => self.plan_commit(message),
+            Operation::MergeCommit { message } => self.plan_merge_commit(message),
             Operation::Checkout { branch } => self.plan_checkout(branch),
             Operation::CheckoutCommit { id } => self.plan_checkout_commit(id),
             Operation::CreateBranch { name, at } => self.plan_create_branch(name, at),
@@ -339,6 +340,9 @@ impl Backend {
             Operation::Commit { message } => {
                 self.execute_commit(message).map(OperationOutcome::Commit)
             }
+            Operation::MergeCommit { message } => self
+                .execute_merge_commit(message)
+                .map(OperationOutcome::Commit),
             Operation::Checkout { branch } => self
                 .execute_checkout(branch)
                 .map(|()| OperationOutcome::Unit),
@@ -455,6 +459,18 @@ impl Backend {
 
     pub fn execute_commit(&self, message: &str) -> Result<CommitId, GitError> {
         staging::execute_commit(&self.repo, message)
+    }
+
+    /// Plan a merge-finalize commit (`git commit` with `MERGE_HEAD` present).
+    /// The plan captures the current HEAD so `run()`'s preflight can detect a
+    /// change between plan and execute (ADR-0104). The conflict-resolution save
+    /// IS the substantive work; this plan is the safety gate around it.
+    pub fn plan_merge_commit(&self, message: &str) -> Result<OperationPlan, GitError> {
+        // Reuse plan_commit's HEAD snapshot + status capture; the merge-commit
+        // message is informational (not validated against the staged tree).
+        let mut plan = self.plan_commit(message)?;
+        plan.title = "Finalize merge commit".to_string();
+        Ok(plan)
     }
 
     pub fn detect_conflict_session(&self) -> Option<conflicts::ConflictSession> {

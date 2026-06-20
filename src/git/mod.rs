@@ -120,6 +120,7 @@ use git2::Repository;
 pub use kagi_domain::head::Head;
 #[allow(unused_imports)]
 pub use kagi_domain::history::{HistoryEntry, OperationHistory, OperationKind};
+pub use kagi_domain::operation::{Operation, OperationOutcome};
 
 /// Basic information about an opened repository.
 #[derive(Debug, Clone)]

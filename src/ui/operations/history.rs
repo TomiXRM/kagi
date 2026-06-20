@@ -70,7 +70,7 @@ impl KagiApp {
             );
             return;
         }
-        let repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
@@ -105,8 +105,10 @@ impl KagiApp {
             });
             return;
         }
-        match repo.execute_undo_commit() {
-            Ok(outcome) => {
+        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+        let undo_op = kagi::git::Operation::UndoCommit;
+        match repo.run(&undo_op, &modal.plan) {
+            Ok(kagi::git::OperationOutcome::Undo(outcome)) => {
                 eprintln!(
                     "[kagi] executed: undo {} -> now at {}",
                     outcome.undone.short(),
@@ -141,6 +143,11 @@ impl KagiApp {
                     outcome.undone.short()
                 )));
                 self.reload();
+            }
+            Ok(_) => {
+                // UndoCommit only yields OperationOutcome::Undo.
+                klog!("undo: unexpected outcome variant");
+                return;
             }
             Err(e) => {
                 let err_msg = format!("Undo failed: {}", e);
@@ -527,7 +534,7 @@ impl KagiApp {
         }
 
         // ── Armed: proceed to preflight → execute ────────────
-        let repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
@@ -571,8 +578,13 @@ impl KagiApp {
         } else {
             Some(modal.message.as_str())
         };
-        match repo.execute_amend(modal.mode, msg_opt) {
-            Ok(outcome) => {
+        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+        let amend_op = kagi::git::Operation::Amend {
+            mode: modal.mode,
+            message: msg_opt.map(|s| s.to_string()),
+        };
+        match repo.run(&amend_op, &modal.plan) {
+            Ok(kagi::git::OperationOutcome::Amend(outcome)) => {
                 eprintln!(
                     "[kagi] executed: amend {} -> {}",
                     outcome.old.short(),
@@ -611,6 +623,11 @@ impl KagiApp {
                     outcome.old.short()
                 )));
                 self.reload();
+            }
+            Ok(_) => {
+                // Amend only yields OperationOutcome::Amend.
+                klog!("amend: unexpected outcome variant");
+                return;
             }
             Err(e) => {
                 let err_msg = format!("Amend failed: {}", e);

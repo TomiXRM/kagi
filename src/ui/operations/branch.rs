@@ -135,7 +135,7 @@ impl KagiApp {
             None => return,
         };
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
@@ -154,25 +154,14 @@ impl KagiApp {
             }
         };
 
-        // Preflight check (re-use checkout preflight: verifies HEAD unchanged).
-        if let Err(e) = repo.preflight_check(&plan) {
-            let err_msg = format!("Preflight failed: {}", e);
-            self.record_op(
-                "create-branch",
-                plan.current.clone(),
-                OpOutcome::Failed {
-                    error: err_msg.clone(),
-                },
-                &repo_path,
-            );
-            if let Some(m) = self.create_branch_modal_mut() {
-                m.error = Some(SharedString::from(err_msg));
-            }
-            return;
-        }
-
-        // Execute create-branch.
-        if let Err(e) = repo.execute_create_branch(&modal.input, &modal.at) {
+        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
+        // in one place (run() calls preflight_check as its first line — the
+        // separate preflight_check call above was redundant).
+        let op = kagi::git::Operation::CreateBranch {
+            name: modal.input.clone(),
+            at: modal.at.clone(),
+        };
+        if let Err(e) = repo.run(&op, &plan) {
             let err_msg = format!("Create branch failed: {}", e);
             self.record_op(
                 "create-branch",
@@ -195,7 +184,7 @@ impl KagiApp {
         );
 
         // Verify: confirm the branch now exists.
-        let repo2 = match kagi::git::Backend::open(&repo_path) {
+        let mut repo2 = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 klog!("verify: repo open error: {}", e);
@@ -263,22 +252,13 @@ impl KagiApp {
                 }
                 return;
             }
-            if let Err(e) = repo2.preflight_check(&checkout_plan) {
-                let err_msg = format!("Checkout preflight failed: {}", e);
-                self.record_op(
-                    "checkout",
-                    checkout_plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                );
-                if let Some(m) = self.create_branch_modal_mut() {
-                    m.error = Some(SharedString::from(err_msg));
-                }
-                return;
-            }
-            if let Err(e) = repo2.execute_checkout(&modal.input) {
+            // ADR-0104 Phase 2: route through Backend::run so preflight is
+            // enforced in one place (the separate preflight_check + execute
+            // above collapses into run()).
+            let checkout_op = kagi::git::Operation::Checkout {
+                branch: modal.input.clone(),
+            };
+            if let Err(e) = repo2.run(&checkout_op, &checkout_plan) {
                 let err_msg = format!("Checkout failed: {}", e);
                 self.record_op(
                     "checkout",
@@ -1248,7 +1228,7 @@ impl KagiApp {
             return;
         }
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
@@ -1269,26 +1249,14 @@ impl KagiApp {
             }
         };
 
-        if let Err(e) = repo.preflight_check(&modal.plan) {
-            let err_msg = format!("Preflight failed: {}", e);
-            self.record_op(
-                "delete-branch",
-                modal.plan.current.clone(),
-                kagi::git::oplog::OpOutcome::Failed {
-                    error: err_msg.clone(),
-                },
-                &repo_path,
-            );
-            self.set_delete_branch_modal(DeleteBranchModal {
-                branch_name: modal.branch_name.clone(),
-                plan: modal.plan.clone(),
-                error: Some(SharedString::from(err_msg)),
-            });
-            return;
-        }
-
-        match repo.execute_delete_branch(&modal.plan, &modal.branch_name) {
-            Ok(()) => {
+        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
+        // in one place (run() calls preflight_check as its first line — the
+        // separate preflight_check call above was redundant).
+        let del_op = kagi::git::Operation::DeleteBranch {
+            name: modal.branch_name.clone(),
+        };
+        match repo.run(&del_op, &modal.plan) {
+            Ok(_) => {
                 klog!("executed: delete-branch {}", modal.branch_name);
                 self.clear_delete_branch_modal();
                 let after = kagi::git::ops::StateSummary {

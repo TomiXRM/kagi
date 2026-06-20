@@ -140,8 +140,13 @@ impl KagiApp {
             }
             return false;
         }
-        match repo.execute_stash_push(Some(msg), true) {
-            Ok(()) => {
+        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+        let stash_op = kagi::git::Operation::StashPush {
+            message: Some(msg.to_string()),
+            include_untracked: true,
+        };
+        match repo.run(&stash_op, &plan) {
+            Ok(_) => {
                 klog!("executed: auto-stash before checkout");
                 self.record_op(
                     "stash-push",
@@ -212,7 +217,7 @@ impl KagiApp {
             CheckoutPlanTarget::Commit(_) => "checkout-commit",
         };
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
@@ -255,11 +260,16 @@ impl KagiApp {
         }
 
         // Execute checkout (safe mode only).
-        let execute_result = match &modal.target {
-            CheckoutPlanTarget::Branch(branch) => repo.execute_checkout(branch),
-            CheckoutPlanTarget::Commit(commit_id) => repo.execute_checkout_commit(commit_id),
+        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+        let checkout_op = match &modal.target {
+            CheckoutPlanTarget::Branch(branch) => kagi::git::Operation::Checkout {
+                branch: branch.clone(),
+            },
+            CheckoutPlanTarget::Commit(commit_id) => kagi::git::Operation::CheckoutCommit {
+                id: commit_id.clone(),
+            },
         };
-        if let Err(e) = execute_result {
+        if let Err(e) = repo.run(&checkout_op, &modal.plan) {
             let err_msg = format!("Checkout failed: {}", e);
             self.record_op(
                 op_name,

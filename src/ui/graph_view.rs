@@ -188,6 +188,41 @@ fn draw_out_of_node(builder: &mut PathBuilder, x_node: f32, mid_y: f32, x_to: f3
     builder.line_to(point(px(x_to), px(y_bot)));
 }
 
+/// Draw a **shift** edge: a lane that moved from `x_from` (top) to `x_to`
+/// (bottom) because compaction reclaimed a column between rows.
+///
+/// Path: vertical down at `x_from` → rounded corner → horizontal at mid-row →
+/// rounded corner → vertical down at `x_to`.  An S-step, mirroring the corner
+/// style of [`draw_into_node`] / [`draw_out_of_node`].
+fn draw_shift(builder: &mut PathBuilder, x_from: f32, y_top: f32, x_to: f32, y_bot: f32) {
+    let dx = (x_to - x_from).abs();
+    let mid_y = (y_top + y_bot) / 2.0;
+    let avail_v = (mid_y - y_top).min(y_bot - mid_y).max(0.0);
+    let r = theme::scaled(CORNER_R).min(dx / 2.0).min(avail_v);
+
+    if r < 0.5 || dx < 0.5 {
+        // Degenerate: draw a straight diagonal.
+        builder.move_to(point(px(x_from), px(y_top)));
+        builder.line_to(point(px(x_to), px(y_bot)));
+        return;
+    }
+
+    let dir: f32 = if x_to > x_from { 1.0 } else { -1.0 };
+
+    builder.move_to(point(px(x_from), px(y_top)));
+    builder.line_to(point(px(x_from), px(mid_y - r)));
+    // Top corner: arc from vertical into the horizontal run.
+    builder.curve_to(
+        point(px(x_from + dir * r), px(mid_y)),
+        point(px(x_from), px(mid_y)),
+    );
+    // Horizontal run across to the destination column.
+    builder.line_to(point(px(x_to - dir * r), px(mid_y)));
+    // Bottom corner: arc from horizontal back into the vertical.
+    builder.curve_to(point(px(x_to), px(mid_y + r)), point(px(x_to), px(mid_y)));
+    builder.line_to(point(px(x_to), px(y_bot)));
+}
+
 // ──────────────────────────────────────────────────────────────
 // Per-row canvas element
 // ──────────────────────────────────────────────────────────────
@@ -211,6 +246,9 @@ fn draw_out_of_node(builder: &mut PathBuilder, x_node: f32, mid_y: f32, x_to: f3
 #[allow(clippy::too_many_arguments)]
 pub fn graph_canvas(
     node_lane: usize,
+    // Stable colour index for this node's lane (carried with the branch). Used
+    // for the ● node and the label→node connector; edges carry their own colour.
+    node_color: usize,
     edges: Vec<GraphEdge>,
     visible_lanes: usize,
     is_head: bool,
@@ -267,24 +305,30 @@ pub fn graph_canvas(
                     continue;
                 }
 
+                // Colour comes from the edge's carried (branch-stable) colour
+                // index — not the column index — so a branch keeps its colour
+                // even when compaction shifts its lane.
                 let color = if is_stash_lane(edge.from_lane) || is_stash_lane(edge.to_lane) {
                     stash_color
                 } else {
-                    match edge.kind {
-                        EdgeKind::IntoNode => lane_color(edge.from_lane),
-                        EdgeKind::OutOfNode => lane_color(edge.to_lane),
-                        EdgeKind::Pass => lane_color(edge.from_lane),
-                    }
+                    lane_color(edge.color)
                 };
 
                 let mut builder = PathBuilder::stroke(theme::scaled_px(EDGE_W));
 
                 match edge.kind {
                     EdgeKind::Pass => {
-                        // Straight vertical line, full row height.
-                        let x = lane_x(edge.from_lane);
-                        builder.move_to(point(px(x), px(oy)));
-                        builder.line_to(point(px(x), px(oy + row_h)));
+                        let x_from = lane_x(edge.from_lane);
+                        if edge.from_lane == edge.to_lane {
+                            // Straight vertical line, full row height.
+                            builder.move_to(point(px(x_from), px(oy)));
+                            builder.line_to(point(px(x_from), px(oy + row_h)));
+                        } else {
+                            // Compaction shift: the lane moved column between
+                            // rows — draw an S-curve from top to bottom column.
+                            let x_to = lane_x(edge.to_lane);
+                            draw_shift(&mut builder, x_from, oy, x_to, oy + row_h);
+                        }
                     }
                     EdgeKind::IntoNode => {
                         let x_from = lane_x(edge.from_lane);
@@ -329,7 +373,7 @@ pub fn graph_canvas(
                     let color = if is_stash_lane(node_lane) {
                         stash_color
                     } else {
-                        lane_color(node_lane)
+                        lane_color(node_color)
                     };
                     let mut builder = PathBuilder::stroke(theme::scaled_px(1.0));
                     builder.move_to(point(px(ox), px(mid_y)));
@@ -346,7 +390,7 @@ pub fn graph_canvas(
                 let color = if is_stash_lane(node_lane) {
                     stash_color
                 } else {
-                    lane_color(node_lane)
+                    lane_color(node_color)
                 };
 
                 // W2-GRAPH: HEAD node gets a larger radius + outer ring.

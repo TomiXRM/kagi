@@ -210,6 +210,9 @@ impl KagiApp {
                         from_lane: lane,
                         to_lane: lane,
                         kind: kagi::graph::EdgeKind::Pass,
+                        // Stash lanes are painted in the stash colour; `color` is
+                        // unused for them but the field is required.
+                        color: lane,
                     })
                     .collect();
                 if sr.connected {
@@ -219,6 +222,7 @@ impl KagiApp {
                         from_lane: sr.lane,
                         to_lane: sr.lane,
                         kind: kagi::graph::EdgeKind::OutOfNode,
+                        color: sr.lane,
                     });
                     passing_lanes.push(sr.lane);
                 }
@@ -311,6 +315,9 @@ impl KagiApp {
                             .when(visible_lanes > 0, |el| {
                                 el.child(
                                     graph_view::graph_canvas(
+                                        sr.lane,
+                                        // Stash nodes are painted in the stash
+                                        // colour; node_color is unused here.
                                         sr.lane,
                                         edges,
                                         visible_lanes,
@@ -3318,6 +3325,7 @@ fn render_rows(
                             el.child(
                                 graph_canvas(
                                     row.lane,
+                                    row.node_color,
                                     row.edges.clone(),
                                     visible_lanes,
                                     row.is_head,

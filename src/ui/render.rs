@@ -2702,7 +2702,7 @@ impl KagiApp {
     ///   `HH:MM:SS  op  outcome-summary` (outcome coloured green/red/yellow).
     /// Clicking a row toggles single-row expansion (before/after + error/blockers).
     fn render_oplog_body(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let entry_count = self.op_entries.len();
+        let entry_count = self.op_log.borrow().len();
 
         if entry_count == 0 {
             return div()
@@ -2726,7 +2726,8 @@ impl KagiApp {
             "oplog-list",
             entry_count,
             cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                let entries: Vec<OpLogEntry> = this.op_entries.iter().cloned().collect();
+                let entries: Vec<OpLogEntry> =
+                    this.op_log.borrow().entries().iter().cloned().collect();
                 let expanded = this.oplog_expanded;
                 range
                     .filter_map(|i| entries.get(i).cloned().map(|e| (i, e)))

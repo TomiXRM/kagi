@@ -329,13 +329,34 @@ pub fn init_compact_graph() {
 /// `"graph_lane_compact"`, `"true"`/`"false"`; missing → off).
 ///
 /// This is the gitk-stable vs Gitru swimlane-compaction layout switch read by
-/// [`crate::ui::commit_list::build_commit_rows`] (`GraphLayoutMode`). Unlike
-/// `graph_compact` it needs no cached atomic — the renderer reads the setting
-/// directly — but the loaded value is logged here so the startup state is
-/// debuggable alongside the other settings lines.
+/// [`crate::ui::commit_list::build_commit_rows`] (`GraphLayoutMode`). Backed by
+/// an atomic (like `graph_compact`) so the Settings-screen toggle can flip it
+/// live; the loaded value is logged here so the startup state is debuggable
+/// alongside the other settings lines.
+static GRAPH_LANE_COMPACT: AtomicBool = AtomicBool::new(false);
+
+/// The currently-active lane-compaction flag (read by `build_commit_rows`).
+#[inline]
+pub fn graph_lane_compact() -> bool {
+    GRAPH_LANE_COMPACT.load(Ordering::Relaxed)
+}
+
+/// Set + persist the lane-compaction flag to `settings.json`
+/// (key `graph_lane_compact`).
+pub fn set_graph_lane_compact(on: bool) {
+    GRAPH_LANE_COMPACT.store(on, Ordering::Relaxed);
+    write_setting(
+        "graph_lane_compact",
+        Some(if on { "true" } else { "false" }),
+    );
+}
+
+/// Initialise the lane-compaction flag at startup from `settings.json`.
 pub fn init_graph_lane_compact() {
-    let on = Settings::load().graph_lane_compact().unwrap_or(false);
-    klog!("graph_lane_compact: {}", on);
+    if let Some(on) = Settings::load().graph_lane_compact() {
+        GRAPH_LANE_COMPACT.store(on, Ordering::Relaxed);
+    }
+    klog!("graph_lane_compact: {}", graph_lane_compact());
 }
 
 /// Background auto-fetch flag. Defaults to **on** (periodic + on-focus fetch so

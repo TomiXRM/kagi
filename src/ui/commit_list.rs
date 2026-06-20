@@ -11,7 +11,7 @@ use gpui::SharedString;
 use kagi::git::{Commit, CommitId, Head, RepoSnapshot};
 use kagi::graph::{layout_with, EdgeKind, GraphEdge, GraphLayoutMode};
 
-use crate::ui::settings::Settings;
+use crate::ui::theme;
 
 // ──────────────────────────────────────────────────────────────
 // Helpers
@@ -192,7 +192,7 @@ pub fn build_commit_rows(snap: &RepoSnapshot) -> Vec<CommitRow> {
     // Compute commit graph layout once up-front (T009). The lane-assignment
     // mode (gitk-stable vs Gitru swimlane compaction) is a user setting; it
     // defaults to Stable, so the compaction path is fully opt-in / removable.
-    let mode = if Settings::load().graph_lane_compact().unwrap_or(false) {
+    let mode = if theme::graph_lane_compact() {
         GraphLayoutMode::Compact
     } else {
         GraphLayoutMode::Stable

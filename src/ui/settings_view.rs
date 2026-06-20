@@ -327,6 +327,25 @@ fn appearance_section(
         .on_click(toggle)
         .into_any_element();
 
+    // ── Lane-compaction (swimlane) toggle ──
+    // Flips the gitk-stable vs Gitru swimlane-compaction layout mode. The lane
+    // assignment is computed in `build_commit_rows`, so the change only takes
+    // effect after a rebuild — `reload()` re-snapshots and rebuilds the rows.
+    let lane_compact = theme::graph_lane_compact();
+    let app_lc = app.clone();
+    let toggle_lane = move |checked: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {
+        let on = *checked;
+        app_lc.update(cx, |app, cx| {
+            theme::set_graph_lane_compact(on);
+            app.reload();
+            cx.notify();
+        });
+    };
+    let lane_compact_ctl = Switch::new("lane-compact-toggle")
+        .checked(lane_compact)
+        .on_click(toggle_lane)
+        .into_any_element();
+
     // ── Auto-fetch toggle ──
     let auto_fetch = theme::auto_fetch();
     let app_f = app.clone();
@@ -363,6 +382,11 @@ fn appearance_section(
             SharedString::from(Msg::SettingsCompact.t()),
             SharedString::from(Msg::SettingsCompactDesc.t()),
             compact_ctl,
+        ))
+        .child(setting_row(
+            SharedString::from(Msg::SettingsLaneCompact.t()),
+            SharedString::from(Msg::SettingsLaneCompactDesc.t()),
+            lane_compact_ctl,
         ))
         .child(setting_row(
             SharedString::from(Msg::SettingsAutoFetch.t()),

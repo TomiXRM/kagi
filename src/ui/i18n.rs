@@ -384,6 +384,10 @@ pub enum Msg {
     SettingsCompact,
     /// Appearance → Compact graph row description.
     SettingsCompactDesc,
+    /// Appearance → Lane-compaction (swimlane) row title.
+    SettingsLaneCompact,
+    /// Appearance → Lane-compaction (swimlane) row description.
+    SettingsLaneCompactDesc,
     /// Appearance → Auto-fetch row title.
     SettingsAutoFetch,
     /// Appearance → Auto-fetch row description.
@@ -801,6 +805,14 @@ impl Msg {
             (Ja, SettingsCompact) => "graph をコンパクト表示",
             (En, SettingsCompactDesc) => "Use a tighter row height in the commit graph.",
             (Ja, SettingsCompactDesc) => "commit graph の行の高さを詰めて表示します。",
+            (En, SettingsLaneCompact) => "Compact lanes (swimlane)",
+            (Ja, SettingsLaneCompact) => "lane をコンパクト表示 (swimlane)",
+            (En, SettingsLaneCompactDesc) => {
+                "Compact freed lanes so the graph stays narrow (Gitru-style). Off = classic gitk layout."
+            }
+            (Ja, SettingsLaneCompactDesc) => {
+                "空いた lane を詰めて graph を細く保ちます (Gitru 方式)。オフで従来の gitk レイアウト。"
+            }
             (En, SettingsAutoFetch) => "Auto-fetch",
             (Ja, SettingsAutoFetch) => "自動 fetch",
             (En, SettingsAutoFetchDesc) => {

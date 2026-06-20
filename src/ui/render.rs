@@ -17,7 +17,8 @@ impl KagiApp {
     /// Render the toast stack as an absolute overlay (bottom-right, above
     /// the status bar). Returns `None` when there is nothing to show.
     fn render_toasts(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        if self.toasts.is_empty() && self.busy_op.is_none() {
+        let toasts_snapshot: Vec<Toast> = self.toast_stack.borrow().toasts().to_vec();
+        if toasts_snapshot.is_empty() && self.busy_op.is_none() {
             return None;
         }
         let mut stack = div()
@@ -35,7 +36,7 @@ impl KagiApp {
             stack = stack.child(self.render_busy_snackbar(op));
         }
 
-        for toast in &self.toasts {
+        for toast in &toasts_snapshot {
             let (accent, glyph) = match toast.kind {
                 ToastKind::Info => (theme().color_branch, "\u{27f3}"), // ⟳
                 ToastKind::Success => (theme().color_success, "\u{2713}"), // ✓

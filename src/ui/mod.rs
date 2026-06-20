@@ -36,6 +36,7 @@ pub mod stash_menu;
 pub mod tabs;
 pub mod terminal;
 pub mod theme;
+pub mod toast_stack;
 pub mod types;
 pub mod view_models;
 pub mod watcher;
@@ -702,15 +703,9 @@ pub fn format_hms(epoch_secs: i64) -> String {
 // (the FooterStatus / ToastKind / Toast types live in `types.rs`)
 // ──────────────────────────────────────────────────────────────
 
-/// Maximum simultaneously visible toasts (oldest dropped beyond this).
-const TOASTS_MAX: usize = 4;
-
 /// Snackbar slide animation timings / distance.
 const TOAST_ENTER_MS: u64 = 240;
 const TOAST_EXIT_MS: u64 = 220;
-/// Remove the toast slightly before the exit animation's nominal end so it
-/// never reverts to its resting (visible) state for a frame before removal.
-const TOAST_REMOVE_MS: u64 = 200;
 /// Horizontal slide distance (px): far enough to clear the left window edge,
 /// so the toast slides fully in from / out to off-screen.
 const TOAST_SLIDE_PX: f32 = 500.0;
@@ -988,11 +983,16 @@ pub struct KagiApp {
     /// Created on first click of the filter area (requires &mut Window).
     pub sidebar_filter: Option<Entity<InputState>>,
     // ── W3-NOTIFY: snackbar toasts + async-op state ──────────────
-    /// Visible toast stack (bottom-right). Newest last.
-    pub toasts: Vec<Toast>,
-    /// Monotonic id source for toasts.
-    pub next_toast_id: u64,
-    /// True while the 500ms auto-dismiss ticker task is alive.
+    /// Toast notification stack — extracted into a dedicated struct (ADR-0110)
+    /// so the toast add/remove/expire logic is self-contained.
+    /// `Rc<RefCell>` (not `Entity`) because `push_toast` is called from ~38
+    /// sites that don't all have `cx`; Entity migration is a follow-up once
+    /// those callers are refactored to thread `cx`. For now the separation
+    /// still pays off: the toast logic + ticker lives in one testable struct.
+    pub toast_stack: std::rc::Rc<std::cell::RefCell<toast_stack::ToastStack>>,
+    /// True while the 150ms auto-dismiss ticker task is alive (ADR-0110).
+    /// The ticker lifecycle stays on KagiApp because it spawns a cx task; the
+    /// toast data/logic lives in ToastStack.
     pub toast_ticker_alive: bool,
     /// True while a background fetch is in flight (refresh / auto-fetch),
     /// so we never stack concurrent fetches.
@@ -1455,8 +1455,7 @@ impl KagiApp {
             branch_groups_collapsed: HashSet::new(),
             sidebar_filter: None,
             // W3-NOTIFY
-            toasts: Vec::new(),
-            next_toast_id: 0,
+            toast_stack: std::rc::Rc::new(std::cell::RefCell::new(toast_stack::ToastStack::new())),
             toast_ticker_alive: false,
             fetch_in_flight: false,
             auto_fetch_ticker_alive: false,
@@ -1581,8 +1580,7 @@ impl KagiApp {
             branch_groups_collapsed: HashSet::new(),
             sidebar_filter: None,
             // W3-NOTIFY
-            toasts: Vec::new(),
-            next_toast_id: 0,
+            toast_stack: std::rc::Rc::new(std::cell::RefCell::new(toast_stack::ToastStack::new())),
             toast_ticker_alive: false,
             fetch_in_flight: false,
             auto_fetch_ticker_alive: false,
@@ -2203,41 +2201,19 @@ impl KagiApp {
     /// Queue a snackbar toast (bottom-right). Callable without a Window:
     /// the auto-dismiss ticker is (re)started from `render`.
     pub(crate) fn push_toast(&mut self, kind: ToastKind, message: impl Into<SharedString>) {
-        let id = self.next_toast_id;
-        self.next_toast_id += 1;
-        self.toasts.push(Toast {
-            id,
-            kind,
-            message: message.into(),
-            born: Instant::now(),
-            dismissing: None,
-        });
-        if self.toasts.len() > TOASTS_MAX {
-            self.toasts.remove(0);
-        }
+        self.toast_stack.borrow_mut().push(kind, message);
     }
 
     /// Begin sliding a toast out (× button or auto-expiry), then remove it once
-    /// the exit animation has played. Marking `dismissing` keeps the card in the
-    /// tree so the slide-out is visible; a one-shot timer does the actual
-    /// removal. No-op if the toast is gone or already leaving.
+    /// the exit animation has played. Delegates to ToastStack + a one-shot timer.
     pub fn start_toast_exit(&mut self, id: u64, cx: &mut Context<Self>) {
-        let Some(toast) = self.toasts.iter_mut().find(|t| t.id == id) else {
-            return;
-        };
-        if toast.dismissing.is_some() {
-            return;
-        }
-        toast.dismissing = Some(Instant::now());
+        self.toast_stack.borrow_mut().start_exit(id);
         cx.notify();
         cx.spawn(async move |this, acx| {
-            gpui::Timer::after(Duration::from_millis(TOAST_REMOVE_MS)).await;
+            gpui::Timer::after(Duration::from_millis(toast_stack::TOAST_REMOVE_MS)).await;
             let _ = this.update(acx, |app, cx| {
-                let before = app.toasts.len();
-                app.toasts.retain(|t| t.id != id);
-                if app.toasts.len() != before {
-                    cx.notify();
-                }
+                app.toast_stack.borrow_mut().remove(id);
+                cx.notify();
             });
         })
         .detach();
@@ -2652,31 +2628,28 @@ impl KagiApp {
         }
     }
 
-    /// Spawn the 500ms auto-dismiss ticker if toasts exist and it is not
+    /// Spawn the 150ms auto-dismiss ticker if toasts exist and it is not
     /// already running. The task exits as soon as the stack drains.
+    /// ADR-0110: delegates expiry detection to ToastStack.expiring_ids().
     fn ensure_toast_ticker(&mut self, cx: &mut Context<Self>) {
-        if self.toast_ticker_alive || self.toasts.is_empty() {
+        {
+            let stack = self.toast_stack.borrow();
+            if stack.is_empty() || !stack.has_pending() {
+                return;
+            }
+        }
+        if self.toast_ticker_alive {
             return;
         }
         self.toast_ticker_alive = true;
         cx.spawn(async move |this, acx| loop {
             gpui::Timer::after(Duration::from_millis(150)).await;
             let finished = this.update(acx, |app, cx| {
-                // Begin the slide-out for any toast that has hit its lifetime;
-                // `start_toast_exit` handles the removal once it has animated.
-                let expiring: Vec<u64> = app
-                    .toasts
-                    .iter()
-                    .filter(|t| t.should_start_exit())
-                    .map(|t| t.id)
-                    .collect();
+                let expiring = app.toast_stack.borrow().expiring_ids();
                 for id in expiring {
                     app.start_toast_exit(id, cx);
                 }
-                // The ticker only needs to keep watching while a toast is still
-                // counting down (not yet leaving). Once every toast is either
-                // gone or already sliding out, its removal timer takes over.
-                let still_watching = app.toasts.iter().any(|t| t.dismissing.is_none());
+                let still_watching = app.toast_stack.borrow().has_pending();
                 if !still_watching {
                     app.toast_ticker_alive = false;
                     true

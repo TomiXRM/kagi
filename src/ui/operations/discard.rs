@@ -176,6 +176,50 @@ impl KagiApp {
             return;
         }
 
+        // ADR-0104 / T-REARCH-014 cross-review fix (B3): the two-stage gate
+        // opens an unbounded window between arming (first click) and firing
+        // (second click). The repo may have changed under the user in that
+        // window (terminal checkout, sibling worktree, etc.). Re-run preflight
+        // here on the ARMED path; if HEAD moved since the plan was built,
+        // refuse and re-show the modal (disarmed) with the preflight error,
+        // rather than executing a stale plan that may discard the wrong
+        // content or back up the wrong blobs.
+        match kagi::git::Backend::open(&repo_path) {
+            Ok(repo) => {
+                if let Err(e) = repo.preflight_check(&modal.plan) {
+                    klog!("refused: discard preflight failed (stale plan) — {}", e);
+                    let err_msg = format!("Repository changed since planning: {}", e);
+                    self.record_op(
+                        "discard",
+                        modal.plan.current.clone(),
+                        OpOutcome::Refused {
+                            blockers: vec![err_msg.clone()],
+                        },
+                        &repo_path,
+                    );
+                    self.set_discard_modal(DiscardModal {
+                        plan: modal.plan.clone(),
+                        paths: modal.paths.clone(),
+                        skipped: modal.skipped.clone(),
+                        is_all: modal.is_all,
+                        error: Some(SharedString::from(err_msg)),
+                        confirm_armed: false,
+                    });
+                    cx.notify();
+                    return;
+                }
+            }
+            Err(e) => {
+                klog!("refused: discard preflight — repo open failed: {}", e);
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "discard: repo open error: {}",
+                    e
+                )));
+                cx.notify();
+                return;
+            }
+        }
+
         self.busy_op = Some("discard");
         self.clear_discard_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDiscard.t()));

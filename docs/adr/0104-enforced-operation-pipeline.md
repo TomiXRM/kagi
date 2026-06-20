@@ -1,10 +1,20 @@
 # ADR-0104: Enforced operation pipeline in `Backend::run`
 
-- Status: Accepted
+- Status: Accepted (Phase 1 — scaffold only; caller migration deferred)
 - Date: 2026-06-20
-- Supersedes: ADR-0073 (GitBackend trait — partial; this ADR makes the
-  pipeline a backend guarantee rather than a UI convention)
 - Implements: `/docs/git-safety-checklist.md` global invariant
+
+> **Honest status note (added after cross-review):** This ADR describes the
+> *target*. As of this sprint, `Backend::run(op, plan)` exists and enforces
+> preflight, **but has zero callers in the binary** — every mutation path
+> (UI `start_*`, headless `KAGI_*`, tests) still calls `execute_*` directly.
+> Routing those callers through `run` is the Phase 2 migration (blocked on
+> ADR-0107 RepoSession, which is the natural owner of a `run` call). Until
+> that migration lands, the safety invariant is still a UI-layer convention,
+> NOT a backend guarantee. The concrete safety wins from this sprint are
+> ADR-0105 (dirty-merge block), ADR-0106 (atomic conflict save), T-REARCH-014
+> (two-stage Discard), and T-REARCH-015 (stash-pop preflight) — those are
+> wired into real call paths.
 
 ## Context
 
@@ -28,7 +38,7 @@ oplog (the advertised recovery mechanism) will not contain entries for the
 majority of writes done via this path. This directly falsifies the safety
 thesis.
 
-## Decision
+## Decision (target)
 
 Introduce a single enforced entry point for every mutating operation:
 
@@ -49,60 +59,60 @@ impl Backend {
 }
 ```
 
-Every `execute_*` function changes signature to take `&OperationPlan` and
-calls `preflight_*` (HEAD-moved / stash-count) as its **first line**. The
-`Backend::execute(op)` entry point is removed; all callers (UI `start_*`
-handlers, headless `KAGI_*` hooks, tests) migrate to `run(op, plan)`.
+The target is: every mutating caller routes through `run`, the `execute_*`
+methods become `pub(crate)`, and the `verify` + `append_oplog` steps move
+into `run` (today the UI's `record_op` does oplog; that responsibility stays
+with the UI until the worker-thread consolidation, because it also drives
+toasts/footer which are UI concerns).
 
-### Per-op pipeline table
+### What this sprint delivered (scaffold)
 
-| Op | preflight | verify | oplog |
-|---|---|---|---|
-| checkout (branch/commit) | `preflight_check` | re-read HEAD == predicted | yes |
-| create branch | `preflight_check` | branch ref exists | yes |
-| create worktree | `preflight_check` | worktree dir + branch ref exist | yes |
-| delete branch | `preflight_check` | ref gone | yes (tip SHA) |
-| discard | `preflight_check` | status re-read | yes (backup blobs) |
-| stash push | `preflight_check` | stash list grew by 1 | yes |
-| stash apply | `preflight_check_stash` | index/WT changed | yes |
-| stash pop | `preflight_check_stash` | stash entry gone on success | yes |
-| stash drop | `preflight_check_stash` | ref gone | yes (stash reflog id) |
-| cherry-pick | `preflight_check` | new HEAD == predicted commit | yes |
-| revert | `preflight_check` | new HEAD == predicted commit | yes |
-| merge (ff) | `preflight_check` | HEAD == upstream tip | yes |
-| merge (real) | `preflight_check` | MERGE_HEAD or new merge commit | yes |
-| merge (into-conflict) | `preflight_check` + dirty-tree block | conflict session present | yes |
-| pull | `preflight_check` | HEAD advanced or merge commit | yes |
-| push | `preflight_check` | remote tip advanced (CLI result) | yes |
-| undo commit | `preflight_check` + pushed re-check | HEAD moved back, WT/index untouched | yes (old HEAD SHA) |
-| amend | `preflight_check` + pushed re-check | HEAD SHA changed | yes (old HEAD SHA) |
-| conflict continue | `preflight_check` | MERGE_HEAD gone, new commit | yes |
+- `Backend::run(op, plan)` exists and runs `preflight_check` (or
+  `preflight_check_stash` for stash apply/pop) before dispatch.
+- The legacy `execute(op)` is `#[deprecated]` and forwards to `run` via a
+  synthesized plan (preflight still runs).
+- `run` is the future single entry point for ADR-0107 `RepoSession`.
+
+### What this sprint did NOT deliver (deferred to Phase 2)
+
+- **No caller migrated to `run`.** UI/headless/tests still call `execute_*`
+  directly. The safety guarantee is therefore NOT yet a backend guarantee.
+- **`execute_*` methods remain `pub`.** They are not yet forced through `run`.
+- **`verify` and `append_oplog` are not in `run`** — oplog stays a UI
+  responsibility (`record_op`) because it also drives toasts/footer.
+
+### Per-op pipeline table (target — with delivery status)
+
+| Op | preflight in run() | wired to real callers? |
+|---|---|---|
+| checkout (branch/commit) | implemented in `run` | no (callers bypass) |
+| cherry-pick / revert | implemented in `run` | no |
+| merge (all kinds) | implemented in `run` + dirty-tree block via ADR-0105 (wired in plan) | no |
+| discard | implemented in `run` + existing verify/oplog | partial (B3: armed path needs preflight — fixed in this follow-up) |
+| stash apply/pop/drop | `preflight_check_stash` in `run` | **yes** (T-REARCH-015) |
+| pull / push | implemented in `run` | no |
+| undo / amend | implemented in `run` | no |
+
+Legend: "implemented in `run`" = the code exists but no caller uses `run()`
+yet; the last column reflects whether real call paths actually go through
+preflight.
 
 ## Consequences
 
-- **Safety becomes a backend guarantee.** No caller can skip preflight, verify,
-  or oplog. This closes codebase-review §4 Findings 1, 2, 3, 6, 12–16, 27 in
-  one change.
-- **Oplog coverage becomes complete.** Every mutating op is recoverable.
-- **Signature ripple.** ~12 `execute_*` signatures change to take
-  `&OperationPlan`. Callers in `src/ui/operations/*` (each `start_*` already
-  builds a plan and shows a confirm modal — the change is the execute call),
-  `src/headless.rs` (each `KAGI_*` hook must `plan_*` first and refuse if
-  `!plan.blockers.is_empty()`), and `tests/` must migrate.
-- **`Operation` enum stays.** The UI continues to build `Operation` values to
-  *describe* work; `run()` enforces *doing* it. The UI/git2 separation
-  invariant is unchanged.
-- **`Backend` begins to earn its existence** as a facade — it is no longer a
-  112-method 1:1 delegator but the single owner of the pipeline.
+- **`run()` is scaffolding.** It enforces preflight *if called*, but is not
+  yet the single enforced entry point. The honest safety wins from this sprint
+  are the four call-path changes (ADR-0105/0106, T-REARCH-014/015).
+- **`#[deprecated]` on `execute(op)`** ensures any NEW code uses `run`, not
+  the shortcut — a forward-looking guard.
 - The worker-thread consolidation (ADR-0073 long-term; deferred) will make
   `run()` the channel message the worker thread receives.
 
-## Rollout
+## Rollout (target)
 
-See `/docs/refactor-plan.md` Phase 1. Each `execute_*` migrates in its own
-commit so the blast radius stays bounded. Tests are added per op: build a
-plan, mutate the repo (e.g. create a commit), call `run()` → must return a
-preflight error, not mutate.
+See `/docs/refactor-plan.md` Phase 1. The caller migration (UI `start_*` →
+`run`, headless `KAGI_*` → `run`) is a Phase 2 task blocked on ADR-0107
+RepoSession (which is the natural owner). Each `execute_*` should become
+`pub(crate)` only after all callers route through `run`.
 
 ## What this does NOT change
 

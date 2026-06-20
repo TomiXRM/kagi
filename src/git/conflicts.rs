@@ -1006,15 +1006,24 @@ pub fn stage_conflict_resolution(
     }
 
     // Phase 2: every write succeeded — atomically swap temps onto targets.
-    for (tmp_abs, abs) in &temps {
+    // `rename` is atomic per-file on POSIX/Windows for same-filesystem moves,
+    // but the loop is NOT transactional across files: if file k's rename fails,
+    // files 1..k-1 have already been renamed (their targets now hold the new
+    // resolution). We accept this (a same-FS rename failing is extremely rare,
+    // and the index is never written on the failure path so the repo still
+    // reports a conflict — the user can re-resolve). We MUST clean up the
+    // unrenamed temps (k..end) so they don't leak as untracked files.
+    for (i, (tmp_abs, abs)) in temps.iter().enumerate() {
         if let Err(e) = std::fs::rename(tmp_abs, abs) {
-            // Rename failing after all writes succeeded is extremely unlikely
-            // (same-filesystem), but recover: best-effort leave the resolved
-            // content in place via copy, then surface the error. The targets
-            // before this point are untouched, so the worst case is a leftover
-            // temp file.
+            // Clean up every temp that hasn't been renamed yet (this one + the
+            // rest), so no `.kagi-resolve-tmp-*` files leak into the worktree.
+            for (unrenamed_tmp, _) in temps.iter().skip(i) {
+                let _ = std::fs::remove_file(unrenamed_tmp);
+            }
             return Err(GitError::Other(format!(
-                "rename {} -> {} failed: {}",
+                "rename {} -> {} failed: {} (files before this point were \
+                 already resolved; the index was not written, so the conflict \
+                 is still recorded — re-resolve and retry)",
                 tmp_abs.display(),
                 abs.display(),
                 e

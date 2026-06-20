@@ -1816,6 +1816,11 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
+        // Capture the switch generation so the background result is discarded
+        // if the user switched tabs while the snapshot was in flight — without
+        // this guard the snapshot would overwrite the NEW tab's freshly-loaded
+        // view with the OLD tab's data (cross-review N4).
+        let gen_at_spawn = self.switch_generation;
         let task = cx.background_spawn(async move {
             let mut backend = kagi::git::Backend::open(&bg_path).ok()?;
             let snap = backend.snapshot(10_000).ok()?;
@@ -1832,6 +1837,12 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
+                // Generation guard (cross-review N4): if the user switched tabs
+                // while the snapshot was in flight, drop the result — applying
+                // it would clobber the now-current tab's view.
+                if app.switch_generation != gen_at_spawn {
+                    return;
+                }
                 let Some((snap, wip, repo_name)) = result else {
                     // Open or snapshot failed — log and bail without nuking
                     // the existing view (better to show stale data than none).

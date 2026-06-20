@@ -36,7 +36,7 @@ impl KagiApp {
     /// Discard menu; untracked rows are (they are deleted after an ODB backup,
     /// ADR-0083).
     pub fn open_discard_modal_for_index(&mut self, index: usize) {
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
@@ -48,13 +48,12 @@ impl KagiApp {
             Some(f) => f.path.to_string_lossy().replace('\\', "/"),
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "discard: repo open error: {}",
-                    e
-                )));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from("discard: repo session unavailable"));
                 return;
             }
         };
@@ -84,18 +83,17 @@ impl KagiApp {
     /// Open the "Discard all" modal: every eligible unstaged file in one
     /// operation; untracked / conflicted files are listed as skipped.
     pub fn open_discard_all_modal(&mut self) {
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
         let (eligible, skipped) = self.discard_partition();
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "discard: repo open error: {}",
-                    e
-                )));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from("discard: repo session unavailable"));
                 return;
             }
         };

@@ -11,17 +11,16 @@ use crate::ui::*;
 impl KagiApp {
     /// Build an undo-commit plan and open the confirmation modal.
     pub fn open_undo_modal(&mut self) {
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "undo: repo open error: {}",
-                    e
-                )));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from("undo: repo session unavailable"));
                 return;
             }
         };
@@ -254,17 +253,17 @@ impl KagiApp {
 
     /// Shared: build an undo/redo plan for `entry` and show the preview modal.
     fn open_history_modal(&mut self, entry: kagi::git::HistoryEntry, is_undo: bool) {
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "{}: repo open error: {}",
+                    "{}: repo session unavailable",
                     if is_undo { "undo" } else { "redo" },
-                    e
                 )));
                 return;
             }
@@ -332,10 +331,11 @@ impl KagiApp {
             return;
         }
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                let err_msg = format!("Repo open error: {}", e);
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                let err_msg = "repo session unavailable".to_string();
                 self.record_op(
                     &op_name,
                     modal.plan.current.clone(),
@@ -448,17 +448,16 @@ impl KagiApp {
     /// Build an amend plan from an explicit `message` (no `Context` needed).
     /// Used by the headless `KAGI_AMEND` path and by [`open_amend_modal`].
     pub fn open_amend_modal_with_message(&mut self, mode: AmendMode, message: String) {
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "amend: repo open error: {}",
-                    e
-                )));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from("amend: repo session unavailable"));
                 return;
             }
         };

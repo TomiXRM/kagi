@@ -88,14 +88,15 @@ impl KagiApp {
             ),
             None => return,
         };
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("replan_create_worktree: repo open error: {}", e);
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                klog!("replan_create_worktree: repo session unavailable");
                 return;
             }
         };

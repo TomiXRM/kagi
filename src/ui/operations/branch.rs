@@ -59,14 +59,15 @@ impl KagiApp {
             Some(m) => (m.at.clone(), m.input.clone(), m.checkout_after),
             None => return,
         };
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("replan_create_branch: repo open error: {}", e);
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                klog!("replan_create_branch: repo session unavailable");
                 return;
             }
         };
@@ -293,17 +294,17 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "branch operation: repo open error: {}",
-                    e
-                )));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    "branch operation: repo session unavailable",
+                ));
                 return;
             }
         };
@@ -443,13 +444,14 @@ impl KagiApp {
             Some(m) => (m.branch_name.clone(), m.input.clone()),
             None => return,
         };
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => return,
         };
         match repo.plan_set_upstream(&branch_name, &input) {
             Ok(plan) => {
@@ -581,13 +583,14 @@ impl KagiApp {
             .map(|(name, _)| name.clone())
             .collect();
         let validation = validate_branch_rename(&old_name, &input, &existing);
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => return,
         };
         match repo.plan_rename_branch(&old_name, &input) {
             Ok(plan) => {
@@ -902,17 +905,17 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "checkout tracking: repo open error: {}",
-                    e
-                )));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    "checkout tracking: repo session unavailable",
+                ));
                 return;
             }
         };
@@ -1032,17 +1035,17 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "switch-to-latest: repo open error: {}",
-                    e
-                )));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    "switch-to-latest: repo session unavailable",
+                ));
                 return;
             }
         };
@@ -1158,20 +1161,20 @@ impl KagiApp {
     /// Build a delete-branch plan for `branch_name` and open the confirmation modal.
     pub fn open_delete_branch_modal(&mut self, branch_name: impl Into<String>) {
         let branch_name = branch_name.into();
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
                 klog!("open_delete_branch_modal: no repo_path set");
                 return;
             }
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "delete-branch: repo open error: {}",
-                    e
-                )));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    "delete-branch: repo session unavailable",
+                ));
                 return;
             }
         };

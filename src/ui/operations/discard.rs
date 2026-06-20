@@ -71,6 +71,7 @@ impl KagiApp {
                     skipped: Vec::new(),
                     is_all: false,
                     error: None,
+                    confirm_armed: false,
                 });
             }
             Err(e) => {
@@ -112,6 +113,7 @@ impl KagiApp {
                     skipped,
                     is_all: true,
                     error: None,
+                    confirm_armed: false,
                 });
             }
             Err(e) => {
@@ -128,6 +130,12 @@ impl KagiApp {
 
     /// Confirm the discard: run `discard_blocking` on a background thread
     /// (busy_op="discard"), then reload. Mirrors `start_pop`.
+    ///
+    /// Two-stage confirm (T-REARCH-014, mirrors `start_amend`): the first click
+    /// only *arms* the red Discard button; the second click executes. Discard is
+    /// the most destructive working-tree op (checkout -- + untracked deletion),
+    /// and the single-click execute was the biggest safety gap vs the product
+    /// thesis.
     pub fn start_discard(&mut self, cx: &mut Context<Self>) {
         let modal = match self.discard_modal().cloned() {
             Some(m) => m,
@@ -137,6 +145,18 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
+
+        // ── Two-stage confirm: first click only arms ──────────────────
+        if !modal.confirm_armed {
+            self.set_discard_modal(DiscardModal {
+                confirm_armed: true,
+                ..modal
+            });
+            klog!("discard: armed (second confirm required — destructive)");
+            cx.notify();
+            return;
+        }
+
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -203,6 +223,9 @@ impl KagiApp {
                             skipped: modal.skipped.clone(),
                             is_all: modal.is_all,
                             error: Some(SharedString::from(err_msg)),
+                            // Force re-arm after a failure: the user is
+                            // re-confirming, so require the two-stage flow again.
+                            confirm_armed: false,
                         });
                     }
                 }

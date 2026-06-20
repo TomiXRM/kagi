@@ -1805,8 +1805,8 @@ impl KagiApp {
 
         // ADR-0104 / performance: an external git event (HEAD/refs change from
         // a terminal, sibling worktree, or auto-fetch) is NOT user-initiated,
-        // so freezing the UI frame for a full git2 snapshot (topological walk,
-        // full `git2::statuses` scan, ahead/behind for every branch) is the
+        // so freezing the UI frame for a full repo snapshot (topological walk,
+        // full working-tree status scan, ahead/behind for every branch) is the
         // worst kind of jank — the user didn't ask for anything. Move the
         // heavy git2 work (open + snapshot + wip diffstat) onto a background
         // thread, then build the view data and apply it on the UI thread.

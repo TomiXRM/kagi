@@ -366,11 +366,15 @@ pub fn graph_canvas(
             }
 
             // ── Draw label→node connector line (W2-GRAPH item 5) ──
-            // When the badge column has chips, draw a 1px horizontal line
-            // from the left edge of the graph canvas (= right edge of badge
-            // column) to the node centre.  The line uses the node's lane colour.
-            // Only drawn when the node is in a visible lane.
-            if has_badges && lane_in(node_lane) && scroll_x < 0.5 {
+            // When the badge column has chips, draw a 1px horizontal line from
+            // the left edge of the graph canvas (= right edge of badge column)
+            // to the node centre. The line uses the node's lane colour.
+            //
+            // Skipped in swimlane mode (pad_l > 0): there the badge/spacer
+            // connector already runs the label up to the lane band's left edge,
+            // and the band itself carries the eye across to the avatar node — an
+            // extra in-graph line just adds noise.
+            if has_badges && lane_in(node_lane) && scroll_x < 0.5 && pad_l <= 0.5 {
                 let x_node = lane_x(node_lane);
                 // Draw from the left edge of the graph area (ox) to the node.
                 // If the node is in lane 0 the line has zero length; only draw
@@ -382,23 +386,8 @@ pub fn graph_canvas(
                         lane_color(node_color)
                     };
                     let mut builder = PathBuilder::stroke(theme::scaled_px(1.0));
-                    if pad_l > 0.5 {
-                        // Swimlane mode: dashed connector to match the dashed
-                        // badge-column / spacer segments (PathBuilder has no dash
-                        // support, so emit individual dash subpaths).
-                        let dash = theme::scaled(3.0);
-                        let gap = theme::scaled(2.5);
-                        let mut x = ox;
-                        while x < x_node - 0.5 {
-                            let x2 = (x + dash).min(x_node);
-                            builder.move_to(point(px(x), px(mid_y)));
-                            builder.line_to(point(px(x2), px(mid_y)));
-                            x = x2 + gap;
-                        }
-                    } else {
-                        builder.move_to(point(px(ox), px(mid_y)));
-                        builder.line_to(point(px(x_node), px(mid_y)));
-                    }
+                    builder.move_to(point(px(ox), px(mid_y)));
+                    builder.line_to(point(px(x_node), px(mid_y)));
                     if let Ok(path) = builder.build() {
                         window.paint_path(path, color);
                     }

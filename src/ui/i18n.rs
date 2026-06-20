@@ -805,13 +805,13 @@ impl Msg {
             (Ja, SettingsCompact) => "graph をコンパクト表示",
             (En, SettingsCompactDesc) => "Use a tighter row height in the commit graph.",
             (Ja, SettingsCompactDesc) => "commit graph の行の高さを詰めて表示します。",
-            (En, SettingsLaneCompact) => "Compact lanes (swimlane)",
-            (Ja, SettingsLaneCompact) => "lane をコンパクト表示 (swimlane)",
+            (En, SettingsLaneCompact) => "Swimlane graph",
+            (Ja, SettingsLaneCompact) => "グラフをスイムレーン表示",
             (En, SettingsLaneCompactDesc) => {
-                "Compact freed lanes and draw a soft lane band behind the graph/message so branches read as bands (Gitru-style). Off = classic gitk layout."
+                "On: freed lanes are reused so the graph stays narrow, each row gets a faint colour band for its branch behind the graph, the commit dot becomes the author's avatar ringed in the lane colour, and ref tags take the lane colour. Off: lanes are never reused (wider graph), plain coloured dots, and tags keep their fixed colours."
             }
             (Ja, SettingsLaneCompactDesc) => {
-                "空いた lane を詰め、graph〜message の背後にブランチ色の帯を敷いて見やすくします (Gitru 方式)。オフで従来の gitk レイアウト。"
+                "オン: 空いたレーンを再利用してグラフを細く保ち、各行の背後にブランチ色の帯を敷き、コミットのドットを著者アバター（レーン色の輪付き）にし、ブランチ/タグのラベルもレーン色になります。オフ: レーンを再利用せず（グラフが広め）、通常の色ドット、ラベルは固定色のままです。"
             }
             (En, SettingsAutoFetch) => "Auto-fetch",
             (Ja, SettingsAutoFetch) => "自動 fetch",

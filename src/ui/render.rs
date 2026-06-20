@@ -3170,19 +3170,10 @@ fn graph_lane_pad_l() -> f32 {
     }
 }
 
-/// A 1px horizontal connector line (branch label → graph node), filling its
-/// parent's width. Dashed in swimlane mode to match the dashed canvas
-/// connector; a solid bar in classic mode (unchanged).
+/// A solid 1px horizontal connector line (branch label → graph node / lane band
+/// edge), filling its parent's width.
 fn connector_line(color: gpui::Hsla) -> gpui::Div {
-    if theme::graph_lane_compact() {
-        div()
-            .w_full()
-            .border_b_1()
-            .border_dashed()
-            .border_color(color)
-    } else {
-        div().w_full().h(theme::scaled_px(1.)).bg(color)
-    }
+    div().w_full().h(theme::scaled_px(1.)).bg(color)
 }
 
 /// Render commit rows for the given range.  Called by `uniform_list`

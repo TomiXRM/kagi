@@ -2206,9 +2206,34 @@ impl KagiApp {
     /// Write failures are non-fatal: they emit a stderr warning only.
     // ── W3-NOTIFY: toast helpers ──────────────────────────────
 
-    /// Queue a snackbar toast (bottom-right). Callable without a Window:
-    /// the auto-dismiss ticker is (re)started from `render`.
-    pub(crate) fn push_toast(&mut self, kind: ToastKind, message: impl Into<SharedString>) {
+    /// Queue a snackbar toast (bottom-right). The auto-dismiss ticker is
+    /// (re)started from `render`; `cx.notify()` shows the toast immediately
+    /// instead of waiting for the next ambient render.
+    ///
+    /// `cx` is threaded through every caller so a later refactor can hold the
+    /// toast state in an `Entity<ToastStack>` and scope the notify to the
+    /// overlay child (ADR-0110 follow-up).
+    pub(crate) fn push_toast(
+        &mut self,
+        kind: ToastKind,
+        message: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.toast_stack.borrow_mut().push(kind, message);
+        cx.notify();
+    }
+
+    /// Queue a toast from a call path that has **no `Context`** (e.g.
+    /// `record_op`, the `open_*_modal` busy guards, `toggle_branch_solo`).
+    /// Identical to the pre-cx `push_toast`: no immediate `cx.notify()`, so the
+    /// toast appears on the next ambient render (the caller's own notify or the
+    /// auto-expire ticker). Kept here so `toast_stack` access stays inside
+    /// `KagiApp`; convert to `push_toast(..., cx)` once the caller gains a `cx`.
+    pub(crate) fn push_toast_deferred(
+        &mut self,
+        kind: ToastKind,
+        message: impl Into<SharedString>,
+    ) {
         self.toast_stack.borrow_mut().push(kind, message);
     }
 
@@ -2721,7 +2746,7 @@ impl KagiApp {
         } else {
             ToastKind::Error
         };
-        self.push_toast(toast_kind, footer_msg.clone());
+        self.push_toast_deferred(toast_kind, footer_msg.clone());
 
         // T-BP-004: auto-open bottom panel on Failed.
         let is_failed = matches!(outcome, OpOutcome::Failed { .. });
@@ -4514,7 +4539,7 @@ impl KagiApp {
         if already_soloed {
             self.active_view.branch_solo = None;
             self.status_footer = FooterStatus::Idle(SharedString::from("Solo off"));
-            self.push_toast(ToastKind::Info, "Solo off");
+            self.push_toast_deferred(ToastKind::Info, "Solo off");
             return;
         }
 
@@ -4525,7 +4550,7 @@ impl KagiApp {
             visible_commits,
         });
         self.status_footer = FooterStatus::Idle(SharedString::from(format!("Solo: {}", name)));
-        self.push_toast(ToastKind::Info, format!("Solo: {}", name));
+        self.push_toast_deferred(ToastKind::Info, format!("Solo: {}", name));
     }
 
     pub fn dispatch_branch_action(
@@ -4652,7 +4677,7 @@ impl KagiApp {
                         "worktree already exists: {}",
                         path
                     )));
-                    self.push_toast(ToastKind::Info, format!("Worktree: {}", path));
+                    self.push_toast(ToastKind::Info, format!("Worktree: {}", path), cx);
                 } else if matches!(state.kind, BranchKind::Local) {
                     self.open_create_worktree_modal_prefilled(state.target, state.name, true, cx);
                 }
@@ -4702,7 +4727,7 @@ impl KagiApp {
                         // W18-COAUTHOR-COPY: surface a toast so the copy is
                         // visible regardless of where it was triggered
                         // (hash chip click or the "Copy SHA" action button).
-                        self.push_toast(ToastKind::Info, format!("Copied {}", short));
+                        self.push_toast(ToastKind::Info, format!("Copied {}", short), cx);
                     }
                 }
             }

@@ -971,6 +971,7 @@ impl KagiApp {
                 self.push_toast(
                     ToastKind::Error,
                     SharedString::from(format!("Repo open error: {}", "session unavailable")),
+                    cx,
                 );
                 return;
             }
@@ -991,6 +992,7 @@ impl KagiApp {
                         "Merge-commit plan failed: {}",
                         "session unavailable"
                     )),
+                    cx,
                 );
                 return;
             }
@@ -1028,6 +1030,7 @@ impl KagiApp {
                 self.push_toast(
                     ToastKind::Error,
                     SharedString::from("merge commit: unexpected outcome"),
+                    cx,
                 );
                 return;
             }

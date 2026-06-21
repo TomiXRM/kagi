@@ -1479,7 +1479,7 @@ impl KagiApp {
             this.status_footer = FooterStatus::Idle(SharedString::from(Msg::Refreshed.t()));
             // W3-NOTIFY: explicit refresh gets a completion toast (the
             // watcher's automatic reloads stay silent to avoid spam).
-            this.push_toast(ToastKind::Success, Msg::Refreshed.t());
+            this.push_toast(ToastKind::Success, Msg::Refreshed.t(), cx);
             // … then also fetch the remote in the background so changes pushed
             // elsewhere (e.g. a GitHub merge) show up. Quiet: success reloads the
             // graph, failure (offline / no remote) is silent — no error spam.

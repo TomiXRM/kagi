@@ -98,7 +98,7 @@ impl KagiApp {
                 let msg = format!("Error: {e}");
                 klog!("open: {}", msg);
                 self.status_footer = FooterStatus::Failed(SharedString::from(msg.clone()));
-                self.push_toast(ToastKind::Error, msg);
+                self.push_toast(ToastKind::Error, msg, cx);
                 cx.notify();
                 return false;
             }

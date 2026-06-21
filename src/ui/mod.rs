@@ -181,7 +181,6 @@ const PANEL_MIN: f32 = 240.0;
 const PANEL_MAX: f32 = 800.0;
 
 // Default widths (matching the pre-T023 hard-coded values).
-const SIDEBAR_DEFAULT: f32 = 200.0;
 const PANEL_DEFAULT: f32 = 360.0;
 
 // T-BP-004: Operation Log initial load count from disk.
@@ -834,8 +833,11 @@ pub struct KagiApp {
     pub stash_push_focus: Option<FocusHandle>,
     /// Status footer message (T017): the result of the most recent operation.
     pub status_footer: FooterStatus,
-    /// Current sidebar width in pixels (T023: user-resizable).
-    pub sidebar_width: f32,
+    /// Repository-Navigator (left sidebar) state: width, scroll handle, rows,
+    /// collapsed sections, filter input, visibility. Consolidated from six flat
+    /// `sidebar_*` fields (ADR-0110 Phase 5 Step 5.1). App-global; preserved
+    /// across reloads.
+    pub sidebar: sidebar::SidebarState,
     /// Current detail/diff panel width in pixels (T023: user-resizable).
     pub panel_width: f32,
     /// T030: Width of the badge (branch/tag) column in pixels.
@@ -880,14 +882,6 @@ pub struct KagiApp {
     /// Scroll handle for the "commit-list" uniform_list.
     /// Stored in KagiApp so it persists across render frames.
     pub commit_scroll_handle: UniformListScrollHandle,
-    /// PERF-SIDEBAR-VIRT: scroll handle for the sidebar navigator
-    /// `uniform_list` ("sidebar-list"). Persisted across frames.
-    pub sidebar_scroll_handle: UniformListScrollHandle,
-    /// PERF-SIDEBAR-VIRT: pre-flattened sidebar rows, rebuilt each render from
-    /// the snapshot fields (branches/remotes/tags/…) honouring collapse +
-    /// filter state. The "sidebar-list" `uniform_list` processor reads
-    /// `self.sidebar_rows[i]`, so the sidebar costs O(visible rows) per frame.
-    pub sidebar_rows: Vec<sidebar::SidebarRow>,
     /// PERF: scroll handle for the commit panel's Unstaged `uniform_list`
     /// (shared across flat/tree views — only one is visible at a time).
     pub cp_unstaged_scroll_handle: UniformListScrollHandle,
@@ -976,20 +970,13 @@ pub struct KagiApp {
     /// Remote-tracking branches from the snapshot (for REMOTE BRANCHES section).
     /// Tags from the snapshot (for TAGS section).
     /// Worktrees from the snapshot (for WORKTREES section).
-    /// Upstream info per local branch name (for ↑A ↓B display).
-    /// Collapsed sections in the sidebar (HashSet of section keys).
-    /// Preserved across reloads so the user's collapse state survives checkout.
-    pub sidebar_collapsed: HashSet<&'static str>,
     /// W13-BRANCHTREE: collapsed branch *groups* (the `/`-prefix sub-trees
     /// inside LOCAL / REMOTE BRANCHES). Keys are dynamic strings of the form
     /// `local:feat` / `remote:origin` — hence a separate `HashSet<String>`
-    /// rather than the `&'static str` `sidebar_collapsed` above.
+    /// rather than the `&'static str` `sidebar.collapsed` set.
     /// Default-expanded (a key present ⇒ that group is collapsed), mirroring
-    /// `sidebar_collapsed` semantics. Preserved across reloads.
+    /// `sidebar.collapsed` semantics. Preserved across reloads.
     pub branch_groups_collapsed: HashSet<String>,
-    /// Lazy InputState for the sidebar filter input (gpui-component IME対応).
-    /// Created on first click of the filter area (requires &mut Window).
-    pub sidebar_filter: Option<Entity<InputState>>,
     // ── W3-NOTIFY: snackbar toasts + async-op state ──────────────
     /// Toast notification stack — an `Entity<ToastStack>` (ADR-0110 Phase 5) so
     /// a push/expire re-renders only the overlay subtree, not the whole app.
@@ -1031,9 +1018,6 @@ pub struct KagiApp {
     /// Offers Discard for eligible (tracked, non-conflicted) rows.
     pub file_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
     // ── W5-MENU: command registry / menu bar ─────────────────
-    /// Whether the left sidebar (Repository Navigator) is shown (View → Toggle
-    /// Sidebar).  Default `true`.
-    pub sidebar_visible: bool,
     /// Whether the right commit-details inspector is shown (View → Toggle Commit
     /// Details).  Default `true`.
     pub inspector_visible: bool,
@@ -1417,7 +1401,7 @@ impl KagiApp {
             modal_focus: None,
             stash_push_focus: None,
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
-            sidebar_width: SIDEBAR_DEFAULT,
+            sidebar: sidebar::SidebarState::new(),
             panel_width: PANEL_DEFAULT,
             badge_col_w: theme::read_col_width("badge_col_w")
                 .map(|w| w.clamp(BADGE_COL_MIN, BADGE_COL_MAX))
@@ -1437,8 +1421,6 @@ impl KagiApp {
             smart_commit_detected_for: None,
             pending_smart_msg: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
-            sidebar_scroll_handle: UniformListScrollHandle::new(),
-            sidebar_rows: Vec::new(),
             cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
             cp_staged_scroll_handle: UniformListScrollHandle::new(),
             operation_history: kagi_git::OperationHistory::new(),
@@ -1455,9 +1437,7 @@ impl KagiApp {
             theme_select: None,
             graph_scroll_x: 0.0,
             // W2-SIDEBAR
-            sidebar_collapsed: HashSet::new(),
             branch_groups_collapsed: HashSet::new(),
-            sidebar_filter: None,
             // W3-NOTIFY
             // Created in `open_main_window`'s `cx.new` closure (needs `cx`).
             toast_stack: None,
@@ -1474,7 +1454,6 @@ impl KagiApp {
             stash_menu: None,
             file_menu: None,
             // W5-MENU
-            sidebar_visible: true,
             inspector_visible: true,
             menu_overlay: None,
             platform_menu_open: None,
@@ -1539,7 +1518,7 @@ impl KagiApp {
             modal_focus: None,
             stash_push_focus: None,
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
-            sidebar_width: SIDEBAR_DEFAULT,
+            sidebar: sidebar::SidebarState::new(),
             panel_width: PANEL_DEFAULT,
             badge_col_w: theme::read_col_width("badge_col_w")
                 .map(|w| w.clamp(BADGE_COL_MIN, BADGE_COL_MAX))
@@ -1559,8 +1538,6 @@ impl KagiApp {
             smart_commit_detected_for: None,
             pending_smart_msg: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
-            sidebar_scroll_handle: UniformListScrollHandle::new(),
-            sidebar_rows: Vec::new(),
             cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
             cp_staged_scroll_handle: UniformListScrollHandle::new(),
             op_log: None,
@@ -1579,9 +1556,7 @@ impl KagiApp {
             theme_select: None,
             graph_scroll_x: 0.0,
             // W2-SIDEBAR
-            sidebar_collapsed: HashSet::new(),
             branch_groups_collapsed: HashSet::new(),
-            sidebar_filter: None,
             // W3-NOTIFY
             // Created in `open_main_window`'s `cx.new` closure (needs `cx`).
             toast_stack: None,
@@ -1598,7 +1573,6 @@ impl KagiApp {
             stash_menu: None,
             file_menu: None,
             // W5-MENU
-            sidebar_visible: true,
             inspector_visible: true,
             menu_overlay: None,
             platform_menu_open: None,
@@ -4923,12 +4897,12 @@ impl KagiApp {
     /// Called from the on_click handler on the filter placeholder area.
     /// No-op if already created.
     pub fn ensure_sidebar_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.sidebar_filter.is_none() {
+        if self.sidebar.filter.is_none() {
             let input_entity = cx.new(|cx| InputState::new(window, cx).placeholder("filter…"));
-            self.sidebar_filter = Some(input_entity);
+            self.sidebar.filter = Some(input_entity);
         }
         // Focus the input after creation (or if already exists).
-        if let Some(ref ent) = self.sidebar_filter {
+        if let Some(ref ent) = self.sidebar.filter {
             ent.update(cx, |state, cx| {
                 state.focus(window, cx);
             });

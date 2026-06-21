@@ -1211,8 +1211,8 @@ impl KagiApp {
             }
             "view.fullScreen" => window.toggle_fullscreen(),
             "view.toggleSidebar" => {
-                self.sidebar_visible = !self.sidebar_visible;
-                klog!("menu: sidebar_visible={}", self.sidebar_visible);
+                self.sidebar.visible = !self.sidebar.visible;
+                klog!("menu: sidebar_visible={}", self.sidebar.visible);
             }
             "view.toggleTerminal" => {
                 self.bottom_panel_open = !self.bottom_panel_open;

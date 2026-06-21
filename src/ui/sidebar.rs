@@ -8,7 +8,9 @@
 
 use std::collections::HashSet;
 
-use gpui::{div, prelude::*, px, rgb, uniform_list, Context, Entity, SharedString};
+use gpui::{
+    div, prelude::*, px, rgb, uniform_list, Context, Entity, SharedString, UniformListScrollHandle,
+};
 use gpui_component::input::{Input, InputState};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::Sizable as _;
@@ -27,10 +29,57 @@ use super::{BranchDrag, BranchDragGhost, KagiApp};
 /// list scrolls correctly regardless of which row happens to be first.
 const SIDEBAR_ROW_H: f32 = 24.0;
 
+/// Default sidebar width in pixels (T023). Previously `mod.rs::SIDEBAR_DEFAULT`.
+const SIDEBAR_DEFAULT_WIDTH: f32 = 200.0;
+
+/// Consolidated Repository-Navigator (left sidebar) state.
+///
+/// Previously six flat `sidebar_*` fields on the `KagiApp` god-struct; grouped
+/// here as the prep step for a future `Entity<SidebarState>` migration
+/// (ADR-0110 Phase 5 Step 5.1). All fields are app-global (not per-tab) and are
+/// preserved across repository reloads. Pure constructible (no `cx`) — the
+/// `filter` `InputState` is created lazily on first focus.
+pub struct SidebarState {
+    /// Current sidebar width in pixels (T023: user-resizable).
+    pub width: f32,
+    /// PERF-SIDEBAR-VIRT: scroll handle for the navigator `uniform_list`
+    /// ("sidebar-list"). Persisted across frames.
+    pub scroll_handle: UniformListScrollHandle,
+    /// Pre-flattened navigator rows (built in `render`); the `uniform_list`
+    /// processor reads `rows[i]`, so the sidebar costs O(visible rows) per frame.
+    pub rows: Vec<SidebarRow>,
+    /// Collapsed sections (HashSet of section keys). Preserved across reloads.
+    pub collapsed: HashSet<&'static str>,
+    /// Lazy `InputState` for the filter input (gpui-component IME 対応); created
+    /// on first click of the filter area (requires `&mut Window`).
+    pub filter: Option<Entity<InputState>>,
+    /// Whether the navigator is shown (View → Toggle Sidebar). Default `true`.
+    pub visible: bool,
+}
+
+impl SidebarState {
+    pub fn new() -> Self {
+        Self {
+            width: SIDEBAR_DEFAULT_WIDTH,
+            scroll_handle: UniformListScrollHandle::new(),
+            rows: Vec::new(),
+            collapsed: HashSet::new(),
+            filter: None,
+            visible: true,
+        }
+    }
+}
+
+impl Default for SidebarState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // W9-THEME: all colours come from `theme()` (see theme.rs).
 
 // ──────────────────────────────────────────────────────────────
-// Section keys (static strings used in sidebar_collapsed)
+// Section keys (static strings used in SidebarState::collapsed)
 // ──────────────────────────────────────────────────────────────
 
 pub const SECTION_LOCAL: &str = "local";
@@ -326,8 +375,8 @@ fn name_tooltip(
 // out per frame — exactly like the commit list.
 //
 // The flat Vec is rebuilt once per render (cheap: just grouping + collapse
-// pruning) and stashed on `KagiApp.sidebar_rows`; the `uniform_list` processor
-// reads `this.sidebar_rows[i]` and dispatches to `build_sidebar_row`, which
+// pruning) and stashed on `KagiApp.sidebar.rows`; the `uniform_list` processor
+// reads `this.sidebar.rows[i]` and dispatches to `build_sidebar_row`, which
 // reproduces every behaviour the old per-section code had (click/jump,
 // dbl-click checkout, delete, drag, drop-to-merge, context menus, collapse
 // toggles, indentation, tooltips, the ✓ HEAD marker, lane colours).
@@ -407,7 +456,7 @@ pub enum SidebarRow {
 /// logic the old per-section renderer used: a collapsed section contributes
 /// only its header; a collapsed group contributes only its header; an active
 /// filter auto-expands every group (matching the previous behaviour). The
-/// result is stored on `KagiApp.sidebar_rows` and consumed by the
+/// result is stored on `KagiApp.sidebar.rows` and consumed by the
 /// `uniform_list` processor.
 #[allow(clippy::too_many_arguments)]
 pub fn build_sidebar_rows(
@@ -730,10 +779,10 @@ fn build_section_header(
     ));
     let toggle = cx.listener(
         move |this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
-            if this.sidebar_collapsed.contains(section) {
-                this.sidebar_collapsed.remove(section);
+            if this.sidebar.collapsed.contains(section) {
+                this.sidebar.collapsed.remove(section);
             } else {
-                this.sidebar_collapsed.insert(section);
+                this.sidebar.collapsed.insert(section);
             }
             cx.notify();
         },
@@ -1169,7 +1218,7 @@ fn build_stash_row(index: usize, message: &str, cx: &mut Context<KagiApp>) -> gp
 /// Sections: LOCAL BRANCHES / REMOTE BRANCHES / TAGS / WORKTREES / STASHES.
 ///
 /// PERF-SIDEBAR-VIRT: the section/group/leaf rows are virtualized with
-/// `uniform_list` over the pre-flattened `this.sidebar_rows` (built by
+/// `uniform_list` over the pre-flattened `this.sidebar.rows` (built by
 /// [`build_sidebar_rows`] in `render`), so only the visible rows are built and
 /// laid out per frame — fixing the O(all refs) taffy cost on huge repos. The
 /// filter input is pinned above the list (it has its own height). All section
@@ -1236,7 +1285,8 @@ pub fn render_sidebar(
             cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
                 range
                     .filter_map(|i| {
-                        this.sidebar_rows
+                        this.sidebar
+                            .rows
                             .get(i)
                             .cloned()
                             .map(|row| build_sidebar_row(this, &row, cx))

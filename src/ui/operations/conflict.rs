@@ -214,7 +214,7 @@ impl KagiApp {
             "[kagi] conflict-editor: external tool requested for {} (launch is W33)",
             path.display()
         );
-        self.push_toast(
+        self.push_toast_deferred(
             ToastKind::Info,
             SharedString::from(format!(
                 "External merge tool launch is not wired yet ({}).",
@@ -273,7 +273,7 @@ impl KagiApp {
         let repo = match self.repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
-                self.push_toast(
+                self.push_toast_deferred(
                     ToastKind::Error,
                     SharedString::from(format!("Repo open error: {}", "session unavailable")),
                 );
@@ -311,7 +311,7 @@ impl KagiApp {
                 // Re-detect so the staged file leaves the conflicted index set.
                 self.conflict_detected_for = None;
                 self.detect_conflict_mode();
-                self.push_toast(
+                self.push_toast_deferred(
                     ToastKind::Success,
                     SharedString::from(Msg::EditorSavedResolved.t()),
                 );
@@ -327,7 +327,7 @@ impl KagiApp {
                     },
                     &repo_path,
                 );
-                self.push_toast(
+                self.push_toast_deferred(
                     ToastKind::Error,
                     SharedString::from(Msg::EditorMarkerWarning.t()),
                 );
@@ -427,7 +427,7 @@ impl KagiApp {
                     path.display(),
                     e
                 );
-                self.push_toast(
+                self.push_toast_deferred(
                     ToastKind::Error,
                     SharedString::from(format!("{}", "session unavailable")),
                 );
@@ -460,6 +460,7 @@ impl KagiApp {
                 self.push_toast(
                     ToastKind::Error,
                     SharedString::from(format!("Repo open error: {}", "session unavailable")),
+                    cx,
                 );
                 return;
             }
@@ -476,11 +477,12 @@ impl KagiApp {
                 klog!("refused: {} blocked: {}", op_name, "session unavailable");
                 // Surface the specific (localized) blocking reason (ADR-0067).
                 if let Some(first) = repo.continue_blockers(&mode.session, &mode.buffer).first() {
-                    self.push_toast(ToastKind::Error, conflict_view::blocker_msg(first).t());
+                    self.push_toast(ToastKind::Error, conflict_view::blocker_msg(first).t(), cx);
                 } else {
                     self.push_toast(
                         ToastKind::Error,
                         SharedString::from(format!("{}", "session unavailable")),
+                        cx,
                     );
                 }
                 self.record_op(
@@ -521,6 +523,7 @@ impl KagiApp {
                             "Could not stage resolution: {}",
                             "session unavailable"
                         )),
+                        cx,
                     );
                     cx.notify();
                     return;
@@ -576,6 +579,7 @@ impl KagiApp {
                 self.push_toast(
                     ToastKind::Error,
                     SharedString::from(format!("Repo open error: {}", "session unavailable")),
+                    cx,
                 );
                 return;
             }
@@ -642,6 +646,7 @@ impl KagiApp {
                 self.push_toast(
                     ToastKind::Error,
                     SharedString::from(format!("Repo open error: {}", "session unavailable")),
+                    cx,
                 );
                 return;
             }
@@ -653,6 +658,7 @@ impl KagiApp {
                 self.push_toast(
                     ToastKind::Error,
                     SharedString::from(format!("abort plan error: {}", "session unavailable")),
+                    cx,
                 );
                 return;
             }
@@ -727,6 +733,7 @@ impl KagiApp {
                 self.push_toast(
                     ToastKind::Error,
                     SharedString::from(format!("Repo open error: {}", "session unavailable")),
+                    cx,
                 );
                 return;
             }
@@ -738,6 +745,7 @@ impl KagiApp {
                 self.push_toast(
                     ToastKind::Error,
                     SharedString::from(format!("skip plan error: {}", "session unavailable")),
+                    cx,
                 );
                 return;
             }
@@ -778,7 +786,7 @@ impl KagiApp {
     /// `$LOCAL` / `$BASE` / `$REMOTE` / `$MERGED`.  If unset, shows how to
     /// configure it (we do NOT invent a default tool).  No plan needed
     /// (read-only launch); a note is recorded to the oplog footer via the toast.
-    pub fn conflict_open_external_tool(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
+    pub fn conflict_open_external_tool(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(c) = self.conflict.as_ref() else {
             return;
         };
@@ -790,7 +798,7 @@ impl KagiApp {
         let template = match settings::read_setting("mergetool") {
             Some(t) if !t.trim().is_empty() => t,
             _ => {
-                self.push_toast(ToastKind::Info, Msg::ConflictExternalToolUnset.t());
+                self.push_toast(ToastKind::Info, Msg::ConflictExternalToolUnset.t(), cx);
                 return;
             }
         };
@@ -822,10 +830,12 @@ impl KagiApp {
             Ok(_) => self.push_toast(
                 ToastKind::Info,
                 SharedString::from(format!("{}: {}", Msg::ConflictExternalTool.t(), merged_str)),
+                cx,
             ),
             Err(_e) => self.push_toast(
                 ToastKind::Error,
                 SharedString::from(format!("external tool failed: {}", "session unavailable")),
+                cx,
             ),
         }
     }
@@ -852,7 +862,7 @@ impl KagiApp {
             None => file.path.to_string_lossy().into_owned(),
         };
         cx.write_to_clipboard(ClipboardItem::new_string(abs.clone()));
-        self.push_toast(ToastKind::Success, SharedString::from(abs));
+        self.push_toast(ToastKind::Success, SharedString::from(abs), cx);
     }
 
     /// Copy the git command suggestion for the current operation + intent
@@ -874,6 +884,6 @@ impl KagiApp {
             format!("git {} --abort", slug)
         };
         cx.write_to_clipboard(ClipboardItem::new_string(cmd.clone()));
-        self.push_toast(ToastKind::Success, SharedString::from(cmd));
+        self.push_toast(ToastKind::Success, SharedString::from(cmd), cx);
     }
 }

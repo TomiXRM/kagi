@@ -339,17 +339,17 @@ pub fn render_branch_menu_overlay(
 
 pub fn copy_branch_name(app: &mut KagiApp, name: String, cx: &mut Context<KagiApp>) {
     cx.write_to_clipboard(ClipboardItem::new_string(name.clone()));
-    app.push_toast(super::ToastKind::Info, i18n::copied_fmt(&name));
+    app.push_toast(super::ToastKind::Info, i18n::copied_fmt(&name), cx);
 }
 
 pub fn copy_head_sha(app: &mut KagiApp, sha: String, cx: &mut Context<KagiApp>) {
     cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()));
-    app.push_toast(super::ToastKind::Info, i18n::copied_fmt(&sha));
+    app.push_toast(super::ToastKind::Info, i18n::copied_fmt(&sha), cx);
 }
 
 pub fn copy_upstream_name(app: &mut KagiApp, upstream: String, cx: &mut Context<KagiApp>) {
     cx.write_to_clipboard(ClipboardItem::new_string(upstream.clone()));
-    app.push_toast(super::ToastKind::Info, i18n::copied_fmt(&upstream));
+    app.push_toast(super::ToastKind::Info, i18n::copied_fmt(&upstream), cx);
 }
 
 fn item(

@@ -1186,7 +1186,7 @@ impl KagiApp {
                 } else {
                     self.reload();
                     self.status_footer = FooterStatus::Idle(SharedString::from(Msg::Refreshed.t()));
-                    self.push_toast(ToastKind::Success, Msg::Refreshed.t());
+                    self.push_toast(ToastKind::Success, Msg::Refreshed.t(), cx);
                     // Also fetch the remote (quiet) so changes pushed elsewhere
                     // show up — success reloads the graph, failure is silent.
                     self.fetch_async(true, cx);
@@ -1444,6 +1444,7 @@ impl KagiApp {
                             app.push_toast(
                                 ToastKind::Success,
                                 format!("Fetched {}", outcome.remote),
+                                cx,
                             );
                         }
                     }
@@ -1454,7 +1455,7 @@ impl KagiApp {
                             app.status_footer = FooterStatus::Failed(SharedString::from(format!(
                                 "Fetch failed: {e}"
                             )));
-                            app.push_toast(ToastKind::Error, format!("Fetch failed: {e}"));
+                            app.push_toast(ToastKind::Error, format!("Fetch failed: {e}"), cx);
                         }
                     }
                 }

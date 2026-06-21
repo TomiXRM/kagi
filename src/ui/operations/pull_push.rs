@@ -26,7 +26,7 @@ impl KagiApp {
             let ahead = s.ahead.unwrap_or(0);
             // Nothing to pull by local knowledge → snackbar, no modal (as local).
             if behind == 0 {
-                self.push_toast(
+                self.push_toast_deferred(
                     ToastKind::Sync,
                     SharedString::from(Msg::AlreadyUpToDatePull.t()),
                 );
@@ -83,7 +83,7 @@ impl KagiApp {
                     && plan.warnings.is_empty()
                     && plan.title.contains("up to date (local knowledge")
                 {
-                    self.push_toast(
+                    self.push_toast_deferred(
                         ToastKind::Sync,
                         SharedString::from(Msg::AlreadyUpToDatePull.t()),
                     );
@@ -346,7 +346,7 @@ impl KagiApp {
                 if !plan.blockers.is_empty()
                     && plan.blockers.iter().all(|b| b.contains("nothing to push"))
                 {
-                    self.push_toast(
+                    self.push_toast_deferred(
                         ToastKind::Sync,
                         SharedString::from(Msg::AlreadyUpToDatePush.t()),
                     );

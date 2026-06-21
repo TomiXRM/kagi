@@ -709,12 +709,12 @@ fn remote_connect_blocking(host: &RemoteHost) -> Result<RemoteBrowseData, String
     remote_browse_blocking(host, &home)
 }
 
-/// Load a read-only [`RepoSnapshot`](kagi::git::RepoSnapshot) of the remote repo
+/// Load a read-only [`RepoSnapshot`](kagi_git::RepoSnapshot) of the remote repo
 /// at `path` over SSH (Phase 2). Returns `(path, snapshot)`.
 fn remote_open_blocking(
     host: &RemoteHost,
     path: &str,
-) -> Result<(String, kagi::git::RepoSnapshot), String> {
+) -> Result<(String, kagi_git::RepoSnapshot), String> {
     let snap = kagi::remote::remote_snapshot(host, path, REMOTE_SNAPSHOT_LIMIT)
         .map_err(|e| e.to_string())?;
     Ok((path.to_string(), snap))

@@ -12,7 +12,7 @@ use std::process::Command;
 use git2::{BranchType, Repository};
 use tempfile::TempDir;
 
-use kagi::git::{
+use kagi_git::{
     ops::{
         execute_checkout, execute_checkout_commit, execute_cherry_pick, execute_create_branch,
         execute_stash_apply, execute_stash_push, plan_checkout, plan_checkout_commit,
@@ -1554,7 +1554,7 @@ fn test_cherry_pick_plan_preview_files_match() {
         "preview file should be feat_two.txt, got: {}",
         pf.path.display()
     );
-    use kagi::git::ChangeKind;
+    use kagi_git::ChangeKind;
     assert!(
         matches!(pf.change, ChangeKind::Added),
         "change kind should be Added, got: {:?}",
@@ -1627,7 +1627,7 @@ fn test_cherry_pick_plan_does_not_change_repo() {
 // new files.  Same ref-ordering pitfall as the pull FF/merge paths.
 #[test]
 fn test_cherry_pick_updates_modified_existing_file() {
-    use kagi::git::{execute_cherry_pick, CommitId};
+    use kagi_git::{execute_cherry_pick, CommitId};
     let tmp = tempfile::TempDir::new().unwrap();
     let dir = tmp.path();
     git(dir, &["init", "-q", "-b", "main", "."]);
@@ -1667,6 +1667,6 @@ fn test_cherry_pick_updates_modified_existing_file() {
         "v2 from feat\n",
         "cherry-pick must materialise modifications to existing files"
     );
-    let st = kagi::git::working_tree_status(&git2::Repository::open(dir).unwrap()).unwrap();
+    let st = kagi_git::working_tree_status(&git2::Repository::open(dir).unwrap()).unwrap();
     assert!(!st.is_dirty(), "WT must be clean after cherry-pick");
 }

@@ -459,7 +459,7 @@ impl Render for KagiApp {
         if !self.history_seed_attempted {
             self.history_seed_attempted = true;
             if let Some(repo_path) = self.repo_path.clone() {
-                if let Ok(backend) = kagi::git::Backend::open(&repo_path) {
+                if let Ok(backend) = kagi_git::Backend::open(&repo_path) {
                     self.seed_history_from_reflog(&backend);
                 }
             }
@@ -485,7 +485,7 @@ impl Render for KagiApp {
                 // Template mode: parse the generated Conventional subject into
                 // the type/scope/summary (+body) fields so each goes into its own
                 // box (ADR-0090).
-                let fields = kagi::git::parse_message(&msg);
+                let fields = kagi_git::parse_message(&msg);
                 self.set_template_inputs(&fields, window, cx);
             } else if let Some(input) = self.commit_input.clone() {
                 input.update(cx, |state, cx| {

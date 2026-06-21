@@ -6,7 +6,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{
+use kagi_git::{
     ops::{execute_create_worktree, plan_create_worktree, preflight_check, validate_worktree_path},
     CommitId,
 };

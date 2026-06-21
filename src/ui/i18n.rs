@@ -971,9 +971,9 @@ pub fn worktree_exists_fmt(path: &str) -> String {
     }
 }
 
-/// Map a keyed [`kagi::git::ops::BranchNameError`] to localized text.
-pub fn branch_name_error(e: &kagi::git::ops::BranchNameError) -> String {
-    use kagi::git::ops::BranchNameError::*;
+/// Map a keyed [`kagi_git::ops::BranchNameError`] to localized text.
+pub fn branch_name_error(e: &kagi_git::ops::BranchNameError) -> String {
+    use kagi_git::ops::BranchNameError::*;
     match e {
         EmptyCreate => Msg::BranchNameEmpty.t().to_string(),
         Required => Msg::BranchNameRequired.t().to_string(),
@@ -1072,9 +1072,9 @@ pub fn smart_cli_warning_lines(name: &str, bin: &str) -> [String; 4] {
     }
 }
 
-/// Map a keyed [`kagi::git::ops::WorktreePathError`] to localized text.
-pub fn worktree_path_error(e: &kagi::git::ops::WorktreePathError) -> String {
-    use kagi::git::ops::WorktreePathError::*;
+/// Map a keyed [`kagi_git::ops::WorktreePathError`] to localized text.
+pub fn worktree_path_error(e: &kagi_git::ops::WorktreePathError) -> String {
+    use kagi_git::ops::WorktreePathError::*;
     match e {
         Empty => Msg::WorktreePathEmpty.t().to_string(),
         Exists(path) => worktree_exists_fmt(path),
@@ -1179,7 +1179,7 @@ mod tests {
     // switch with the active language.
     #[test]
     fn keyed_validation_display_is_exact_english() {
-        use kagi::git::ops::{BranchNameError as B, WorktreePathError as W};
+        use kagi_git::ops::{BranchNameError as B, WorktreePathError as W};
         assert_eq!(B::EmptyCreate.to_string(), "Branch name must not be empty.");
         assert_eq!(B::Required.to_string(), "Branch name is required.");
         assert_eq!(
@@ -1217,7 +1217,7 @@ mod tests {
 
     #[test]
     fn keyed_validation_localizes() {
-        use kagi::git::ops::{BranchNameError as B, WorktreePathError as W};
+        use kagi_git::ops::{BranchNameError as B, WorktreePathError as W};
         let _g = LOCK.lock().unwrap();
         set_lang_no_persist(Lang::En);
         assert_eq!(

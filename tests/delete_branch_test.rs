@@ -18,7 +18,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{execute_delete_branch, plan_delete_branch};
+use kagi_git::{execute_delete_branch, plan_delete_branch};
 
 // ────────────────────────────────────────────────────────────
 // Helpers

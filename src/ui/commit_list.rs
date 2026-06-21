@@ -8,8 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui::SharedString;
 
-use kagi::git::{Commit, CommitId, Head, RepoSnapshot};
 use kagi::graph::{layout_with, EdgeKind, GraphEdge, GraphLayoutMode};
+use kagi_git::{Commit, CommitId, Head, RepoSnapshot};
 
 // ──────────────────────────────────────────────────────────────
 // Helpers

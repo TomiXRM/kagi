@@ -20,7 +20,7 @@ use std::process::Command;
 
 use tempfile::TempDir;
 
-use kagi::git::{Backend, CommitId, HistoryEntry, OperationHistory, OperationKind};
+use kagi_git::{Backend, CommitId, HistoryEntry, OperationHistory, OperationKind};
 
 // ────────────────────────────────────────────────────────────
 // Helpers

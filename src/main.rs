@@ -6,7 +6,7 @@ mod ui;
 
 use std::path::PathBuf;
 
-use kagi::git::{open_repository, snapshot, Head};
+use kagi_git::{open_repository, snapshot, Head};
 use ui::{run_app, KagiApp};
 
 /// True when the process is running under the `KAGI_*` headless test harness.

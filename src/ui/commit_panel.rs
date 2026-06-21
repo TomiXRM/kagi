@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use gpui::SharedString;
 
-use kagi::git::{Backend, ChangeKind, CommitPreview, FileDiffStat, FileStatus};
+use kagi_git::{Backend, ChangeKind, CommitPreview, FileDiffStat, FileStatus};
 
 use crate::ui::file_tree::{self, TreeRow};
 
@@ -39,7 +39,7 @@ pub enum CommitPanelFileRef {
 #[derive(Clone)]
 pub struct CommitPlanModal {
     /// The computed plan (warnings for unstaged remains, preview_files = staged).
-    pub plan: std::sync::Arc<kagi::git::ops::OperationPlan>,
+    pub plan: std::sync::Arc<kagi_git::ops::OperationPlan>,
     /// Error message to show if execute or preflight failed.
     pub error: Option<SharedString>,
 }

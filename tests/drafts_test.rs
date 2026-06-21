@@ -8,7 +8,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use kagi::git::drafts::{clear_draft, load_draft, save_draft};
+use kagi_git::drafts::{clear_draft, load_draft, save_draft};
 
 /// Serialize all env-var-using tests to prevent KAGI_LOG_DIR races.
 static ENV_LOCK: Mutex<()> = Mutex::new(());

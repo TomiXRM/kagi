@@ -1,7 +1,7 @@
 //! Integration tests for commit_changed_files (T011).
 //!
 //! Each test builds a small Git repository in a `tempfile::TempDir` using the
-//! `git` CLI, then asserts the result of `kagi::git::commit_changed_files`.
+//! `git` CLI, then asserts the result of `kagi_git::commit_changed_files`.
 //!
 //! Scenarios covered:
 //! - root commit (all files Added)
@@ -17,7 +17,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{
+use kagi_git::{
     commit_changed_files, commit_file_diff, commit_log, ChangeKind, CommitId, DiffLineKind,
 };
 

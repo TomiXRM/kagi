@@ -19,7 +19,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{execute_undo_commit, plan_undo_commit, working_tree_status};
+use kagi_git::{execute_undo_commit, plan_undo_commit, working_tree_status};
 
 // ────────────────────────────────────────────────────────────
 // Helpers

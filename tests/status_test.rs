@@ -2,7 +2,7 @@
 //!
 //! Each test builds a small Git repository inside a `tempfile::TempDir` using
 //! `std::process::Command` to call the `git` CLI, then asserts the result of
-//! `kagi::git::working_tree_status`.
+//! `kagi_git::working_tree_status`.
 //!
 //! All writes are confined to the temporary directory; no existing repository
 //! is ever modified.
@@ -14,7 +14,7 @@ use git2::Repository;
 use tempfile::TempDir;
 
 // Re-use the public types from the library.
-use kagi::git::{working_tree_status, ChangeKind};
+use kagi_git::{working_tree_status, ChangeKind};
 
 // ────────────────────────────────────────────────────────────
 // Helpers

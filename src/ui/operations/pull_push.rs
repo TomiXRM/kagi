@@ -39,7 +39,7 @@ impl KagiApp {
                 .get(&branch)
                 .map(|u| u.remote_branch.clone())
                 .unwrap_or_else(|| "upstream".to_string());
-            let plan = kagi::git::plan_pull_remote(
+            let plan = kagi_git::plan_pull_remote(
                 &branch,
                 &upstream,
                 behind,
@@ -202,7 +202,7 @@ impl KagiApp {
                                 "pull",
                                 before.clone(),
                                 OpOutcome::Success {
-                                    after: kagi::git::StateSummary {
+                                    after: kagi_git::StateSummary {
                                         head: before.head.clone(),
                                         dirty: summary.clone(),
                                     },

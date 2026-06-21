@@ -24,7 +24,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{execute_amend, plan_amend, preflight_check, AmendMode};
+use kagi_git::{execute_amend, plan_amend, preflight_check, AmendMode};
 
 // ────────────────────────────────────────────────────────────
 // Helpers

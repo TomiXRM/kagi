@@ -22,7 +22,7 @@ use gpui::{
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
 
-use kagi::git::{find_stat, parse_coauthors, ChangeKind, CommitId, FileDiffStat, FileStatus};
+use kagi_git::{find_stat, parse_coauthors, ChangeKind, CommitId, FileDiffStat, FileStatus};
 
 use super::{
     avatar::{avatar_color, avatar_initial},

@@ -20,7 +20,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{execute_pull, plan_pull, working_tree_status, PullOutcome};
+use kagi_git::{execute_pull, plan_pull, working_tree_status, PullOutcome};
 
 // ────────────────────────────────────────────────────────────
 // Helpers

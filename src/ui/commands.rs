@@ -36,7 +36,7 @@ use gpui::{
     SharedString, Window,
 };
 
-use kagi::git::CommitId;
+use kagi_git::CommitId;
 
 /// Interval between background auto-fetches (when the `auto_fetch` setting is on
 /// and a repo is open). Kept conservative to avoid hammering the remote.
@@ -1423,8 +1423,8 @@ impl KagiApp {
             klog!("fetch: start");
         }
         let task = cx.background_spawn(async move {
-            let backend = kagi::git::Backend::open(&repo_path)
-                .map_err(|e| format!("repo open error: {e}"))?;
+            let backend =
+                kagi_git::Backend::open(&repo_path).map_err(|e| format!("repo open error: {e}"))?;
             backend.fetch_remote().map_err(|e| format!("{e}"))
         });
         cx.spawn(async move |this, acx| {

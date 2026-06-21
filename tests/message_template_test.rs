@@ -1,12 +1,12 @@
 //! Integration tests for the structured commit-message template assembly /
 //! parsing pure functions — T-COMMIT-009 (lane W14-TEMPLATE).
 //!
-//! These exercise `kagi::git::message_template` end to end: assembling the six
+//! These exercise `kagi_git::message_template` end to end: assembling the six
 //! fields into one message (empty fields omitted), parsing a plain message back
 //! into best-effort structured fields, and the plain ⇄ template round-trip the
 //! Commit Panel relies on to not lose user input on a mode toggle.
 
-use kagi::git::message_template::{assemble, parse_message, TemplateFields, TYPE_CHOICES};
+use kagi_git::message_template::{assemble, parse_message, TemplateFields, TYPE_CHOICES};
 
 // ── assemble: full + partial ────────────────────────────────────
 

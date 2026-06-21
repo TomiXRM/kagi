@@ -33,7 +33,7 @@ use kagi_domain::remote_diff as rd;
 use kagi_domain::remote_snapshot as rs;
 use kagi_domain::status::FileStatus;
 
-use crate::git::{FileDiff, Head, RepoSnapshot};
+use kagi_git::{FileDiff, Head, RepoSnapshot};
 
 /// Whole-command backstop timeout. ssh's own `ConnectTimeout`
 /// ([`SSH_CONNECT_TIMEOUT_SECS`]) bounds the handshake; this bounds the entire

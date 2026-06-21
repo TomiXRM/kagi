@@ -1,0 +1,18 @@
+[package]
+name = "kagi-git"
+version = "0.1.0"
+license = "MIT"
+edition = "2021"
+
+# kagi-git is the Git backend layer (ADR-0072 / Phase E): the ONLY crate that
+# opens `git2::Repository`. It depends on the pure `kagi-domain` layer for the
+# model types and re-exports them so callers keep using `kagi_git::Head` etc.
+# No gpui, no UI — the `git2` dependency lives here, not in the UI crate, so the
+# "no git2 in the UI" invariant becomes a compile-time crate boundary.
+[dependencies]
+kagi-domain = { path = "../kagi-domain" }
+git2 = { version = "0.21", default-features = false }
+# Commit-message generation (message_gen) calls a local model endpoint over HTTP
+# and stages the request body in a tempfile; both stay inside this crate.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+tempfile = "3"

@@ -2,7 +2,7 @@
 //!
 //! Each test builds a small Git repository in a `tempfile::TempDir` via the
 //! `git` CLI, then asserts the additions/deletions aggregated by
-//! `kagi::git::{commit_diffstat, staged_diffstat, unstaged_diffstat}`.
+//! `kagi_git::{commit_diffstat, staged_diffstat, unstaged_diffstat}`.
 //!
 //! Scenarios: add / modify / delete / binary / rename, for commit-vs-parent,
 //! staged (HEAD→index), and unstaged (index→workdir).
@@ -13,7 +13,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{
+use kagi_git::{
     commit_diffstat, commit_log, find_stat, staged_diffstat, unstaged_diffstat, ChangeKind,
     CommitId,
 };

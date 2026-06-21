@@ -1,7 +1,7 @@
 //! Integration tests for the File History data layer (ADR-0089).
 //!
 //! These shell out to the real `git` binary into a `TempDir` and exercise
-//! `kagi::git::file_history` end-to-end (add / modify / rename / delete /
+//! `kagi_git::file_history` end-to-end (add / modify / rename / delete /
 //! binary / WIP / unicode paths / limit).  No real repository is ever touched.
 
 use std::path::{Path, PathBuf};
@@ -9,7 +9,7 @@ use std::process::Command;
 
 use tempfile::TempDir;
 
-use kagi::git::{file_history, FileChangeType, FileHistoryEntryKind, FileHistoryRequest};
+use kagi_git::{file_history, FileChangeType, FileHistoryEntryKind, FileHistoryRequest};
 
 // ────────────────────────────────────────────────────────────
 // Helpers

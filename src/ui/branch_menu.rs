@@ -2,7 +2,7 @@
 
 use gpui::{ClipboardItem, Context, Pixels, Point, SharedString, Window};
 
-use kagi::git::CommitId;
+use kagi_git::CommitId;
 
 use super::{
     context_menu::{ItemState, MenuGroup, MenuItem},

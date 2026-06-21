@@ -16,7 +16,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{execute_discard, plan_discard, working_tree_status};
+use kagi_git::{execute_discard, plan_discard, working_tree_status};
 
 // ────────────────────────────────────────────────────────────
 // Helpers

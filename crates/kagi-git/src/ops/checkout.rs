@@ -363,7 +363,7 @@ fn predict_checkout_conflict(
     repo: &Repository,
     head: &Head,
     target_oid: git2::Oid,
-    status: &crate::git::status::WorkingTreeStatus,
+    status: &crate::status::WorkingTreeStatus,
 ) -> Option<String> {
     // Resolve the current HEAD tree (the baseline the checkout diffs against).
     let head_oid = match head {

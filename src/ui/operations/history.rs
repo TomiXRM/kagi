@@ -70,7 +70,7 @@ impl KagiApp {
             );
             return;
         }
-        let mut repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
@@ -106,9 +106,9 @@ impl KagiApp {
             return;
         }
         // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
-        let undo_op = kagi::git::Operation::UndoCommit;
+        let undo_op = kagi_git::Operation::UndoCommit;
         match repo.run(&undo_op, &modal.plan) {
-            Ok(kagi::git::OperationOutcome::Undo(outcome)) => {
+            Ok(kagi_git::OperationOutcome::Undo(outcome)) => {
                 eprintln!(
                     "[kagi] executed: undo {} -> now at {}",
                     outcome.undone.short(),
@@ -130,7 +130,7 @@ impl KagiApp {
                 // of THIS entry re-applies the commit; a redo undoes it again.
                 if let Some((branch, _)) = self.head_branch_and_sha() {
                     self.record_history(
-                        kagi::git::OperationKind::UndoCommit,
+                        kagi_git::OperationKind::UndoCommit,
                         &branch,
                         outcome.undone.clone(),
                         outcome.now_at.clone(),
@@ -173,7 +173,7 @@ impl KagiApp {
     ///
     /// Only seeds when empty — an in-session stack (with precise summaries) is
     /// never clobbered. Reflog read failures are logged and ignored (best-effort).
-    pub(crate) fn seed_history_from_reflog(&mut self, backend: &kagi::git::Backend) {
+    pub(crate) fn seed_history_from_reflog(&mut self, backend: &kagi_git::Backend) {
         if self.operation_history.len() != 0 {
             return;
         }
@@ -184,7 +184,7 @@ impl KagiApp {
                         "[kagi] history: seeded {} entries from reflog",
                         entries.len()
                     );
-                    self.operation_history = kagi::git::OperationHistory::seeded(entries);
+                    self.operation_history = kagi_git::OperationHistory::seeded(entries);
                 }
             }
             Err(e) => {
@@ -201,10 +201,10 @@ impl KagiApp {
     /// branch name is empty (detached HEAD ops are not undoable in MVP).
     pub fn record_history(
         &mut self,
-        kind: kagi::git::OperationKind,
+        kind: kagi_git::OperationKind,
         branch: &str,
-        before: kagi::git::CommitId,
-        after: kagi::git::CommitId,
+        before: kagi_git::CommitId,
+        after: kagi_git::CommitId,
         summary: impl Into<String>,
     ) {
         if branch.is_empty() || before == after {
@@ -218,7 +218,7 @@ impl KagiApp {
             before.short(),
             after.short()
         );
-        self.operation_history.record(kagi::git::HistoryEntry {
+        self.operation_history.record(kagi_git::HistoryEntry {
             kind,
             branch: branch.to_string(),
             before,
@@ -253,7 +253,7 @@ impl KagiApp {
     }
 
     /// Shared: build an undo/redo plan for `entry` and show the preview modal.
-    fn open_history_modal(&mut self, entry: kagi::git::HistoryEntry, is_undo: bool) {
+    fn open_history_modal(&mut self, entry: kagi_git::HistoryEntry, is_undo: bool) {
         let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -533,7 +533,7 @@ impl KagiApp {
         }
 
         // ── Armed: proceed to preflight → execute ────────────
-        let mut repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
@@ -578,12 +578,12 @@ impl KagiApp {
             Some(modal.message.as_str())
         };
         // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
-        let amend_op = kagi::git::Operation::Amend {
+        let amend_op = kagi_git::Operation::Amend {
             mode: modal.mode,
             message: msg_opt.map(|s| s.to_string()),
         };
         match repo.run(&amend_op, &modal.plan) {
-            Ok(kagi::git::OperationOutcome::Amend(outcome)) => {
+            Ok(kagi_git::OperationOutcome::Amend(outcome)) => {
                 eprintln!(
                     "[kagi] executed: amend {} -> {}",
                     outcome.old.short(),
@@ -608,7 +608,7 @@ impl KagiApp {
                 // commit back to the pre-amend commit (still in the reflog).
                 if let Some((branch, _)) = self.head_branch_and_sha() {
                     self.record_history(
-                        kagi::git::OperationKind::Amend,
+                        kagi_git::OperationKind::Amend,
                         &branch,
                         outcome.old.clone(),
                         outcome.new.clone(),

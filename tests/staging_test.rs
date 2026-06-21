@@ -30,7 +30,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{
+use kagi_git::{
     commit_preview, execute_commit, plan_commit, stage_file, staged_file_diff, unstage_file,
     unstaged_file_diff, working_tree_status, DiffLineKind,
 };
@@ -196,7 +196,7 @@ fn test_stage_deleted_file() {
     let status_before = working_tree_status(&repo).unwrap();
     assert!(
         status_before.unstaged.iter().any(|f| {
-            use kagi::git::ChangeKind;
+            use kagi_git::ChangeKind;
             f.path.to_string_lossy().contains("README") && matches!(f.change, ChangeKind::Deleted)
         }),
         "README.md should appear as unstaged Deleted before stage"
@@ -750,7 +750,7 @@ fn test_stage_files_batch() {
     let paths: Vec<std::path::PathBuf> = (1..=5)
         .map(|i| std::path::PathBuf::from(format!("f{}.txt", i)))
         .collect();
-    let n = kagi::git::stage_files(&repo, &paths).unwrap();
+    let n = kagi_git::stage_files(&repo, &paths).unwrap();
     assert_eq!(n, 5);
     let st = working_tree_status(&repo).unwrap();
     assert_eq!(st.staged.len(), 5);
@@ -768,7 +768,7 @@ fn test_unstage_files_batch() {
     let paths: Vec<std::path::PathBuf> = (1..=4)
         .map(|i| std::path::PathBuf::from(format!("g{}.txt", i)))
         .collect();
-    let n = kagi::git::unstage_files(&repo, &paths).unwrap();
+    let n = kagi_git::unstage_files(&repo, &paths).unwrap();
     assert_eq!(n, 4);
     let st = working_tree_status(&repo).unwrap();
     assert!(st.staged.is_empty());

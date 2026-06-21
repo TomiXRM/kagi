@@ -1,7 +1,7 @@
 //! Integration tests for RepoSnapshot (T005).
 //!
 //! Each test builds a small Git repository inside a `tempfile::TempDir` using
-//! the `git` CLI, then asserts the result of `kagi::git::snapshot`.
+//! the `git` CLI, then asserts the result of `kagi_git::snapshot`.
 //!
 //! All writes are confined to the temporary directory.
 
@@ -11,7 +11,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{snapshot, Head};
+use kagi_git::{snapshot, Head};
 
 // ────────────────────────────────────────────────────────────
 // Helpers

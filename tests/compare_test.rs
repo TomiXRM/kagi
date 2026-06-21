@@ -10,7 +10,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{
+use kagi_git::{
     compare_commit_to_workdir, compare_commit_to_workdir_file_diff, compare_commits,
     compare_file_diff, ChangeKind, CommitId, DiffLineKind,
 };

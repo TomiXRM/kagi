@@ -145,7 +145,7 @@ pub fn github_owner_repo(remote_url: &str) -> Option<(String, String)> {
 /// Opens the repo read-only through the backend and inspects every remote's fetch URL.
 /// Returns `None` if the repo can't be opened or no remote points at GitHub.
 pub fn repo_github_coords(repo_path: &std::path::Path) -> Option<(String, String)> {
-    let backend = kagi::git::Backend::open(repo_path).ok()?;
+    let backend = kagi_git::Backend::open(repo_path).ok()?;
     for url in backend.remote_urls().ok()? {
         if let Some(coords) = github_owner_repo(&url) {
             return Some(coords);

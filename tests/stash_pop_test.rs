@@ -13,7 +13,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{
+use kagi_git::{
     execute_stash_apply, execute_stash_drop, execute_stash_pop, execute_stash_push,
     plan_stash_drop, plan_stash_pop, snapshot,
 };

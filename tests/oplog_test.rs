@@ -6,8 +6,8 @@
 //! KAGI_LOG_DIR is a process-global env var shared by all test threads.
 //! We serialize all tests in this file with ENV_LOCK to prevent races.
 
-use kagi::git::oplog::{append_oplog, read_oplog_tail, OpLogEntry, OpOutcome};
-use kagi::git::ops::StateSummary;
+use kagi_git::oplog::{append_oplog, read_oplog_tail, OpLogEntry, OpOutcome};
+use kagi_git::ops::StateSummary;
 use std::path::PathBuf;
 use std::sync::Mutex;
 

@@ -13,7 +13,7 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::Sizable as _;
 
-use kagi::git::{CommitId, RemoteBranch, Stash, Tag, Worktree};
+use kagi_git::{CommitId, RemoteBranch, Stash, Tag, Worktree};
 
 use super::theme::{self, theme};
 use super::{BranchDrag, BranchDragGhost, KagiApp};

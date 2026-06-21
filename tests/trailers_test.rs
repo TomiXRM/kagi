@@ -1,10 +1,10 @@
 //! Unit tests for commit-message trailer parsing — W18-COAUTHOR-COPY.
 //!
-//! Exercises `kagi::git::parse_coauthors`, the pure function that extracts
+//! Exercises `kagi_git::parse_coauthors`, the pure function that extracts
 //! `Co-authored-by:` trailers from a raw commit message.  No filesystem or
 //! git access is required — these are pure string tests.
 
-use kagi::git::{parse_coauthors, CoAuthor};
+use kagi_git::{parse_coauthors, CoAuthor};
 
 fn ca(name: &str, email: &str) -> CoAuthor {
     CoAuthor {
@@ -133,7 +133,7 @@ fn trailers_interspersed_with_other_lines() {
 #[test]
 fn japanese_prose_line_does_not_panic() {
     let msg = "回路図修正\n\n基板の配線を全面的に見直した。\nハーネスを整理。\n\nCo-authored-by: 太郎 <taro@example.jp>\n";
-    let co = kagi::git::parse_coauthors(msg);
+    let co = kagi_git::parse_coauthors(msg);
     assert_eq!(co.len(), 1);
     assert_eq!(co[0].name, "太郎");
 }
@@ -143,5 +143,5 @@ fn japanese_prose_only_no_trailer_does_not_panic() {
     // Lines >= 15 bytes of pure Japanese (3 bytes/char) hit the old
     // split_at(15) mid-char.
     let msg = "実装メモ\n\nこの変更では設定を読み込む処理を追加した。\n";
-    assert!(kagi::git::parse_coauthors(msg).is_empty());
+    assert!(kagi_git::parse_coauthors(msg).is_empty());
 }

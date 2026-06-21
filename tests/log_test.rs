@@ -2,7 +2,7 @@
 //!
 //! Each test builds a small Git repository inside a `tempfile::TempDir` using
 //! `std::process::Command` to call the `git` CLI, then asserts the result of
-//! `kagi::git::commit_log`.
+//! `kagi_git::commit_log`.
 //!
 //! All writes are confined to the temporary directory; no existing repository
 //! is ever modified.
@@ -14,7 +14,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{commit_log, CommitId};
+use kagi_git::{commit_log, CommitId};
 
 // ────────────────────────────────────────────────────────────
 // Helpers (mirrors status_test.rs by design; shared helper

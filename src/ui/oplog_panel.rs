@@ -11,7 +11,7 @@
 
 use std::collections::VecDeque;
 
-use kagi::git::oplog::OpLogEntry;
+use kagi_git::oplog::OpLogEntry;
 
 /// Maximum entries kept in the in-memory ring buffer.
 const OP_ENTRIES_MAX: usize = 200;
@@ -66,18 +66,18 @@ impl Default for OpLogPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kagi::git::oplog::OpOutcome;
+    use kagi_git::oplog::OpOutcome;
 
     fn dummy_entry(op: &str) -> OpLogEntry {
         OpLogEntry::new(
             op,
             "repo",
-            kagi::git::ops::StateSummary {
+            kagi_git::ops::StateSummary {
                 head: "HEAD → main".to_string(),
                 dirty: "clean".to_string(),
             },
             OpOutcome::Success {
-                after: kagi::git::ops::StateSummary {
+                after: kagi_git::ops::StateSummary {
                     head: "main".to_string(),
                     dirty: "clean".to_string(),
                 },

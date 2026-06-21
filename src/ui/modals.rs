@@ -4,7 +4,7 @@
 
 use gpui::{Entity, SharedString};
 use gpui_component::input::InputState;
-use kagi::git::{
+use kagi_git::{
     ops::{AmendMode, BranchRenameValidation, MergeKind, OperationPlan},
     CommitId,
 };
@@ -59,7 +59,7 @@ pub struct HistoryPlanModal {
     /// The computed undo/redo plan (current → target, blockers, warnings).
     pub plan: std::sync::Arc<OperationPlan>,
     /// The history entry this modal acts on.
-    pub entry: kagi::git::HistoryEntry,
+    pub entry: kagi_git::HistoryEntry,
     /// `true` for an undo move, `false` for a redo move.
     pub is_undo: bool,
     /// Error message to show if execute or preflight failed.

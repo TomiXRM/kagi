@@ -100,6 +100,7 @@ impl KagiApp {
                         blockers: plan.blockers.clone(),
                     },
                     rp,
+                    cx,
                 );
             }
             return;
@@ -138,6 +139,7 @@ impl KagiApp {
                             plan.current.clone(),
                             OpOutcome::Success { after },
                             &repo_path,
+                            cx,
                         );
                         app.status_footer = FooterStatus::Success(SharedString::from(format!(
                             "stash: {}",
@@ -152,6 +154,7 @@ impl KagiApp {
                             plan.current.clone(),
                             OpOutcome::Failed { error: err_msg },
                             &repo_path,
+                            cx,
                         );
                     }
                 }
@@ -211,7 +214,7 @@ impl KagiApp {
     ///
     /// On failure the modal remains open and shows the error text.
     /// The stash entry is **never** removed (apply, not pop).
-    pub fn confirm_stash_apply(&mut self) {
+    pub fn confirm_stash_apply(&mut self, cx: &mut Context<Self>) {
         let modal = match self.stash_apply_modal().cloned() {
             Some(m) => m,
             None => return,
@@ -228,6 +231,7 @@ impl KagiApp {
                         blockers: plan.blockers.clone(),
                     },
                     rp,
+                    cx,
                 );
             }
             return;
@@ -248,6 +252,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 if let Some(m) = self.stash_apply_modal_mut() {
                     m.error = Some(SharedString::from(err_msg));
@@ -270,6 +275,7 @@ impl KagiApp {
                     error: err_msg.clone(),
                 },
                 &repo_path,
+                cx,
             );
             if let Some(m) = self.stash_apply_modal_mut() {
                 m.error = Some(SharedString::from(err_msg));
@@ -333,6 +339,7 @@ impl KagiApp {
                 after: after_summary,
             },
             &repo_path,
+            cx,
         );
 
         // Reload display data.
@@ -518,6 +525,7 @@ impl KagiApp {
                                     },
                                 },
                                 &oplog_path,
+                                cx,
                             );
                             app.status_footer = FooterStatus::Success(SharedString::from(format!(
                                 "stash drop: {summary}"
@@ -535,6 +543,7 @@ impl KagiApp {
                                     error: err_msg.clone(),
                                 },
                                 &oplog_path,
+                                cx,
                             );
                             app.set_stash_drop_modal(StashDropModal {
                                 plan: plan.clone(),
@@ -564,6 +573,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             self.clear_stash_drop_modal();
             cx.notify();
@@ -593,6 +603,7 @@ impl KagiApp {
                             plan.current.clone(),
                             OpOutcome::Success { after },
                             &repo_path,
+                            cx,
                         );
                         app.status_footer = FooterStatus::Success(SharedString::from(format!(
                             "stash drop: {}",
@@ -609,6 +620,7 @@ impl KagiApp {
                                 error: err_msg.clone(),
                             },
                             &repo_path,
+                            cx,
                         );
                         app.set_stash_drop_modal(StashDropModal {
                             plan: plan.clone(),
@@ -625,7 +637,7 @@ impl KagiApp {
     }
 
     /// Confirm stash pop: preflight → apply-then-drop → oplog → reload.
-    pub fn confirm_pop(&mut self) {
+    pub fn confirm_pop(&mut self, cx: &mut Context<Self>) {
         let modal = match self.pop_modal().cloned() {
             Some(m) => m,
             None => return,
@@ -643,6 +655,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             return;
         }
@@ -657,6 +670,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 self.set_pop_modal(PopPlanModal {
                     plan: modal.plan.clone(),
@@ -684,6 +698,7 @@ impl KagiApp {
                     modal.plan.current.clone(),
                     OpOutcome::Success { after },
                     &repo_path,
+                    cx,
                 );
                 self.status_footer =
                     FooterStatus::Success(SharedString::from("stash pop: applied and dropped"));
@@ -698,6 +713,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 self.set_pop_modal(PopPlanModal {
                     plan: modal.plan.clone(),
@@ -732,6 +748,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             self.clear_pop_modal();
             cx.notify();
@@ -761,6 +778,7 @@ impl KagiApp {
                             plan.current.clone(),
                             OpOutcome::Success { after },
                             &repo_path,
+                            cx,
                         );
                         app.status_footer = FooterStatus::Success(SharedString::from(format!(
                             "stash pop: {}",
@@ -777,6 +795,7 @@ impl KagiApp {
                                 error: err_msg.clone(),
                             },
                             &repo_path,
+                            cx,
                         );
                         app.set_pop_modal(PopPlanModal {
                             plan: plan.clone(),

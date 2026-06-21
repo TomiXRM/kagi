@@ -56,7 +56,7 @@ impl KagiApp {
     }
 
     /// Confirm undo: preflight → execute (ref-only) → oplog → reload.
-    pub fn confirm_undo(&mut self) {
+    pub fn confirm_undo(&mut self, cx: &mut Context<Self>) {
         let modal = match self.undo_modal().cloned() {
             Some(m) => m,
             None => return,
@@ -74,6 +74,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             return;
         }
@@ -88,6 +89,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 self.set_undo_modal(UndoPlanModal {
                     plan: modal.plan.clone(),
@@ -105,6 +107,7 @@ impl KagiApp {
                     error: err_msg.clone(),
                 },
                 &repo_path,
+                cx,
             );
             self.set_undo_modal(UndoPlanModal {
                 plan: modal.plan.clone(),
@@ -131,6 +134,7 @@ impl KagiApp {
                     modal.plan.current.clone(),
                     OpOutcome::Success { after },
                     &repo_path,
+                    cx,
                 );
                 // T-UNDOREDO-001: record so the undo-commit itself is redoable
                 // (entry.before = undone commit, entry.after = parent). An undo
@@ -164,6 +168,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 self.set_undo_modal(UndoPlanModal {
                     plan: modal.plan.clone(),
@@ -311,7 +316,7 @@ impl KagiApp {
     /// pipeline, advance/retreat the history cursor, record in the oplog, and
     /// reload. On a stale entry (preflight failure) the entry is left in place
     /// and the error is surfaced.
-    pub fn confirm_history(&mut self) {
+    pub fn confirm_history(&mut self, cx: &mut Context<Self>) {
         let modal = match self.history_modal().cloned() {
             Some(m) => m,
             None => return,
@@ -334,6 +339,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             self.clear_history_modal();
             return;
@@ -351,6 +357,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 self.set_history_modal(HistoryPlanModal {
                     error: Some(SharedString::from(err_msg)),
@@ -369,6 +376,7 @@ impl KagiApp {
                     error: err_msg.clone(),
                 },
                 &repo_path,
+                cx,
             );
             self.set_history_modal(HistoryPlanModal {
                 error: Some(SharedString::from(err_msg)),
@@ -401,6 +409,7 @@ impl KagiApp {
                     modal.plan.current.clone(),
                     OpOutcome::Success { after },
                     &repo_path,
+                    cx,
                 );
                 self.status_footer = FooterStatus::Success(SharedString::from(format!(
                     "{}: {} → {} (recover: git reflog)",
@@ -423,6 +432,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 self.set_history_modal(HistoryPlanModal {
                     error: Some(SharedString::from(err_msg)),
@@ -505,7 +515,7 @@ impl KagiApp {
 
     /// First stage of the two-stage confirm: arm the action.  If already armed
     /// this is the final stage and executes the amend (ADR-0023 history-rewrite).
-    pub fn confirm_amend(&mut self) {
+    pub fn confirm_amend(&mut self, cx: &mut Context<Self>) {
         let modal = match self.amend_modal().cloned() {
             Some(m) => m,
             None => return,
@@ -525,6 +535,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             return;
         }
@@ -551,6 +562,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 self.set_amend_modal(AmendPlanModal {
                     error: Some(SharedString::from(err_msg)),
@@ -568,6 +580,7 @@ impl KagiApp {
                     error: err_msg.clone(),
                 },
                 &repo_path,
+                cx,
             );
             self.set_amend_modal(AmendPlanModal {
                 error: Some(SharedString::from(err_msg)),
@@ -610,6 +623,7 @@ impl KagiApp {
                     modal.plan.current.clone(),
                     OpOutcome::Success { after },
                     &repo_path,
+                    cx,
                 );
                 // T-UNDOREDO-001: undo of an amend moves the branch from the new
                 // commit back to the pre-amend commit (still in the reflog).
@@ -643,6 +657,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 self.set_amend_modal(AmendPlanModal {
                     error: Some(SharedString::from(err_msg)),
@@ -676,6 +691,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             return;
         }
@@ -721,6 +737,7 @@ impl KagiApp {
                             plan.current.clone(),
                             OpOutcome::Success { after },
                             &repo_path,
+                            cx,
                         );
                         app.status_footer = FooterStatus::Success(SharedString::from(format!(
                             "amend: {} → {} (restore: git reset --hard {})",
@@ -739,6 +756,7 @@ impl KagiApp {
                                 error: err_msg.clone(),
                             },
                             &repo_path,
+                            cx,
                         );
                         app.set_amend_modal(AmendPlanModal {
                             plan: plan.clone(),

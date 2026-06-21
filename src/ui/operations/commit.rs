@@ -897,6 +897,7 @@ impl KagiApp {
                             plan.current.clone(),
                             OpOutcome::Success { after },
                             &repo_path,
+                            cx,
                         );
                         if let (Some((hbranch, before)), Some((_, after_sha))) =
                             (history_before.clone(), app.head_branch_and_sha())
@@ -922,6 +923,7 @@ impl KagiApp {
                                 error: err_msg.clone(),
                             },
                             &repo_path,
+                            cx,
                         );
                         if let Some(ref mut panel) = app.commit_panel {
                             if let Some(ref mut modal) = panel.plan_modal {
@@ -1003,6 +1005,7 @@ impl KagiApp {
                     plan.current.clone(),
                     OpOutcome::Success { after },
                     &repo_path,
+                    cx,
                 );
                 // Leave the merge-commit / commit-panel state and re-detect so
                 // Conflict Mode clears (MERGE_HEAD is gone after cleanup_state).
@@ -1034,6 +1037,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 if let Some(panel) = self.commit_panel.as_mut() {
                     if let Some(modal) = panel.plan_modal.as_mut() {

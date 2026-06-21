@@ -1234,8 +1234,8 @@ impl KagiApp {
 
             // ── Repository ──────────────────────────────────────────
             "repo.fetch" => self.menu_fetch(cx),
-            "repo.pull" => self.open_pull_modal(),
-            "repo.push" => self.open_push_modal(),
+            "repo.pull" => self.open_pull_modal(cx),
+            "repo.push" => self.open_push_modal(cx),
             "repo.openInFinder" => self.menu_open_in_finder(),
 
             // ── Branch ──────────────────────────────────────────────

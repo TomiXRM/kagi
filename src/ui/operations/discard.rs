@@ -169,6 +169,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             self.clear_discard_modal();
             cx.notify();
@@ -195,6 +196,7 @@ impl KagiApp {
                             blockers: vec![err_msg.clone()],
                         },
                         &repo_path,
+                        cx,
                     );
                     self.set_discard_modal(DiscardModal {
                         plan: modal.plan.clone(),
@@ -243,6 +245,7 @@ impl KagiApp {
                             plan.current.clone(),
                             OpOutcome::Success { after },
                             &repo_path,
+                            cx,
                         );
                         app.status_footer = FooterStatus::Success(SharedString::from(format!(
                             "discard: {}",
@@ -259,6 +262,7 @@ impl KagiApp {
                                 error: err_msg.clone(),
                             },
                             &repo_path,
+                            cx,
                         );
                         app.set_discard_modal(DiscardModal {
                             plan: plan.clone(),

@@ -2223,20 +2223,6 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Queue a toast from a call path that has **no `Context`** (e.g.
-    /// `record_op`, the `open_*_modal` busy guards, `toggle_branch_solo`).
-    /// Identical to the pre-cx `push_toast`: no immediate `cx.notify()`, so the
-    /// toast appears on the next ambient render (the caller's own notify or the
-    /// auto-expire ticker). Kept here so `toast_stack` access stays inside
-    /// `KagiApp`; convert to `push_toast(..., cx)` once the caller gains a `cx`.
-    pub(crate) fn push_toast_deferred(
-        &mut self,
-        kind: ToastKind,
-        message: impl Into<SharedString>,
-    ) {
-        self.toast_stack.borrow_mut().push(kind, message);
-    }
-
     /// Begin sliding a toast out (× button or auto-expiry), then remove it once
     /// the exit animation has played. Delegates to ToastStack + a one-shot timer.
     pub fn start_toast_exit(&mut self, id: u64, cx: &mut Context<Self>) {
@@ -2717,6 +2703,7 @@ impl KagiApp {
         before: StateSummary,
         outcome: OpOutcome,
         repo_path: &std::path::Path,
+        cx: &mut Context<Self>,
     ) {
         // Build the footer message before moving `outcome`.
         let (footer_msg, footer_ok) = match &outcome {
@@ -2746,7 +2733,7 @@ impl KagiApp {
         } else {
             ToastKind::Error
         };
-        self.push_toast_deferred(toast_kind, footer_msg.clone());
+        self.push_toast(toast_kind, footer_msg.clone(), cx);
 
         // T-BP-004: auto-open bottom panel on Failed.
         let is_failed = matches!(outcome, OpOutcome::Failed { .. });
@@ -2825,6 +2812,7 @@ impl KagiApp {
                 },
                 OpOutcome::Failed { error: err },
                 &repo_path,
+                cx,
             );
         }
     }
@@ -4529,7 +4517,7 @@ impl KagiApp {
         collect_history_commits(target, &parents_by_id)
     }
 
-    pub fn toggle_branch_solo(&mut self, name: String, target: CommitId) {
+    pub fn toggle_branch_solo(&mut self, name: String, target: CommitId, cx: &mut Context<Self>) {
         let already_soloed = self
             .active_view
             .branch_solo
@@ -4539,7 +4527,7 @@ impl KagiApp {
         if already_soloed {
             self.active_view.branch_solo = None;
             self.status_footer = FooterStatus::Idle(SharedString::from("Solo off"));
-            self.push_toast_deferred(ToastKind::Info, "Solo off");
+            self.push_toast(ToastKind::Info, "Solo off", cx);
             return;
         }
 
@@ -4550,7 +4538,7 @@ impl KagiApp {
             visible_commits,
         });
         self.status_footer = FooterStatus::Idle(SharedString::from(format!("Solo: {}", name)));
-        self.push_toast_deferred(ToastKind::Info, format!("Solo: {}", name));
+        self.push_toast(ToastKind::Info, format!("Solo: {}", name), cx);
     }
 
     pub fn dispatch_branch_action(
@@ -4581,7 +4569,7 @@ impl KagiApp {
                 self.jump_to_commit(&state.target);
             }
             BranchAction::ToggleSolo => {
-                self.toggle_branch_solo(state.name, state.target);
+                self.toggle_branch_solo(state.name, state.target, cx);
             }
             BranchAction::Checkout => {
                 if matches!(state.kind, BranchKind::Local) {
@@ -4630,7 +4618,7 @@ impl KagiApp {
                         .iter()
                         .any(|(name, current)| name == &state.name && *current);
                     if is_current {
-                        self.open_pull_modal();
+                        self.open_pull_modal(cx);
                     } else {
                         self.open_branch_plan_modal(state.name, BranchPlanKind::PullFfOnly);
                     }
@@ -4644,7 +4632,7 @@ impl KagiApp {
                         .iter()
                         .any(|(name, current)| name == &state.name && *current);
                     if is_current {
-                        self.open_push_modal();
+                        self.open_push_modal(cx);
                     } else {
                         self.open_branch_plan_modal(state.name, BranchPlanKind::Push);
                     }
@@ -4839,23 +4827,23 @@ impl KagiApp {
         } else if self.conflict_continue_modal().is_some() {
             self.confirm_conflict_continue(cx);
         } else if self.history_modal().is_some() {
-            self.confirm_history();
+            self.confirm_history(cx);
         } else if self.amend_modal().is_some() {
-            self.confirm_amend();
+            self.confirm_amend(cx);
         } else if self.undo_modal().is_some() {
-            self.confirm_undo();
+            self.confirm_undo(cx);
         } else if self.cherry_pick_modal().is_some() {
             self.start_cherry_pick(cx);
         } else if self.revert_modal().is_some() {
             self.start_revert(cx);
         } else if self.stash_apply_modal().is_some() {
-            self.confirm_stash_apply();
+            self.confirm_stash_apply(cx);
         } else if self.stash_push_modal().is_some() {
             self.confirm_stash_push(cx);
         } else if self.create_worktree_modal().is_some() {
             self.start_create_worktree(cx);
         } else if self.create_branch_modal().is_some() {
-            self.confirm_create_branch();
+            self.confirm_create_branch(cx);
         } else if self.rename_branch_modal().is_some() {
             self.start_rename_branch(cx);
         } else if self.set_upstream_modal().is_some() {
@@ -4869,15 +4857,15 @@ impl KagiApp {
         } else if self.branch_plan_modal().is_some() {
             self.start_branch_plan(cx);
         } else if self.delete_branch_modal().is_some() {
-            self.confirm_delete_branch();
+            self.confirm_delete_branch(cx);
         } else if self.pop_modal().is_some() {
-            self.confirm_pop();
+            self.confirm_pop(cx);
         } else if self.push_modal().is_some() {
-            self.confirm_push();
+            self.confirm_push(cx);
         } else if self.pull_modal().is_some() {
-            self.confirm_pull();
+            self.confirm_pull(cx);
         } else if self.plan_modal().is_some() {
-            self.confirm_checkout();
+            self.confirm_checkout(cx);
         } else if self.smart_commit.modal.is_some() {
             self.confirm_smart_consent(cx);
         } else if self

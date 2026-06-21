@@ -1362,7 +1362,7 @@ impl KagiApp {
         let pull_on = toolbar.pull_on;
         let pull_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
             if pull_on {
-                this.open_pull_modal();
+                this.open_pull_modal(cx);
             } else {
                 let reason = if this.busy_op.is_some() {
                     Msg::PullBusy.t()
@@ -1384,7 +1384,7 @@ impl KagiApp {
         let push_on = toolbar.push_on;
         let push_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
             if push_on {
-                this.open_push_modal();
+                this.open_push_modal(cx);
             } else {
                 let reason = if this.busy_op.is_some() {
                     Msg::PushBusy.t()

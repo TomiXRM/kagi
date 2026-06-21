@@ -81,6 +81,7 @@ impl KagiApp {
                         blockers: modal.plan.blockers.clone(),
                     },
                     rp,
+                    cx,
                 );
             }
             self.clear_cherry_pick_modal();
@@ -118,6 +119,7 @@ impl KagiApp {
                             plan.current.clone(),
                             OpOutcome::Success { after },
                             &repo_path,
+                            cx,
                         );
                         if let (Some((branch, before)), Some((_, after_sha))) =
                             (history_before.clone(), app.head_branch_and_sha())
@@ -141,6 +143,7 @@ impl KagiApp {
                                 error: err_msg.clone(),
                             },
                             &repo_path,
+                            cx,
                         );
                         app.set_cherry_pick_modal(CherryPickModal {
                             commit_id: commit_id.clone(),
@@ -220,6 +223,7 @@ impl KagiApp {
                         blockers: modal.plan.blockers.clone(),
                     },
                     rp,
+                    cx,
                 );
             }
             self.clear_revert_modal();
@@ -257,6 +261,7 @@ impl KagiApp {
                             plan.current.clone(),
                             OpOutcome::Success { after },
                             &repo_path,
+                            cx,
                         );
                         if let (Some((branch, before)), Some((_, after_sha))) =
                             (history_before.clone(), app.head_branch_and_sha())
@@ -280,6 +285,7 @@ impl KagiApp {
                                 error: err_msg.clone(),
                             },
                             &repo_path,
+                            cx,
                         );
                         app.set_revert_modal(RevertModal {
                             commit_id: commit_id.clone(),

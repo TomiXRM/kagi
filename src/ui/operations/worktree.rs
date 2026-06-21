@@ -172,6 +172,7 @@ impl KagiApp {
                         blockers: plan.blockers.clone(),
                     },
                     rp,
+                    cx,
                 );
             }
             return;
@@ -214,6 +215,7 @@ impl KagiApp {
                             plan.current.clone(),
                             OpOutcome::Success { after },
                             &repo_path,
+                            cx,
                         );
                         app.reload();
                     }
@@ -224,6 +226,7 @@ impl KagiApp {
                             plan.current.clone(),
                             OpOutcome::Failed { error: err_msg },
                             &repo_path,
+                            cx,
                         );
                     }
                 }

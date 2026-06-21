@@ -885,12 +885,12 @@ fn render_center(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyEle
 
     let p1 = path.clone();
     let keep_current = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_apply_choice(&p1, kagi_git::resolution::ResolutionChoice::Current);
+        this.conflict_apply_choice(&p1, kagi_git::resolution::ResolutionChoice::Current, cx);
         cx.notify();
     });
     let p2 = path.clone();
     let take_incoming = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_apply_choice(&p2, kagi_git::resolution::ResolutionChoice::Incoming);
+        this.conflict_apply_choice(&p2, kagi_git::resolution::ResolutionChoice::Incoming, cx);
         cx.notify();
     });
     let p3 = path.clone();
@@ -898,6 +898,7 @@ fn render_center(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyEle
         this.conflict_apply_choice(
             &p3,
             kagi_git::resolution::ResolutionChoice::BothCurrentFirst,
+            cx,
         );
         cx.notify();
     });

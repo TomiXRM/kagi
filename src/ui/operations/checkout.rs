@@ -102,7 +102,7 @@ impl KagiApp {
     /// Stash the working tree ahead of an Enter-checkout. Returns `true`
     /// when the tree is clean afterwards; on Refused/Failed the plan modal
     /// shows the error and the checkout is aborted.
-    fn stash_before_checkout(&mut self) -> bool {
+    fn stash_before_checkout(&mut self, cx: &mut Context<Self>) -> bool {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return false,
@@ -135,6 +135,7 @@ impl KagiApp {
                     blockers: plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             if let Some(m) = self.plan_modal_mut() {
                 m.error = Some(SharedString::from(format!(
@@ -159,6 +160,7 @@ impl KagiApp {
                         after: plan.predicted.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 // Keep status fresh so the checkout preflight sees the
                 // now-clean tree.
@@ -172,6 +174,7 @@ impl KagiApp {
                     plan.current.clone(),
                     OpOutcome::Failed { error: err.clone() },
                     &repo_path,
+                    cx,
                 );
                 if let Some(m) = self.plan_modal_mut() {
                     m.error = Some(SharedString::from(err));
@@ -181,7 +184,7 @@ impl KagiApp {
         }
     }
 
-    pub fn confirm_checkout(&mut self) {
+    pub fn confirm_checkout(&mut self, cx: &mut Context<Self>) {
         let modal = match self.plan_modal().cloned() {
             Some(m) => m,
             None => return,
@@ -191,7 +194,7 @@ impl KagiApp {
         // shown in the modal).
         if modal.stash_first
             && self.active_view.status_summary.is_dirty
-            && !self.stash_before_checkout()
+            && !self.stash_before_checkout(cx)
         {
             return;
         }
@@ -208,6 +211,7 @@ impl KagiApp {
                         blockers: modal.plan.blockers.clone(),
                     },
                     rp,
+                    cx,
                 );
             }
             return;
@@ -232,6 +236,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 self.set_plan_modal(CheckoutPlanModal {
                     stash_first: false,
@@ -253,6 +258,7 @@ impl KagiApp {
                     error: err_msg.clone(),
                 },
                 &repo_path,
+                cx,
             );
             self.set_plan_modal(CheckoutPlanModal {
                 stash_first: false,
@@ -282,6 +288,7 @@ impl KagiApp {
                     error: err_msg.clone(),
                 },
                 &repo_path,
+                cx,
             );
             self.set_plan_modal(CheckoutPlanModal {
                 stash_first: false,
@@ -355,6 +362,7 @@ impl KagiApp {
                 after: after_summary,
             },
             &repo_path,
+            cx,
         );
 
         // Reload display data.
@@ -378,7 +386,7 @@ impl KagiApp {
         // auto-stash aborts the checkout with the error shown in the modal.
         if modal.stash_first
             && self.active_view.status_summary.is_dirty
-            && !self.stash_before_checkout()
+            && !self.stash_before_checkout(cx)
         {
             return;
         }
@@ -393,6 +401,7 @@ impl KagiApp {
                         blockers: modal.plan.blockers.clone(),
                     },
                     rp,
+                    cx,
                 );
             }
             self.clear_plan_modal();
@@ -432,6 +441,7 @@ impl KagiApp {
                             plan.current.clone(),
                             OpOutcome::Success { after },
                             &repo_path,
+                            cx,
                         );
                         app.reload();
                     }
@@ -444,6 +454,7 @@ impl KagiApp {
                                 error: err_msg.clone(),
                             },
                             &repo_path,
+                            cx,
                         );
                         app.set_plan_modal(CheckoutPlanModal {
                             stash_first: false,

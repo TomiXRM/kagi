@@ -2704,13 +2704,10 @@ impl KagiApp {
                     .text_color(rgb(theme().text_sub))
                     .child(SharedString::from(gran.window_label()))
                     .child(legend(
-                        theme().color_branch,
+                        theme().color_success,
                         format!("{win_commits} commits"),
                     ))
-                    .child(legend(
-                        theme().color_warning,
-                        format!("{win_merges} merges"),
-                    )),
+                    .child(legend(theme().color_head, format!("{win_merges} merges"))),
             );
 
         let chart = if win_commits == 0 {

@@ -72,9 +72,9 @@ pub fn activity_chart(buckets: Vec<ActivityBucket>) -> Canvas<()> {
                     }
                 };
 
-            // Commits first (accent), merges on top (warning) so both read.
-            polyline(&|b| b.commits, 1.8, hsla(theme().color_branch));
-            polyline(&|b| b.merges, 1.5, hsla(theme().color_warning));
+            // Commits (green) first, merges (pink) on top so both read.
+            polyline(&|b| b.commits, 1.8, hsla(theme().color_success));
+            polyline(&|b| b.merges, 1.5, hsla(theme().color_head));
         },
     )
 }
@@ -155,7 +155,7 @@ pub fn contributor_row(rank: usize, c: &Contributor, max_commits: u32) -> impl I
                                 .h_full()
                                 .w(gpui::relative(bar_frac))
                                 .rounded_full()
-                                .bg(rgb(theme().color_branch)),
+                                .bg(rgb(theme().color_success)),
                         ),
                 ),
         )

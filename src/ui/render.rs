@@ -2761,10 +2761,19 @@ impl KagiApp {
                                 .child(tick("0".into())),
                         )
                         .child(
+                            // Canvas + a transparent per-bucket hover overlay
+                            // (tooltips with the slice's time + counts).
                             div()
                                 .flex_1()
                                 .min_w(px(0.))
-                                .child(activity_view::activity_chart(buckets).size_full()),
+                                .relative()
+                                .child(activity_view::activity_chart(buckets.clone()).size_full())
+                                .child(activity_view::hover_overlay(
+                                    &buckets,
+                                    gdata.start,
+                                    gdata.bucket_secs,
+                                    gdata.now,
+                                )),
                         ),
                 )
                 .child(

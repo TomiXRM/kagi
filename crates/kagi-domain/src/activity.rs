@@ -115,6 +115,13 @@ pub struct GranularityData {
     /// Left x-axis label for the window start (e.g. `"−7d"` or, for `All`, the
     /// earliest commit date `"YYYY-MM-DD"`). The right edge is always "now".
     pub start_label: String,
+    /// Window start (epoch secs) — `buckets[i]` spans
+    /// `[start + i*bucket_secs, start + (i+1)*bucket_secs)`. Used by the UI to
+    /// label per-bucket hover tooltips.
+    pub start: i64,
+    pub bucket_secs: i64,
+    /// The `now` the window was computed against (tooltip "ago" reference).
+    pub now: i64,
 }
 
 /// Aggregated activity for one repository snapshot, per granularity.
@@ -224,6 +231,9 @@ fn aggregate_one(commits: &[Commit], now: i64, g: Granularity) -> GranularityDat
         total_commits,
         total_merges,
         start_label,
+        start,
+        bucket_secs: bucket,
+        now,
     }
 }
 

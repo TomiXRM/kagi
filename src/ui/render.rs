@@ -574,6 +574,14 @@ impl Render for KagiApp {
             .stash_menu
             .clone()
             .and_then(|state| self.render_stash_menu_overlay(state, window, cx));
+        // T-CONFLICT-DASH-022: per-file "…" overflow menu overlay (anchored at the
+        // click position; rendered top-level so it floats over the body).
+        let conflict_file_menu_overlay = match (&conflict, self.conflict.file_menu) {
+            (Some(m), Some((idx, pos))) => {
+                Some(conflict_view::render_file_menu(m, idx, pos, window, cx))
+            }
+            _ => None,
+        };
         // T-HT-001: clone toolbar/summary state for header render.
         // W3-NOTIFY: while a background git op runs, disable every git button
         // so operations never overlap.
@@ -1016,6 +1024,8 @@ impl Render for KagiApp {
             .children(branch_menu_overlay)
             // ── Stash context menu overlay (below modals) ──────
             .children(stash_menu_overlay)
+            // ── Conflict per-file "…" overflow menu overlay ────
+            .children(conflict_file_menu_overlay)
             // ── W5-MENU: menu-driven overlay (branch picker / About / shortcuts) ──
             .children(self.render_menu_overlay(window, cx))
             // ── Plan modal overlay (above everything) ──────

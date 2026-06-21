@@ -326,6 +326,8 @@ pub enum Msg {
     ConflictBlockerMessage,
     ConflictBlockerChecklist,
     ConflictContinueReady,
+    ConflictMore,
+    ConflictNextConflict,
     ConflictNoConflictedFiles,
     ConflictNoResolvedFiles,
     // ── Branch-name / worktree-path validation (W29-I18N-WAVE2) ──────
@@ -703,8 +705,8 @@ impl Msg {
             (Ja, ConflictSectionConflicted) => "Conflicted ファイル",
             (En, ConflictSectionResolved) => "Resolved Files",
             (Ja, ConflictSectionResolved) => "Resolved ファイル",
-            (En, ConflictConfirmAbort) => "Click again to confirm abort",
-            (Ja, ConflictConfirmAbort) => "もう一度押すと中止します",
+            (En, ConflictConfirmAbort) => "Confirm abort",
+            (Ja, ConflictConfirmAbort) => "中止を確定",
             (En, ConflictConfirmAbortHint) => {
                 "Aborting may discard your saved resolutions (they are preserved in the autosave directory)."
             }
@@ -741,6 +743,10 @@ impl Msg {
             (Ja, ConflictBlockerChecklist) => "commit checklist のルールが continue を妨げています。",
             (En, ConflictContinueReady) => "All conflicts resolved — ready to continue.",
             (Ja, ConflictContinueReady) => "すべて解決済み — continue できます。",
+            (En, ConflictMore) => "More",
+            (Ja, ConflictMore) => "その他",
+            (En, ConflictNextConflict) => "Next conflict",
+            (Ja, ConflictNextConflict) => "次の衝突へ",
             (En, ConflictNoConflictedFiles) => "No conflicted files remain.",
             (Ja, ConflictNoConflictedFiles) => "未解決ファイルはありません。",
             (En, ConflictNoResolvedFiles) => "No files resolved yet.",

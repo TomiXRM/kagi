@@ -69,6 +69,15 @@ const ASSETS: &[(&str, &[u8])] = &[
         "icons/trash-2.svg",
         include_bytes!("../../assets/icons/trash-2.svg"),
     ),
+    // T-CONFLICT-DASH-022: per-file card actions (IconName::Copy / Ellipsis).
+    (
+        "icons/copy.svg",
+        include_bytes!("../../assets/icons/copy.svg"),
+    ),
+    (
+        "icons/ellipsis.svg",
+        include_bytes!("../../assets/icons/ellipsis.svg"),
+    ),
     // T-SETTINGS-001: header Settings gear (gpui_component IconName::Settings).
     (
         "icons/settings.svg",

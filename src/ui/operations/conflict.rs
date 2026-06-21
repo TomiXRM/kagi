@@ -798,11 +798,10 @@ impl KagiApp {
     /// `$LOCAL` / `$BASE` / `$REMOTE` / `$MERGED`.  If unset, shows how to
     /// configure it (we do NOT invent a default tool).  No plan needed
     /// (read-only launch); a note is recorded to the oplog footer via the toast.
-    pub fn conflict_open_external_tool(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    pub fn conflict_open_external_tool(&mut self, idx: usize, cx: &mut Context<Self>) {
         let Some(c) = self.conflict.mode.as_ref() else {
             return;
         };
-        let Some(idx) = c.selected_file else { return };
         let Some(file) = c.session.files.get(idx) else {
             return;
         };
@@ -861,11 +860,10 @@ impl KagiApp {
 
     /// Copy the selected conflict file's absolute path to the clipboard
     /// (ADR-0060 / T-052).
-    pub fn conflict_copy_path(&mut self, cx: &mut Context<Self>) {
+    pub fn conflict_copy_path(&mut self, idx: usize, cx: &mut Context<Self>) {
         let Some(c) = self.conflict.mode.as_ref() else {
             return;
         };
-        let Some(idx) = c.selected_file else { return };
         let Some(file) = c.session.files.get(idx) else {
             return;
         };

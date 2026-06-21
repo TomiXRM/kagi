@@ -316,9 +316,9 @@ impl KagiApp {
                     SharedString::from(Msg::EditorSavedResolved.t()),
                 );
             }
-            Err(_e) => {
+            Err(e) => {
                 // Marker residue / write failure: hard block (ADR-0068).
-                let err_msg = format!("{}", "session unavailable");
+                let err_msg = format!("{}", e);
                 self.record_op(
                     &op_name,
                     before,
@@ -427,10 +427,7 @@ impl KagiApp {
                     path.display(),
                     e
                 );
-                self.push_toast_deferred(
-                    ToastKind::Error,
-                    SharedString::from(format!("{}", "session unavailable")),
-                );
+                self.push_toast_deferred(ToastKind::Error, SharedString::from(format!("{}", e)));
             }
         }
     }
@@ -473,17 +470,13 @@ impl KagiApp {
             &mode.current_branch,
         ) {
             Ok(r) => r,
-            Err(_e) => {
-                klog!("refused: {} blocked: {}", op_name, "session unavailable");
+            Err(e) => {
+                klog!("refused: {} blocked: {}", op_name, e);
                 // Surface the specific (localized) blocking reason (ADR-0067).
                 if let Some(first) = repo.continue_blockers(&mode.session, &mode.buffer).first() {
                     self.push_toast(ToastKind::Error, conflict_view::blocker_msg(first).t(), cx);
                 } else {
-                    self.push_toast(
-                        ToastKind::Error,
-                        SharedString::from(format!("{}", "session unavailable")),
-                        cx,
-                    );
+                    self.push_toast(ToastKind::Error, SharedString::from(format!("{}", e)), cx);
                 }
                 self.record_op(
                     &op_name,
@@ -492,7 +485,7 @@ impl KagiApp {
                         dirty: "blocked".to_string(),
                     },
                     OpOutcome::Refused {
-                        blockers: vec![format!("{}", "session unavailable")],
+                        blockers: vec![format!("{}", e)],
                     },
                     &repo_path,
                 );
@@ -511,18 +504,11 @@ impl KagiApp {
                 // optional, so the index may still hold unmerged entries.  Without
                 // this the commit panel shows nothing staged (Commit disabled) and
                 // execute_merge_commit refuses the still-conflicted index.
-                if let Err(_e) = repo.stage_conflict_resolution(&mode.session, &mode.buffer) {
-                    klog!(
-                        "refused: {} stage failed: {}",
-                        op_name,
-                        "session unavailable"
-                    );
+                if let Err(e) = repo.stage_conflict_resolution(&mode.session, &mode.buffer) {
+                    klog!("refused: {} stage failed: {}", op_name, e);
                     self.push_toast(
                         ToastKind::Error,
-                        SharedString::from(format!(
-                            "Could not stage resolution: {}",
-                            "session unavailable"
-                        )),
+                        SharedString::from(format!("Could not stage resolution: {}", e)),
                         cx,
                     );
                     cx.notify();
@@ -603,8 +589,8 @@ impl KagiApp {
                 self.clear_conflict_continue_modal();
                 self.reload();
             }
-            Err(_e) => {
-                let err_msg = format!("{}", "session unavailable");
+            Err(e) => {
+                let err_msg = format!("{}", e);
                 klog!("{} failed: {}", op_name, err_msg);
                 self.record_op(
                     &op_name,
@@ -654,10 +640,10 @@ impl KagiApp {
 
         let plan = match repo.plan_conflict_abort(&mode.session) {
             Ok(p) => p,
-            Err(_e) => {
+            Err(e) => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("abort plan error: {}", "session unavailable")),
+                    SharedString::from(format!("abort plan error: {}", e)),
                     cx,
                 );
                 return;
@@ -680,8 +666,8 @@ impl KagiApp {
                 );
                 self.reload();
             }
-            Err(_e) => {
-                let err_msg = format!("{}", "session unavailable");
+            Err(e) => {
+                let err_msg = format!("{}", e);
                 klog!("{} failed: {}", op_name, err_msg);
                 self.record_op(
                     &op_name,
@@ -741,10 +727,10 @@ impl KagiApp {
 
         let plan = match repo.plan_conflict_skip(&mode.session) {
             Ok(p) => p,
-            Err(_e) => {
+            Err(e) => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("skip plan error: {}", "session unavailable")),
+                    SharedString::from(format!("skip plan error: {}", e)),
                     cx,
                 );
                 return;
@@ -767,8 +753,8 @@ impl KagiApp {
                 );
                 self.reload();
             }
-            Err(_e) => {
-                let err_msg = format!("{}", "session unavailable");
+            Err(e) => {
+                let err_msg = format!("{}", e);
                 klog!("{} failed: {}", op_name, err_msg);
                 self.record_op(
                     &op_name,
@@ -832,9 +818,9 @@ impl KagiApp {
                 SharedString::from(format!("{}: {}", Msg::ConflictExternalTool.t(), merged_str)),
                 cx,
             ),
-            Err(_e) => self.push_toast(
+            Err(e) => self.push_toast(
                 ToastKind::Error,
-                SharedString::from(format!("external tool failed: {}", "session unavailable")),
+                SharedString::from(format!("external tool failed: {}", e)),
                 cx,
             ),
         }

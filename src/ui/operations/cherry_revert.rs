@@ -49,8 +49,8 @@ impl KagiApp {
                     error: None,
                 });
             }
-            Err(_e) => {
-                klog!("cherry-pick plan: error: {}", "session unavailable");
+            Err(e) => {
+                klog!("cherry-pick plan: error: {}", e);
             }
         }
     }
@@ -188,8 +188,8 @@ impl KagiApp {
                     error: None,
                 });
             }
-            Err(_e) => {
-                klog!("revert plan: error: {}", "session unavailable");
+            Err(e) => {
+                klog!("revert plan: error: {}", e);
             }
         }
     }

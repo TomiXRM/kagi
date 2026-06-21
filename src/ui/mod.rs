@@ -989,17 +989,13 @@ pub struct KagiApp {
     /// Created on first click of the filter area (requires &mut Window).
     pub sidebar_filter: Option<Entity<InputState>>,
     // ── W3-NOTIFY: snackbar toasts + async-op state ──────────────
-    /// Toast notification stack — extracted into a dedicated struct (ADR-0110)
-    /// so the toast add/remove/expire logic is self-contained.
-    /// `Rc<RefCell>` (not `Entity`) because `push_toast` is called from ~38
-    /// sites that don't all have `cx`; Entity migration is a follow-up once
-    /// those callers are refactored to thread `cx`. For now the separation
-    /// still pays off: the toast logic + ticker lives in one testable struct.
-    pub toast_stack: std::rc::Rc<std::cell::RefCell<toast_stack::ToastStack>>,
-    /// True while the 150ms auto-dismiss ticker task is alive (ADR-0110).
-    /// The ticker lifecycle stays on KagiApp because it spawns a cx task; the
-    /// toast data/logic lives in ToastStack.
-    pub toast_ticker_alive: bool,
+    /// Toast notification stack — an `Entity<ToastStack>` (ADR-0110 Phase 5) so
+    /// a push/expire re-renders only the overlay subtree, not the whole app.
+    /// The cards render via `impl Render for ToastStack`; the ticker + slide-out
+    /// timers live on the entity. `Option` because the pure `KagiApp`
+    /// constructors have no `cx`; it is created in `open_main_window`'s
+    /// `cx.new` closure and is `None` only before the window exists.
+    pub toast_stack: Option<Entity<toast_stack::ToastStack>>,
     /// True while a background fetch is in flight (refresh / auto-fetch),
     /// so we never stack concurrent fetches.
     pub fetch_in_flight: bool,
@@ -1463,8 +1459,8 @@ impl KagiApp {
             branch_groups_collapsed: HashSet::new(),
             sidebar_filter: None,
             // W3-NOTIFY
-            toast_stack: std::rc::Rc::new(std::cell::RefCell::new(toast_stack::ToastStack::new())),
-            toast_ticker_alive: false,
+            // Created in `open_main_window`'s `cx.new` closure (needs `cx`).
+            toast_stack: None,
             fetch_in_flight: false,
             auto_fetch_ticker_alive: false,
             busy_op: None,
@@ -1588,8 +1584,8 @@ impl KagiApp {
             branch_groups_collapsed: HashSet::new(),
             sidebar_filter: None,
             // W3-NOTIFY
-            toast_stack: std::rc::Rc::new(std::cell::RefCell::new(toast_stack::ToastStack::new())),
-            toast_ticker_alive: false,
+            // Created in `open_main_window`'s `cx.new` closure (needs `cx`).
+            toast_stack: None,
             fetch_in_flight: false,
             auto_fetch_ticker_alive: false,
             busy_op: None,
@@ -2206,36 +2202,18 @@ impl KagiApp {
     /// Write failures are non-fatal: they emit a stderr warning only.
     // ── W3-NOTIFY: toast helpers ──────────────────────────────
 
-    /// Queue a snackbar toast (bottom-right). The auto-dismiss ticker is
-    /// (re)started from `render`; `cx.notify()` shows the toast immediately
-    /// instead of waiting for the next ambient render.
-    ///
-    /// `cx` is threaded through every caller so a later refactor can hold the
-    /// toast state in an `Entity<ToastStack>` and scope the notify to the
-    /// overlay child (ADR-0110 follow-up).
+    /// Queue a snackbar toast (bottom-left). Delegates to the `ToastStack`
+    /// entity, which (re)starts the auto-dismiss ticker and re-renders only the
+    /// overlay subtree (ADR-0110 Phase 5). No-op before the window exists.
     pub(crate) fn push_toast(
         &mut self,
         kind: ToastKind,
         message: impl Into<SharedString>,
         cx: &mut Context<Self>,
     ) {
-        self.toast_stack.borrow_mut().push(kind, message);
-        cx.notify();
-    }
-
-    /// Begin sliding a toast out (× button or auto-expiry), then remove it once
-    /// the exit animation has played. Delegates to ToastStack + a one-shot timer.
-    pub fn start_toast_exit(&mut self, id: u64, cx: &mut Context<Self>) {
-        self.toast_stack.borrow_mut().start_exit(id);
-        cx.notify();
-        cx.spawn(async move |this, acx| {
-            gpui::Timer::after(Duration::from_millis(toast_stack::TOAST_REMOVE_MS)).await;
-            let _ = this.update(acx, |app, cx| {
-                app.toast_stack.borrow_mut().remove(id);
-                cx.notify();
-            });
-        })
-        .detach();
+        if let Some(stack) = self.toast_stack.clone() {
+            stack.update(cx, |stack, cx| stack.push_notify(kind, message, cx));
+        }
     }
 
     /// Debounced live re-plan for the open modal(s): waits 250ms of input
@@ -2645,43 +2623,6 @@ impl KagiApp {
             self.graph_scroll_x = next;
             cx.notify();
         }
-    }
-
-    /// Spawn the 150ms auto-dismiss ticker if toasts exist and it is not
-    /// already running. The task exits as soon as the stack drains.
-    /// ADR-0110: delegates expiry detection to ToastStack.expiring_ids().
-    fn ensure_toast_ticker(&mut self, cx: &mut Context<Self>) {
-        {
-            let stack = self.toast_stack.borrow();
-            if stack.is_empty() || !stack.has_pending() {
-                return;
-            }
-        }
-        if self.toast_ticker_alive {
-            return;
-        }
-        self.toast_ticker_alive = true;
-        cx.spawn(async move |this, acx| loop {
-            gpui::Timer::after(Duration::from_millis(150)).await;
-            let finished = this.update(acx, |app, cx| {
-                let expiring = app.toast_stack.borrow().expiring_ids();
-                for id in expiring {
-                    app.start_toast_exit(id, cx);
-                }
-                let still_watching = app.toast_stack.borrow().has_pending();
-                if !still_watching {
-                    app.toast_ticker_alive = false;
-                    true
-                } else {
-                    false
-                }
-            });
-            match finished {
-                Ok(true) | Err(_) => break,
-                Ok(false) => {}
-            }
-        })
-        .detach();
     }
 
     /// Read the current HEAD branch name + commit SHA from the open repo.
@@ -5156,6 +5097,10 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
                 // dispatches key events, so cmd-j (and future shortcuts)
                 // would silently do nothing.
                 app_state.root_focus = Some(cx.focus_handle());
+                // ADR-0110 Phase 5: the toast stack is a child entity so a
+                // push/expire re-renders only the overlay. Created here because
+                // the pure `KagiApp` constructors have no `cx`.
+                app_state.toast_stack = Some(cx.new(|_| toast_stack::ToastStack::new()));
                 app_state
             });
             if let Some(fh) = kagi.read(cx).root_focus.clone() {

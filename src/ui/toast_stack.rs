@@ -4,16 +4,16 @@
 //! in one testable struct. Previously this was ~80 lines of inline methods on
 //! the 104-field `KagiApp` god-struct, interleaved with unrelated state.
 //!
-//! Today the stack is held as `Rc<RefCell<ToastStack>>` on `KagiApp` (not an
-//! `Entity<T>`) because `push_toast` is called from ~38 sites that don't all
-//! have `cx`. When those callers are refactored to thread `cx`, this becomes
-//! `Entity<ToastStack>` and each push/expire only re-renders the overlay, not
-//! the whole app — the full Phase 5 win. Even as `Rc<RefCell>`, the separation
-//! pays off: one struct, one responsibility, unit-testable in isolation.
+//! Held as an `Entity<ToastStack>` on `KagiApp` (ADR-0110 Phase 5): the cards
+//! render via `impl Render for ToastStack` (in `render.rs`) and every
+//! push/expire re-renders only this entity's subtree, not the whole app. The
+//! auto-dismiss ticker and slide-out timers live here too (`ensure_ticker` /
+//! `begin_exit`) so the lifecycle is self-contained. The pure data methods
+//! (`push` / `start_exit` / `remove`) stay `cx`-free for unit tests.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use gpui::SharedString;
+use gpui::{Context, SharedString};
 
 use crate::ui::types::{Toast, ToastKind};
 
@@ -26,6 +26,9 @@ pub const TOAST_REMOVE_MS: u64 = 300;
 pub struct ToastStack {
     toasts: Vec<Toast>,
     next_id: u64,
+    /// True while the auto-dismiss ticker task is running (so we never spawn a
+    /// second one). Reset when the stack drains.
+    ticker_alive: bool,
 }
 
 impl ToastStack {
@@ -33,6 +36,7 @@ impl ToastStack {
         Self {
             toasts: Vec::new(),
             next_id: 1,
+            ticker_alive: false,
         }
     }
 
@@ -90,6 +94,66 @@ impl ToastStack {
     /// The ticker uses this to decide when to stop.
     pub fn has_pending(&self) -> bool {
         self.toasts.iter().any(|t| t.dismissing.is_none())
+    }
+
+    // ── Entity orchestration (cx-driven) ─────────────────────────────────────
+    // These wrap the pure data methods with `cx.notify()` + timer tasks so the
+    // overlay re-renders in isolation (ADR-0110 Phase 5).
+
+    /// Push a toast, (re)start the auto-dismiss ticker, and re-render this
+    /// entity's subtree only.
+    pub fn push_notify(
+        &mut self,
+        kind: ToastKind,
+        message: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.push(kind, message);
+        self.ensure_ticker(cx);
+        cx.notify();
+    }
+
+    /// Begin sliding a toast out (× button or auto-expiry), then remove it once
+    /// the exit animation has played. Re-renders only this entity.
+    pub fn begin_exit(&mut self, id: u64, cx: &mut Context<Self>) {
+        self.start_exit(id);
+        cx.notify();
+        cx.spawn(async move |this, acx| {
+            gpui::Timer::after(Duration::from_millis(TOAST_REMOVE_MS)).await;
+            let _ = this.update(acx, |stack, cx| {
+                stack.remove(id);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Spawn the 150ms auto-dismiss ticker if toasts are pending and it is not
+    /// already running. The task exits as soon as the stack drains.
+    fn ensure_ticker(&mut self, cx: &mut Context<Self>) {
+        if self.is_empty() || !self.has_pending() || self.ticker_alive {
+            return;
+        }
+        self.ticker_alive = true;
+        cx.spawn(async move |this, acx| loop {
+            gpui::Timer::after(Duration::from_millis(150)).await;
+            let finished = this.update(acx, |stack, cx| {
+                for id in stack.expiring_ids() {
+                    stack.begin_exit(id, cx);
+                }
+                if !stack.has_pending() {
+                    stack.ticker_alive = false;
+                    true
+                } else {
+                    false
+                }
+            });
+            match finished {
+                Ok(true) | Err(_) => break,
+                Ok(false) => {}
+            }
+        })
+        .detach();
     }
 }
 

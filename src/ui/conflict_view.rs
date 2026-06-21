@@ -29,7 +29,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use gpui::{
-    div, prelude::*, px, rgb, Context, Entity, SharedString, UniformListScrollHandle, Window,
+    div, prelude::*, px, rgb, Context, Entity, MouseButton, SharedString, UniformListScrollHandle,
+    Window,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::InputState;
@@ -79,9 +80,6 @@ pub struct EditorChrome {
     pub geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     /// Measured (left, right) screen-px bounds of the A·B row.
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
-    /// Whether the dashboard's collapsible "More" (secondary/utility +
-    /// destructive Abort) section is expanded.
-    pub more_expanded: bool,
 }
 
 /// Consolidated Conflict-Editor view state.
@@ -136,10 +134,10 @@ pub struct ConflictState {
     /// ADR-0070: shared A/B uniform-list scroll handle for synchronized vertical
     /// scrolling in the Conflict Editor.
     pub ab_scroll_handle: UniformListScrollHandle,
-    /// T-CONFLICT-DASH-021: whether the dashboard's collapsible "More" section
-    /// (secondary/utility actions + destructive Abort) is expanded. Collapsed by
-    /// default so the right sidebar stays focused on state + the next action.
-    pub more_expanded: bool,
+    /// T-CONFLICT-DASH-022: the open per-file "…" context menu, as
+    /// `(file_index, anchor)` where `anchor` is the click position in window px.
+    /// `None` when no menu is open. Rendered as a top-level overlay (render.rs).
+    pub file_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
 }
 
 impl ConflictState {
@@ -159,7 +157,7 @@ impl ConflictState {
             merge_commit_pending: false,
             selected_hunk: 0,
             ab_scroll_handle: UniformListScrollHandle::new(),
-            more_expanded: false,
+            file_menu: None,
         }
     }
 }
@@ -428,7 +426,7 @@ pub fn render_body(
         .min_h(px(0.))
         .bg(rgb(theme().bg_base))
         .child(center)
-        .child(render_dashboard(mode, chrome, cx))
+        .child(render_dashboard(mode, cx))
         .into_any_element()
 }
 
@@ -436,16 +434,12 @@ pub fn render_body(
 // Right panel: Conflict Dashboard (ADR-0063)
 // ────────────────────────────────────────────────────────────
 
-fn render_dashboard(
-    mode: &ConflictMode,
-    chrome: &EditorChrome,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    // T-CONFLICT-DASH-021: information hierarchy is state → next action → files
-    // → More. The right sidebar shows what's left and the single safe next step;
-    // utility/destructive actions are demoted into the collapsible "More"
-    // section (utilities) and onto the file rows (file-specific), so they never
-    // compete with the primary action.
+fn render_dashboard(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    // T-CONFLICT-DASH-021/022: information hierarchy is state → next action →
+    // files. The right sidebar shows what's left and the next steps (Continue
+    // and Abort side by side); each file card carries its own actions (open
+    // externally / copy path as icon buttons, plus a "…" overflow menu), so
+    // utilities never crowd the top-level layout.
     div()
         .id("conflict-dashboard")
         .flex()
@@ -460,12 +454,10 @@ fn render_dashboard(
         .child(dash_header(mode))
         .child(dash_role_badges(mode))
         .child(dash_counts(mode, cx))
-        // ── Next action (exactly one primary) ──
+        // ── Next action (Continue + Abort side by side) ──
         .child(dash_primary(mode, cx))
-        // ── Files (file-specific actions live on the selected row) ──
+        // ── Files (per-card actions: icons + "…" overflow menu) ──
         .child(dash_sections(mode, cx))
-        // ── More (collapsed: utilities + destructive Abort) ──
-        .child(dash_more(mode, chrome.more_expanded, cx))
         .into_any_element()
 }
 
@@ -627,16 +619,52 @@ where
         .on_click(handler)
 }
 
-/// The single primary "next step" + a status note (T-CONFLICT-DASH-021).
-///
-/// Exactly one visually dominant action: a filled Continue (gated on
-/// all-conflicts-resolved, mirroring `can_continue`) when ready, otherwise a
-/// muted blocker reason plus a *secondary* "Next conflict" jump (and Skip for
-/// sequencer ops). The destructive Abort never lives here — it sits in
-/// `dash_more`, danger-styled and separated from utilities.
+/// The "next step" actions (T-CONFLICT-DASH-021): Continue and Abort side by
+/// side. Continue is the filled success action, gated on `can_continue` (all
+/// conflicts resolved); Abort is the danger action with a two-stage confirm. A
+/// status note (ready / specific blocker) sits below, and — for sequencer ops or
+/// while blocked — a secondary row offers Next-conflict / Skip.
 fn dash_primary(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let can_continue = mode.can_continue();
     let is_sequencer = mode.session.op.is_sequencer();
+
+    let continue_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.conflict_continue(window, cx);
+        cx.notify();
+    });
+    let abort_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_abort_request(cx);
+        cx.notify();
+    });
+    let abort_label = if mode.abort_armed {
+        Msg::ConflictConfirmAbort.t()
+    } else {
+        Msg::ConflictAbort.t()
+    };
+
+    // Continue (filled, gated) + Abort (danger, two-stage) on one row.
+    let primary_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .child(action_button(
+            Msg::ConflictContinue.t(),
+            theme().color_success,
+            can_continue,
+            if can_continue {
+                Some(continue_handler)
+            } else {
+                None
+            },
+            cx,
+        ))
+        .child(action_button(
+            abort_label,
+            theme().color_blocker,
+            true,
+            Some(abort_handler),
+            cx,
+        ));
 
     let mut col = div()
         .flex()
@@ -645,37 +673,23 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElem
         .px(theme::scaled_px(12.))
         .py(theme::scaled_px(8.))
         .border_b_1()
-        .border_color(rgb(theme().surface));
+        .border_color(rgb(theme().surface))
+        .child(primary_row);
 
-    if can_continue {
-        // Ready: Continue is the one dominant (filled) action.
-        let continue_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-            this.conflict_continue(window, cx);
-            cx.notify();
-        });
-        col = col.child(action_button(
-            Msg::ConflictContinue.t(),
-            theme().color_success,
-            true,
-            Some(continue_handler),
-            cx,
-        ));
+    // Status note: the specific blocker reason, or the ready confirmation.
+    let (note, note_color) = match mode.continue_blocker() {
+        Some(msg) => (msg.t(), theme().color_blocker),
+        None => (Msg::ConflictContinueReady.t(), theme().color_success),
+    };
+    col = col.child(dash_note(note, note_color));
+    if mode.abort_armed {
         col = col.child(dash_note(
-            Msg::ConflictContinueReady.t(),
-            theme().color_success,
+            Msg::ConflictConfirmAbortHint.t(),
+            theme().color_warning,
         ));
-    } else {
-        // Blocked: surface the specific reason, then offer only secondary
-        // navigation — there is no safe primary yet, so none is shown.
-        let reason = mode
-            .continue_blocker()
-            .map(|m| m.t())
-            .unwrap_or_else(|| Msg::ConflictContinueReady.t());
-        col = col.child(dash_note(reason, theme().color_blocker));
     }
 
-    // Secondary navigation row: "Next conflict" (only useful while blocked) and
-    // Skip (sequencer ops only). Both are secondary so they never rival Continue.
+    // Secondary row: Next-conflict (while blocked) and Skip (sequencer ops).
     let mut row = div().flex().flex_row().flex_wrap().gap_2();
     let mut has_secondary = false;
     if !can_continue {
@@ -720,93 +734,117 @@ fn dash_note(text: &str, color: u32) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// Collapsible "More" section (T-CONFLICT-DASH-021): global utility actions
-/// (open repository terminal, copy git command) and — clearly separated and
-/// danger-styled — the destructive Abort (two-stage confirm). Collapsed by
-/// default so utilities never compete with the primary action, and so the
-/// destructive action is not visually grouped with ordinary utilities.
-/// File-specific actions (open externally / copy path) live on the file rows.
-fn dash_more(mode: &ConflictMode, expanded: bool, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let toggle = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict.more_expanded = !this.conflict.more_expanded;
+/// A Keynote-style icon button for a file card: an icon-only, rounded, hover-lit
+/// hit target. `on_down` fires on mouse-down (use a `cx.listener` that calls
+/// `cx.stop_propagation()` so the card's row-select doesn't also run).
+fn card_icon<H>(
+    id: String,
+    icon: gpui_component::IconName,
+    tip: &'static str,
+    on_down: H,
+) -> gpui::Stateful<gpui::Div>
+where
+    H: Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
+{
+    div()
+        .id(SharedString::from(id))
+        .flex()
+        .items_center()
+        .justify_center()
+        .w(theme::scaled_px(22.))
+        .h(theme::scaled_px(22.))
+        .rounded_md()
+        .text_color(rgb(theme().text_sub))
+        .hover(|s| {
+            s.bg(rgb(theme().bg_row_alt))
+                .text_color(rgb(theme().text_main))
+                .cursor_pointer()
+        })
+        .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
+        .on_mouse_down(MouseButton::Left, on_down)
+        .child(
+            gpui_component::Icon::new(icon)
+                .with_size(gpui_component::Size::Size(theme::scaled_px(14.))),
+        )
+}
+
+/// The per-file "…" overflow menu (T-CONFLICT-DASH-022): the file-specific and
+/// global actions that don't get their own card icon. Rendered as a top-level
+/// overlay (mounted in render.rs) anchored at the click position; a full-screen
+/// backdrop dismisses it. Mirrors `render_fh_row_menu`.
+pub fn render_file_menu(
+    mode: &ConflictMode,
+    idx: usize,
+    pos: gpui::Point<gpui::Pixels>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let dismiss = cx.listener(|this, _e: &gpui::MouseDownEvent, _w, cx| {
+        this.conflict.file_menu = None;
         cx.notify();
     });
-    let chevron = if expanded { "▾" } else { "▸" };
 
-    let mut col = div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(8.))
-        .child(
-            Button::new("conflict-more-toggle")
-                .label(SharedString::from(format!(
-                    "{} {}",
-                    Msg::ConflictMore.t(),
-                    chevron
-                )))
-                .ghost()
-                .small()
-                .on_click(toggle),
-        );
-
-    if expanded {
-        // Global utilities (not tied to a specific file).
-        let term = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-            this.conflict_open_terminal(window, cx);
-            cx.notify();
-        });
-        let copy_cmd = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-            this.conflict_copy_git_command(cx);
-            cx.notify();
-        });
-        col = col
-            .child(secondary_button(
-                "conflict-more-terminal".to_string(),
-                Msg::ConflictOpenTerminal.t(),
-                true,
-                Some(term),
-            ))
-            .child(secondary_button(
-                "conflict-more-copycmd".to_string(),
-                Msg::ConflictCopyGitCommand.t(),
-                true,
-                Some(copy_cmd),
-            ));
-
-        // Destructive Abort — separated by a divider, danger-styled, two-stage.
-        col = col.child(
-            div()
-                .h(px(1.))
-                .my(theme::scaled_px(2.))
-                .bg(rgb(theme().surface)),
-        );
-        let abort = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-            this.conflict_abort_request(cx);
-            cx.notify();
-        });
-        let abort_label = if mode.abort_armed {
-            Msg::ConflictConfirmAbort.t()
-        } else {
-            Msg::ConflictAbort.t()
-        };
-        col = col.child(action_button(
-            abort_label,
-            theme().color_blocker,
-            true,
-            Some(abort),
-            cx,
-        ));
-        if mode.abort_armed {
-            col = col.child(dash_note(
-                Msg::ConflictConfirmAbortHint.t(),
-                theme().color_warning,
-            ));
-        }
+    fn item<F>(id: &'static str, label: &str, on_click: F) -> gpui::Stateful<gpui::Div>
+    where
+        F: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    {
+        div()
+            .id(id)
+            .px_3()
+            .py(theme::scaled_px(4.))
+            .text_sm()
+            .text_color(rgb(theme().text_main))
+            .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+            .on_click(on_click)
+            .child(SharedString::from(label.to_string()))
     }
 
-    col.into_any_element()
+    // File-specific (act on this row) + global utilities.
+    let ext = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict.file_menu = None;
+        this.conflict_copy_git_command(cx);
+        cx.notify();
+    });
+    let term = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.conflict.file_menu = None;
+        this.conflict_open_terminal(window, cx);
+        cx.notify();
+    });
+    // Suppress unused warning for `mode`/`idx` if the item set shrinks; both are
+    // kept for clarity and future per-file commands.
+    let _ = (mode, idx);
+
+    let menu = div()
+        .absolute()
+        .left(pos.x)
+        .top(pos.y)
+        .w(theme::scaled_px(220.))
+        .occlude()
+        .bg(rgb(theme().panel))
+        .border_1()
+        .border_color(rgb(theme().surface))
+        .rounded_md()
+        .shadow_lg()
+        .py(theme::scaled_px(2.))
+        .child(item(
+            "conflict-menu-copycmd",
+            Msg::ConflictCopyGitCommand.t(),
+            ext,
+        ))
+        .child(item(
+            "conflict-menu-terminal",
+            Msg::ConflictOpenTerminal.t(),
+            term,
+        ));
+
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .occlude()
+        .on_mouse_down(MouseButton::Left, dismiss)
+        .child(menu)
+        .into_any_element()
 }
 
 /// A left-aligned secondary (utility / navigation) button with clear button
@@ -918,70 +956,96 @@ fn section(
             cx.notify();
         });
 
-        let mut row_el = div()
+        // Per-card actions (T-CONFLICT-DASH-022). Each acts on THIS row's file
+        // (not the selected one) and stops propagation so the row-select / editor
+        // open doesn't also fire. "…" opens the overflow menu at the cursor.
+        let more = cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {
+            cx.stop_propagation();
+            this.conflict.file_menu = Some((idx, e.position));
+            cx.notify();
+        });
+        let ext = cx.listener(move |this, _e: &gpui::MouseDownEvent, _w, cx| {
+            cx.stop_propagation();
+            this.conflict_open_external_tool(idx, cx);
+            cx.notify();
+        });
+        let copy = cx.listener(move |this, _e: &gpui::MouseDownEvent, _w, cx| {
+            cx.stop_propagation();
+            this.conflict_copy_path(idx, cx);
+            cx.notify();
+        });
+
+        let row_el = div()
             .id(SharedString::from(format!("conflict-row-{}", idx)))
             .flex()
-            .flex_col()
-            .gap_1()
-            .px(theme::scaled_px(12.))
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .mx(theme::scaled_px(6.))
+            .px(theme::scaled_px(6.))
             .py(theme::scaled_px(6.))
+            .rounded_md()
             .cursor_pointer()
             .when(selected, |s| s.bg(rgb(theme().selected)))
             .hover(|s| s.bg(rgb(theme().bg_row_alt)))
             .on_click(row_click)
-            .child(
-                div()
-                    .text_size(theme::scaled_px(12.))
-                    .text_color(rgb(theme().text_main))
-                    .child(SharedString::from(path_str)),
-            )
+            // Left: file name + status/kind (flex-shrinks; name truncates).
             .child(
                 div()
                     .flex()
-                    .flex_row()
-                    .gap_2()
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .gap_1()
                     .child(
                         div()
-                            .text_size(theme::scaled_px(10.))
-                            .text_color(rgb(status_color))
-                            .child(SharedString::from(status_text)),
+                            .text_size(theme::scaled_px(12.))
+                            .text_color(rgb(theme().text_main))
+                            .truncate()
+                            .child(SharedString::from(path_str)),
                     )
-                    .child(kind_badge(kind)),
-            );
-
-        // File-specific actions live on the (selected) row, not as global
-        // sidebar buttons (T-CONFLICT-DASH-021). They act on the selected file,
-        // which is this row.
-        if selected {
-            let ext_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-                this.conflict_open_external_tool(window, cx);
-                cx.notify();
-            });
-            let copy_path_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-                this.conflict_copy_path(cx);
-                cx.notify();
-            });
-            row_el = row_el.child(
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(theme::scaled_px(10.))
+                                    .text_color(rgb(status_color))
+                                    .child(SharedString::from(status_text)),
+                            )
+                            .child(kind_badge(kind)),
+                    ),
+            )
+            // Right: Keynote-style icon group — "…" / open externally / copy path.
+            .child(
                 div()
                     .flex()
                     .flex_row()
-                    .flex_wrap()
-                    .gap_2()
-                    .pt(theme::scaled_px(2.))
-                    .child(secondary_button(
-                        format!("conflict-file-ext-{}", idx),
-                        Msg::ConflictExternalTool.t(),
-                        true,
-                        Some(ext_handler),
+                    .items_center()
+                    .gap(theme::scaled_px(1.))
+                    .flex_shrink_0()
+                    .child(card_icon(
+                        format!("conflict-more-{}", idx),
+                        gpui_component::IconName::Ellipsis,
+                        Msg::ConflictMore.t(),
+                        more,
                     ))
-                    .child(secondary_button(
-                        format!("conflict-file-path-{}", idx),
+                    .child(card_icon(
+                        format!("conflict-ext-{}", idx),
+                        gpui_component::IconName::ExternalLink,
+                        Msg::ConflictExternalTool.t(),
+                        ext,
+                    ))
+                    .child(card_icon(
+                        format!("conflict-copy-{}", idx),
+                        gpui_component::IconName::Copy,
                         Msg::ConflictCopyPath.t(),
-                        true,
-                        Some(copy_path_handler),
+                        copy,
                     )),
             );
-        }
 
         col = col.child(row_el);
     }

@@ -5,6 +5,7 @@
 //! module can access `KagiApp` privates so no visibility was widened.
 
 #![allow(clippy::too_many_arguments)]
+use crate::ui::blocking_ops::*;
 
 use crate::ui::*;
 
@@ -255,25 +256,12 @@ impl KagiApp {
             }
         };
 
-        // Preflight check (HEAD + stash count).
-        if let Err(e) = repo.preflight_check_stash(&plan, plan.stash_count_at_plan()) {
-            let err_msg = format!("Preflight failed: {}", e);
-            self.record_op(
-                "stash-apply",
-                plan.current.clone(),
-                OpOutcome::Failed {
-                    error: err_msg.clone(),
-                },
-                &repo_path,
-            );
-            if let Some(m) = self.stash_apply_modal_mut() {
-                m.error = Some(SharedString::from(err_msg));
-            }
-            return;
-        }
-
-        // Execute stash apply (apply only — no pop, no drop).
-        if let Err(e) = repo.execute_stash_apply(modal.index) {
+        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
+        // in one place (run() calls preflight_check_stash for StashApply: HEAD +
+        // stash-count guard). The separate preflight_check_stash + execute above
+        // collapses into run().
+        let op = kagi::git::Operation::StashApply { index: modal.index };
+        if let Err(e) = repo.run(&op, &plan) {
             let err_msg = format!("Stash apply failed: {}", e);
             self.record_op(
                 "stash-apply",
@@ -678,25 +666,13 @@ impl KagiApp {
                 return;
             }
         };
-        if let Err(e) = repo.preflight_check(&modal.plan) {
-            let err_msg = format!("Preflight failed: {}", e);
-            self.record_op(
-                "stash-pop",
-                modal.plan.current.clone(),
-                OpOutcome::Failed {
-                    error: err_msg.clone(),
-                },
-                &repo_path,
-            );
-            self.set_pop_modal(PopPlanModal {
-                plan: modal.plan.clone(),
-                error: Some(SharedString::from(err_msg)),
-                stash_index: modal.stash_index,
-            });
-            return;
-        }
-        match repo.execute_stash_pop(modal.stash_index) {
-            Ok(()) => {
+        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
+        // (run uses preflight_check_stash for StashPop: HEAD + stash-count guard).
+        let pop_op = kagi::git::Operation::StashPop {
+            index: modal.stash_index,
+        };
+        match repo.run(&pop_op, &modal.plan) {
+            Ok(_) => {
                 klog!("executed: stash-pop index={}", modal.stash_index);
                 self.clear_pop_modal();
                 let after = StateSummary {

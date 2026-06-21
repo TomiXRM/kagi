@@ -289,6 +289,92 @@ pub(crate) fn highlight_diff_rows(
     lang
 }
 
+/// Off-thread-friendly variant of [`highlight_diff_rows`] (ADR-0109 / perf).
+///
+/// Instead of mutating `rows` in place (which requires `&mut Vec<DiffRow>` and
+/// is therefore `!Send` when the rows hold GPUI types), this returns a
+/// `Send`-safe vector of `(row_index, highlights)` pairs that the caller can
+/// move across a `cx.background_spawn` boundary and apply on the UI thread.
+///
+/// The parsing work (tree-sitter) is identical to `highlight_diff_rows`; only
+/// the output shape differs. Callers that stay on the UI thread should keep
+/// using `highlight_diff_rows` for simplicity; callers that want to render the
+/// diff text immediately and swap highlights in when ready should use this.
+pub(crate) fn highlight_diff_rows_send(
+    rows: &[DiffRow],
+    file_path: &std::path::Path,
+) -> (
+    String,
+    Vec<(usize, Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>)>,
+) {
+    use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};
+    use gpui_component::Rope;
+
+    let lang = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .and_then(lang_for_ext)
+        .unwrap_or("none");
+
+    // Collect (row_index, rope_byte_start) for each Line row and build the
+    // combined source text — same one-pass approach as highlight_diff_rows.
+    let mut line_offsets: Vec<(usize, usize)> = Vec::new();
+    let mut combined = String::new();
+    for (i, row) in rows.iter().enumerate() {
+        if let DiffRow::Line { text, .. } = row {
+            let t = text.as_ref();
+            let start = combined.len();
+            let content = if !t.is_empty() { &t[1..] } else { "" };
+            combined.push_str(content);
+            combined.push('\n');
+            line_offsets.push((i, start));
+        }
+    }
+
+    if combined.is_empty() || lang == "none" {
+        return (lang.to_string(), Vec::new());
+    }
+
+    let mut highlighter = SyntaxHighlighter::new(lang);
+    let rope = Rope::from_str(&combined);
+    highlighter.update(None, &rope);
+    let hl_theme = if theme::theme().dark {
+        HighlightTheme::default_dark()
+    } else {
+        HighlightTheme::default_light()
+    };
+    let all_styles = highlighter.styles(&(0..combined.len()), &hl_theme);
+
+    // Distribute styles back to per-row vectors (Send-safe: no DiffRow, just
+    // the row index + the highlight span list).
+    let mut result: Vec<(usize, Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>)> =
+        Vec::with_capacity(line_offsets.len());
+    for k in 0..line_offsets.len() {
+        let (row_i, rope_start) = line_offsets[k];
+        let rope_end = if k + 1 < line_offsets.len() {
+            line_offsets[k + 1].1
+        } else {
+            combined.len()
+        };
+        let content_end = rope_end.saturating_sub(1);
+
+        let mut row_highlights: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> = Vec::new();
+        for (range, style) in &all_styles {
+            let clipped_start = range.start.max(rope_start);
+            let clipped_end = range.end.min(content_end);
+            if clipped_start >= clipped_end {
+                continue;
+            }
+            let local_start = 1 + (clipped_start - rope_start);
+            let local_end = 1 + (clipped_end - rope_start);
+            row_highlights.push((local_start..local_end, *style));
+        }
+        result.push((row_i, row_highlights));
+    }
+
+    (lang.to_string(), result)
+}
+
 /// Render a range of diff rows for the `"main-diff-list"` uniform_list.
 /// Includes line numbers: old/new each 5 chars wide, theme::theme().text_muted colour.
 pub(crate) fn render_main_diff_rows(

@@ -7,6 +7,7 @@
 pub mod assets;
 pub mod avatar;
 pub mod avatar_fetch;
+pub mod blocking_ops;
 pub mod branch_menu;
 pub mod button_style;
 pub mod commands;
@@ -24,10 +25,13 @@ pub mod graph_view;
 pub mod i18n;
 pub mod inspector;
 pub mod menu_overlay;
+mod modal_renderers;
 pub mod modals;
 mod operations;
+pub mod oplog_panel;
 pub mod remote_browse;
 mod render;
+mod render_helpers;
 pub mod settings;
 pub mod settings_view;
 pub mod sidebar;
@@ -36,6 +40,7 @@ pub mod stash_menu;
 pub mod tabs;
 pub mod terminal;
 pub mod theme;
+pub mod toast_stack;
 pub mod types;
 pub mod view_models;
 pub mod watcher;
@@ -44,7 +49,7 @@ pub use diff_view::*;
 use i18n::Msg;
 pub use modals::*;
 pub use remote_browse::*;
-pub(crate) use render::with_vertical_scrollbar;
+pub(crate) use render_helpers::with_vertical_scrollbar;
 use theme::theme;
 pub use types::*;
 
@@ -179,8 +184,8 @@ const PANEL_MAX: f32 = 800.0;
 const SIDEBAR_DEFAULT: f32 = 200.0;
 const PANEL_DEFAULT: f32 = 360.0;
 
-// T-BP-004: Operation Log ring-buffer size and initial load count.
-const OP_ENTRIES_MAX: usize = 500;
+// T-BP-004: Operation Log initial load count from disk.
+// (Ring-buffer cap moved to oplog_panel::OP_ENTRIES_MAX, ADR-0111.)
 const OP_ENTRIES_LOAD: usize = 100;
 
 // T-BP-002: Bottom panel height limits and default.
@@ -299,8 +304,8 @@ use graph_view::graph_canvas;
 use kagi::git::{
     oplog::{append_oplog, read_oplog_tail, OpLogEntry, OpOutcome},
     ops::{
-        default_tracking_branch_name, validate_branch_rename, AmendMode, MergeKind, OperationPlan,
-        PullOutcome, StateSummary,
+        default_tracking_branch_name, validate_branch_rename, AmendMode, OperationPlan,
+        StateSummary,
     },
     CommitId, DiffLineKind, FileDiff, FileDiffStat, FileStatus, Head, RemoteBranch, RepoSnapshot,
     Stash, Tag, UpstreamInfo, Worktree,
@@ -702,15 +707,9 @@ pub fn format_hms(epoch_secs: i64) -> String {
 // (the FooterStatus / ToastKind / Toast types live in `types.rs`)
 // ──────────────────────────────────────────────────────────────
 
-/// Maximum simultaneously visible toasts (oldest dropped beyond this).
-const TOASTS_MAX: usize = 4;
-
 /// Snackbar slide animation timings / distance.
 const TOAST_ENTER_MS: u64 = 240;
 const TOAST_EXIT_MS: u64 = 220;
-/// Remove the toast slightly before the exit animation's nominal end so it
-/// never reverts to its resting (visible) state for a frame before removal.
-const TOAST_REMOVE_MS: u64 = 200;
 /// Horizontal slide distance (px): far enough to clear the left window edge,
 /// so the toast slides fully in from / out to off-screen.
 const TOAST_SLIDE_PX: f32 = 500.0;
@@ -765,9 +764,23 @@ pub struct KagiApp {
     pub error: Option<SharedString>,
     /// Absolute path to the repository root; used for on-demand diff fetches.
     pub repo_path: Option<PathBuf>,
+    /// Per-tab repository session (ADR-0107): owns a `Backend` for the tab
+    /// lifetime so read paths don't re-open the repo on every interaction.
+    /// `None` when no repo is open (same lifecycle as `repo_path`). Cloning
+    /// is cheap (`Rc` bump); the underlying repository handle is opened once.
+    /// Mutating ops still open a fresh `Backend` (the `*_blocking` pattern)
+    /// because `run()` needs `&mut self` and the session is `Rc`, not
+    /// `Arc+Mutex` — that collapses when the worker thread (ADR-0073) lands.
+    pub repo_session: Option<kagi::git::session::RepoSession>,
     /// Cache of changed-files results keyed by row index.
     /// `None` value means the diff was attempted but failed (show unavailable).
     pub diff_cache: HashMap<usize, Option<Vec<FileStatus>>>,
+    /// Per-(commit-row, file-index) cached `FileDiff` content (T-REARCH-031).
+    /// `diff_cache` above only holds the file *list*; without this content
+    /// cache, clicking between two commits to compare the same file recomputes
+    /// the full git2 tree-diff + hunk extraction on every toggle. The key is
+    /// `(selected_row, file_index)`; invalidated together with `diff_cache`.
+    pub file_diff_cache: HashMap<(usize, usize), std::sync::Arc<FileDiff>>,
     /// Row indices whose remote changed-files load is in flight over SSH
     /// (ADR-0089 Phase 2c), so the render trigger spawns it only once.
     pub remote_diff_inflight: std::collections::HashSet<usize>,
@@ -780,6 +793,15 @@ pub struct KagiApp {
     /// T-UI-003: When `Some`, the main pane shows this diff (full-width) instead
     /// of the commit graph list.  Cleared when `selected` changes or on reload.
     pub main_diff: Option<MainDiffView>,
+    /// Pending tree-sitter highlight result from a background task (ADR-0109).
+    /// When the off-thread `highlight_diff_rows_send` completes, the result is
+    /// stored here and applied to `main_diff` on the next `apply_pending_highlights`
+    /// call (from render or a notify). `None` = no pending highlight.
+    pub pending_diff_highlight: Option<(
+        usize,
+        usize,
+        Vec<(usize, Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>)>,
+    )>,
     /// ADR-0026: read-only compare mode shown in the inspector changed-files area.
     /// Cleared on selection change or reload to avoid stale path/diff state.
     pub compare_view: Option<CompareView>,
@@ -882,8 +904,10 @@ pub struct KagiApp {
     /// Pre-computed toolbar button enabled/disabled flags.
     /// Updated on every reload; rendered by `render_header_slot`.
     // ── T-BP-004: Operation Log entries ─────────────────────────
-    /// In-memory operation log ring-buffer (max 500, newest at index 0).
-    pub op_entries: VecDeque<OpLogEntry>,
+    /// Operation log panel — self-contained ring buffer (ADR-0111 / Phase C).
+    /// Rc<RefCell> (same pattern as ToastStack) because record_op has ~30
+    /// callers without cx; Entity migration is a follow-up.
+    pub op_log: std::rc::Rc<std::cell::RefCell<oplog_panel::OpLogPanel>>,
     /// Scroll handle for the Operation Log uniform_list.
     pub oplog_scroll_handle: UniformListScrollHandle,
     /// Which row index (0 = newest) is currently expanded; None = none.
@@ -965,11 +989,16 @@ pub struct KagiApp {
     /// Created on first click of the filter area (requires &mut Window).
     pub sidebar_filter: Option<Entity<InputState>>,
     // ── W3-NOTIFY: snackbar toasts + async-op state ──────────────
-    /// Visible toast stack (bottom-right). Newest last.
-    pub toasts: Vec<Toast>,
-    /// Monotonic id source for toasts.
-    pub next_toast_id: u64,
-    /// True while the 500ms auto-dismiss ticker task is alive.
+    /// Toast notification stack — extracted into a dedicated struct (ADR-0110)
+    /// so the toast add/remove/expire logic is self-contained.
+    /// `Rc<RefCell>` (not `Entity`) because `push_toast` is called from ~38
+    /// sites that don't all have `cx`; Entity migration is a follow-up once
+    /// those callers are refactored to thread `cx`. For now the separation
+    /// still pays off: the toast logic + ticker lives in one testable struct.
+    pub toast_stack: std::rc::Rc<std::cell::RefCell<toast_stack::ToastStack>>,
+    /// True while the 150ms auto-dismiss ticker task is alive (ADR-0110).
+    /// The ticker lifecycle stays on KagiApp because it spawns a cx task; the
+    /// toast data/logic lives in ToastStack.
     pub toast_ticker_alive: bool,
     /// True while a background fetch is in flight (refresh / auto-fetch),
     /// so we never stack concurrent fetches.
@@ -1366,16 +1395,22 @@ impl KagiApp {
         let op_entries: VecDeque<OpLogEntry> = read_oplog_tail(OP_ENTRIES_LOAD).into();
 
         KagiApp {
+            op_log: std::rc::Rc::new(std::cell::RefCell::new(
+                oplog_panel::OpLogPanel::from_entries(op_entries),
+            )),
             root_focus: None,
             active_view: view,
             selected: None,
             error: None,
             repo_path: None,
+            repo_session: None,
             diff_cache: HashMap::new(),
+            file_diff_cache: HashMap::new(),
             remote_diff_inflight: std::collections::HashSet::new(),
             diffstat_cache: HashMap::new(),
             wip_diffstat: None,
             main_diff: None,
+            pending_diff_highlight: None,
             compare_view: None,
             main_diff_scroll_handle: UniformListScrollHandle::new(),
             active_modal: None,
@@ -1408,7 +1443,6 @@ impl KagiApp {
             sidebar_rows: Vec::new(),
             cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
             cp_staged_scroll_handle: UniformListScrollHandle::new(),
-            op_entries,
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
             operation_history: kagi::git::OperationHistory::new(),
@@ -1429,8 +1463,7 @@ impl KagiApp {
             branch_groups_collapsed: HashSet::new(),
             sidebar_filter: None,
             // W3-NOTIFY
-            toasts: Vec::new(),
-            next_toast_id: 0,
+            toast_stack: std::rc::Rc::new(std::cell::RefCell::new(toast_stack::ToastStack::new())),
             toast_ticker_alive: false,
             fetch_in_flight: false,
             auto_fetch_ticker_alive: false,
@@ -1494,11 +1527,14 @@ impl KagiApp {
             selected: None,
             error: Some(SharedString::from(message.into())),
             repo_path: None,
+            repo_session: None,
             diff_cache: HashMap::new(),
+            file_diff_cache: HashMap::new(),
             remote_diff_inflight: std::collections::HashSet::new(),
             diffstat_cache: HashMap::new(),
             wip_diffstat: None,
             main_diff: None,
+            pending_diff_highlight: None,
             compare_view: None,
             main_diff_scroll_handle: UniformListScrollHandle::new(),
             active_modal: None,
@@ -1531,7 +1567,7 @@ impl KagiApp {
             sidebar_rows: Vec::new(),
             cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
             cp_staged_scroll_handle: UniformListScrollHandle::new(),
-            op_entries: VecDeque::new(),
+            op_log: std::rc::Rc::new(std::cell::RefCell::new(oplog_panel::OpLogPanel::new())),
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
             operation_history: kagi::git::OperationHistory::new(),
@@ -1552,8 +1588,7 @@ impl KagiApp {
             branch_groups_collapsed: HashSet::new(),
             sidebar_filter: None,
             // W3-NOTIFY
-            toasts: Vec::new(),
-            next_toast_id: 0,
+            toast_stack: std::rc::Rc::new(std::cell::RefCell::new(toast_stack::ToastStack::new())),
             toast_ticker_alive: false,
             fetch_in_flight: false,
             auto_fetch_ticker_alive: false,
@@ -1647,6 +1682,7 @@ impl KagiApp {
         // Per-repo transient state reset (unchanged behaviour).
         self.selected = None;
         self.diff_cache = HashMap::new();
+        self.file_diff_cache = HashMap::new();
         self.remote_diff_inflight.clear();
         self.diffstat_cache = HashMap::new();
         self.wip_diffstat = Some(wip_diffstat);
@@ -1794,24 +1830,86 @@ impl KagiApp {
             .and_then(|idx| self.active_view.details.get(idx))
             .map(|detail| CommitId(detail.full_sha.to_string()));
 
-        // Delegate to the core reload logic (resets self.selected to None).
-        self.reload();
+        // ADR-0104 / performance: an external git event (HEAD/refs change from
+        // a terminal, sibling worktree, or auto-fetch) is NOT user-initiated,
+        // so freezing the UI frame for a full repo snapshot (topological walk,
+        // full working-tree status scan, ahead/behind for every branch) is the
+        // worst kind of jank — the user didn't ask for anything. Move the
+        // heavy git2 work (open + snapshot + wip diffstat) onto a background
+        // thread, then build the view data and apply it on the UI thread.
+        // (The synchronous `reload()` is still used by user-initiated paths
+        // where a short, expected wait is acceptable.)
+        let bg_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        // Capture the switch generation so the background result is discarded
+        // if the user switched tabs while the snapshot was in flight — without
+        // this guard the snapshot would overwrite the NEW tab's freshly-loaded
+        // view with the OLD tab's data (cross-review N4).
+        let gen_at_spawn = self.switch_generation;
+        let task = cx.background_spawn(async move {
+            let mut backend = kagi::git::Backend::open(&bg_path).ok()?;
+            let snap = backend.snapshot(10_000).ok()?;
+            let wip = KagiApp::wip_diffstat_from_backend(&backend);
+            // RepoSnapshot is pure domain (Send); build_tab_view constructs
+            // SharedString-bearing TabViewState, so we return the raw pieces
+            // and build the view on the UI thread.
+            let repo_name = bg_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| bg_path.display().to_string());
+            Some((snap, wip, repo_name))
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                // Generation guard (cross-review N4): if the user switched tabs
+                // while the snapshot was in flight, drop the result — applying
+                // it would clobber the now-current tab's view.
+                if app.switch_generation != gen_at_spawn {
+                    return;
+                }
+                let Some((snap, wip, repo_name)) = result else {
+                    // Open or snapshot failed — log and bail without nuking
+                    // the existing view (better to show stale data than none).
+                    klog!("reload_external: snapshot failed (non-fatal)");
+                    app.status_footer = FooterStatus::Idle(SharedString::from(
+                        "[kagi] refresh skipped (snapshot failed)",
+                    ));
+                    cx.notify();
+                    return;
+                };
+                // Build the view data on the UI thread (cheap; heavy git2 work
+                // already done in the background) and apply it.
+                let view = build_tab_view(&snap, &repo_name);
+                app.apply_tab_view(view);
+                app.diff_cache = HashMap::new();
+                app.file_diff_cache = HashMap::new();
+                app.remote_diff_inflight.clear();
+                app.diffstat_cache = HashMap::new();
+                app.wip_diffstat = Some(wip);
+                app.main_diff = None;
+                app.compare_view = None;
+                app.file_history = None;
 
-        // Attempt to restore selection by CommitId.
-        if let Some(ref cid) = prev_commit_id {
-            if let Some(&new_idx) = self.active_view.commit_row_index.get(cid) {
-                self.selected = Some(new_idx);
-            }
-            // If the commit is no longer present, selected stays None.
-        }
+                // Attempt to restore selection by CommitId.
+                app.selected = None;
+                if let Some(ref cid) = prev_commit_id {
+                    if let Some(&new_idx) = app.active_view.commit_row_index.get(cid) {
+                        app.selected = Some(new_idx);
+                    }
+                    // If the commit is no longer present, selected stays None.
+                }
 
-        // Emit the required log line and update the footer.
-        klog!("refreshed (external change)");
-        self.status_footer =
-            FooterStatus::Idle(SharedString::from("[kagi] refreshed (external change)"));
-
-        // Notify gpui that state has changed so the window repaints.
-        cx.notify();
+                // Emit the required log line and update the footer.
+                klog!("refreshed (external change)");
+                app.status_footer =
+                    FooterStatus::Idle(SharedString::from("[kagi] refreshed (external change)"));
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Working-tree change refresh (FS watcher, [`watcher::WatchEvent::WorkTree`]).
@@ -2111,41 +2209,19 @@ impl KagiApp {
     /// Queue a snackbar toast (bottom-right). Callable without a Window:
     /// the auto-dismiss ticker is (re)started from `render`.
     pub(crate) fn push_toast(&mut self, kind: ToastKind, message: impl Into<SharedString>) {
-        let id = self.next_toast_id;
-        self.next_toast_id += 1;
-        self.toasts.push(Toast {
-            id,
-            kind,
-            message: message.into(),
-            born: Instant::now(),
-            dismissing: None,
-        });
-        if self.toasts.len() > TOASTS_MAX {
-            self.toasts.remove(0);
-        }
+        self.toast_stack.borrow_mut().push(kind, message);
     }
 
     /// Begin sliding a toast out (× button or auto-expiry), then remove it once
-    /// the exit animation has played. Marking `dismissing` keeps the card in the
-    /// tree so the slide-out is visible; a one-shot timer does the actual
-    /// removal. No-op if the toast is gone or already leaving.
+    /// the exit animation has played. Delegates to ToastStack + a one-shot timer.
     pub fn start_toast_exit(&mut self, id: u64, cx: &mut Context<Self>) {
-        let Some(toast) = self.toasts.iter_mut().find(|t| t.id == id) else {
-            return;
-        };
-        if toast.dismissing.is_some() {
-            return;
-        }
-        toast.dismissing = Some(Instant::now());
+        self.toast_stack.borrow_mut().start_exit(id);
         cx.notify();
         cx.spawn(async move |this, acx| {
-            gpui::Timer::after(Duration::from_millis(TOAST_REMOVE_MS)).await;
+            gpui::Timer::after(Duration::from_millis(toast_stack::TOAST_REMOVE_MS)).await;
             let _ = this.update(acx, |app, cx| {
-                let before = app.toasts.len();
-                app.toasts.retain(|t| t.id != id);
-                if app.toasts.len() != before {
-                    cx.notify();
-                }
+                app.toast_stack.borrow_mut().remove(id);
+                cx.notify();
             });
         })
         .detach();
@@ -2560,31 +2636,28 @@ impl KagiApp {
         }
     }
 
-    /// Spawn the 500ms auto-dismiss ticker if toasts exist and it is not
+    /// Spawn the 150ms auto-dismiss ticker if toasts exist and it is not
     /// already running. The task exits as soon as the stack drains.
+    /// ADR-0110: delegates expiry detection to ToastStack.expiring_ids().
     fn ensure_toast_ticker(&mut self, cx: &mut Context<Self>) {
-        if self.toast_ticker_alive || self.toasts.is_empty() {
+        {
+            let stack = self.toast_stack.borrow();
+            if stack.is_empty() || !stack.has_pending() {
+                return;
+            }
+        }
+        if self.toast_ticker_alive {
             return;
         }
         self.toast_ticker_alive = true;
         cx.spawn(async move |this, acx| loop {
             gpui::Timer::after(Duration::from_millis(150)).await;
             let finished = this.update(acx, |app, cx| {
-                // Begin the slide-out for any toast that has hit its lifetime;
-                // `start_toast_exit` handles the removal once it has animated.
-                let expiring: Vec<u64> = app
-                    .toasts
-                    .iter()
-                    .filter(|t| t.should_start_exit())
-                    .map(|t| t.id)
-                    .collect();
+                let expiring = app.toast_stack.borrow().expiring_ids();
                 for id in expiring {
                     app.start_toast_exit(id, cx);
                 }
-                // The ticker only needs to keep watching while a toast is still
-                // counting down (not yet leaving). Once every toast is either
-                // gone or already sliding out, its removal timer takes over.
-                let still_watching = app.toasts.iter().any(|t| t.dismissing.is_none());
+                let still_watching = app.toast_stack.borrow().has_pending();
                 if !still_watching {
                     app.toast_ticker_alive = false;
                     true
@@ -2661,10 +2734,7 @@ impl KagiApp {
         }
 
         // T-BP-004: push to in-memory ring-buffer (newest at front).
-        self.op_entries.push_front(entry);
-        if self.op_entries.len() > OP_ENTRIES_MAX {
-            self.op_entries.pop_back();
-        }
+        self.op_log.borrow_mut().push(entry);
         // Reset expanded state when new entries arrive.
         self.oplog_expanded = None;
 
@@ -2956,7 +3026,7 @@ impl KagiApp {
     /// No-op if no commit is selected.
     /// Step the open main diff to the previous/next file (arrow keys).
     /// No-op when no diff is open or already at the list edge.
-    pub fn main_diff_step(&mut self, delta: i64) {
+    pub fn main_diff_step(&mut self, delta: i64, cx: &mut Context<Self>) {
         let source = match self.main_diff.as_ref() {
             Some(d) => d.source.clone(),
             None => return,
@@ -2977,7 +3047,7 @@ impl KagiApp {
                 }
                 let next = (file_index as i64 + delta).clamp(0, len as i64 - 1) as usize;
                 if next != file_index {
-                    self.open_main_diff_commit(next);
+                    self.open_main_diff_commit(next, cx);
                 }
             }
             MainDiffSource::Compare {
@@ -3049,7 +3119,7 @@ impl KagiApp {
         } else if self.compare_view.is_some() {
             self.open_main_diff_compare(file_index);
         } else {
-            self.open_main_diff_commit(file_index);
+            self.open_main_diff_commit(file_index, cx);
         }
     }
 
@@ -3493,14 +3563,32 @@ impl KagiApp {
         .detach();
     }
 
-    pub fn open_main_diff_commit(&mut self, file_index: usize) {
+    /// Open the first changed file's diff in the main pane (headless path).
+    /// Calls the synchronous highlight variant since headless has no cx and is
+    /// test-only (no UI latency concern).
+    pub fn open_main_diff_commit_headless(&mut self, file_index: usize) {
+        // Delegate to the shared open path with a dummy sync-highlight by
+        // calling set_commit_main_diff_sync directly after acquiring the diff.
+        self.open_main_diff_commit_inner(file_index, None);
+    }
+
+    /// Open the main diff with async highlight (UI path).
+    pub fn open_main_diff_commit(&mut self, file_index: usize, cx: &mut Context<Self>) {
+        self.open_main_diff_commit_inner(file_index, Some(cx));
+    }
+
+    fn open_main_diff_commit_inner(
+        &mut self,
+        file_index: usize,
+        mut cx: Option<&mut Context<Self>>,
+    ) {
         use kagi::git::CommitId;
 
         let selected = match self.selected {
             Some(s) => s,
             None => return,
         };
-        let repo_path = match self.repo_path.as_ref() {
+        let _repo_path = match self.repo_path.as_ref() {
             Some(p) => p.clone(),
             None => return,
         };
@@ -3520,13 +3608,27 @@ impl KagiApp {
         let id = CommitId(detail.full_sha.as_ref().to_string());
         let path = file_status.path.clone();
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => return,
+        // T-REARCH-031: per-(row, file) content cache. Clicking between two
+        // commits to compare the same file previously recomputed the full git2
+        // tree-diff + hunk extraction on every toggle. Hit the cache first.
+        if let Some(cached) = self.file_diff_cache.get(&(selected, file_index)).cloned() {
+            self.set_commit_main_diff(&cached, &path, selected, file_index, cx.as_deref_mut());
+            return;
+        }
+
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let Some(session) = self.repo_session.as_ref() else {
+            return;
         };
+        let repo = session.backend();
 
         match repo.commit_file_diff(&id, &path) {
-            Ok(file_diff) => self.set_commit_main_diff(&file_diff, &path, selected, file_index),
+            Ok(file_diff) => {
+                let arc = std::sync::Arc::new(file_diff);
+                self.file_diff_cache
+                    .insert((selected, file_index), arc.clone());
+                self.set_commit_main_diff(&arc, &path, selected, file_index, cx.as_deref_mut());
+            }
             Err(e) => {
                 klog!("diff error: {}", e);
             }
@@ -3542,6 +3644,7 @@ impl KagiApp {
         path: &std::path::Path,
         selected: usize,
         file_index: usize,
+        cx: Option<&mut Context<Self>>,
     ) {
         let added: usize = file_diff
             .hunks
@@ -3566,25 +3669,92 @@ impl KagiApp {
         let fdv = FileDiffView::from_file_diff(file_diff, file_index);
         let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
         let title = fdv.file_name.clone();
-        let mut rows = fdv.rows;
-        let row_count = rows.len();
-        let hl_lang = highlight_diff_rows(&mut rows, path);
-        eprintln!(
-            "[kagi] main-diff: open {} rows={} highlight={}",
-            path.display(),
-            row_count,
-            hl_lang
-        );
 
-        self.main_diff = Some(MainDiffView {
-            title,
-            stats,
-            rows,
-            source: MainDiffSource::Commit {
-                row_index: selected,
+        match cx {
+            // UI path (cx present): render text-first, highlight off-thread.
+            Some(cx) => {
+                let rows = fdv.rows;
+                let row_count = rows.len();
+                let path_for_hl = path.to_path_buf();
+                let rows_snapshot = rows.clone();
+                let selected_for_hl = selected;
+                let file_index_for_hl = file_index;
+
+                self.main_diff = Some(MainDiffView {
+                    title,
+                    stats,
+                    rows,
+                    source: MainDiffSource::Commit {
+                        row_index: selected,
+                        file_index,
+                    },
+                });
+
+                // Spawn the highlight off-thread; store the result for swap-in.
+                cx.spawn(async move |this, acx| {
+                    let (hl_lang, highlights) =
+                        diff_view::highlight_diff_rows_send(&rows_snapshot, &path_for_hl);
+                    let _ = this.update(acx, |app, cx| {
+                        app.pending_diff_highlight =
+                            Some((selected_for_hl, file_index_for_hl, highlights));
+                        eprintln!(
+                            "[kagi] main-diff: highlight ready {} rows={} lang={}",
+                            path_for_hl.display(),
+                            row_count,
+                            hl_lang
+                        );
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            // Headless path (no cx): synchronous highlight (test-only, no UI).
+            None => {
+                let mut rows = fdv.rows;
+                let hl_lang = diff_view::highlight_diff_rows(&mut rows, path);
+                eprintln!(
+                    "[kagi] main-diff: open {} rows={} highlight={}",
+                    path.display(),
+                    rows.len(),
+                    hl_lang
+                );
+                self.main_diff = Some(MainDiffView {
+                    title,
+                    stats,
+                    rows,
+                    source: MainDiffSource::Commit {
+                        row_index: selected,
+                        file_index,
+                    },
+                });
+            }
+        }
+    }
+
+    /// Apply a pending background highlight result to `main_diff` if it still
+    /// matches the current view (same row/file index). Called from render so
+    /// the swap happens on the next frame after the background task completes.
+    /// Stale results (view changed) are discarded.
+    fn apply_pending_highlights(&mut self) {
+        let Some((row, file, highlights)) = self.pending_diff_highlight.take() else {
+            return;
+        };
+        let Some(view) = self.main_diff.as_mut() else {
+            return;
+        };
+        // Only apply if the view hasn't changed since the highlight was requested.
+        match view.source {
+            MainDiffSource::Commit {
+                row_index,
                 file_index,
-            },
-        });
+            } if row_index == row && file_index == file => {}
+            _ => return,
+        }
+        for (row_i, row_highlights) in highlights {
+            if let Some(DiffRow::Line { highlights: hl, .. }) = view.rows.get_mut(row_i) {
+                *hl = row_highlights;
+            }
+        }
     }
 
     /// Load the selected remote commit's changed files over SSH (ADR-0089 Phase
@@ -3663,7 +3833,7 @@ impl KagiApp {
             let _ = this.update(acx, |app, cx| {
                 match result {
                     Ok(file_diff) => {
-                        app.set_commit_main_diff(&file_diff, &path, selected, file_index)
+                        app.set_commit_main_diff(&file_diff, &path, selected, file_index, Some(cx))
                     }
                     Err(e) => klog!("remote diff error: {e}"),
                 }
@@ -3674,7 +3844,7 @@ impl KagiApp {
     }
 
     pub fn open_main_diff_compare(&mut self, file_index: usize) {
-        let repo_path = match self.repo_path.as_ref() {
+        let _repo_path = match self.repo_path.as_ref() {
             Some(p) => p.clone(),
             None => return,
         };
@@ -3688,10 +3858,11 @@ impl KagiApp {
         };
         let path = file_status.path.clone();
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let Some(session) = self.repo_session.as_ref() else {
+            return;
         };
+        let repo = session.backend();
 
         let file_diff_result = match view.target {
             CompareTarget::Head => {
@@ -3763,7 +3934,7 @@ impl KagiApp {
 
     /// T-UI-003: Open the diff for a Commit Panel file in the full-width main pane.
     pub fn open_main_diff_wip(&mut self, file_ref: commit_panel::CommitPanelFileRef) {
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
@@ -3789,10 +3960,11 @@ impl KagiApp {
             }
         };
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let Some(session) = self.repo_session.as_ref() else {
+            return;
         };
+        let repo = session.backend();
 
         let file_diff_result = if is_staged {
             repo.staged_file_diff(&path)
@@ -3865,11 +4037,15 @@ impl KagiApp {
     fn fetch_changed_files(&self, index: usize) -> Option<Vec<FileStatus>> {
         use kagi::git::CommitId;
 
-        let repo_path = self.repo_path.as_ref()?;
+        // Early-exit if no repo is open (the session is None in that case too).
+        if self.repo_session.is_none() {
+            return None;
+        }
         let detail = self.active_view.details.get(index)?;
         let id = CommitId(detail.full_sha.as_ref().to_string());
 
-        let repo = kagi::git::Backend::open(repo_path).ok()?;
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = self.repo_session.as_ref()?.backend();
         repo.commit_changed_files(&id).ok()
     }
 
@@ -3900,13 +4076,12 @@ impl KagiApp {
     }
 
     pub fn refresh_wip_diffstat(&mut self) {
-        let Some(repo_path) = self.repo_path.as_ref() else {
-            self.wip_diffstat = None;
-            return;
-        };
-        self.wip_diffstat = kagi::git::Backend::open(repo_path)
-            .ok()
-            .map(|repo| Self::wip_diffstat_from_backend(&repo));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        // When no repo is open (session is None), wip_diffstat is cleared.
+        self.wip_diffstat = self
+            .repo_session
+            .as_ref()
+            .map(|s| Self::wip_diffstat_from_backend(s.backend()));
     }
 
     pub fn close_compare_view(&mut self) {
@@ -3942,17 +4117,11 @@ impl KagiApp {
             self.select(row_index);
         }
 
-        let repo_path = match self.repo_path.as_ref() {
-            Some(p) => p.clone(),
-            None => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let Some(session) = self.repo_session.as_ref() else {
+            return;
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("compare: repo open error: {}", e);
-                return;
-            }
-        };
+        let repo = session.backend();
         let head = match repo.head_commit_id() {
             Some(id) => id,
             None => {
@@ -3994,17 +4163,11 @@ impl KagiApp {
             self.select(row_index);
         }
 
-        let repo_path = match self.repo_path.as_ref() {
-            Some(p) => p.clone(),
-            None => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let Some(session) = self.repo_session.as_ref() else {
+            return;
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("compare: repo open error: {}", e);
-                return;
-            }
-        };
+        let repo = session.backend();
         match repo.working_tree_status() {
             Ok(status) if !status.is_dirty() => {
                 eprintln!(
@@ -4810,794 +4973,6 @@ impl KagiApp {
             ent.update(cx, |state, cx| {
                 state.focus(window, cx);
             });
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────
-// W3-NOTIFY: blocking cores for pull / push
-//
-// Everything that may take seconds (repo open → preflight → execute →
-// verify snapshot) lives here, free of `&mut KagiApp`, so the UI path can
-// run it via `cx.background_spawn` while the headless path calls it inline.
-// ──────────────────────────────────────────────────────────────
-
-/// Blocking part of stash push (preflight → execute → verify). Stashing
-/// copies the working tree (and untracked files) into the stash, which can
-/// take a long time on large repos — running it on the UI thread looked
-/// like a total freeze (user-reported).
-fn stash_push_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    message: Option<String>,
-) -> Result<(String, StateSummary), String> {
-    let t0 = Instant::now();
-    let mut repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check_stash(plan, plan.stash_count_at_plan())
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-    repo.execute_stash_push(message.as_deref(), true)
-        .map_err(|e| format!("Stash push failed: {}", e))?;
-    let t_stash = t0.elapsed();
-    eprintln!(
-        "[kagi] executed: stash-push message={:?}",
-        message.unwrap_or_default()
-    );
-
-    // Light verify: the full reload that follows on the main thread already
-    // rebuilds the complete snapshot, so re-walking 10k commits here only
-    // doubled the wall-clock (user asked why stash took ~10s). Status + a
-    // stash-count check are enough to confirm the operation took effect.
-    let t1 = Instant::now();
-    let after = match repo.working_tree_status() {
-        Ok(status) => {
-            if !status.is_dirty() {
-                klog!("verified: working tree clean after stash-push");
-            } else {
-                klog!("verify: working tree NOT clean after stash-push");
-            }
-            let count = repo.stash_count().unwrap_or(0);
-            klog!("verified: stash count={}", count);
-            // resolve_head is crate-private; the predicted head from the
-            // plan is accurate here (stash does not move HEAD).
-            let head = plan.predicted.head.clone();
-            StateSummary {
-                head,
-                dirty: if status.is_dirty() {
-                    "dirty".into()
-                } else {
-                    "clean".into()
-                },
-            }
-        }
-        Err(_) => plan.predicted.clone(),
-    };
-    eprintln!(
-        "[kagi] async: stash-push timing stash={:.1}s verify={:.1}s",
-        t_stash.as_secs_f32(),
-        t1.elapsed().as_secs_f32()
-    );
-    Ok(("stashed working tree".to_string(), after))
-}
-
-/// Blocking part of pull. Returns (human summary, after-state) or an error
-/// message suitable for the oplog / modal.
-fn pull_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-) -> Result<(String, StateSummary), String> {
-    let repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    let outcome = repo
-        .execute_pull()
-        .map_err(|e| format!("Pull failed: {}", e))?;
-    let summary = match &outcome {
-        PullOutcome::UpToDate => "already up to date".to_string(),
-        PullOutcome::FastForward { to } => format!("fast-forward to {}", to.short()),
-        PullOutcome::Merged { commit } => format!("merge commit {}", commit.short()),
-    };
-    klog!("executed: pull — {}", summary);
-
-    // Verify: re-snapshot for the after-state.
-    let after_summary = verify_after_snapshot(repo_path, plan);
-    klog!("verified: pull after = {}", after_summary.head);
-    Ok((summary, after_summary))
-}
-
-/// Blocking part of push. Returns (human summary, after-state) or an error
-/// message suitable for the oplog / modal.
-fn push_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-) -> Result<(String, StateSummary), String> {
-    let repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    let outcome = repo
-        .execute_push()
-        .map_err(|e| format!("Push failed: {}", e))?;
-    let summary = if outcome.set_upstream {
-        format!("pushed {} commit(s), set upstream", outcome.pushed)
-    } else {
-        format!("pushed {} commit(s)", outcome.pushed)
-    };
-    klog!("executed: push — {}", summary);
-
-    let after_summary = verify_after_snapshot(repo_path, plan);
-    klog!("verified: push after = {}", after_summary.head);
-    Ok((summary, after_summary))
-}
-
-/// Re-snapshot the repo for the verified after-state; falls back to the
-/// plan's prediction when the snapshot fails (non-fatal).
-fn verify_after_snapshot(repo_path: &std::path::Path, plan: &OperationPlan) -> StateSummary {
-    match kagi::git::Backend::open(repo_path) {
-        Ok(mut repo2) => match repo2.snapshot(10_000) {
-            Ok(snap) => StateSummary {
-                head: snap.head.display(),
-                dirty: if snap.status.is_dirty() {
-                    "dirty".to_string()
-                } else {
-                    "clean".to_string()
-                },
-            },
-            Err(_) => plan.predicted.clone(),
-        },
-        Err(_) => plan.predicted.clone(),
-    }
-}
-
-// ──────────────────────────────────────────────────────────────
-// W15-ASYNCOPS: blocking cores for the tree-size-proportional ops
-//
-// Same shape as the pull/push/stash cores above: repo open → preflight →
-// execute → verify snapshot, free of `&mut KagiApp`, so the UI button path can
-// run them via `cx.background_spawn`. The headless KAGI_* path keeps calling the
-// synchronous `confirm_*` methods (unchanged log文言/order). ref-order rules and
-// in-memory semantics are unchanged — only the threading moved.
-// ──────────────────────────────────────────────────────────────
-
-/// Blocking part of checkout (branch or commit). `checkout_tree` writes the
-/// working tree on disk, which scales with tree size.
-fn checkout_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    target: &CheckoutPlanTarget,
-) -> Result<(String, StateSummary), String> {
-    let repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    let execute_result = match target {
-        CheckoutPlanTarget::Branch(branch) => repo.execute_checkout(branch),
-        CheckoutPlanTarget::Commit(commit_id) => repo.execute_checkout_commit(commit_id),
-    };
-    execute_result.map_err(|e| format!("Checkout failed: {}", e))?;
-
-    let summary = match target {
-        CheckoutPlanTarget::Branch(branch) => {
-            klog!("executed: checkout {}", branch);
-            format!("checkout {}", branch)
-        }
-        CheckoutPlanTarget::Commit(commit_id) => {
-            klog!("executed: checkout-commit {}", commit_id.short());
-            format!("detached: {}", commit_id.short())
-        }
-    };
-
-    // Verify: re-snapshot and confirm HEAD.
-    let after = match kagi::git::Backend::open(repo_path) {
-        Ok(mut repo2) => match repo2.snapshot(10_000) {
-            Ok(snap) => {
-                match (target, &snap.head) {
-                    (
-                        CheckoutPlanTarget::Branch(branch),
-                        Head::Attached {
-                            branch: actual_branch,
-                            ..
-                        },
-                    ) if actual_branch == branch => {
-                        klog!("verified: HEAD={}", actual_branch);
-                    }
-                    (CheckoutPlanTarget::Commit(commit_id), Head::Detached { target: t })
-                        if t == &commit_id.0 =>
-                    {
-                        klog!("verified: detached HEAD={}", commit_id.short());
-                    }
-                    other => {
-                        eprintln!(
-                            "[kagi] verify: unexpected HEAD state after checkout: {:?}",
-                            other
-                        );
-                    }
-                }
-                StateSummary {
-                    head: snap.head.display(),
-                    dirty: if snap.status.is_dirty() {
-                        "dirty".to_string()
-                    } else {
-                        "clean".to_string()
-                    },
-                }
-            }
-            Err(e) => {
-                klog!("verify: snapshot error: {}", e);
-                plan.predicted.clone()
-            }
-        },
-        Err(e) => {
-            klog!("verify: repo open error: {}", e);
-            plan.predicted.clone()
-        }
-    };
-    Ok((summary, after))
-}
-
-fn merge_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    target: &str,
-    kind: &MergeKind,
-) -> Result<(String, StateSummary), String> {
-    let repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    match kind {
-        MergeKind::Conflicts(_) => {
-            // W31: perform the real conflicting merge — leaves markers + index
-            // stages + MERGE_HEAD. No commit is created; Conflict Mode takes over
-            // on the subsequent reload.
-            let files = repo
-                .execute_merge_into_conflict(target)
-                .map_err(|e| format!("Merge failed: {}", e))?;
-            eprintln!(
-                "[kagi] executed: merge-into-conflict {} -> {} conflict(s)",
-                target,
-                files.len()
-            );
-            let after = verify_after_snapshot(repo_path, plan);
-            Ok((
-                format!("merge {} (conflicts: {})", target, files.len()),
-                after,
-            ))
-        }
-        MergeKind::FastForward | MergeKind::MergeCommit => {
-            let new_head = repo
-                .execute_merge_branch(target)
-                .map_err(|e| format!("Merge failed: {}", e))?;
-            klog!("executed: merge {} -> {}", target, new_head.short());
-
-            let after = verify_after_snapshot(repo_path, plan);
-            klog!("verified: merge after = {}", after.head);
-            Ok((format!("merge {}", target), after))
-        }
-    }
-}
-
-fn checkout_tracking_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    remote_branch: &str,
-    local_branch: &str,
-) -> Result<(String, StateSummary), String> {
-    let repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    repo.execute_checkout_tracking_branch(remote_branch, local_branch)
-        .map_err(|e| format!("Checkout tracking failed: {}", e))?;
-    eprintln!(
-        "[kagi] executed: checkout-tracking {} -> {}",
-        remote_branch, local_branch
-    );
-
-    let after = verify_after_snapshot(repo_path, plan);
-    klog!("verified: checkout-tracking after = {}", after.head);
-    Ok((format!("checkout {}", local_branch), after))
-}
-
-fn switch_to_latest_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    branch_name: &str,
-    remote_branch: &str,
-) -> Result<(String, StateSummary), String> {
-    let repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    repo.execute_switch_to_latest(plan, branch_name, remote_branch)
-        .map_err(|e| format!("Switch to latest failed: {}", e))?;
-    klog!(
-        "executed: switch-to-latest {} <- {}",
-        branch_name,
-        remote_branch
-    );
-
-    let after = verify_after_snapshot(repo_path, plan);
-    klog!("verified: switch-to-latest after = {}", after.head);
-    Ok((format!("switch {}", branch_name), after))
-}
-
-/// Blocking part of cherry-pick (in-memory index merge → commit → safe
-/// checkout_head). Scales with the diff size.
-fn cherry_pick_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    commit_id: &CommitId,
-) -> Result<(String, StateSummary), String> {
-    let repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    let new_id = repo
-        .execute_cherry_pick(commit_id)
-        .map_err(|e| format!("Cherry-pick failed: {}", e))?;
-    eprintln!(
-        "[kagi] executed: cherry-pick {} -> {}",
-        commit_id.short(),
-        new_id.short()
-    );
-
-    let after = verify_new_commit_snapshot(repo_path, plan, &new_id, "cherry-pick");
-    Ok((format!("{} applied", commit_id.short()), after))
-}
-
-/// Blocking part of revert (in-memory inverse merge → commit). Scales with the
-/// diff size.
-fn revert_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    commit_id: &CommitId,
-) -> Result<(String, StateSummary), String> {
-    let repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    let new_id = repo
-        .execute_revert(commit_id)
-        .map_err(|e| format!("Revert failed: {}", e))?;
-    eprintln!(
-        "[kagi] executed: revert {} -> {}",
-        commit_id.short(),
-        new_id.short()
-    );
-
-    let after = verify_new_commit_snapshot(repo_path, plan, &new_id, "revert");
-    Ok((format!("reverted {}", commit_id.short()), after))
-}
-
-/// Blocking part of commit (tree-build + write). Scales with the staged tree.
-/// Returns the new commit id alongside the after-state so the UI finish step can
-/// clear the branch draft on the main thread.
-fn commit_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    message: &str,
-) -> Result<(String, StateSummary), String> {
-    let repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-
-    let new_id = repo
-        .execute_commit(message)
-        .map_err(|e| format!("Commit failed: {}", e))?;
-    klog!("executed: commit {}", new_id.short());
-
-    // Verify: re-snapshot, check HEAD is the new commit, unstaged remain.
-    let after = match kagi::git::Backend::open(repo_path) {
-        Ok(mut repo2) => match repo2.snapshot(10_000) {
-            Ok(snap) => {
-                if let Head::Attached { target, branch } = &snap.head {
-                    if *target == new_id.0 {
-                        eprintln!(
-                            "[kagi] verified: commit HEAD={} on {}",
-                            new_id.short(),
-                            branch
-                        );
-                    } else {
-                        klog!("verify: HEAD mismatch after commit");
-                    }
-                }
-                let is_dirty = snap.status.is_dirty();
-                eprintln!(
-                    "[kagi] verified: working tree {} after commit",
-                    if is_dirty {
-                        "dirty (unstaged remain)"
-                    } else {
-                        "clean"
-                    }
-                );
-                StateSummary {
-                    head: snap.head.display(),
-                    dirty: if is_dirty {
-                        "dirty".to_string()
-                    } else {
-                        "clean".to_string()
-                    },
-                }
-            }
-            Err(e) => {
-                klog!("verify: snapshot error: {}", e);
-                plan.predicted.clone()
-            }
-        },
-        Err(e) => {
-            klog!("verify: repo open error: {}", e);
-            plan.predicted.clone()
-        }
-    };
-    Ok((new_id.short().to_string(), after))
-}
-
-/// Blocking part of stash-pop (preflight + apply-then-drop). Re-snapshots HEAD
-/// for the after-state.
-fn stash_pop_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    stash_index: usize,
-) -> Result<(String, StateSummary), String> {
-    let mut repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    repo.execute_stash_pop(stash_index)
-        .map_err(|e| format!("Pop failed: {}", e))?;
-    klog!("executed: stash-pop index={}", stash_index);
-
-    let after = StateSummary {
-        head: plan.current.head.clone(),
-        dirty: "changes restored (stash removed)".to_string(),
-    };
-    Ok(("applied and dropped".to_string(), after))
-}
-
-/// Blocking part of standalone stash drop (ADR-0087). Deletes the stash entry
-/// without touching the working tree; returns the dropped stash commit OID as
-/// the oplog recovery handle.
-fn stash_drop_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    stash_index: usize,
-) -> Result<(String, StateSummary), String> {
-    let mut repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check_stash(plan, plan.stash_count_at_plan())
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    let dropped_oid = repo
-        .execute_stash_drop(stash_index)
-        .map_err(|e| format!("Drop failed: {}", e))?;
-    eprintln!(
-        "[kagi] executed: stash-drop index={} oid={}",
-        stash_index, dropped_oid
-    );
-
-    let after = StateSummary {
-        head: plan.current.head.clone(),
-        dirty: format!("stash@{{{}}} deleted (oid {})", stash_index, dropped_oid),
-    };
-    Ok(("entry deleted".to_string(), after))
-}
-
-/// Blocking part of discard (W17-DISCARD, ADR-0046). Backup-then-discard scales
-/// with the working-tree content written, so it runs on the background path.
-/// The returned `after` carries the path→blob backup list (the recovery handle)
-/// into the oplog entry.
-fn discard_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    paths: &[String],
-) -> Result<(String, StateSummary), String> {
-    let repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-
-    let outcome = repo
-        .execute_discard(plan, paths)
-        .map_err(|e| format!("Discard failed: {}", e))?;
-    let summary = outcome.oplog_summary();
-    klog!("executed: {}", summary);
-
-    // Verify: re-read status; targets must have left the unstaged set.
-    let dirty = match repo.working_tree_status() {
-        Ok(status) => {
-            let still: std::collections::HashSet<String> = status
-                .unstaged
-                .iter()
-                .map(|f| f.path.to_string_lossy().replace('\\', "/"))
-                .collect();
-            let leftover = paths.iter().filter(|p| still.contains(*p)).count();
-            if leftover == 0 {
-                eprintln!(
-                    "[kagi] verified: {} target(s) left the unstaged set",
-                    paths.len()
-                );
-            } else {
-                klog!("verify: {} target(s) still unstaged", leftover);
-            }
-            // Record the recovery handle (path→blob list) in the oplog after-state.
-            summary.clone()
-        }
-        Err(e) => {
-            klog!("verify: status error: {}", e);
-            summary.clone()
-        }
-    };
-
-    let after = StateSummary {
-        head: plan.current.head.clone(),
-        dirty,
-    };
-    let human = if outcome.backups.len() == 1 {
-        format!("{} discarded", outcome.backups[0].path)
-    } else {
-        format!("{} files discarded", outcome.backups.len())
-    };
-    Ok((human, after))
-}
-
-/// Blocking part of amend (history rewrite: tree-build + commit-replace).
-/// Returns (summary-suffix, after, old, new) so the UI footer can render the
-/// 旧→新 SHA transition and the restore hint.
-fn amend_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    mode: AmendMode,
-    message: &str,
-) -> Result<(StateSummary, CommitId, CommitId), String> {
-    let repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    let msg_opt = if message.trim().is_empty() {
-        None
-    } else {
-        Some(message)
-    };
-    let outcome = repo
-        .execute_amend(mode, msg_opt)
-        .map_err(|e| format!("Amend failed: {}", e))?;
-    eprintln!(
-        "[kagi] executed: amend {} -> {}",
-        outcome.old.short(),
-        outcome.new.short()
-    );
-
-    let after = StateSummary {
-        head: format!(
-            "branch @ {} (was {})",
-            outcome.new.short(),
-            outcome.old.short()
-        ),
-        dirty: "amended".to_string(),
-    };
-    Ok((after, outcome.old, outcome.new))
-}
-
-/// Blocking part of delete-branch (preflight → ref delete). Lightweight, but
-/// kept on the background path for consistency with the other confirm flows.
-fn delete_branch_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    branch_name: &str,
-) -> Result<StateSummary, String> {
-    let repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    repo.execute_delete_branch(plan, branch_name)
-        .map_err(|e| format!("Delete failed: {}", e))?;
-    klog!("executed: delete-branch {}", branch_name);
-
-    Ok(StateSummary {
-        head: plan.current.head.clone(),
-        dirty: format!("branch '{}' deleted", branch_name),
-    })
-}
-
-fn branch_plan_blocking(
-    repo_path: &std::path::Path,
-    modal: &BranchPlanModal,
-) -> Result<StateSummary, String> {
-    let repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    match modal.kind {
-        BranchPlanKind::PullFfOnly => {
-            let outcome = repo
-                .execute_pull_branch_ff(&modal.plan, &modal.branch_name)
-                .map_err(|e| format!("Pull failed: {}", e))?;
-            let dirty = match outcome {
-                PullOutcome::UpToDate => {
-                    format!("branch '{}' already up to date", modal.branch_name)
-                }
-                PullOutcome::FastForward { to } => {
-                    format!(
-                        "branch '{}' fast-forwarded to {}",
-                        modal.branch_name,
-                        to.short()
-                    )
-                }
-                PullOutcome::Merged { .. } => "unexpected merge outcome".to_string(),
-            };
-            Ok(StateSummary {
-                head: modal.plan.current.head.clone(),
-                dirty,
-            })
-        }
-        BranchPlanKind::Push | BranchPlanKind::PushSetUpstream => {
-            let set_upstream = modal.kind == BranchPlanKind::PushSetUpstream;
-            let outcome = repo
-                .execute_push_branch(&modal.plan, &modal.branch_name, set_upstream)
-                .map_err(|e| format!("Push failed: {}", e))?;
-            Ok(StateSummary {
-                head: modal.plan.current.head.clone(),
-                dirty: format!(
-                    "branch '{}' pushed {} commit(s){}",
-                    modal.branch_name,
-                    outcome.pushed,
-                    if outcome.set_upstream {
-                        " and upstream set"
-                    } else {
-                        ""
-                    }
-                ),
-            })
-        }
-    }
-}
-
-fn set_upstream_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    branch_name: &str,
-    upstream: &str,
-) -> Result<StateSummary, String> {
-    let repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.execute_set_upstream(plan, branch_name, upstream)
-        .map_err(|e| format!("Set upstream failed: {}", e))?;
-    Ok(StateSummary {
-        head: plan.current.head.clone(),
-        dirty: format!("branch '{}' upstream set to '{}'", branch_name, upstream),
-    })
-}
-
-fn rename_branch_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    old_name: &str,
-    new_name: &str,
-) -> Result<StateSummary, String> {
-    let repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.execute_rename_branch(plan, old_name, new_name)
-        .map_err(|e| format!("Rename failed: {}", e))?;
-    Ok(StateSummary {
-        head: plan.predicted.head.clone(),
-        dirty: format!("branch '{}' renamed to '{}'", old_name, new_name),
-    })
-}
-
-/// Blocking part of create-worktree (checks out a full tree into a new linked
-/// worktree on disk — scales with tree size).
-fn create_worktree_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    branch_input: &str,
-    path_input: &str,
-    at: &CommitId,
-    allow_existing_branch: bool,
-) -> Result<StateSummary, String> {
-    let repo =
-        kagi::git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
-    repo.preflight_check(plan)
-        .map_err(|e| format!("Preflight failed: {}", e))?;
-
-    if allow_existing_branch {
-        repo.execute_open_worktree_for_branch(branch_input, path_input)
-            .map_err(|e| format!("Open worktree failed: {}", e))?;
-    } else {
-        repo.execute_create_worktree(branch_input, path_input, at)
-            .map_err(|e| format!("Create worktree failed: {}", e))?;
-    }
-    eprintln!(
-        "[kagi] executed: create-worktree '{}' path='{}' @ {}",
-        branch_input,
-        path_input,
-        at.short()
-    );
-
-    // Verify: open the linked worktree and log its HEAD.
-    let verify_path = {
-        let path = std::path::PathBuf::from(path_input);
-        if path.is_absolute() {
-            path
-        } else {
-            repo_path.join(path)
-        }
-    };
-    match kagi::git::Backend::open(&verify_path) {
-        Ok(linked) => {
-            let head = linked.head_shorthand();
-            eprintln!(
-                "[kagi] verified: worktree '{}' HEAD={}",
-                verify_path.display(),
-                head.unwrap_or_else(|| "?".to_string())
-            );
-        }
-        Err(e) => klog!("verify: worktree open error: {}", e),
-    }
-
-    Ok(plan.predicted.clone())
-}
-
-/// Re-snapshot after a new-commit op (cherry-pick / revert) for the after-state,
-/// logging the verified HEAD. Falls back to the plan prediction on failure.
-fn verify_new_commit_snapshot(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    new_id: &CommitId,
-    op: &str,
-) -> StateSummary {
-    match kagi::git::Backend::open(repo_path) {
-        Ok(mut repo2) => match repo2.snapshot(10_000) {
-            Ok(snap) => {
-                if let Head::Attached { target, branch } = &snap.head {
-                    if *target == new_id.0 {
-                        eprintln!(
-                            "[kagi] verified: {} HEAD={} on {}",
-                            op,
-                            new_id.short(),
-                            branch
-                        );
-                    } else {
-                        eprintln!(
-                            "[kagi] verify: HEAD={} expected {}",
-                            &target[..8.min(target.len())],
-                            new_id.short()
-                        );
-                    }
-                    let is_clean = !snap.status.is_dirty();
-                    eprintln!(
-                        "[kagi] verified: working tree {}",
-                        if is_clean {
-                            "clean"
-                        } else {
-                            "dirty (unexpected)"
-                        }
-                    );
-                }
-                StateSummary {
-                    head: snap.head.display(),
-                    dirty: if snap.status.is_dirty() {
-                        "dirty".to_string()
-                    } else {
-                        "clean".to_string()
-                    },
-                }
-            }
-            Err(e) => {
-                klog!("verify: snapshot error: {}", e);
-                plan.predicted.clone()
-            }
-        },
-        Err(e) => {
-            klog!("verify: repo open error: {}", e);
-            plan.predicted.clone()
         }
     }
 }

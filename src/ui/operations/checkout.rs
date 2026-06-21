@@ -5,6 +5,7 @@
 //! module can access `KagiApp` privates so no visibility was widened.
 
 #![allow(clippy::too_many_arguments)]
+use crate::ui::blocking_ops::*;
 
 use crate::ui::*;
 
@@ -15,7 +16,7 @@ impl KagiApp {
     /// result in `self.plan_modal`.  Emits a plan log entry.
     pub fn open_plan_modal(&mut self, branch: impl Into<String>) {
         let branch = branch.into();
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
                 klog!("open_plan_modal: no repo_path set");
@@ -23,10 +24,10 @@ impl KagiApp {
             }
         };
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("plan: repo open error: {}", e);
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                klog!("plan: repo open error: {}", "session unavailable");
                 return;
             }
         };
@@ -46,15 +47,15 @@ impl KagiApp {
                     error: None,
                 });
             }
-            Err(e) => {
-                klog!("plan: error: {}", e);
+            Err(_e) => {
+                klog!("plan: error: {}", "session unavailable");
             }
         }
     }
 
     /// Open the detached checkout plan modal for commit `commit_id`.
     pub fn open_checkout_commit_modal(&mut self, commit_id: CommitId) {
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
                 klog!("open_checkout_commit_modal: no repo_path set");
@@ -62,10 +63,13 @@ impl KagiApp {
             }
         };
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("checkout-commit plan: repo open error: {}", e);
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                klog!(
+                    "checkout-commit plan: repo open error: {}",
+                    "session unavailable"
+                );
                 return;
             }
         };
@@ -85,8 +89,8 @@ impl KagiApp {
                     error: None,
                 });
             }
-            Err(e) => {
-                klog!("checkout-commit plan: error: {}", e);
+            Err(_e) => {
+                klog!("checkout-commit plan: error: {}", "session unavailable");
             }
         }
     }
@@ -105,9 +109,12 @@ impl KagiApp {
         };
         let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
-            Err(e) => {
+            Err(_e) => {
                 if let Some(m) = self.plan_modal_mut() {
-                    m.error = Some(SharedString::from(format!("stash: repo open error: {}", e)));
+                    m.error = Some(SharedString::from(format!(
+                        "stash: repo open error: {}",
+                        "session unavailable"
+                    )));
                 }
                 return false;
             }
@@ -115,9 +122,12 @@ impl KagiApp {
         let msg = "kagi: auto-stash before checkout";
         let plan = match repo.plan_stash_push(Some(msg), true) {
             Ok(p) => p,
-            Err(e) => {
+            Err(_e) => {
                 if let Some(m) = self.plan_modal_mut() {
-                    m.error = Some(SharedString::from(format!("stash plan error: {}", e)));
+                    m.error = Some(SharedString::from(format!(
+                        "stash plan error: {}",
+                        "session unavailable"
+                    )));
                 }
                 return false;
             }
@@ -140,8 +150,13 @@ impl KagiApp {
             }
             return false;
         }
-        match repo.execute_stash_push(Some(msg), true) {
-            Ok(()) => {
+        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+        let stash_op = kagi::git::Operation::StashPush {
+            message: Some(msg.to_string()),
+            include_untracked: true,
+        };
+        match repo.run(&stash_op, &plan) {
+            Ok(_) => {
                 klog!("executed: auto-stash before checkout");
                 self.record_op(
                     "stash-push",
@@ -156,8 +171,8 @@ impl KagiApp {
                 self.reload();
                 true
             }
-            Err(e) => {
-                let err = format!("stash failed: {}", e);
+            Err(_e) => {
+                let err = format!("stash failed: {}", "session unavailable");
                 self.record_op(
                     "stash-push",
                     plan.current.clone(),
@@ -212,10 +227,10 @@ impl KagiApp {
             CheckoutPlanTarget::Commit(_) => "checkout-commit",
         };
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
-            Err(e) => {
-                let err_msg = format!("Repo open error: {}", e);
+            Err(_e) => {
+                let err_msg = format!("Repo open error: {}", "session unavailable");
                 self.record_op(
                     op_name,
                     modal.plan.current.clone(),
@@ -235,8 +250,8 @@ impl KagiApp {
         };
 
         // Preflight check.
-        if let Err(e) = repo.preflight_check(&modal.plan) {
-            let err_msg = format!("Preflight failed: {}", e);
+        if let Err(_e) = repo.preflight_check(&modal.plan) {
+            let err_msg = format!("Preflight failed: {}", "session unavailable");
             self.record_op(
                 op_name,
                 modal.plan.current.clone(),
@@ -255,12 +270,17 @@ impl KagiApp {
         }
 
         // Execute checkout (safe mode only).
-        let execute_result = match &modal.target {
-            CheckoutPlanTarget::Branch(branch) => repo.execute_checkout(branch),
-            CheckoutPlanTarget::Commit(commit_id) => repo.execute_checkout_commit(commit_id),
+        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+        let checkout_op = match &modal.target {
+            CheckoutPlanTarget::Branch(branch) => kagi::git::Operation::Checkout {
+                branch: branch.clone(),
+            },
+            CheckoutPlanTarget::Commit(commit_id) => kagi::git::Operation::CheckoutCommit {
+                id: commit_id.clone(),
+            },
         };
-        if let Err(e) = execute_result {
-            let err_msg = format!("Checkout failed: {}", e);
+        if let Err(_e) = repo.run(&checkout_op, &modal.plan) {
+            let err_msg = format!("Checkout failed: {}", "session unavailable");
             self.record_op(
                 op_name,
                 modal.plan.current.clone(),
@@ -288,8 +308,8 @@ impl KagiApp {
         // Verify: re-snapshot and confirm HEAD.
         let mut repo2 = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
-            Err(e) => {
-                klog!("verify: repo open error: {}", e);
+            Err(_e) => {
+                klog!("verify: repo open error: {}", "session unavailable");
                 self.reload();
                 return;
             }
@@ -327,8 +347,8 @@ impl KagiApp {
                     },
                 }
             }
-            Err(e) => {
-                klog!("verify: snapshot error: {}", e);
+            Err(_e) => {
+                klog!("verify: snapshot error: {}", "session unavailable");
                 modal.plan.predicted.clone()
             }
         };

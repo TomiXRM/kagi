@@ -312,7 +312,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
     // Emits `[kagi] diff: <path> hunks=N (+A -R)` (legacy compat) +
     // `[kagi] main-diff: open <path> rows=N` for headless verification.
     if std::env::var("KAGI_OPEN_FIRST_FILE").as_deref() == Ok("1") {
-        app_state.open_main_diff_commit(0);
+        app_state.open_main_diff_commit_headless(0);
     }
 
     // ── T-HT-003: headless pull plan / execute ───────────────
@@ -1699,7 +1699,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
             "[kagi] bottom-panel: open height={} tab={}",
             h_label, tab_label
         );
-        klog!("oplog-tab: {} entries", app_state.op_entries.len());
+        klog!("oplog-tab: {} entries", app_state.op_log.borrow().len());
     }
 
     // ── W5-MENU: headless command-registry state dump ─────────

@@ -5,6 +5,7 @@
 //! module can access `KagiApp` privates so no visibility was widened.
 
 #![allow(clippy::too_many_arguments)]
+use crate::ui::blocking_ops::*;
 
 use crate::ui::*;
 
@@ -36,7 +37,7 @@ impl KagiApp {
     /// Discard menu; untracked rows are (they are deleted after an ODB backup,
     /// ADR-0083).
     pub fn open_discard_modal_for_index(&mut self, index: usize) {
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
@@ -48,13 +49,12 @@ impl KagiApp {
             Some(f) => f.path.to_string_lossy().replace('\\', "/"),
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "discard: repo open error: {}",
-                    e
-                )));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from("discard: repo session unavailable"));
                 return;
             }
         };
@@ -71,6 +71,7 @@ impl KagiApp {
                     skipped: Vec::new(),
                     is_all: false,
                     error: None,
+                    confirm_armed: false,
                 });
             }
             Err(e) => {
@@ -83,18 +84,17 @@ impl KagiApp {
     /// Open the "Discard all" modal: every eligible unstaged file in one
     /// operation; untracked / conflicted files are listed as skipped.
     pub fn open_discard_all_modal(&mut self) {
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
         let (eligible, skipped) = self.discard_partition();
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "discard: repo open error: {}",
-                    e
-                )));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from("discard: repo session unavailable"));
                 return;
             }
         };
@@ -112,6 +112,7 @@ impl KagiApp {
                     skipped,
                     is_all: true,
                     error: None,
+                    confirm_armed: false,
                 });
             }
             Err(e) => {
@@ -128,6 +129,12 @@ impl KagiApp {
 
     /// Confirm the discard: run `discard_blocking` on a background thread
     /// (busy_op="discard"), then reload. Mirrors `start_pop`.
+    ///
+    /// Two-stage confirm (T-REARCH-014, mirrors `start_amend`): the first click
+    /// only *arms* the red Discard button; the second click executes. Discard is
+    /// the most destructive working-tree op (checkout -- + untracked deletion),
+    /// and the single-click execute was the biggest safety gap vs the product
+    /// thesis.
     pub fn start_discard(&mut self, cx: &mut Context<Self>) {
         let modal = match self.discard_modal().cloned() {
             Some(m) => m,
@@ -137,6 +144,18 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
+
+        // ── Two-stage confirm: first click only arms ──────────────────
+        if !modal.confirm_armed {
+            self.set_discard_modal(DiscardModal {
+                confirm_armed: true,
+                ..modal
+            });
+            klog!("discard: armed (second confirm required — destructive)");
+            cx.notify();
+            return;
+        }
+
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -154,6 +173,50 @@ impl KagiApp {
             self.clear_discard_modal();
             cx.notify();
             return;
+        }
+
+        // ADR-0104 / T-REARCH-014 cross-review fix (B3): the two-stage gate
+        // opens an unbounded window between arming (first click) and firing
+        // (second click). The repo may have changed under the user in that
+        // window (terminal checkout, sibling worktree, etc.). Re-run preflight
+        // here on the ARMED path; if HEAD moved since the plan was built,
+        // refuse and re-show the modal (disarmed) with the preflight error,
+        // rather than executing a stale plan that may discard the wrong
+        // content or back up the wrong blobs.
+        match kagi::git::Backend::open(&repo_path) {
+            Ok(repo) => {
+                if let Err(e) = repo.preflight_check(&modal.plan) {
+                    klog!("refused: discard preflight failed (stale plan) — {}", e);
+                    let err_msg = format!("Repository changed since planning: {}", e);
+                    self.record_op(
+                        "discard",
+                        modal.plan.current.clone(),
+                        OpOutcome::Refused {
+                            blockers: vec![err_msg.clone()],
+                        },
+                        &repo_path,
+                    );
+                    self.set_discard_modal(DiscardModal {
+                        plan: modal.plan.clone(),
+                        paths: modal.paths.clone(),
+                        skipped: modal.skipped.clone(),
+                        is_all: modal.is_all,
+                        error: Some(SharedString::from(err_msg)),
+                        confirm_armed: false,
+                    });
+                    cx.notify();
+                    return;
+                }
+            }
+            Err(e) => {
+                klog!("refused: discard preflight — repo open failed: {}", e);
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "discard: repo open error: {}",
+                    e
+                )));
+                cx.notify();
+                return;
+            }
         }
 
         self.busy_op = Some("discard");
@@ -203,6 +266,9 @@ impl KagiApp {
                             skipped: modal.skipped.clone(),
                             is_all: modal.is_all,
                             error: Some(SharedString::from(err_msg)),
+                            // Force re-arm after a failure: the user is
+                            // re-confirming, so require the two-stage flow again.
+                            confirm_armed: false,
                         });
                     }
                 }

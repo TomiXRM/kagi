@@ -5,6 +5,7 @@
 //! module can access `KagiApp` privates so no visibility was widened.
 
 #![allow(clippy::too_many_arguments)]
+use crate::ui::blocking_ops::*;
 
 use crate::ui::*;
 
@@ -15,7 +16,7 @@ impl KagiApp {
     /// no working-tree modification) and stores the result in
     /// `self.cherry_pick_modal`.  Emits a plan log entry.
     pub fn open_cherry_pick_modal(&mut self, commit_id: CommitId) {
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
                 klog!("open_cherry_pick_modal: no repo_path set");
@@ -23,10 +24,13 @@ impl KagiApp {
             }
         };
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("cherry-pick plan: repo open error: {}", e);
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                klog!(
+                    "cherry-pick plan: repo open error: {}",
+                    "session unavailable"
+                );
                 return;
             }
         };
@@ -45,8 +49,8 @@ impl KagiApp {
                     error: None,
                 });
             }
-            Err(e) => {
-                klog!("cherry-pick plan: error: {}", e);
+            Err(_e) => {
+                klog!("cherry-pick plan: error: {}", "session unavailable");
             }
         }
     }
@@ -154,7 +158,7 @@ impl KagiApp {
 
     /// Open the revert plan modal for commit `id`.
     pub fn open_revert_modal(&mut self, commit_id: CommitId) {
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
                 klog!("open_revert_modal: no repo_path set");
@@ -162,10 +166,10 @@ impl KagiApp {
             }
         };
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("revert plan: repo open error: {}", e);
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                klog!("revert plan: repo open error: {}", "session unavailable");
                 return;
             }
         };
@@ -184,8 +188,8 @@ impl KagiApp {
                     error: None,
                 });
             }
-            Err(e) => {
-                klog!("revert plan: error: {}", e);
+            Err(_e) => {
+                klog!("revert plan: error: {}", "session unavailable");
             }
         }
     }

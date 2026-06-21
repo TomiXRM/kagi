@@ -5,6 +5,7 @@
 //! module can access `KagiApp` privates so no visibility was widened.
 
 #![allow(clippy::too_many_arguments)]
+use crate::ui::blocking_ops::*;
 
 use crate::ui::*;
 
@@ -59,14 +60,15 @@ impl KagiApp {
             Some(m) => (m.at.clone(), m.input.clone(), m.checkout_after),
             None => return,
         };
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("replan_create_branch: repo open error: {}", e);
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                klog!("replan_create_branch: repo session unavailable");
                 return;
             }
         };
@@ -135,7 +137,7 @@ impl KagiApp {
             None => return,
         };
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
@@ -154,25 +156,14 @@ impl KagiApp {
             }
         };
 
-        // Preflight check (re-use checkout preflight: verifies HEAD unchanged).
-        if let Err(e) = repo.preflight_check(&plan) {
-            let err_msg = format!("Preflight failed: {}", e);
-            self.record_op(
-                "create-branch",
-                plan.current.clone(),
-                OpOutcome::Failed {
-                    error: err_msg.clone(),
-                },
-                &repo_path,
-            );
-            if let Some(m) = self.create_branch_modal_mut() {
-                m.error = Some(SharedString::from(err_msg));
-            }
-            return;
-        }
-
-        // Execute create-branch.
-        if let Err(e) = repo.execute_create_branch(&modal.input, &modal.at) {
+        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
+        // in one place (run() calls preflight_check as its first line — the
+        // separate preflight_check call above was redundant).
+        let op = kagi::git::Operation::CreateBranch {
+            name: modal.input.clone(),
+            at: modal.at.clone(),
+        };
+        if let Err(e) = repo.run(&op, &plan) {
             let err_msg = format!("Create branch failed: {}", e);
             self.record_op(
                 "create-branch",
@@ -195,7 +186,7 @@ impl KagiApp {
         );
 
         // Verify: confirm the branch now exists.
-        let repo2 = match kagi::git::Backend::open(&repo_path) {
+        let mut repo2 = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 klog!("verify: repo open error: {}", e);
@@ -263,22 +254,13 @@ impl KagiApp {
                 }
                 return;
             }
-            if let Err(e) = repo2.preflight_check(&checkout_plan) {
-                let err_msg = format!("Checkout preflight failed: {}", e);
-                self.record_op(
-                    "checkout",
-                    checkout_plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                );
-                if let Some(m) = self.create_branch_modal_mut() {
-                    m.error = Some(SharedString::from(err_msg));
-                }
-                return;
-            }
-            if let Err(e) = repo2.execute_checkout(&modal.input) {
+            // ADR-0104 Phase 2: route through Backend::run so preflight is
+            // enforced in one place (the separate preflight_check + execute
+            // above collapses into run()).
+            let checkout_op = kagi::git::Operation::Checkout {
+                branch: modal.input.clone(),
+            };
+            if let Err(e) = repo2.run(&checkout_op, &checkout_plan) {
                 let err_msg = format!("Checkout failed: {}", e);
                 self.record_op(
                     "checkout",
@@ -313,17 +295,17 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "branch operation: repo open error: {}",
-                    e
-                )));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    "branch operation: repo session unavailable",
+                ));
                 return;
             }
         };
@@ -463,13 +445,14 @@ impl KagiApp {
             Some(m) => (m.branch_name.clone(), m.input.clone()),
             None => return,
         };
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => return,
         };
         match repo.plan_set_upstream(&branch_name, &input) {
             Ok(plan) => {
@@ -601,13 +584,14 @@ impl KagiApp {
             .map(|(name, _)| name.clone())
             .collect();
         let validation = validate_branch_rename(&old_name, &input, &existing);
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => return,
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => return,
         };
         match repo.plan_rename_branch(&old_name, &input) {
             Ok(plan) => {
@@ -922,17 +906,17 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "checkout tracking: repo open error: {}",
-                    e
-                )));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    "checkout tracking: repo session unavailable",
+                ));
                 return;
             }
         };
@@ -1052,17 +1036,17 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "switch-to-latest: repo open error: {}",
-                    e
-                )));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    "switch-to-latest: repo session unavailable",
+                ));
                 return;
             }
         };
@@ -1178,20 +1162,20 @@ impl KagiApp {
     /// Build a delete-branch plan for `branch_name` and open the confirmation modal.
     pub fn open_delete_branch_modal(&mut self, branch_name: impl Into<String>) {
         let branch_name = branch_name.into();
-        let repo_path = match self.repo_path.clone() {
+        let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
                 klog!("open_delete_branch_modal: no repo_path set");
                 return;
             }
         };
-        let repo = match kagi::git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "delete-branch: repo open error: {}",
-                    e
-                )));
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    "delete-branch: repo session unavailable",
+                ));
                 return;
             }
         };
@@ -1248,7 +1232,7 @@ impl KagiApp {
             return;
         }
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi::git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
@@ -1269,26 +1253,14 @@ impl KagiApp {
             }
         };
 
-        if let Err(e) = repo.preflight_check(&modal.plan) {
-            let err_msg = format!("Preflight failed: {}", e);
-            self.record_op(
-                "delete-branch",
-                modal.plan.current.clone(),
-                kagi::git::oplog::OpOutcome::Failed {
-                    error: err_msg.clone(),
-                },
-                &repo_path,
-            );
-            self.set_delete_branch_modal(DeleteBranchModal {
-                branch_name: modal.branch_name.clone(),
-                plan: modal.plan.clone(),
-                error: Some(SharedString::from(err_msg)),
-            });
-            return;
-        }
-
-        match repo.execute_delete_branch(&modal.plan, &modal.branch_name) {
-            Ok(()) => {
+        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
+        // in one place (run() calls preflight_check as its first line — the
+        // separate preflight_check call above was redundant).
+        let del_op = kagi::git::Operation::DeleteBranch {
+            name: modal.branch_name.clone(),
+        };
+        match repo.run(&del_op, &modal.plan) {
+            Ok(_) => {
                 klog!("executed: delete-branch {}", modal.branch_name);
                 self.clear_delete_branch_modal();
                 let after = kagi::git::ops::StateSummary {

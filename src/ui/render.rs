@@ -536,30 +536,31 @@ impl Render for KagiApp {
         let status_footer = self.status_footer.clone();
         // W30-CONFLICT-UI: clone the Conflict Mode snapshot for render (free
         // functions in `conflict_view` render from this immutable copy).
-        let conflict = self.conflict.clone();
+        let conflict = self.conflict.mode.clone();
         // T-CONFLICT-FLOW-030: while a continued merge waits for its commit
         // message, show the normal body (commit panel) instead of the conflict
         // resolution body (ADR-0068). Conflict Mode is still active (MERGE_HEAD
         // present) but the editor is hidden behind the commit message panel.
-        let conflict_merge_pending = self.conflict_merge_commit_pending;
+        let conflict_merge_pending = self.conflict.merge_commit_pending;
         // T-CONFLICT-UI: chrome the 3-pane Conflict Editor needs from the app
         // (the editors live on `self`, not on the cloned `ConflictMode`).
         let conflict_chrome = conflict_view::EditorChrome {
             inputs: self
-                .conflict_editor_inputs
+                .conflict
+                .editor_inputs
                 .as_ref()
                 .map(|i| conflict_view::EditorInputs {
                     path: i.path.clone(),
                     result: i.result.clone(),
                 }),
-            ab_scroll: self.conflict_ab_scroll_handle.clone(),
-            result_editing: self.conflict_result_editing,
-            reset_all_armed: self.conflict_reset_all_armed,
-            ab_split: self.conflict_ab_split,
-            result_split: self.conflict_result_split,
-            selected_hunk: self.conflict_selected_hunk,
-            geom: self.conflict_geom.clone(),
-            ab_geom: self.conflict_ab_geom.clone(),
+            ab_scroll: self.conflict.ab_scroll_handle.clone(),
+            result_editing: self.conflict.result_editing,
+            reset_all_armed: self.conflict.reset_all_armed,
+            ab_split: self.conflict.ab_split,
+            result_split: self.conflict.result_split,
+            selected_hunk: self.conflict.selected_hunk,
+            geom: self.conflict.geom.clone(),
+            ab_geom: self.conflict.ab_geom.clone(),
         };
         let commit_menu_overlay = self
             .commit_menu
@@ -729,7 +730,7 @@ impl Render for KagiApp {
                         // the divider center, while flex layout assigns the ratio
                         // to the space excluding the scaled divider.
                         let cursor_x = f32::from(event.event.position.x);
-                        let (left, right) = this.conflict_ab_geom.get();
+                        let (left, right) = this.conflict.ab_geom.get();
                         if let Some(ratio) = conflict_split_ratio_from_cursor(
                             cursor_x,
                             left,
@@ -738,8 +739,8 @@ impl Render for KagiApp {
                             CONFLICT_AB_MIN,
                             CONFLICT_AB_MAX,
                         ) {
-                            if (ratio - this.conflict_ab_split).abs() > 0.001 {
-                                this.conflict_ab_split = ratio;
+                            if (ratio - this.conflict.ab_split).abs() > 0.001 {
+                                this.conflict.ab_split = ratio;
                                 cx.notify();
                             }
                         }
@@ -781,7 +782,7 @@ impl Render for KagiApp {
                         // controls live inside the A/B lists, so this measured
                         // region now matches the rendered split exactly.
                         let cursor_y = f32::from(event.event.position.y);
-                        let (top, bottom) = this.conflict_geom.get();
+                        let (top, bottom) = this.conflict.geom.get();
                         if let Some(ratio) = conflict_split_ratio_from_cursor(
                             cursor_y,
                             top,
@@ -790,8 +791,8 @@ impl Render for KagiApp {
                             CONFLICT_RESULT_MIN,
                             CONFLICT_RESULT_MAX,
                         ) {
-                            if (ratio - this.conflict_result_split).abs() > 0.001 {
-                                this.conflict_result_split = ratio;
+                            if (ratio - this.conflict.result_split).abs() > 0.001 {
+                                this.conflict.result_split = ratio;
                                 cx.notify();
                             }
                         }

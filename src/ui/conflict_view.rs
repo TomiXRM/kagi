@@ -22,6 +22,7 @@
 //! Terminology (ADR-0058): every side label comes from `side_labels` — the words
 //! "ours"/"theirs" never appear in any user-facing string.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use gpui::{
@@ -37,6 +38,7 @@ use kagi_git::conflicts::{ConflictKind, ConflictOp, ConflictStatus, SideLabels};
 use super::button_style::{apply_accent, KagiButton};
 use super::i18n::Msg;
 use super::theme::{self, theme};
+use super::ConflictEditorInputs;
 use super::KagiApp;
 
 /// T-CONFLICT-UI: the per-pane editor state for the open file.
@@ -76,8 +78,87 @@ pub struct EditorChrome {
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
 }
 
-/// In-memory Conflict Mode state held by [`KagiApp`].
+/// Consolidated Conflict-Editor view state.
 ///
+/// Previously thirteen+ flat `conflict_*` fields on the `KagiApp` god-struct;
+/// grouped here as the prep step for a future `Entity<ConflictState>` migration
+/// (ADR-0110 Phase 5 Step 5.1). All fields are app-global (not per-tab); cleared
+/// on reload / abort. Pure constructible (no `cx`) — the `editor_inputs`
+/// `InputState`s are created lazily in a `Window` context. The status-bar
+/// `conflict_count` badge and `merge_commit_ready` are intentionally left on
+/// `KagiApp` (separate concerns, not editor state).
+pub struct ConflictState {
+    /// `Some(_)` while a conflict/merge is in progress (set by
+    /// `detect_conflict_mode`). The repository is untouched until Continue /
+    /// Abort execute through the existing plan pipeline.
+    pub mode: Option<ConflictMode>,
+    /// Guard so render-time detection runs at most once per (repo_path) until a
+    /// reload / tab switch invalidates it. Holds the repo path whose conflict
+    /// state has been detected this cycle.
+    pub detected_for: Option<PathBuf>,
+    /// W32: `Some(path)` while the dedicated hunk-level Conflict Editor is open
+    /// for that conflicting file. `None` shows the Dashboard.
+    pub editing: Option<PathBuf>,
+    /// W32: last-saved resolved text per file, so a Save can log a before→after
+    /// file-content hash pair (T-035) without re-reading the working tree.
+    pub editing_before_text: HashMap<PathBuf, String>,
+    /// T-CONFLICT-UI-001/005: the three CodeEditor `InputState`s backing the
+    /// A / B / Result panes (ADR-0069). Lazily created in a `Window` context.
+    pub editor_inputs: Option<ConflictEditorInputs>,
+    /// T-CONFLICT-UX-015: whether the Result pane is in Edit mode (editable)
+    /// rather than Preview (read-only).
+    pub result_editing: bool,
+    /// T-CONFLICT-POLISH-042: armed state for the destructive "Reset all".
+    pub reset_all_armed: bool,
+    /// T-CONFLICT-UI-003: A|B pane width split ratio (fraction given to A).
+    pub ab_split: f32,
+    /// T-CONFLICT-UI-003: A·B / Result vertical split ratio (fraction to A·B).
+    pub result_split: f32,
+    /// T-CONFLICT-UI-003: measured (top, bottom) screen-px bounds of the
+    /// editor's split region, for absolute-coordinate divider dragging.
+    pub geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
+    /// T-CONFLICT-UI-003: measured (left, right) screen-px bounds of the A·B
+    /// row, for the vertical A|B divider drag.
+    pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
+    /// T-CONFLICT-FLOW-030/031 (ADR-0068): showing the merge commit panel
+    /// (every file saved + staged, MERGE_HEAD still present). Cleared on commit /
+    /// abort / reload.
+    pub merge_commit_pending: bool,
+    /// T-CONFLICT-UX-010/012: index (among conflict hunks) of the focused hunk
+    /// in the per-hunk Conflict Editor.
+    pub selected_hunk: usize,
+    /// ADR-0070: shared A/B uniform-list scroll handle for synchronized vertical
+    /// scrolling in the Conflict Editor.
+    pub ab_scroll_handle: UniformListScrollHandle,
+}
+
+impl ConflictState {
+    pub fn new() -> Self {
+        Self {
+            mode: None,
+            detected_for: None,
+            editing: None,
+            editing_before_text: HashMap::new(),
+            editor_inputs: None,
+            result_editing: false,
+            reset_all_armed: false,
+            ab_split: super::CONFLICT_AB_DEFAULT,
+            result_split: super::CONFLICT_RESULT_DEFAULT,
+            geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
+            ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
+            merge_commit_pending: false,
+            selected_hunk: 0,
+            ab_scroll_handle: UniformListScrollHandle::new(),
+        }
+    }
+}
+
+impl Default for ConflictState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Pure UI-side data: the `ConflictSession` describes the in-progress operation
 /// and its files; the `ResolutionBuffer` holds the in-memory Result drafts (the
 /// repository is untouched until Continue/Abort/Skip execute through the plan

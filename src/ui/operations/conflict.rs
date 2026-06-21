@@ -21,7 +21,7 @@ impl KagiApp {
         // Materialize the markers (needs the repo) and build the hunk model.
         if let Some(repo_path) = self.repo_path.clone() {
             if let Ok(repo) = kagi_git::Backend::open(&repo_path) {
-                if let Some(c) = self.conflict.as_mut() {
+                if let Some(c) = self.conflict.mode.as_mut() {
                     if let Some(markers) = repo.materialized_markers(&c.buffer, path) {
                         c.buffer.ensure_hunks(path, &markers);
                     }
@@ -29,18 +29,18 @@ impl KagiApp {
             }
         }
         // Keep the Dashboard selection in sync so back/forth is coherent.
-        if let Some(c) = self.conflict.as_mut() {
+        if let Some(c) = self.conflict.mode.as_mut() {
             if let Some(idx) = c.session.files.iter().position(|f| f.path == path) {
                 c.selected_file = Some(idx);
                 c.editing_file = Some(idx);
             }
         }
-        self.conflict_editing = Some(path.to_path_buf());
+        self.conflict.editing = Some(path.to_path_buf());
     }
 
     /// T-CONFLICT-UX-010/012: set the focused hunk (selected-hunk highlight).
     pub fn conflict_editor_select_hunk(&mut self, hunk_index: usize) {
-        self.conflict_selected_hunk = hunk_index;
+        self.conflict.selected_hunk = hunk_index;
     }
 
     fn conflict_editor_after_selection_change(
@@ -48,14 +48,14 @@ impl KagiApp {
         path: &std::path::Path,
         selected_hunk: Option<usize>,
     ) {
-        self.conflict_reset_all_armed = false;
+        self.conflict.reset_all_armed = false;
         if let Some(hunk) = selected_hunk {
-            self.conflict_selected_hunk = hunk;
+            self.conflict.selected_hunk = hunk;
         }
-        if let Some(i) = self.conflict_editor_inputs.as_mut() {
+        if let Some(i) = self.conflict.editor_inputs.as_mut() {
             i.content_sig = 0;
         }
-        let Some(c) = self.conflict.as_mut() else {
+        let Some(c) = self.conflict.mode.as_mut() else {
             return;
         };
         let residue = c.buffer.files_with_marker_residue();
@@ -77,7 +77,7 @@ impl KagiApp {
         side: kagi_git::resolution::SelectionSide,
         taken: bool,
     ) {
-        let Some(c) = self.conflict.as_mut() else {
+        let Some(c) = self.conflict.mode.as_mut() else {
             return;
         };
         if c.buffer.set_file_side_selection(path, side, taken) {
@@ -92,7 +92,7 @@ impl KagiApp {
         side: kagi_git::resolution::SelectionSide,
         taken: bool,
     ) {
-        let Some(c) = self.conflict.as_mut() else {
+        let Some(c) = self.conflict.mode.as_mut() else {
             return;
         };
         if c.buffer
@@ -110,7 +110,7 @@ impl KagiApp {
         line_index: usize,
         taken: bool,
     ) {
-        let Some(c) = self.conflict.as_mut() else {
+        let Some(c) = self.conflict.mode.as_mut() else {
             return;
         };
         if c.buffer
@@ -126,7 +126,7 @@ impl KagiApp {
         hunk_index: usize,
         order: kagi_git::resolution::LineOrder,
     ) {
-        let Some(c) = self.conflict.as_mut() else {
+        let Some(c) = self.conflict.mode.as_mut() else {
             return;
         };
         if c.buffer.set_hunk_line_order(path, hunk_index, order) {
@@ -140,11 +140,11 @@ impl KagiApp {
     /// by any other editor interaction (handled where those run) and on the
     /// performed reset.
     pub fn conflict_editor_reset_all_request(&mut self, path: &std::path::Path) {
-        if self.conflict_reset_all_armed {
-            self.conflict_reset_all_armed = false;
+        if self.conflict.reset_all_armed {
+            self.conflict.reset_all_armed = false;
             self.conflict_editor_reset_all(path);
         } else {
-            self.conflict_reset_all_armed = true;
+            self.conflict.reset_all_armed = true;
         }
     }
 
@@ -153,9 +153,9 @@ impl KagiApp {
     /// edits were already pulled into the buffer via `set_manual_text` during
     /// the sync pass.
     pub fn conflict_editor_toggle_result_mode(&mut self) {
-        self.conflict_result_editing = !self.conflict_result_editing;
+        self.conflict.result_editing = !self.conflict.result_editing;
         // Force the inputs to re-sync (mode is part of the content signature).
-        if let Some(i) = self.conflict_editor_inputs.as_mut() {
+        if let Some(i) = self.conflict.editor_inputs.as_mut() {
             i.content_sig = 0;
         }
     }
@@ -163,10 +163,10 @@ impl KagiApp {
     /// Reset every hunk of `path` to unresolved (toolbar "Reset all").
     pub fn conflict_editor_reset_all(&mut self, path: &std::path::Path) {
         // Force the editor inputs to re-sync after the reset.
-        if let Some(i) = self.conflict_editor_inputs.as_mut() {
+        if let Some(i) = self.conflict.editor_inputs.as_mut() {
             i.content_sig = 0;
         }
-        let Some(c) = self.conflict.as_mut() else {
+        let Some(c) = self.conflict.mode.as_mut() else {
             return;
         };
         let n = c.buffer.hunk_count(path);
@@ -196,7 +196,7 @@ impl KagiApp {
         // For MVP, prev/next reuse the Dashboard unresolved-file navigation and
         // re-open the editor on the newly selected file.
         self.conflict_nav_unresolved(dir);
-        if let Some(c) = self.conflict.as_ref() {
+        if let Some(c) = self.conflict.mode.as_ref() {
             if let Some(idx) = c.selected_file {
                 if let Some(f) = c.session.files.get(idx) {
                     let p = f.path.clone();
@@ -239,13 +239,14 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let Some(c) = self.conflict.as_ref() else {
+        let Some(c) = self.conflict.mode.as_ref() else {
             return;
         };
 
         // Before/after hashes of the file's resolved text for the oplog.
         let before_text = self
-            .conflict_editing_before_text
+            .conflict
+            .editing_before_text
             .get(path)
             .cloned()
             .unwrap_or_default();
@@ -286,14 +287,14 @@ impl KagiApp {
                 return;
             }
         };
-        let buffer = match self.conflict.as_ref() {
+        let buffer = match self.conflict.mode.as_ref() {
             Some(c) => c.buffer.clone(),
             None => return,
         };
         match repo.execute_conflict_save(&buffer, path) {
             Ok(_outcome) => {
                 // Staged → mark the file Resolved and re-evaluate the gate.
-                if let Some(c) = self.conflict.as_mut() {
+                if let Some(c) = self.conflict.mode.as_mut() {
                     let _ = c.buffer.autosave();
                     let residue = c.buffer.files_with_marker_residue();
                     if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
@@ -318,10 +319,11 @@ impl KagiApp {
                     &repo_path,
                     cx,
                 );
-                self.conflict_editing_before_text
+                self.conflict
+                    .editing_before_text
                     .insert(path.to_path_buf(), after_text);
                 // Re-detect so the staged file leaves the conflicted index set.
-                self.conflict_detected_for = None;
+                self.conflict.detected_for = None;
                 self.detect_conflict_mode();
                 self.push_toast(
                     ToastKind::Success,
@@ -353,7 +355,7 @@ impl KagiApp {
     /// Select a conflicting file (open its detail + Result preview).
     pub fn conflict_select_file(&mut self, idx: usize) {
         let mut open_path: Option<PathBuf> = None;
-        if let Some(c) = self.conflict.as_mut() {
+        if let Some(c) = self.conflict.mode.as_mut() {
             if let Some(f) = c.session.files.get(idx) {
                 c.selected_file = Some(idx);
                 // W32: activating a content conflict opens the dedicated
@@ -372,7 +374,7 @@ impl KagiApp {
     /// Move the selection to the previous (`dir < 0`) or next (`dir > 0`)
     /// **unresolved** file, wrapping around (KDiff3-style nav).
     pub fn conflict_nav_unresolved(&mut self, dir: i32) {
-        let Some(c) = self.conflict.as_mut() else {
+        let Some(c) = self.conflict.mode.as_mut() else {
             return;
         };
         let n = c.session.files.len();
@@ -410,7 +412,7 @@ impl KagiApp {
         choice: kagi_git::ResolutionChoice,
         cx: &mut Context<Self>,
     ) {
-        let Some(c) = self.conflict.as_mut() else {
+        let Some(c) = self.conflict.mode.as_mut() else {
             return;
         };
         match c.buffer.apply_choice(path, choice) {
@@ -463,7 +465,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let Some(mode) = self.conflict.clone() else {
+        let Some(mode) = self.conflict.mode.clone() else {
             return;
         };
 
@@ -543,7 +545,7 @@ impl KagiApp {
                 if let Some(panel) = self.commit_panel.as_mut() {
                     panel.commit_msg = message.clone();
                 }
-                self.conflict_merge_commit_pending = true;
+                self.conflict.merge_commit_pending = true;
             }
             kagi_git::ContinueRoute::SequencerPlan(plan) => {
                 // Confirmation modal before advancing the sequencer.
@@ -568,7 +570,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let Some(mode) = self.conflict.clone() else {
+        let Some(mode) = self.conflict.mode.clone() else {
             return;
         };
         let Some(modal) = self.conflict_continue_modal().cloned() else {
@@ -641,7 +643,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let Some(mode) = self.conflict.clone() else {
+        let Some(mode) = self.conflict.mode.clone() else {
             return;
         };
 
@@ -707,11 +709,12 @@ impl KagiApp {
     pub fn conflict_abort_request(&mut self, cx: &mut Context<Self>) {
         let armed = self
             .conflict
+            .mode
             .as_ref()
             .map(|c| c.abort_armed)
             .unwrap_or(false);
         if !armed {
-            if let Some(c) = self.conflict.as_mut() {
+            if let Some(c) = self.conflict.mode.as_mut() {
                 c.abort_armed = true;
             }
             klog!("conflict-mode: abort armed (second confirm required)");
@@ -730,7 +733,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let Some(mode) = self.conflict.clone() else {
+        let Some(mode) = self.conflict.mode.clone() else {
             return;
         };
 
@@ -796,7 +799,7 @@ impl KagiApp {
     /// configure it (we do NOT invent a default tool).  No plan needed
     /// (read-only launch); a note is recorded to the oplog footer via the toast.
     pub fn conflict_open_external_tool(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(c) = self.conflict.as_ref() else {
+        let Some(c) = self.conflict.mode.as_ref() else {
             return;
         };
         let Some(idx) = c.selected_file else { return };
@@ -859,7 +862,7 @@ impl KagiApp {
     /// Copy the selected conflict file's absolute path to the clipboard
     /// (ADR-0060 / T-052).
     pub fn conflict_copy_path(&mut self, cx: &mut Context<Self>) {
-        let Some(c) = self.conflict.as_ref() else {
+        let Some(c) = self.conflict.mode.as_ref() else {
             return;
         };
         let Some(idx) = c.selected_file else { return };
@@ -878,7 +881,7 @@ impl KagiApp {
     /// (ADR-0060 / T-052), e.g. `git merge --continue` / `git rebase --abort` /
     /// `git rebase --skip`.
     pub fn conflict_copy_git_command(&mut self, cx: &mut Context<Self>) {
-        let Some(c) = self.conflict.as_ref() else {
+        let Some(c) = self.conflict.mode.as_ref() else {
             return;
         };
         let slug = c.session.op.slug();

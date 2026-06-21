@@ -525,11 +525,8 @@ impl KagiApp {
             };
             let (msg, used_llm) = match message_gen::generate_message(&backend, &gi, &files) {
                 Ok(m) => (m, true),
-                Err(_e) => {
-                    klog!(
-                        "smart-commit: llm failed ({}) → rule-based",
-                        "session unavailable"
-                    );
+                Err(e) => {
+                    klog!("smart-commit: llm failed ({}) → rule-based", e);
                     (message_gen::rule_based(&gi, &files), false)
                 }
             };
@@ -606,11 +603,9 @@ impl KagiApp {
                 }
                 self.refresh_wip_diffstat();
             }
-            Err(_e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "stage all failed: {}",
-                    "session unavailable"
-                )));
+            Err(e) => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("stage all failed: {}", e)));
             }
         }
     }
@@ -641,11 +636,9 @@ impl KagiApp {
                 }
                 self.refresh_wip_diffstat();
             }
-            Err(_e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "unstage all failed: {}",
-                    "session unavailable"
-                )));
+            Err(e) => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("unstage all failed: {}", e)));
             }
         }
     }
@@ -670,8 +663,8 @@ impl KagiApp {
                 return;
             }
         };
-        if let Err(_e) = repo.stage_file(&path) {
-            klog!("stage_file error: {}", "session unavailable");
+        if let Err(e) = repo.stage_file(&path) {
+            klog!("stage_file error: {}", e);
         } else {
             klog!("staged: {}", path.display());
         }
@@ -705,8 +698,8 @@ impl KagiApp {
                 return;
             }
         };
-        if let Err(_e) = repo.unstage_file(&path) {
-            klog!("unstage_file error: {}", "session unavailable");
+        if let Err(e) = repo.unstage_file(&path) {
+            klog!("unstage_file error: {}", e);
         } else {
             klog!("unstaged: {}", path.display());
         }
@@ -812,8 +805,8 @@ impl KagiApp {
                     }
                 }
             }
-            Err(_e) => {
-                klog!("plan_commit error: {}", "session unavailable");
+            Err(e) => {
+                klog!("plan_commit error: {}", e);
             }
         }
     }
@@ -967,10 +960,10 @@ impl KagiApp {
         };
         let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
-            Err(_e) => {
+            Err(e) => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("Repo open error: {}", "session unavailable")),
+                    SharedString::from(format!("Repo open error: {}", e)),
                     cx,
                 );
                 return;
@@ -985,13 +978,10 @@ impl KagiApp {
         };
         let merge_plan = match repo.plan(&merge_op) {
             Ok(p) => p,
-            Err(_e) => {
+            Err(e) => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!(
-                        "Merge-commit plan failed: {}",
-                        "session unavailable"
-                    )),
+                    SharedString::from(format!("Merge-commit plan failed: {}", e)),
                     cx,
                 );
                 return;
@@ -1034,8 +1024,8 @@ impl KagiApp {
                 );
                 return;
             }
-            Err(_e) => {
-                let err_msg = format!("{}", "session unavailable");
+            Err(e) => {
+                let err_msg = format!("{}", e);
                 klog!("merge commit failed: {}", err_msg);
                 self.record_op(
                     "merge-commit",

@@ -47,8 +47,8 @@ impl KagiApp {
                     error: None,
                 });
             }
-            Err(_e) => {
-                klog!("plan: error: {}", "session unavailable");
+            Err(e) => {
+                klog!("plan: error: {}", e);
             }
         }
     }
@@ -89,8 +89,8 @@ impl KagiApp {
                     error: None,
                 });
             }
-            Err(_e) => {
-                klog!("checkout-commit plan: error: {}", "session unavailable");
+            Err(e) => {
+                klog!("checkout-commit plan: error: {}", e);
             }
         }
     }
@@ -109,12 +109,9 @@ impl KagiApp {
         };
         let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
-            Err(_e) => {
+            Err(e) => {
                 if let Some(m) = self.plan_modal_mut() {
-                    m.error = Some(SharedString::from(format!(
-                        "stash: repo open error: {}",
-                        "session unavailable"
-                    )));
+                    m.error = Some(SharedString::from(format!("stash: repo open error: {}", e)));
                 }
                 return false;
             }
@@ -122,12 +119,9 @@ impl KagiApp {
         let msg = "kagi: auto-stash before checkout";
         let plan = match repo.plan_stash_push(Some(msg), true) {
             Ok(p) => p,
-            Err(_e) => {
+            Err(e) => {
                 if let Some(m) = self.plan_modal_mut() {
-                    m.error = Some(SharedString::from(format!(
-                        "stash plan error: {}",
-                        "session unavailable"
-                    )));
+                    m.error = Some(SharedString::from(format!("stash plan error: {}", e)));
                 }
                 return false;
             }
@@ -171,8 +165,8 @@ impl KagiApp {
                 self.reload();
                 true
             }
-            Err(_e) => {
-                let err = format!("stash failed: {}", "session unavailable");
+            Err(e) => {
+                let err = format!("stash failed: {}", e);
                 self.record_op(
                     "stash-push",
                     plan.current.clone(),
@@ -229,8 +223,8 @@ impl KagiApp {
 
         let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
-            Err(_e) => {
-                let err_msg = format!("Repo open error: {}", "session unavailable");
+            Err(e) => {
+                let err_msg = format!("Repo open error: {}", e);
                 self.record_op(
                     op_name,
                     modal.plan.current.clone(),
@@ -250,8 +244,8 @@ impl KagiApp {
         };
 
         // Preflight check.
-        if let Err(_e) = repo.preflight_check(&modal.plan) {
-            let err_msg = format!("Preflight failed: {}", "session unavailable");
+        if let Err(e) = repo.preflight_check(&modal.plan) {
+            let err_msg = format!("Preflight failed: {}", e);
             self.record_op(
                 op_name,
                 modal.plan.current.clone(),
@@ -279,8 +273,8 @@ impl KagiApp {
                 id: commit_id.clone(),
             },
         };
-        if let Err(_e) = repo.run(&checkout_op, &modal.plan) {
-            let err_msg = format!("Checkout failed: {}", "session unavailable");
+        if let Err(e) = repo.run(&checkout_op, &modal.plan) {
+            let err_msg = format!("Checkout failed: {}", e);
             self.record_op(
                 op_name,
                 modal.plan.current.clone(),
@@ -308,8 +302,8 @@ impl KagiApp {
         // Verify: re-snapshot and confirm HEAD.
         let mut repo2 = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
-            Err(_e) => {
-                klog!("verify: repo open error: {}", "session unavailable");
+            Err(e) => {
+                klog!("verify: repo open error: {}", e);
                 self.reload();
                 return;
             }
@@ -347,8 +341,8 @@ impl KagiApp {
                     },
                 }
             }
-            Err(_e) => {
-                klog!("verify: snapshot error: {}", "session unavailable");
+            Err(e) => {
+                klog!("verify: snapshot error: {}", e);
                 modal.plan.predicted.clone()
             }
         };

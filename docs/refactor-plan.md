@@ -420,14 +420,20 @@ lowest-risk starts. This is the change that kills the 329-notify repaints.
 (ADR-0110): push / expire / dismiss / row-expand now re-render only their own
 subtree.
 
-**Prep done:** the six flat `sidebar_*` fields are consolidated into a single
-`sidebar: sidebar::SidebarState` field on `KagiApp` (no behaviour change) — the
-groundwork for a future `Entity<SidebarState>`. `ConflictEditor`'s scattered
-`conflict_*` fields are the next consolidation candidate (same prep before its
-Entity migration).
+**Prep done:** the flat per-panel fields are being consolidated into single
+structs ahead of the Entity move (pure field moves, no behaviour change): the six
+`sidebar_*` fields → `sidebar: sidebar::SidebarState`, and the thirteen
+`conflict_*` fields → `conflict: conflict_view::ConflictState`. Both are the
+groundwork for a future `Entity<…>` migration. (The conflict dashboard's
+information hierarchy / per-file card actions were also reworked on top of the
+consolidated state — a UX change, separate from the Entity work.)
 
 Remaining: `CommitPanel`, `FileHistoryView` (already single-struct, ready for
-Entity); `Sidebar`, `ConflictEditor` (Entity migration after state consolidation).
+Entity); `Sidebar`, `ConflictEditor` (state now consolidated — the Entity
+migration itself is the next step). Note `FileHistoryView` / `CommitPanel` /
+`Sidebar` / `ConflictEditor` interactions drive `Backend` (diff load, stage,
+checkout, resolve), so — unlike the pure-UI `Toasts` / `OpLogPanel` — their
+Entity move needs a child→parent event/callback path, not just a field hoist.
 
 ### Step 5.2 — Worker thread per RepoSession
 **Touch:** New `src/git/worker.rs` — one thread holding the `git2::Repository`,

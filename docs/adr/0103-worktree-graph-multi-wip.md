@@ -3,6 +3,9 @@
 - Status: Accepted
 - Date: 2026-06-19
 - Amends: ADR-0088 (stash graph rows)
+- Amended: 2026-06-21 — worktree glyph unified to 🌲 (was 🌳); the main repo's
+  own WIP row now carries ✏️ instead of a tree, so a worktree is visually
+  distinct from the normal working tree (user request).
 
 ## Context
 
@@ -35,9 +38,15 @@ tab-per-worktree). Two worktree-aware overlays are added on top of it:
    carries the live `+/-` diffstat; linked-worktree rows are informational
    (count only, `i18n::wip_row_other`).
 
+   Each WIP-row chip is prefixed with a glyph identifying its working tree:
+   **🌲 when the row belongs to a linked worktree** (the open repo's own row gets
+   this only when the open repo *is* a worktree — `RepoTab.is_worktree`), and
+   **✏️ for the main repo's normal branch**. This keeps a worktree visually
+   distinct from an ordinary editable working tree.
+
 2. **Multi-HEAD markers.** A branch tip checked out in a worktree other than the
-   current HEAD gets a 🌳 glyph in its badge (`build_badge_map`), matching the
-   🌳 on each WIP-row chip.
+   current HEAD gets a 🌲 glyph in its badge (`build_badge_map`), matching the
+   🌲 on the worktree WIP-row chips.
 
 The open repo's WIP row is driven by the *live* working-tree status, not by
 matching a worktree's `is_current` flag, so click-to-commit and the `+/-`
@@ -59,7 +68,7 @@ for headless coverage.
   was already opened to resolve its branch name, so the added cost is bounded.
 - A worktree opened as a tab is marked distinctly: `RepoInfo.is_worktree`
   (`repo.is_worktree()`) flows onto `RepoTab.is_worktree`, and the tab strip
-  renders worktree tabs with a 🌳 marker plus a colour accent/wash. The tab
+  renders worktree tabs with a 🌲 marker plus a colour accent/wash. The tab
   colour is the **same lane colour as that worktree's WIP row** — `apply_tab_view`
   records the worktree's rank (`RepoTab.wt_color_idx`) and the strip paints
   `lane_color(rank)`, so a worktree reads with one consistent colour across its
@@ -74,8 +83,8 @@ for headless coverage.
   main repo and a worktree (or opening one from the other's WIP row) never
   spawns a duplicate tab for the same repository — even when an existing tab was
   created from a non-canonical path (CLI/session `/tmp` vs `/private/tmp`).
-- Per-badge colour for the 🌳 markers (matching each WIP row's colour) is left
+- Per-badge colour for the 🌲 markers (matching each WIP row's colour) is left
   for later; today the colour distinction lives in the WIP rows (coloured chip,
   left colour stripe, and a colour wash across the row).
-- 🌳 relies on the platform emoji fallback (Inter has no such glyph). If a build
+- 🌲 relies on the platform emoji fallback (Inter has no such glyph). If a build
   target lacks colour-emoji fallback, swap for a monochrome worktree glyph.

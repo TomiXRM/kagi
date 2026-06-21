@@ -67,10 +67,10 @@ Colored lanes track each branch's history; ref badges and a HEAD ring mark where
 ## See every worktree at once
 
 <div align="center">
-<img src="docs/images/worktree.png" width="900" alt="Commit graph with one colored WIP row per worktree, each tinted in its own lane color with a 🌳 chip and change count, plus 🌳 markers on branches checked out in another worktree and a colored worktree tab" />
+<img src="docs/images/worktree.png" width="900" alt="Commit graph with one colored WIP row per worktree, each tinted in its own lane color with a 🌲 chip and change count, plus 🌲 markers on branches checked out in another worktree and a colored worktree tab" />
 </div>
 
-Most clients show one worktree at a time. Kagi draws **a WIP row for every worktree at once**, each tinted in its own lane color with a 🌳 chip and change count — so you can see what's uncommitted across all of them in a single glance. Branches checked out in another worktree carry a 🌳 marker in the graph. Click your current worktree's WIP row to stage and commit; click another's to **switch to that worktree** (it opens as a tab in the matching color, never a duplicate). Create new worktrees from any branch, all from the safe `plan → confirm → execute` path.
+Most clients show one worktree at a time. Kagi draws **a WIP row for every worktree at once**, each tinted in its own lane color with a 🌲 chip and change count — so you can see what's uncommitted across all of them in a single glance. The main repo's own WIP row carries an ✏️ chip instead, so a worktree is never confused with your normal working tree. Branches checked out in another worktree carry a 🌲 marker in the graph. Click your current worktree's WIP row to stage and commit; click another's to **switch to that worktree** (it opens as a tab in the matching color, never a duplicate). Create new worktrees from any branch, all from the safe `plan → confirm → execute` path.
 
 ## Inspect any commit
 

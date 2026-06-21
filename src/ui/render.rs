@@ -1850,6 +1850,7 @@ impl KagiApp {
         change_count: usize,
         diffstat: Option<WipDiffStat>,
         click: WipRowClick,
+        is_worktree: bool,
         commit_panel_open: bool,
         badge_col_w: f32,
         graph_col_w: f32,
@@ -1878,8 +1879,11 @@ impl KagiApp {
             i18n::wip_row_other(change_count)
         };
 
-        // 🌳 ties the row to its worktree HEAD marker in the graph.
-        let chip_label = SharedString::from(format!("🌳 {label}"));
+        // Glyph distinguishes the row's working tree: 🌲 for a linked worktree
+        // (ties to its 🌲 HEAD badge in the graph), ✏️ for the main repo's
+        // normal branch (just an editable working tree, not a worktree).
+        let glyph = if is_worktree { "🌲" } else { "✏️" };
+        let chip_label = SharedString::from(format!("{glyph} {label}"));
 
         let mut row = div()
             .id(SharedString::from(format!("wip-row-{label}")))
@@ -1917,7 +1921,7 @@ impl KagiApp {
         row = row.hover(|s| s.bg(rgb(theme().selected))).cursor_pointer();
 
         row
-            // Badges column: worktree-coloured chip carrying a 🌳 + the branch
+            // Badges column: worktree-coloured chip carrying the glyph + the branch
             // name, left-aligned like the commit-row badges.
             .child(
                 div()
@@ -2065,8 +2069,18 @@ impl KagiApp {
         // gather plain params first (cloning out of `self.active_view`), then map
         // to elements via `render_wip_row`.
         let wip_rows: Vec<gpui::AnyElement> = {
-            let live_total =
-                self.active_view.status_summary.staged + self.active_view.status_summary.unstaged;
+            // Count every dirty kind so the row's "N changes" matches the
+            // `is_dirty` gate above — otherwise an untracked-only (or
+            // conflict-only) tree renders the row with a misleading "0 changes".
+            let live_total = self.active_view.status_summary.wip_change_count();
+            // Whether the *open* repo is itself a linked worktree (vs the main
+            // working tree). Drives the open-repo WIP row's glyph: 🌲 worktree,
+            // ✏️ normal branch.
+            let open_is_worktree = self
+                .tabs
+                .get(self.active_tab)
+                .map(|t| t.is_worktree)
+                .unwrap_or(false);
             let worktrees = &self.active_view.worktrees;
             let cur_idx = worktrees.iter().position(|w| w.is_current);
             let mut params: Vec<(
@@ -2075,6 +2089,7 @@ impl KagiApp {
                 usize,
                 Option<WipDiffStat>,
                 WipRowClick,
+                bool, // is_worktree → 🌲 vs ✏️
             )> = Vec::new();
 
             // Open-repo row: ALWAYS driven by the live working-tree status (kept
@@ -2100,6 +2115,7 @@ impl KagiApp {
                     live_total,
                     wip_diffstat,
                     WipRowClick::CommitPanel,
+                    open_is_worktree,
                 ));
             }
 
@@ -2121,18 +2137,20 @@ impl KagiApp {
                     wip.total(),
                     None,
                     WipRowClick::OpenWorktree(wt.path.clone()),
+                    true, // linked-worktree rows are always worktrees → 🌲
                 ));
             }
 
             params
                 .into_iter()
-                .map(|(color, label, count, ds, click)| {
+                .map(|(color, label, count, ds, click, is_worktree)| {
                     self.render_wip_row(
                         color,
                         label,
                         count,
                         ds,
                         click,
+                        is_worktree,
                         commit_panel_open,
                         badge_col_w,
                         graph_col_w,

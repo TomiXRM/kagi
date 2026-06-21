@@ -40,7 +40,7 @@ pub struct RepoTab {
     /// `Some` for a remote read-only repository opened over SSH; `None` for a
     /// normal local repository.
     pub remote: Option<super::RemoteRepoView>,
-    /// True when this tab is a linked git worktree (shown with a 🌳 marker and a
+    /// True when this tab is a linked git worktree (shown with a 🌲 marker and a
     /// distinct tab colour so it's not mistaken for the main repository).
     pub is_worktree: bool,
     /// Lane-colour index for a worktree tab, matching that worktree's WIP-row
@@ -764,12 +764,12 @@ impl KagiApp {
 
             // chars()-based truncation is handled by `.truncate()` on the label
             // div (the byte-slice approach panics on multi-byte names). Remote
-            // tabs (ADR-0089) get a ☁ marker; worktree tabs get a 🌳 marker so
+            // tabs (ADR-0089) get a ☁ marker; worktree tabs get a 🌲 marker so
             // they're distinct from the main repository.
             let label = SharedString::from(if tab.remote.is_some() {
                 format!("\u{2601} {}", tab.name) // ☁ name
             } else if is_wt {
-                format!("\u{1f333} {}", tab.name) // 🌳 name
+                format!("\u{1f332} {}", tab.name) // 🌲 name
             } else {
                 tab.name.clone()
             });

@@ -153,6 +153,9 @@ pub struct CommitRow {
     pub author: SharedString,
     /// Author email — used by the avatar helper to derive a stable colour.
     pub author_email: String,
+    /// Author commit time (Unix epoch secs) — used to window the Activity
+    /// ranking / line-stat pass by granularity.
+    pub author_time: i64,
     /// Relative date string, e.g. `"3d ago"`, `"2y ago"`.
     pub date: SharedString,
     /// Ref badges for this commit, if any.
@@ -363,6 +366,7 @@ fn commit_to_row(
 
     let author = SharedString::from(c.author.name.clone());
     let author_email = c.author.email.clone();
+    let author_time = c.author.time;
     let date = SharedString::from(relative_time(c.author.time, now_secs));
     let badges = badge_map.get(&c.id).cloned().unwrap_or_default();
 
@@ -372,6 +376,7 @@ fn commit_to_row(
         summary,
         author,
         author_email,
+        author_time,
         date,
         badges,
         lane,

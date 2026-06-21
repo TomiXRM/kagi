@@ -2,12 +2,13 @@
 //!
 //! Buckets a commit history into per-day / per-week / per-month counts (total
 //! commits and merge commits) for the bottom-panel "Activity" line chart, and
-//! ranks contributors. Line-stat fields (`additions`/`deletions`) are reserved
-//! here but filled by the git backend (a per-commit diff pass), since the pure
-//! domain has no access to file contents.
+//! ranks contributors **within each granularity's visible window** (so toggling
+//! Day/Week/Month re-scopes the ranking too, and the line-stat diff pass only
+//! has to look at the windowed commits). Line-stat fields
+//! (`additions`/`deletions`) are reserved here but filled by the git backend.
 //!
 //! All timestamps are `author.time` (Unix epoch seconds, UTC). Date maths uses
-//! Howard Hinnant's civil-from-days algorithm so we stay dependency-free.
+//! Howard Hinnant's civil/days algorithms so we stay dependency-free.
 
 use crate::commit::Commit;
 use std::collections::BTreeMap;
@@ -49,26 +50,28 @@ pub struct Contributor {
     pub email: String,
     pub commits: u32,
     pub merges: u32,
-    /// Added lines across this author's commits. Filled by the git backend
-    /// (0 from pure aggregation).
+    /// Added lines across this author's windowed commits. Filled by the git
+    /// backend (0 from pure aggregation).
     pub additions: u64,
-    /// Deleted lines across this author's commits. Filled by the git backend.
+    /// Deleted lines across this author's windowed commits.
     pub deletions: u64,
 }
 
 /// Aggregated activity for one repository snapshot.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ActivityData {
-    /// Per-day buckets (most recent [`DAY_BUCKETS`], chronological).
     pub day: Vec<ActivityBucket>,
-    /// Per-week buckets (Monday-aligned, most recent [`WEEK_BUCKETS`]).
     pub week: Vec<ActivityBucket>,
-    /// Per-month buckets (most recent [`MONTH_BUCKETS`]).
     pub month: Vec<ActivityBucket>,
-    /// Contributors sorted by commit count desc (UI shows the top N).
-    pub contributors: Vec<Contributor>,
-    pub total_commits: u32,
-    pub total_merges: u32,
+    /// Contributors scoped to the Day window (sorted by commit count desc).
+    pub day_contributors: Vec<Contributor>,
+    pub week_contributors: Vec<Contributor>,
+    pub month_contributors: Vec<Contributor>,
+    /// Window start (epoch secs): a commit with `author.time >= cutoff` is in
+    /// the corresponding granularity's window. `i64::MAX` when empty.
+    pub day_cutoff: i64,
+    pub week_cutoff: i64,
+    pub month_cutoff: i64,
 }
 
 impl ActivityData {
@@ -80,9 +83,35 @@ impl ActivityData {
             Granularity::Month => &self.month,
         }
     }
+
+    /// The contributor ranking for a given [`Granularity`] (windowed).
+    pub fn contributors(&self, g: Granularity) -> &[Contributor] {
+        match g {
+            Granularity::Day => &self.day_contributors,
+            Granularity::Week => &self.week_contributors,
+            Granularity::Month => &self.month_contributors,
+        }
+    }
+
+    /// Window start (epoch secs) for a given [`Granularity`].
+    pub fn cutoff(&self, g: Granularity) -> i64 {
+        match g {
+            Granularity::Day => self.day_cutoff,
+            Granularity::Week => self.week_cutoff,
+            Granularity::Month => self.month_cutoff,
+        }
+    }
+
+    /// Total (commits, merges) shown in the chart window for a granularity.
+    pub fn window_totals(&self, g: Granularity) -> (u32, u32) {
+        self.series(g)
+            .iter()
+            .fold((0u32, 0u32), |(c, m), b| (c + b.commits, m + b.merges))
+    }
 }
 
-/// How many trailing buckets each granularity keeps (chart stays readable).
+/// How many trailing buckets each granularity keeps (chart stays readable and
+/// the line-stat window stays cheap to diff).
 pub const DAY_BUCKETS: usize = 60;
 pub const WEEK_BUCKETS: usize = 52;
 pub const MONTH_BUCKETS: usize = 24;
@@ -91,26 +120,15 @@ const SECS_PER_DAY: i64 = 86_400;
 
 /// Aggregate a commit slice into [`ActivityData`].
 pub fn aggregate(commits: &[Commit]) -> ActivityData {
-    // Per-bucket (key -> (commits, merges)) maps, ordered by key.
+    // Pass 1: per-bucket (key -> (commits, merges)) maps, ordered by key.
     let mut day: BTreeMap<i64, (u32, u32)> = BTreeMap::new();
     let mut week: BTreeMap<i64, (u32, u32)> = BTreeMap::new();
     let mut month: BTreeMap<i64, (u32, u32)> = BTreeMap::new();
-    // email -> contributor aggregate.
-    let mut authors: BTreeMap<String, Contributor> = BTreeMap::new();
-
-    let mut total_commits: u32 = 0;
-    let mut total_merges: u32 = 0;
 
     for c in commits {
         let is_merge = c.parents.len() >= 2;
-        total_commits += 1;
-        if is_merge {
-            total_merges += 1;
-        }
-
         let day_idx = c.author.time.div_euclid(SECS_PER_DAY);
-        // Monday-aligned week index (epoch day 0 = Thursday → +3).
-        let week_idx = (day_idx + 3).div_euclid(7);
+        let week_idx = (day_idx + 3).div_euclid(7); // Monday-aligned
         let (y, m, _d) = civil_from_days(day_idx);
         let month_idx = y * 12 + (m as i64 - 1);
 
@@ -125,8 +143,45 @@ pub fn aggregate(commits: &[Commit]) -> ActivityData {
                 e.1 += 1;
             }
         }
+    }
 
-        let entry = authors
+    // Window cutoffs (epoch secs) derived from the trailing-N bucket start.
+    let day_cutoff = window_start_key(&day, DAY_BUCKETS)
+        .map(|k| k * SECS_PER_DAY)
+        .unwrap_or(i64::MAX);
+    let week_cutoff = window_start_key(&week, WEEK_BUCKETS)
+        .map(|k| (k * 7 - 3) * SECS_PER_DAY)
+        .unwrap_or(i64::MAX);
+    let month_cutoff = window_start_key(&month, MONTH_BUCKETS)
+        .map(|k| {
+            let y = k.div_euclid(12);
+            let m = (k.rem_euclid(12) + 1) as u32;
+            days_from_civil(y, m, 1) * SECS_PER_DAY
+        })
+        .unwrap_or(i64::MAX);
+
+    ActivityData {
+        day: build_series(&day, DAY_BUCKETS, |k| label_day(k)),
+        week: build_series(&week, WEEK_BUCKETS, |k| label_day(k * 7 - 3)),
+        month: build_series(&month, MONTH_BUCKETS, label_month),
+        day_contributors: rank_window(commits, day_cutoff),
+        week_contributors: rank_window(commits, week_cutoff),
+        month_contributors: rank_window(commits, month_cutoff),
+        day_cutoff,
+        week_cutoff,
+        month_cutoff,
+    }
+}
+
+/// Rank contributors over commits with `author.time >= cutoff`.
+fn rank_window(commits: &[Commit], cutoff: i64) -> Vec<Contributor> {
+    let mut authors: BTreeMap<String, Contributor> = BTreeMap::new();
+    for c in commits {
+        if c.author.time < cutoff {
+            continue;
+        }
+        let is_merge = c.parents.len() >= 2;
+        let e = authors
             .entry(c.author.email.clone())
             .or_insert_with(|| Contributor {
                 name: c.author.name.clone(),
@@ -136,28 +191,27 @@ pub fn aggregate(commits: &[Commit]) -> ActivityData {
                 additions: 0,
                 deletions: 0,
             });
-        entry.commits += 1;
+        e.commits += 1;
         if is_merge {
-            entry.merges += 1;
+            e.merges += 1;
         }
     }
-
-    let mut contributors: Vec<Contributor> = authors.into_values().collect();
-    contributors.sort_by(|a, b| {
+    let mut v: Vec<Contributor> = authors.into_values().collect();
+    v.sort_by(|a, b| {
         b.commits
             .cmp(&a.commits)
             .then(b.merges.cmp(&a.merges))
             .then(a.name.cmp(&b.name))
     });
+    v
+}
 
-    ActivityData {
-        day: build_series(&day, DAY_BUCKETS, |k| label_day(k)),
-        week: build_series(&week, WEEK_BUCKETS, |k| label_day(k * 7 - 3)),
-        month: build_series(&month, MONTH_BUCKETS, label_month),
-        contributors,
-        total_commits,
-        total_merges,
-    }
+/// The key of the first bucket shown in the trailing-`n` window (clamped to the
+/// available range), or `None` when there are no commits.
+fn window_start_key(counts: &BTreeMap<i64, (u32, u32)>, n: usize) -> Option<i64> {
+    let min = *counts.keys().next()?;
+    let max = *counts.keys().next_back()?;
+    Some((max - (n as i64 - 1)).max(min))
 }
 
 /// Take the most recent `n` buckets (clamped to the available range), filling
@@ -167,10 +221,10 @@ fn build_series(
     n: usize,
     label: impl Fn(i64) -> String,
 ) -> Vec<ActivityBucket> {
-    let (Some(&min_key), Some(&max_key)) = (counts.keys().next(), counts.keys().next_back()) else {
+    let Some(start) = window_start_key(counts, n) else {
         return Vec::new();
     };
-    let start = (max_key - (n as i64 - 1)).max(min_key);
+    let max_key = *counts.keys().next_back().unwrap();
     (start..=max_key)
         .map(|k| {
             let (commits, merges) = counts.get(&k).copied().unwrap_or((0, 0));
@@ -196,8 +250,7 @@ fn label_month(month_key: i64) -> String {
     format!("{:04}-{:02}", y, m)
 }
 
-/// Howard Hinnant's `civil_from_days`: convert days-since-epoch to
-/// `(year, month, day)` (proleptic Gregorian, UTC). Pure integer maths.
+/// Howard Hinnant's `civil_from_days`: days-since-epoch → `(year, month, day)`.
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
@@ -209,6 +262,17 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
     (y + if m <= 2 { 1 } else { 0 }, m, d)
+}
+
+/// Inverse of [`civil_from_days`]: `(year, month, day)` → days-since-epoch.
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400; // [0, 399]
+    let mp = if m > 2 { m - 3 } else { m + 9 } as i64; // [0, 11]
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    era * 146_097 + doe - 719_468
 }
 
 // ────────────────────────────────────────────────────────────
@@ -239,36 +303,36 @@ mod tests {
         }
     }
 
-    // 2021-01-01 00:00:00 UTC = 1609459200; that day index:
     const D_2021_01_01: i64 = 1_609_459_200;
 
     #[test]
     fn empty_input() {
         let a = aggregate(&[]);
         assert!(a.day.is_empty() && a.week.is_empty() && a.month.is_empty());
-        assert!(a.contributors.is_empty());
-        assert_eq!(a.total_commits, 0);
-        assert_eq!(a.total_merges, 0);
+        assert!(a.contributors(Granularity::Week).is_empty());
+        assert_eq!(a.window_totals(Granularity::Day), (0, 0));
     }
 
     #[test]
-    fn civil_from_days_known_dates() {
+    fn civil_roundtrip() {
         assert_eq!(civil_from_days(0), (1970, 1, 1));
-        assert_eq!(civil_from_days(D_2021_01_01 / SECS_PER_DAY), (2021, 1, 1));
+        assert_eq!(days_from_civil(1970, 1, 1), 0);
+        let d = D_2021_01_01 / SECS_PER_DAY;
+        let (y, m, day) = civil_from_days(d);
+        assert_eq!((y, m, day), (2021, 1, 1));
+        assert_eq!(days_from_civil(y, m, day), d);
     }
 
     #[test]
     fn counts_commits_and_merges_per_day() {
         let t = D_2021_01_01;
         let commits = vec![
-            commit(t, 1, "A", "a@x"),                // normal
-            commit(t + 100, 2, "A", "a@x"),          // merge, same day
-            commit(t + SECS_PER_DAY, 1, "B", "b@x"), // next day
+            commit(t, 1, "A", "a@x"),
+            commit(t + 100, 2, "A", "a@x"),
+            commit(t + SECS_PER_DAY, 1, "B", "b@x"),
         ];
         let a = aggregate(&commits);
-        assert_eq!(a.total_commits, 3);
-        assert_eq!(a.total_merges, 1);
-        // Two contiguous days.
+        assert_eq!(a.window_totals(Granularity::Day), (3, 1));
         assert_eq!(a.day.len(), 2);
         assert_eq!((a.day[0].commits, a.day[0].merges), (2, 1));
         assert_eq!((a.day[1].commits, a.day[1].merges), (1, 0));
@@ -277,7 +341,6 @@ mod tests {
     #[test]
     fn fills_gaps_between_days() {
         let t = D_2021_01_01;
-        // day 0 and day 3 (gap of 2 empty days between).
         let commits = vec![
             commit(t, 1, "A", "a@x"),
             commit(t + 3 * SECS_PER_DAY, 1, "A", "a@x"),
@@ -291,27 +354,25 @@ mod tests {
     }
 
     #[test]
-    fn contributor_ranking_by_commits_then_merges() {
-        let t = D_2021_01_01;
+    fn contributor_ranking_windowed_by_granularity() {
+        // Two commits long ago (outside the 60-day window) + recent ones.
+        let recent = D_2021_01_01;
+        let old = recent - 200 * SECS_PER_DAY; // ~200 days earlier
         let commits = vec![
-            commit(t, 1, "Alice", "a@x"),
-            commit(t, 1, "Alice", "a@x"),
-            commit(t, 2, "Alice", "a@x"), // alice: 3 commits, 1 merge
-            commit(t, 1, "Bob", "b@x"),
-            commit(t, 2, "Bob", "b@x"), // bob: 2 commits, 1 merge
+            commit(old, 1, "Old", "old@x"),
+            commit(recent, 1, "Alice", "a@x"),
+            commit(recent, 2, "Alice", "a@x"),
+            commit(recent, 1, "Bob", "b@x"),
         ];
         let a = aggregate(&commits);
-        assert_eq!(a.contributors.len(), 2);
-        assert_eq!(a.contributors[0].email, "a@x");
-        assert_eq!(
-            (a.contributors[0].commits, a.contributors[0].merges),
-            (3, 1)
-        );
-        assert_eq!(a.contributors[1].email, "b@x");
-        assert_eq!(
-            (a.contributors[1].commits, a.contributors[1].merges),
-            (2, 1)
-        );
+        // Day window (60d) excludes the old commit.
+        let day = a.contributors(Granularity::Day);
+        assert!(!day.iter().any(|c| c.email == "old@x"));
+        assert_eq!(day[0].email, "a@x");
+        assert_eq!((day[0].commits, day[0].merges), (2, 1));
+        // Month window (24mo) includes the old commit.
+        let month = a.contributors(Granularity::Month);
+        assert!(month.iter().any(|c| c.email == "old@x"));
     }
 
     #[test]

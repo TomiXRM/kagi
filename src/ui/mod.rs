@@ -1861,11 +1861,14 @@ impl KagiApp {
     fn activity_stats_target_key(&self) -> Option<String> {
         let path = self.repo_path.as_ref()?;
         let newest = self.active_view.rows.first()?;
+        // Granularity is part of the key: each window is computed/cached
+        // separately, so toggling Day/Week/Month re-scopes the line stats too.
         Some(format!(
-            "{}|{}|{}",
+            "{}|{}|{}|{:?}",
             path.display(),
             newest.id.0,
-            self.active_view.rows.len()
+            self.active_view.rows.len(),
+            self.activity_granularity,
         ))
     }
 
@@ -1883,11 +1886,18 @@ impl KagiApp {
         let Some(path) = self.repo_path.clone() else {
             return;
         };
-        // (sha, author_email, is_merge) per commit — all owned/Send.
+        // Only diff the commits inside the current granularity's window — this is
+        // what keeps the pass fast (Day = ~60 days, not the whole 10k history).
+        // Hard-capped as a safety net for very busy Month windows; rows are
+        // newest-first so the cap keeps the most recent commits.
+        const MAX_LINE_STAT_COMMITS: usize = 4000;
+        let cutoff = self.active_view.activity.cutoff(self.activity_granularity);
         let commits: Vec<(String, String, bool)> = self
             .active_view
             .rows
             .iter()
+            .filter(|r| r.author_time >= cutoff)
+            .take(MAX_LINE_STAT_COMMITS)
             .map(|r| (r.id.0.clone(), r.author_email.clone(), r.is_merge))
             .collect();
         if commits.is_empty() {

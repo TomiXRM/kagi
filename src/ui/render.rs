@@ -2670,15 +2670,20 @@ impl KagiApp {
                 .child(SharedString::from(g.label()))
         };
 
+        // Legend entry: a short line swatch (matching the chart strokes) + text.
         let legend = |color: u32, text: String| {
             div()
                 .flex()
                 .flex_row()
                 .items_center()
                 .gap_1()
-                .child(div().w(px(8.)).h(px(8.)).rounded_full().bg(rgb(color)))
+                .child(div().w(px(16.)).h(px(3.)).rounded_full().bg(rgb(color)))
                 .child(SharedString::from(text))
         };
+
+        // Window totals + ranking are scoped to the selected granularity.
+        let (win_commits, win_merges) = activity.window_totals(gran);
+        let contribs = activity.contributors(gran);
 
         let header = div()
             .flex()
@@ -2706,11 +2711,11 @@ impl KagiApp {
                     .text_color(rgb(theme().text_sub))
                     .child(legend(
                         theme().color_branch,
-                        format!("{} commits", activity.total_commits),
+                        format!("{win_commits} commits"),
                     ))
                     .child(legend(
                         theme().color_warning,
-                        format!("{} merges", activity.total_merges),
+                        format!("{win_merges} merges"),
                     )),
             );
 
@@ -2725,32 +2730,110 @@ impl KagiApp {
                 .child(SharedString::from("No commit activity"))
                 .into_any_element()
         } else {
+            let max_c = buckets.iter().map(|b| b.commits).max().unwrap_or(0);
+            let first_label = buckets.first().map(|b| b.label.clone()).unwrap_or_default();
+            let last_label = buckets.last().map(|b| b.label.clone()).unwrap_or_default();
+            let tick = |t: String| {
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(t))
+            };
+            let axis_w = theme::scaled_px(30.);
             div()
                 .flex_1()
                 .min_w(px(0.))
                 .min_h(px(0.))
-                .child(activity_view::activity_chart(buckets).size_full())
+                .flex()
+                .flex_col()
+                .child(
+                    // Plot row: y-axis tick gutter (max … 0) + the canvas.
+                    div()
+                        .flex_1()
+                        .min_h(px(0.))
+                        .flex()
+                        .flex_row()
+                        .child(
+                            div()
+                                .w(axis_w)
+                                .flex_shrink_0()
+                                .flex()
+                                .flex_col()
+                                .justify_between()
+                                .items_end()
+                                .pr_1()
+                                .py(theme::scaled_px(8.))
+                                .child(tick(max_c.to_string()))
+                                .child(tick("0".into())),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .child(activity_view::activity_chart(buckets).size_full()),
+                        ),
+                )
+                .child(
+                    // X-axis labels under the canvas (first … last bucket).
+                    div()
+                        .flex()
+                        .flex_row()
+                        .child(div().w(axis_w).flex_shrink_0())
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .flex()
+                                .flex_row()
+                                .justify_between()
+                                .child(tick(first_label))
+                                .child(tick(last_label)),
+                        ),
+                )
                 .into_any_element()
         };
 
-        let max_commits = activity
-            .contributors
-            .first()
-            .map(|c| c.commits)
-            .unwrap_or(0);
-        let mut ranking = div()
+        let max_commits = contribs.first().map(|c| c.commits).unwrap_or(0);
+        // Scrollable rows so the ranking stays usable when the bottom panel is
+        // short.
+        let mut rows_el = div()
+            .id("activity-ranking-scroll")
+            .flex_1()
+            .min_h(px(0.))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .gap_1();
+        if contribs.is_empty() {
+            rows_el = rows_el.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from("—")),
+            );
+        } else {
+            for (i, c) in contribs.iter().take(50).enumerate() {
+                let line = have_stats
+                    .then(|| self.activity_line_stats.get(&c.email).copied())
+                    .flatten();
+                rows_el =
+                    rows_el.child(activity_view::contributor_row(i + 1, c, max_commits, line));
+            }
+        }
+        let ranking = div()
             .w(theme::scaled_px(320.))
             .flex_shrink_0()
+            .min_h(px(0.))
             .flex()
             .flex_col()
             .gap_1()
-            .overflow_hidden()
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
                     .gap_2()
+                    .flex_shrink_0()
                     .child(
                         div()
                             .text_sm()
@@ -2766,25 +2849,8 @@ impl KagiApp {
                                 .child(SharedString::from("calculating diffs…")),
                         )
                     }),
-            );
-        if activity.contributors.is_empty() {
-            ranking = ranking.child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from("—")),
-            );
-        } else {
-            for (i, c) in activity.contributors.iter().take(5).enumerate() {
-                // Per-author (additions, deletions), once the background pass has
-                // computed them for the current commit set.
-                let line = have_stats
-                    .then(|| self.activity_line_stats.get(&c.email).copied())
-                    .flatten();
-                ranking =
-                    ranking.child(activity_view::contributor_row(i + 1, c, max_commits, line));
-            }
-        }
+            )
+            .child(rows_el);
 
         div()
             .flex_1()

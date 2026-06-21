@@ -11,7 +11,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{
+use kagi_git::{
     collect_staged_diff, collect_staged_files, generate_message, rule_based, ChangeKind, GenError,
     GenInput, Lang, MessageBackend, Style,
 };

@@ -9,7 +9,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{
+use kagi_git::{
     ops::{execute_revert, plan_revert, preflight_check},
     CommitId,
 };

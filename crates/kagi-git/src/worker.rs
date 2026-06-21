@@ -171,7 +171,7 @@ mod tests {
         let backend = session.backend();
         let head = backend.head_state().expect("head");
         let at = match &head {
-            crate::git::Head::Attached { target, .. } => crate::git::CommitId(target.clone()),
+            crate::Head::Attached { target, .. } => crate::CommitId(target.clone()),
             _ => panic!("expected attached HEAD"),
         };
 
@@ -199,7 +199,7 @@ mod tests {
         let backend = session.backend();
         let head = backend.head_state().expect("head");
         let at = match &head {
-            crate::git::Head::Attached { target, .. } => crate::git::CommitId(target.clone()),
+            crate::Head::Attached { target, .. } => crate::CommitId(target.clone()),
             _ => panic!("expected attached HEAD"),
         };
 

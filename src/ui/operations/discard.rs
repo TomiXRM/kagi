@@ -183,7 +183,7 @@ impl KagiApp {
         // refuse and re-show the modal (disarmed) with the preflight error,
         // rather than executing a stale plan that may discard the wrong
         // content or back up the wrong blobs.
-        match kagi::git::Backend::open(&repo_path) {
+        match kagi_git::Backend::open(&repo_path) {
             Ok(repo) => {
                 if let Err(e) = repo.preflight_check(&modal.plan) {
                     klog!("refused: discard preflight failed (stale plan) — {}", e);

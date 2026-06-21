@@ -26,7 +26,7 @@ use gpui::{
 };
 use gpui_component::tooltip::Tooltip;
 
-use kagi::git::{bar_segments, FileDiffStat};
+use kagi_git::{bar_segments, FileDiffStat};
 
 use super::theme::{self, theme};
 

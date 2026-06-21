@@ -13,8 +13,8 @@ use std::process::Command;
 
 use tempfile::TempDir;
 
-use kagi::git::ops::MergeKind;
-use kagi::git::Backend;
+use kagi_git::ops::MergeKind;
+use kagi_git::Backend;
 
 // ── Validation gate (a copy of the action-layer rule under test) ──
 //

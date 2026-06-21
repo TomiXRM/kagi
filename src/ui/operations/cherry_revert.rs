@@ -123,7 +123,7 @@ impl KagiApp {
                             (history_before.clone(), app.head_branch_and_sha())
                         {
                             app.record_history(
-                                kagi::git::OperationKind::CherryPick,
+                                kagi_git::OperationKind::CherryPick,
                                 &branch,
                                 before,
                                 after_sha,
@@ -262,7 +262,7 @@ impl KagiApp {
                             (history_before.clone(), app.head_branch_and_sha())
                         {
                             app.record_history(
-                                kagi::git::OperationKind::Revert,
+                                kagi_git::OperationKind::Revert,
                                 &branch,
                                 before,
                                 after_sha,

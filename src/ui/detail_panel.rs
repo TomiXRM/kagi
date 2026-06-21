@@ -9,7 +9,7 @@
 
 use gpui::SharedString;
 
-use kagi::git::{Commit, RepoSnapshot};
+use kagi_git::{Commit, RepoSnapshot};
 
 // ──────────────────────────────────────────────────────────────
 // CommitDetail — one entry in the pre-built Vec
@@ -230,7 +230,7 @@ mod tests {
     #[test]
     fn no_zwsp_in_author_line() {
         // Build a fake Commit and verify no ZWSP appears in author_line.
-        use kagi::git::{CommitId, Signature};
+        use kagi_git::{CommitId, Signature};
         let c = Commit {
             id: CommitId("a".repeat(40)),
             summary: "fix: something".to_string(),
@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn message_preserves_newlines() {
-        use kagi::git::{CommitId, Signature};
+        use kagi_git::{CommitId, Signature};
         let msg = "subject line\n\nbody paragraph\n\n- item 1\n- item 2";
         let c = Commit {
             id: CommitId("b".repeat(40)),

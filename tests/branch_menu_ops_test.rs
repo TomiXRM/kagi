@@ -6,12 +6,12 @@ use std::process::Command;
 use git2::{BranchType, Repository};
 use tempfile::TempDir;
 
-use kagi::git::ops::{
+use kagi_git::ops::{
     default_tracking_branch_name, execute_checkout_tracking_branch, execute_merge_into_conflict,
     execute_switch_to_latest, plan_checkout_tracking_branch, plan_merge_branch,
     plan_switch_to_latest, MergeKind,
 };
-use kagi::git::{
+use kagi_git::{
     detect_conflict_session, execute_conflict_abort, plan_conflict_abort, ResolutionBuffer,
 };
 

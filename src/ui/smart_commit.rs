@@ -19,7 +19,7 @@
 //!     models force a choice.  The chosen model is persisted to `settings.json`.
 //!   * `KAGI_OFFLINE=1` disables detection and generation entirely.
 
-use kagi::git::message_gen::{self, CliProvider, Lang};
+use kagi_git::message_gen::{self, CliProvider, Lang};
 
 use super::settings;
 

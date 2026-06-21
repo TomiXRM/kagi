@@ -488,7 +488,7 @@ pub fn plan_amend(
     // Only meaningful when staged content is being folded in; message-only
     // amends keep the old tree, so there is nothing new to scan.
     if mode.includes_staged() {
-        let (cl_blockers, cl_warnings) = crate::git::checklist::checklist(repo, &status)?;
+        let (cl_blockers, cl_warnings) = crate::checklist::checklist(repo, &status)?;
         blockers.extend(cl_blockers);
         warnings.extend(cl_warnings);
     }

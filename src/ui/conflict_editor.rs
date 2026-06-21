@@ -44,7 +44,7 @@ use gpui_component::input::Input;
 use gpui_component::scroll::Scrollbar;
 use gpui_component::Sizable as _;
 
-use kagi::git::resolution::{LineOrder, Region, SelectionSide, TriState};
+use kagi_git::resolution::{LineOrder, Region, SelectionSide, TriState};
 
 use super::button_style::KagiButton;
 use super::conflict_view::ConflictMode;
@@ -422,7 +422,7 @@ fn side_file_checkbox(
     )
 }
 
-fn build_side_rows(model: &kagi::git::resolution::HunkModel, side: SelectionSide) -> Vec<SideRow> {
+fn build_side_rows(model: &kagi_git::resolution::HunkModel, side: SelectionSide) -> Vec<SideRow> {
     let mut rows = Vec::new();
     let mut hunk_index = 0usize;
     let mut line_no = 1usize;
@@ -445,9 +445,7 @@ fn build_side_rows(model: &kagi::git::resolution::HunkModel, side: SelectionSide
                 .as_ref()
                 .map(|selection| selection.order)
                 .unwrap_or_else(|| match hunk.choice {
-                    kagi::git::resolution::HunkChoice::BothIncomingFirst => {
-                        LineOrder::IncomingFirst
-                    }
+                    kagi_git::resolution::HunkChoice::BothIncomingFirst => LineOrder::IncomingFirst,
                     _ => LineOrder::CurrentFirst,
                 });
             rows.push(SideRow::HunkHeader {
@@ -496,7 +494,7 @@ fn build_side_rows(model: &kagi::git::resolution::HunkModel, side: SelectionSide
 
 fn side_row_list(
     path: &std::path::Path,
-    model: &kagi::git::resolution::HunkModel,
+    model: &kagi_git::resolution::HunkModel,
     side: SelectionSide,
     scroll: UniformListScrollHandle,
     selected_hunk: usize,
@@ -1164,7 +1162,7 @@ fn horizontal_divider() -> gpui::Stateful<gpui::Div> {
 #[cfg(test)]
 mod side_row_tests {
     use super::*;
-    use kagi::git::resolution::HunkModel;
+    use kagi_git::resolution::HunkModel;
 
     fn counts(rows: &[SideRow]) -> (usize, usize, usize, usize) {
         let mut ctx = 0;

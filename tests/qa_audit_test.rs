@@ -27,7 +27,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{
+use kagi_git::{
     execute_checkout_commit, execute_stash_push, execute_undo_commit, plan_amend,
     plan_checkout_commit, plan_stash_pop, plan_stash_push, snapshot, AmendMode, CommitId,
 };

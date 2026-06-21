@@ -20,8 +20,8 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputState};
 use gpui_component::{Disableable as _, Sizable as _};
-use kagi::git::BranchRenameValidation;
-use kagi::git::{ChangeKind, CommitId, MergeKind};
+use kagi_git::BranchRenameValidation;
+use kagi_git::{ChangeKind, CommitId, MergeKind};
 
 pub(crate) fn render_plan_modal(
     modal: CheckoutPlanModal,

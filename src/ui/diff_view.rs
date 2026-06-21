@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use gpui::{div, prelude::*, rgb, SharedString};
 
-use kagi::git::{CommitId, DiffLineKind, FileDiff, FileStatus};
+use kagi_git::{CommitId, DiffLineKind, FileDiff, FileStatus};
 
 use super::theme;
 

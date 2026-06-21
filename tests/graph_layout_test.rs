@@ -10,8 +10,8 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{commit_log, Commit, CommitId, Signature};
 use kagi::graph::{layout, layout_with, EdgeKind, GraphLayout, GraphLayoutMode};
+use kagi_git::{commit_log, Commit, CommitId, Signature};
 
 // ────────────────────────────────────────────────────────────
 // Test helpers — commit construction

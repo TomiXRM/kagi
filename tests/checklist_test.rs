@@ -36,7 +36,7 @@ use std::sync::Mutex;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::git::{checklist, plan_commit, working_tree_status};
+use kagi_git::{checklist, plan_commit, working_tree_status};
 
 // ────────────────────────────────────────────────────────────
 // Env serialization (KAGI_LARGE_BLOB_BYTES is process-global)

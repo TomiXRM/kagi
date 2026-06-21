@@ -3144,6 +3144,7 @@ dependencies = [
  "gpui-component",
  "gpui-terminal",
  "kagi-domain",
+ "kagi-git",
  "notify",
  "portable-pty",
  "serde",
@@ -3156,6 +3157,16 @@ dependencies = [
 [[package]]
 name = "kagi-domain"
 version = "0.3.11"
+
+[[package]]
+name = "kagi-git"
+version = "0.1.0"
+dependencies = [
+ "git2",
+ "kagi-domain",
+ "tempfile",
+ "ureq",
+]
 
 [[package]]
 name = "khronos-egl"

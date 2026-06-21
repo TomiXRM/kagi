@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use gpui::{SharedString, UniformListScrollHandle};
 
-use kagi::git::{FileChangeType, FileHistory, FileHistoryEntry, FileHistoryEntryKind};
+use kagi_git::{FileChangeType, FileHistory, FileHistoryEntry, FileHistoryEntryKind};
 
 use super::diff_view::MainDiffView;
 use super::theme::theme;

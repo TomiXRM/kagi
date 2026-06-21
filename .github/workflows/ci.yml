@@ -29,7 +29,7 @@ jobs:
         shell: bash
         run: |
           if grep -rnE 'git2::|Repository::open' src/ui/; then
-            echo "::error::src/ui must not use git2 directly — route through kagi::git::Backend (ADR-0078)."
+            echo "::error::src/ui must not use git2 directly — route through kagi_git::Backend (ADR-0072 / ADR-0078)."
             exit 1
           fi
           echo "OK: src/ui has zero git2 usage."

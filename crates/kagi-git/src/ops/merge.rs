@@ -374,7 +374,7 @@ pub fn execute_merge_branch(repo: &Repository, target: &str) -> Result<CommitId,
 /// Unlike [`execute_merge_branch`], this does NOT create a commit. It uses
 /// git2's real `Repository::merge` so the working tree gets conflict markers,
 /// the index gets stage 1/2/3 entries, and `.git/MERGE_HEAD` is written — the
-/// exact state [`crate::git::detect_conflict_session`] recognises and that
+/// exact state [`crate::detect_conflict_session`] recognises and that
 /// `plan_conflict_abort` / `execute_conflict_abort` can roll back.
 ///
 /// `ORIG_HEAD` is written to the pre-merge HEAD so the conflict abort can

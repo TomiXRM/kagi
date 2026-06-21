@@ -68,7 +68,7 @@ impl KagiApp {
     ///
     /// Returns `true` if a tab is now active for the repo, `false` on failure.
     pub fn open_repository(&mut self, path: PathBuf, cx: &mut Context<Self>) -> bool {
-        use kagi::git::open_repository;
+        use kagi_git::open_repository;
 
         // Normalise so the same repo opened via different relative paths maps
         // to one tab.  Fall back to the original path if canonicalize fails.
@@ -169,7 +169,7 @@ impl KagiApp {
         // ADR-0107: open (or re-use) a RepoSession for this tab so read paths
         // don't re-open the repo per interaction. Failure is non-fatal — read
         // paths fall back to Backend::open until the session succeeds.
-        self.repo_session = kagi::git::session::RepoSession::open(&tab.path).ok();
+        self.repo_session = kagi_git::session::RepoSession::open(&tab.path).ok();
 
         // Reset every per-repo UI surface up-front so a cached instant-apply
         // never shows the previous tab's selection / modals (ADR-0027).
@@ -224,7 +224,7 @@ impl KagiApp {
         &mut self,
         host: kagi_domain::remote::RemoteHost,
         root: String,
-        snap: kagi::git::RepoSnapshot,
+        snap: kagi_git::RepoSnapshot,
         cx: &mut Context<Self>,
     ) {
         let name = root
@@ -342,7 +342,7 @@ impl KagiApp {
         // ADR-0084: drop the previous repo's undo/redo history and re-arm the
         // reflog seed so the next repo seeds its own (else Cmd+Z would target
         // the old repo's branch).
-        self.operation_history = kagi::git::OperationHistory::new();
+        self.operation_history = kagi_git::OperationHistory::new();
         self.history_seed_attempted = false;
     }
 
@@ -361,8 +361,8 @@ impl KagiApp {
         let bg_path = path.clone();
         let bg_name = name.clone();
         let task = cx.background_spawn(async move {
-            let mut backend = kagi::git::Backend::open(&bg_path)
-                .map_err(|e| format!("repo open error: {}", e))?;
+            let mut backend =
+                kagi_git::Backend::open(&bg_path).map_err(|e| format!("repo open error: {}", e))?;
             let snap = backend
                 .snapshot(10_000)
                 .map_err(|e| format!("snapshot error: {e}"))?;
@@ -1044,7 +1044,7 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
         if app.tabs.iter().any(|t| t.path == path) {
             continue;
         }
-        match kagi::git::open_repository(&path) {
+        match kagi_git::open_repository(&path) {
             Ok(info) => {
                 app.tabs.push(RepoTab {
                     path: path.clone(),
@@ -1066,7 +1066,7 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
         .min(app.tabs.len() - 1);
     app.active_tab = active;
     app.repo_path = Some(app.tabs[active].path.clone());
-    app.repo_session = kagi::git::session::RepoSession::open(&app.tabs[active].path).ok();
+    app.repo_session = kagi_git::session::RepoSession::open(&app.tabs[active].path).ok();
     app.error = None;
     app.reload();
     klog!("session: restored {} tab(s)", app.tabs.len());

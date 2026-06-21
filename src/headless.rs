@@ -13,9 +13,9 @@
 
 use std::path::PathBuf;
 
-use kagi::git::oplog::{append_oplog, OpLogEntry, OpOutcome};
-use kagi::git::ops::StateSummary;
-use kagi::git::{open_repository, snapshot, Head};
+use kagi_git::oplog::{append_oplog, OpLogEntry, OpOutcome};
+use kagi_git::ops::StateSummary;
+use kagi_git::{open_repository, snapshot, Head};
 
 use crate::ui::commit_panel::CommitPanelState;
 use crate::ui::{
@@ -50,7 +50,7 @@ pub(crate) fn record_headless_op(
 /// (untracked / conflicted are skipped, as the UI does). Execution only happens
 /// when `KAGI_AUTO_CONFIRM=1` is set (test-only).
 fn run_headless_discard(repo_path: &PathBuf, single: Option<String>, all: bool) {
-    use kagi::git::{execute_discard, plan_discard, working_tree_status};
+    use kagi_git::{execute_discard, plan_discard, working_tree_status};
 
     let repo = match git2::Repository::open(repo_path) {
         Ok(r) => r,
@@ -433,7 +433,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
     // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, drive the TWO-STAGE confirm
     // (arm + execute).  For fixture/tempdir testing only.  Do not set in normal use.
     if let Ok(mode_str) = std::env::var("KAGI_AMEND") {
-        match kagi::git::ops::AmendMode::from_env_str(&mode_str) {
+        match kagi_git::ops::AmendMode::from_env_str(&mode_str) {
             Some(mode) => {
                 let message = std::env::var("KAGI_AMEND_MSG").unwrap_or_default();
                 app_state.open_amend_modal_with_message(mode, message);
@@ -537,7 +537,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
             .active_view
             .details
             .get(row_index)
-            .map(|detail| kagi::git::CommitId(detail.full_sha.as_ref().to_string()));
+            .map(|detail| kagi_git::CommitId(detail.full_sha.as_ref().to_string()));
 
         match commit_id {
             Some(commit_id) => {
@@ -588,7 +588,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                 r.head()
                     .ok()
                     .and_then(|h| h.target())
-                    .map(|oid| kagi::git::CommitId(oid.to_string()))
+                    .map(|oid| kagi_git::CommitId(oid.to_string()))
             })
         };
 
@@ -596,7 +596,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
             // Plan and log.
             let repo_for_plan = git2::Repository::open(&repo_path).ok();
             if let Some(repo) = repo_for_plan {
-                match kagi::git::plan_create_branch(&repo, &branch_name, &at) {
+                match kagi_git::plan_create_branch(&repo, &branch_name, &at) {
                     Ok(plan) => {
                         eprintln!(
                             "[kagi] plan: create-branch '{}' blockers={} warnings={}",
@@ -625,7 +625,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                                 // Preflight + execute.
                                 let repo2 = git2::Repository::open(&repo_path).ok();
                                 if let Some(r2) = repo2 {
-                                    if let Err(e) = kagi::git::preflight_check(&r2, &plan) {
+                                    if let Err(e) = kagi_git::preflight_check(&r2, &plan) {
                                         let err_msg = format!("preflight failed: {}", e);
                                         klog!("{}", err_msg);
                                         record_headless_op(
@@ -635,7 +635,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                                             &repo_path,
                                         );
                                     } else if let Err(e) =
-                                        kagi::git::execute_create_branch(&r2, &branch_name, &at)
+                                        kagi_git::execute_create_branch(&r2, &branch_name, &at)
                                     {
                                         let err_msg = format!("create-branch failed: {}", e);
                                         klog!("{}", err_msg);
@@ -730,13 +730,13 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
             r.head()
                 .ok()
                 .and_then(|h| h.target())
-                .map(|oid| kagi::git::CommitId(oid.to_string()))
+                .map(|oid| kagi_git::CommitId(oid.to_string()))
         });
 
         if let Some(at) = head_commit_id {
             let repo_for_plan = git2::Repository::open(&repo_path).ok();
             if let Some(repo) = repo_for_plan {
-                match kagi::git::plan_create_worktree(&repo, &branch_name, &worktree_path, &at) {
+                match kagi_git::plan_create_worktree(&repo, &branch_name, &worktree_path, &at) {
                     Ok(plan) => {
                         eprintln!(
                             "[kagi] plan: create-worktree '{}' path='{}' blockers={} warnings={}",
@@ -750,7 +750,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                             if plan.blockers.is_empty() {
                                 let repo2 = git2::Repository::open(&repo_path).ok();
                                 if let Some(r2) = repo2 {
-                                    if let Err(e) = kagi::git::preflight_check(&r2, &plan) {
+                                    if let Err(e) = kagi_git::preflight_check(&r2, &plan) {
                                         let err_msg = format!("preflight failed: {}", e);
                                         klog!("{}", err_msg);
                                         record_headless_op(
@@ -759,7 +759,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                                             OpOutcome::Failed { error: err_msg },
                                             &repo_path,
                                         );
-                                    } else if let Err(e) = kagi::git::execute_create_worktree(
+                                    } else if let Err(e) = kagi_git::execute_create_worktree(
                                         &r2,
                                         &branch_name,
                                         &worktree_path,
@@ -853,7 +853,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
             }
         };
 
-        match kagi::git::plan_stash_push(&mut repo_sp, None, true) {
+        match kagi_git::plan_stash_push(&mut repo_sp, None, true) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: stash-push blockers={} warnings={}",
@@ -877,7 +877,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                             }
                         };
                         if let Err(e) =
-                            kagi::git::preflight_check_stash(&mut repo2, &plan, stash_count_at_plan)
+                            kagi_git::preflight_check_stash(&mut repo2, &plan, stash_count_at_plan)
                         {
                             let err_msg = format!("preflight failed: {}", e);
                             klog!("{}", err_msg);
@@ -887,7 +887,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                                 OpOutcome::Failed { error: err_msg },
                                 &repo_path,
                             );
-                        } else if let Err(e) = kagi::git::execute_stash_push(&mut repo2, None, true)
+                        } else if let Err(e) = kagi_git::execute_stash_push(&mut repo2, None, true)
                         {
                             let err_msg = format!("stash-push failed: {}", e);
                             klog!("{}", err_msg);
@@ -1000,7 +1000,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
             }
         };
 
-        match kagi::git::plan_stash_apply(&mut repo_sa, index) {
+        match kagi_git::plan_stash_apply(&mut repo_sa, index) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: stash-apply index={} blockers={} warnings={}",
@@ -1025,7 +1025,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                             }
                         };
                         if let Err(e) =
-                            kagi::git::preflight_check_stash(&mut repo2, &plan, stash_count_at_plan)
+                            kagi_git::preflight_check_stash(&mut repo2, &plan, stash_count_at_plan)
                         {
                             let err_msg = format!("preflight failed: {}", e);
                             klog!("{}", err_msg);
@@ -1035,7 +1035,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                                 OpOutcome::Failed { error: err_msg },
                                 &repo_path,
                             );
-                        } else if let Err(e) = kagi::git::execute_stash_apply(&mut repo2, index) {
+                        } else if let Err(e) = kagi_git::execute_stash_apply(&mut repo2, index) {
                             let err_msg = format!("stash-apply failed: {}", e);
                             klog!("{}", err_msg);
                             record_headless_op(
@@ -1133,7 +1133,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
     // KAGI_AUTO_CONFIRM=1: (TEST-ONLY) if no blockers, execute immediately.
     // For fixture/tempdir testing only.  Do not set in normal use.
     if let Ok(sha_str) = std::env::var("KAGI_CHERRY_PICK") {
-        let commit_id = kagi::git::CommitId(sha_str.clone());
+        let commit_id = kagi_git::CommitId(sha_str.clone());
         let repo_cp = match git2::Repository::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
@@ -1143,7 +1143,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
             }
         };
 
-        match kagi::git::plan_cherry_pick(&repo_cp, &commit_id) {
+        match kagi_git::plan_cherry_pick(&repo_cp, &commit_id) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: cherry-pick {} blockers={} preview_files={}",
@@ -1177,7 +1177,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                                 return;
                             }
                         };
-                        if let Err(e) = kagi::git::preflight_check(&repo2, &plan) {
+                        if let Err(e) = kagi_git::preflight_check(&repo2, &plan) {
                             let err_msg = format!("preflight failed: {}", e);
                             klog!("{}", err_msg);
                             record_headless_op(
@@ -1187,7 +1187,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                                 &repo_path,
                             );
                         } else {
-                            match kagi::git::execute_cherry_pick(&repo2, &commit_id) {
+                            match kagi_git::execute_cherry_pick(&repo2, &commit_id) {
                                 Ok(new_id) => {
                                     eprintln!(
                                         "[kagi] executed: cherry-pick {} -> {}",
@@ -1319,7 +1319,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                         row,
                         detail.full_sha.as_ref()
                     );
-                    kagi::git::CommitId(detail.full_sha.to_string())
+                    kagi_git::CommitId(detail.full_sha.to_string())
                 }
                 None => {
                     klog!("KAGI_REVERT: row {} out of range", row);
@@ -1327,7 +1327,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                     return;
                 }
             },
-            Err(_) => kagi::git::CommitId(sha_str.clone()),
+            Err(_) => kagi_git::CommitId(sha_str.clone()),
         };
         let repo_revert = match git2::Repository::open(&repo_path) {
             Ok(r) => r,
@@ -1338,7 +1338,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
             }
         };
 
-        match kagi::git::plan_revert(&repo_revert, &commit_id) {
+        match kagi_git::plan_revert(&repo_revert, &commit_id) {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: revert {} blockers={} preview_files={}",
@@ -1371,7 +1371,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                                 return;
                             }
                         };
-                        if let Err(e) = kagi::git::preflight_check(&repo2, &plan) {
+                        if let Err(e) = kagi_git::preflight_check(&repo2, &plan) {
                             let err_msg = format!("preflight failed: {}", e);
                             klog!("{}", err_msg);
                             record_headless_op(
@@ -1381,7 +1381,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                                 &repo_path,
                             );
                         } else {
-                            match kagi::git::execute_revert(&repo2, &commit_id) {
+                            match kagi_git::execute_revert(&repo2, &commit_id) {
                                 Ok(new_id) => {
                                     eprintln!(
                                         "[kagi] executed: revert {} -> {}",
@@ -1518,7 +1518,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
             use std::path::Path;
             let repo_s = git2::Repository::open(&repo_path).ok();
             if let Some(repo_s) = repo_s {
-                match kagi::git::stage_file(&repo_s, Path::new(&path_str)) {
+                match kagi_git::stage_file(&repo_s, Path::new(&path_str)) {
                     Ok(_) => {
                         klog!("staged: {}", path_str);
                         panel.reload_status(&repo_path);
@@ -1538,7 +1538,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
             use std::path::Path;
             let repo_u = git2::Repository::open(&repo_path).ok();
             if let Some(repo_u) = repo_u {
-                match kagi::git::unstage_file(&repo_u, Path::new(&path_str)) {
+                match kagi_git::unstage_file(&repo_u, Path::new(&path_str)) {
                     Ok(_) => {
                         klog!("unstaged: {}", path_str);
                         panel.reload_status(&repo_path);
@@ -1557,7 +1557,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
         if let Ok(commit_msg) = std::env::var("KAGI_COMMIT_MSG") {
             let repo_c = git2::Repository::open(&repo_path).ok();
             if let Some(repo_c) = repo_c {
-                match kagi::git::plan_commit(&repo_c, &commit_msg) {
+                match kagi_git::plan_commit(&repo_c, &commit_msg) {
                     Ok(plan) => {
                         eprintln!(
                             "[kagi] plan: commit blockers={} warnings={}",
@@ -1575,7 +1575,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                         if auto_confirm && plan.blockers.is_empty() {
                             let repo_e = git2::Repository::open(&repo_path).ok();
                             if let Some(repo_e) = repo_e {
-                                match kagi::git::execute_commit(&repo_e, &commit_msg) {
+                                match kagi_git::execute_commit(&repo_e, &commit_msg) {
                                     Ok(new_id) => {
                                         klog!("executed: commit {}", new_id.short());
                                         // Verify: check new commit exists and untracked remain.
@@ -1590,7 +1590,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, repo_path: PathBuf, env_open_repo: 
                                                 return;
                                             }
                                         };
-                                        match kagi::git::snapshot(&mut repo_v, 10_000) {
+                                        match kagi_git::snapshot(&mut repo_v, 10_000) {
                                             Ok(snap) => {
                                                 eprintln!(
                                                     "[kagi] verified: commit count={}",

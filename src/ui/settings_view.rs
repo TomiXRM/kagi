@@ -487,7 +487,7 @@ fn smart_commit_section(
         // (label, this-provider, available)
         let entries: Vec<(String, SmartProvider, bool)> = {
             let mut v = vec![("Ollama".to_string(), SmartProvider::Ollama, true)];
-            for p in kagi::git::message_gen::CliProvider::ALL {
+            for p in kagi_git::message_gen::CliProvider::ALL {
                 v.push((
                     p.display_name().to_string(),
                     SmartProvider::Cli(p),

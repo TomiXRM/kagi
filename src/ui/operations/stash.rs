@@ -42,7 +42,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let mut repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 klog!("replan_stash_push: repo open error: {}", e);
@@ -174,7 +174,7 @@ impl KagiApp {
             }
         };
 
-        let mut repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 klog!("plan: stash-apply repo open error: {}", e);
@@ -237,7 +237,7 @@ impl KagiApp {
             None => return,
         };
 
-        let mut repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
@@ -260,7 +260,7 @@ impl KagiApp {
         // in one place (run() calls preflight_check_stash for StashApply: HEAD +
         // stash-count guard). The separate preflight_check_stash + execute above
         // collapses into run().
-        let op = kagi::git::Operation::StashApply { index: modal.index };
+        let op = kagi_git::Operation::StashApply { index: modal.index };
         if let Err(e) = repo.run(&op, &plan) {
             let err_msg = format!("Stash apply failed: {}", e);
             self.record_op(
@@ -280,7 +280,7 @@ impl KagiApp {
         klog!("executed: stash-apply index={}", modal.index);
 
         // Verify: check working tree is dirty and stash entry still exists.
-        let mut repo2 = match kagi::git::Backend::open(&repo_path) {
+        let mut repo2 = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 klog!("verify: repo open error: {}", e);
@@ -345,7 +345,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let mut repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(format!(
@@ -394,7 +394,7 @@ impl KagiApp {
                 .map(|s| format!("stash@{{{}}}: {}", s.index, s.message))
                 .unwrap_or_else(|| format!("stash@{{{index}}}"));
             let head = self.active_view.header.to_string();
-            let plan = kagi::git::plan_stash_drop_remote(&label, head);
+            let plan = kagi_git::plan_stash_drop_remote(&label, head);
             eprintln!("[kagi] plan: remote stash-drop index={index} blockers=0");
             self.set_stash_drop_modal(StashDropModal {
                 plan: std::sync::Arc::new(plan),
@@ -407,7 +407,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let mut repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(format!(
@@ -512,7 +512,7 @@ impl KagiApp {
                                 "stash-drop",
                                 before.clone(),
                                 OpOutcome::Success {
-                                    after: kagi::git::StateSummary {
+                                    after: kagi_git::StateSummary {
                                         head: before.head.clone(),
                                         dirty: "stash entry removed".to_string(),
                                     },
@@ -646,7 +646,7 @@ impl KagiApp {
             );
             return;
         }
-        let mut repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
@@ -668,7 +668,7 @@ impl KagiApp {
         };
         // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
         // (run uses preflight_check_stash for StashPop: HEAD + stash-count guard).
-        let pop_op = kagi::git::Operation::StashPop {
+        let pop_op = kagi_git::Operation::StashPop {
             index: modal.stash_index,
         };
         match repo.run(&pop_op, &modal.plan) {

@@ -23,7 +23,7 @@ use tempfile::TempDir;
 /// Every test that touches `KAGI_LOG_DIR` holds this lock for its duration.
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-use kagi::git::{
+use kagi_git::{
     continue_blockers, detect_conflict_session, execute_conflict_abort, execute_conflict_skip,
     plan_conflict_abort, plan_conflict_continue, plan_conflict_skip, ConflictKind, ConflictOp,
     LineOrigin, ResolutionBuffer, ResolutionChoice,
@@ -538,9 +538,9 @@ fn execute_continue_merge_creates_merge_commit() {
         .unwrap();
 
     let outcome =
-        kagi::git::execute_conflict_continue(&repo, &session, &buffer).expect("continue merge");
+        kagi_git::execute_conflict_continue(&repo, &session, &buffer).expect("continue merge");
     match outcome {
-        kagi::git::ContinueOutcome::Committed(id) => {
+        kagi_git::ContinueOutcome::Committed(id) => {
             // The new commit is a merge (two parents).
             let parents = git_output(dir, &["rev-list", "--parents", "-n", "1", &id.0]);
             let count = parents.split_whitespace().count();
@@ -580,7 +580,7 @@ fn stage_then_merge_commit_without_per_file_save() {
     );
 
     // Continue route stages the resolution into the index.
-    kagi::git::stage_conflict_resolution(&repo, &session, &buffer).expect("stage on continue");
+    kagi_git::stage_conflict_resolution(&repo, &session, &buffer).expect("stage on continue");
 
     let index = repo.index().unwrap();
     assert!(
@@ -595,7 +595,7 @@ fn stage_then_merge_commit_without_per_file_save() {
 
     // Commit panel button → execute_merge_commit now succeeds (it would have
     // refused the conflicted index before).
-    let id = kagi::git::execute_merge_commit(&repo, "Merge feature into main")
+    let id = kagi_git::execute_merge_commit(&repo, "Merge feature into main")
         .expect("merge commit from staged index");
     let parents = git_output(dir, &["rev-list", "--parents", "-n", "1", &id.0]);
     assert_eq!(
@@ -651,7 +651,7 @@ fn two_hunk_conflict_repo() -> TempDir {
 
 #[test]
 fn hunk_model_splits_real_multi_hunk_conflict_and_assembles_marker_free() {
-    use kagi::git::resolution::HunkChoice;
+    use kagi_git::resolution::HunkChoice;
 
     let tmp = two_hunk_conflict_repo();
     let dir = tmp.path();
@@ -688,14 +688,14 @@ fn hunk_model_splits_real_multi_hunk_conflict_and_assembles_marker_free() {
     assert!(text.contains("mid 2"));
     // Fully resolved → no markers.
     assert!(
-        !kagi::git::text_has_conflict_marker(&text),
+        !kagi_git::text_has_conflict_marker(&text),
         "assembled Result must be marker-free: {:?}",
         text
     );
 
     // Provenance over the assembled lines.
     let prov = buffer.provenance(path).expect("provenance");
-    use kagi::git::LineOrigin::*;
+    use kagi_git::LineOrigin::*;
     assert!(prov.contains(&Current));
     assert!(prov.contains(&Incoming));
     assert!(prov.contains(&Context));
@@ -703,7 +703,7 @@ fn hunk_model_splits_real_multi_hunk_conflict_and_assembles_marker_free() {
 
 #[test]
 fn hunk_reset_keeps_marker_residue_and_blocks_continue() {
-    use kagi::git::resolution::HunkChoice;
+    use kagi_git::resolution::HunkChoice;
 
     let tmp = two_hunk_conflict_repo();
     let dir = tmp.path();
@@ -893,7 +893,7 @@ fn skip_cherry_pick_drops_current_step() {
 /// unmerged entries (stage 1/2/3) collapse to stage 0 (T-CONFLICT-UX-014).
 #[test]
 fn save_resolution_stages_file_to_stage_zero() {
-    use kagi::git::execute_conflict_save;
+    use kagi_git::execute_conflict_save;
 
     let tmp = merge_conflict_repo();
     let dir = tmp.path();
@@ -936,13 +936,13 @@ fn save_resolution_stages_file_to_stage_zero() {
         "working tree has resolved text: {:?}",
         wt
     );
-    assert!(!kagi::git::text_has_conflict_marker(&wt));
+    assert!(!kagi_git::text_has_conflict_marker(&wt));
 }
 
 /// Save refuses (blocks) when the resolved text still has conflict markers.
 #[test]
 fn save_resolution_blocks_on_marker_residue() {
-    use kagi::git::execute_conflict_save;
+    use kagi_git::execute_conflict_save;
 
     let tmp = merge_conflict_repo();
     let repo = Repository::open(tmp.path()).unwrap();
@@ -969,7 +969,7 @@ fn save_resolution_blocks_on_marker_residue() {
 /// panel (T-CONFLICT-FLOW-030).  HEAD is unchanged after routing.
 #[test]
 fn merge_continue_routes_to_commit_panel_without_committing() {
-    use kagi::git::{plan_conflict_continue_route, ContinueRoute};
+    use kagi_git::{plan_conflict_continue_route, ContinueRoute};
 
     let tmp = merge_conflict_repo();
     let dir = tmp.path();
@@ -1007,7 +1007,7 @@ fn merge_continue_routes_to_commit_panel_without_committing() {
 /// (HEAD + MERGE_HEAD) and cleans up the merge state (T-CONFLICT-FLOW-031).
 #[test]
 fn merge_commit_has_two_parents_and_cleans_state() {
-    use kagi::git::{execute_conflict_save, execute_merge_commit};
+    use kagi_git::{execute_conflict_save, execute_merge_commit};
 
     let tmp = merge_conflict_repo();
     let dir = tmp.path();
@@ -1049,7 +1049,7 @@ fn merge_commit_has_two_parents_and_cleans_state() {
 /// not a merge-commit-panel route (T-CONFLICT-FLOW-032).
 #[test]
 fn sequencer_continue_produces_a_plan() {
-    use kagi::git::{plan_conflict_continue_route, ContinueRoute};
+    use kagi_git::{plan_conflict_continue_route, ContinueRoute};
 
     let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let log_tmp = TempDir::new().unwrap();
@@ -1086,7 +1086,7 @@ fn sequencer_continue_produces_a_plan() {
 /// one hunk does not alter another (T-CONFLICT-UX-010/012).
 #[test]
 fn per_hunk_accept_is_independent() {
-    use kagi::git::resolution::{HunkChoice, Region};
+    use kagi_git::resolution::{HunkChoice, Region};
 
     let tmp = two_hunk_conflict_repo();
     let repo = Repository::open(tmp.path()).unwrap();

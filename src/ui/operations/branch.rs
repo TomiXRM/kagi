@@ -137,7 +137,7 @@ impl KagiApp {
             None => return,
         };
 
-        let mut repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
@@ -159,7 +159,7 @@ impl KagiApp {
         // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
         // in one place (run() calls preflight_check as its first line — the
         // separate preflight_check call above was redundant).
-        let op = kagi::git::Operation::CreateBranch {
+        let op = kagi_git::Operation::CreateBranch {
             name: modal.input.clone(),
             at: modal.at.clone(),
         };
@@ -186,7 +186,7 @@ impl KagiApp {
         );
 
         // Verify: confirm the branch now exists.
-        let mut repo2 = match kagi::git::Backend::open(&repo_path) {
+        let mut repo2 = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 klog!("verify: repo open error: {}", e);
@@ -257,7 +257,7 @@ impl KagiApp {
             // ADR-0104 Phase 2: route through Backend::run so preflight is
             // enforced in one place (the separate preflight_check + execute
             // above collapses into run()).
-            let checkout_op = kagi::git::Operation::Checkout {
+            let checkout_op = kagi_git::Operation::Checkout {
                 branch: modal.input.clone(),
             };
             if let Err(e) = repo2.run(&checkout_op, &checkout_plan) {
@@ -716,7 +716,7 @@ impl KagiApp {
         let bg_target = target.clone();
         let task = cx.background_spawn(async move {
             let repo =
-                kagi::git::Backend::open(&bg_path).map_err(|e| format!("repo open error: {e}"))?;
+                kagi_git::Backend::open(&bg_path).map_err(|e| format!("repo open error: {e}"))?;
             repo.plan_merge_branch(&bg_target)
                 .map_err(|e| format!("{e}"))
         });
@@ -862,7 +862,7 @@ impl KagiApp {
                             (history_before.clone(), app.head_branch_and_sha())
                         {
                             app.record_history(
-                                kagi::git::OperationKind::Merge,
+                                kagi_git::OperationKind::Merge,
                                 &branch,
                                 before,
                                 after_sha,
@@ -1224,7 +1224,7 @@ impl KagiApp {
             self.record_op(
                 "delete-branch",
                 modal.plan.current.clone(),
-                kagi::git::oplog::OpOutcome::Refused {
+                kagi_git::oplog::OpOutcome::Refused {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
@@ -1232,14 +1232,14 @@ impl KagiApp {
             return;
         }
 
-        let mut repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = format!("Repo open error: {}", e);
                 self.record_op(
                     "delete-branch",
                     modal.plan.current.clone(),
-                    kagi::git::oplog::OpOutcome::Failed {
+                    kagi_git::oplog::OpOutcome::Failed {
                         error: err_msg.clone(),
                     },
                     &repo_path,
@@ -1256,21 +1256,21 @@ impl KagiApp {
         // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
         // in one place (run() calls preflight_check as its first line — the
         // separate preflight_check call above was redundant).
-        let del_op = kagi::git::Operation::DeleteBranch {
+        let del_op = kagi_git::Operation::DeleteBranch {
             name: modal.branch_name.clone(),
         };
         match repo.run(&del_op, &modal.plan) {
             Ok(_) => {
                 klog!("executed: delete-branch {}", modal.branch_name);
                 self.clear_delete_branch_modal();
-                let after = kagi::git::ops::StateSummary {
+                let after = kagi_git::ops::StateSummary {
                     head: modal.plan.current.head.clone(),
                     dirty: format!("branch '{}' deleted", modal.branch_name),
                 };
                 self.record_op(
                     "delete-branch",
                     modal.plan.current.clone(),
-                    kagi::git::oplog::OpOutcome::Success { after },
+                    kagi_git::oplog::OpOutcome::Success { after },
                     &repo_path,
                 );
                 self.status_footer = FooterStatus::Success(SharedString::from(format!(
@@ -1285,7 +1285,7 @@ impl KagiApp {
                 self.record_op(
                     "delete-branch",
                     modal.plan.current.clone(),
-                    kagi::git::oplog::OpOutcome::Failed {
+                    kagi_git::oplog::OpOutcome::Failed {
                         error: err_msg.clone(),
                     },
                     &repo_path,
@@ -1323,7 +1323,7 @@ impl KagiApp {
             self.record_op(
                 "delete-branch",
                 modal.plan.current.clone(),
-                kagi::git::oplog::OpOutcome::Refused {
+                kagi_git::oplog::OpOutcome::Refused {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
@@ -1363,7 +1363,7 @@ impl KagiApp {
                         app.record_op(
                             "delete-branch",
                             plan.current.clone(),
-                            kagi::git::oplog::OpOutcome::Success { after },
+                            kagi_git::oplog::OpOutcome::Success { after },
                             &repo_path,
                         );
                         app.status_footer = FooterStatus::Success(SharedString::from(format!(
@@ -1377,7 +1377,7 @@ impl KagiApp {
                         app.record_op(
                             "delete-branch",
                             plan.current.clone(),
-                            kagi::git::oplog::OpOutcome::Failed {
+                            kagi_git::oplog::OpOutcome::Failed {
                                 error: err_msg.clone(),
                             },
                             &repo_path,

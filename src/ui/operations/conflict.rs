@@ -20,7 +20,7 @@ impl KagiApp {
     pub fn conflict_open_editor(&mut self, path: &std::path::Path) {
         // Materialize the markers (needs the repo) and build the hunk model.
         if let Some(repo_path) = self.repo_path.clone() {
-            if let Ok(repo) = kagi::git::Backend::open(&repo_path) {
+            if let Ok(repo) = kagi_git::Backend::open(&repo_path) {
                 if let Some(c) = self.conflict.as_mut() {
                     if let Some(markers) = repo.materialized_markers(&c.buffer, path) {
                         c.buffer.ensure_hunks(path, &markers);
@@ -61,11 +61,11 @@ impl KagiApp {
         let residue = c.buffer.files_with_marker_residue();
         if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
             f.status = if !c.buffer.has_resolution(path) {
-                kagi::git::ConflictStatus::Unresolved
+                kagi_git::ConflictStatus::Unresolved
             } else if residue.contains(&f.path) {
-                kagi::git::ConflictStatus::NeedsReview
+                kagi_git::ConflictStatus::NeedsReview
             } else {
-                kagi::git::ConflictStatus::Resolved
+                kagi_git::ConflictStatus::Resolved
             };
         }
         let _ = c.buffer.autosave();
@@ -74,7 +74,7 @@ impl KagiApp {
     pub fn conflict_editor_set_file_side(
         &mut self,
         path: &std::path::Path,
-        side: kagi::git::resolution::SelectionSide,
+        side: kagi_git::resolution::SelectionSide,
         taken: bool,
     ) {
         let Some(c) = self.conflict.as_mut() else {
@@ -89,7 +89,7 @@ impl KagiApp {
         &mut self,
         path: &std::path::Path,
         hunk_index: usize,
-        side: kagi::git::resolution::SelectionSide,
+        side: kagi_git::resolution::SelectionSide,
         taken: bool,
     ) {
         let Some(c) = self.conflict.as_mut() else {
@@ -106,7 +106,7 @@ impl KagiApp {
         &mut self,
         path: &std::path::Path,
         hunk_index: usize,
-        side: kagi::git::resolution::SelectionSide,
+        side: kagi_git::resolution::SelectionSide,
         line_index: usize,
         taken: bool,
     ) {
@@ -124,7 +124,7 @@ impl KagiApp {
         &mut self,
         path: &std::path::Path,
         hunk_index: usize,
-        order: kagi::git::resolution::LineOrder,
+        order: kagi_git::resolution::LineOrder,
     ) {
         let Some(c) = self.conflict.as_mut() else {
             return;
@@ -178,11 +178,11 @@ impl KagiApp {
         let residue = c.buffer.files_with_marker_residue();
         if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
             f.status = if residue.contains(&f.path) {
-                kagi::git::ConflictStatus::NeedsReview
+                kagi_git::ConflictStatus::NeedsReview
             } else if c.buffer.has_resolution(path) {
-                kagi::git::ConflictStatus::Resolved
+                kagi_git::ConflictStatus::Resolved
             } else {
-                kagi::git::ConflictStatus::Unresolved
+                kagi_git::ConflictStatus::Unresolved
             };
         }
         let _ = c.buffer.autosave();
@@ -292,9 +292,9 @@ impl KagiApp {
                     let residue = c.buffer.files_with_marker_residue();
                     if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
                         f.status = if residue.contains(&f.path) {
-                            kagi::git::ConflictStatus::NeedsReview
+                            kagi_git::ConflictStatus::NeedsReview
                         } else {
-                            kagi::git::ConflictStatus::Resolved
+                            kagi_git::ConflictStatus::Resolved
                         };
                     }
                 }
@@ -344,7 +344,7 @@ impl KagiApp {
                 // W32: activating a content conflict opens the dedicated
                 // hunk-level Conflict Editor (binary / single-sided files have no
                 // hunk model and stay on the Dashboard choose UI).
-                if f.kind == kagi::git::ConflictKind::Content {
+                if f.kind == kagi_git::ConflictKind::Content {
                     open_path = Some(f.path.clone());
                 }
             }
@@ -372,7 +372,7 @@ impl KagiApp {
             } else {
                 (start + n - (step % n)) % n
             };
-            if c.session.files[i].status == kagi::git::ConflictStatus::Unresolved {
+            if c.session.files[i].status == kagi_git::ConflictStatus::Unresolved {
                 c.selected_file = Some(i);
                 return;
             }
@@ -392,7 +392,7 @@ impl KagiApp {
     pub fn conflict_apply_choice(
         &mut self,
         path: &std::path::Path,
-        choice: kagi::git::ResolutionChoice,
+        choice: kagi_git::ResolutionChoice,
     ) {
         let Some(c) = self.conflict.as_mut() else {
             return;
@@ -403,9 +403,9 @@ impl KagiApp {
                 let residue = c.buffer.files_with_marker_residue();
                 if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
                     f.status = if residue.contains(&f.path) {
-                        kagi::git::ConflictStatus::NeedsReview
+                        kagi_git::ConflictStatus::NeedsReview
                     } else {
-                        kagi::git::ConflictStatus::Resolved
+                        kagi_git::ConflictStatus::Resolved
                     };
                 }
                 // Autosave (ADR-0057): never lose a partial resolution.
@@ -413,10 +413,10 @@ impl KagiApp {
                 eprintln!(
                     "[kagi] conflict-mode: choice {} for {}",
                     match choice {
-                        kagi::git::ResolutionChoice::Current => "current",
-                        kagi::git::ResolutionChoice::Incoming => "incoming",
-                        kagi::git::ResolutionChoice::BothCurrentFirst => "both(current-first)",
-                        kagi::git::ResolutionChoice::BothIncomingFirst => "both(incoming-first)",
+                        kagi_git::ResolutionChoice::Current => "current",
+                        kagi_git::ResolutionChoice::Incoming => "incoming",
+                        kagi_git::ResolutionChoice::BothCurrentFirst => "both(current-first)",
+                        kagi_git::ResolutionChoice::BothIncomingFirst => "both(incoming-first)",
                     },
                     path.display()
                 );
@@ -500,7 +500,7 @@ impl KagiApp {
         };
 
         match route {
-            kagi::git::ContinueRoute::MergeCommitPanel { message } => {
+            kagi_git::ContinueRoute::MergeCommitPanel { message } => {
                 // Transition to the commit message panel pre-filled with the merge
                 // message.  MERGE_HEAD stays present so the commit becomes a merge
                 // commit.  No commit is created here (ADR-0068).
@@ -539,7 +539,7 @@ impl KagiApp {
                 }
                 self.conflict_merge_commit_pending = true;
             }
-            kagi::git::ContinueRoute::SequencerPlan(plan) => {
+            kagi_git::ContinueRoute::SequencerPlan(plan) => {
                 // Confirmation modal before advancing the sequencer.
                 eprintln!(
                     "[kagi] {}: opening continue confirmation (sequencer)",
@@ -585,7 +585,7 @@ impl KagiApp {
         match repo.execute_conflict_continue(&mode.session, &mode.buffer) {
             Ok(_outcome) => {
                 klog!("executed: {}", op_name);
-                let _ = kagi::git::ResolutionBuffer::clear(&repo_path);
+                let _ = kagi_git::ResolutionBuffer::clear(&repo_path);
                 let after = StateSummary {
                     head: plan.predicted.head.clone(),
                     dirty: "staged".to_string(),

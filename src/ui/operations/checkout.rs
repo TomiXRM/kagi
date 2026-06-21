@@ -107,7 +107,7 @@ impl KagiApp {
             Some(p) => p,
             None => return false,
         };
-        let mut repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(_e) => {
                 if let Some(m) = self.plan_modal_mut() {
@@ -151,7 +151,7 @@ impl KagiApp {
             return false;
         }
         // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
-        let stash_op = kagi::git::Operation::StashPush {
+        let stash_op = kagi_git::Operation::StashPush {
             message: Some(msg.to_string()),
             include_untracked: true,
         };
@@ -227,7 +227,7 @@ impl KagiApp {
             CheckoutPlanTarget::Commit(_) => "checkout-commit",
         };
 
-        let mut repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(_e) => {
                 let err_msg = format!("Repo open error: {}", "session unavailable");
@@ -272,10 +272,10 @@ impl KagiApp {
         // Execute checkout (safe mode only).
         // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
         let checkout_op = match &modal.target {
-            CheckoutPlanTarget::Branch(branch) => kagi::git::Operation::Checkout {
+            CheckoutPlanTarget::Branch(branch) => kagi_git::Operation::Checkout {
                 branch: branch.clone(),
             },
-            CheckoutPlanTarget::Commit(commit_id) => kagi::git::Operation::CheckoutCommit {
+            CheckoutPlanTarget::Commit(commit_id) => kagi_git::Operation::CheckoutCommit {
                 id: commit_id.clone(),
             },
         };
@@ -306,7 +306,7 @@ impl KagiApp {
         }
 
         // Verify: re-snapshot and confirm HEAD.
-        let mut repo2 = match kagi::git::Backend::open(&repo_path) {
+        let mut repo2 = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(_e) => {
                 klog!("verify: repo open error: {}", "session unavailable");

@@ -2,7 +2,7 @@
 # ADR-0047 authorizes adding the xtask build/bundle helper as a workspace member.
 # ADR-0072 (v1.0 re-architecture): crates/* host the layered workspace; the pure
 # `kagi-domain` crate is the first extracted layer (strangler migration).
-members = ["xtask", "crates/kagi-domain"]
+members = ["xtask", "crates/kagi-domain", "crates/kagi-git"]
 
 [package]
 name = "kagi"
@@ -11,9 +11,13 @@ license = "MIT"
 edition = "2021"
 
 [dependencies]
-# Pure domain layer (ADR-0072). The git2-using code in src/git/ depends on it
+# Pure domain layer (ADR-0072). The git2-using code in kagi-git depends on it
 # for the commit/graph types; git2 itself stays out of kagi-domain.
 kagi-domain = { path = "crates/kagi-domain" }
+# Git backend layer (ADR-0072 / Phase E): the extracted `kagi-git` crate is the
+# only place `git2::Repository` is opened. The bin's `kagi::git` shim and the
+# `src/remote` module re-export it; UI code reaches Git through `kagi_git::`.
+kagi-git = { path = "crates/kagi-git" }
 gpui = { version = "0.2.2", features = ["runtime_shaders"] }
 gpui-component = { version = "0.5.1", features = ["tree-sitter-languages"] }
 gpui-terminal = { path = "vendor/gpui-terminal" }  # vendored fork (ADR-0035): selection/copy not yet upstream

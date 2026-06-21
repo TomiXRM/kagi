@@ -2,7 +2,7 @@
 //! Dashboard (right panel) + per-file choose / preview center.
 //!
 //! This module is the **UI half** of the conflict feature.  All git logic lives
-//! in the `kagi::git::conflicts` / `resolution` backend (W26): this file only
+//! in the `kagi_git::conflicts` / `resolution` backend (W26): this file only
 //! *renders* a [`ConflictMode`] snapshot and wires its buttons to the `KagiApp`
 //! handlers (which in turn call the backend `plan_*` / `ResolutionBuffer` API).
 //! No `git2` calls happen here.
@@ -32,7 +32,7 @@ use gpui_component::input::InputState;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{Disableable as _, Sizable as _};
 
-use kagi::git::conflicts::{ConflictKind, ConflictOp, ConflictStatus, SideLabels};
+use kagi_git::conflicts::{ConflictKind, ConflictOp, ConflictStatus, SideLabels};
 
 use super::button_style::{apply_accent, KagiButton};
 use super::i18n::Msg;
@@ -87,9 +87,9 @@ pub struct EditorChrome {
 pub struct ConflictMode {
     /// The detected conflict session (operation + files), with per-file `status`
     /// recomputed from the buffer at detection time.
-    pub session: kagi::git::conflicts::ConflictSession,
+    pub session: kagi_git::conflicts::ConflictSession,
     /// The resolution buffer (in-memory Result drafts + materialized sides).
-    pub buffer: kagi::git::resolution::ResolutionBuffer,
+    pub buffer: kagi_git::resolution::ResolutionBuffer,
     /// Current branch short name, for the `side_labels` left role.
     pub current_branch: String,
     /// Index into `session.files` of the file whose detail/preview is open.
@@ -124,7 +124,7 @@ impl ConflictMode {
     /// Whether Continue is allowed from the UI's point of view: every file has
     /// a clean resolution (no marker residue), every binary has a side chosen,
     /// and every keep-or-delete decision is made.  This mirrors the buffer-only
-    /// subset of `kagi::git::continue_blockers`; the repo-bound checks (index
+    /// subset of `kagi_git::continue_blockers`; the repo-bound checks (index
     /// unmerged / empty merge message) are enforced at execute time in mod.rs.
     pub fn can_continue(&self) -> bool {
         self.continue_blocker().is_none()
@@ -174,7 +174,7 @@ impl ConflictMode {
 
     /// The role labels for the current operation (ADR-0058, never ours/theirs).
     pub fn labels(&self) -> SideLabels {
-        kagi::git::conflicts::side_labels(&self.session.op, &self.current_branch)
+        kagi_git::conflicts::side_labels(&self.session.op, &self.current_branch)
     }
 }
 
@@ -222,11 +222,11 @@ fn op_summary(mode: &ConflictMode) -> String {
     }
 }
 
-/// Map a backend [`kagi::git::ContinueBlocker`] to its localized UI message
+/// Map a backend [`kagi_git::ContinueBlocker`] to its localized UI message
 /// (ADR-0067 — surface the specific blocking reason).  Used by `conflict_continue`
 /// when the plan pipeline refuses, so the toast names the precise reason.
-pub fn blocker_msg(b: &kagi::git::ContinueBlocker) -> Msg {
-    use kagi::git::ContinueBlocker as B;
+pub fn blocker_msg(b: &kagi_git::ContinueBlocker) -> Msg {
+    use kagi_git::ContinueBlocker as B;
     match b {
         B::UnresolvedFiles(_) => Msg::ConflictBlockerUnresolved,
         B::MarkerResidue(_) => Msg::ConflictBlockerMarker,
@@ -885,19 +885,19 @@ fn render_center(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyEle
 
     let p1 = path.clone();
     let keep_current = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_apply_choice(&p1, kagi::git::resolution::ResolutionChoice::Current);
+        this.conflict_apply_choice(&p1, kagi_git::resolution::ResolutionChoice::Current);
         cx.notify();
     });
     let p2 = path.clone();
     let take_incoming = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_apply_choice(&p2, kagi::git::resolution::ResolutionChoice::Incoming);
+        this.conflict_apply_choice(&p2, kagi_git::resolution::ResolutionChoice::Incoming);
         cx.notify();
     });
     let p3 = path.clone();
     let keep_both = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
         this.conflict_apply_choice(
             &p3,
-            kagi::git::resolution::ResolutionChoice::BothCurrentFirst,
+            kagi_git::resolution::ResolutionChoice::BothCurrentFirst,
         );
         cx.notify();
     });
@@ -1057,7 +1057,7 @@ mod tests {
 
     /// Build a ConflictMode from a repo path, mirroring `detect_conflict_mode`.
     fn detect(repo_path: &std::path::Path, branch: &str) -> ConflictMode {
-        let backend = kagi::git::Backend::open(repo_path).unwrap();
+        let backend = kagi_git::Backend::open(repo_path).unwrap();
         let mut session = backend.detect_conflict_session().expect("conflict session");
         let buffer = backend.resolution_buffer_from_repo().unwrap();
         let residue = buffer.files_with_marker_residue();
@@ -1100,7 +1100,7 @@ mod tests {
         // Apply a side choice → resolved, no marker residue → gate opens.
         let path = mode.session.files[0].path.clone();
         mode.buffer
-            .apply_choice(&path, kagi::git::ResolutionChoice::Current)
+            .apply_choice(&path, kagi_git::ResolutionChoice::Current)
             .unwrap();
         // Recompute status as the UI handler does.
         let residue = mode.buffer.files_with_marker_residue();

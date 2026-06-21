@@ -3,7 +3,7 @@
 //! The pure staged-content rule logic now lives in `kagi_domain::checklist`
 //! (ADR-0072). This module is the git2-backed bridge that reads staged index
 //! BLOBs from a repository, applies the pure rules, and re-exports the pure
-//! entry points so existing `crate::git::checklist::*` paths resolve during the
+//! entry points so existing `crate::checklist::*` paths resolve during the
 //! migration.
 
 use git2::Repository;

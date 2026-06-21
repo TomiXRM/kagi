@@ -35,9 +35,9 @@ impl KagiApp {
 
     /// Read the six template `InputState`s into a [`TemplateFields`].
     /// Returns `default()` when the inputs have not been created yet.
-    fn template_fields_from_inputs(&self, cx: &Context<Self>) -> kagi::git::TemplateFields {
+    fn template_fields_from_inputs(&self, cx: &Context<Self>) -> kagi_git::TemplateFields {
         match &self.commit_template_inputs {
-            Some([ty, scope, summary, body, test, risk]) => kagi::git::TemplateFields::new(
+            Some([ty, scope, summary, body, test, risk]) => kagi_git::TemplateFields::new(
                 ty.read(cx).value().to_string(),
                 scope.read(cx).value().to_string(),
                 summary.read(cx).value().to_string(),
@@ -45,14 +45,14 @@ impl KagiApp {
                 test.read(cx).value().to_string(),
                 risk.read(cx).value().to_string(),
             ),
-            None => kagi::git::TemplateFields::default(),
+            None => kagi_git::TemplateFields::default(),
         }
     }
 
     /// Write a [`TemplateFields`] into the six template `InputState`s.
     pub(crate) fn set_template_inputs(
         &mut self,
-        fields: &kagi::git::TemplateFields,
+        fields: &kagi_git::TemplateFields,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -80,7 +80,7 @@ impl KagiApp {
         if self.commit_template_mode {
             // template → plain: assemble + pour into the plain Input.
             let fields = self.template_fields_from_inputs(cx);
-            let assembled = kagi::git::assemble(&fields);
+            let assembled = kagi_git::assemble(&fields);
             if self.commit_input.is_none() {
                 let st = cx.new(|cx| InputState::new(window, cx).placeholder("Commit message"));
                 self.commit_input = Some(st);
@@ -97,7 +97,7 @@ impl KagiApp {
                 .as_ref()
                 .map(|i| i.read(cx).value().to_string())
                 .unwrap_or_default();
-            let fields = kagi::git::parse_message(&plain);
+            let fields = kagi_git::parse_message(&plain);
             self.set_template_inputs(&fields, window, cx);
             self.commit_template_mode = true;
             // Focus the summary field (index 2) — the most-edited one.
@@ -116,7 +116,7 @@ impl KagiApp {
     /// (ADR-0042).
     pub(crate) fn effective_commit_message(&self, cx: &Context<Self>) -> String {
         if self.commit_template_mode {
-            kagi::git::assemble(&self.template_fields_from_inputs(cx))
+            kagi_git::assemble(&self.template_fields_from_inputs(cx))
         } else {
             self.commit_input
                 .as_ref()
@@ -150,9 +150,9 @@ impl KagiApp {
                 let branch = app.active_view.status_summary.branch.clone();
                 let msg = app.last_draft_value.clone();
                 if msg.trim().is_empty() {
-                    let _ = kagi::git::clear_draft(&rp, &branch);
+                    let _ = kagi_git::clear_draft(&rp, &branch);
                 } else {
-                    let _ = kagi::git::save_draft(&rp, &branch, &msg, &mode);
+                    let _ = kagi_git::save_draft(&rp, &branch, &msg, &mode);
                 }
             });
         })
@@ -195,11 +195,11 @@ impl KagiApp {
             let current = input_entity.read(cx).value().to_string();
             if current.trim().is_empty() {
                 let branch = self.active_view.status_summary.branch.clone();
-                if let Some(d) = kagi::git::load_draft(&repo_path, &branch) {
+                if let Some(d) = kagi_git::load_draft(&repo_path, &branch) {
                     klog!("draft: loaded {} (mode={})", branch, d.mode);
                     let entity = input_entity.clone();
                     if d.mode == "template" {
-                        let fields = kagi::git::parse_message(&d.message);
+                        let fields = kagi_git::parse_message(&d.message);
                         self.set_template_inputs(&fields, window, cx);
                         self.commit_template_mode = true;
                         self.last_draft_value = d.message;
@@ -500,7 +500,7 @@ impl KagiApp {
         cx.notify();
 
         let task = cx.background_spawn(async move {
-            let repo = match kagi::git::Backend::open(&repo_path) {
+            let repo = match kagi_git::Backend::open(&repo_path) {
                 Ok(r) => r,
                 Err(_) => return None,
             };
@@ -895,7 +895,7 @@ impl KagiApp {
                         klog!("async: commit finished");
                         // A successful commit clears the branch draft (T-COMMIT-007).
                         let branch = app.active_view.status_summary.branch.clone();
-                        let _ = kagi::git::clear_draft(&repo_path, &branch);
+                        let _ = kagi_git::clear_draft(&repo_path, &branch);
                         klog!("draft: cleared {}", branch);
                         app.last_draft_value = String::new();
 
@@ -911,7 +911,7 @@ impl KagiApp {
                             let summary =
                                 format!("commit {} '{}'", after_sha.short(), history_summary_line);
                             app.record_history(
-                                kagi::git::OperationKind::Commit,
+                                kagi_git::OperationKind::Commit,
                                 &hbranch,
                                 before,
                                 after_sha,
@@ -965,7 +965,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let mut repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(_e) => {
                 self.push_toast(
@@ -979,7 +979,7 @@ impl KagiApp {
         // MergeCommit has no user-facing plan modal (the conflict-resolution
         // save IS the confirm step); we synthesize a plan via plan_merge_commit
         // so run()'s preflight can gate on HEAD movement.
-        let merge_op = kagi::git::Operation::MergeCommit {
+        let merge_op = kagi_git::Operation::MergeCommit {
             message: message.to_string(),
         };
         let merge_plan = match repo.plan(&merge_op) {
@@ -996,11 +996,11 @@ impl KagiApp {
             }
         };
         match repo.run(&merge_op, &merge_plan) {
-            Ok(kagi::git::OperationOutcome::Commit(id)) => {
+            Ok(kagi_git::OperationOutcome::Commit(id)) => {
                 klog!("executed: merge commit {}", id.short());
-                let _ = kagi::git::ResolutionBuffer::clear(&repo_path);
+                let _ = kagi_git::ResolutionBuffer::clear(&repo_path);
                 let branch = self.active_view.status_summary.branch.clone();
-                let _ = kagi::git::clear_draft(&repo_path, &branch);
+                let _ = kagi_git::clear_draft(&repo_path, &branch);
                 self.last_draft_value = String::new();
                 let after = StateSummary {
                     head: format!("branch: {} (merge commit {})", branch, id.short()),

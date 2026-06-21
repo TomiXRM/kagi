@@ -124,7 +124,7 @@ impl KagiApp {
                         keyed.push((e.to_string(), crate::ui::i18n::branch_name_error(&e)));
                     }
                 }
-                if let Err(kagi::git::ops::WorktreeValidationError::Keyed(e)) =
+                if let Err(kagi_git::ops::WorktreeValidationError::Keyed(e)) =
                     repo.validate_worktree_path_keyed(&path)
                 {
                     keyed.push((e.to_string(), crate::ui::i18n::worktree_path_error(&e)));

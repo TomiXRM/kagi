@@ -53,7 +53,7 @@ pub(crate) use render_helpers::with_vertical_scrollbar;
 use theme::theme;
 pub use types::*;
 
-use kagi::git::message_gen;
+use kagi_git::message_gen;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -301,7 +301,7 @@ use commit_panel::{status_badge, CommitPanelFileRef, CommitPanelState, CommitPla
 use context_menu::{CommitAction, CommitMenuState, MenuContext};
 use detail_panel::{build_commit_details, CommitDetail};
 use graph_view::graph_canvas;
-use kagi::git::{
+use kagi_git::{
     oplog::{append_oplog, read_oplog_tail, OpLogEntry, OpOutcome},
     ops::{
         default_tracking_branch_name, validate_branch_rename, AmendMode, OperationPlan,
@@ -363,9 +363,9 @@ pub struct StatusBarSummary {
 
 impl StatusBarSummary {
     /// Build from a [`RepoSnapshot`] at the current wall clock time.
-    pub fn from_snapshot(snap: &kagi::git::RepoSnapshot) -> Self {
+    pub fn from_snapshot(snap: &kagi_git::RepoSnapshot) -> Self {
         use commit_list::now_unix_secs;
-        use kagi::git::Head;
+        use kagi_git::Head;
 
         let (branch, ahead, behind, no_upstream, is_detached, is_unborn, upstream_name) =
             match &snap.head {
@@ -771,7 +771,7 @@ pub struct KagiApp {
     /// Mutating ops still open a fresh `Backend` (the `*_blocking` pattern)
     /// because `run()` needs `&mut self` and the session is `Rc`, not
     /// `Arc+Mutex` — that collapses when the worker thread (ADR-0073) lands.
-    pub repo_session: Option<kagi::git::session::RepoSession>,
+    pub repo_session: Option<kagi_git::session::RepoSession>,
     /// Cache of changed-files results keyed by row index.
     /// `None` value means the diff was attempted but failed (show unavailable).
     pub diff_cache: HashMap<usize, Option<Vec<FileStatus>>>,
@@ -917,7 +917,7 @@ pub struct KagiApp {
     /// cherry-pick, revert, amend, undo-commit). Entries record the branch and
     /// the before/after commit SHAs; undo/redo move the branch ref between them
     /// via the safe pipeline. Lost on quit (reflog is the durable backstop).
-    pub operation_history: kagi::git::OperationHistory,
+    pub operation_history: kagi_git::OperationHistory,
     /// Whether the reflog-seed of `operation_history` has been attempted for the
     /// current repo (ADR-0084). Set on the first render with a repo open so undo
     /// works on a freshly-opened repo (the initial CLI/snapshot path never calls
@@ -1145,7 +1145,7 @@ pub struct KagiApp {
     /// path to skip a refresh when nothing the parent repo cares about changed
     /// (e.g. churn inside a nested worktree, which `working_tree_status` treats as
     /// opaque). Set on every `reload`.
-    pub last_working_status: Option<kagi::git::WorkingTreeStatus>,
+    pub last_working_status: Option<kagi_git::WorkingTreeStatus>,
     /// T-CONFLICT-UX-010/012: index (among conflict hunks) of the focused hunk in
     /// the per-hunk Conflict Editor, so the selected-hunk highlight tracks the
     /// hunk the user last interacted with / navigated to.
@@ -1445,7 +1445,7 @@ impl KagiApp {
             cp_staged_scroll_handle: UniformListScrollHandle::new(),
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
-            operation_history: kagi::git::OperationHistory::new(),
+            operation_history: kagi_git::OperationHistory::new(),
             history_seed_attempted: false,
             terminal_sessions: HashMap::new(),
             tabs: Vec::new(),
@@ -1570,7 +1570,7 @@ impl KagiApp {
             op_log: std::rc::Rc::new(std::cell::RefCell::new(oplog_panel::OpLogPanel::new())),
             oplog_scroll_handle: UniformListScrollHandle::new(),
             oplog_expanded: None,
-            operation_history: kagi::git::OperationHistory::new(),
+            operation_history: kagi_git::OperationHistory::new(),
             history_seed_attempted: false,
             terminal_sessions: HashMap::new(),
             tabs: Vec::new(),
@@ -1652,7 +1652,7 @@ impl KagiApp {
         };
 
         // Re-open and snapshot.
-        let mut repo = match kagi::git::Backend::open(&repo_path) {
+        let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 klog!("reload: repo open error: {}", e);
@@ -1849,7 +1849,7 @@ impl KagiApp {
         // view with the OLD tab's data (cross-review N4).
         let gen_at_spawn = self.switch_generation;
         let task = cx.background_spawn(async move {
-            let mut backend = kagi::git::Backend::open(&bg_path).ok()?;
+            let mut backend = kagi_git::Backend::open(&bg_path).ok()?;
             let snap = backend.snapshot(10_000).ok()?;
             let wip = KagiApp::wip_diffstat_from_backend(&backend);
             // RepoSnapshot is pure domain (Send); build_tab_view constructs
@@ -1927,7 +1927,7 @@ impl KagiApp {
         };
         let bg_path = repo_path.clone();
         let task = cx.background_spawn(async move {
-            let backend = kagi::git::Backend::open(&bg_path).ok()?;
+            let backend = kagi_git::Backend::open(&bg_path).ok()?;
             let status = backend.working_tree_status().ok()?;
             let wip_diffstat = KagiApp::wip_diffstat_from_backend(&backend);
             Some((status, wip_diffstat))
@@ -1995,7 +1995,7 @@ impl KagiApp {
         }
         self.conflict_detected_for = Some(repo_path.clone());
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
+        let repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(_) => {
                 self.conflict = None;
@@ -2024,7 +2024,7 @@ impl KagiApp {
         // Show the commit panel (handled by `reload`), not an empty Conflict Mode
         // editor.  Without this the FS-watcher reload that staging triggers would
         // re-enter Conflict Mode with zero files and clobber the commit panel.
-        if matches!(session.op, kagi::git::ConflictOp::Merge { .. }) && session.files.is_empty() {
+        if matches!(session.op, kagi_git::ConflictOp::Merge { .. }) && session.files.is_empty() {
             klog!("conflict-mode: merge resolved — ready to commit");
             self.merge_commit_ready = true;
             self.conflict = None;
@@ -2035,9 +2035,9 @@ impl KagiApp {
         // Build / reload the resolution buffer.  A previously-autosaved buffer
         // (e.g. from before a restart) is preferred so partial work survives;
         // otherwise materialize a fresh buffer from the index conflicts.
-        let buffer = kagi::git::ResolutionBuffer::load(&repo_path)
+        let buffer = kagi_git::ResolutionBuffer::load(&repo_path)
             .or_else(|| repo.resolution_buffer_from_repo().ok())
-            .unwrap_or_else(|| kagi::git::ResolutionBuffer::new(&repo_path));
+            .unwrap_or_else(|| kagi_git::ResolutionBuffer::new(&repo_path));
 
         // Current branch short name (for the side_labels left role).
         let current_branch = self.active_view.status_summary.branch.clone();
@@ -2048,12 +2048,12 @@ impl KagiApp {
         for f in &mut session.files {
             if buffer.has_resolution(&f.path) {
                 f.status = if residue.contains(&f.path) {
-                    kagi::git::ConflictStatus::NeedsReview
+                    kagi_git::ConflictStatus::NeedsReview
                 } else {
-                    kagi::git::ConflictStatus::Resolved
+                    kagi_git::ConflictStatus::Resolved
                 };
             } else {
-                f.status = kagi::git::ConflictStatus::Unresolved;
+                f.status = kagi_git::ConflictStatus::Unresolved;
             }
         }
 
@@ -2066,7 +2066,7 @@ impl KagiApp {
                 session
                     .files
                     .iter()
-                    .position(|f| f.status == kagi::git::ConflictStatus::Unresolved)
+                    .position(|f| f.status == kagi_git::ConflictStatus::Unresolved)
             })
             .or_else(|| (!session.files.is_empty()).then_some(0));
 
@@ -2102,7 +2102,7 @@ impl KagiApp {
         if let Some(c) = self.conflict.as_mut() {
             if let Some(idx) = c.selected_file {
                 if let Some(f) = c.session.files.get(idx) {
-                    if f.kind == kagi::git::ConflictKind::Content {
+                    if f.kind == kagi_git::ConflictKind::Content {
                         let path = f.path.clone();
                         if let Some(markers) = repo.materialized_markers(&c.buffer, &path) {
                             c.buffer.ensure_hunks(&path, &markers);
@@ -2433,9 +2433,9 @@ impl KagiApp {
                             let branch = app.active_view.status_summary.branch.clone();
                             let msg = app.last_draft_value.clone();
                             if msg.trim().is_empty() {
-                                let _ = kagi::git::clear_draft(&rp, &branch);
+                                let _ = kagi_git::clear_draft(&rp, &branch);
                             } else {
-                                let _ = kagi::git::save_draft(&rp, &branch, &msg, &mode);
+                                let _ = kagi_git::save_draft(&rp, &branch, &msg, &mode);
                                 klog!("draft: saved {}", branch);
                             }
                         });
@@ -2559,11 +2559,11 @@ impl KagiApp {
                             let residue = c.buffer.files_with_marker_residue();
                             if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
                                 f.status = if residue.contains(&f.path) {
-                                    kagi::git::ConflictStatus::NeedsReview
+                                    kagi_git::ConflictStatus::NeedsReview
                                 } else if c.buffer.has_resolution(&path) {
-                                    kagi::git::ConflictStatus::Resolved
+                                    kagi_git::ConflictStatus::Resolved
                                 } else {
-                                    kagi::git::ConflictStatus::Unresolved
+                                    kagi_git::ConflictStatus::Unresolved
                                 };
                             }
                         }
@@ -2677,10 +2677,10 @@ impl KagiApp {
     /// Returns `None` for detached/unborn HEAD or any open/read failure — used
     /// to capture before/after snapshots for the operation-history recording
     /// (T-UNDOREDO-001). The view never holds git2 directly: this goes through
-    /// the `kagi::git::Backend`.
-    fn head_branch_and_sha(&self) -> Option<(String, kagi::git::CommitId)> {
+    /// the `kagi_git::Backend`.
+    fn head_branch_and_sha(&self) -> Option<(String, kagi_git::CommitId)> {
         let repo_path = self.repo_path.clone()?;
-        let backend = kagi::git::Backend::open(&repo_path).ok()?;
+        let backend = kagi_git::Backend::open(&repo_path).ok()?;
         let branch = backend.head_shorthand()?;
         let sha = backend.head_commit_id()?;
         Some((branch, sha))
@@ -2790,8 +2790,8 @@ impl KagiApp {
         });
 
         if let Some(err) = failure_msg {
-            use kagi::git::oplog::OpOutcome;
-            use kagi::git::ops::StateSummary;
+            use kagi_git::oplog::OpOutcome;
+            use kagi_git::ops::StateSummary;
             self.record_op(
                 "terminal-start",
                 StateSummary {
@@ -3168,14 +3168,14 @@ impl KagiApp {
         let req_path = rel_path.clone();
         let bg_path = repo_path.clone();
         let task = cx.background_spawn(async move {
-            let req = kagi::git::FileHistoryRequest {
+            let req = kagi_git::FileHistoryRequest {
                 repo_dir: bg_path,
                 file_path: req_path,
                 follow_renames: follow,
                 include_wip: true,
                 limit: 500,
             };
-            kagi::git::file_history(&req)
+            kagi_git::file_history(&req)
         });
 
         cx.spawn(async move |this, acx| {
@@ -3220,10 +3220,10 @@ impl KagiApp {
     /// Choose the initial selected index: the WIP row (always index 0 if
     /// present), else the `origin` commit if it appears, else the newest entry.
     fn pick_initial_file_history_index(
-        history: &kagi::git::FileHistory,
+        history: &kagi_git::FileHistory,
         origin: &Option<CommitId>,
     ) -> usize {
-        use kagi::git::FileHistoryEntryKind;
+        use kagi_git::FileHistoryEntryKind;
         if let Some(first) = history.entries.first() {
             if first.kind == FileHistoryEntryKind::Wip {
                 return 0;
@@ -3290,7 +3290,7 @@ impl KagiApp {
     /// `open_main_diff_commit`.  Never panics on missing / binary / deleted
     /// files — falls back to `diff = None` so the banner messaging covers it.
     fn load_file_history_diff(&mut self, _cx: &mut Context<Self>) {
-        use kagi::git::FileHistoryEntryKind;
+        use kagi_git::FileHistoryEntryKind;
 
         let Some(repo_path) = self.repo_path.clone() else {
             return;
@@ -3309,7 +3309,7 @@ impl KagiApp {
         let kind = entry.kind;
         let commit_id = entry.commit.as_ref().map(|c| CommitId(c.full_hash.clone()));
 
-        let repo = match kagi::git::Backend::open(&repo_path) {
+        let repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(_) => {
                 if let Some(fh) = self.file_history.as_mut() {
@@ -3520,14 +3520,14 @@ impl KagiApp {
         let req_path = rel_path.clone();
         let bg_path = repo_path.clone();
         let task = cx.background_spawn(async move {
-            let req = kagi::git::FileHistoryRequest {
+            let req = kagi_git::FileHistoryRequest {
                 repo_dir: bg_path,
                 file_path: req_path,
                 follow_renames: follow,
                 include_wip: true,
                 limit: 500,
             };
-            kagi::git::file_history(&req)
+            kagi_git::file_history(&req)
         });
 
         cx.spawn(async move |this, acx| {
@@ -3582,7 +3582,7 @@ impl KagiApp {
         file_index: usize,
         mut cx: Option<&mut Context<Self>>,
     ) {
-        use kagi::git::CommitId;
+        use kagi_git::CommitId;
 
         let selected = match self.selected {
             Some(s) => s,
@@ -4035,7 +4035,7 @@ impl KagiApp {
     /// Fetch changed files for the commit at `index`.  Returns `None` on
     /// failure (so the UI can show "(diff unavailable)").
     fn fetch_changed_files(&self, index: usize) -> Option<Vec<FileStatus>> {
-        use kagi::git::CommitId;
+        use kagi_git::CommitId;
 
         // Early-exit if no repo is open (the session is None in that case too).
         if self.repo_session.is_none() {
@@ -4052,17 +4052,17 @@ impl KagiApp {
     /// W16-DIFFSTAT: aggregate per-file additions/deletions for the commit at
     /// `index`.  Returns `None` on failure (the UI simply omits the bar).
     fn fetch_diffstat(&self, index: usize) -> Option<Vec<FileDiffStat>> {
-        use kagi::git::CommitId;
+        use kagi_git::CommitId;
 
         let repo_path = self.repo_path.as_ref()?;
         let detail = self.active_view.details.get(index)?;
         let id = CommitId(detail.full_sha.as_ref().to_string());
 
-        let repo = kagi::git::Backend::open(repo_path).ok()?;
+        let repo = kagi_git::Backend::open(repo_path).ok()?;
         repo.commit_diffstat(&id).ok()
     }
 
-    fn wip_diffstat_from_backend(repo: &kagi::git::Backend) -> WipDiffStat {
+    fn wip_diffstat_from_backend(repo: &kagi_git::Backend) -> WipDiffStat {
         let mut out = WipDiffStat::default();
         for stat in repo.staged_diffstat().unwrap_or_default() {
             out.additions += stat.additions;
@@ -4365,7 +4365,7 @@ impl KagiApp {
         } else {
             self.repo_path
                 .as_ref()
-                .and_then(|repo_path| kagi::git::Backend::open(repo_path).ok())
+                .and_then(|repo_path| kagi_git::Backend::open(repo_path).ok())
                 .and_then(|repo| repo.is_ancestor_of_head(&target).ok())
                 .unwrap_or(false)
         };
@@ -5579,8 +5579,8 @@ fn conflict_split_ratio_from_cursor(
 }
 
 /// Stable slug for a per-hunk choice, for the oplog action summary (T-035).
-fn hunk_choice_slug(choice: &kagi::git::resolution::HunkChoice) -> &'static str {
-    use kagi::git::resolution::HunkChoice::*;
+fn hunk_choice_slug(choice: &kagi_git::resolution::HunkChoice) -> &'static str {
+    use kagi_git::resolution::HunkChoice::*;
     match choice {
         AcceptCurrent => "current",
         AcceptIncoming => "incoming",
@@ -5698,7 +5698,7 @@ mod drag_merge_validation_tests {
 mod draggable_branch_name_tests {
     use super::{collect_history_commits, context_branch_name, draggable_branch_name};
     use crate::ui::commit_list::{BadgeKind, RefBadge};
-    use kagi::git::CommitId;
+    use kagi_git::CommitId;
     use std::collections::{HashMap, HashSet};
 
     fn badge(kind: BadgeKind, label: &str) -> RefBadge {

@@ -839,7 +839,7 @@ pub(crate) fn render_fh_list_and_diff(
         let scroll = state.diff_scroll.clone();
         // Per-entry banner (Added / Deleted / Renamed) above the diff.
         let sel_banner = state.selected_entry().map(|e| {
-            use kagi::git::FileChangeType;
+            use kagi_git::FileChangeType;
             match e.change.change_type {
                 FileChangeType::Added => "This file was added in this commit.".to_string(),
                 FileChangeType::Deleted => "This file was deleted in this commit.".to_string(),
@@ -999,12 +999,12 @@ pub(crate) fn render_fh_commit_list(
 /// One row in the File History commit list.
 pub(crate) fn render_fh_row(
     ix: usize,
-    entry: &kagi::git::FileHistoryEntry,
+    entry: &kagi_git::FileHistoryEntry,
     is_selected: bool,
     now: i64,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
-    use kagi::git::FileHistoryEntryKind;
+    use kagi_git::FileHistoryEntryKind;
 
     let (badge, badge_color) = file_history::entry_badge(entry);
     let is_wip = entry.kind == FileHistoryEntryKind::Wip;
@@ -1169,7 +1169,7 @@ pub(crate) fn render_fh_detail_pane(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     // Clone the entry out so listeners can capture owned data.
-    let entry: Option<kagi::git::FileHistoryEntry> = state.selected_entry().cloned();
+    let entry: Option<kagi_git::FileHistoryEntry> = state.selected_entry().cloned();
 
     let mut pane = div()
         .id("fh-detail-pane")
@@ -2257,7 +2257,7 @@ pub(crate) fn render_commit_panel(
     // stable call-site signature.
     _active_wip: Option<(bool, PathBuf)>,
     smart: smart_commit::SmartCommitState,
-    preview: Option<kagi::git::CommitPreview>,
+    preview: Option<kagi_git::CommitPreview>,
     unstaged_scroll_handle: UniformListScrollHandle,
     staged_scroll_handle: UniformListScrollHandle,
     cx: &mut Context<KagiApp>,
@@ -2284,7 +2284,7 @@ pub(crate) fn render_commit_panel(
         template_inputs
             .as_ref()
             .map(|inp| {
-                let fields = kagi::git::TemplateFields::new(
+                let fields = kagi_git::TemplateFields::new(
                     inp[0].read(cx).value().to_string(),
                     inp[1].read(cx).value().to_string(),
                     inp[2].read(cx).value().to_string(),
@@ -2292,7 +2292,7 @@ pub(crate) fn render_commit_panel(
                     inp[4].read(cx).value().to_string(),
                     inp[5].read(cx).value().to_string(),
                 );
-                !kagi::git::assemble(&fields).trim().is_empty()
+                !kagi_git::assemble(&fields).trim().is_empty()
             })
             .unwrap_or(false)
     } else {
@@ -2519,7 +2519,7 @@ pub(crate) fn render_commit_panel(
 
             // type quick-pick chips (also free-typeable in the type field above).
             let mut chips = div().flex().flex_row().flex_wrap().gap_1();
-            for &choice in kagi::git::TYPE_CHOICES {
+            for &choice in kagi_git::TYPE_CHOICES {
                 let ty_state = ty.clone();
                 let pick = cx.listener(move |_this, _e: &gpui::ClickEvent, window, cx| {
                     ty_state.update(cx, |s, cx| s.set_value(choice.to_string(), window, cx));

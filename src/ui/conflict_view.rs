@@ -644,10 +644,14 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElem
         Msg::ConflictAbort.t()
     };
 
-    // Continue (filled, gated) + Abort (danger, two-stage) on one row.
+    // Continue (filled, gated) + Abort (danger, two-stage) on one row. The
+    // buttons size to content (gpui-component Buttons are flex_shrink_0), so wrap
+    // rather than overflow the fixed-width dashboard when the armed-abort label
+    // grows (T-CONFLICT-DASH-023).
     let primary_row = div()
         .flex()
         .flex_row()
+        .flex_wrap()
         .gap_2()
         .child(action_button(
             Msg::ConflictContinue.t(),

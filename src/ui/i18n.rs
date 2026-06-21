@@ -705,8 +705,8 @@ impl Msg {
             (Ja, ConflictSectionConflicted) => "Conflicted ファイル",
             (En, ConflictSectionResolved) => "Resolved Files",
             (Ja, ConflictSectionResolved) => "Resolved ファイル",
-            (En, ConflictConfirmAbort) => "Click again to confirm abort",
-            (Ja, ConflictConfirmAbort) => "もう一度押すと中止します",
+            (En, ConflictConfirmAbort) => "Confirm abort",
+            (Ja, ConflictConfirmAbort) => "中止を確定",
             (En, ConflictConfirmAbortHint) => {
                 "Aborting may discard your saved resolutions (they are preserved in the autosave directory)."
             }

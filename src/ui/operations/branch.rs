@@ -105,7 +105,7 @@ impl KagiApp {
     /// Confirm the create-branch plan: run preflight, execute, then reload.
     ///
     /// On failure the modal remains open and shows the error text.
-    pub fn confirm_create_branch(&mut self) {
+    pub fn confirm_create_branch(&mut self, cx: &mut Context<Self>) {
         // The live plan is debounced; rebuild it from the latest input so a
         // fast type-then-click can never execute a stale plan.
         self.run_modal_replans();
@@ -128,6 +128,7 @@ impl KagiApp {
                         blockers: plan.blockers.clone(),
                     },
                     rp,
+                    cx,
                 );
             }
             return;
@@ -148,6 +149,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 if let Some(m) = self.create_branch_modal_mut() {
                     m.error = Some(SharedString::from(err_msg));
@@ -172,6 +174,7 @@ impl KagiApp {
                     error: err_msg.clone(),
                 },
                 &repo_path,
+                cx,
             );
             if let Some(m) = self.create_branch_modal_mut() {
                 m.error = Some(SharedString::from(err_msg));
@@ -217,6 +220,7 @@ impl KagiApp {
                 after: create_after.clone(),
             },
             &repo_path,
+            cx,
         );
 
         if modal.checkout_after {
@@ -231,6 +235,7 @@ impl KagiApp {
                             error: err_msg.clone(),
                         },
                         &repo_path,
+                        cx,
                     );
                     if let Some(m) = self.create_branch_modal_mut() {
                         m.error = Some(SharedString::from(err_msg));
@@ -246,6 +251,7 @@ impl KagiApp {
                         blockers: checkout_plan.blockers.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 if let Some(m) = self.create_branch_modal_mut() {
                     m.error = Some(SharedString::from(
@@ -269,6 +275,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 if let Some(m) = self.create_branch_modal_mut() {
                     m.error = Some(SharedString::from(err_msg));
@@ -283,6 +290,7 @@ impl KagiApp {
                     after: checkout_plan.predicted.clone(),
                 },
                 &repo_path,
+                cx,
             );
         }
 
@@ -362,6 +370,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             self.clear_branch_plan_modal();
             cx.notify();
@@ -388,6 +397,7 @@ impl KagiApp {
                                 after: after.clone(),
                             },
                             &repo_path,
+                            cx,
                         );
                         app.status_footer = FooterStatus::Success(SharedString::from(format!(
                             "{}: {}",
@@ -403,6 +413,7 @@ impl KagiApp {
                                 error: err_msg.clone(),
                             },
                             &repo_path,
+                            cx,
                         );
                         app.set_branch_plan_modal(BranchPlanModal {
                             kind: modal.kind.clone(),
@@ -497,6 +508,7 @@ impl KagiApp {
                     blockers: plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             return;
         }
@@ -521,6 +533,7 @@ impl KagiApp {
                             plan.current.clone(),
                             OpOutcome::Success { after },
                             &repo_path,
+                            cx,
                         );
                         app.reload();
                     }
@@ -532,6 +545,7 @@ impl KagiApp {
                                 error: err_msg.clone(),
                             },
                             &repo_path,
+                            cx,
                         );
                         app.set_set_upstream_modal(SetUpstreamModal {
                             branch_name: modal.branch_name.clone(),
@@ -635,6 +649,7 @@ impl KagiApp {
                     blockers: plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             return;
         }
@@ -658,6 +673,7 @@ impl KagiApp {
                             plan.current.clone(),
                             OpOutcome::Success { after },
                             &repo_path,
+                            cx,
                         );
                         app.reload();
                     }
@@ -669,6 +685,7 @@ impl KagiApp {
                                 error: err_msg.clone(),
                             },
                             &repo_path,
+                            cx,
                         );
                         app.set_rename_branch_modal(RenameBranchModal {
                             old_name: modal.old_name.clone(),
@@ -821,6 +838,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             self.clear_merge_modal();
             cx.notify();
@@ -853,6 +871,7 @@ impl KagiApp {
                             modal.plan.current.clone(),
                             OpOutcome::Success { after },
                             &repo_path,
+                            cx,
                         );
                         // Record for undo/redo only when the merge actually moved
                         // the branch ref (clean merge / fast-forward). A merge
@@ -884,6 +903,7 @@ impl KagiApp {
                                 error: err_msg.clone(),
                             },
                             &repo_path,
+                            cx,
                         );
                         app.set_merge_modal(MergePlanModal {
                             target: modal.target.clone(),
@@ -972,6 +992,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             self.clear_tracking_checkout_modal();
             cx.notify();
@@ -1002,6 +1023,7 @@ impl KagiApp {
                             modal.plan.current.clone(),
                             OpOutcome::Success { after },
                             &repo_path,
+                            cx,
                         );
                         app.reload();
                     }
@@ -1014,6 +1036,7 @@ impl KagiApp {
                                 error: err_msg.clone(),
                             },
                             &repo_path,
+                            cx,
                         );
                         app.set_tracking_checkout_modal(TrackingCheckoutPlanModal {
                             remote_branch: modal.remote_branch.clone(),
@@ -1101,6 +1124,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             self.clear_switch_to_latest_modal();
             cx.notify();
@@ -1131,6 +1155,7 @@ impl KagiApp {
                             modal.plan.current.clone(),
                             OpOutcome::Success { after },
                             &repo_path,
+                            cx,
                         );
                         app.reload();
                     }
@@ -1143,6 +1168,7 @@ impl KagiApp {
                                 error: err_msg.clone(),
                             },
                             &repo_path,
+                            cx,
                         );
                         app.set_switch_to_latest_modal(SwitchToLatestPlanModal {
                             branch_name: modal.branch_name.clone(),
@@ -1206,7 +1232,7 @@ impl KagiApp {
     }
 
     /// Confirm delete-branch: preflight → execute → oplog → reload.
-    pub fn confirm_delete_branch(&mut self) {
+    pub fn confirm_delete_branch(&mut self, cx: &mut Context<Self>) {
         let modal = match self.delete_branch_modal().cloned() {
             Some(m) => m,
             None => return,
@@ -1228,6 +1254,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             return;
         }
@@ -1243,6 +1270,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 self.set_delete_branch_modal(DeleteBranchModal {
                     branch_name: modal.branch_name.clone(),
@@ -1272,6 +1300,7 @@ impl KagiApp {
                     modal.plan.current.clone(),
                     kagi_git::oplog::OpOutcome::Success { after },
                     &repo_path,
+                    cx,
                 );
                 self.status_footer = FooterStatus::Success(SharedString::from(format!(
                     "delete-branch: '{}' deleted (restore: {})",
@@ -1289,6 +1318,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 self.set_delete_branch_modal(DeleteBranchModal {
                     branch_name: modal.branch_name.clone(),
@@ -1327,6 +1357,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             self.clear_delete_branch_modal();
             cx.notify();
@@ -1365,6 +1396,7 @@ impl KagiApp {
                             plan.current.clone(),
                             kagi_git::oplog::OpOutcome::Success { after },
                             &repo_path,
+                            cx,
                         );
                         app.status_footer = FooterStatus::Success(SharedString::from(format!(
                             "delete-branch: '{}' deleted (restore: {})",
@@ -1381,6 +1413,7 @@ impl KagiApp {
                                 error: err_msg.clone(),
                             },
                             &repo_path,
+                            cx,
                         );
                         app.set_delete_branch_modal(DeleteBranchModal {
                             branch_name: branch_name.clone(),

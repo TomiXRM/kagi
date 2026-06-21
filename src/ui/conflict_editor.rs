@@ -103,7 +103,7 @@ fn render_toolbar(
     });
     let p_ext = path.to_path_buf();
     let open_ext = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_editor_open_external(&p_ext);
+        this.conflict_editor_open_external(&p_ext, cx);
         cx.notify();
     });
     let p_reset = path.to_path_buf();
@@ -958,7 +958,7 @@ fn render_result_pane(
     // File-level "Save resolution" lives near the Result (deliverable #4).
     let p_save = path.to_path_buf();
     let save = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_editor_save(&p_save);
+        this.conflict_editor_save(&p_save, cx);
         cx.notify();
     });
 

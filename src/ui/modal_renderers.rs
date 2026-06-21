@@ -103,7 +103,7 @@ pub(crate) fn render_undo_modal(
         cx.notify();
     });
     let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.confirm_undo();
+        this.confirm_undo(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh);
         }
@@ -136,7 +136,7 @@ pub(crate) fn render_history_modal(
         cx.notify();
     });
     let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.confirm_history();
+        this.confirm_history(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh);
         }
@@ -1515,7 +1515,7 @@ pub(crate) fn render_create_branch_modal(
     // ── Confirm handler (only created when no blockers) ─────
     // T-BP-003: return focus to root_focus after confirm.
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.confirm_create_branch();
+        this.confirm_create_branch(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh);
         }
@@ -2275,7 +2275,7 @@ pub(crate) fn render_stash_apply_modal(
     });
 
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.confirm_stash_apply();
+        this.confirm_stash_apply(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh);
         }

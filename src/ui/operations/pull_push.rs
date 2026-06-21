@@ -11,7 +11,7 @@ use crate::ui::*;
 
 impl KagiApp {
     /// Build a pull plan and open the confirmation modal.
-    pub fn open_pull_modal(&mut self) {
+    pub fn open_pull_modal(&mut self, cx: &mut Context<Self>) {
         // W3-NOTIFY: refuse while a background op runs.
         if self.busy_op.is_some() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
@@ -26,9 +26,10 @@ impl KagiApp {
             let ahead = s.ahead.unwrap_or(0);
             // Nothing to pull by local knowledge → snackbar, no modal (as local).
             if behind == 0 {
-                self.push_toast_deferred(
+                self.push_toast(
                     ToastKind::Sync,
                     SharedString::from(Msg::AlreadyUpToDatePull.t()),
+                    cx,
                 );
                 self.status_footer = FooterStatus::Idle(SharedString::from(""));
                 return;
@@ -83,9 +84,10 @@ impl KagiApp {
                     && plan.warnings.is_empty()
                     && plan.title.contains("up to date (local knowledge")
                 {
-                    self.push_toast_deferred(
+                    self.push_toast(
                         ToastKind::Sync,
                         SharedString::from(Msg::AlreadyUpToDatePull.t()),
+                        cx,
                     );
                     self.status_footer = FooterStatus::Idle(SharedString::from(""));
                     return;
@@ -111,7 +113,7 @@ impl KagiApp {
     /// FF / in-memory merge (see `execute_pull`).  Used by the headless
     /// KAGI_PULL path (no event loop). The UI button uses `start_pull`,
     /// which runs the same blocking core on a background thread (W3-NOTIFY).
-    pub fn confirm_pull(&mut self) {
+    pub fn confirm_pull(&mut self, cx: &mut Context<Self>) {
         let modal = match self.pull_modal().cloned() {
             Some(m) => m,
             None => return,
@@ -130,6 +132,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             return;
         }
@@ -144,6 +147,7 @@ impl KagiApp {
                         after: after_summary,
                     },
                     &repo_path,
+                    cx,
                 );
                 self.status_footer =
                     FooterStatus::Success(SharedString::from(format!("pull: {}", summary)));
@@ -157,6 +161,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 self.set_pull_modal(PullPlanModal {
                     plan: modal.plan.clone(),
@@ -208,6 +213,7 @@ impl KagiApp {
                                     },
                                 },
                                 &oplog_path,
+                                cx,
                             );
                             app.status_footer = FooterStatus::Success(SharedString::from(format!(
                                 "pull: {summary}"
@@ -223,6 +229,7 @@ impl KagiApp {
                                     error: err_msg.clone(),
                                 },
                                 &oplog_path,
+                                cx,
                             );
                             app.set_pull_modal(PullPlanModal {
                                 plan: modal.plan.clone(),
@@ -251,6 +258,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             self.clear_pull_modal();
             cx.notify();
@@ -268,7 +276,7 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                app.finish_pull(result, modal, repo_path);
+                app.finish_pull(result, modal, repo_path, cx);
                 cx.notify();
             });
         })
@@ -282,6 +290,7 @@ impl KagiApp {
         result: Result<(String, StateSummary), String>,
         modal: PullPlanModal,
         repo_path: PathBuf,
+        cx: &mut Context<Self>,
     ) {
         self.busy_op = None;
         match result {
@@ -294,6 +303,7 @@ impl KagiApp {
                         after: after_summary,
                     },
                     &repo_path,
+                    cx,
                 );
                 self.status_footer =
                     FooterStatus::Success(SharedString::from(format!("pull: {}", summary)));
@@ -306,13 +316,14 @@ impl KagiApp {
                     modal.plan.current.clone(),
                     OpOutcome::Failed { error: err_msg },
                     &repo_path,
+                    cx,
                 );
             }
         }
     }
 
     /// Build a push plan and open the confirmation modal.
-    pub fn open_push_modal(&mut self) {
+    pub fn open_push_modal(&mut self, cx: &mut Context<Self>) {
         // W3-NOTIFY: refuse while a background op runs.
         if self.busy_op.is_some() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
@@ -346,9 +357,10 @@ impl KagiApp {
                 if !plan.blockers.is_empty()
                     && plan.blockers.iter().all(|b| b.contains("nothing to push"))
                 {
-                    self.push_toast_deferred(
+                    self.push_toast(
                         ToastKind::Sync,
                         SharedString::from(Msg::AlreadyUpToDatePush.t()),
+                        cx,
                     );
                     self.status_footer = FooterStatus::Idle(SharedString::from(""));
                     return;
@@ -373,7 +385,7 @@ impl KagiApp {
     /// Confirm the push plan synchronously: preflight, execute push via CLI.
     /// Used by the headless KAGI_PUSH path. The UI button uses `start_push`
     /// (background thread + toasts, W3-NOTIFY).
-    pub fn confirm_push(&mut self) {
+    pub fn confirm_push(&mut self, cx: &mut Context<Self>) {
         let modal = match self.push_modal().cloned() {
             Some(m) => m,
             None => return,
@@ -392,6 +404,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             return;
         }
@@ -406,6 +419,7 @@ impl KagiApp {
                         after: after_summary,
                     },
                     &repo_path,
+                    cx,
                 );
                 self.status_footer =
                     FooterStatus::Success(SharedString::from(format!("push: {}", summary)));
@@ -419,6 +433,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 self.set_push_modal(PushPlanModal {
                     plan: modal.plan.clone(),
@@ -451,6 +466,7 @@ impl KagiApp {
                     blockers: modal.plan.blockers.clone(),
                 },
                 &repo_path,
+                cx,
             );
             self.clear_push_modal();
             cx.notify();
@@ -468,7 +484,7 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                app.finish_push(result, modal, repo_path);
+                app.finish_push(result, modal, repo_path, cx);
                 cx.notify();
             });
         })
@@ -482,6 +498,7 @@ impl KagiApp {
         result: Result<(String, StateSummary), String>,
         modal: PushPlanModal,
         repo_path: PathBuf,
+        cx: &mut Context<Self>,
     ) {
         self.busy_op = None;
         match result {
@@ -494,6 +511,7 @@ impl KagiApp {
                         after: after_summary,
                     },
                     &repo_path,
+                    cx,
                 );
                 self.status_footer =
                     FooterStatus::Success(SharedString::from(format!("push: {}", summary)));
@@ -506,6 +524,7 @@ impl KagiApp {
                     modal.plan.current.clone(),
                     OpOutcome::Failed { error: err_msg },
                     &repo_path,
+                    cx,
                 );
             }
         }

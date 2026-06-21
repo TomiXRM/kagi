@@ -209,17 +209,22 @@ impl KagiApp {
     /// Entry point for "Open external tool" (ADR-0060 / ADR-0064 toolbar).  The
     /// actual launch is W33's lane; here we only record the intent + toast so the
     /// button is wired and discoverable.
-    pub fn conflict_editor_open_external(&mut self, path: &std::path::Path) {
+    pub fn conflict_editor_open_external(
+        &mut self,
+        path: &std::path::Path,
+        cx: &mut Context<Self>,
+    ) {
         eprintln!(
             "[kagi] conflict-editor: external tool requested for {} (launch is W33)",
             path.display()
         );
-        self.push_toast_deferred(
+        self.push_toast(
             ToastKind::Info,
             SharedString::from(format!(
                 "External merge tool launch is not wired yet ({}).",
                 path.display()
             )),
+            cx,
         );
     }
 
@@ -229,7 +234,7 @@ impl KagiApp {
     /// entries (stage 1/2/3) collapse to stage 0.  Moves the file into Resolved
     /// Files, re-evaluates the continue gate, autosaves the buffer, and records
     /// the resolution action to the operation log (T-035).  No commit is created.
-    pub fn conflict_editor_save(&mut self, path: &std::path::Path) {
+    pub fn conflict_editor_save(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -273,9 +278,10 @@ impl KagiApp {
         let repo = match self.repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
-                self.push_toast_deferred(
+                self.push_toast(
                     ToastKind::Error,
                     SharedString::from(format!("Repo open error: {}", "session unavailable")),
+                    cx,
                 );
                 return;
             }
@@ -305,15 +311,22 @@ impl KagiApp {
                     ),
                     dirty: "clean".to_string(),
                 };
-                self.record_op(&op_name, before, OpOutcome::Success { after }, &repo_path);
+                self.record_op(
+                    &op_name,
+                    before,
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
                 self.conflict_editing_before_text
                     .insert(path.to_path_buf(), after_text);
                 // Re-detect so the staged file leaves the conflicted index set.
                 self.conflict_detected_for = None;
                 self.detect_conflict_mode();
-                self.push_toast_deferred(
+                self.push_toast(
                     ToastKind::Success,
                     SharedString::from(Msg::EditorSavedResolved.t()),
+                    cx,
                 );
             }
             Err(e) => {
@@ -326,10 +339,12 @@ impl KagiApp {
                         blockers: vec![err_msg],
                     },
                     &repo_path,
+                    cx,
                 );
-                self.push_toast_deferred(
+                self.push_toast(
                     ToastKind::Error,
                     SharedString::from(Msg::EditorMarkerWarning.t()),
+                    cx,
                 );
             }
         }
@@ -393,6 +408,7 @@ impl KagiApp {
         &mut self,
         path: &std::path::Path,
         choice: kagi_git::ResolutionChoice,
+        cx: &mut Context<Self>,
     ) {
         let Some(c) = self.conflict.as_mut() else {
             return;
@@ -427,7 +443,7 @@ impl KagiApp {
                     path.display(),
                     e
                 );
-                self.push_toast_deferred(ToastKind::Error, SharedString::from(format!("{}", e)));
+                self.push_toast(ToastKind::Error, SharedString::from(format!("{}", e)), cx);
             }
         }
     }
@@ -488,6 +504,7 @@ impl KagiApp {
                         blockers: vec![format!("{}", e)],
                     },
                     &repo_path,
+                    cx,
                 );
                 cx.notify();
                 return;
@@ -585,6 +602,7 @@ impl KagiApp {
                     plan.current.clone(),
                     OpOutcome::Success { after },
                     &repo_path,
+                    cx,
                 );
                 self.clear_conflict_continue_modal();
                 self.reload();
@@ -599,6 +617,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    cx,
                 );
                 if let Some(modal) = self.conflict_continue_modal_mut() {
                     modal.error = Some(SharedString::from(err_msg));
@@ -663,6 +682,7 @@ impl KagiApp {
                     plan.current.clone(),
                     OpOutcome::Success { after },
                     &repo_path,
+                    cx,
                 );
                 self.reload();
             }
@@ -674,6 +694,7 @@ impl KagiApp {
                     plan.current.clone(),
                     OpOutcome::Failed { error: err_msg },
                     &repo_path,
+                    cx,
                 );
             }
         }
@@ -750,6 +771,7 @@ impl KagiApp {
                     plan.current.clone(),
                     OpOutcome::Success { after },
                     &repo_path,
+                    cx,
                 );
                 self.reload();
             }
@@ -761,6 +783,7 @@ impl KagiApp {
                     plan.current.clone(),
                     OpOutcome::Failed { error: err_msg },
                     &repo_path,
+                    cx,
                 );
             }
         }

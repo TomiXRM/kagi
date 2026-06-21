@@ -624,6 +624,9 @@ const LANE_PALETTE_DARK: [(f32, f32, f32); 8] = [
 
 /// Lane colour palette for **light-background** themes — same hues/chroma at a
 /// lower lightness (`oklch(0.58 0.174 H)`) for contrast on light surfaces.
+// The gold lightness (0.318) happens to sit near `FRAC_1_PI`; it is a colour
+// component, not a maths constant, so silence the false positive.
+#[allow(clippy::approx_constant)]
 const LANE_PALETTE_LIGHT: [(f32, f32, f32); 8] = [
     (0.935, 0.542, 0.519), // rose   #c74276
     (0.250, 1.0, 0.281),   // green  #478f00

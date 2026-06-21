@@ -2634,10 +2634,11 @@ impl KagiApp {
         use kagi_domain::activity::Granularity;
         let activity = &self.active_view.activity;
         let gran = self.activity_granularity;
-        let buckets = activity.series(gran).to_vec();
+        let gdata = activity.get(gran);
+        let buckets = gdata.buckets.clone();
 
-        // Compact granularity toggle (Day / Week / Month) — sized to match the
-        // rest of the app's chrome rather than standing out.
+        // Compact granularity toggle (Day / Week / Month / Year) — sized to match
+        // the rest of the app's chrome rather than standing out.
         let mk_gran = |g: Granularity| {
             let active = g == gran;
             let click = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
@@ -2677,8 +2678,14 @@ impl KagiApp {
         };
 
         // Window totals + ranking are scoped to the selected granularity.
-        let (win_commits, win_merges) = activity.window_totals(gran);
-        let contribs = activity.contributors(gran);
+        let win_commits = gdata.total_commits;
+        let win_merges = gdata.total_merges;
+        let contribs = &gdata.contributors;
+
+        let mut gran_row = div().flex().flex_row().items_center().gap_1();
+        for g in Granularity::ALL {
+            gran_row = gran_row.child(mk_gran(g));
+        }
 
         let header = div()
             .flex()
@@ -2686,16 +2693,7 @@ impl KagiApp {
             .items_center()
             .justify_between()
             .flex_shrink_0()
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_1()
-                    .child(mk_gran(Granularity::Day))
-                    .child(mk_gran(Granularity::Week))
-                    .child(mk_gran(Granularity::Month)),
-            )
+            .child(gran_row)
             .child(
                 div()
                     .flex()
@@ -2704,6 +2702,7 @@ impl KagiApp {
                     .gap_3()
                     .text_xs()
                     .text_color(rgb(theme().text_sub))
+                    .child(SharedString::from(gran.window_label()))
                     .child(legend(
                         theme().color_branch,
                         format!("{win_commits} commits"),
@@ -2714,7 +2713,7 @@ impl KagiApp {
                     )),
             );
 
-        let chart = if buckets.is_empty() {
+        let chart = if win_commits == 0 {
             div()
                 .flex_1()
                 .min_h(px(0.))
@@ -2723,12 +2722,15 @@ impl KagiApp {
                 .justify_center()
                 .text_xs()
                 .text_color(rgb(theme().text_muted))
-                .child(SharedString::from("No commit activity"))
+                .child(SharedString::from(format!(
+                    "No commits in the {}",
+                    gran.window_label()
+                )))
                 .into_any_element()
         } else {
             let max_c = buckets.iter().map(|b| b.commits).max().unwrap_or(0);
-            let first_label = buckets.first().map(|b| b.label.clone()).unwrap_or_default();
-            let last_label = buckets.last().map(|b| b.label.clone()).unwrap_or_default();
+            let first_label = gran.axis_start_label().to_string();
+            let last_label = "now".to_string();
             let tick = |t: String| {
                 div()
                     .text_xs()

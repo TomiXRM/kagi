@@ -1331,8 +1331,16 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
         branch_upstream_info,
         worktrees: snap.worktrees.clone(),
         branch_solo: None,
-        activity: kagi_domain::activity::aggregate(&snap.commits),
+        activity: kagi_domain::activity::aggregate(&snap.commits, now_unix_secs()),
     }
+}
+
+/// Wall-clock now in Unix epoch seconds (right edge of the Activity windows).
+fn now_unix_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 impl KagiApp {

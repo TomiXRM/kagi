@@ -418,8 +418,16 @@ lowest-risk starts. This is the change that kills the 329-notify repaints.
 
 **Done:** `Toasts` → `Entity<ToastStack>` and `OpLogPanel` → `Entity<OpLogPanel>`
 (ADR-0110): push / expire / dismiss / row-expand now re-render only their own
-subtree. Remaining: `CommitPanel`, `ConflictEditor`, `FileHistoryView`,
-`Sidebar`.
+subtree.
+
+**Prep done:** the six flat `sidebar_*` fields are consolidated into a single
+`sidebar: sidebar::SidebarState` field on `KagiApp` (no behaviour change) — the
+groundwork for a future `Entity<SidebarState>`. `ConflictEditor`'s scattered
+`conflict_*` fields are the next consolidation candidate (same prep before its
+Entity migration).
+
+Remaining: `CommitPanel`, `FileHistoryView` (already single-struct, ready for
+Entity); `Sidebar`, `ConflictEditor` (Entity migration after state consolidation).
 
 ### Step 5.2 — Worker thread per RepoSession
 **Touch:** New `src/git/worker.rs` — one thread holding the `git2::Repository`,

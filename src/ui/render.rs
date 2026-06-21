@@ -484,28 +484,29 @@ impl Render for KagiApp {
         let is_dirty = self.active_view.is_dirty;
         // PERF-SIDEBAR-VIRT: the navigator data (branches/remotes/tags/…) is no
         // longer cloned for render_sidebar — it's flattened into
-        // `self.sidebar_rows` below and read by the virtualized list processor.
-        let sidebar_filter = self.sidebar_filter.clone();
-        // PERF-SIDEBAR-VIRT: flatten the navigator into `self.sidebar_rows`
+        // `self.sidebar.rows` below and read by the virtualized list processor.
+        let sidebar_filter = self.sidebar.filter.clone();
+        // PERF-SIDEBAR-VIRT: flatten the navigator into `self.sidebar.rows`
         // (honouring collapse + filter) so the "sidebar-list" uniform_list can
         // virtualize it. Rebuilt every render; the processor reads the field.
         let sidebar_filter_text: String = self
-            .sidebar_filter
+            .sidebar
+            .filter
             .as_ref()
             .map(|ent| ent.read(cx).value().to_lowercase())
             .unwrap_or_default();
-        self.sidebar_rows = sidebar::build_sidebar_rows(
+        self.sidebar.rows = sidebar::build_sidebar_rows(
             &self.active_view.branches,
             &self.active_view.remote_branches,
             &self.active_view.tags,
             &self.active_view.stashes,
             &self.active_view.worktrees,
-            &self.sidebar_collapsed,
+            &self.sidebar.collapsed,
             &self.branch_groups_collapsed,
             &sidebar_filter_text,
         );
-        let sidebar_row_count = self.sidebar_rows.len();
-        let sidebar_scroll_handle = self.sidebar_scroll_handle.clone();
+        let sidebar_row_count = self.sidebar.rows.len();
+        let sidebar_scroll_handle = self.sidebar.scroll_handle.clone();
         let plan_modal = self.plan_modal().cloned();
         let pull_modal = self.pull_modal().cloned();
         let undo_modal = self.undo_modal().cloned();
@@ -596,7 +597,7 @@ impl Render for KagiApp {
         let status_summary = self.active_view.status_summary.clone();
 
         // T023: pane widths for divider rendering.
-        let sidebar_width = self.sidebar_width;
+        let sidebar_width = self.sidebar.width;
         let panel_width = self.panel_width;
         // T030: inner column widths for the commit list.
         let badge_col_w = self.badge_col_w;
@@ -628,8 +629,8 @@ impl Render for KagiApp {
                     DividerKind::Sidebar => {
                         // Divider sits at x = sidebar_width * zoom; centre on cursor.
                         let new_width = ((cursor_x - 2.0 * z) / z).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
-                        if (new_width - this.sidebar_width).abs() > 0.5 {
-                            this.sidebar_width = new_width;
+                        if (new_width - this.sidebar.width).abs() > 0.5 {
+                            this.sidebar.width = new_width;
                             cx.notify();
                         }
                     }
@@ -647,7 +648,7 @@ impl Render for KagiApp {
                         // T030/W28: badge column left edge = sidebar_width + INNER_DIV_W, all
                         // rendered scaled, so the on-screen left edge is (..)*z; convert the
                         // raw cursor back to logical space (/z) before clamping/storing.
-                        let badge_col_left = this.sidebar_width + INNER_DIV_W; // sidebar divider = 4px
+                        let badge_col_left = this.sidebar.width + INNER_DIV_W; // sidebar divider = 4px
                         let new_w = ((cursor_x / z) - badge_col_left - INNER_DIV_W / 2.0)
                             .clamp(BADGE_COL_MIN, BADGE_COL_MAX);
                         if (new_w - this.badge_col_w).abs() > 0.5 {
@@ -659,7 +660,7 @@ impl Render for KagiApp {
                     DividerKind::GraphCol => {
                         // T030/W28: graph column left edge = badge_col_left + badge_col_w + INNER_DIV_W,
                         // all rendered scaled; convert the raw cursor back to logical space (/z).
-                        let badge_col_left = this.sidebar_width + INNER_DIV_W;
+                        let badge_col_left = this.sidebar.width + INNER_DIV_W;
                         let graph_col_left = badge_col_left + this.badge_col_w + INNER_DIV_W;
                         let new_w = ((cursor_x / z) - graph_col_left - INNER_DIV_W / 2.0)
                             .clamp(GRAPH_COL_MIN, GRAPH_COL_MAX);
@@ -2021,7 +2022,7 @@ impl KagiApp {
         compare_view: Option<CompareView>,
         main_diff_scroll_handle: UniformListScrollHandle,
         // PERF-SIDEBAR-VIRT: the navigator is now virtualized from
-        // `self.sidebar_rows` (built in `render`); render_body only needs the
+        // `self.sidebar.rows` (built in `render`); render_body only needs the
         // row count + scroll handle + filter input for `render_sidebar`.
         sidebar_row_count: usize,
         sidebar_scroll_handle: UniformListScrollHandle,
@@ -2339,7 +2340,7 @@ impl KagiApp {
         let main_diff_for_center = main_diff;
 
         // W5-MENU: View → Toggle Sidebar hides the navigator + its divider.
-        let sidebar_visible = self.sidebar_visible;
+        let sidebar_visible = self.sidebar.visible;
         // ADR-0089: File History takes over the center+right area (sidebar stays).
         let file_history_open = self.file_history.is_some();
         let fh_branch = self

@@ -85,50 +85,14 @@ fn hsla(hex: u32) -> gpui::Hsla {
     gpui::rgb(hex).into()
 }
 
-/// One contributor ranking row: `#rank  name … commits / merges (+add −del)`,
-/// with a small commit bar proportional to the leader's commit count. `line` is
-/// the per-author `(additions, deletions)` once the background pass has them.
-pub fn contributor_row(
-    rank: usize,
-    c: &Contributor,
-    max_commits: u32,
-    line: Option<(u64, u64)>,
-) -> impl IntoElement {
+/// One compact contributor ranking row: `#rank  name … commits·merges` with a
+/// thin commit bar beneath, proportional to the leader's commit count.
+pub fn contributor_row(rank: usize, c: &Contributor, max_commits: u32) -> impl IntoElement {
     let bar_frac = if max_commits > 0 {
         (c.commits as f32 / max_commits as f32).clamp(0.0, 1.0)
     } else {
         0.0
     };
-
-    // Right column: counts, with optional +add / −del beneath once computed.
-    let mut counts = div().flex_shrink_0().flex().flex_col().items_end().child(
-        div()
-            .text_sm()
-            .text_color(rgb(theme().text_sub))
-            .child(SharedString::from(format!(
-                "{} commits · {} merges",
-                c.commits, c.merges
-            ))),
-    );
-    if let Some((add, del)) = line {
-        counts = counts.child(
-            div()
-                .flex()
-                .flex_row()
-                .gap_2()
-                .text_xs()
-                .child(
-                    div()
-                        .text_color(rgb(theme().change_added))
-                        .child(SharedString::from(format!("+{add}"))),
-                )
-                .child(
-                    div()
-                        .text_color(rgb(theme().change_deleted))
-                        .child(SharedString::from(format!("−{del}"))),
-                ),
-        );
-    }
 
     div()
         .flex()
@@ -136,35 +100,54 @@ pub fn contributor_row(
         .items_center()
         .gap_2()
         .w_full()
-        .py_1()
+        .py(theme::scaled_px(1.5))
         .child(
             div()
-                .w(theme::scaled_px(20.))
+                .w(theme::scaled_px(14.))
                 .flex_shrink_0()
-                .text_sm()
+                .text_xs()
                 .text_color(rgb(theme().text_muted))
                 .child(SharedString::from(format!("{rank}"))),
         )
         .child(
-            // Name + commit bar stacked, taking the remaining width.
             div()
                 .flex_1()
                 .min_w(px(0.))
                 .flex()
                 .flex_col()
-                .gap_1()
+                .gap(theme::scaled_px(1.))
                 .child(
+                    // Name (left) + counts (right) on one line.
                     div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_main))
-                        .truncate()
-                        .child(SharedString::from(c.name.clone())),
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .text_sm()
+                                .text_color(rgb(theme().text_main))
+                                .truncate()
+                                .child(SharedString::from(c.name.clone())),
+                        )
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_xs()
+                                .text_color(rgb(theme().text_sub))
+                                .child(SharedString::from(format!(
+                                    "{} · {} merges",
+                                    c.commits, c.merges
+                                ))),
+                        ),
                 )
                 .child(
-                    // Bar track + fill.
                     div()
                         .w_full()
-                        .h(theme::scaled_px(4.))
+                        .h(theme::scaled_px(3.))
                         .rounded_full()
                         .bg(rgb(theme().surface))
                         .child(
@@ -176,7 +159,6 @@ pub fn contributor_row(
                         ),
                 ),
         )
-        .child(counts)
 }
 
 #[inline]

@@ -173,34 +173,6 @@ impl Backend {
         diffstat::commit_diffstat(&self.repo, id)
     }
 
-    /// Sum added/deleted lines per author email across the given commits, for
-    /// the bottom-panel Activity ranking. Each tuple is `(sha, author_email,
-    /// is_merge)`; merge commits are skipped (their diff double-counts), matching
-    /// `git log --no-merges --numstat`. This is the heavy part — a `diff_tree_to_tree`
-    /// per commit — so callers run it on a background thread.
-    pub fn author_line_stats(
-        &self,
-        commits: &[(String, String, bool)],
-    ) -> std::collections::HashMap<String, (u64, u64)> {
-        let mut map: std::collections::HashMap<String, (u64, u64)> =
-            std::collections::HashMap::new();
-        for (sha, email, is_merge) in commits {
-            if *is_merge {
-                continue;
-            }
-            let Ok(stats) = self.commit_diffstat(&CommitId(sha.clone())) else {
-                continue;
-            };
-            let (add, del) = stats.iter().fold((0u64, 0u64), |(a, d), f| {
-                (a + f.additions as u64, d + f.deletions as u64)
-            });
-            let e = map.entry(email.clone()).or_insert((0, 0));
-            e.0 += add;
-            e.1 += del;
-        }
-        map
-    }
-
     pub fn staged_diffstat(&self) -> Result<Vec<FileDiffStat>, GitError> {
         diffstat::staged_diffstat(&self.repo)
     }

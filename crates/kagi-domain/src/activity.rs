@@ -3,9 +3,7 @@
 //! Buckets a commit history into per-day / per-week / per-month counts (total
 //! commits and merge commits) for the bottom-panel "Activity" line chart, and
 //! ranks contributors **within each granularity's visible window** (so toggling
-//! Day/Week/Month re-scopes the ranking too, and the line-stat diff pass only
-//! has to look at the windowed commits). Line-stat fields
-//! (`additions`/`deletions`) are reserved here but filled by the git backend.
+//! Day/Week/Month re-scopes the ranking too).
 //!
 //! All timestamps are `author.time` (Unix epoch seconds, UTC). Date maths uses
 //! Howard Hinnant's civil/days algorithms so we stay dependency-free.
@@ -50,11 +48,6 @@ pub struct Contributor {
     pub email: String,
     pub commits: u32,
     pub merges: u32,
-    /// Added lines across this author's windowed commits. Filled by the git
-    /// backend (0 from pure aggregation).
-    pub additions: u64,
-    /// Deleted lines across this author's windowed commits.
-    pub deletions: u64,
 }
 
 /// Aggregated activity for one repository snapshot.
@@ -188,8 +181,6 @@ fn rank_window(commits: &[Commit], cutoff: i64) -> Vec<Contributor> {
                 email: c.author.email.clone(),
                 commits: 0,
                 merges: 0,
-                additions: 0,
-                deletions: 0,
             });
         e.commits += 1;
         if is_merge {

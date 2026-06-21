@@ -2630,19 +2630,14 @@ impl KagiApp {
     /// commit + merge line chart, and the top-5 contributor ranking. The data is
     /// pre-aggregated in `active_view.activity` (built in `build_tab_view`), so
     /// this method only lays it out and wires the toggle.
-    fn render_activity_body(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn render_activity_body(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         use kagi_domain::activity::Granularity;
-        // Phase 2: kick off (or reuse) the background per-author line-stat pass.
-        self.ensure_activity_stats(cx);
-        let target_key = self.activity_stats_target_key();
-        let have_stats = self.activity_stats_key.is_some() && self.activity_stats_key == target_key;
-        let loading = self.activity_stats_loading;
-
         let activity = &self.active_view.activity;
         let gran = self.activity_granularity;
         let buckets = activity.series(gran).to_vec();
 
-        // Granularity toggle button (Day / Week / Month).
+        // Compact granularity toggle (Day / Week / Month) — sized to match the
+        // rest of the app's chrome rather than standing out.
         let mk_gran = |g: Granularity| {
             let active = g == gran;
             let click = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
@@ -2651,10 +2646,10 @@ impl KagiApp {
             });
             div()
                 .id(SharedString::from(format!("activity-gran-{}", g.label())))
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .text_sm()
+                .px(theme::scaled_px(6.))
+                .py(theme::scaled_px(1.))
+                .rounded(theme::scaled_px(4.))
+                .text_xs()
                 .text_color(rgb(if active {
                     theme().text_main
                 } else {
@@ -2677,7 +2672,7 @@ impl KagiApp {
                 .flex_row()
                 .items_center()
                 .gap_1()
-                .child(div().w(px(16.)).h(px(3.)).rounded_full().bg(rgb(color)))
+                .child(div().w(px(14.)).h(px(3.)).rounded_full().bg(rgb(color)))
                 .child(SharedString::from(text))
         };
 
@@ -2707,7 +2702,7 @@ impl KagiApp {
                     .flex_row()
                     .items_center()
                     .gap_3()
-                    .text_sm()
+                    .text_xs()
                     .text_color(rgb(theme().text_sub))
                     .child(legend(
                         theme().color_branch,
@@ -2726,6 +2721,7 @@ impl KagiApp {
                 .flex()
                 .items_center()
                 .justify_center()
+                .text_xs()
                 .text_color(rgb(theme().text_muted))
                 .child(SharedString::from("No commit activity"))
                 .into_any_element()
@@ -2739,7 +2735,7 @@ impl KagiApp {
                     .text_color(rgb(theme().text_muted))
                     .child(SharedString::from(t))
             };
-            let axis_w = theme::scaled_px(30.);
+            let axis_w = theme::scaled_px(26.);
             div()
                 .flex_1()
                 .min_w(px(0.))
@@ -2747,7 +2743,6 @@ impl KagiApp {
                 .flex()
                 .flex_col()
                 .child(
-                    // Plot row: y-axis tick gutter (max … 0) + the canvas.
                     div()
                         .flex_1()
                         .min_h(px(0.))
@@ -2762,7 +2757,7 @@ impl KagiApp {
                                 .justify_between()
                                 .items_end()
                                 .pr_1()
-                                .py(theme::scaled_px(8.))
+                                .py(theme::scaled_px(6.))
                                 .child(tick(max_c.to_string()))
                                 .child(tick("0".into())),
                         )
@@ -2774,7 +2769,6 @@ impl KagiApp {
                         ),
                 )
                 .child(
-                    // X-axis labels under the canvas (first … last bucket).
                     div()
                         .flex()
                         .flex_row()
@@ -2794,34 +2788,27 @@ impl KagiApp {
         };
 
         let max_commits = contribs.first().map(|c| c.commits).unwrap_or(0);
-        // Scrollable rows so the ranking stays usable when the bottom panel is
-        // short.
         let mut rows_el = div()
             .id("activity-ranking-scroll")
             .flex_1()
             .min_h(px(0.))
             .overflow_y_scroll()
             .flex()
-            .flex_col()
-            .gap_1();
+            .flex_col();
         if contribs.is_empty() {
             rows_el = rows_el.child(
                 div()
-                    .text_sm()
+                    .text_xs()
                     .text_color(rgb(theme().text_muted))
                     .child(SharedString::from("—")),
             );
         } else {
             for (i, c) in contribs.iter().take(50).enumerate() {
-                let line = have_stats
-                    .then(|| self.activity_line_stats.get(&c.email).copied())
-                    .flatten();
-                rows_el =
-                    rows_el.child(activity_view::contributor_row(i + 1, c, max_commits, line));
+                rows_el = rows_el.child(activity_view::contributor_row(i + 1, c, max_commits));
             }
         }
         let ranking = div()
-            .w(theme::scaled_px(320.))
+            .w(theme::scaled_px(300.))
             .flex_shrink_0()
             .min_h(px(0.))
             .flex()
@@ -2829,26 +2816,11 @@ impl KagiApp {
             .gap_1()
             .child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(theme().color_branch))
                     .flex_shrink_0()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(rgb(theme().color_branch))
-                            .child(SharedString::from("Top contributors")),
-                    )
-                    .when(loading, |el| {
-                        el.child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(theme().text_muted))
-                                .child(SharedString::from("calculating diffs…")),
-                        )
-                    }),
+                    .child(SharedString::from("Top contributors")),
             )
             .child(rows_el);
 
@@ -2857,8 +2829,8 @@ impl KagiApp {
             .min_h(px(0.))
             .flex()
             .flex_col()
-            .gap_2()
-            .p_2()
+            .gap(theme::scaled_px(4.))
+            .p(theme::scaled_px(6.))
             .child(header)
             .child(
                 div()
@@ -2866,7 +2838,7 @@ impl KagiApp {
                     .min_h(px(0.))
                     .flex()
                     .flex_row()
-                    .gap_3()
+                    .gap(theme::scaled_px(8.))
                     .child(chart)
                     .child(ranking),
             )

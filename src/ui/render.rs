@@ -577,7 +577,9 @@ impl Render for KagiApp {
         // T-CONFLICT-DASH-022: per-file "…" overflow menu overlay (anchored at the
         // click position; rendered top-level so it floats over the body).
         let conflict_file_menu_overlay = match (&conflict, self.conflict.file_menu) {
-            (Some(m), Some((idx, pos))) => Some(conflict_view::render_file_menu(m, idx, pos, cx)),
+            (Some(m), Some((idx, pos))) => {
+                Some(conflict_view::render_file_menu(m, idx, pos, window, cx))
+            }
             _ => None,
         };
         // T-HT-001: clone toolbar/summary state for header render.

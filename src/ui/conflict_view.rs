@@ -9,16 +9,16 @@
 //!
 //! # W33 scope (this lane)
 //!
-//! - **Conflict Dashboard** (ADR-0063 / T-CONFLICT-DASH-021): the right panel in
-//!   Conflict Mode, ordered state → next action → files → More:
+//! - **Conflict Dashboard** (ADR-0063 / T-CONFLICT-DASH-021/022): the right panel
+//!   in Conflict Mode, ordered state → next action → files:
 //!   - state: op header + direction summary + Current/Incoming role badges +
 //!     conflicted/resolved counts (with prev/next nav),
-//!   - next action: exactly one dominant button — a gated Continue when ready,
-//!     else the blocker reason + a *secondary* Next-conflict / Skip,
-//!   - files: Conflicted / Resolved sections; file-specific actions (open
-//!     externally, copy path) live on the selected row,
-//!   - More (collapsed by default): global utilities (open terminal, copy git
-//!     command) and, separated + danger-styled, the destructive Abort.
+//!   - next action: Continue (filled, gated on `can_continue`) and Abort (danger,
+//!     two-stage) side by side, the blocker/ready note, and a *secondary*
+//!     Next-conflict / Skip row,
+//!   - files: Conflicted / Resolved cards; each card carries icon buttons
+//!     (open externally, copy path) plus a "…" overflow menu (the full action
+//!     set) rendered via the shared `menu_overlay` (so it clamps on-screen).
 //! - Activating a Conflicted row sets `editing_file` (W32's Conflict Editor lane
 //!   reads it); this lane does not implement the editor.
 //!
@@ -40,7 +40,9 @@ use gpui_component::{Disableable as _, Sizable as _};
 use kagi_git::conflicts::{ConflictKind, ConflictOp, ConflictStatus, SideLabels};
 
 use super::button_style::{apply_accent, KagiButton};
+use super::context_menu::{ItemState, MenuGroup, MenuItem};
 use super::i18n::Msg;
+use super::menu_overlay;
 use super::theme::{self, theme};
 use super::ConflictEditorInputs;
 use super::KagiApp;
@@ -768,83 +770,96 @@ where
         )
 }
 
-/// The per-file "…" overflow menu (T-CONFLICT-DASH-022): the file-specific and
-/// global actions that don't get their own card icon. Rendered as a top-level
-/// overlay (mounted in render.rs) anchored at the click position; a full-screen
-/// backdrop dismisses it. Mirrors `render_fh_row_menu`.
+/// Actions for the per-file "…" overflow menu.
+#[derive(Clone)]
+enum ConflictFileAction {
+    OpenExternally,
+    CopyPath,
+    CopyGitCommand,
+    OpenTerminal,
+}
+
+/// The per-file "…" overflow menu (T-CONFLICT-DASH-022): the full set of
+/// file/repo actions (the card icons are quick shortcuts for the top two).
+/// Rendered with the shared `menu_overlay` machinery so it gets the same
+/// viewport clamping (stays on-screen near the right edge) and styling as the
+/// commit / branch / stash context menus, anchored at the click position.
 pub fn render_file_menu(
     mode: &ConflictMode,
     idx: usize,
     pos: gpui::Point<gpui::Pixels>,
+    window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let dismiss = cx.listener(|this, _e: &gpui::MouseDownEvent, _w, cx| {
+    // Header = the file the menu acts on.
+    let header = mode
+        .session
+        .files
+        .get(idx)
+        .map(|f| SharedString::from(f.path.to_string_lossy().into_owned()))
+        .unwrap_or_default();
+
+    let item = |action: ConflictFileAction, label: &str| MenuItem {
+        action,
+        label: SharedString::from(label.to_string()),
+        state: ItemState::Enabled,
+        dangerous: false,
+    };
+    let groups = vec![
+        MenuGroup {
+            title: None,
+            items: vec![
+                item(
+                    ConflictFileAction::OpenExternally,
+                    Msg::ConflictExternalTool.t(),
+                ),
+                item(ConflictFileAction::CopyPath, Msg::ConflictCopyPath.t()),
+            ],
+        },
+        MenuGroup {
+            title: None,
+            items: vec![
+                item(
+                    ConflictFileAction::CopyGitCommand,
+                    Msg::ConflictCopyGitCommand.t(),
+                ),
+                item(
+                    ConflictFileAction::OpenTerminal,
+                    Msg::ConflictOpenTerminal.t(),
+                ),
+            ],
+        },
+    ];
+
+    let on_dismiss = |this: &mut KagiApp, _w: &mut Window, _cx: &mut Context<KagiApp>| {
         this.conflict.file_menu = None;
-        cx.notify();
-    });
-
-    fn item<F>(id: &'static str, label: &str, on_click: F) -> gpui::Stateful<gpui::Div>
-    where
-        F: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    {
-        div()
-            .id(id)
-            .px_3()
-            .py(theme::scaled_px(4.))
-            .text_sm()
-            .text_color(rgb(theme().text_main))
-            .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
-            .on_click(on_click)
-            .child(SharedString::from(label.to_string()))
-    }
-
-    // File-specific (act on this row) + global utilities.
-    let ext = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+    };
+    let on_select = move |this: &mut KagiApp,
+                          action: ConflictFileAction,
+                          window: &mut Window,
+                          cx: &mut Context<KagiApp>| {
         this.conflict.file_menu = None;
-        this.conflict_copy_git_command(cx);
-        cx.notify();
-    });
-    let term = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.conflict.file_menu = None;
-        this.conflict_open_terminal(window, cx);
-        cx.notify();
-    });
-    // Suppress unused warning for `mode`/`idx` if the item set shrinks; both are
-    // kept for clarity and future per-file commands.
-    let _ = (mode, idx);
+        match action {
+            ConflictFileAction::OpenExternally => this.conflict_open_external_tool(idx, cx),
+            ConflictFileAction::CopyPath => this.conflict_copy_path(idx, cx),
+            ConflictFileAction::CopyGitCommand => this.conflict_copy_git_command(cx),
+            ConflictFileAction::OpenTerminal => this.conflict_open_terminal(window, cx),
+        }
+    };
 
-    let menu = div()
-        .absolute()
-        .left(pos.x)
-        .top(pos.y)
-        .w(theme::scaled_px(220.))
-        .occlude()
-        .bg(rgb(theme().panel))
-        .border_1()
-        .border_color(rgb(theme().surface))
-        .rounded_md()
-        .shadow_lg()
-        .py(theme::scaled_px(2.))
-        .child(item(
-            "conflict-menu-copycmd",
-            Msg::ConflictCopyGitCommand.t(),
-            ext,
-        ))
-        .child(item(
-            "conflict-menu-terminal",
-            Msg::ConflictOpenTerminal.t(),
-            term,
-        ));
-
-    div()
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
-        .occlude()
-        .on_mouse_down(MouseButton::Left, dismiss)
-        .child(menu)
-        .into_any_element()
+    menu_overlay::render_menu_overlay(
+        "conflict-file-context-menu",
+        "conflict-file-menu-item",
+        220.0,
+        "Danger",
+        pos,
+        header,
+        groups,
+        on_dismiss,
+        on_select,
+        window,
+        cx,
+    )
 }
 
 /// A left-aligned secondary (utility / navigation) button with clear button

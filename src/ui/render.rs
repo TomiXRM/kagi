@@ -3235,16 +3235,12 @@ fn render_rows(
                 } else {
                     None
                 };
-            // Lane-driven ref-pill colour (swimlane mode): every pill on this
-            // commit uses the commit's lane colour so pills agree with the graph
-            // line / node / band. Per-ref lanes aren't modelled, so the primary
-            // commit lane is the documented fallback. `None` = classic semantic
-            // (HEAD/branch/remote/tag) colours when swimlane mode is off.
-            let pill_lane: Option<u32> = if theme::graph_lane_compact() {
-                Some(theme::lane_color_u32(row.node_color))
-            } else {
-                None
-            };
+            // Lane-driven ref-pill colour: every pill on this commit uses the
+            // commit's lane colour so pills agree with the graph line / node /
+            // band. Always on (independent of the avatar-nodes toggle), matching
+            // the lane-coloured graph. Per-ref lanes aren't modelled, so the
+            // primary commit lane is the documented fallback.
+            let pill_lane: Option<u32> = Some(theme::lane_color_u32(row.node_color));
 
             // ── Graph lane area (T030) ────────────────────────
             // visible_lanes = how many lanes fit in the current graph column width.

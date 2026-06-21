@@ -11,8 +11,6 @@ use gpui::SharedString;
 use kagi::git::{Commit, CommitId, Head, RepoSnapshot};
 use kagi::graph::{layout_with, EdgeKind, GraphEdge, GraphLayoutMode};
 
-use crate::ui::theme;
-
 // ──────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────
@@ -189,15 +187,11 @@ pub fn build_commit_rows(snap: &RepoSnapshot) -> Vec<CommitRow> {
     // Resolve HEAD commit id (W2-GRAPH).
     let head_sha: Option<&str> = head_target(&snap.head);
 
-    // Compute commit graph layout once up-front (T009). The lane-assignment
-    // mode (gitk-stable vs Gitru swimlane compaction) is a user setting; it
-    // defaults to Stable, so the compaction path is fully opt-in / removable.
-    let mode = if theme::graph_lane_compact() {
-        GraphLayoutMode::Compact
-    } else {
-        GraphLayoutMode::Stable
-    };
-    let graph = layout_with(&snap.commits, mode);
+    // Compute commit graph layout once up-front (T009). The graph is always
+    // drawn swimlane-style (compacted lanes); the "Avatar commit nodes" setting
+    // only changes how the node is drawn, not the lane layout. (Switch to
+    // `GraphLayoutMode::Stable` here if the gitk no-reuse layout is ever wanted.)
+    let graph = layout_with(&snap.commits, GraphLayoutMode::Compact);
     let lane_count = graph.lane_count;
 
     snap.commits

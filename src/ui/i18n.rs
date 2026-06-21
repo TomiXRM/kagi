@@ -808,10 +808,10 @@ impl Msg {
             (En, SettingsLaneCompact) => "Avatar commit nodes",
             (Ja, SettingsLaneCompact) => "コミットノードをアバター表示",
             (En, SettingsLaneCompactDesc) => {
-                "On: each commit's dot becomes the author's avatar, ringed in its lane colour. The graph also reuses freed lanes (staying narrower), shows a faint branch-colour band behind each row, and colours branch/tag labels by lane. Off: plain coloured dots and fixed label colours."
+                "On: each commit's node is the author's avatar (ringed in its lane colour) with a faint branch-colour band behind the graph. Off: a plain coloured dot, the avatar back in the message row, and no band. Either way the graph keeps its lane colours (graph lines, nodes and branch/tag labels)."
             }
             (Ja, SettingsLaneCompactDesc) => {
-                "オン: 各コミットのドットが著者アバター（レーン色の輪付き）になります。あわせて、空いたレーンを再利用してグラフを細くし、各行の背後にブランチ色の帯を敷き、ブランチ/タグのラベルをレーン色にします。オフ: 通常の色ドットと固定色のラベル。"
+                "オン: 各コミットのノードが著者アバター（レーン色の輪付き）になり、グラフ背後にブランチ色の帯が付きます。オフ: 通常の色ドットになり、アバターはメッセージ行に戻り、帯は出ません。どちらでもグラフのレーン色（線・ノード・ブランチ/タグのラベル）は維持されます。"
             }
             (En, SettingsAutoFetch) => "Auto-fetch",
             (Ja, SettingsAutoFetch) => "自動 fetch",

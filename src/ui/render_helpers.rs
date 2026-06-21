@@ -469,6 +469,15 @@ pub(crate) fn render_main_diff_view(
 
     div()
         .flex_1()
+        // Allow the center diff column to shrink below its content's intrinsic
+        // width so the right-hand inspector panel keeps its space. Flex
+        // min-width defaults to content size, which for a wide diff (long lines)
+        // or a widened inspector pushes the `flex_shrink_0` panel off the right
+        // edge — its diffstat badges / Tree button then overflow off-screen
+        // (user report: widening the commit pane while viewing a file diff).
+        // Mirrors the same fix on `commit_list_col` in render.rs.
+        .min_w(px(0.))
+        .overflow_hidden()
         .h_full()
         .flex()
         .flex_col()

@@ -194,7 +194,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, env_open_repo: Option<PathBuf>) {
             "[kagi] bottom-panel: open height={} tab={}",
             h_label, tab_label
         );
-        klog!("oplog-tab: {} entries", app_state.op_log.borrow().len());
+        klog!("oplog-tab: {} entries", app_state.op_log_seed.len());
     }
 
     // ── W5-MENU: headless command-registry state dump ─────────

@@ -416,8 +416,10 @@ These are the ADR-0072/0075/0076/0077 deliverables.
 **Risk:** High. Do one panel at a time; `Toasts` and `OpLogPanel` are the
 lowest-risk starts. This is the change that kills the 329-notify repaints.
 
-**Done:** `Toasts` → `Entity<ToastStack>` (ADR-0110): push/expire/dismiss now
-re-render only the overlay subtree. `OpLogPanel` is next (same shape).
+**Done:** `Toasts` → `Entity<ToastStack>` and `OpLogPanel` → `Entity<OpLogPanel>`
+(ADR-0110): push / expire / dismiss / row-expand now re-render only their own
+subtree. Remaining: `CommitPanel`, `ConflictEditor`, `FileHistoryView`,
+`Sidebar`.
 
 ### Step 5.2 — Worker thread per RepoSession
 **Touch:** New `src/git/worker.rs` — one thread holding the `git2::Repository`,

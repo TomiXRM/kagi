@@ -83,9 +83,9 @@ pub fn build_badge_map(snap: &RepoSnapshot) -> HashMap<CommitId, Vec<RefBadge>> 
         let label = if is_head_branch {
             SharedString::from(format!("{} ✓", b.name))
         } else if in_other_worktree {
-            // 🌳 marks a branch checked out in another worktree (matches the
+            // 🌲 marks a branch checked out in another worktree (matches the
             // worktree's WIP row marker).
-            SharedString::from(format!("🌳 {}", b.name))
+            SharedString::from(format!("🌲 {}", b.name))
         } else {
             SharedString::from(b.name.clone())
         };

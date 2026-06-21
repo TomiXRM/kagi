@@ -2630,8 +2630,14 @@ impl KagiApp {
     /// commit + merge line chart, and the top-5 contributor ranking. The data is
     /// pre-aggregated in `active_view.activity` (built in `build_tab_view`), so
     /// this method only lays it out and wires the toggle.
-    fn render_activity_body(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn render_activity_body(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         use kagi_domain::activity::Granularity;
+        // Phase 2: kick off (or reuse) the background per-author line-stat pass.
+        self.ensure_activity_stats(cx);
+        let target_key = self.activity_stats_target_key();
+        let have_stats = self.activity_stats_key.is_some() && self.activity_stats_key == target_key;
+        let loading = self.activity_stats_loading;
+
         let activity = &self.active_view.activity;
         let gran = self.activity_granularity;
         let buckets = activity.series(gran).to_vec();
@@ -2741,10 +2747,25 @@ impl KagiApp {
             .overflow_hidden()
             .child(
                 div()
-                    .text_sm()
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(rgb(theme().color_branch))
-                    .child(SharedString::from("Top contributors")),
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(rgb(theme().color_branch))
+                            .child(SharedString::from("Top contributors")),
+                    )
+                    .when(loading, |el| {
+                        el.child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(theme().text_muted))
+                                .child(SharedString::from("calculating diffs…")),
+                        )
+                    }),
             );
         if activity.contributors.is_empty() {
             ranking = ranking.child(
@@ -2755,7 +2776,13 @@ impl KagiApp {
             );
         } else {
             for (i, c) in activity.contributors.iter().take(5).enumerate() {
-                ranking = ranking.child(activity_view::contributor_row(i + 1, c, max_commits));
+                // Per-author (additions, deletions), once the background pass has
+                // computed them for the current commit set.
+                let line = have_stats
+                    .then(|| self.activity_line_stats.get(&c.email).copied())
+                    .flatten();
+                ranking =
+                    ranking.child(activity_view::contributor_row(i + 1, c, max_commits, line));
             }
         }
 

@@ -85,14 +85,51 @@ fn hsla(hex: u32) -> gpui::Hsla {
     gpui::rgb(hex).into()
 }
 
-/// One contributor ranking row: `#rank  name … commits / merges`, with a small
-/// commit bar proportional to the leader's commit count.
-pub fn contributor_row(rank: usize, c: &Contributor, max_commits: u32) -> impl IntoElement {
+/// One contributor ranking row: `#rank  name … commits / merges (+add −del)`,
+/// with a small commit bar proportional to the leader's commit count. `line` is
+/// the per-author `(additions, deletions)` once the background pass has them.
+pub fn contributor_row(
+    rank: usize,
+    c: &Contributor,
+    max_commits: u32,
+    line: Option<(u64, u64)>,
+) -> impl IntoElement {
     let bar_frac = if max_commits > 0 {
         (c.commits as f32 / max_commits as f32).clamp(0.0, 1.0)
     } else {
         0.0
     };
+
+    // Right column: counts, with optional +add / −del beneath once computed.
+    let mut counts = div().flex_shrink_0().flex().flex_col().items_end().child(
+        div()
+            .text_sm()
+            .text_color(rgb(theme().text_sub))
+            .child(SharedString::from(format!(
+                "{} commits · {} merges",
+                c.commits, c.merges
+            ))),
+    );
+    if let Some((add, del)) = line {
+        counts = counts.child(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .text_xs()
+                .child(
+                    div()
+                        .text_color(rgb(theme().change_added))
+                        .child(SharedString::from(format!("+{add}"))),
+                )
+                .child(
+                    div()
+                        .text_color(rgb(theme().change_deleted))
+                        .child(SharedString::from(format!("−{del}"))),
+                ),
+        );
+    }
+
     div()
         .flex()
         .flex_row()
@@ -139,16 +176,7 @@ pub fn contributor_row(rank: usize, c: &Contributor, max_commits: u32) -> impl I
                         ),
                 ),
         )
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_sm()
-                .text_color(rgb(theme().text_sub))
-                .child(SharedString::from(format!(
-                    "{} commits · {} merges",
-                    c.commits, c.merges
-                ))),
-        )
+        .child(counts)
 }
 
 #[inline]

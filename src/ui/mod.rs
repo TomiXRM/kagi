@@ -852,6 +852,14 @@ pub struct KagiApp {
     pub bottom_tab: BottomTab,
     /// Time bucketing for the bottom-panel "Activity" chart (Day/Week/Month).
     pub activity_granularity: kagi_domain::activity::Granularity,
+    /// Per-author added/deleted lines for the Activity ranking (email → (add,
+    /// del)), computed lazily on a background thread (Phase 2). Keyed by
+    /// [`Self::activity_stats_key`] so it is reused until the commit set changes.
+    pub activity_line_stats: HashMap<String, (u64, u64)>,
+    /// Which commit-set [`activity_line_stats`] was computed for (None = none).
+    pub activity_stats_key: Option<String>,
+    /// True while the background line-stat diff pass is in flight.
+    pub activity_stats_loading: bool,
     // ── T025: Commit Panel ───────────────────────────────────────
     /// Whether the commit panel is currently open (WIP row selected).
     pub commit_panel_open: bool,
@@ -1386,6 +1394,9 @@ impl KagiApp {
             bottom_panel_height: BOTTOM_PANEL_H_UNSET,
             bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
             activity_granularity: kagi_domain::activity::Granularity::Week,
+            activity_line_stats: HashMap::new(),
+            activity_stats_key: None,
+            activity_stats_loading: false,
             commit_panel_open: false,
             commit_panel: None,
             commit_input: None,
@@ -1496,6 +1507,9 @@ impl KagiApp {
             bottom_panel_height: BOTTOM_PANEL_H_UNSET,
             bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
             activity_granularity: kagi_domain::activity::Granularity::Week,
+            activity_line_stats: HashMap::new(),
+            activity_stats_key: None,
+            activity_stats_loading: false,
             commit_panel_open: false,
             commit_panel: None,
             commit_input: None,
@@ -1836,6 +1850,64 @@ impl KagiApp {
                 app.status_footer =
                     FooterStatus::Idle(SharedString::from("[kagi] refreshed (external change)"));
                 cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Identity of the current commit set for the Activity line-stat cache:
+    /// repo path + newest commit + count. Changes whenever a commit is added or
+    /// the repo/tab changes, so cached stats are reused but never go stale.
+    fn activity_stats_target_key(&self) -> Option<String> {
+        let path = self.repo_path.as_ref()?;
+        let newest = self.active_view.rows.first()?;
+        Some(format!(
+            "{}|{}|{}",
+            path.display(),
+            newest.id.0,
+            self.active_view.rows.len()
+        ))
+    }
+
+    /// Lazily compute per-author added/deleted lines for the Activity ranking on
+    /// a background thread (Phase 2). Idempotent: returns immediately if the
+    /// stats are already current or a pass is in flight. Called from the Activity
+    /// tab render, so it self-heals when a new commit changes the commit set.
+    pub fn ensure_activity_stats(&mut self, cx: &mut Context<Self>) {
+        let Some(key) = self.activity_stats_target_key() else {
+            return;
+        };
+        if self.activity_stats_loading || self.activity_stats_key.as_deref() == Some(key.as_str()) {
+            return;
+        }
+        let Some(path) = self.repo_path.clone() else {
+            return;
+        };
+        // (sha, author_email, is_merge) per commit — all owned/Send.
+        let commits: Vec<(String, String, bool)> = self
+            .active_view
+            .rows
+            .iter()
+            .map(|r| (r.id.0.clone(), r.author_email.clone(), r.is_merge))
+            .collect();
+        if commits.is_empty() {
+            return;
+        }
+        self.activity_stats_loading = true;
+        let key_at_spawn = key;
+        let task = cx.background_spawn(async move {
+            let backend = kagi_git::Backend::open(&path).ok()?;
+            Some(backend.author_line_stats(&commits))
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.activity_stats_loading = false;
+                if let Some(map) = result {
+                    app.activity_line_stats = map;
+                    app.activity_stats_key = Some(key_at_spawn);
+                    cx.notify();
+                }
             });
         })
         .detach();

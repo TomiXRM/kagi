@@ -561,6 +561,7 @@ impl Render for KagiApp {
             selected_hunk: self.conflict.selected_hunk,
             geom: self.conflict.geom.clone(),
             ab_geom: self.conflict.ab_geom.clone(),
+            more_expanded: self.conflict.more_expanded,
         };
         let commit_menu_overlay = self
             .commit_menu

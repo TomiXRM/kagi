@@ -9,13 +9,16 @@
 //!
 //! # W33 scope (this lane)
 //!
-//! - **Conflict Dashboard** (ADR-0063): the right panel in Conflict Mode.  Op
-//!   header + direction summary + Current/Incoming role+name badges +
-//!   conflicted/resolved counts + Path/Tree toggle (Tree disabled placeholder) +
-//!   two sections (Conflicted / Resolved) each with a `ConflictKind` badge +
-//!   action buttons (Abort with two-stage confirm, Continue gated, Skip for
-//!   sequencer ops only, external-tool) + Mark-resolved options + escape hatch
-//!   (open terminal, copy path, copy git command).
+//! - **Conflict Dashboard** (ADR-0063 / T-CONFLICT-DASH-021): the right panel in
+//!   Conflict Mode, ordered state → next action → files → More:
+//!   - state: op header + direction summary + Current/Incoming role badges +
+//!     conflicted/resolved counts (with prev/next nav),
+//!   - next action: exactly one dominant button — a gated Continue when ready,
+//!     else the blocker reason + a *secondary* Next-conflict / Skip,
+//!   - files: Conflicted / Resolved sections; file-specific actions (open
+//!     externally, copy path) live on the selected row,
+//!   - More (collapsed by default): global utilities (open terminal, copy git
+//!     command) and, separated + danger-styled, the destructive Abort.
 //! - Activating a Conflicted row sets `editing_file` (W32's Conflict Editor lane
 //!   reads it); this lane does not implement the editor.
 //!
@@ -76,6 +79,9 @@ pub struct EditorChrome {
     pub geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     /// Measured (left, right) screen-px bounds of the A·B row.
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
+    /// Whether the dashboard's collapsible "More" (secondary/utility +
+    /// destructive Abort) section is expanded.
+    pub more_expanded: bool,
 }
 
 /// Consolidated Conflict-Editor view state.
@@ -130,6 +136,10 @@ pub struct ConflictState {
     /// ADR-0070: shared A/B uniform-list scroll handle for synchronized vertical
     /// scrolling in the Conflict Editor.
     pub ab_scroll_handle: UniformListScrollHandle,
+    /// T-CONFLICT-DASH-021: whether the dashboard's collapsible "More" section
+    /// (secondary/utility actions + destructive Abort) is expanded. Collapsed by
+    /// default so the right sidebar stays focused on state + the next action.
+    pub more_expanded: bool,
 }
 
 impl ConflictState {
@@ -149,6 +159,7 @@ impl ConflictState {
             merge_commit_pending: false,
             selected_hunk: 0,
             ab_scroll_handle: UniformListScrollHandle::new(),
+            more_expanded: false,
         }
     }
 }
@@ -417,7 +428,7 @@ pub fn render_body(
         .min_h(px(0.))
         .bg(rgb(theme().bg_base))
         .child(center)
-        .child(render_dashboard(mode, cx))
+        .child(render_dashboard(mode, chrome, cx))
         .into_any_element()
 }
 
@@ -425,7 +436,16 @@ pub fn render_body(
 // Right panel: Conflict Dashboard (ADR-0063)
 // ────────────────────────────────────────────────────────────
 
-fn render_dashboard(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+fn render_dashboard(
+    mode: &ConflictMode,
+    chrome: &EditorChrome,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    // T-CONFLICT-DASH-021: information hierarchy is state → next action → files
+    // → More. The right sidebar shows what's left and the single safe next step;
+    // utility/destructive actions are demoted into the collapsible "More"
+    // section (utilities) and onto the file rows (file-specific), so they never
+    // compete with the primary action.
     div()
         .id("conflict-dashboard")
         .flex()
@@ -436,12 +456,16 @@ fn render_dashboard(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::Any
         .border_color(rgb(theme().surface))
         .bg(rgb(theme().sidebar))
         .overflow_y_scroll()
+        // ── State ──
         .child(dash_header(mode))
         .child(dash_role_badges(mode))
         .child(dash_counts(mode, cx))
-        .child(dash_actions(mode, cx))
+        // ── Next action (exactly one primary) ──
+        .child(dash_primary(mode, cx))
+        // ── Files (file-specific actions live on the selected row) ──
         .child(dash_sections(mode, cx))
-        .child(dash_escape_hatch(mode, cx))
+        // ── More (collapsed: utilities + destructive Abort) ──
+        .child(dash_more(mode, chrome.more_expanded, cx))
         .into_any_element()
 }
 
@@ -603,20 +627,16 @@ where
         .on_click(handler)
 }
 
-/// Action buttons: Abort (always, two-stage confirm), Continue (gated),
-/// Skip (sequencer ops only), external tool.
-fn dash_actions(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+/// The single primary "next step" + a status note (T-CONFLICT-DASH-021).
+///
+/// Exactly one visually dominant action: a filled Continue (gated on
+/// all-conflicts-resolved, mirroring `can_continue`) when ready, otherwise a
+/// muted blocker reason plus a *secondary* "Next conflict" jump (and Skip for
+/// sequencer ops). The destructive Abort never lives here — it sits in
+/// `dash_more`, danger-styled and separated from utilities.
+fn dash_primary(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let can_continue = mode.can_continue();
     let is_sequencer = mode.session.op.is_sequencer();
-
-    let continue_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.conflict_continue(window, cx);
-        cx.notify();
-    });
-    let abort_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_abort_request(cx);
-        cx.notify();
-    });
 
     let mut col = div()
         .flex()
@@ -627,73 +647,185 @@ fn dash_actions(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElem
         .border_b_1()
         .border_color(rgb(theme().surface));
 
-    // Continue (gated) + the specific blocking reason / ready note.
-    let mut row = div().flex().flex_row().flex_wrap().gap_2();
-    row = row.child(action_button(
-        Msg::ConflictContinue.t(),
-        theme().color_success,
-        can_continue,
-        if can_continue {
-            Some(continue_handler)
-        } else {
-            None
-        },
-        cx,
-    ));
+    if can_continue {
+        // Ready: Continue is the one dominant (filled) action.
+        let continue_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+            this.conflict_continue(window, cx);
+            cx.notify();
+        });
+        col = col.child(action_button(
+            Msg::ConflictContinue.t(),
+            theme().color_success,
+            true,
+            Some(continue_handler),
+            cx,
+        ));
+        col = col.child(dash_note(
+            Msg::ConflictContinueReady.t(),
+            theme().color_success,
+        ));
+    } else {
+        // Blocked: surface the specific reason, then offer only secondary
+        // navigation — there is no safe primary yet, so none is shown.
+        let reason = mode
+            .continue_blocker()
+            .map(|m| m.t())
+            .unwrap_or_else(|| Msg::ConflictContinueReady.t());
+        col = col.child(dash_note(reason, theme().color_blocker));
+    }
 
-    // Skip — sequencer ops only (hidden for merge).
+    // Secondary navigation row: "Next conflict" (only useful while blocked) and
+    // Skip (sequencer ops only). Both are secondary so they never rival Continue.
+    let mut row = div().flex().flex_row().flex_wrap().gap_2();
+    let mut has_secondary = false;
+    if !can_continue {
+        let next = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+            this.conflict_nav_unresolved(1);
+            cx.notify();
+        });
+        row = row.child(secondary_button(
+            "conflict-next".to_string(),
+            Msg::ConflictNextConflict.t(),
+            true,
+            Some(next),
+        ));
+        has_secondary = true;
+    }
     if is_sequencer {
-        let skip_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+        let skip = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
             this.conflict_skip(cx);
             cx.notify();
         });
-        row = row.child(action_button(
+        row = row.child(secondary_button(
+            "conflict-skip".to_string(),
             Msg::ConflictSkip.t(),
-            theme().color_warning,
             true,
-            Some(skip_handler),
-            cx,
+            Some(skip),
         ));
+        has_secondary = true;
     }
-
-    // Abort — always available; two-stage confirm (armed colour swaps).
-    let abort_label = if mode.abort_armed {
-        Msg::ConflictConfirmAbort.t()
-    } else {
-        Msg::ConflictAbort.t()
-    };
-    row = row.child(action_button(
-        abort_label,
-        theme().color_blocker,
-        true,
-        Some(abort_handler),
-        cx,
-    ));
-
-    col = col.child(row);
-
-    // Continue gate reason / ready note.
-    let (note, note_color) = match mode.continue_blocker() {
-        Some(msg) => (msg.t(), theme().color_blocker),
-        None => (Msg::ConflictContinueReady.t(), theme().color_success),
-    };
-    col = col.child(
-        div()
-            .text_size(theme::scaled_px(10.))
-            .text_color(rgb(note_color))
-            .child(SharedString::from(note)),
-    );
-
-    if mode.abort_armed {
-        col = col.child(
-            div()
-                .text_size(theme::scaled_px(10.))
-                .text_color(rgb(theme().color_warning))
-                .child(SharedString::from(Msg::ConflictConfirmAbortHint.t())),
-        );
+    if has_secondary {
+        col = col.child(row);
     }
 
     col.into_any_element()
+}
+
+/// A small status line used throughout the dashboard.
+fn dash_note(text: &str, color: u32) -> gpui::AnyElement {
+    div()
+        .text_size(theme::scaled_px(10.))
+        .text_color(rgb(color))
+        .child(SharedString::from(text.to_string()))
+        .into_any_element()
+}
+
+/// Collapsible "More" section (T-CONFLICT-DASH-021): global utility actions
+/// (open repository terminal, copy git command) and — clearly separated and
+/// danger-styled — the destructive Abort (two-stage confirm). Collapsed by
+/// default so utilities never compete with the primary action, and so the
+/// destructive action is not visually grouped with ordinary utilities.
+/// File-specific actions (open externally / copy path) live on the file rows.
+fn dash_more(mode: &ConflictMode, expanded: bool, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let toggle = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict.more_expanded = !this.conflict.more_expanded;
+        cx.notify();
+    });
+    let chevron = if expanded { "▾" } else { "▸" };
+
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .px(theme::scaled_px(12.))
+        .py(theme::scaled_px(8.))
+        .child(
+            Button::new("conflict-more-toggle")
+                .label(SharedString::from(format!(
+                    "{} {}",
+                    Msg::ConflictMore.t(),
+                    chevron
+                )))
+                .ghost()
+                .small()
+                .on_click(toggle),
+        );
+
+    if expanded {
+        // Global utilities (not tied to a specific file).
+        let term = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+            this.conflict_open_terminal(window, cx);
+            cx.notify();
+        });
+        let copy_cmd = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+            this.conflict_copy_git_command(cx);
+            cx.notify();
+        });
+        col = col
+            .child(secondary_button(
+                "conflict-more-terminal".to_string(),
+                Msg::ConflictOpenTerminal.t(),
+                true,
+                Some(term),
+            ))
+            .child(secondary_button(
+                "conflict-more-copycmd".to_string(),
+                Msg::ConflictCopyGitCommand.t(),
+                true,
+                Some(copy_cmd),
+            ));
+
+        // Destructive Abort — separated by a divider, danger-styled, two-stage.
+        col = col.child(
+            div()
+                .h(px(1.))
+                .my(theme::scaled_px(2.))
+                .bg(rgb(theme().surface)),
+        );
+        let abort = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+            this.conflict_abort_request(cx);
+            cx.notify();
+        });
+        let abort_label = if mode.abort_armed {
+            Msg::ConflictConfirmAbort.t()
+        } else {
+            Msg::ConflictAbort.t()
+        };
+        col = col.child(action_button(
+            abort_label,
+            theme().color_blocker,
+            true,
+            Some(abort),
+            cx,
+        ));
+        if mode.abort_armed {
+            col = col.child(dash_note(
+                Msg::ConflictConfirmAbortHint.t(),
+                theme().color_warning,
+            ));
+        }
+    }
+
+    col.into_any_element()
+}
+
+/// A left-aligned secondary (utility / navigation) button with clear button
+/// affordance — outlined rather than ghost so it never reads as plain text.
+fn secondary_button<H>(id: String, label: &str, enabled: bool, handler: Option<H>) -> Button
+where
+    H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+{
+    let mut btn = Button::new(SharedString::from(id))
+        .label(SharedString::from(label.to_string()))
+        .outline()
+        .small()
+        .disabled(!enabled);
+    if enabled {
+        if let Some(h) = handler {
+            btn = btn.on_click(h);
+        }
+    }
+    btn
 }
 
 /// Two sections: Conflicted Files and Resolved Files, each row with a kind badge.
@@ -786,38 +918,72 @@ fn section(
             cx.notify();
         });
 
-        col = col.child(
-            div()
-                .id(SharedString::from(format!("conflict-row-{}", idx)))
-                .flex()
-                .flex_col()
-                .gap_1()
-                .px(theme::scaled_px(12.))
-                .py(theme::scaled_px(6.))
-                .cursor_pointer()
-                .when(selected, |s| s.bg(rgb(theme().selected)))
-                .hover(|s| s.bg(rgb(theme().bg_row_alt)))
-                .on_click(row_click)
-                .child(
-                    div()
-                        .text_size(theme::scaled_px(12.))
-                        .text_color(rgb(theme().text_main))
-                        .child(SharedString::from(path_str)),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_size(theme::scaled_px(10.))
-                                .text_color(rgb(status_color))
-                                .child(SharedString::from(status_text)),
-                        )
-                        .child(kind_badge(kind)),
-                ),
-        );
+        let mut row_el = div()
+            .id(SharedString::from(format!("conflict-row-{}", idx)))
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px(theme::scaled_px(12.))
+            .py(theme::scaled_px(6.))
+            .cursor_pointer()
+            .when(selected, |s| s.bg(rgb(theme().selected)))
+            .hover(|s| s.bg(rgb(theme().bg_row_alt)))
+            .on_click(row_click)
+            .child(
+                div()
+                    .text_size(theme::scaled_px(12.))
+                    .text_color(rgb(theme().text_main))
+                    .child(SharedString::from(path_str)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(theme::scaled_px(10.))
+                            .text_color(rgb(status_color))
+                            .child(SharedString::from(status_text)),
+                    )
+                    .child(kind_badge(kind)),
+            );
+
+        // File-specific actions live on the (selected) row, not as global
+        // sidebar buttons (T-CONFLICT-DASH-021). They act on the selected file,
+        // which is this row.
+        if selected {
+            let ext_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+                this.conflict_open_external_tool(window, cx);
+                cx.notify();
+            });
+            let copy_path_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+                this.conflict_copy_path(cx);
+                cx.notify();
+            });
+            row_el = row_el.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .gap_2()
+                    .pt(theme::scaled_px(2.))
+                    .child(secondary_button(
+                        format!("conflict-file-ext-{}", idx),
+                        Msg::ConflictExternalTool.t(),
+                        true,
+                        Some(ext_handler),
+                    ))
+                    .child(secondary_button(
+                        format!("conflict-file-path-{}", idx),
+                        Msg::ConflictCopyPath.t(),
+                        true,
+                        Some(copy_path_handler),
+                    )),
+            );
+        }
+
+        col = col.child(row_el);
     }
 
     col.into_any_element()
@@ -834,67 +1000,6 @@ fn kind_badge(kind: ConflictKind) -> gpui::AnyElement {
         .text_size(theme::scaled_px(9.))
         .text_color(rgb(theme().text_muted))
         .child(SharedString::from(kind_tag(kind)))
-        .into_any_element()
-}
-
-/// Escape hatch (ADR-0060 / T-050..052): external tool, terminal, copy path,
-/// copy git command.
-fn dash_escape_hatch(mode: &ConflictMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let ext_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.conflict_open_external_tool(window, cx);
-        cx.notify();
-    });
-    let term_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.conflict_open_terminal(window, cx);
-        cx.notify();
-    });
-    let copy_path_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_copy_path(cx);
-        cx.notify();
-    });
-    let copy_cmd_handler = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_copy_git_command(cx);
-        cx.notify();
-    });
-
-    div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(8.))
-        .child(action_button(
-            Msg::ConflictExternalTool.t(),
-            theme().text_sub,
-            true,
-            Some(ext_handler),
-            cx,
-        ))
-        .child(action_button(
-            Msg::ConflictOpenTerminal.t(),
-            theme().text_sub,
-            true,
-            Some(term_handler),
-            cx,
-        ))
-        .child(action_button(
-            Msg::ConflictCopyPath.t(),
-            theme().text_sub,
-            mode.selected_file.is_some(),
-            if mode.selected_file.is_some() {
-                Some(copy_path_handler)
-            } else {
-                None
-            },
-            cx,
-        ))
-        .child(action_button(
-            Msg::ConflictCopyGitCommand.t(),
-            theme().text_sub,
-            true,
-            Some(copy_cmd_handler),
-            cx,
-        ))
         .into_any_element()
 }
 

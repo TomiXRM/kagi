@@ -2643,6 +2643,7 @@ impl KagiApp {
             let active = g == gran;
             let click = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
                 this.activity_granularity = g;
+                this.activity_hover = None;
                 cx.notify();
             });
             div()
@@ -2682,6 +2683,23 @@ impl KagiApp {
         let win_merges = gdata.total_merges;
         let contribs = &gdata.contributors;
 
+        // Instant hover read-out: when the pointer is over a chart bucket, the
+        // header shows that slice's relative time + counts instead of the window
+        // totals (no tooltip delay).
+        let hovered = self.activity_hover.filter(|&i| i < buckets.len()).map(|i| {
+            let b = &buckets[i];
+            let center = gdata.start + (i as i64) * gdata.bucket_secs + gdata.bucket_secs / 2;
+            (
+                commit_list::relative_time(center, gdata.now),
+                b.commits,
+                b.merges,
+            )
+        });
+        let (head_label, head_commits, head_merges) = match &hovered {
+            Some((ago, c, m)) => (format!("at {ago}"), *c, *m),
+            None => (gran.window_label().to_string(), win_commits, win_merges),
+        };
+
         let mut gran_row = div().flex().flex_row().items_center().gap_1();
         for g in Granularity::ALL {
             gran_row = gran_row.child(mk_gran(g));
@@ -2702,12 +2720,12 @@ impl KagiApp {
                     .gap_3()
                     .text_xs()
                     .text_color(rgb(theme().text_sub))
-                    .child(SharedString::from(gran.window_label()))
+                    .child(SharedString::from(head_label))
                     .child(legend(
                         theme().color_success,
-                        format!("{win_commits} commits"),
+                        format!("{head_commits} commits"),
                     ))
-                    .child(legend(theme().color_head, format!("{win_merges} merges"))),
+                    .child(legend(theme().color_head, format!("{head_merges} merges"))),
             );
 
         let chart = if win_commits == 0 {
@@ -2760,21 +2778,43 @@ impl KagiApp {
                                 .child(tick(max_c.to_string()))
                                 .child(tick("0".into())),
                         )
-                        .child(
-                            // Canvas + a transparent per-bucket hover overlay
-                            // (tooltips with the slice's time + counts).
+                        .child({
+                            // Canvas + a transparent per-bucket hover overlay.
+                            // Each column updates `activity_hover` instantly via
+                            // on_hover (gpui's own tooltip has a fixed 500ms
+                            // delay that felt too slow), so the header read-out
+                            // appears with no perceptible lag.
+                            let hover_bg = if theme().dark {
+                                gpui::hsla(0., 0., 1., 0.07)
+                            } else {
+                                gpui::hsla(0., 0., 0., 0.06)
+                            };
+                            let mut overlay = div().absolute().inset_0().flex().flex_row();
+                            for i in 0..buckets.len() {
+                                let on_hover = cx.listener(move |this, hovered: &bool, _w, cx| {
+                                    if *hovered {
+                                        this.activity_hover = Some(i);
+                                    } else if this.activity_hover == Some(i) {
+                                        this.activity_hover = None;
+                                    }
+                                    cx.notify();
+                                });
+                                overlay = overlay.child(
+                                    div()
+                                        .id(SharedString::from(format!("activity-bucket-{i}")))
+                                        .flex_1()
+                                        .h_full()
+                                        .hover(move |s| s.bg(hover_bg))
+                                        .on_hover(on_hover),
+                                );
+                            }
                             div()
                                 .flex_1()
                                 .min_w(px(0.))
                                 .relative()
                                 .child(activity_view::activity_chart(buckets.clone()).size_full())
-                                .child(activity_view::hover_overlay(
-                                    &buckets,
-                                    gdata.start,
-                                    gdata.bucket_secs,
-                                    gdata.now,
-                                )),
-                        ),
+                                .child(overlay)
+                        }),
                 )
                 .child(
                     div()

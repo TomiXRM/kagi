@@ -852,6 +852,9 @@ pub struct KagiApp {
     pub bottom_tab: BottomTab,
     /// Time bucketing for the bottom-panel "Activity" chart (Day/Week/Month).
     pub activity_granularity: kagi_domain::activity::Granularity,
+    /// Index of the chart bucket the pointer is over (instant hover readout),
+    /// or `None`. Reset on leave / granularity change.
+    pub activity_hover: Option<usize>,
     // ── T025: Commit Panel ───────────────────────────────────────
     /// Whether the commit panel is currently open (WIP row selected).
     pub commit_panel_open: bool,
@@ -1394,6 +1397,7 @@ impl KagiApp {
             bottom_panel_height: BOTTOM_PANEL_H_UNSET,
             bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
             activity_granularity: kagi_domain::activity::Granularity::Week,
+            activity_hover: None,
             commit_panel_open: false,
             commit_panel: None,
             commit_input: None,
@@ -1504,6 +1508,7 @@ impl KagiApp {
             bottom_panel_height: BOTTOM_PANEL_H_UNSET,
             bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
             activity_granularity: kagi_domain::activity::Granularity::Week,
+            activity_hover: None,
             commit_panel_open: false,
             commit_panel: None,
             commit_input: None,

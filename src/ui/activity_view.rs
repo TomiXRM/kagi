@@ -4,11 +4,9 @@
 //! already-aggregated [`kagi_domain::activity`] data in here.
 
 use gpui::{
-    canvas, div, point, px, App, Bounds, Canvas, InteractiveElement as _, IntoElement,
-    ParentElement as _, PathBuilder, Pixels, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Window,
+    canvas, div, point, px, App, Bounds, Canvas, IntoElement, ParentElement as _, PathBuilder,
+    Pixels, SharedString, Styled as _, Window,
 };
-use gpui_component::tooltip::Tooltip;
 
 use kagi_domain::activity::{ActivityBucket, Contributor};
 
@@ -85,42 +83,6 @@ pub fn activity_chart(buckets: Vec<ActivityBucket>) -> Canvas<()> {
 #[inline]
 fn hsla(hex: u32) -> gpui::Hsla {
     gpui::rgb(hex).into()
-}
-
-/// A transparent overlay of one interactive column per bucket: hovering a column
-/// highlights that slice and shows a tooltip with its time + commit/merge count.
-/// Sits absolutely over the chart canvas (no canvas hit-testing needed).
-pub fn hover_overlay(
-    buckets: &[ActivityBucket],
-    start: i64,
-    bucket_secs: i64,
-    now: i64,
-) -> impl IntoElement {
-    let dark = theme().dark;
-    let hover_bg = if dark {
-        gpui::hsla(0., 0., 1., 0.07)
-    } else {
-        gpui::hsla(0., 0., 0., 0.06)
-    };
-    let mut row = div().absolute().inset_0().flex().flex_row();
-    for (i, b) in buckets.iter().enumerate() {
-        let center = start + (i as i64) * bucket_secs + bucket_secs / 2;
-        let ago = crate::ui::commit_list::relative_time(center, now);
-        let tip = SharedString::from(if b.commits == 0 {
-            format!("{ago} · no commits")
-        } else {
-            format!("{ago} · {} commits · {} merges", b.commits, b.merges)
-        });
-        row = row.child(
-            div()
-                .id(SharedString::from(format!("activity-bucket-{i}")))
-                .flex_1()
-                .h_full()
-                .hover(move |s| s.bg(hover_bg))
-                .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx)),
-        );
-    }
-    row
 }
 
 /// One compact contributor ranking row: `#rank  name … commits·merges` with a

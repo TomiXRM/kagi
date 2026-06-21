@@ -11,6 +11,13 @@ use crate::ui::*;
 
 impl KagiApp {
     /// Build an undo-commit plan and open the confirmation modal.
+    ///
+    /// NOTE: this "undo last commit" entry point (ADR-0107) is distinct from the
+    /// operation-history undo (`open_history_undo_modal`, ADR-0081) that Cmd+Z
+    /// drives. Its only caller used to be the `KAGI_UNDO` headless hook, retired
+    /// in the ADR-0077 harness cleanup; the confirm/cancel/render flow stays
+    /// wired, so this is kept (pending a GUI trigger) rather than deleted.
+    #[allow(dead_code)]
     pub fn open_undo_modal(&mut self) {
         let _repo_path = match self.repo_path.clone() {
             Some(p) => p,

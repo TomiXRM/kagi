@@ -205,10 +205,10 @@ fn main() {
     app_state.log_tabs();
 
     // ── KAGI_* headless harness + window launch ───────────────
-    // All env-driven test hooks (KAGI_OPEN_REPO second tab, SELECT_FIRST, JUMP,
-    // COMPARE_*, PULL/PUSH/CHECKOUT/COMMIT/AMEND/DISCARD/STASH_*/CHERRY_PICK/
-    // REVERT/UNDO/POP/CREATE_BRANCH/DELETE_BRANCH/PLAN_*/BOTTOM_PANEL/TERMINAL/
-    // COMMIT_PANEL/MENU_DUMP, …) are applied in `headless::run_repo_flow`, which
-    // takes ownership of `app_state` and ends by calling `run_app`.  See ADR-0077.
-    headless::run_repo_flow(app_state, repo_path, env_open_repo);
+    // The surviving read-only UI-state hooks (KAGI_OPEN_REPO second tab,
+    // SELECT_FIRST, JUMP, CONTEXT_MENU, COMPARE_*, OPEN_FIRST_FILE, COMPACT,
+    // BOTTOM_PANEL/TERMINAL, MENU_DUMP) are applied in `headless::run_repo_flow`,
+    // which takes ownership of `app_state` and ends by calling `run_app`. The
+    // mutating plan/execute hooks were retired in the ADR-0077 harness cleanup.
+    headless::run_repo_flow(app_state, env_open_repo);
 }

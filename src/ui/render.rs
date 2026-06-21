@@ -2729,7 +2729,7 @@ impl KagiApp {
                 .into_any_element()
         } else {
             let max_c = buckets.iter().map(|b| b.commits).max().unwrap_or(0);
-            let first_label = gran.axis_start_label().to_string();
+            let first_label = gdata.start_label.clone();
             let last_label = "now".to_string();
             let tick = |t: String| {
                 div()

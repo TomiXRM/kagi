@@ -4,6 +4,7 @@
 //! It must not be added to `src/lib.rs` so that domain tests stay
 //! independent of GPUI.
 
+pub mod activity_view;
 pub mod assets;
 pub mod avatar;
 pub mod avatar_fetch;
@@ -849,6 +850,8 @@ pub struct KagiApp {
     pub bottom_panel_height: f32,
     /// Active tab in the bottom panel.
     pub bottom_tab: BottomTab,
+    /// Time bucketing for the bottom-panel "Activity" chart (Day/Week/Month).
+    pub activity_granularity: kagi_domain::activity::Granularity,
     // ── T025: Commit Panel ───────────────────────────────────────
     /// Whether the commit panel is currently open (WIP row selected).
     pub commit_panel_open: bool,
@@ -1182,6 +1185,8 @@ pub struct TabViewState {
     pub branch_upstream_info: HashMap<String, UpstreamInfo>,
     pub worktrees: Vec<Worktree>,
     pub branch_solo: Option<BranchSolo>,
+    /// Commit-activity aggregation for the bottom-panel "Activity" chart.
+    pub activity: kagi_domain::activity::ActivityData,
 }
 
 /// W6-TABSPEED: build the pure [`TabViewState`] from a snapshot.
@@ -1326,6 +1331,7 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
         branch_upstream_info,
         worktrees: snap.worktrees.clone(),
         branch_solo: None,
+        activity: kagi_domain::activity::aggregate(&snap.commits),
     }
 }
 
@@ -1379,6 +1385,7 @@ impl KagiApp {
             bottom_panel_open: true, // user request: terminal visible by default
             bottom_panel_height: BOTTOM_PANEL_H_UNSET,
             bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
+            activity_granularity: kagi_domain::activity::Granularity::Week,
             commit_panel_open: false,
             commit_panel: None,
             commit_input: None,
@@ -1488,6 +1495,7 @@ impl KagiApp {
             bottom_panel_open: true, // user request: terminal visible by default
             bottom_panel_height: BOTTOM_PANEL_H_UNSET,
             bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
+            activity_granularity: kagi_domain::activity::Granularity::Week,
             commit_panel_open: false,
             commit_panel: None,
             commit_input: None,

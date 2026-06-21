@@ -2518,6 +2518,10 @@ impl KagiApp {
                 this.ensure_terminal(window, cx);
                 cx.notify();
             });
+            let tab_activity_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
+                this.bottom_tab = BottomTab::Activity;
+                cx.notify();
+            });
 
             let make_tab = |label: &'static str, is_active: bool| {
                 let text_color = if is_active {
@@ -2575,6 +2579,18 @@ impl KagiApp {
                             active_tab == BottomTab::Terminal,
                         )),
                 )
+                .child(
+                    div()
+                        .id("tab-activity")
+                        .flex()
+                        .flex_shrink_0()
+                        .on_click(tab_activity_click)
+                        .hover(|s| s.cursor_pointer())
+                        .child(make_tab(
+                            BottomTab::Activity.label(),
+                            active_tab == BottomTab::Activity,
+                        )),
+                )
         };
 
         // ── Body: Operation Log or Terminal ──
@@ -2587,6 +2603,7 @@ impl KagiApp {
                 .map(|e| e.into_any_element())
                 .unwrap_or_else(|| div().flex_1().min_h(px(0.)).into_any_element()),
             BottomTab::Terminal => self.render_terminal_body(cx),
+            BottomTab::Activity => self.render_activity_body(cx),
         };
 
         // ── Panel container (height = fixed, flex_shrink_0) ──
@@ -2607,6 +2624,160 @@ impl KagiApp {
                 .child(tab_bar)
                 .child(body),
         )
+    }
+
+    /// Render the Activity tab body: a Day/Week/Month granularity toggle, a
+    /// commit + merge line chart, and the top-5 contributor ranking. The data is
+    /// pre-aggregated in `active_view.activity` (built in `build_tab_view`), so
+    /// this method only lays it out and wires the toggle.
+    fn render_activity_body(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        use kagi_domain::activity::Granularity;
+        let activity = &self.active_view.activity;
+        let gran = self.activity_granularity;
+        let buckets = activity.series(gran).to_vec();
+
+        // Granularity toggle button (Day / Week / Month).
+        let mk_gran = |g: Granularity| {
+            let active = g == gran;
+            let click = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
+                this.activity_granularity = g;
+                cx.notify();
+            });
+            div()
+                .id(SharedString::from(format!("activity-gran-{}", g.label())))
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .text_sm()
+                .text_color(rgb(if active {
+                    theme().text_main
+                } else {
+                    theme().text_muted
+                }))
+                .bg(rgb(if active {
+                    theme().selected
+                } else {
+                    theme().panel
+                }))
+                .hover(|s| s.cursor_pointer().bg(rgb(theme().surface)))
+                .on_click(click)
+                .child(SharedString::from(g.label()))
+        };
+
+        let legend = |color: u32, text: String| {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .child(div().w(px(8.)).h(px(8.)).rounded_full().bg(rgb(color)))
+                .child(SharedString::from(text))
+        };
+
+        let header = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .flex_shrink_0()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .child(mk_gran(Granularity::Day))
+                    .child(mk_gran(Granularity::Week))
+                    .child(mk_gran(Granularity::Month)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_3()
+                    .text_sm()
+                    .text_color(rgb(theme().text_sub))
+                    .child(legend(
+                        theme().color_branch,
+                        format!("{} commits", activity.total_commits),
+                    ))
+                    .child(legend(
+                        theme().color_warning,
+                        format!("{} merges", activity.total_merges),
+                    )),
+            );
+
+        let chart = if buckets.is_empty() {
+            div()
+                .flex_1()
+                .min_h(px(0.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from("No commit activity"))
+                .into_any_element()
+        } else {
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .min_h(px(0.))
+                .child(activity_view::activity_chart(buckets).size_full())
+                .into_any_element()
+        };
+
+        let max_commits = activity
+            .contributors
+            .first()
+            .map(|c| c.commits)
+            .unwrap_or(0);
+        let mut ranking = div()
+            .w(theme::scaled_px(320.))
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .overflow_hidden()
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(theme().color_branch))
+                    .child(SharedString::from("Top contributors")),
+            );
+        if activity.contributors.is_empty() {
+            ranking = ranking.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from("—")),
+            );
+        } else {
+            for (i, c) in activity.contributors.iter().take(5).enumerate() {
+                ranking = ranking.child(activity_view::contributor_row(i + 1, c, max_commits));
+            }
+        }
+
+        div()
+            .flex_1()
+            .min_h(px(0.))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_2()
+            .child(header)
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .flex()
+                    .flex_row()
+                    .gap_3()
+                    .child(chart)
+                    .child(ranking),
+            )
+            .into_any_element()
     }
 
     /// Render the Terminal tab body (T-BP-007).

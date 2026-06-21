@@ -904,14 +904,16 @@ pub struct KagiApp {
     /// Pre-computed toolbar button enabled/disabled flags.
     /// Updated on every reload; rendered by `render_header_slot`.
     // ── T-BP-004: Operation Log entries ─────────────────────────
-    /// Operation log panel — self-contained ring buffer (ADR-0111 / Phase C).
-    /// Rc<RefCell> (same pattern as ToastStack) because record_op has ~30
-    /// callers without cx; Entity migration is a follow-up.
-    pub op_log: std::rc::Rc<std::cell::RefCell<oplog_panel::OpLogPanel>>,
-    /// Scroll handle for the Operation Log uniform_list.
-    pub oplog_scroll_handle: UniformListScrollHandle,
-    /// Which row index (0 = newest) is currently expanded; None = none.
-    pub oplog_expanded: Option<usize>,
+    /// Operation log panel — an `Entity<OpLogPanel>` (ADR-0110 Phase 5 Step 5.1)
+    /// so a push / row-expand re-renders only the panel subtree, not the whole
+    /// app. The ring buffer + the expanded-row / scroll UI state live on the
+    /// entity. `Option` because the pure constructors have no `cx`; created in
+    /// `open_main_window`'s `cx.new` closure from `op_log_seed`.
+    pub op_log: Option<Entity<oplog_panel::OpLogPanel>>,
+    /// Disk-loaded startup tail (read by the pure constructors), held until
+    /// `open_main_window` moves it into the `op_log` entity. Read by the
+    /// `KAGI_BOTTOM` headless dump before the window exists; empty afterwards.
+    pub op_log_seed: VecDeque<OpLogEntry>,
     // ── T-UNDOREDO-001 / ADR-0081: Operation Undo / Redo history ──
     /// In-session undo/redo stack of ref-moving operations (commit, merge,
     /// cherry-pick, revert, amend, undo-commit). Entries record the branch and
@@ -1391,9 +1393,9 @@ impl KagiApp {
         let op_entries: VecDeque<OpLogEntry> = read_oplog_tail(OP_ENTRIES_LOAD).into();
 
         KagiApp {
-            op_log: std::rc::Rc::new(std::cell::RefCell::new(
-                oplog_panel::OpLogPanel::from_entries(op_entries),
-            )),
+            // Created in `open_main_window`'s `cx.new` closure from this seed.
+            op_log: None,
+            op_log_seed: op_entries,
             root_focus: None,
             active_view: view,
             selected: None,
@@ -1439,8 +1441,6 @@ impl KagiApp {
             sidebar_rows: Vec::new(),
             cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
             cp_staged_scroll_handle: UniformListScrollHandle::new(),
-            oplog_scroll_handle: UniformListScrollHandle::new(),
-            oplog_expanded: None,
             operation_history: kagi_git::OperationHistory::new(),
             history_seed_attempted: false,
             terminal_sessions: HashMap::new(),
@@ -1563,9 +1563,8 @@ impl KagiApp {
             sidebar_rows: Vec::new(),
             cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
             cp_staged_scroll_handle: UniformListScrollHandle::new(),
-            op_log: std::rc::Rc::new(std::cell::RefCell::new(oplog_panel::OpLogPanel::new())),
-            oplog_scroll_handle: UniformListScrollHandle::new(),
-            oplog_expanded: None,
+            op_log: None,
+            op_log_seed: VecDeque::new(),
             operation_history: kagi_git::OperationHistory::new(),
             history_seed_attempted: false,
             terminal_sessions: HashMap::new(),
@@ -1733,8 +1732,9 @@ impl KagiApp {
         // operation result remains visible after the commit list refreshes.
         // sidebar_width / panel_width are also preserved so the user's resize
         // is not lost on checkout/reload (T023).
-        // T-BP-004: op_entries, oplog_scroll_handle, oplog_expanded are preserved
-        // so the Operation Log keeps its contents across repository reloads.
+        // T-BP-004: the op_log entity (entries + expanded row + scroll handle)
+        // persists across reloads/tab switches so the Operation Log keeps its
+        // contents and UI state.
         // sidebar_collapsed / sidebar_filter are preserved so the user's
         // collapse + filter state survives reload.
         // W13-BRANCHTREE: branch_groups_collapsed is likewise preserved so the
@@ -2686,10 +2686,15 @@ impl KagiApp {
             klog!("oplog: write failed (non-fatal): {}", e);
         }
 
-        // T-BP-004: push to in-memory ring-buffer (newest at front).
-        self.op_log.borrow_mut().push(entry);
-        // Reset expanded state when new entries arrive.
-        self.oplog_expanded = None;
+        // T-BP-004: push to in-memory ring-buffer (newest at front) and collapse
+        // any expanded row. Scoped to the op-log entity (ADR-0110 Phase 5).
+        if let Some(panel) = self.op_log.clone() {
+            panel.update(cx, |panel, cx| {
+                panel.push(entry);
+                panel.collapse();
+                cx.notify();
+            });
+        }
 
         // T-BP-004: auto-open panel on failure.
         if is_failed {
@@ -5101,6 +5106,9 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
                 // push/expire re-renders only the overlay. Created here because
                 // the pure `KagiApp` constructors have no `cx`.
                 app_state.toast_stack = Some(cx.new(|_| toast_stack::ToastStack::new()));
+                // Likewise the op-log panel: seeded from the disk-loaded tail.
+                let seed = std::mem::take(&mut app_state.op_log_seed);
+                app_state.op_log = Some(cx.new(|_| oplog_panel::OpLogPanel::from_entries(seed)));
                 app_state
             });
             if let Some(fh) = kagi.read(cx).root_focus.clone() {

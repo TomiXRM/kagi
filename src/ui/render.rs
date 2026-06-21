@@ -2578,7 +2578,13 @@ impl KagiApp {
 
         // ── Body: Operation Log or Terminal ──
         let body = match active_tab {
-            BottomTab::OperationLog => self.render_oplog_body(cx),
+            // ADR-0110 Phase 5: the op-log renders as its own child entity so a
+            // push / row-expand re-renders only this subtree.
+            BottomTab::OperationLog => self
+                .op_log
+                .clone()
+                .map(|e| e.into_any_element())
+                .unwrap_or_else(|| div().flex_1().min_h(px(0.)).into_any_element()),
             BottomTab::Terminal => self.render_terminal_body(cx),
         };
 
@@ -2600,186 +2606,6 @@ impl KagiApp {
                 .child(tab_bar)
                 .child(body),
         )
-    }
-
-    /// Render the Operation Log tab body (T-BP-004).
-    ///
-    /// Uses `uniform_list` for virtual scroll.  Each row shows:
-    ///   `HH:MM:SS  op  outcome-summary` (outcome coloured green/red/yellow).
-    /// Clicking a row toggles single-row expansion (before/after + error/blockers).
-    fn render_oplog_body(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let entry_count = self.op_log.borrow().len();
-
-        if entry_count == 0 {
-            return div()
-                .flex_1()
-                .min_h(px(0.))
-                .bg(rgb(theme().panel))
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(Msg::NoOperationsYet.t()))
-                .into_any();
-        }
-
-        let scroll_handle = self.oplog_scroll_handle.clone();
-        // W12-GCADOPT (§2.10): Scrollbar overlay on the Operation Log list.
-        let scrollbar_handle = scroll_handle.clone();
-
-        let oplog_list = uniform_list(
-            "oplog-list",
-            entry_count,
-            cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                let entries: Vec<OpLogEntry> =
-                    this.op_log.borrow().entries().iter().cloned().collect();
-                let expanded = this.oplog_expanded;
-                range
-                    .filter_map(|i| entries.get(i).cloned().map(|e| (i, e)))
-                    .map(move |(i, entry)| {
-                        let time_label = SharedString::from(format_hms(entry.timestamp));
-                        let op_label = SharedString::from(entry.op.clone());
-
-                        let (outcome_label, outcome_color) = match &entry.outcome {
-                            OpOutcome::Success { after } => (
-                                SharedString::from(format!("Success \u{2192} {}", after.head)),
-                                theme().color_success,
-                            ),
-                            OpOutcome::Failed { error } => (
-                                SharedString::from(format!("Failed: {}", error)),
-                                theme().color_blocker,
-                            ),
-                            OpOutcome::Refused { blockers } => (
-                                SharedString::from(format!(
-                                    "Refused ({} blocker{})",
-                                    blockers.len(),
-                                    if blockers.len() == 1 { "" } else { "s" }
-                                )),
-                                theme().color_warning,
-                            ),
-                        };
-
-                        let is_expanded = expanded == Some(i);
-
-                        let row_click =
-                            cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-                                this.oplog_expanded = if this.oplog_expanded == Some(i) {
-                                    None
-                                } else {
-                                    Some(i)
-                                };
-                                cx.notify();
-                            });
-
-                        let row_bg = if i % 2 == 0 {
-                            theme().panel
-                        } else {
-                            theme().bg_base
-                        };
-
-                        // Summary row.
-                        let mut row_div = div()
-                            .id(("oplog-row", i))
-                            .flex()
-                            .flex_col()
-                            .w_full()
-                            .bg(rgb(row_bg))
-                            .hover(|s| s.bg(rgb(theme().surface)).cursor_pointer())
-                            .on_click(row_click)
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .px_3()
-                                    .h(theme::scaled_px(22.))
-                                    .child(
-                                        div()
-                                            .w(theme::scaled_px(60.))
-                                            .flex_shrink_0()
-                                            .text_xs()
-                                            .text_color(rgb(theme().text_muted))
-                                            .child(time_label),
-                                    )
-                                    .child(
-                                        div()
-                                            .w(theme::scaled_px(100.))
-                                            .flex_shrink_0()
-                                            .ml(theme::scaled_px(6.))
-                                            .text_xs()
-                                            .text_color(rgb(theme().text_sub))
-                                            .child(op_label),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .ml(theme::scaled_px(6.))
-                                            .text_xs()
-                                            .text_color(rgb(outcome_color))
-                                            .truncate()
-                                            .child(outcome_label),
-                                    ),
-                            );
-
-                        // Expansion detail rows (before + outcome specifics).
-                        if is_expanded {
-                            let mut detail_lines: Vec<SharedString> = Vec::new();
-                            detail_lines.push(SharedString::from(format!(
-                                "  before:  {}",
-                                entry.before.head
-                            )));
-                            detail_lines.push(SharedString::from(format!(
-                                "  dirty:   {}",
-                                entry.before.dirty
-                            )));
-                            match &entry.outcome {
-                                OpOutcome::Success { after } => {
-                                    detail_lines.push(SharedString::from(format!(
-                                        "  after:   {}",
-                                        after.head
-                                    )));
-                                    detail_lines.push(SharedString::from(format!(
-                                        "  dirty:   {}",
-                                        after.dirty
-                                    )));
-                                }
-                                OpOutcome::Failed { error } => {
-                                    detail_lines
-                                        .push(SharedString::from(format!("  error:   {}", error)));
-                                }
-                                OpOutcome::Refused { blockers } => {
-                                    for b in blockers {
-                                        detail_lines
-                                            .push(SharedString::from(format!("  blocker: {}", b)));
-                                    }
-                                }
-                            }
-                            let detail_div = div()
-                                .flex()
-                                .flex_col()
-                                .w_full()
-                                .px_3()
-                                .py_1()
-                                .bg(rgb(theme().selected))
-                                .text_xs()
-                                .text_color(rgb(theme().text_sub))
-                                .children(detail_lines.into_iter().map(|line| div().child(line)));
-                            row_div = row_div.child(detail_div);
-                        }
-
-                        row_div
-                    })
-                    .collect()
-            }),
-        )
-        .track_scroll(scroll_handle)
-        .flex_1()
-        .min_h(px(0.))
-        .bg(rgb(theme().panel));
-
-        with_vertical_scrollbar("oplog-list-scroll", &scrollbar_handle, oplog_list, true)
-            .into_any_element()
     }
 
     /// Render the Terminal tab body (T-BP-007).
@@ -3178,5 +3004,187 @@ impl gpui::Render for toast_stack::ToastStack {
             stack = stack.child(animated);
         }
         stack
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Operation Log overlay (ADR-0110 Phase 5 Step 5.1): the op-log renders as
+// its own `Entity<OpLogPanel>` so a push / row-expand re-renders only this
+// subtree. Embedded by `KagiApp::render_bottom_panel`.
+
+impl gpui::Render for oplog_panel::OpLogPanel {
+    /// Render the Operation Log tab body (T-BP-004).
+    ///
+    /// Uses `uniform_list` for virtual scroll.  Each row shows:
+    ///   `HH:MM:SS  op  outcome-summary` (outcome coloured green/red/yellow).
+    /// Clicking a row toggles single-row expansion (before/after + error/blockers).
+    fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let entry_count = self.len();
+
+        if entry_count == 0 {
+            return div()
+                .flex_1()
+                .min_h(px(0.))
+                .bg(rgb(theme().panel))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(Msg::NoOperationsYet.t()))
+                .into_any();
+        }
+
+        let scroll_handle = self.scroll_handle();
+        // W12-GCADOPT (§2.10): Scrollbar overlay on the Operation Log list.
+        let scrollbar_handle = scroll_handle.clone();
+
+        let oplog_list = uniform_list(
+            "oplog-list",
+            entry_count,
+            cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                let entries: Vec<OpLogEntry> = this.entries().iter().cloned().collect();
+                let expanded = this.expanded();
+                range
+                    .filter_map(|i| entries.get(i).cloned().map(|e| (i, e)))
+                    .map(move |(i, entry)| {
+                        let time_label = SharedString::from(format_hms(entry.timestamp));
+                        let op_label = SharedString::from(entry.op.clone());
+
+                        let (outcome_label, outcome_color) = match &entry.outcome {
+                            OpOutcome::Success { after } => (
+                                SharedString::from(format!("Success \u{2192} {}", after.head)),
+                                theme().color_success,
+                            ),
+                            OpOutcome::Failed { error } => (
+                                SharedString::from(format!("Failed: {}", error)),
+                                theme().color_blocker,
+                            ),
+                            OpOutcome::Refused { blockers } => (
+                                SharedString::from(format!(
+                                    "Refused ({} blocker{})",
+                                    blockers.len(),
+                                    if blockers.len() == 1 { "" } else { "s" }
+                                )),
+                                theme().color_warning,
+                            ),
+                        };
+
+                        let is_expanded = expanded == Some(i);
+
+                        let row_click =
+                            cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+                                this.toggle_expanded(i);
+                                cx.notify();
+                            });
+
+                        let row_bg = if i % 2 == 0 {
+                            theme().panel
+                        } else {
+                            theme().bg_base
+                        };
+
+                        // Summary row.
+                        let mut row_div = div()
+                            .id(("oplog-row", i))
+                            .flex()
+                            .flex_col()
+                            .w_full()
+                            .bg(rgb(row_bg))
+                            .hover(|s| s.bg(rgb(theme().surface)).cursor_pointer())
+                            .on_click(row_click)
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .px_3()
+                                    .h(theme::scaled_px(22.))
+                                    .child(
+                                        div()
+                                            .w(theme::scaled_px(60.))
+                                            .flex_shrink_0()
+                                            .text_xs()
+                                            .text_color(rgb(theme().text_muted))
+                                            .child(time_label),
+                                    )
+                                    .child(
+                                        div()
+                                            .w(theme::scaled_px(100.))
+                                            .flex_shrink_0()
+                                            .ml(theme::scaled_px(6.))
+                                            .text_xs()
+                                            .text_color(rgb(theme().text_sub))
+                                            .child(op_label),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .ml(theme::scaled_px(6.))
+                                            .text_xs()
+                                            .text_color(rgb(outcome_color))
+                                            .truncate()
+                                            .child(outcome_label),
+                                    ),
+                            );
+
+                        // Expansion detail rows (before + outcome specifics).
+                        if is_expanded {
+                            let mut detail_lines: Vec<SharedString> = Vec::new();
+                            detail_lines.push(SharedString::from(format!(
+                                "  before:  {}",
+                                entry.before.head
+                            )));
+                            detail_lines.push(SharedString::from(format!(
+                                "  dirty:   {}",
+                                entry.before.dirty
+                            )));
+                            match &entry.outcome {
+                                OpOutcome::Success { after } => {
+                                    detail_lines.push(SharedString::from(format!(
+                                        "  after:   {}",
+                                        after.head
+                                    )));
+                                    detail_lines.push(SharedString::from(format!(
+                                        "  dirty:   {}",
+                                        after.dirty
+                                    )));
+                                }
+                                OpOutcome::Failed { error } => {
+                                    detail_lines
+                                        .push(SharedString::from(format!("  error:   {}", error)));
+                                }
+                                OpOutcome::Refused { blockers } => {
+                                    for b in blockers {
+                                        detail_lines
+                                            .push(SharedString::from(format!("  blocker: {}", b)));
+                                    }
+                                }
+                            }
+                            let detail_div = div()
+                                .flex()
+                                .flex_col()
+                                .w_full()
+                                .px_3()
+                                .py_1()
+                                .bg(rgb(theme().selected))
+                                .text_xs()
+                                .text_color(rgb(theme().text_sub))
+                                .children(detail_lines.into_iter().map(|line| div().child(line)));
+                            row_div = row_div.child(detail_div);
+                        }
+
+                        row_div
+                    })
+                    .collect()
+            }),
+        )
+        .track_scroll(scroll_handle)
+        .flex_1()
+        .min_h(px(0.))
+        .bg(rgb(theme().panel));
+
+        with_vertical_scrollbar("oplog-list-scroll", &scrollbar_handle, oplog_list, true)
+            .into_any_element()
     }
 }

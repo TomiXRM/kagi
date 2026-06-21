@@ -57,8 +57,13 @@ and is `None` only before the window exists, where `push_toast` is a safe no-op.
   longer nudges the ticker each frame; `push_notify` (re)starts it.
 - No `[kagi]`/klog contract lines and no toast message text changed; the toast
   path emits no contract lines, so the headless harness is unaffected.
-- `OpLogPanel` is the next Step 5.1 candidate and follows the identical shape
-  (it already mirrors the old `Rc<RefCell>` pattern).
+- `OpLogPanel` followed with the identical shape (`Entity<OpLogPanel>`): the
+  ring buffer plus the expanded-row / scroll UI state moved onto the entity, and
+  `record_op`'s push + a row-expand click now re-render only the panel. Its one
+  extra wrinkle: the panel is seeded from a disk-loaded tail read by the pure
+  constructors, so `KagiApp` carries `op_log_seed` until `open_main_window` can
+  build the entity (and the `KAGI_BOTTOM` headless dump reads the seed
+  pre-window).
 
 ## Rollout
 

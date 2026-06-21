@@ -15,13 +15,14 @@ use crate::ui::modal_renderers::*;
 use gpui_component::button::ButtonVariants as _;
 
 impl KagiApp {
-    /// Render the toast stack as an absolute overlay (bottom-right, above
-    /// the status bar). Returns `None` when there is nothing to show.
-    fn render_toasts(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let toasts_snapshot: Vec<Toast> = self.toast_stack.borrow().toasts().to_vec();
-        if toasts_snapshot.is_empty() && self.busy_op.is_none() {
-            return None;
-        }
+    /// Render the toast / busy overlay as an absolute container (bottom-left,
+    /// above the status bar). The toast cards live in the `Entity<ToastStack>`
+    /// child, so a push / expire re-renders only that subtree instead of all of
+    /// `KagiApp` (ADR-0110 Phase 5). The busy snackbar stays here because it is
+    /// driven by `busy_op` (KagiApp state). Returns `None` before the window
+    /// (and thus the toast entity) exists.
+    fn render_toasts(&self) -> Option<gpui::AnyElement> {
+        let toast_stack = self.toast_stack.clone()?;
         let mut stack = div()
             .absolute()
             .bottom(theme::scaled_px(34.))
@@ -37,86 +38,8 @@ impl KagiApp {
             stack = stack.child(self.render_busy_snackbar(op));
         }
 
-        for toast in &toasts_snapshot {
-            let (accent, glyph) = match toast.kind {
-                ToastKind::Info => (theme().color_branch, "\u{27f3}"), // ⟳
-                ToastKind::Success => (theme().color_success, "\u{2713}"), // ✓
-                ToastKind::Error => (theme().color_blocker, "\u{2715}"), // ✕
-                ToastKind::Sync => (theme().color_branch, ""),
-            };
-            let id = toast.id;
-            let is_sync = toast.kind == ToastKind::Sync;
-            // Sync toasts reuse the busy snackbar's big spinning icon (user
-            // request: "already up to date" must match an in-flight op); the
-            // others keep the compact text glyph.
-            let icon_el: gpui::AnyElement = if is_sync {
-                self.big_sync_icon(accent, ("kagi-toast-sync", id))
-            } else {
-                div()
-                    .text_color(rgb(accent))
-                    .child(SharedString::from(glyph))
-                    .into_any_element()
-            };
-            let leaving = toast.dismissing.is_some();
-            let dismiss = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-                this.start_toast_exit(id, cx);
-            });
-            // Explicit width so the animated margin-left slides the whole card
-            // horizontally (a stretched flex child wouldn't translate cleanly).
-            let card = div()
-                .w(theme::scaled_px(460.))
-                .flex()
-                .flex_row()
-                .when(is_sync, |d| d.items_center().gap_3())
-                .when(!is_sync, |d| d.items_start().gap_2())
-                .px_4()
-                .py_3()
-                .rounded(theme::scaled_px(8.))
-                .bg(rgb(theme().panel))
-                .border_1()
-                .border_color(rgb(accent))
-                .text_base()
-                .text_color(rgb(theme().text_main))
-                .child(div().flex_shrink_0().child(icon_el))
-                .child(
-                    div()
-                        .flex_1()
-                        .overflow_hidden()
-                        .child(toast.message.clone()),
-                )
-                .child(
-                    div()
-                        .id(("toast-dismiss", id))
-                        .flex_shrink_0()
-                        .px_1()
-                        .text_color(rgb(theme().text_muted))
-                        .hover(|s| s.text_color(rgb(theme().text_main)))
-                        .on_click(dismiss)
-                        .child(SharedString::from("\u{00d7}")),
-                );
-
-            // Slide + fade: in from the left on appear, out to the left on
-            // dismiss. Keyed by toast id so the animation plays once and holds.
-            use gpui::AnimationExt as _;
-            let animated = if leaving {
-                card.with_animation(
-                    ("kagi-toast-exit", id),
-                    gpui::Animation::new(Duration::from_millis(TOAST_EXIT_MS))
-                        .with_easing(gpui::quadratic),
-                    |el, delta| el.ml(px(-TOAST_SLIDE_PX * delta)).opacity(1.0 - delta),
-                )
-                .into_any_element()
-            } else {
-                card.with_animation(
-                    ("kagi-toast-enter", id),
-                    gpui::Animation::new(Duration::from_millis(TOAST_ENTER_MS))
-                        .with_easing(gpui::ease_out_quint()),
-                    |el, delta| el.ml(px(-TOAST_SLIDE_PX * (1.0 - delta))).opacity(delta),
-                )
-                .into_any_element()
-            };
-            stack = stack.child(animated);
-        }
+        // The toast cards are an independently-rendered child entity.
+        stack = stack.child(toast_stack);
         Some(stack.into_any())
     }
 
@@ -124,34 +47,9 @@ impl KagiApp {
     /// icon + a friendly label (user request — a non-blocking alternative to a
     /// modal busy-spinner). Driven automatically by `busy_op`, so every async
     /// op gets one for free.
-    /// The big spinning sync icon shared by the busy snackbar and the
-    /// sync-flavoured no-op toasts (`ToastKind::Sync`), so every sync-icon
-    /// snackbar looks identical. `key` keeps each animation instance distinct.
-    fn big_sync_icon(&self, accent: u32, key: impl Into<gpui::ElementId>) -> gpui::AnyElement {
-        use gpui::AnimationExt as _;
-        const SPIN_MS: u64 = 700;
-        gpui::svg()
-            .path("icons/refresh-cw.svg")
-            // ~2× the header spinner (user request) so the snackbar reads
-            // clearly as "working".
-            .w(theme::scaled_px(32.0))
-            .h(theme::scaled_px(32.0))
-            .text_color(rgb(accent))
-            .with_animation(
-                key,
-                gpui::Animation::new(Duration::from_millis(SPIN_MS)).repeat(),
-                |svg, delta| {
-                    svg.with_transformation(gpui::Transformation::rotate(gpui::radians(
-                        delta * std::f32::consts::TAU,
-                    )))
-                },
-            )
-            .into_any_element()
-    }
-
     fn render_busy_snackbar(&self, op: &'static str) -> gpui::AnyElement {
         let accent = theme().color_branch;
-        let icon = self.big_sync_icon(accent, "kagi-busy-snackbar-spin");
+        let icon = big_sync_icon(accent, "kagi-busy-snackbar-spin");
         div()
             .w(theme::scaled_px(460.))
             .flex()
@@ -443,10 +341,9 @@ impl Render for KagiApp {
         // post-operation paths force re-detection via `reload()`.
         self.detect_conflict_mode();
 
-        // W3-NOTIFY: keep the auto-dismiss ticker alive while toasts remain. The
-        // ticker starts each toast's slide-out at end-of-life; a per-toast timer
-        // removes it once it has animated out (see start_toast_exit).
-        self.ensure_toast_ticker(cx);
+        // W3-NOTIFY: the toast auto-dismiss ticker now lives on the
+        // `ToastStack` entity and is (re)started by `push_notify`, so KagiApp's
+        // render no longer needs to nudge it (ADR-0110 Phase 5).
 
         // Background auto-fetch ticker (periodic `git fetch` so the graph and
         // ahead/behind stay fresh). Lazily spawned; no-op when off / no repo.
@@ -1251,7 +1148,7 @@ impl Render for KagiApp {
             // ── Status bar slot (T017) — last operation result ─
             .child(self.render_status_bar(status_footer, bottom_panel_open, cx))
             // ── W3-NOTIFY: toast stack (above everything) ──────
-            .children(self.render_toasts(cx))
+            .children(self.render_toasts())
             // Linux/FreeBSD in-app menu dropdown (native menu bar is macOS-only).
             .children(self.render_platform_menu_dropdown(cx))
             .into_any()
@@ -3165,3 +3062,121 @@ impl KagiApp {
 // ──────────────────────────────────────────────────────────────
 // Render helper functions (render_rows, render_commit_panel, etc.)
 // have been extracted to render_helpers.rs (ADR-0113).
+
+// ──────────────────────────────────────────────────────────────
+// Toast overlay (ADR-0110 Phase 5): the toast cards render as their own
+// `Entity<ToastStack>` so a push/expire only re-renders this subtree, not
+// the whole `KagiApp`. The busy snackbar stays on `KagiApp` (driven by
+// `busy_op`); see `KagiApp::render_toasts`.
+
+/// The big spinning sync icon shared by the busy snackbar and the
+/// sync-flavoured no-op toasts (`ToastKind::Sync`), so every sync-icon
+/// snackbar looks identical. `key` keeps each animation instance distinct.
+pub(crate) fn big_sync_icon(accent: u32, key: impl Into<gpui::ElementId>) -> gpui::AnyElement {
+    use gpui::AnimationExt as _;
+    const SPIN_MS: u64 = 700;
+    gpui::svg()
+        .path("icons/refresh-cw.svg")
+        // ~2× the header spinner (user request) so the snackbar reads
+        // clearly as "working".
+        .w(theme::scaled_px(32.0))
+        .h(theme::scaled_px(32.0))
+        .text_color(rgb(accent))
+        .with_animation(
+            key,
+            gpui::Animation::new(Duration::from_millis(SPIN_MS)).repeat(),
+            |svg, delta| {
+                svg.with_transformation(gpui::Transformation::rotate(gpui::radians(
+                    delta * std::f32::consts::TAU,
+                )))
+            },
+        )
+        .into_any_element()
+}
+
+impl gpui::Render for toast_stack::ToastStack {
+    fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut stack = div().flex().flex_col().gap_2();
+        for toast in self.toasts() {
+            let (accent, glyph) = match toast.kind {
+                ToastKind::Info => (theme().color_branch, "\u{27f3}"), // ⟳
+                ToastKind::Success => (theme().color_success, "\u{2713}"), // ✓
+                ToastKind::Error => (theme().color_blocker, "\u{2715}"), // ✕
+                ToastKind::Sync => (theme().color_branch, ""),
+            };
+            let id = toast.id;
+            let is_sync = toast.kind == ToastKind::Sync;
+            // Sync toasts reuse the busy snackbar's big spinning icon (user
+            // request: "already up to date" must match an in-flight op); the
+            // others keep the compact text glyph.
+            let icon_el: gpui::AnyElement = if is_sync {
+                big_sync_icon(accent, ("kagi-toast-sync", id))
+            } else {
+                div()
+                    .text_color(rgb(accent))
+                    .child(SharedString::from(glyph))
+                    .into_any_element()
+            };
+            let leaving = toast.dismissing.is_some();
+            let dismiss = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+                this.begin_exit(id, cx);
+            });
+            // Explicit width so the animated margin-left slides the whole card
+            // horizontally (a stretched flex child wouldn't translate cleanly).
+            let card = div()
+                .w(theme::scaled_px(460.))
+                .flex()
+                .flex_row()
+                .when(is_sync, |d| d.items_center().gap_3())
+                .when(!is_sync, |d| d.items_start().gap_2())
+                .px_4()
+                .py_3()
+                .rounded(theme::scaled_px(8.))
+                .bg(rgb(theme().panel))
+                .border_1()
+                .border_color(rgb(accent))
+                .text_base()
+                .text_color(rgb(theme().text_main))
+                .child(div().flex_shrink_0().child(icon_el))
+                .child(
+                    div()
+                        .flex_1()
+                        .overflow_hidden()
+                        .child(toast.message.clone()),
+                )
+                .child(
+                    div()
+                        .id(("toast-dismiss", id))
+                        .flex_shrink_0()
+                        .px_1()
+                        .text_color(rgb(theme().text_muted))
+                        .hover(|s| s.text_color(rgb(theme().text_main)))
+                        .on_click(dismiss)
+                        .child(SharedString::from("\u{00d7}")),
+                );
+
+            // Slide + fade: in from the left on appear, out to the left on
+            // dismiss. Keyed by toast id so the animation plays once and holds.
+            use gpui::AnimationExt as _;
+            let animated = if leaving {
+                card.with_animation(
+                    ("kagi-toast-exit", id),
+                    gpui::Animation::new(Duration::from_millis(TOAST_EXIT_MS))
+                        .with_easing(gpui::quadratic),
+                    |el, delta| el.ml(px(-TOAST_SLIDE_PX * delta)).opacity(1.0 - delta),
+                )
+                .into_any_element()
+            } else {
+                card.with_animation(
+                    ("kagi-toast-enter", id),
+                    gpui::Animation::new(Duration::from_millis(TOAST_ENTER_MS))
+                        .with_easing(gpui::ease_out_quint()),
+                    |el, delta| el.ml(px(-TOAST_SLIDE_PX * (1.0 - delta))).opacity(delta),
+                )
+                .into_any_element()
+            };
+            stack = stack.child(animated);
+        }
+        stack
+    }
+}

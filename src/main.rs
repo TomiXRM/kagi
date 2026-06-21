@@ -49,6 +49,11 @@ fn main() {
     // "graph_compact") so new tabs/windows open in the user's chosen density.
     crate::ui::theme::init_compact_graph();
 
+    // Log the persisted lane-compaction flag (settings.json
+    // "graph_lane_compact") so the gitk-stable vs swimlane-compaction layout
+    // mode chosen at load time is visible/debuggable in the [kagi] log.
+    crate::ui::theme::init_graph_lane_compact();
+
     // Resolve the persisted auto-fetch flag (settings.json "auto_fetch") so the
     // background fetch ticker starts in the user's chosen state.
     crate::ui::theme::init_auto_fetch();

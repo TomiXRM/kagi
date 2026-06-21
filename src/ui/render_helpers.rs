@@ -13,6 +13,23 @@ use super::*;
 use crate::ui::button_style::KagiButton;
 use gpui_component::button::{Button, ButtonVariants};
 
+/// Left pad (px) applied to the graph lane geometry in swimlane mode so lane 0
+/// clears the column's left edge (room for the avatar node). 0 in classic mode.
+/// Must match between the main rows and the stash rows so their lanes line up.
+pub(crate) fn graph_lane_pad_l() -> f32 {
+    if theme::graph_lane_compact() {
+        theme::scaled(8.0)
+    } else {
+        0.0
+    }
+}
+
+/// A solid 1px horizontal connector line (branch label -> graph node / lane band
+/// edge), filling its parent's width.
+fn connector_line(color: gpui::Hsla) -> gpui::Div {
+    div().w_full().h(theme::scaled_px(1.)).bg(color)
+}
+
 pub(crate) fn render_rows(
     rows: &[CommitRow],
     avatar_images: &HashMap<String, std::sync::Arc<gpui::Image>>,
@@ -44,6 +61,32 @@ pub(crate) fn render_rows(
             } else {
                 theme().bg_row_alt
             };
+            // Swimlane lane band (Gitru-style): an inner horizontal strip drawn
+            // BEHIND the graph column only and tinted by this row's lane colour.
+            // It is a separate absolute layer — NOT the row background — with
+            // vertical inset so adjacent bands don't touch and the row stays a
+            // neutral list. The message column is intentionally left neutral so
+            // text stays readable. Gated on lane-compaction; skipped on the
+            // selected row so the selection highlight always wins. Tuple =
+            // (normal, hover) wash colours.
+            let lane_band: Option<(gpui::Hsla, gpui::Hsla)> =
+                if theme::graph_lane_compact() && !is_selected {
+                    let c = theme().lane_color(row.node_color);
+                    let (na, ha) = if theme().dark {
+                        (0.18, 0.24)
+                    } else {
+                        (0.11, 0.15)
+                    };
+                    Some((gpui::hsla(c.h, c.s, c.l, na), gpui::hsla(c.h, c.s, c.l, ha)))
+                } else {
+                    None
+                };
+            // Lane-driven ref-pill colour: every pill on this commit uses the
+            // commit's lane colour so pills agree with the graph line / node /
+            // band. Always on (independent of the avatar-nodes toggle), matching
+            // the lane-coloured graph. Per-ref lanes aren't modelled, so the
+            // primary commit lane is the documented fallback.
+            let pill_lane: Option<u32> = Some(theme::lane_color_u32(row.node_color));
 
             // ── Graph lane area (T030) ────────────────────────
             // visible_lanes = how many lanes fit in the current graph column width.
@@ -84,13 +127,39 @@ pub(crate) fn render_rows(
             // graph isn't scrolled sideways (the canvas connector is gated the
             // same way).
             let connector_color: Option<gpui::Hsla> = if has_badges && graph_scroll_x < 0.5 {
-                Some(theme().lane_color(row.lane))
+                // Use the node's stable lane colour (matches the graph node / band
+                // / pills) rather than the bare lane index.
+                Some(theme().lane_color(row.node_color))
             } else {
                 None
             };
 
+            // Swimlane: render the author avatar AS the commit node inside the
+            // graph (ringed in the lane colour, Gitru-style), replacing the
+            // separate avatar in the message column. Only when the node's lane is
+            // within the visible (horizontally-scrolled) lane window so it isn't
+            // clipped to a wrong position.
+            let lane_w_px = graph_view::lane_w();
+            // Left pad inside the graph: shifts the lanes + avatar node right so
+            // lane 0's avatar sits fully inside the column with a sliver of the
+            // lane band visible to its left (the band itself stays at the column
+            // edge). Passed into the canvas (lane geometry) and used for the node
+            // x; 0 in classic mode.
+            let graph_pad_l = graph_lane_pad_l();
+            let lane_lo = (graph_scroll_x / lane_w_px).floor().max(0.0) as usize;
+            let avatar_in_graph = theme::graph_lane_compact()
+                && visible_lanes > 0
+                && row.lane >= lane_lo
+                && row.lane < lane_lo + visible_lanes;
+            // Local x-centre of the node within the graph column (incl. left pad).
+            let node_cx =
+                graph_pad_l + (row.lane as f32) * lane_w_px + lane_w_px / 2.0 - graph_scroll_x;
+            let avatar_image_g = avatar_image.clone();
+            let avatar_init_g = avatar_init.clone();
+
             div()
                 .id(ix)
+                .relative()
                 .flex()
                 .flex_row()
                 .items_center()
@@ -123,6 +192,7 @@ pub(crate) fn render_rows(
                     &row.badges,
                     badge_col_w,
                     connector_color,
+                    pill_lane,
                     &mut *cx,
                 ))
                 // ── Inner divider spacer (badge|graph handle width) ──
@@ -148,7 +218,7 @@ pub(crate) fn render_rows(
                                     .inset_0()
                                     .flex()
                                     .items_center()
-                                    .child(div().w_full().h(theme::scaled_px(1.)).bg(color)),
+                                    .child(connector_line(color)),
                             )
                         }),
                 )
@@ -157,9 +227,32 @@ pub(crate) fn render_rows(
                 // Clip by visible_lanes to prevent bleed into message column.
                 .child(
                     div()
+                        .relative()
                         .w(theme::scaled_px(graph_col_w))
                         .h_full()
                         .flex_shrink_0()
+                        // ── Lane band (swimlane) ──
+                        // A child of the GRAPH column (not the row) so it is
+                        // contained to the column and cannot reach into the
+                        // BRANCH/TAG label area. Absolute, inset 0 horizontally
+                        // (= the column width) with a 3px top/bottom inset so
+                        // adjacent bands don't touch; painted before the canvas
+                        // so it sits behind the lanes/nodes.
+                        .when_some(lane_band, |el, (band, band_hover)| {
+                            el.child(
+                                div()
+                                    .absolute()
+                                    .left_0()
+                                    .right_0()
+                                    .top(theme::scaled_px(3.))
+                                    .bottom(theme::scaled_px(3.))
+                                    .rounded(theme::scaled_px(3.))
+                                    .bg(band)
+                                    .hover(|s| s.bg(band_hover)),
+                            )
+                        })
+                        // Clip to the column so nothing reaches the BRANCH/TAG or
+                        // message columns; the avatar fits thanks to graph_pad_l.
                         .overflow_hidden()
                         // Horizontal wheel/trackpad scroll reveals clipped
                         // lanes. Vertical deltas are left untouched so the
@@ -170,18 +263,70 @@ pub(crate) fn render_rows(
                             },
                         ))
                         .when(visible_lanes > 0, |el| {
+                            // The left pad is applied inside the canvas (lane
+                            // geometry) via `graph_pad_l`, NOT as a `pl` here, so
+                            // the label→node connector still starts at the column
+                            // edge and doesn't gap.
                             el.child(
-                                graph_canvas(
-                                    row.lane,
-                                    row.edges.clone(),
-                                    visible_lanes,
-                                    row.is_head,
-                                    row.is_merge,
-                                    has_badges,
-                                    graph_scroll_x,
-                                    stash_lanes.to_vec(),
-                                )
-                                .size_full(),
+                                div().size_full().child(
+                                    graph_canvas(
+                                        row.lane,
+                                        row.node_color,
+                                        row.edges.clone(),
+                                        visible_lanes,
+                                        row.is_head,
+                                        row.is_merge,
+                                        has_badges,
+                                        graph_scroll_x,
+                                        graph_pad_l,
+                                        stash_lanes.to_vec(),
+                                    )
+                                    .size_full(),
+                                ),
+                            )
+                        })
+                        // Swimlane: avatar node, drawn over the canvas at the
+                        // node centre with a lane-colour ring (the coloured disc
+                        // shows as a ~1.5px ring around the inner avatar).
+                        .when(avatar_in_graph, |el| {
+                            let ring_d = theme::scaled(18.);
+                            let av_d = theme::scaled(15.);
+                            let inner = div()
+                                .w(px(av_d))
+                                .h(px(av_d))
+                                .rounded_full()
+                                .overflow_hidden();
+                            let inner = match avatar_image_g {
+                                Some(image) => inner.child(
+                                    gpui::img(gpui::ImageSource::Image(image))
+                                        .size_full()
+                                        .rounded_full(),
+                                ),
+                                None => inner
+                                    .bg(av_bg)
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(
+                                        div()
+                                            .text_color(gpui::white())
+                                            .text_xs()
+                                            .child(avatar_init_g),
+                                    ),
+                            };
+                            el.child(
+                                div()
+                                    .absolute()
+                                    .left(px(node_cx - ring_d / 2.))
+                                    .top(px(rh / 2. - ring_d / 2.))
+                                    .w(px(ring_d))
+                                    .h(px(ring_d))
+                                    .rounded_full()
+                                    .bg(theme().lane_color(row.node_color))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(inner),
                             )
                         }),
                 )
@@ -197,29 +342,36 @@ pub(crate) fn render_rows(
                 // ── Author avatar: 18px circle after graph ────────
                 // W11-AVATAR: when a GitHub avatar is resolved, show the image
                 // clipped to the circle; otherwise the initial-on-colour circle.
-                .child({
-                    // W28: avatar circle scales with zoom so it stays sized to
-                    // the (rem-scaled) row text and aligned with the graph node.
-                    let circle = div()
-                        .w(theme::scaled_px(18.))
-                        .h(theme::scaled_px(18.))
-                        .flex_shrink_0()
-                        .mr(theme::scaled_px(4.))
-                        .rounded_full()
-                        .overflow_hidden();
-                    match avatar_image {
-                        Some(image) => circle.child(
-                            gpui::img(gpui::ImageSource::Image(image))
-                                .size_full()
-                                .rounded_full(),
-                        ),
-                        None => circle
-                            .bg(av_bg)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(div().text_color(gpui::white()).text_xs().child(avatar_init)),
-                    }
+                // Skipped in swimlane mode — the avatar is drawn as the graph
+                // node instead (Gitru-style), so the message column starts with
+                // the summary text.
+                .when(!avatar_in_graph, |row_el| {
+                    row_el.child({
+                        // W28: avatar circle scales with zoom so it stays sized to
+                        // the (rem-scaled) row text and aligned with the graph node.
+                        let circle = div()
+                            .w(theme::scaled_px(18.))
+                            .h(theme::scaled_px(18.))
+                            .flex_shrink_0()
+                            .mr(theme::scaled_px(4.))
+                            .rounded_full()
+                            .overflow_hidden();
+                        match avatar_image {
+                            Some(image) => circle.child(
+                                gpui::img(gpui::ImageSource::Image(image))
+                                    .size_full()
+                                    .rounded_full(),
+                            ),
+                            None => circle
+                                .bg(av_bg)
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    div().text_color(gpui::white()).text_xs().child(avatar_init),
+                                ),
+                        }
+                    })
                 })
                 .child(
                     div()
@@ -1333,6 +1485,10 @@ pub(crate) fn render_badges_column(
     // the badges and the right edge of the column, so the badge→node line is
     // continuous *inside* the BRANCH/TAG pane (not stopping at the boundary).
     connector_color: Option<gpui::Hsla>,
+    // Swimlane mode: when `Some`, every pill uses this lane colour (`0xRRGGBB`)
+    // instead of its semantic HEAD/branch/remote/tag colour, so pills agree with
+    // the graph line / node / band. `None` = classic semantic colours.
+    lane_pill_color: Option<u32>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     // Content is built to fit rather than relying on clipping:
@@ -1362,11 +1518,14 @@ pub(crate) fn render_badges_column(
     // Badges in priority order: primary (HEAD/branch) leftmost.
     for (i, badge) in shown.iter().enumerate() {
         let target = row_id.clone();
-        let color = match badge.kind {
-            BadgeKind::HeadBranch => theme().color_head,
-            BadgeKind::Branch => theme().color_branch,
-            BadgeKind::Remote => theme().color_remote,
-            BadgeKind::Tag => theme().color_tag,
+        let color = match lane_pill_color {
+            Some(c) => c,
+            None => match badge.kind {
+                BadgeKind::HeadBranch => theme().color_head,
+                BadgeKind::Branch => theme().color_branch,
+                BadgeKind::Remote => theme().color_remote,
+                BadgeKind::Tag => theme().color_tag,
+            },
         };
         // Char-truncate long labels.
         let label: SharedString = if badge.label.chars().count() > MAX_BADGE_CHARS {
@@ -1506,7 +1665,7 @@ pub(crate) fn render_badges_column(
                     .h_full()
                     .flex()
                     .items_center()
-                    .child(div().w_full().h(theme::scaled_px(1.)).bg(color)),
+                    .child(connector_line(color)),
             )
         })
 }

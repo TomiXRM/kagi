@@ -102,9 +102,19 @@ impl Settings {
     }
 
     /// Compact-graph flag (`"graph_compact"`, `"true"`/`"false"`). `None` when
-    /// unset so the caller keeps its default.
+    /// unset so the caller keeps its default. NOTE: this controls the compact
+    /// *row height*, not lane compaction — see [`Self::graph_lane_compact`].
     pub fn graph_compact(&self) -> Option<bool> {
         self.get_str("graph_compact").map(|s| s.trim() == "true")
+    }
+
+    /// Lane-compaction flag (`"graph_lane_compact"`, `"true"`/`"false"`). When
+    /// `true` the commit graph uses Gitru-style swimlane compaction
+    /// (`GraphLayoutMode::Compact`); otherwise the gitk-stable layout. `None`
+    /// when unset so the caller defaults to Stable.
+    pub fn graph_lane_compact(&self) -> Option<bool> {
+        self.get_str("graph_lane_compact")
+            .map(|s| s.trim() == "true")
     }
 
     /// Background auto-fetch flag (`"auto_fetch"`). `None` when unset (default

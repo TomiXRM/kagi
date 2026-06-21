@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use gpui::SharedString;
 
 use kagi::git::{Commit, CommitId, Head, RepoSnapshot};
-use kagi::graph::{layout, EdgeKind, GraphEdge};
+use kagi::graph::{layout_with, EdgeKind, GraphEdge, GraphLayoutMode};
 
 // ──────────────────────────────────────────────────────────────
 // Helpers
@@ -160,6 +160,8 @@ pub struct CommitRow {
     // ── Graph layout fields (T009) ────────────────────────────
     /// Lane index for the commit node (●) in this row.
     pub lane: usize,
+    /// Stable colour index for this node's lane (carried with the branch).
+    pub node_color: usize,
     /// All edges passing through this row (Pass / IntoNode / OutOfNode).
     pub edges: Vec<GraphEdge>,
     /// Total lane count across the entire graph (needed to compute graph width).
@@ -185,8 +187,11 @@ pub fn build_commit_rows(snap: &RepoSnapshot) -> Vec<CommitRow> {
     // Resolve HEAD commit id (W2-GRAPH).
     let head_sha: Option<&str> = head_target(&snap.head);
 
-    // Compute commit graph layout once up-front (T009).
-    let graph = layout(&snap.commits);
+    // Compute commit graph layout once up-front (T009). The graph is always
+    // drawn swimlane-style (compacted lanes); the "Avatar commit nodes" setting
+    // only changes how the node is drawn, not the lane layout. (Switch to
+    // `GraphLayoutMode::Stable` here if the gitk no-reuse layout is ever wanted.)
+    let graph = layout_with(&snap.commits, GraphLayoutMode::Compact);
     let lane_count = graph.lane_count;
 
     snap.commits
@@ -195,12 +200,13 @@ pub fn build_commit_rows(snap: &RepoSnapshot) -> Vec<CommitRow> {
         .map(|(i, c)| {
             let graph_row = graph.rows.get(i);
             let lane = graph_row.map(|r| r.lane).unwrap_or(0);
+            let node_color = graph_row.map(|r| r.color).unwrap_or(0);
             let edges = graph_row.map(|r| r.edges.clone()).unwrap_or_default();
             // W2-GRAPH: determine HEAD / merge flags.
             let is_head = head_sha.map(|sha| c.id.0 == sha).unwrap_or(false);
             let is_merge = c.parents.len() >= 2;
             commit_to_row(
-                c, &badge_map, now_secs, lane, edges, lane_count, is_head, is_merge,
+                c, &badge_map, now_secs, lane, node_color, edges, lane_count, is_head, is_merge,
             )
         })
         .collect()
@@ -292,6 +298,9 @@ pub fn build_commit_rows_with_stashes(
                     from_lane: lane,
                     to_lane: lane,
                     kind: EdgeKind::Pass,
+                    // Stash lanes are painted in the stash colour (see renderer);
+                    // `color` is unused for them but the field is required.
+                    color: lane,
                 });
             }
             // Curve into the base commit node.
@@ -299,6 +308,7 @@ pub fn build_commit_rows_with_stashes(
                 from_lane: lane,
                 to_lane: base_lane,
                 kind: EdgeKind::IntoNode,
+                color: lane,
             });
             true
         } else {
@@ -327,11 +337,13 @@ pub fn build_commit_rows_with_stashes(
     (rows, stash_rows, stash_lanes)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn commit_to_row(
     c: &Commit,
     badge_map: &HashMap<CommitId, Vec<RefBadge>>,
     now_secs: i64,
     lane: usize,
+    node_color: usize,
     edges: Vec<GraphEdge>,
     lane_count: usize,
     is_head: bool,
@@ -363,6 +375,7 @@ fn commit_to_row(
         date,
         badges,
         lane,
+        node_color,
         edges,
         lane_count,
         parents: c.parents.clone(),

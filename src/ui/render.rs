@@ -212,6 +212,9 @@ impl KagiApp {
                         from_lane: lane,
                         to_lane: lane,
                         kind: kagi::graph::EdgeKind::Pass,
+                        // Stash lanes are painted in the stash colour; the lane
+                        // colour index is unused for them.
+                        color: lane,
                     })
                     .collect();
                 if sr.connected {
@@ -221,6 +224,7 @@ impl KagiApp {
                         from_lane: sr.lane,
                         to_lane: sr.lane,
                         kind: kagi::graph::EdgeKind::OutOfNode,
+                        color: sr.lane,
                     });
                     passing_lanes.push(sr.lane);
                 }
@@ -314,12 +318,16 @@ impl KagiApp {
                                 el.child(
                                     graph_view::graph_canvas(
                                         sr.lane,
+                                        // Stash nodes paint in the stash colour;
+                                        // node_color is unused for them.
+                                        sr.lane,
                                         edges,
                                         visible_lanes,
                                         false,
                                         false,
                                         true,
                                         graph_scroll_x,
+                                        graph_lane_pad_l(),
                                         stash_lanes.clone(),
                                     )
                                     .size_full(),

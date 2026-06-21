@@ -857,7 +857,7 @@ impl KagiApp {
         // merge commit (HEAD + MERGE_HEAD) + cleanup_state instead of a plain
         // single-parent commit.  This is synchronous (cheap; no tree rebuild on a
         // worker) so the conflict-mode transition stays simple.
-        if self.conflict_merge_commit_pending {
+        if self.conflict.merge_commit_pending {
             self.finish_merge_commit(&commit_message, &plan, cx);
             return;
         }
@@ -1009,7 +1009,7 @@ impl KagiApp {
                 );
                 // Leave the merge-commit / commit-panel state and re-detect so
                 // Conflict Mode clears (MERGE_HEAD is gone after cleanup_state).
-                self.conflict_merge_commit_pending = false;
+                self.conflict.merge_commit_pending = false;
                 self.commit_panel_open = false;
                 if let Some(panel) = self.commit_panel.as_mut() {
                     panel.plan_modal = None;

@@ -335,6 +335,9 @@ pub struct StatusBarSummary {
     pub staged: usize,
     /// Number of unstaged files (shown only when > 0).
     pub unstaged: usize,
+    /// Number of untracked files. Counted toward the WIP-row change total so the
+    /// row's "N changes" matches `is_dirty` (which includes untracked).
+    pub untracked: usize,
     /// Commits ahead of upstream (None = no upstream / detached).
     pub ahead: Option<usize>,
     /// Commits behind upstream (None = no upstream / detached).
@@ -361,6 +364,14 @@ pub struct StatusBarSummary {
 }
 
 impl StatusBarSummary {
+    /// Total pending changes for the WIP row's "N changes" label. Counts every
+    /// dirty kind (staged + unstaged + untracked + conflicted) so the number
+    /// matches `is_dirty` — an untracked-only or conflict-only tree must not
+    /// render the WIP row as "0 changes".
+    pub fn wip_change_count(&self) -> usize {
+        self.staged + self.unstaged + self.untracked + self.conflict_count
+    }
+
     /// Build from a [`RepoSnapshot`] at the current wall clock time.
     pub fn from_snapshot(snap: &kagi_git::RepoSnapshot) -> Self {
         use commit_list::now_unix_secs;
@@ -427,6 +438,7 @@ impl StatusBarSummary {
             is_dirty: snap.status.is_dirty(),
             staged: snap.status.staged.len(),
             unstaged: snap.status.unstaged.len(),
+            untracked: snap.status.untracked.len(),
             ahead,
             behind,
             no_upstream,
@@ -560,6 +572,7 @@ mod toolbar_tests {
             is_dirty,
             staged: 0,
             unstaged: if is_dirty { 1 } else { 0 },
+            untracked: 0,
             ahead: Some(ahead),
             behind: Some(behind),
             no_upstream: false,
@@ -620,6 +633,7 @@ mod toolbar_tests {
             is_dirty: false,
             staged: 0,
             unstaged: 0,
+            untracked: 0,
             ahead: None,
             behind: None,
             no_upstream: false,
@@ -681,6 +695,35 @@ mod toolbar_tests {
         assert!(t.stash_on);
         assert!(t.pop_on);
         assert!(t.undo_on);
+    }
+
+    /// WIP-row change count includes untracked and conflicted, so an
+    /// untracked-only (or conflict-only) tree never reads "0 changes" while the
+    /// row is shown (regression: row gated on `is_dirty`, count on staged+unstaged).
+    #[test]
+    fn wip_change_count_covers_all_dirty_kinds() {
+        let untracked_only = StatusBarSummary {
+            untracked: 3,
+            ..Default::default()
+        };
+        assert_eq!(untracked_only.wip_change_count(), 3);
+
+        let conflict_only = StatusBarSummary {
+            conflict_count: 2,
+            ..Default::default()
+        };
+        assert_eq!(conflict_only.wip_change_count(), 2);
+
+        let mixed = StatusBarSummary {
+            staged: 1,
+            unstaged: 2,
+            untracked: 3,
+            conflict_count: 4,
+            ..Default::default()
+        };
+        assert_eq!(mixed.wip_change_count(), 10);
+
+        assert_eq!(StatusBarSummary::default().wip_change_count(), 0);
     }
 }
 
@@ -1848,6 +1891,8 @@ impl KagiApp {
                 app.active_view.status_summary.is_dirty = new_status.is_dirty();
                 app.active_view.status_summary.staged = new_status.staged.len();
                 app.active_view.status_summary.unstaged = new_status.unstaged.len();
+                app.active_view.status_summary.untracked = new_status.untracked.len();
+                app.active_view.status_summary.conflict_count = new_status.conflicted.len();
                 app.active_view.is_dirty = new_status.is_dirty();
                 app.last_working_status = Some(new_status);
                 app.wip_diffstat = Some(wip_diffstat);

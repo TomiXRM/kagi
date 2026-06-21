@@ -2069,8 +2069,10 @@ impl KagiApp {
         // gather plain params first (cloning out of `self.active_view`), then map
         // to elements via `render_wip_row`.
         let wip_rows: Vec<gpui::AnyElement> = {
-            let live_total =
-                self.active_view.status_summary.staged + self.active_view.status_summary.unstaged;
+            // Count every dirty kind so the row's "N changes" matches the
+            // `is_dirty` gate above — otherwise an untracked-only (or
+            // conflict-only) tree renders the row with a misleading "0 changes".
+            let live_total = self.active_view.status_summary.wip_change_count();
             // Whether the *open* repo is itself a linked worktree (vs the main
             // working tree). Drives the open-repo WIP row's glyph: 🌲 worktree,
             // ✏️ normal branch.

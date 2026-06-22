@@ -274,7 +274,9 @@ impl Render for KagiApp {
         // selection path (click / keyboard / jump) uniformly.
         if self.remote_view.is_some() {
             if let Some(i) = selected {
-                if !self.diff_cache.contains_key(&i) && !self.remote_diff_inflight.contains(&i) {
+                if !self.diff_caches.changed_files.contains_key(&i)
+                    && !self.diff_caches.remote_inflight.contains(&i)
+                {
                     self.load_remote_changed_files(i, cx);
                 }
             }
@@ -283,7 +285,9 @@ impl Render for KagiApp {
             // changed files + diffstat off the UI thread (once per row), so no
             // selection path (click / keyboard / jump) blocks the frame. `select`
             // only records the selection; this fires the async load.
-            if !self.diff_cache.contains_key(&i) && !self.local_diff_inflight.contains(&i) {
+            if !self.diff_caches.changed_files.contains_key(&i)
+                && !self.diff_caches.local_inflight.contains(&i)
+            {
                 self.load_local_changed_files(i, cx);
             }
         }
@@ -294,11 +298,16 @@ impl Render for KagiApp {
             .cloned();
         // Clone cached changed-files list for the render closure.
         // `None` outer = no selection; `Some(None)` = diff unavailable; `Some(Some(v))` = files.
-        let changed_files: Option<Option<Vec<FileStatus>>> =
-            selected.map(|i| self.diff_cache.get(&i).cloned().unwrap_or(None));
+        let changed_files: Option<Option<Vec<FileStatus>>> = selected.map(|i| {
+            self.diff_caches
+                .changed_files
+                .get(&i)
+                .cloned()
+                .unwrap_or(None)
+        });
         // W16-DIFFSTAT: per-file additions/deletions for the selected commit.
         let changed_diffstat: Option<Vec<FileDiffStat>> =
-            selected.and_then(|i| self.diffstat_cache.get(&i).cloned());
+            selected.and_then(|i| self.diff_caches.diffstat.get(&i).cloned());
         let wip_diffstat = self.wip_diffstat;
         // W2-INSPECTOR: badges for the selected commit row and tree-view toggle state.
         let selected_badges: Vec<commit_list::RefBadge> = selected

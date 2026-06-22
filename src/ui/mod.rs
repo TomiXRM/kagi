@@ -20,6 +20,7 @@ pub mod conflict_editor;
 pub mod conflict_view;
 pub mod context_menu;
 pub mod detail_panel;
+mod diff_cache;
 pub mod diff_view;
 pub mod diffstat_bar;
 pub mod file_history;
@@ -845,26 +846,11 @@ pub struct KagiApp {
     /// because `run()` needs `&mut self` and the session is `Rc`, not
     /// `Arc+Mutex` — that collapses when the worker thread (ADR-0073) lands.
     pub repo_session: Option<kagi_git::session::RepoSession>,
-    /// Cache of changed-files results keyed by row index.
-    /// `None` value means the diff was attempted but failed (show unavailable).
-    pub diff_cache: HashMap<usize, Option<Vec<FileStatus>>>,
-    /// Per-(commit-row, file-index) cached `FileDiff` content (T-REARCH-031).
-    /// `diff_cache` above only holds the file *list*; without this content
-    /// cache, clicking between two commits to compare the same file recomputes
-    /// the full git2 tree-diff + hunk extraction on every toggle. The key is
-    /// `(selected_row, file_index)`; invalidated together with `diff_cache`.
-    pub file_diff_cache: HashMap<(usize, usize), std::sync::Arc<FileDiff>>,
-    /// Row indices whose remote changed-files load is in flight over SSH
-    /// (ADR-0089 Phase 2c), so the render trigger spawns it only once.
-    pub remote_diff_inflight: std::collections::HashSet<usize>,
-    /// Row indices whose LOCAL changed-files + diffstat load is in flight off
-    /// the UI thread, so the render trigger (`load_local_changed_files`) spawns
-    /// it only once per row. The local counterpart of `remote_diff_inflight`.
-    pub local_diff_inflight: std::collections::HashSet<usize>,
-    /// W16-DIFFSTAT: per-file additions/deletions for the selected commit,
-    /// keyed by row index. Computed lazily alongside `diff_cache` and consumed
-    /// by the Inspector changed-files list (truncated set only).
-    pub diffstat_cache: HashMap<usize, Vec<FileDiffStat>>,
+    /// Per-row diff / changed-files cache cluster (T-DECOMP-002, ADR-0118).
+    /// The five formerly-flat fields (`changed_files` / `file_content` /
+    /// `remote_inflight` / `local_inflight` / `diffstat`) now move and
+    /// invalidate as a unit via `diff_caches.clear()`.
+    pub diff_caches: diff_cache::DiffCaches,
     /// Aggregated staged + unstaged additions/deletions for the synthetic WIP row.
     pub wip_diffstat: Option<WipDiffStat>,
     /// T-UI-003: When `Some`, the main pane shows this diff (full-width) instead
@@ -1462,11 +1448,7 @@ impl KagiApp {
             error: None,
             repo_path: None,
             repo_session: None,
-            diff_cache: HashMap::new(),
-            file_diff_cache: HashMap::new(),
-            remote_diff_inflight: std::collections::HashSet::new(),
-            local_diff_inflight: std::collections::HashSet::new(),
-            diffstat_cache: HashMap::new(),
+            diff_caches: diff_cache::DiffCaches::default(),
             wip_diffstat: None,
             main_diff: None,
             pending_diff_highlight: None,
@@ -1569,11 +1551,7 @@ impl KagiApp {
             error: Some(SharedString::from(message.into())),
             repo_path: None,
             repo_session: None,
-            diff_cache: HashMap::new(),
-            file_diff_cache: HashMap::new(),
-            remote_diff_inflight: std::collections::HashSet::new(),
-            local_diff_inflight: std::collections::HashSet::new(),
-            diffstat_cache: HashMap::new(),
+            diff_caches: diff_cache::DiffCaches::default(),
             wip_diffstat: None,
             main_diff: None,
             pending_diff_highlight: None,
@@ -1714,11 +1692,7 @@ impl KagiApp {
 
         // Per-repo transient state reset (unchanged behaviour).
         self.selected = None;
-        self.diff_cache = HashMap::new();
-        self.file_diff_cache = HashMap::new();
-        self.remote_diff_inflight.clear();
-        self.local_diff_inflight.clear();
-        self.diffstat_cache = HashMap::new();
+        self.diff_caches.clear();
         self.wip_diffstat = Some(wip_diffstat);
         self.main_diff = None;
         self.compare_view = None;
@@ -1970,11 +1944,7 @@ impl KagiApp {
                 // already done in the background) and apply it.
                 let view = build_tab_view(&snap, &repo_name);
                 app.apply_tab_view(view);
-                app.diff_cache = HashMap::new();
-                app.file_diff_cache = HashMap::new();
-                app.remote_diff_inflight.clear();
-                app.local_diff_inflight.clear();
-                app.diffstat_cache = HashMap::new();
+                app.diff_caches.clear();
                 app.wip_diffstat = Some(wip);
                 app.main_diff = None;
                 app.compare_view = None;
@@ -3168,19 +3138,20 @@ impl KagiApp {
         if self.selected != Some(index) {
             return;
         }
-        if !self.diff_cache.contains_key(&index) {
+        if !self.diff_caches.changed_files.contains_key(&index) {
             let files_opt = self.fetch_changed_files(index);
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             klog!("changed files: {}", n);
-            self.diff_cache.insert(index, files_opt);
+            self.diff_caches.changed_files.insert(index, files_opt);
             // W16-DIFFSTAT: aggregate per-file additions/deletions alongside.
             if let Some(stats) = self.fetch_diffstat(index) {
-                self.diffstat_cache.insert(index, stats);
+                self.diff_caches.diffstat.insert(index, stats);
             }
         } else {
             // Already cached — still emit the log (matches the old select()).
             let n = self
-                .diff_cache
+                .diff_caches
+                .changed_files
                 .get(&index)
                 .and_then(|v| v.as_ref())
                 .map(|v| v.len())
@@ -3191,7 +3162,7 @@ impl KagiApp {
         // T018: emit tree structure log when KAGI_SELECT_FIRST=1.
         if std::env::var("KAGI_SELECT_FIRST").as_deref() == Ok("1") {
             const MAX_FILES: usize = 100;
-            if let Some(Some(files)) = self.diff_cache.get(&index) {
+            if let Some(Some(files)) = self.diff_caches.changed_files.get(&index) {
                 let truncated: Vec<_> = files.iter().take(MAX_FILES).cloned().collect();
                 let rows = file_tree::build_file_tree(&truncated);
                 for row in &rows {
@@ -3237,7 +3208,8 @@ impl KagiApp {
                 file_index,
             } => {
                 let len = self
-                    .diff_cache
+                    .diff_caches
+                    .changed_files
                     .get(&row_index)
                     .and_then(|o| o.as_ref())
                     .map(|v| v.len())
@@ -3398,7 +3370,8 @@ impl KagiApp {
         };
         let origin = self.commit_id_for_row(selected);
         let path = self
-            .diff_cache
+            .diff_caches
+            .changed_files
             .get(&selected)
             .and_then(|v| v.as_ref())
             .and_then(|files| files.get(file_index))
@@ -3424,7 +3397,8 @@ impl KagiApp {
                 file_index,
             } => {
                 let path = self
-                    .diff_cache
+                    .diff_caches
+                    .changed_files
                     .get(row_index)
                     .and_then(|v| v.as_ref())
                     .and_then(|files| files.get(*file_index))
@@ -3493,7 +3467,12 @@ impl KagiApp {
             Some(d) => d,
             None => return,
         };
-        let files = match self.diff_cache.get(&selected).and_then(|v| v.as_ref()) {
+        let files = match self
+            .diff_caches
+            .changed_files
+            .get(&selected)
+            .and_then(|v| v.as_ref())
+        {
             Some(f) => f,
             None => return,
         };
@@ -3508,7 +3487,12 @@ impl KagiApp {
         // T-REARCH-031: per-(row, file) content cache. Clicking between two
         // commits to compare the same file previously recomputed the full git2
         // tree-diff + hunk extraction on every toggle. Hit the cache first.
-        if let Some(cached) = self.file_diff_cache.get(&(selected, file_index)).cloned() {
+        if let Some(cached) = self
+            .diff_caches
+            .file_content
+            .get(&(selected, file_index))
+            .cloned()
+        {
             self.set_commit_main_diff(&cached, &path, selected, file_index, cx.as_deref_mut());
             return;
         }
@@ -3522,7 +3506,8 @@ impl KagiApp {
         match repo.commit_file_diff(&id, &path) {
             Ok(file_diff) => {
                 let arc = std::sync::Arc::new(file_diff);
-                self.file_diff_cache
+                self.diff_caches
+                    .file_content
                     .insert((selected, file_index), arc.clone());
                 self.set_commit_main_diff(&arc, &path, selected, file_index, cx.as_deref_mut());
             }
@@ -3656,11 +3641,13 @@ impl KagiApp {
 
     /// Load the selected remote commit's changed files over SSH (ADR-0089 Phase
     /// 2c) and cache them under `index`. Runs off the UI thread; idempotent via
-    /// `remote_diff_inflight`.
+    /// `diff_caches.remote_inflight`.
     fn load_remote_changed_files(&mut self, index: usize, cx: &mut Context<Self>) {
         // Idempotent: skip if already loaded or a load is in flight, so it is
         // safe to call from both the click handler and the render trigger.
-        if self.diff_cache.contains_key(&index) || self.remote_diff_inflight.contains(&index) {
+        if self.diff_caches.changed_files.contains_key(&index)
+            || self.diff_caches.remote_inflight.contains(&index)
+        {
             return;
         }
         let (host, root) = match &self.remote_view {
@@ -3671,7 +3658,7 @@ impl KagiApp {
             Some(d) => d.full_sha.as_ref().to_string(),
             None => return,
         };
-        self.remote_diff_inflight.insert(index);
+        self.diff_caches.remote_inflight.insert(index);
 
         let task = cx.background_spawn(async move {
             kagi::remote::remote_commit_changed_files(&host, &root, &sha).map_err(|e| e.to_string())
@@ -3679,14 +3666,14 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                app.remote_diff_inflight.remove(&index);
+                app.diff_caches.remote_inflight.remove(&index);
                 match result {
                     Ok(files) => {
-                        app.diff_cache.insert(index, Some(files));
+                        app.diff_caches.changed_files.insert(index, Some(files));
                     }
                     Err(e) => {
                         klog!("remote changed-files error: {e}");
-                        app.diff_cache.insert(index, None);
+                        app.diff_caches.changed_files.insert(index, None);
                     }
                 }
                 cx.notify();
@@ -3696,7 +3683,7 @@ impl KagiApp {
     }
 
     /// Load the selected LOCAL commit's changed files + per-file diffstat OFF the
-    /// UI thread and cache them under `index`. Idempotent via `local_diff_inflight`
+    /// UI thread and cache them under `index`. Idempotent via `diff_caches.local_inflight`
     /// so it is safe to call every frame from the render trigger; `select` only
     /// records the selection. Emits the `[kagi] changed files: N` contract on
     /// completion — the interactive counterpart of `select_headless`.
@@ -3707,7 +3694,9 @@ impl KagiApp {
     /// (the captured SHA no longer matches the row), so a late load can't show
     /// the wrong commit's files.
     fn load_local_changed_files(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.diff_cache.contains_key(&index) || self.local_diff_inflight.contains(&index) {
+        if self.diff_caches.changed_files.contains_key(&index)
+            || self.diff_caches.local_inflight.contains(&index)
+        {
             return;
         }
         let Some(repo_path) = self.repo_path.clone() else {
@@ -3718,7 +3707,7 @@ impl KagiApp {
         };
         let sha = detail.full_sha.as_ref().to_string();
         let sha_guard = sha.clone();
-        self.local_diff_inflight.insert(index);
+        self.diff_caches.local_inflight.insert(index);
 
         let task = cx.background_spawn(async move {
             let repo = kagi_git::Backend::open(&repo_path).ok()?;
@@ -3730,7 +3719,7 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                app.local_diff_inflight.remove(&index);
+                app.diff_caches.local_inflight.remove(&index);
                 // Drop the result if a reload remapped this row to another commit.
                 let still_current = app
                     .active_view
@@ -3743,9 +3732,9 @@ impl KagiApp {
                 let (files, stats) = result.unwrap_or((None, None));
                 let n = files.as_ref().map(|v| v.len()).unwrap_or(0);
                 klog!("changed files: {}", n);
-                app.diff_cache.insert(index, files);
+                app.diff_caches.changed_files.insert(index, files);
                 if let Some(stats) = stats {
-                    app.diffstat_cache.insert(index, stats);
+                    app.diff_caches.diffstat.insert(index, stats);
                 }
                 cx.notify();
             });
@@ -3769,7 +3758,8 @@ impl KagiApp {
             None => return,
         };
         let path = match self
-            .diff_cache
+            .diff_caches
+            .changed_files
             .get(&selected)
             .and_then(|v| v.as_ref())
             .and_then(|files| files.get(file_index))
@@ -4052,13 +4042,13 @@ impl KagiApp {
         self.close_compare_view();
         if self.selected != Some(row_index) {
             self.select(row_index);
-        } else if !self.diff_cache.contains_key(&row_index) {
+        } else if !self.diff_caches.changed_files.contains_key(&row_index) {
             let files_opt = self.fetch_changed_files(row_index);
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             klog!("changed files: {}", n);
-            self.diff_cache.insert(row_index, files_opt);
+            self.diff_caches.changed_files.insert(row_index, files_opt);
             if let Some(stats) = self.fetch_diffstat(row_index) {
-                self.diffstat_cache.insert(row_index, stats);
+                self.diff_caches.diffstat.insert(row_index, stats);
             }
         }
     }

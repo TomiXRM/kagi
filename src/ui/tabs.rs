@@ -126,7 +126,7 @@ impl KagiApp {
     /// it is applied **instantly** (zero-frame swap) and a background revalidate
     /// refreshes it; otherwise a `Loading <name>…` placeholder + `Busy` footer
     /// is shown while the snapshot is built on a background thread.  Per-repo UI
-    /// state (selection / diff_cache / main_diff / modals / commit_panel) is
+    /// state (selection / diff_caches / main_diff / modals / commit_panel) is
     /// reset either way, and the FS watcher is re-armed (ADR-0027 generation
     /// scheme).
     pub fn switch_repo(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -330,10 +330,7 @@ impl KagiApp {
     /// so a cached swap never leaks the previous tab's UI.
     fn reset_per_repo_ui(&mut self) {
         self.selected = None;
-        self.diff_cache.clear();
-        self.file_diff_cache.clear();
-        self.remote_diff_inflight.clear();
-        self.local_diff_inflight.clear();
+        self.diff_caches.clear();
         self.wip_diffstat = None;
         self.main_diff = None;
         self.clear_plan_modal();
@@ -501,10 +498,7 @@ impl KagiApp {
         self.active_view.rows = blank.active_view.rows;
         self.active_view.details = blank.active_view.details;
         self.selected = None;
-        self.diff_cache.clear();
-        self.file_diff_cache.clear();
-        self.remote_diff_inflight.clear();
-        self.local_diff_inflight.clear();
+        self.diff_caches.clear();
         self.main_diff = None;
         self.active_view.branches = blank.active_view.branches;
         self.active_view.remote_branches = blank.active_view.remote_branches;

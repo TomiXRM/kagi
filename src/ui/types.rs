@@ -20,6 +20,8 @@ use super::theme;
 pub enum BottomTab {
     OperationLog,
     Terminal,
+    /// Commit-activity line chart + contributor ranking.
+    Activity,
 }
 
 impl BottomTab {
@@ -27,6 +29,7 @@ impl BottomTab {
         match self {
             BottomTab::OperationLog => "Operation Log",
             BottomTab::Terminal => "Terminal",
+            BottomTab::Activity => "Activity",
         }
     }
 }

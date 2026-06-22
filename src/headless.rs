@@ -182,6 +182,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, env_open_repo: Option<PathBuf>) {
         let tab_label = match t {
             ui::BottomTab::OperationLog => "OperationLog",
             ui::BottomTab::Terminal => "Terminal",
+            ui::BottomTab::Activity => "Activity",
         };
         // W2-STATUS: the height is resolved at first render (18% of viewport);
         // before that the field holds the 0.0 sentinel.

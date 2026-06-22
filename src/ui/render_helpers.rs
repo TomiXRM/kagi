@@ -12,12 +12,14 @@
 use super::*;
 use gpui_component::button::{Button, ButtonVariants};
 
-// T-SPLIT-HELPERS-001 / ADR-0116 Wave 3: the commit-panel, file-history, badge,
-// and file-menu renderers moved to focused sibling modules. Re-export them here
-// so the existing `use super::render_helpers::*;` call sites keep resolving
-// without touching the render_*.rs callers (public paths preserved).
+// T-SPLIT-HELPERS-001 / ADR-0116 Wave 3: the commit-panel, badge, and file-menu
+// renderers moved to focused sibling modules. Re-export them here so the existing
+// `use super::render_helpers::*;` call sites keep resolving without touching the
+// render_*.rs callers (public paths preserved).
+// ADR-0117: the file-history renderers are now internal to `file_history_render`
+// (the `Entity<FileHistoryView>` renders itself), so they are no longer
+// re-exported here.
 pub(crate) use super::badges::*;
-pub(crate) use super::file_history_render::*;
 pub(crate) use super::file_menu::*;
 
 /// Left pad (px) applied to the graph lane geometry in swimlane mode so lane 0
@@ -482,32 +484,26 @@ pub(crate) fn render_loading_placeholder(label: SharedString) -> impl IntoElemen
         )
 }
 
-pub(crate) fn render_main_diff_view(
+/// ADR-0117: the diff "list body" (header line + virtualized rows + scrollbar),
+/// parameterized over the entity context `V` so it can be rendered from either
+/// `KagiApp` (the standalone main diff) or `FileHistoryView` (its embedded diff
+/// pane). The `uniform_list` row processor ignores the entity (`_this`), so this
+/// works for any `V: 'static`. `leading` / `trailing` are the optional standalone
+/// header buttons (Back / History) — `None` when embedded in File History, which
+/// supplies its own Back. Never read an entity back via `cx` here — this runs
+/// during render (the rendering entity is already borrowed → panic).
+pub(crate) fn render_diff_list<V: 'static>(
     view: MainDiffView,
+    leading: Option<gpui::AnyElement>,
+    trailing: Option<gpui::AnyElement>,
     scroll_handle: UniformListScrollHandle,
-    // Standalone main diff (true) vs reused inside the File History view
-    // (false). When embedded in File History, the header's Back and History
-    // buttons are hidden — the File History view has its own Back. Passed in by
-    // the caller — never read the KagiApp entity here, since this runs during
-    // render (the entity is already borrowed → panic).
-    standalone: bool,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<V>,
 ) -> impl IntoElement {
     let row_count = view.rows.len();
-    let rows = std::sync::Arc::new(view.rows);
-    let rows_for_list = rows.clone();
     let title = view.title.clone();
     let stats = view.stats.clone();
-
-    // "← Back" click handler: close the main diff view.
-    let back_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
-        this.close_main_diff();
-        cx.notify();
-    });
-    let history_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
-        this.open_file_history_from_main_diff(cx);
-        cx.notify();
-    });
+    let rows = std::sync::Arc::new(view.rows);
+    let rows_for_list = rows.clone();
 
     div()
         .flex_1()
@@ -538,15 +534,7 @@ pub(crate) fn render_main_diff_view(
                 .bg(rgb(theme().surface))
                 // ← Back button (only for the standalone main diff; the File
                 // History view embeds this diff and has its own Back).
-                .when(standalone, |el| {
-                    el.child(
-                        Button::new("main-diff-back")
-                            .label("\u{2190} Back")
-                            .ghost()
-                            .small()
-                            .on_click(back_click),
-                    )
-                })
+                .when_some(leading, |el, btn| el.child(btn))
                 // File name
                 .child(
                     div()
@@ -557,16 +545,7 @@ pub(crate) fn render_main_diff_view(
                         .child(title),
                 )
                 // History button (导线 #3)
-                .when(standalone, |el| {
-                    el.child(
-                        Button::new("main-diff-history")
-                            .label("History")
-                            .ghost()
-                            .small()
-                            .flex_shrink_0()
-                            .on_click(history_click),
-                    )
-                })
+                .when_some(trailing, |el, btn| el.child(btn))
                 // Stats: +N −M
                 .child(
                     div()
@@ -586,7 +565,7 @@ pub(crate) fn render_main_diff_view(
                 uniform_list(
                     "main-diff-list",
                     row_count,
-                    cx.processor(move |_this, range, _window, _cx| {
+                    cx.processor(move |_this: &mut V, range, _window, _cx| {
                         render_main_diff_rows(&rows_for_list, range)
                     }),
                 )
@@ -596,6 +575,54 @@ pub(crate) fn render_main_diff_view(
                 true,
             )
         })
+}
+
+/// Standalone main diff view (KagiApp): the embedded diff list plus the
+/// KagiApp-bound header buttons (← Back / History). The File History view
+/// renders its diff pane via [`render_diff_list`] directly (no buttons).
+pub(crate) fn render_main_diff_view(
+    view: MainDiffView,
+    scroll_handle: UniformListScrollHandle,
+    // Standalone main diff (true) vs reused inside the File History view
+    // (false). When embedded in File History, the header's Back and History
+    // buttons are hidden — the File History view has its own Back.
+    standalone: bool,
+    cx: &mut Context<KagiApp>,
+) -> impl IntoElement {
+    let (leading, trailing): (Option<gpui::AnyElement>, Option<gpui::AnyElement>) = if standalone {
+        // "← Back" click handler: close the main diff view.
+        let back_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+            this.close_main_diff();
+            cx.notify();
+        });
+        let history_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+            this.open_file_history_from_main_diff(cx);
+            cx.notify();
+        });
+        (
+            Some(
+                Button::new("main-diff-back")
+                    .label("\u{2190} Back")
+                    .ghost()
+                    .small()
+                    .on_click(back_click)
+                    .into_any_element(),
+            ),
+            Some(
+                Button::new("main-diff-history")
+                    .label("History")
+                    .ghost()
+                    .small()
+                    .flex_shrink_0()
+                    .on_click(history_click)
+                    .into_any_element(),
+            ),
+        )
+    } else {
+        (None, None)
+    };
+
+    render_diff_list::<KagiApp>(view, leading, trailing, scroll_handle, cx)
 }
 
 /// W12-GCADOPT (§2.10): wrap a virtualized list in a relative flex column and

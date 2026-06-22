@@ -1178,12 +1178,11 @@ pub struct KagiApp {
     /// T-CONFLICT-FLOW-032 (ADR-0068): sequencer `<op> --continue` confirmation
     /// modal, shown when Continue routes a rebase / cherry-pick / revert.
     /// (Stored in `active_modal` — see the `conflict_continue_modal()` accessor.)
-    /// ADR-0089: File History view state.  `Some` while the dedicated
-    /// single-file history view occupies the center+right area; `None` shows
-    /// the normal commit graph / diff body.
-    pub file_history: Option<file_history::FileHistoryState>,
-    /// ADR-0089: File History commit-row context menu: (entry index, anchor).
-    pub file_history_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
+    /// ADR-0089 / ADR-0117: File History view, promoted to its own
+    /// `Entity<FileHistoryView>` (Phase 5.1). `Some` while the dedicated
+    /// single-file history view occupies the center+right area; `None` shows the
+    /// normal commit graph / diff body. The entity owns its loads + row menu.
+    pub file_history: Option<Entity<file_history::FileHistoryView>>,
 }
 
 /// T-CONFLICT-UI-001: the Result `InputState` entity backing the Conflict
@@ -1561,7 +1560,6 @@ impl KagiApp {
             update_status: None,
             last_working_status: None,
             file_history: None,
-            file_history_menu: None,
         }
     }
 
@@ -1672,7 +1670,6 @@ impl KagiApp {
             update_status: None,
             last_working_status: None,
             file_history: None,
-            file_history_menu: None,
         }
     }
 
@@ -1723,9 +1720,9 @@ impl KagiApp {
         self.wip_diffstat = Some(wip_diffstat);
         self.main_diff = None;
         self.compare_view = None;
-        // ADR-0089: drop any open File History view; reload() has no `cx` to
-        // re-spawn the async re-load, so callers that want to keep it open use
-        // `reload_external` / `refresh_file_history` (which do have `cx`).
+        // ADR-0089 / ADR-0117: drop any open File History view — its `Entity`
+        // and any in-flight load tear down. `reload()` has no `cx` to re-spawn;
+        // the `reload_external` path re-opens fresh when needed.
         self.file_history = None;
         self.clear_plan_modal();
         self.clear_pull_modal();
@@ -3309,13 +3306,12 @@ impl KagiApp {
     // ADR-0089: File History view
     // ──────────────────────────────────────────────────────────────
 
-    /// Open the File History view for `rel_path` (repo-relative).
-    ///
-    /// Sets the view to Loading, bumps a generation counter, and spawns a
-    /// background `Backend::file_history` (read-only — no `busy_op` gate).  On
-    /// completion (guarded by generation) the history is stored, an initial
-    /// entry selected (WIP if present, else `origin`, else newest), and that
-    /// entry's diff loaded.
+    /// Open the File History view for `rel_path` (repo-relative). ADR-0117: this
+    /// builds the `Entity<FileHistoryView>` (in Loading state) and kicks off its
+    /// own async history load (read-only — no `busy_op` gate). The entity owns
+    /// the load + diff logic (it holds `repo_path`); `KagiApp` only constructs it
+    /// and stores the handle. Callers: the inspector / main-diff "History" entry
+    /// points.
     pub fn open_file_history(
         &mut self,
         rel_path: PathBuf,
@@ -3326,15 +3322,10 @@ impl KagiApp {
             return;
         };
         klog!("file-history: open {}", rel_path.display());
-        let generation = self
-            .file_history
-            .as_ref()
-            .map(|fh| fh.generation + 1)
-            .unwrap_or(0);
 
         let branch = SharedString::from(self.active_view.status_summary.branch.clone());
-        self.file_history = Some(file_history::FileHistoryState {
-            rel_path: rel_path.clone(),
+        let state = file_history::FileHistoryState {
+            rel_path,
             branch,
             follow_renames: true,
             history: None,
@@ -3343,223 +3334,29 @@ impl KagiApp {
             diff: None,
             diff_scroll: UniformListScrollHandle::new(),
             split: 0.25,
-            generation,
-        });
+            generation: 0,
+        };
 
-        let follow = true;
-        let req_path = rel_path.clone();
-        let bg_path = repo_path.clone();
-        let task = cx.background_spawn(async move {
-            let req = kagi_git::FileHistoryRequest {
-                repo_dir: bg_path,
-                file_path: req_path,
-                follow_renames: follow,
-                include_wip: true,
-                limit: 500,
-            };
-            kagi_git::file_history(&req)
-        });
-
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                // Guard: discard if a newer open/refresh superseded this load.
-                let still_current = app
-                    .file_history
-                    .as_ref()
-                    .is_some_and(|fh| fh.generation == generation);
-                if !still_current {
-                    return;
-                }
-                match result {
-                    Ok(history) => {
-                        eprintln!(
-                            "[kagi] file-history: loaded {} entries",
-                            history.entries.len()
-                        );
-                        // Pick the initial selection.
-                        let initial = Self::pick_initial_file_history_index(&history, &origin);
-                        if let Some(fh) = app.file_history.as_mut() {
-                            fh.history = Some(history);
-                            fh.error = None;
-                            fh.selected = initial;
-                        }
-                        app.load_file_history_diff(cx);
-                    }
-                    Err(e) => {
-                        if let Some(fh) = app.file_history.as_mut() {
-                            fh.history = None;
-                            fh.error = Some(e.to_string());
-                        }
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// Choose the initial selected index: the WIP row (always index 0 if
-    /// present), else the `origin` commit if it appears, else the newest entry.
-    fn pick_initial_file_history_index(
-        history: &kagi_git::FileHistory,
-        origin: &Option<CommitId>,
-    ) -> usize {
-        use kagi_git::FileHistoryEntryKind;
-        if let Some(first) = history.entries.first() {
-            if first.kind == FileHistoryEntryKind::Wip {
-                return 0;
-            }
-        }
-        if let Some(id) = origin {
-            if let Some(ix) = history.entries.iter().position(|e| {
-                e.commit
-                    .as_ref()
-                    .is_some_and(|c| c.full_hash == id.0 || c.full_hash.starts_with(&id.0))
-            }) {
-                return ix;
-            }
-        }
-        0
-    }
-
-    /// Select a history entry and (synchronously) load its diff.
-    pub fn file_history_select(&mut self, index: usize, cx: &mut Context<Self>) {
-        let valid = self
-            .file_history
-            .as_ref()
-            .and_then(|fh| fh.history.as_ref())
-            .is_some_and(|h| index < h.entries.len());
-        if !valid {
-            return;
-        }
-        if let Some(fh) = self.file_history.as_mut() {
-            fh.selected = index;
-        }
-        self.load_file_history_diff(cx);
-        cx.notify();
+        // The entity holds a weak back-ref (for close / jump-to-commit), a shared
+        // clone of the geom cell (the divider-drag reads it), and `panel_width`.
+        let weak = cx.weak_entity();
+        let geom = self.file_history_geom.clone();
+        let panel_width = self.panel_width;
+        let view = cx
+            .new(|_| file_history::FileHistoryView::new(state, weak, geom, panel_width, repo_path));
+        // Kick off the initial load on the (now fully-constructed) entity.
+        view.update(cx, |v, cx| v.start_load(origin, true, cx));
+        self.file_history = Some(view);
     }
 
     /// Move the file-history entry selection up/down by `delta` (arrow keys),
-    /// clamped to the entry list. Loads the newly-selected entry's diff via
-    /// [`file_history_select`] so the row highlight AND the diff pane both update
-    /// (the arrows previously fell through to the main commit list, so the file
-    /// history view's selection/diff never moved).
+    /// clamped to the entry list. Drives the `FileHistoryView` entity directly
+    /// (ADR-0117) so the row highlight AND the diff pane both update. The entity
+    /// is not leased here (this runs in `KagiApp`'s root key handler), so the
+    /// `update` is safe.
     pub fn step_file_history_selection(&mut self, delta: i64, cx: &mut Context<Self>) {
-        let len = self
-            .file_history
-            .as_ref()
-            .and_then(|fh| fh.history.as_ref())
-            .map(|h| h.entries.len())
-            .unwrap_or(0);
-        if len == 0 {
-            return;
-        }
-        let cur = self
-            .file_history
-            .as_ref()
-            .map(|fh| fh.selected)
-            .unwrap_or(0);
-        let next = (cur as i64 + delta).clamp(0, len as i64 - 1) as usize;
-        if next != cur {
-            self.file_history_select(next, cx);
-        }
-    }
-
-    /// Build the `MainDiffView` for the currently-selected entry, reusing the
-    /// existing diff renderer pipeline (`FileDiffView::from_file_diff` +
-    /// highlight).  Single-file diffs are cheap, so this runs synchronously like
-    /// `open_main_diff_commit`.  Never panics on missing / binary / deleted
-    /// files — falls back to `diff = None` so the banner messaging covers it.
-    fn load_file_history_diff(&mut self, _cx: &mut Context<Self>) {
-        use kagi_git::FileHistoryEntryKind;
-
-        let Some(repo_path) = self.repo_path.clone() else {
-            return;
-        };
-        let Some(fh) = self.file_history.as_ref() else {
-            return;
-        };
-        let Some(entry) = fh.selected_entry() else {
-            if let Some(fh) = self.file_history.as_mut() {
-                fh.diff = None;
-            }
-            return;
-        };
-
-        let path = entry.change.path_after.clone();
-        let kind = entry.kind;
-        let commit_id = entry.commit.as_ref().map(|c| CommitId(c.full_hash.clone()));
-
-        let repo = match kagi_git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => {
-                if let Some(fh) = self.file_history.as_mut() {
-                    fh.diff = None;
-                }
-                return;
-            }
-        };
-
-        let file_diff_result = match kind {
-            FileHistoryEntryKind::Wip => {
-                // Prefer the unstaged diff; fall back to staged (e.g. fully
-                // staged change) so the WIP entry still shows something.
-                match repo.unstaged_file_diff(&path) {
-                    Ok(d) if !d.hunks.is_empty() || d.is_binary => Ok(d),
-                    _ => repo.staged_file_diff(&path),
-                }
-            }
-            FileHistoryEntryKind::Commit => match commit_id {
-                Some(id) => repo.commit_file_diff(&id, &path),
-                None => {
-                    if let Some(fh) = self.file_history.as_mut() {
-                        fh.diff = None;
-                    }
-                    return;
-                }
-            },
-        };
-
-        let view = match file_diff_result {
-            Ok(file_diff) => {
-                let added: usize = file_diff
-                    .hunks
-                    .iter()
-                    .flat_map(|h| h.lines.iter())
-                    .filter(|l| l.kind == DiffLineKind::Added)
-                    .count();
-                let removed: usize = file_diff
-                    .hunks
-                    .iter()
-                    .flat_map(|h| h.lines.iter())
-                    .filter(|l| l.kind == DiffLineKind::Removed)
-                    .count();
-
-                let fdv = FileDiffView::from_file_diff(&file_diff, 0);
-                let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
-                let title = fdv.file_name.clone();
-                let mut rows = fdv.rows;
-                let _ = highlight_diff_rows(&mut rows, &path);
-
-                Some(MainDiffView {
-                    title,
-                    stats,
-                    rows,
-                    // The source is unused by the File History renderer (it does
-                    // not flow through the commit-list highlight), so any variant
-                    // is fine; Unstaged carries the path for completeness.
-                    source: MainDiffSource::Unstaged { path: path.clone() },
-                })
-            }
-            Err(e) => {
-                klog!("file-history diff error: {}", e);
-                None
-            }
-        };
-
-        if let Some(fh) = self.file_history.as_mut() {
-            fh.diff = view;
+        if let Some(fh) = self.file_history.clone() {
+            fh.update(cx, |v, cx| v.step(delta, cx));
         }
     }
 
@@ -3633,116 +3430,12 @@ impl KagiApp {
     }
 
     /// Close the File History view (Back → returns to the commit graph).
+    /// ADR-0117: dropping the `Entity<FileHistoryView>` tears down its state and
+    /// row menu; an in-flight load no-ops on the dropped entity. Refresh /
+    /// follow-toggle / select now live on the entity (`reload` / `step` /
+    /// `select`).
     pub fn close_file_history(&mut self) {
         self.file_history = None;
-        self.file_history_menu = None;
-    }
-
-    /// Re-run the history load for the currently-open file (Refresh / Retry).
-    pub fn refresh_file_history(&mut self, cx: &mut Context<Self>) {
-        let Some((rel_path, origin)) = self.file_history.as_ref().map(|fh| {
-            let origin = fh
-                .selected_entry()
-                .and_then(|e| e.commit.as_ref())
-                .map(|c| CommitId(c.full_hash.clone()));
-            (fh.rel_path.clone(), origin)
-        }) else {
-            return;
-        };
-        self.open_file_history(rel_path, origin, cx);
-    }
-
-    /// Toggle Follow Renames and re-load the history.
-    pub fn toggle_file_history_follow(&mut self, cx: &mut Context<Self>) {
-        let Some(fh) = self.file_history.as_mut() else {
-            return;
-        };
-        let new_follow = !fh.follow_renames;
-        let rel_path = fh.rel_path.clone();
-        let origin = fh
-            .selected_entry()
-            .and_then(|e| e.commit.as_ref())
-            .map(|c| CommitId(c.full_hash.clone()));
-        // open_file_history always forces follow=true; replicate its load but
-        // honour the toggled value via a direct generation bump.
-        self.open_file_history_with_follow(rel_path, origin, new_follow, cx);
-    }
-
-    /// Variant of [`open_file_history`] honouring an explicit `follow` flag.
-    pub fn open_file_history_with_follow(
-        &mut self,
-        rel_path: PathBuf,
-        origin: Option<CommitId>,
-        follow: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(repo_path) = self.repo_path.clone() else {
-            return;
-        };
-        klog!("file-history: open {}", rel_path.display());
-        let generation = self
-            .file_history
-            .as_ref()
-            .map(|fh| fh.generation + 1)
-            .unwrap_or(0);
-        let branch = SharedString::from(self.active_view.status_summary.branch.clone());
-        self.file_history = Some(file_history::FileHistoryState {
-            rel_path: rel_path.clone(),
-            branch,
-            follow_renames: follow,
-            history: None,
-            error: None,
-            selected: 0,
-            diff: None,
-            diff_scroll: UniformListScrollHandle::new(),
-            split: 0.25,
-            generation,
-        });
-
-        let req_path = rel_path.clone();
-        let bg_path = repo_path.clone();
-        let task = cx.background_spawn(async move {
-            let req = kagi_git::FileHistoryRequest {
-                repo_dir: bg_path,
-                file_path: req_path,
-                follow_renames: follow,
-                include_wip: true,
-                limit: 500,
-            };
-            kagi_git::file_history(&req)
-        });
-
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                let still_current = app
-                    .file_history
-                    .as_ref()
-                    .is_some_and(|fh| fh.generation == generation);
-                if !still_current {
-                    return;
-                }
-                match result {
-                    Ok(history) => {
-                        let initial = Self::pick_initial_file_history_index(&history, &origin);
-                        if let Some(fh) = app.file_history.as_mut() {
-                            fh.history = Some(history);
-                            fh.error = None;
-                            fh.selected = initial;
-                        }
-                        app.load_file_history_diff(cx);
-                    }
-                    Err(e) => {
-                        if let Some(fh) = app.file_history.as_mut() {
-                            fh.history = None;
-                            fh.error = Some(e.to_string());
-                        }
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
     }
 
     /// Open the first changed file's diff in the main pane (headless path).

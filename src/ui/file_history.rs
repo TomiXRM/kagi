@@ -5,9 +5,11 @@
 //! the [`FileHistoryState`] struct plus presentation helpers that are pure
 //! enough to unit-test and keep out of the already-huge `mod.rs`.
 
+use std::cell::Cell;
 use std::path::PathBuf;
+use std::rc::Rc;
 
-use gpui::{SharedString, UniformListScrollHandle};
+use gpui::{Pixels, Point, SharedString, UniformListScrollHandle, WeakEntity};
 
 use kagi_git::{FileChangeType, FileHistory, FileHistoryEntry, FileHistoryEntryKind};
 
@@ -83,6 +85,57 @@ impl FileHistoryState {
                     .count()
             })
             .unwrap_or(0)
+    }
+}
+
+/// ADR-0117: the File History panel promoted to its own `Entity<T>` (Phase 5.1).
+///
+/// Holds the [`FileHistoryState`] data plus the small amount of plumbing the
+/// entity needs to drive itself and call back to the parent. The Backend-driving
+/// logic (history + diff loads) lives on this entity (it holds `repo_path`) — see
+/// the `impl FileHistoryView` in `file_history_render.rs` — so entity-initiated
+/// actions update *self* and never re-enter `KagiApp.file_history` (which would
+/// double-borrow the leased entity and panic). The only parent callbacks are
+/// `close` and `jump_to_commit`, neither of which touches this entity's lease.
+pub struct FileHistoryView {
+    /// The view-model data (loaded history, selection, diff, split, generation).
+    pub data: FileHistoryState,
+    /// Weak back-reference to the parent. Used ONLY from event/listener closures
+    /// (close / jump-to-commit) — NEVER read in a `Render` path (ADR-0117).
+    pub(crate) app: WeakEntity<super::KagiApp>,
+    /// Commit-row context menu: (entry index, anchor). Moved off `KagiApp`.
+    pub menu: Option<(usize, Point<Pixels>)>,
+    /// Shared with `KagiApp.file_history_geom` (the *same* `Rc<Cell>`): the
+    /// render writes the measured list+diff screen bounds here; the divider-drag
+    /// handler (on `KagiApp`) reads them so the list/diff split maps exactly.
+    pub geom: Rc<Cell<(f32, f32)>>,
+    /// Right detail-pane width, synced from `KagiApp.panel_width` (the FH detail
+    /// divider drags `panel_width`, which `KagiApp` pushes back into the entity).
+    pub panel_width: f32,
+    /// Repo root for this FH session. Constant for the entity's life (FH closes
+    /// on repo/tab switch). Used for the read-only history + diff loads.
+    pub(crate) repo_path: PathBuf,
+}
+
+impl FileHistoryView {
+    /// Construct the entity from freshly-built (loading) state. Created in
+    /// `KagiApp::open_file_history` via `cx.new`; the caller then kicks off the
+    /// initial load via [`FileHistoryView::start_load`].
+    pub fn new(
+        data: FileHistoryState,
+        app: WeakEntity<super::KagiApp>,
+        geom: Rc<Cell<(f32, f32)>>,
+        panel_width: f32,
+        repo_path: PathBuf,
+    ) -> Self {
+        Self {
+            data,
+            app,
+            menu: None,
+            geom,
+            panel_width,
+            repo_path,
+        }
     }
 }
 

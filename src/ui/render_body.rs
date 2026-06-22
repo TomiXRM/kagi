@@ -370,12 +370,9 @@ impl KagiApp {
         // W5-MENU: View → Toggle Sidebar hides the navigator + its divider.
         let sidebar_visible = self.sidebar.visible;
         // ADR-0089: File History takes over the center+right area (sidebar stays).
-        let file_history_open = self.file_history.is_some();
-        let fh_branch = self
-            .file_history
-            .as_ref()
-            .map(|fh| fh.branch.clone())
-            .unwrap_or_default();
+        // ADR-0117: it is now its own Entity<FileHistoryView>; clone the handle so
+        // we can embed it below (GPUI renders the entity directly).
+        let file_history = self.file_history.clone();
         let mut body_row = div()
             .flex()
             .flex_row()
@@ -397,26 +394,11 @@ impl KagiApp {
                 .child(divider1)
             });
 
-        // ADR-0089: File History view (top priority) — replaces center + right.
-        if file_history_open {
-            // Source the FH state from `&self` here (legitimate &self access) and
-            // pass it down — render functions must NEVER read the entity back via
-            // `cx`, because they run while the KagiApp entity is checked out for
-            // update (re-entrant read panics).
-            let fh_state = self
-                .file_history
-                .as_ref()
-                .expect("file_history_open implies file_history is Some");
-            let fh_menu = self.file_history_menu;
-            let fh_geom = self.file_history_geom.clone();
-            body_row = body_row.child(render_file_history_view(
-                fh_state,
-                fh_menu,
-                fh_branch,
-                panel_width,
-                fh_geom,
-                cx,
-            ));
+        // ADR-0089 / ADR-0117: File History view (top priority) — replaces
+        // center + right. The entity renders its own center+right body; embedding
+        // `Entity<FileHistoryView>` gives it an isolated `cx.notify()` scope.
+        if let Some(fh) = file_history {
+            body_row = body_row.child(fh);
             return body_row;
         }
 

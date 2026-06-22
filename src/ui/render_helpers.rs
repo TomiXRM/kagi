@@ -1638,6 +1638,24 @@ pub(crate) fn render_badges_column(
             }
             BadgeKind::Tag => chip,
         };
+        // Double-click a local-branch pill → switch to that branch. A clean plan
+        // switches with no popup; blockers/warnings open the checkout modal
+        // (see `KagiApp::dblclick_checkout_branch`). Gated on `Branch` only so
+        // the current-branch (HeadBranch), remotes and tags are unaffected. Uses
+        // the full `badge.label` (the displayed `label` may be truncated).
+        let chip = if badge.kind == BadgeKind::Branch {
+            let dbl_branch = badge.label.to_string();
+            chip.on_click(cx.listener(
+                move |this: &mut KagiApp, event: &gpui::ClickEvent, _window, cx| {
+                    if event.click_count() >= 2 {
+                        this.dblclick_checkout_branch(dbl_branch.clone(), cx);
+                        cx.notify();
+                    }
+                },
+            ))
+        } else {
+            chip
+        };
         let chip = if let Some(branch_name) = context_branch_name(badge) {
             let badge_kind = badge.kind.clone();
             chip.on_mouse_down(

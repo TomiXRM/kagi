@@ -34,6 +34,25 @@ jobs:
           fi
           echo "OK: src/ui has zero git2 usage."
 
+  # ── BLOCKING: the `[kagi]` contract is a single channel (klog! only) (ADR-0096) ──
+  invariant-klog-single-channel:
+    name: invariant — [kagi] lines go through klog!
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert no hand-written [kagi] contract lines outside klog.rs
+        shell: bash
+        run: |
+          # The `[kagi] …` stderr lines are the headless test contract; ADR-0096
+          # requires them to be emitted only through the klog! macro. Forbid raw
+          # `eprintln!("[kagi]` / `println!("[kagi]` anywhere but the macro itself.
+          if grep -rnE '(eprintln|println)!\("\[kagi\]' --include='*.rs' . \
+               | grep -v 'src/klog.rs'; then
+            echo "::error::[kagi] contract lines must go through klog! (ADR-0096), not raw eprintln!/println!."
+            exit 1
+          fi
+          echo "OK: every [kagi] line routes through klog!."
+
   # ── BLOCKING: full test suite on macOS (the validated dev platform) ──────────
   test-macos:
     name: test (macOS)

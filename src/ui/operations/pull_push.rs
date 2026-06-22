@@ -48,7 +48,7 @@ impl KagiApp {
                 s.is_dirty,
                 self.active_view.header.to_string(),
             );
-            eprintln!("[kagi] plan: remote pull branch={branch} behind={behind} ahead={ahead}");
+            klog!("plan: remote pull branch={branch} behind={behind} ahead={ahead}");
             self.set_pull_modal(PullPlanModal {
                 plan: std::sync::Arc::new(plan),
                 error: None,

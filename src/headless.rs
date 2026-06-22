@@ -191,10 +191,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, env_open_repo: Option<PathBuf>) {
         } else {
             "18%-of-viewport".to_string()
         };
-        eprintln!(
-            "[kagi] bottom-panel: open height={} tab={}",
-            h_label, tab_label
-        );
+        klog!("bottom-panel: open height={} tab={}", h_label, tab_label);
         klog!("oplog-tab: {} entries", app_state.op_log_seed.len());
     }
 

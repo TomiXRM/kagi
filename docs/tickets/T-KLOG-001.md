@@ -35,3 +35,42 @@ ADR-0096 は「`[kagi] …` 契約行は必ず `klog!` 経由（手書き `eprin
 
 - 契約行の format/wording/順序は変えない（CLAUDE.md ログ規約）
 - klog! contract 行を `eprintln!` に逆流させない
+
+## 実装メモ（2026-06-22 完了）
+
+### 判断: チケットの参照パスは stale だった
+チケット本文・ADR-0116 は3箇所を `crates/kagi-git/src/ops/stash.rs:405` /
+`crates/kagi-git/src/ops/pull_push.rs:51` と記載していたが、リポジトリを grep した
+結果、`crates/kagi-git/` には `[kagi]` 文字列は1つも存在しなかった。実体は **bin 側**の
+以下にあった（行番号は一致）:
+
+- `src/headless.rs:194` `eprintln!("[kagi] bottom-panel: open height={} tab={}", …)`
+- `src/ui/operations/stash.rs:405` `eprintln!("[kagi] plan: remote stash-drop index={index} blockers=0")`
+- `src/ui/operations/pull_push.rs:51` `eprintln!("[kagi] plan: remote pull branch={branch} behind={behind} ahead={ahead}")`
+
+3箇所とも bin クレート内なので `#[macro_export]` の `klog!` がそのまま使える（3ファイル
+とも既に他の `klog!` 呼び出しを持っていた）。よって「kagi-git から klog! が使えない」
+懸念は発生せず、置換を完遂できた。kagi-git 側の現状維持・理由メモは不要。
+
+### 置換（出力バイト列は完全一致）
+`klog!` は `eprintln!("[kagi] {}", format_args!(…))` の薄いマクロ。`[kagi] ` を除いた
+本体だけを渡すよう置換。headless.rs は複数行 `eprintln!` を1行 `klog!` に畳んだが、
+format 文字列・引数順は同一で出力は不変。
+
+### CI ゲート
+`.github/workflows/ci.yml` に blocking job `invariant-klog-single-channel` を追加
+（git2 ゲートと同形式）。`grep -rnE '(eprintln|println)!\("\[kagi\]' --include='*.rs'`
+で `src/klog.rs` 以外にヒットしたら fail。
+
+注意点: このパターンは **同一行**に `eprintln!("[kagi]` がある場合のみ一致する。
+リポジトリには `eprintln!(` と `"[kagi]"` が別行に分かれた multiline 形式が多数残るが、
+それらは ADR-0096 の機械変換でマクロ化されておらず本パターンには一致しないため、
+ゲートは今回の3箇所修正後 green になる（ローカル grep 確認済み: ヒット 0 件）。
+multiline 形式の掃除はスコープ外（将来チケット）。除外パス追加や置換先送りは不要。
+
+### 検証結果
+- `cargo build --workspace`: 成功
+- `cargo test --workspace`: **791 passed / 0 failed**
+- `cargo fmt --check`: clean（差分なし）
+- CI ゲート grep をローカル実行: `src/klog.rs` 以外にヒット 0 件（green 見込み）
+- `git diff` で契約行の出力文字列が変わっていないことを確認（3箇所とも本体不変）

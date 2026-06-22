@@ -189,7 +189,49 @@ impl KagiApp {
         if self.operation_history.len() != 0 {
             return;
         }
-        match backend.history_from_reflog() {
+        self.apply_reflog_seed(backend.history_from_reflog().map_err(|e| e.to_string()));
+    }
+
+    /// T-PERF-RENDER-001: async sibling of [`seed_history_from_reflog`].
+    ///
+    /// Opens the repo and reads the branch reflog on a background thread
+    /// (`cx.background_spawn`), then applies the (only-when-empty) seed on the UI
+    /// thread.  Used by the startup / tab-switch commit points where `reload()`
+    /// (which calls the sync variant with an already-open `Backend`) did not run —
+    /// this replaces the synchronous `Backend::open` + reflog read that used to sit
+    /// in `render()`.  The "only seed when empty" check is re-evaluated at apply
+    /// time so an in-session stack built while the read was in flight is preserved.
+    pub(crate) fn seed_history_from_reflog_async(&mut self, cx: &mut Context<Self>) {
+        if !self.operation_history.is_empty() {
+            return;
+        }
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        let task = cx.background_spawn(async move {
+            kagi_git::Backend::open(&repo_path)
+                .map_err(|e| e.to_string())
+                .and_then(|backend| backend.history_from_reflog().map_err(|e| e.to_string()))
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                // Re-check the only-when-empty guard: a record_history during the
+                // background read must not be clobbered.
+                if !app.operation_history.is_empty() {
+                    return;
+                }
+                app.apply_reflog_seed(result);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Apply a reflog read result to the in-session history (shared by the sync
+    /// and async seed paths).  Caller guarantees the history is currently empty.
+    fn apply_reflog_seed(&mut self, result: Result<Vec<kagi_git::HistoryEntry>, String>) {
+        match result {
             Ok(entries) => {
                 if !entries.is_empty() {
                     eprintln!(

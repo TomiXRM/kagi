@@ -39,7 +39,7 @@ Phases are ordered by **risk reduction per unit effort**:
 
 ### Step 0.1 — Trivial deletions
 **Touch:**
-- `src/git/backend.rs:53` — delete `pub fn repo(&self) -> &Repository`. Make
+- `crates/kagi-git/src/backend.rs:53` — delete `pub fn repo(&self) -> &Repository`. Make
   `repo` field private. (0 callers verified.)
 - `Cargo.toml:39` — delete the redundant `tempfile = "3"` under
   `[dev-dependencies]` (already in `[dependencies]`).
@@ -81,8 +81,8 @@ Rename works end-to-end.
 These are the highest-value changes in the whole plan.
 
 ### Step 1.1 — Enforce the pipeline in `Backend::execute`  ⭐ highest priority
-**Touch:** `src/git/backend.rs:304-427` and every `execute_*` signature in
-`src/git/ops/*.rs`.
+**Touch:** `crates/kagi-git/src/backend.rs:304-427` and every `execute_*` signature in
+`crates/kagi-git/src/ops/*.rs`.
 
 **Approach (incremental, not big-bang):**
 
@@ -149,7 +149,7 @@ to `backend.run(&op, &plan)`.
 **Verify:** `cargo test --workspace`; manual smoke test of each op.
 
 ### Step 1.3 — Block merge on dirty working tree
-**Touch:** `src/git/ops/merge.rs:26` — replace `merge_dirty_warnings(...)` with
+**Touch:** `crates/kagi-git/src/ops/merge.rs:26` — replace `merge_dirty_warnings(...)` with
 a blocker when `!status.staged.is_empty() || !status.unstaged.is_empty()`.
 Keep warnings for untracked-only. Block `execute_merge_into_conflict`
 unconditionally on dirty tree.
@@ -160,7 +160,7 @@ unconditionally on dirty tree.
 merge with unstaged edits → modal shows red blocker, no Execute button.
 
 ### Step 1.4 — Atomic `stage_conflict_resolution`
-**Touch:** `src/git/conflicts.rs:931-984`. Rewrite the per-file loop:
+**Touch:** `crates/kagi-git/src/conflicts.rs:931-984`. Rewrite the per-file loop:
 1. Write each resolved file to a temp path (`<file>.kagi-tmp-<n>`).
 2. If any write fails, delete all temp files, return `Err`.
 3. Rename all temp files atomically to their targets.
@@ -182,7 +182,7 @@ executes. Reset armed state on modal open/cancel.
 **Verify:** Manual — Discard modal requires two clicks; Escape/Cancel resets.
 
 ### Step 1.6 — Oplog "Restore" action
-**Touch:** New `src/git/ops/restore.rs` with `restore_discarded(paths, backups:
+**Touch:** New `crates/kagi-git/src/ops/restore.rs` with `restore_discarded(paths, backups:
 &[DiscardBackup]) -> Result<()>` (`git cat-file -p <blob>` → write file) and
 `restore_deleted_branch(name, sha) -> Result<()>` (`git branch <name> <sha>`).
 Wire a "Restore" button on discard/delete-branch rows in the Operation Log
@@ -194,7 +194,7 @@ panel (`src/ui/render.rs:2698` area).
 byte-identical.
 
 ### Step 1.7 — Stash pop/drop take plan + preflight
-**Touch:** `src/git/ops/stash.rs:534-543,693-704` — already covered by Step
+**Touch:** `crates/kagi-git/src/ops/stash.rs:534-543,693-704` — already covered by Step
 1.1's signature change; ensure `preflight_check_stash` is the first line.
 
 **Commit:** (folded into Step 1.1's stash sub-commit)
@@ -207,7 +207,7 @@ byte-identical.
 the domain extraction. These unblock Phase 3 (perf) and Phase 5 (entity split).
 
 ### Step 2.1 — Introduce `RepoSession` owning the `Backend`
-**Touch:** New `src/git/session.rs`:
+**Touch:** New `crates/kagi-git/src/session.rs`:
 ```rust
 pub struct RepoSession {
     backend: Backend,           // opened once
@@ -237,18 +237,19 @@ matters for the later worker thread; for now `Rc` (single-thread) is fine.
 
 ### Step 2.2 — Finish `kagi-domain` extraction (collapse shims)
 **Touch:**
-- Rename `src/git/history.rs` → `src/git/file_history.rs` (resolves the
-  filename collision with `kagi-domain/src/history.rs`). Update `mod.rs`.
-- `src/git/message_gen.rs`: move all pure parsing/rule logic to
+- ~~Rename `src/git/history.rs` → `src/git/file_history.rs`~~ — **Done**: the file
+  now lives at `crates/kagi-git/src/file_history.rs` (resolved the filename
+  collision with `kagi-domain/src/history.rs`).
+- `crates/kagi-git/src/message_gen.rs`: move all pure parsing/rule logic to
   `crates/kagi-domain/src/message_gen.rs`; keep only git2 glue
-  (`collect_staged_files`, `ollama_available`, CLI probe) in `src/git/`.
-- `src/git/resolution.rs`: move pure hunk/chunk logic to domain; keep only
+  (`collect_staged_files`, `ollama_available`, CLI probe) in `crates/kagi-git/src/`.
+- `crates/kagi-git/src/resolution.rs`: move pure hunk/chunk logic to domain; keep only
   git2-backed `ResolutionBuffer` materialization.
-- Target: each `src/git/<x>.rs` visibly smaller than its domain twin.
+- Target: each `crates/kagi-git/src/<x>.rs` visibly smaller than its domain twin.
 
 **Commit:** `refactor(domain): finish message_gen/resolution extraction; rename history→file_history`
 
-**Verify:** `grep -rn 'pub use kagi_domain' src/git/` shows clean bridges;
+**Verify:** `grep -rn 'pub use kagi_domain' crates/kagi-git/src/` shows clean bridges;
 unit tests moved with the logic; `cargo test --workspace`.
 
 ### Step 2.3 — Move pure helpers out of `ui/mod.rs`
@@ -346,7 +347,7 @@ re-layouts the whole graph if the commit count is unchanged.
 
 ### Step 3.6 — Lazy ahead/behind + single auto-fetch ticker
 **Touch:**
-- `src/git/snapshot.rs:126-151` — compute `graph_ahead_behind` only for visible
+- `crates/kagi-git/src/snapshot.rs:126-151` — compute `graph_ahead_behind` only for visible
   sidebar branches; cache the rest, invalidate on fetch.
 - `src/ui/commands.rs:1474` — make `ensure_auto_fetch_ticker` global per
   remote-URL (store on `AppState` or a singleton), not per-tab; remove the
@@ -363,7 +364,7 @@ re-layouts the whole graph if the commit count is unchanged.
 ## Phase 4 — UX improvements (can interleave with Phase 2–3)
 
 ### Step 4.1 — Error classification + persistent error toasts
-**Touch:** New `src/git/error_classify.rs` mapping `git2::Error` codes + CLI
+**Touch:** New `crates/kagi-git/src/error_classify.rs` mapping `git2::Error` codes + CLI
 exit/stderr patterns → `enum UserError { Auth, Network, Conflict, DirtyTree,
 NotARepo, NonFastForward, Unknown(String) }`, each with a friendly message +
 suggested action. Replace ~35 `FooterStatus::Failed(format!("...: {}", e))`
@@ -373,12 +374,12 @@ and the `TOASTS_MAX` cap.
 **Commit:** `feat(ui): typed error classification + persistent error toasts`
 
 ### Step 4.2 — Per-hunk staging
-**Touch:** `src/git/staging.rs` — add `stage_hunks(path, &[HunkRange])` using
+**Touch:** `crates/kagi-git/src/staging.rs` — add `stage_hunks(path, &[HunkRange])` using
 `git apply --cached` on a generated patch; `src/ui/diff_view.rs` — per-hunk
 "+" buttons. (Large; consider splitting into backend + UI commits.)
 
 ### Step 4.3 — Pull strategy selector
-**Touch:** `src/git/ops/pull_push.rs:487` `plan_pull` — add `PullStrategy {
+**Touch:** `crates/kagi-git/src/ops/pull_push.rs:487` `plan_pull` — add `PullStrategy {
 FollowConfig, Merge, Rebase, FastForwardOnly }`; read repo's `pull.rebase` for
 default. `src/ui/modals.rs` pull modal — strategy dropdown.
 
@@ -436,7 +437,7 @@ checkout, resolve), so — unlike the pure-UI `Toasts` / `OpLogPanel` — their
 Entity move needs a child→parent event/callback path, not just a field hoist.
 
 ### Step 5.2 — Worker thread per RepoSession
-**Touch:** New `src/git/worker.rs` — one thread holding the `git2::Repository`,
+**Touch:** New `crates/kagi-git/src/worker.rs` — one thread holding the `git2::Repository`,
 serializing ops via a channel. `RepoSession` sends `Operation`s and awaits
 results. Kills the per-op open pattern permanently.
 
@@ -454,6 +455,11 @@ Decompose `run_repo_flow` (1456 LOC). Eventually delete once Step 5.3 lands.
 **Touch:** The final ADR-0072 move: extract `src/ui` → `crates/kagi-ui` (no
 `git2` in `Cargo.toml`), `src/git` → `crates/kagi-git`, app state →
 `crates/kagi-app`. Makes the git2-free UI a compile error.
+
+**Done (git):** the `src/git` → `crates/kagi-git` extraction landed in **ADR-0115**;
+the git backend now lives in `crates/kagi-git/` (this is why all `src/git/…` touch
+targets above are written as `crates/kagi-git/src/…`). Remaining: the `src/ui` →
+`crates/kagi-ui` and app-state → `crates/kagi-app` extractions.
 
 ---
 
@@ -491,7 +497,7 @@ Decompose `run_repo_flow` (1456 LOC). Eventually delete once Step 5.3 lands.
 | 1.3 (block dirty merge) | Low-Medium — behavior change users may notice | Keep the old warning path behind a setting for one release. |
 | 1.4 (atomic conflict save) | Low | Pure restructure of an internal fn. |
 | 2.1 (RepoSession) | Medium — large touch count | Mechanical per-file; revert per-file commits. |
-| 2.2 (domain extraction) | Medium — logic moves between crates | Keep the `src/git/<x>.rs` shims delegating until tests pass; delete last. |
+| 2.2 (domain extraction) | Medium — logic moves between crates | Keep the `crates/kagi-git/src/<x>.rs` shims delegating until tests pass; delete last. |
 | 3.x (perf) | Low individually | Each is independent and reversible. |
 | 5.1 (entity decomposition) | **High** — core architecture | Do one panel at a time; each panel is independently mergeable. Do not attempt before Phase 1. |
 | 5.5 (crate split) | High — workspace restructure | Keep `src/` shims re-exporting from `crates/` during migration (the existing strangler pattern). |

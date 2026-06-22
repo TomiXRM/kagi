@@ -48,6 +48,12 @@ pub struct SidebarState {
     /// Pre-flattened navigator rows (built in `render`); the `uniform_list`
     /// processor reads `rows[i]`, so the sidebar costs O(visible rows) per frame.
     pub rows: Vec<SidebarRow>,
+    /// T-PERF-RENDER-002 (ADR-0116 Wave 2): fingerprint of the inputs that
+    /// produced the cached `rows`.  `render` recomputes a cheap fingerprint each
+    /// frame (view epoch + collection lengths + collapsed sets + filter text)
+    /// and only calls `build_sidebar_rows` when it differs, so unchanged frames
+    /// reuse the cache instead of re-allocating O(all-refs) per frame.
+    pub rows_fingerprint: u64,
     /// Collapsed sections (HashSet of section keys). Preserved across reloads.
     pub collapsed: HashSet<&'static str>,
     /// Lazy `InputState` for the filter input (gpui-component IME 対応); created
@@ -63,6 +69,7 @@ impl SidebarState {
             width: SIDEBAR_DEFAULT_WIDTH,
             scroll_handle: UniformListScrollHandle::new(),
             rows: Vec::new(),
+            rows_fingerprint: u64::MAX,
             collapsed: HashSet::new(),
             filter: None,
             visible: true,
@@ -448,6 +455,58 @@ pub enum SidebarRow {
     },
     /// A stash leaf.
     Stash { index: usize, message: String },
+}
+
+/// T-PERF-RENDER-002 (ADR-0116 Wave 2): a cheap, allocation-free fingerprint of
+/// the inputs to [`build_sidebar_rows`].
+///
+/// `render` recomputes this each frame and only rebuilds `rows` when it changes,
+/// so unchanged frames skip the O(all-refs) clone+collect.  The heavy collection
+/// *contents* (branch names, tag/stash/worktree data) are covered by
+/// `view_epoch`, which `KagiApp` bumps on every `active_view` write — so this
+/// never has to hash the full ref lists.  The collection lengths are folded in
+/// as an O(1) backstop, and the collapsed sets + filter text (small, and not
+/// tied to `view_epoch`) are hashed directly so collapse toggles and filter
+/// edits invalidate the cache.
+#[allow(clippy::too_many_arguments)]
+pub fn sidebar_rows_fingerprint(
+    view_epoch: u64,
+    branches_len: usize,
+    remote_branches_len: usize,
+    tags_len: usize,
+    stashes_len: usize,
+    worktrees_len: usize,
+    collapsed: &HashSet<&'static str>,
+    groups_collapsed: &HashSet<String>,
+    filter_text: &str,
+) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    view_epoch.hash(&mut hasher);
+    branches_len.hash(&mut hasher);
+    remote_branches_len.hash(&mut hasher);
+    tags_len.hash(&mut hasher);
+    stashes_len.hash(&mut hasher);
+    worktrees_len.hash(&mut hasher);
+    // Order-independent fold for the two collapse sets (HashSet iteration order
+    // is non-deterministic, so XOR per-element hashes instead of hashing the set
+    // in iteration order).
+    let mut collapsed_acc: u64 = 0;
+    for key in collapsed {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        key.hash(&mut h);
+        collapsed_acc ^= h.finish();
+    }
+    collapsed_acc.hash(&mut hasher);
+    let mut groups_acc: u64 = 0;
+    for key in groups_collapsed {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        key.hash(&mut h);
+        groups_acc ^= h.finish();
+    }
+    groups_acc.hash(&mut hasher);
+    filter_text.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Build the flat, virtualization-ready sidebar row list.

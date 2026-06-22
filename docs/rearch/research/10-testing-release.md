@@ -1,5 +1,7 @@
 # 10. テストアーキテクチャ & リリース配布 — 現状調査と v1.0 設計方針
 
+> NOTE (2026-06-22): `src/git` was extracted to `crates/kagi-git` in ADR-0115; paths below describe the pre-extraction layout.
+
 - 調査日: 2026-06-14 / research sub-agent #10 (PM-led re-architecture)
 - DOMAIN: test architecture, fixture repos, headless testing, CI, release packaging/distribution
 - branch: re-architecture

@@ -14,21 +14,22 @@ before editing. It encodes invariants that are otherwise scattered across 90+ AD
 
 1. **No `git2::` in `src/ui/`.** `Repository::open` is also forbidden there. This is
    enforced by a CI grep gate (`.github/workflows/ci.yml`, ADR-0078). All Git access
-   from the UI goes through `kagi::git::Backend` or the free functions in `src/git/`.
+   from the UI goes through `kagi::git::Backend` or the free functions in `crates/kagi-git/src/`.
 2. **`kagi-domain` stays pure.** No `git2`, no `gpui`, no I/O. Keep
    `crates/kagi-domain/Cargo.toml` dependency-free. All pure-logic unit tests live here.
 3. **No destructive commands — ever.** `push --force`, `reset --hard`, and `git clean`
    must not appear anywhere in the codebase. Their absence is the product's reason to exist.
 4. **Every write operation follows `plan → confirm → preflight → execute → verify → oplog`.**
-   Keep the `plan_X` / `preflight_X` / `execute_X` triple together in `src/git/ops.rs`
-   (future: `src/git/ops/`). Never let the UI mutate the repo outside this path.
+   Keep the `plan_X` / `preflight_X` / `execute_X` triple together in the matching
+   per-feature module under `crates/kagi-git/src/ops/<feature>.rs`. Never let the UI
+   mutate the repo outside this path.
 
 ## Layering — where things are allowed to live
 
 | Layer | Location | Rule |
 |---|---|---|
 | Pure domain | `crates/kagi-domain/` | Models, Graph, Diff, Conflict FSM, Plan types, parsers. No git2/gpui/I/O. |
-| Git backend | `src/git/` | The **only** place `git2::Repository` is opened. `ops.rs` triples, `cli.rs` (fetch/push shell), `backend.rs` (`Backend` facade). |
+| Git backend | `crates/kagi-git/` | The **only** place `git2::Repository` is opened. `ops/<feature>.rs` triples, `cli.rs` (fetch/push shell), `backend.rs` (`Backend` facade). |
 | UI (View + state) | `src/ui/` | GPUI `Render`, modals, toolbar/sidebar/diff/terminal. No git2. |
 | Shell | `src/main.rs`, `src/headless.rs` | Window/menu, bootstrap, test harness. |
 
@@ -39,8 +40,9 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 
 - Aim for ≤ 800 LOC per file. Past that, split on a feature boundary.
 - Aim for ≤ 80 LOC per function.
-- `src/ui/mod.rs` and `src/git/ops.rs` are known oversized god-files mid-split;
-  prefer adding new code to a focused sibling module over growing them.
+- `src/ui/mod.rs` is a known oversized god-file mid-split; prefer adding new code to a
+  focused sibling module over growing it. (`kagi-git`'s ops are already split into
+  per-feature `crates/kagi-git/src/ops/<feature>.rs` modules — keep each focused.)
 
 ## State-update rules
 
@@ -52,9 +54,10 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
   Read active per-tab data via `self.active_view.<field>`.
 - Modals are a single `active_modal: Option<ActiveModal>` field on `KagiApp`
   (ADR-0093 / ADR-0076; the "one modal at a time" invariant is now structural).
-  Adding a modal: add an `ActiveModal` variant in `src/ui/modals.rs`, the five
-  accessors in `src/ui/operations/modal_state.rs` (`X`/`X_mut`/`set_X`/`clear_X`/
-  `take_X`), an `open_*`/`cancel_*` method that uses `set_X`/`clear_X`, render
+  Adding a modal: add an `ActiveModal` variant in `src/ui/modals.rs`, the
+  accessors in `src/ui/operations/modal_state.rs` (`X`/`set_X`/`clear_X`, plus an
+  `X_mut` for modals with editable fields), an `open_*`/`cancel_*` method that uses
+  `set_X`/`clear_X`, render
   routing, and the entry in `confirm_active_modal`/`cancel_active_modal`. Use the
   accessors — never reach into `active_modal` directly. (`CommitPanel` has its own
   separate `plan_modal`; don't confuse it with the checkout `plan_modal` accessor.)
@@ -75,7 +78,7 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 
 ## Error handling
 
-- Git layer returns `Result<T, GitError>` (`src/git/mod.rs:137`). Avoid `.unwrap()`
+- Git layer returns `Result<T, GitError>` (`crates/kagi-git/src/lib.rs:143`). Avoid `.unwrap()`
   outside tests.
 - User-facing errors must surface via the oplog **and** a modal — never swallowed.
 
@@ -95,8 +98,8 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 ## Adding a new feature
 
 1. Read or write the relevant ADR in `docs/adr/`.
-2. Git operation? Add the `plan_/preflight_/execute_` triple in `src/git/ops.rs` and a
-   matching integration test in `tests/`.
+2. Git operation? Add the `plan_/preflight_/execute_` triple in the matching
+   `crates/kagi-git/src/ops/<feature>.rs` module and a matching integration test in `tests/`.
 3. UI? Add `open_/confirm_/start_` methods on `KagiApp`; add the modal in
    `src/ui/modals.rs`.
 4. i18n: add EN **and** JA strings to the `Msg` enum in `src/ui/i18n.rs`.
@@ -105,13 +108,13 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 
 - Operations: `plan_X` / `preflight_X` / `execute_X` / `verify_X` (keep the triple aligned).
 - UI methods: `open_X_modal` / `cancel_X` / `replan_X` / `confirm_X` / `start_X`.
-- Domain types are defined in `kagi-domain`; `src/git/` re-exports them (shim) rather
+- Domain types are defined in `kagi-domain`; `crates/kagi-git/src/` re-exports them (shim) rather
   than redefining.
 
 ## Files whose dependencies you must understand before editing
 
 - `src/ui/mod.rs` (`KagiApp`): 110+ interdependent fields. Grep for callers before changing.
-- `src/git/ops.rs`: triples share `StateSummary` / `OperationPlan`.
+- `crates/kagi-git/src/ops/`: triples share `StateSummary` / `OperationPlan`.
 - `docs/rearch/migration/README.md`: confirm which step is done/pending before refactoring.
 
 ## Verifying changes

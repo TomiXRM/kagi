@@ -1,5 +1,7 @@
 # 03 — Git Operation Layer (re-architecture research)
 
+> NOTE (2026-06-22): `src/git` was extracted to `crates/kagi-git` in ADR-0115; paths below describe the pre-extraction layout.
+
 > Research sub-agent #3 / Kagi v1.0 re-architecture (PM-led).
 > Domain: **Git operation layer** — libgit2 usage, dry-run/preflight/execute/verify
 > pipeline, operation log. **This is the most important domain: it carries Kagi's

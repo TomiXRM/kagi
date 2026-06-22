@@ -96,20 +96,27 @@ mod branch;
 mod checkout;
 mod cherry_revert;
 mod discard;
+mod fetch;
 mod history;
 mod merge;
-mod pull_push;
+mod pull;
+mod push;
+mod remote_common;
 mod stash;
+mod switch;
 mod worktree;
 
 pub use branch::*;
 pub use checkout::*;
 pub use cherry_revert::*;
 pub use discard::*;
+pub use fetch::*;
 pub use history::*;
 pub use merge::*;
-pub use pull_push::*;
+pub use pull::*;
+pub use push::*;
 pub use stash::*;
+pub use switch::*;
 pub use worktree::*;
 
 // ────────────────────────────────────────────────────────────

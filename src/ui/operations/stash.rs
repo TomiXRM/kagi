@@ -402,7 +402,7 @@ impl KagiApp {
                 .unwrap_or_else(|| format!("stash@{{{index}}}"));
             let head = self.active_view.header.to_string();
             let plan = kagi_git::plan_stash_drop_remote(&label, head);
-            eprintln!("[kagi] plan: remote stash-drop index={index} blockers=0");
+            klog!("plan: remote stash-drop index={index} blockers=0");
             self.set_stash_drop_modal(StashDropModal {
                 plan: std::sync::Arc::new(plan),
                 error: None,

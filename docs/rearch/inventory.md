@@ -1,5 +1,7 @@
 # Kagi v0.2.0 — PM Feature & Architecture Inventory
 
+> NOTE (2026-06-22): `src/git` was extracted to `crates/kagi-git` in ADR-0115; paths below describe the pre-extraction layout.
+
 > Phase 0 of the v1.0 re-architecture (`re-architecture` branch).
 > Purpose: catalogue everything Kagi v0.2.0 does **before** any redesign, and
 > name the structural debt the re-architecture must repay. This is the baseline

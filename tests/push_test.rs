@@ -318,13 +318,12 @@ fn test_push_detached_blocker() {
 #[test]
 fn test_push_no_force_in_args() {
     // Read the push-operation source (ops.rs was split into per-op modules; the
-    // push pipeline now lives in crates/kagi-git/src/ops/pull_push.rs after the
-    // Phase E crate split — issue #13 Phase 3 / ADR-0072).
+    // push pipeline now lives in crates/kagi-git/src/ops/push.rs after the Wave 3
+    // pull_push split — issue #13 Phase 3 / ADR-0072 / ADR-0116).
     let src = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("crates/kagi-git/src/ops/pull_push.rs"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/kagi-git/src/ops/push.rs"),
     )
-    .expect("could not read pull_push.rs");
+    .expect("could not read push.rs");
 
     // Find the execute_push function section only (up to build_push_preview).
     let push_section_start = src

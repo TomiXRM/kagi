@@ -1,5 +1,7 @@
 # 06 — Diff Viewer / Changed-Files Tree / Syntax Highlighting (re-architecture research)
 
+> NOTE (2026-06-22): `src/git` was extracted to `crates/kagi-git` in ADR-0115; paths below describe the pre-extraction layout.
+
 Research sub-agent #6. RESEARCH ONLY — no source modified.
 
 Scope: diff viewer, changed-files tree, syntax highlighting, large-file handling,

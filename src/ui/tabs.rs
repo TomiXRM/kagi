@@ -348,6 +348,10 @@ impl KagiApp {
         self.commit_panel_open = false;
         self.commit_panel = None;
         self.commit_input = None;
+        // ADR-0117: File History is per-repo; drop the entity on repo/tab switch
+        // so its captured `repo_path` can't keep reading the previous repo (and
+        // the stale view doesn't linger over the newly-activated tab).
+        self.file_history = None;
         // ADR-0084: drop the previous repo's undo/redo history and re-arm the
         // reflog seed so the next repo seeds its own (else Cmd+Z would target
         // the old repo's branch).

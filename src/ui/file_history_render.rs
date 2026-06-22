@@ -6,9 +6,249 @@
 
 #![allow(clippy::too_many_arguments)]
 
+use super::file_history::FileHistoryView;
 use super::render_helpers::*;
 use super::*;
 use gpui_component::button::{Button, ButtonVariants};
+
+// ──────────────────────────────────────────────────────────────
+// ADR-0117: File History as its own `Entity<FileHistoryView>`.
+//
+// The entity owns the read-only Backend loads (history + diff) — it holds
+// `repo_path` — so every entity-initiated action updates *self* and never
+// re-enters `KagiApp.file_history` (which would double-borrow the leased entity
+// and panic). The only parent callbacks are `close` and `jump_to_commit`.
+// ──────────────────────────────────────────────────────────────
+
+impl Render for FileHistoryView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        render_file_history_view(self, cx)
+    }
+}
+
+impl FileHistoryView {
+    /// Kick off the async history load for the current `rel_path` /
+    /// `follow_renames`. Marshals the result back into *this* entity, guarded by
+    /// the per-entity `generation` so a superseded load (rapid refresh) or a
+    /// dropped entity (close/reopen) is discarded.
+    ///
+    /// `emit_loaded` preserves the pre-extraction contract: the initial open and
+    /// Refresh emit `[kagi] file-history: loaded N entries`; the follow-toggle
+    /// reload does NOT (it only emits the `open` line).
+    pub fn start_load(
+        &mut self,
+        origin: Option<CommitId>,
+        emit_loaded: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let generation = self.data.generation;
+        let follow = self.data.follow_renames;
+        let req_path = self.data.rel_path.clone();
+        let bg_path = self.repo_path.clone();
+        let task = cx.background_spawn(async move {
+            let req = kagi_git::FileHistoryRequest {
+                repo_dir: bg_path,
+                file_path: req_path,
+                follow_renames: follow,
+                include_wip: true,
+                limit: 500,
+            };
+            kagi_git::file_history(&req)
+        });
+
+        cx.spawn(async move |view, acx| {
+            let result = task.await;
+            let _ = view.update(acx, |v, cx| {
+                // Per-entity generation guard: discard a superseded load.
+                if v.data.generation != generation {
+                    return;
+                }
+                match result {
+                    Ok(history) => {
+                        if emit_loaded {
+                            klog!("file-history: loaded {} entries", history.entries.len());
+                        }
+                        let initial = Self::pick_initial_index(&history, &origin);
+                        v.data.history = Some(history);
+                        v.data.error = None;
+                        v.data.selected = initial;
+                        v.load_diff(cx);
+                    }
+                    Err(e) => {
+                        v.data.history = None;
+                        v.data.error = Some(e.to_string());
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Re-run the history load for the current file (Refresh / Retry / Follow
+    /// toggle), preserving the current selection's commit as the re-selection
+    /// origin. Bumps `generation` so any in-flight older load is discarded.
+    pub fn reload(&mut self, emit_loaded: bool, cx: &mut Context<Self>) {
+        let origin = self
+            .data
+            .selected_entry()
+            .and_then(|e| e.commit.as_ref())
+            .map(|c| CommitId(c.full_hash.clone()));
+        klog!("file-history: open {}", self.data.rel_path.display());
+        self.data.history = None;
+        self.data.error = None;
+        self.data.diff = None;
+        self.data.selected = 0;
+        self.data.generation = self.data.generation.wrapping_add(1);
+        cx.notify();
+        self.start_load(origin, emit_loaded, cx);
+    }
+
+    /// Select a history entry and (synchronously) load its diff.
+    pub fn select(&mut self, index: usize, cx: &mut Context<Self>) {
+        let valid = self
+            .data
+            .history
+            .as_ref()
+            .is_some_and(|h| index < h.entries.len());
+        if !valid {
+            return;
+        }
+        self.data.selected = index;
+        self.load_diff(cx);
+        cx.notify();
+    }
+
+    /// Move the entry selection up/down by `delta` (arrow keys), clamped.
+    pub fn step(&mut self, delta: i64, cx: &mut Context<Self>) {
+        let len = self
+            .data
+            .history
+            .as_ref()
+            .map(|h| h.entries.len())
+            .unwrap_or(0);
+        if len == 0 {
+            return;
+        }
+        let cur = self.data.selected;
+        let next = (cur as i64 + delta).clamp(0, len as i64 - 1) as usize;
+        if next != cur {
+            self.select(next, cx);
+        }
+    }
+
+    /// Update the list/diff vertical split ratio (divider drag), child-scoped.
+    pub fn set_split(&mut self, ratio: f32, cx: &mut Context<Self>) {
+        if (ratio - self.data.split).abs() > 0.002 {
+            self.data.split = ratio;
+            cx.notify();
+        }
+    }
+
+    /// Choose the initial selected index: the WIP row (always index 0 if
+    /// present), else the `origin` commit if it appears, else the newest entry.
+    fn pick_initial_index(history: &kagi_git::FileHistory, origin: &Option<CommitId>) -> usize {
+        use kagi_git::FileHistoryEntryKind;
+        if let Some(first) = history.entries.first() {
+            if first.kind == FileHistoryEntryKind::Wip {
+                return 0;
+            }
+        }
+        if let Some(id) = origin {
+            if let Some(ix) = history.entries.iter().position(|e| {
+                e.commit
+                    .as_ref()
+                    .is_some_and(|c| c.full_hash == id.0 || c.full_hash.starts_with(&id.0))
+            }) {
+                return ix;
+            }
+        }
+        0
+    }
+
+    /// Build the `MainDiffView` for the currently-selected entry, reusing the
+    /// existing diff renderer pipeline. Single-file diffs are cheap, so this runs
+    /// synchronously. Never panics on missing / binary / deleted files — falls
+    /// back to `diff = None` so the banner messaging covers it. (Moved from
+    /// `KagiApp::load_file_history_diff`, sourcing `repo_path` from `self`.)
+    pub fn load_diff(&mut self, _cx: &mut Context<Self>) {
+        use kagi_git::FileHistoryEntryKind;
+
+        let repo_path = self.repo_path.clone();
+        let Some(entry) = self.data.selected_entry() else {
+            self.data.diff = None;
+            return;
+        };
+
+        let path = entry.change.path_after.clone();
+        let kind = entry.kind;
+        let commit_id = entry.commit.as_ref().map(|c| CommitId(c.full_hash.clone()));
+
+        let repo = match kagi_git::Backend::open(&repo_path) {
+            Ok(r) => r,
+            Err(_) => {
+                self.data.diff = None;
+                return;
+            }
+        };
+
+        let file_diff_result = match kind {
+            FileHistoryEntryKind::Wip => {
+                // Prefer the unstaged diff; fall back to staged (e.g. fully
+                // staged change) so the WIP entry still shows something.
+                match repo.unstaged_file_diff(&path) {
+                    Ok(d) if !d.hunks.is_empty() || d.is_binary => Ok(d),
+                    _ => repo.staged_file_diff(&path),
+                }
+            }
+            FileHistoryEntryKind::Commit => match commit_id {
+                Some(id) => repo.commit_file_diff(&id, &path),
+                None => {
+                    self.data.diff = None;
+                    return;
+                }
+            },
+        };
+
+        let view = match file_diff_result {
+            Ok(file_diff) => {
+                let added: usize = file_diff
+                    .hunks
+                    .iter()
+                    .flat_map(|h| h.lines.iter())
+                    .filter(|l| l.kind == DiffLineKind::Added)
+                    .count();
+                let removed: usize = file_diff
+                    .hunks
+                    .iter()
+                    .flat_map(|h| h.lines.iter())
+                    .filter(|l| l.kind == DiffLineKind::Removed)
+                    .count();
+
+                let fdv = FileDiffView::from_file_diff(&file_diff, 0);
+                let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
+                let title = fdv.file_name.clone();
+                let mut rows = fdv.rows;
+                let _ = highlight_diff_rows(&mut rows, &path);
+
+                Some(MainDiffView {
+                    title,
+                    stats,
+                    rows,
+                    // The source is unused by the File History renderer; Unstaged
+                    // carries the path for completeness.
+                    source: MainDiffSource::Unstaged { path: path.clone() },
+                })
+            }
+            Err(e) => {
+                klog!("file-history diff error: {}", e);
+                None
+            }
+        };
+
+        self.data.diff = view;
+    }
+}
 
 // ──────────────────────────────────────────────────────────────
 // ADR-0089: File History view rendering
@@ -18,9 +258,13 @@ use gpui_component::button::{Button, ButtonVariants};
 pub(crate) fn fh_header_button(
     id: &'static str,
     label: impl Into<SharedString>,
-    on_click: impl Fn(&mut KagiApp, &gpui::ClickEvent, &mut gpui::Window, &mut Context<KagiApp>)
-        + 'static,
-    cx: &mut Context<KagiApp>,
+    on_click: impl Fn(
+            &mut FileHistoryView,
+            &gpui::ClickEvent,
+            &mut gpui::Window,
+            &mut Context<FileHistoryView>,
+        ) + 'static,
+    cx: &mut Context<FileHistoryView>,
 ) -> impl IntoElement {
     Button::new(id)
         .label(label.into())
@@ -34,16 +278,19 @@ pub(crate) fn fh_header_button(
 /// Reuses [`render_main_diff_view`] for the diff body.  Returns the body
 /// fragment that `render_body` drops in place of the normal center+right area.
 pub(crate) fn render_file_history_view(
-    state: &file_history::FileHistoryState,
-    file_history_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
-    fh_branch: SharedString,
-    panel_width: f32,
-    geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
-    cx: &mut Context<KagiApp>,
+    view: &FileHistoryView,
+    cx: &mut Context<FileHistoryView>,
 ) -> gpui::AnyElement {
-    // Extract the scalar/owned view data from the shared `state` borrow. Render
-    // functions must NEVER read the entity back via `cx` — that re-enters the
-    // already checked-out KagiApp entity and panics. State is from render_body.
+    // ADR-0117: the entity renders itself. Read only `self`'s data here — never
+    // upgrade `view.app` in a render path (it would re-enter the parent and
+    // panic). The owned bindings below come straight from `view.data`.
+    let state = &view.data;
+    let file_history_menu = view.menu;
+    let fh_branch = view.data.branch.clone();
+    let panel_width = view.panel_width;
+    let geom = view.geom.clone();
+
+    // Extract the scalar/owned view data from the `state` borrow.
     let (rel_path, follow, split, count, is_loading, error, is_empty, is_untracked) = (
         state.rel_path.clone(),
         state.follow_renames,
@@ -61,8 +308,12 @@ pub(crate) fn render_file_history_view(
         "fh-back",
         "\u{2190} Back",
         |this, _e, _w, cx| {
-            this.close_file_history();
-            cx.notify();
+            this.app
+                .update(cx, |app, cx| {
+                    app.close_file_history();
+                    cx.notify();
+                })
+                .ok();
         },
         cx,
     );
@@ -83,7 +334,7 @@ pub(crate) fn render_file_history_view(
         "fh-refresh",
         "Refresh",
         |this, _e, _w, cx| {
-            this.refresh_file_history(cx);
+            this.reload(true, cx);
         },
         cx,
     );
@@ -92,11 +343,13 @@ pub(crate) fn render_file_history_view(
     let open_file = fh_header_button(
         "fh-open-file",
         "Open File",
-        move |this, _e, _w, _cx| {
+        move |this, _e, _w, cx| {
             // v1: return to the normal body; the file's diff is reachable via
             // the commit panel / inspector.  Keep it simple per the spec.
             let _ = &path_for_open;
-            this.close_file_history();
+            this.app
+                .update(cx, |app, _cx| app.close_file_history())
+                .ok();
         },
         cx,
     );
@@ -110,7 +363,8 @@ pub(crate) fn render_file_history_view(
         "fh-follow",
         follow_label,
         |this, _e, _w, cx| {
-            this.toggle_file_history_follow(cx);
+            this.data.follow_renames = !this.data.follow_renames;
+            this.reload(false, cx);
         },
         cx,
     );
@@ -230,7 +484,7 @@ pub(crate) fn render_file_history_view(
 pub(crate) fn render_fh_message(
     msg: &'static str,
     is_error: bool,
-    _cx: &mut Context<KagiApp>,
+    _cx: &mut Context<FileHistoryView>,
 ) -> impl IntoElement {
     let color = if is_error {
         theme().color_blocker
@@ -249,7 +503,10 @@ pub(crate) fn render_fh_message(
 }
 
 /// Error state: message + detail + Retry button.
-pub(crate) fn render_fh_error(detail: String, cx: &mut Context<KagiApp>) -> impl IntoElement {
+pub(crate) fn render_fh_error(
+    detail: String,
+    cx: &mut Context<FileHistoryView>,
+) -> impl IntoElement {
     let retry = div()
         .id("fh-retry")
         .px_3()
@@ -259,7 +516,7 @@ pub(crate) fn render_fh_error(detail: String, cx: &mut Context<KagiApp>) -> impl
         .text_sm()
         .text_color(rgb(theme().text_sub))
         .on_click(cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-            this.refresh_file_history(cx);
+            this.reload(true, cx);
         }))
         .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
         .child(SharedString::from("Retry"));
@@ -294,7 +551,7 @@ pub(crate) fn render_fh_list_and_diff(
     split: f32,
     banner: Option<&'static str>,
     geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<FileHistoryView>,
 ) -> impl IntoElement {
     let list = render_fh_commit_list(state, cx);
     let (diff_view, diff_scroll, sel_banner) = {
@@ -379,7 +636,10 @@ pub(crate) fn render_fh_list_and_diff(
             )
         })
         .child(match diff_view {
-            Some(view) => render_main_diff_view(view, diff_scroll, false, cx).into_any_element(),
+            // ADR-0117: render the diff list directly on the FileHistoryView
+            // context (no standalone Back/History buttons — FH has its own Back).
+            Some(view) => render_diff_list::<FileHistoryView>(view, None, None, diff_scroll, cx)
+                .into_any_element(),
             None => div()
                 .flex_1()
                 .flex()
@@ -434,7 +694,7 @@ pub(crate) fn render_fh_list_and_diff(
 /// The commit list (upper pane) of the File History view.
 pub(crate) fn render_fh_commit_list(
     state: &file_history::FileHistoryState,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<FileHistoryView>,
 ) -> gpui::AnyElement {
     let Some(history) = state.history.as_ref() else {
         return div().into_any_element();
@@ -465,7 +725,7 @@ pub(crate) fn render_fh_row(
     entry: &kagi_git::FileHistoryEntry,
     is_selected: bool,
     now: i64,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<FileHistoryView>,
 ) -> impl IntoElement {
     use kagi_git::FileHistoryEntryKind;
 
@@ -519,27 +779,31 @@ pub(crate) fn render_fh_row(
     };
 
     let click = cx.listener(move |this, e: &gpui::ClickEvent, _w, cx| {
-        this.file_history_menu = None;
+        this.menu = None;
         if e.click_count() >= 2 {
             // Double-click: jump to the commit in the graph (commits only).
             if let Some(id) = this
-                .file_history
+                .data
+                .history
                 .as_ref()
-                .and_then(|fh| fh.history.as_ref())
                 .and_then(|h| h.entries.get(ix))
                 .and_then(|e| e.commit.as_ref())
                 .map(|c| CommitId(c.full_hash.clone()))
             {
-                this.close_file_history();
-                this.jump_to_commit(&id);
-                cx.notify();
+                this.app
+                    .update(cx, |app, cx| {
+                        app.close_file_history();
+                        app.jump_to_commit(&id);
+                        cx.notify();
+                    })
+                    .ok();
                 return;
             }
         }
-        this.file_history_select(ix, cx);
+        this.select(ix, cx);
     });
     let ctx = cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {
-        this.file_history_menu = Some((ix, e.position));
+        this.menu = Some((ix, e.position));
         cx.stop_propagation();
         cx.notify();
     });
@@ -629,7 +893,7 @@ pub(crate) fn render_fh_row(
 pub(crate) fn render_fh_detail_pane(
     state: &file_history::FileHistoryState,
     panel_width: f32,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<FileHistoryView>,
 ) -> gpui::AnyElement {
     // Clone the entry out so listeners can capture owned data.
     let entry: Option<kagi_git::FileHistoryEntry> = state.selected_entry().cloned();
@@ -737,9 +1001,13 @@ pub(crate) fn render_fh_detail_pane(
                 "fh-detail-open",
                 "Open Commit",
                 move |this, _e, _w, cx| {
-                    this.close_file_history();
-                    this.jump_to_commit(&id_open);
-                    cx.notify();
+                    this.app
+                        .update(cx, |app, cx| {
+                            app.close_file_history();
+                            app.jump_to_commit(&id_open);
+                            cx.notify();
+                        })
+                        .ok();
                 },
                 cx,
             ))
@@ -747,9 +1015,13 @@ pub(crate) fn render_fh_detail_pane(
                 "fh-detail-graph",
                 "Show in Graph",
                 move |this, _e, _w, cx| {
-                    this.close_file_history();
-                    this.jump_to_commit(&id_graph);
-                    cx.notify();
+                    this.app
+                        .update(cx, |app, cx| {
+                            app.close_file_history();
+                            app.jump_to_commit(&id_graph);
+                            cx.notify();
+                        })
+                        .ok();
                 },
                 cx,
             ))
@@ -784,7 +1056,7 @@ pub(crate) fn render_fh_row_menu(
     state: &file_history::FileHistoryState,
     ix: usize,
     pos: gpui::Point<gpui::Pixels>,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<FileHistoryView>,
 ) -> gpui::AnyElement {
     // Resolve the entry's data up front (commit hash + path at this commit).
     let (commit_hash, path_at) = {
@@ -797,7 +1069,7 @@ pub(crate) fn render_fh_row_menu(
     };
 
     let dismiss = cx.listener(|this, _e: &gpui::MouseDownEvent, _w, cx| {
-        this.file_history_menu = None;
+        this.menu = None;
         cx.notify();
     });
 
@@ -835,7 +1107,7 @@ pub(crate) fn render_fh_row_menu(
             "fh-menu-copy-hash",
             "Copy Commit Hash",
             cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-                this.file_history_menu = None;
+                this.menu = None;
                 cx.write_to_clipboard(ClipboardItem::new_string(h1.clone()));
                 cx.notify();
             }),
@@ -846,7 +1118,7 @@ pub(crate) fn render_fh_row_menu(
             "fh-menu-copy-path",
             "Copy File Path at This Commit",
             cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-                this.file_history_menu = None;
+                this.menu = None;
                 cx.write_to_clipboard(ClipboardItem::new_string(p.clone()));
                 cx.notify();
             }),
@@ -858,10 +1130,14 @@ pub(crate) fn render_fh_row_menu(
             "fh-menu-open-commit",
             "Open Commit",
             cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-                this.file_history_menu = None;
-                this.close_file_history();
-                this.jump_to_commit(&id_open);
-                cx.notify();
+                this.menu = None;
+                this.app
+                    .update(cx, |app, cx| {
+                        app.close_file_history();
+                        app.jump_to_commit(&id_open);
+                        cx.notify();
+                    })
+                    .ok();
             }),
         ));
         let id_graph = CommitId(hash.clone());
@@ -869,10 +1145,14 @@ pub(crate) fn render_fh_row_menu(
             "fh-menu-graph",
             "Show Commit in Graph",
             cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-                this.file_history_menu = None;
-                this.close_file_history();
-                this.jump_to_commit(&id_graph);
-                cx.notify();
+                this.menu = None;
+                this.app
+                    .update(cx, |app, cx| {
+                        app.close_file_history();
+                        app.jump_to_commit(&id_graph);
+                        cx.notify();
+                    })
+                    .ok();
             }),
         ));
     }

@@ -128,14 +128,24 @@ impl Render for KagiApp {
         // W27-UIPOLISH: apply the global UI zoom by scaling the window's rem
         // size. gpui's `text_*` helpers and rem-based lengths resolve through
         // `rem_size()`, so this zooms virtually all of kagi's text/layout like
-        // a web-page zoom. `set_rem_size` persists across frames, so
-        // T-PERF-RENDER-002 (ADR-0116 Wave 2) re-asserts it only when the zoom
-        // changes (tracked via `last_rem_size`); it still self-heals after a
-        // zoom change. The `NAN` sentinel forces the first-frame assert.
-        let rem_size = theme::rem_size_px();
-        if self.last_rem_size != rem_size {
-            window.set_rem_size(px(rem_size));
-            self.last_rem_size = rem_size;
+        // a web-page zoom.
+        //
+        // This re-asserts the zoomed rem size every frame, by design. `KagiApp`
+        // is a child view of `gpui_component::Root`, whose `Root::render` runs
+        // first in gpui's interleaved render→layout walk and calls
+        // `window.set_rem_size(cx.theme().font_size)` — a fixed `px(16.)` that is
+        // NOT zoom-aware (kagi's `sync_gpui_component_theme` maps colours and font
+        // families, never `font_size`). KagiApp::render runs immediately after,
+        // so re-asserting here is what actually scales kagi's text. The earlier
+        // `last_rem_size` guard (T-PERF-RENDER-002) skipped the re-assert on every
+        // steady-state frame, letting Root's fixed 16px win — layout scaled via
+        // `theme::scaled_px` but text stayed pinned at 16px (text/graph drifted
+        // apart on zoom). Compare against the *live* window value (which Root just
+        // reset) so the write is skipped only when genuinely a no-op (zoom == 1.0
+        // ⇒ both already 16px).
+        let rem_size = px(theme::rem_size_px());
+        if window.rem_size() != rem_size {
+            window.set_rem_size(rem_size);
         }
 
         // Auto-update (ADR-0082): kick the run-once background version check.

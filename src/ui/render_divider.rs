@@ -42,6 +42,15 @@ impl KagiApp {
                 let new_width = ((viewport_w - cursor_x - 2.0 * z) / z).clamp(PANEL_MIN, PANEL_MAX);
                 if (new_width - self.panel_width).abs() > 0.5 {
                     self.panel_width = new_width;
+                    // ADR-0117: the File History detail divider drags `panel_width`
+                    // too — keep the (entity-owned) detail-pane width in sync so it
+                    // resizes live.
+                    if let Some(fh) = self.file_history.clone() {
+                        fh.update(cx, |v, cx| {
+                            v.panel_width = new_width;
+                            cx.notify();
+                        });
+                    }
                     cx.notify();
                 }
             }
@@ -176,12 +185,11 @@ impl KagiApp {
                 };
                 let span = bottom - top;
                 if span > 1.0 {
-                    if let Some(fh) = self.file_history.as_mut() {
-                        let ratio = ((cursor_y - top) / span).clamp(0.15, 0.85);
-                        if (ratio - fh.split).abs() > 0.002 {
-                            fh.split = ratio;
-                            cx.notify();
-                        }
+                    // ADR-0117: split lives in the entity; mutate it via `update`
+                    // (its `set_split` applies the 0.002 threshold + child notify).
+                    let ratio = ((cursor_y - top) / span).clamp(0.15, 0.85);
+                    if let Some(fh) = self.file_history.clone() {
+                        fh.update(cx, |v, cx| v.set_split(ratio, cx));
                     }
                 }
             }

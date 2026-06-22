@@ -102,7 +102,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, env_open_repo: Option<PathBuf>) {
     if std::env::var("KAGI_SELECT_FIRST").as_deref() == Ok("1")
         && !app_state.active_view.rows.is_empty()
     {
-        app_state.select(0);
+        app_state.select_headless(0);
     }
 
     // ── T028: headless branch jump ────────────────────────────

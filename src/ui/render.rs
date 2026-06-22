@@ -278,6 +278,14 @@ impl Render for KagiApp {
                     self.load_remote_changed_files(i, cx);
                 }
             }
+        } else if let Some(i) = selected {
+            // ADR-0107 / perf: local view — lazily load the selected commit's
+            // changed files + diffstat off the UI thread (once per row), so no
+            // selection path (click / keyboard / jump) blocks the frame. `select`
+            // only records the selection; this fires the async load.
+            if !self.diff_cache.contains_key(&i) && !self.local_diff_inflight.contains(&i) {
+                self.load_local_changed_files(i, cx);
+            }
         }
 
         // ── Pre-fetch detail for panel (if any row is selected) ─

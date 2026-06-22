@@ -1678,9 +1678,18 @@ impl KagiApp {
     /// Called after a successful checkout to update the commit list, header,
     /// branch list, and badges without restarting the application.
     pub fn reload(&mut self) {
+        let _ = self.reload_checked();
+    }
+
+    /// Like [`reload`] but reports failure. Returns `Err(msg)` when the repo
+    /// can't be reopened or snapshotted (the current view is left intact), so a
+    /// user-initiated refresh can surface the error instead of falsely reporting
+    /// success. `Ok(())` also covers "no repo open" (nothing to refresh). The
+    /// passive FS-watcher path uses [`reload_external`], which stays silent.
+    pub fn reload_checked(&mut self) -> Result<(), String> {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
-            None => return,
+            None => return Ok(()),
         };
 
         // Re-open and snapshot.
@@ -1688,14 +1697,14 @@ impl KagiApp {
             Ok(r) => r,
             Err(e) => {
                 klog!("reload: repo open error: {}", e);
-                return;
+                return Err(e.to_string());
             }
         };
         let snap = match repo.snapshot(self.commit_limit) {
             Ok(s) => s,
             Err(e) => {
                 klog!("reload: snapshot error: {}", e);
-                return;
+                return Err(e.to_string());
             }
         };
         let wip_diffstat = Self::wip_diffstat_from_backend(&repo);
@@ -1824,6 +1833,7 @@ impl KagiApp {
                 self.commit_template_inputs = None;
             }
         }
+        Ok(())
     }
 
     /// Grow the commit graph by [`COMMIT_PAGE_STEP`] and re-snapshot.

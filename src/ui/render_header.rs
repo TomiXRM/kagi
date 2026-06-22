@@ -224,11 +224,20 @@ impl KagiApp {
         let refresh_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
             this.refresh_spin_started = Some(Instant::now());
             // Re-read local .git immediately (instant feedback) …
-            this.reload();
-            this.status_footer = FooterStatus::Idle(SharedString::from(Msg::Refreshed.t()));
-            // W3-NOTIFY: explicit refresh gets a completion toast (the
-            // watcher's automatic reloads stay silent to avoid spam).
-            this.push_toast(ToastKind::Success, Msg::Refreshed.t(), cx);
+            // W3-NOTIFY: explicit refresh gets a completion toast (the watcher's
+            // automatic reloads stay silent to avoid spam). A failed reload now
+            // surfaces an error toast instead of a misleading "Refreshed".
+            match this.reload_checked() {
+                Ok(()) => {
+                    this.status_footer = FooterStatus::Idle(SharedString::from(Msg::Refreshed.t()));
+                    this.push_toast(ToastKind::Success, Msg::Refreshed.t(), cx);
+                }
+                Err(e) => {
+                    let msg = format!("Refresh failed: {e}");
+                    this.status_footer = FooterStatus::Idle(SharedString::from(msg.clone()));
+                    this.push_toast(ToastKind::Error, msg, cx);
+                }
+            }
             // … then also fetch the remote in the background so changes pushed
             // elsewhere (e.g. a GitHub merge) show up. Quiet: success reloads the
             // graph, failure (offline / no remote) is silent — no error spam.

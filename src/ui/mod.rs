@@ -857,6 +857,10 @@ pub struct KagiApp {
     /// Row indices whose remote changed-files load is in flight over SSH
     /// (ADR-0089 Phase 2c), so the render trigger spawns it only once.
     pub remote_diff_inflight: std::collections::HashSet<usize>,
+    /// Row indices whose LOCAL changed-files + diffstat load is in flight off
+    /// the UI thread, so the render trigger (`load_local_changed_files`) spawns
+    /// it only once per row. The local counterpart of `remote_diff_inflight`.
+    pub local_diff_inflight: std::collections::HashSet<usize>,
     /// W16-DIFFSTAT: per-file additions/deletions for the selected commit,
     /// keyed by row index. Computed lazily alongside `diff_cache` and consumed
     /// by the Inspector changed-files list (truncated set only).
@@ -1467,6 +1471,7 @@ impl KagiApp {
             diff_cache: HashMap::new(),
             file_diff_cache: HashMap::new(),
             remote_diff_inflight: std::collections::HashSet::new(),
+            local_diff_inflight: std::collections::HashSet::new(),
             diffstat_cache: HashMap::new(),
             wip_diffstat: None,
             main_diff: None,
@@ -1574,6 +1579,7 @@ impl KagiApp {
             diff_cache: HashMap::new(),
             file_diff_cache: HashMap::new(),
             remote_diff_inflight: std::collections::HashSet::new(),
+            local_diff_inflight: std::collections::HashSet::new(),
             diffstat_cache: HashMap::new(),
             wip_diffstat: None,
             main_diff: None,
@@ -1710,6 +1716,7 @@ impl KagiApp {
         self.diff_cache = HashMap::new();
         self.file_diff_cache = HashMap::new();
         self.remote_diff_inflight.clear();
+        self.local_diff_inflight.clear();
         self.diffstat_cache = HashMap::new();
         self.wip_diffstat = Some(wip_diffstat);
         self.main_diff = None;
@@ -1964,6 +1971,7 @@ impl KagiApp {
                 app.diff_cache = HashMap::new();
                 app.file_diff_cache = HashMap::new();
                 app.remote_diff_inflight.clear();
+                app.local_diff_inflight.clear();
                 app.diffstat_cache = HashMap::new();
                 app.wip_diffstat = Some(wip);
                 app.main_diff = None;
@@ -3135,13 +3143,30 @@ impl KagiApp {
             );
         }
 
-        // Fetch changed files on-demand (only once per row). For a remote
-        // read-only view (ADR-0089 Phase 2c) the fetch is an SSH round-trip, so
-        // it is loaded asynchronously from the render trigger instead — leave
-        // the cache empty here so that trigger fires.
-        if self.remote_view.is_some() {
-            // no-op: the async remote load handles this row.
-        } else if !self.diff_cache.contains_key(&index) {
+        // Changed files + diffstat for this row load lazily OFF the UI thread
+        // via the render trigger (`load_local_changed_files`, or
+        // `load_remote_changed_files` for a remote view), so selecting a row
+        // never blocks the frame on a git diff. The headless harness runs no
+        // render loop, so it drives `select_headless` instead, which performs
+        // the synchronous load + emits the `[kagi] changed files:` / `tree:`
+        // contract deterministically.
+    }
+
+    /// Headless-only: select row `index` and SYNCHRONOUSLY load its changed
+    /// files + diffstat, emitting the `[kagi] changed files: N` contract and,
+    /// under `KAGI_SELECT_FIRST=1`, the `[kagi] tree:` structure dump. The
+    /// interactive UI defers this load to the async render trigger
+    /// (`load_local_changed_files`), which the headless harness does not run —
+    /// so this preserves the old synchronous `select` behaviour, and its exact
+    /// stderr ordering, for deterministic verification.
+    pub fn select_headless(&mut self, index: usize) {
+        self.select(index);
+        // `select` toggles off when re-selecting the same row; only a freshly
+        // selected row needs the on-demand load.
+        if self.selected != Some(index) {
+            return;
+        }
+        if !self.diff_cache.contains_key(&index) {
             let files_opt = self.fetch_changed_files(index);
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             klog!("changed files: {}", n);
@@ -3151,7 +3176,7 @@ impl KagiApp {
                 self.diffstat_cache.insert(index, stats);
             }
         } else {
-            // Already cached — just emit the log.
+            // Already cached — still emit the log (matches the old select()).
             let n = self
                 .diff_cache
                 .get(&index)
@@ -3161,7 +3186,7 @@ impl KagiApp {
             klog!("changed files: {}", n);
         }
 
-        // T018: emit tree structure log when KAGI_SELECT_FIRST=1
+        // T018: emit tree structure log when KAGI_SELECT_FIRST=1.
         if std::env::var("KAGI_SELECT_FIRST").as_deref() == Ok("1") {
             const MAX_FILES: usize = 100;
             if let Some(Some(files)) = self.diff_cache.get(&index) {
@@ -3329,6 +3354,7 @@ impl KagiApp {
             diff_scroll: UniformListScrollHandle::new(),
             split: 0.25,
             generation: 0,
+            diff_req: 0,
         };
 
         // The entity holds a weak back-ref (for close / jump-to-commit), a shared
@@ -3660,6 +3686,64 @@ impl KagiApp {
                         klog!("remote changed-files error: {e}");
                         app.diff_cache.insert(index, None);
                     }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Load the selected LOCAL commit's changed files + per-file diffstat OFF the
+    /// UI thread and cache them under `index`. Idempotent via `local_diff_inflight`
+    /// so it is safe to call every frame from the render trigger; `select` only
+    /// records the selection. Emits the `[kagi] changed files: N` contract on
+    /// completion — the interactive counterpart of `select_headless`.
+    ///
+    /// The repo is re-opened inside the background task (a `git2` handle is
+    /// `!Send`); only the plain `kagi_git` result data crosses back. The result
+    /// is dropped if a history reload has remapped the row to a different commit
+    /// (the captured SHA no longer matches the row), so a late load can't show
+    /// the wrong commit's files.
+    fn load_local_changed_files(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.diff_cache.contains_key(&index) || self.local_diff_inflight.contains(&index) {
+            return;
+        }
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        let Some(detail) = self.active_view.details.get(index) else {
+            return;
+        };
+        let sha = detail.full_sha.as_ref().to_string();
+        let sha_guard = sha.clone();
+        self.local_diff_inflight.insert(index);
+
+        let task = cx.background_spawn(async move {
+            let repo = kagi_git::Backend::open(&repo_path).ok()?;
+            let id = kagi_git::CommitId(sha);
+            let files = repo.commit_changed_files(&id).ok();
+            let stats = repo.commit_diffstat(&id).ok();
+            Some((files, stats))
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.local_diff_inflight.remove(&index);
+                // Drop the result if a reload remapped this row to another commit.
+                let still_current = app
+                    .active_view
+                    .details
+                    .get(index)
+                    .is_some_and(|d| d.full_sha.as_ref() == sha_guard);
+                if !still_current {
+                    return;
+                }
+                let (files, stats) = result.unwrap_or((None, None));
+                let n = files.as_ref().map(|v| v.len()).unwrap_or(0);
+                klog!("changed files: {}", n);
+                app.diff_cache.insert(index, files);
+                if let Some(stats) = stats {
+                    app.diffstat_cache.insert(index, stats);
                 }
                 cx.notify();
             });

@@ -7,10 +7,10 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::i18n::Msg;
-use super::modal_renderers::{render_input_plan_modal, render_plan_modal_card};
+use super::modal_renderers::{render_input_plan_modal, render_plan_modal_wrapper};
 use super::modals::*;
 use super::KagiApp;
-use gpui::{prelude::*, Context, SharedString};
+use gpui::{Context, SharedString};
 use kagi_git::{MergeKind, OperationPlan};
 
 pub(crate) fn render_plan_modal(
@@ -21,30 +21,15 @@ pub(crate) fn render_plan_modal(
         CheckoutPlanTarget::Commit(commit_id) => Some(commit_id.clone()),
         CheckoutPlanTarget::Branch(_) => None,
     };
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.start_checkout(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(
+    render_plan_modal_wrapper(
         modal.plan,
         modal.error,
         "Checkout",
-        cancel_handler,
-        confirm_handler,
         create_branch_target,
+        |this, _cx| this.cancel_modal(),
+        |this, cx| this.start_checkout(cx),
         cx,
     )
-    .into_any_element()
 }
 
 /// Pull plan confirmation overlay (T-HT-003) — same card as the checkout
@@ -53,31 +38,16 @@ pub(crate) fn render_pull_modal(
     modal: PullPlanModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_pull_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        // W3-NOTIFY: run on a background thread (start/finish toasts).
-        this.start_pull(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(
+    // W3-NOTIFY: confirm runs on a background thread (start/finish toasts).
+    render_plan_modal_wrapper(
         modal.plan,
         modal.error,
         "Pull",
-        cancel_handler,
-        confirm_handler,
         None,
+        |this, _cx| this.cancel_pull_modal(),
+        |this, cx| this.start_pull(cx),
         cx,
     )
-    .into_any_element()
 }
 
 /// Undo-commit confirmation overlay (T-HT-009).
@@ -85,30 +55,15 @@ pub(crate) fn render_undo_modal(
     modal: UndoPlanModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.cancel_undo_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.confirm_undo(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(
+    render_plan_modal_wrapper(
         modal.plan,
         modal.error,
         "Undo",
-        cancel_handler,
-        confirm_handler,
         None,
+        |this, _cx| this.cancel_undo_modal(),
+        |this, cx| this.confirm_undo(cx),
         cx,
     )
-    .into_any_element()
 }
 
 /// Operation-history Undo / Redo confirmation overlay (T-UNDOREDO-001,
@@ -118,35 +73,20 @@ pub(crate) fn render_history_modal(
     modal: HistoryPlanModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.clear_history_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.confirm_history(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
     let confirm_label = if modal.is_undo {
         Msg::Undo.t()
     } else {
         Msg::Redo.t()
     };
-    render_plan_modal_card(
+    render_plan_modal_wrapper(
         modal.plan,
         modal.error,
         confirm_label,
-        cancel_handler,
-        confirm_handler,
         None,
+        |this, _cx| this.clear_history_modal(),
+        |this, cx| this.confirm_history(cx),
         cx,
     )
-    .into_any_element()
 }
 
 /// Sequencer `<op> --continue` confirmation overlay (ADR-0068 /
@@ -156,58 +96,28 @@ pub(crate) fn render_conflict_continue_modal(
     modal: ConflictContinuePlanModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.cancel_conflict_continue();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.confirm_conflict_continue(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(
+    render_plan_modal_wrapper(
         modal.plan,
         modal.error,
         Msg::ConflictContinue.t(),
-        cancel_handler,
-        confirm_handler,
         None,
+        |this, _cx| this.cancel_conflict_continue(),
+        |this, cx| this.confirm_conflict_continue(cx),
         cx,
     )
-    .into_any_element()
 }
 
 /// Stash-pop confirmation overlay (T-HT-007).
 pub(crate) fn render_pop_modal(modal: PopPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.cancel_pop_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.start_pop(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(
+    render_plan_modal_wrapper(
         modal.plan,
         modal.error,
         "Pop",
-        cancel_handler,
-        confirm_handler,
         None,
+        |this, _cx| this.cancel_pop_modal(),
+        |this, cx| this.start_pop(cx),
         cx,
     )
-    .into_any_element()
 }
 
 /// Stash drop confirmation overlay (ADR-0087) — Destructive: deletes the
@@ -217,30 +127,15 @@ pub(crate) fn render_stash_drop_modal(
     modal: StashDropModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.cancel_stash_drop_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.start_stash_drop(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(
+    render_plan_modal_wrapper(
         modal.plan,
         modal.error,
         "Drop",
-        cancel_handler,
-        confirm_handler,
         None,
+        |this, _cx| this.cancel_stash_drop_modal(),
+        |this, cx| this.start_stash_drop(cx),
         cx,
     )
-    .into_any_element()
 }
 
 /// Push plan confirmation overlay (T-HT-004) — same card as the pull
@@ -249,31 +144,16 @@ pub(crate) fn render_push_modal(
     modal: PushPlanModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_push_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        // W3-NOTIFY: run on a background thread (start/finish toasts).
-        this.start_push(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(
+    // W3-NOTIFY: confirm runs on a background thread (start/finish toasts).
+    render_plan_modal_wrapper(
         modal.plan,
         modal.error,
         "Push",
-        cancel_handler,
-        confirm_handler,
         None,
+        |this, _cx| this.cancel_push_modal(),
+        |this, cx| this.start_push(cx),
         cx,
     )
-    .into_any_element()
 }
 
 pub(crate) fn render_branch_plan_modal(
@@ -284,30 +164,15 @@ pub(crate) fn render_branch_plan_modal(
         BranchPlanKind::PullFfOnly => "Pull",
         BranchPlanKind::Push | BranchPlanKind::PushSetUpstream => "Push",
     };
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.cancel_branch_plan_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.start_branch_plan(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(
+    render_plan_modal_wrapper(
         modal.plan,
         modal.error,
         label,
-        cancel_handler,
-        confirm_handler,
         None,
+        |this, _cx| this.cancel_branch_plan_modal(),
+        |this, cx| this.start_branch_plan(cx),
         cx,
     )
-    .into_any_element()
 }
 
 pub(crate) fn render_set_upstream_modal(
@@ -376,20 +241,6 @@ pub(crate) fn render_merge_modal(
     modal: MergePlanModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_merge_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.start_merge(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
     // W31-MERGE-INTO-CONFLICT: a conflict-producing merge gets a localized
     // Confirm-button label. The full "Merge <source> into <current>" context is
     // already the modal's title (the plan title), so the button stays short —
@@ -408,46 +259,30 @@ pub(crate) fn render_merge_modal(
         } else {
             (SharedString::from("Merge"), modal.plan)
         };
-    render_plan_modal_card(
+    render_plan_modal_wrapper(
         plan,
         modal.error,
         confirm_label,
-        cancel_handler,
-        confirm_handler,
         None,
+        |this, _cx| this.cancel_merge_modal(),
+        |this, cx| this.start_merge(cx),
         cx,
     )
-    .into_any_element()
 }
 
 pub(crate) fn render_tracking_checkout_modal(
     modal: TrackingCheckoutPlanModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_tracking_checkout_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.start_tracking_checkout(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(
+    render_plan_modal_wrapper(
         modal.plan,
         modal.error,
         "Checkout",
-        cancel_handler,
-        confirm_handler,
         None,
+        |this, _cx| this.cancel_tracking_checkout_modal(),
+        |this, cx| this.start_tracking_checkout(cx),
         cx,
     )
-    .into_any_element()
 }
 
 /// Switch-to-latest confirmation overlay (ADR-0101).
@@ -455,30 +290,15 @@ pub(crate) fn render_switch_to_latest_modal(
     modal: SwitchToLatestPlanModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_switch_to_latest_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.start_switch_to_latest(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(
+    render_plan_modal_wrapper(
         modal.plan,
         modal.error,
         "Switch",
-        cancel_handler,
-        confirm_handler,
         None,
+        |this, _cx| this.cancel_switch_to_latest_modal(),
+        |this, cx| this.start_switch_to_latest(cx),
         cx,
     )
-    .into_any_element()
 }
 
 /// Delete-branch confirmation overlay (W2-DELETE).
@@ -486,30 +306,15 @@ pub(crate) fn render_delete_branch_modal(
     modal: DeleteBranchModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.cancel_delete_branch_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.start_delete_branch(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(
+    render_plan_modal_wrapper(
         modal.plan,
         modal.error,
         "Delete",
-        cancel_handler,
-        confirm_handler,
         None,
+        |this, _cx| this.cancel_delete_branch_modal(),
+        |this, cx| this.start_delete_branch(cx),
         cx,
     )
-    .into_any_element()
 }
 
 /// Revert confirmation overlay (T-CM-034).
@@ -517,28 +322,13 @@ pub(crate) fn render_revert_modal(
     modal: RevertModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.cancel_revert_modal();
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-        this.start_revert(cx);
-        if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
-        }
-        cx.notify();
-    });
-    render_plan_modal_card(
+    render_plan_modal_wrapper(
         modal.plan,
         modal.error,
         "Revert",
-        cancel_handler,
-        confirm_handler,
         None,
+        |this, _cx| this.cancel_revert_modal(),
+        |this, cx| this.start_revert(cx),
         cx,
     )
-    .into_any_element()
 }

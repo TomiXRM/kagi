@@ -333,6 +333,7 @@ impl KagiApp {
         self.diff_cache.clear();
         self.file_diff_cache.clear();
         self.remote_diff_inflight.clear();
+        self.local_diff_inflight.clear();
         self.wip_diffstat = None;
         self.main_diff = None;
         self.clear_plan_modal();
@@ -503,6 +504,7 @@ impl KagiApp {
         self.diff_cache.clear();
         self.file_diff_cache.clear();
         self.remote_diff_inflight.clear();
+        self.local_diff_inflight.clear();
         self.main_diff = None;
         self.active_view.branches = blank.active_view.branches;
         self.active_view.remote_branches = blank.active_view.remote_branches;

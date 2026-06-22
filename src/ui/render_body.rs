@@ -49,7 +49,7 @@ impl KagiApp {
     ) -> impl IntoElement {
         // W11-AVATAR: snapshot the resolved avatar images so the inspector can
         // swap the initial circle for a real image without re-borrowing self.
-        let avatar_images = self.avatar_images.clone();
+        let avatar_images = self.avatars.images.clone();
         // Build divider 1: sidebar | main.
         let divider1 = div()
             .id("divider-sidebar")
@@ -327,7 +327,7 @@ impl KagiApp {
                             let commit_range = range.start..range.end.min(rows_len);
                             let mut els: Vec<gpui::AnyElement> = render_rows(
                                 &this.active_view.rows,
-                                &this.avatar_images,
+                                &this.avatars.images,
                                 commit_range,
                                 selected,
                                 this.badge_col_w,

@@ -820,10 +820,6 @@ pub struct KagiApp {
     /// truth; ADR-0075 P2). Inactive tabs live in `tab_cache`. Adding a
     /// field to `TabViewState` no longer needs an `apply_tab_view` edit.
     pub active_view: TabViewState,
-    /// T-PERF-RENDER-002 (ADR-0116 Wave 2): last rem size pushed to the window
-    /// via `set_rem_size`, so `render` only re-asserts it when the UI zoom
-    /// actually changes (NaN sentinel forces the first-frame assert).
-    pub last_rem_size: f32,
     /// T-PERF-RENDER-002 (ADR-0116 Wave 2): monotonic counter bumped on every
     /// `active_view` write so the sidebar can cheaply detect that its inputs
     /// (branches/remotes/tags/stashes/worktrees) may have changed without
@@ -1464,7 +1460,6 @@ impl KagiApp {
             root_focus: None,
             active_view: view,
             view_epoch: 0,
-            last_rem_size: f32::NAN,
             selected: None,
             error: None,
             repo_path: None,
@@ -1572,7 +1567,6 @@ impl KagiApp {
                 ..Default::default()
             },
             view_epoch: 0,
-            last_rem_size: f32::NAN,
             selected: None,
             error: Some(SharedString::from(message.into())),
             repo_path: None,

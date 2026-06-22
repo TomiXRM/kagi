@@ -1185,6 +1185,36 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// Double-click a remote-branch pill → switch to its latest.
+    ///
+    /// Resolves the local tracking name from `remote_branch` (e.g.
+    /// `origin/feature` → `feature`), plans the switch via
+    /// [`open_switch_to_latest_modal`](Self::open_switch_to_latest_modal), and —
+    /// when the plan is completely clean (no blockers **and** no warnings) —
+    /// runs it immediately with no popup. `start_switch_to_latest` consumes the
+    /// modal before any render, so nothing flashes on screen. Blockers/warnings
+    /// leave the modal open for review (e.g. a dirty tree blocks; a local branch
+    /// ahead of its remote warns that the switch can't fast-forward).
+    pub fn dblclick_switch_to_latest(
+        &mut self,
+        remote_branch: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let remote_branch = remote_branch.into();
+        let branch_name = default_tracking_branch_name(&remote_branch);
+        self.open_switch_to_latest_modal(branch_name, remote_branch);
+        // `open_switch_to_latest_modal` only sets the modal on a successful plan
+        // (and bails when busy); treat a missing modal as "not clean".
+        let clean = self
+            .switch_to_latest_modal()
+            .map(|m| m.plan.blockers.is_empty() && m.plan.warnings.is_empty())
+            .unwrap_or(false);
+        if clean {
+            klog!("dblclick switch-to-latest: clean, no modal");
+            self.start_switch_to_latest(cx);
+        }
+    }
+
     /// Build a delete-branch plan for `branch_name` and open the confirmation modal.
     pub fn open_delete_branch_modal(&mut self, branch_name: impl Into<String>) {
         let branch_name = branch_name.into();

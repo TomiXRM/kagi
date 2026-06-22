@@ -1638,23 +1638,37 @@ pub(crate) fn render_badges_column(
             }
             BadgeKind::Tag => chip,
         };
-        // Double-click a local-branch pill → switch to that branch. A clean plan
-        // switches with no popup; blockers/warnings open the checkout modal
-        // (see `KagiApp::dblclick_checkout_branch`). Gated on `Branch` only so
-        // the current-branch (HeadBranch), remotes and tags are unaffected. Uses
-        // the full `badge.label` (the displayed `label` may be truncated).
-        let chip = if badge.kind == BadgeKind::Branch {
-            let dbl_branch = badge.label.to_string();
-            chip.on_click(cx.listener(
-                move |this: &mut KagiApp, event: &gpui::ClickEvent, _window, cx| {
-                    if event.click_count() >= 2 {
-                        this.dblclick_checkout_branch(dbl_branch.clone(), cx);
-                        cx.notify();
-                    }
-                },
-            ))
-        } else {
-            chip
+        // Double-click a branch pill → switch. A local-branch pill checks out
+        // the branch; a remote-branch pill switches to its latest (create/
+        // fast-forward the tracking branch). A clean plan switches with no
+        // popup; blockers/warnings open the relevant modal (see
+        // `dblclick_checkout_branch` / `dblclick_switch_to_latest`). The
+        // current-branch (HeadBranch) and tags are unaffected. Uses the full
+        // `badge.label` (the displayed `label` may be truncated).
+        let chip = match badge.kind {
+            BadgeKind::Branch => {
+                let dbl_branch = badge.label.to_string();
+                chip.on_click(cx.listener(
+                    move |this: &mut KagiApp, event: &gpui::ClickEvent, _window, cx| {
+                        if event.click_count() >= 2 {
+                            this.dblclick_checkout_branch(dbl_branch.clone(), cx);
+                            cx.notify();
+                        }
+                    },
+                ))
+            }
+            BadgeKind::Remote => {
+                let dbl_remote = badge.label.to_string();
+                chip.on_click(cx.listener(
+                    move |this: &mut KagiApp, event: &gpui::ClickEvent, _window, cx| {
+                        if event.click_count() >= 2 {
+                            this.dblclick_switch_to_latest(dbl_remote.clone(), cx);
+                            cx.notify();
+                        }
+                    },
+                ))
+            }
+            BadgeKind::HeadBranch | BadgeKind::Tag => chip,
         };
         let chip = if let Some(branch_name) = context_branch_name(badge) {
             let badge_kind = badge.kind.clone();

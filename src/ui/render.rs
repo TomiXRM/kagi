@@ -309,9 +309,15 @@ impl Render for KagiApp {
         // W27-UIPOLISH: apply the global UI zoom by scaling the window's rem
         // size. gpui's `text_*` helpers and rem-based lengths resolve through
         // `rem_size()`, so this zooms virtually all of kagi's text/layout like
-        // a web-page zoom. `set_rem_size` persists, but kagi re-asserts it every
-        // frame so it self-heals after window re-create / zoom changes.
-        window.set_rem_size(px(theme::rem_size_px()));
+        // a web-page zoom. `set_rem_size` persists across frames, so
+        // T-PERF-RENDER-002 (ADR-0116 Wave 2) re-asserts it only when the zoom
+        // changes (tracked via `last_rem_size`); it still self-heals after a
+        // zoom change. The `NAN` sentinel forces the first-frame assert.
+        let rem_size = theme::rem_size_px();
+        if self.last_rem_size != rem_size {
+            window.set_rem_size(px(rem_size));
+            self.last_rem_size = rem_size;
+        }
 
         // Auto-update (ADR-0082): kick the run-once background version check.
         self.ensure_update_check(cx);
@@ -477,23 +483,44 @@ impl Render for KagiApp {
         let sidebar_filter = self.sidebar.filter.clone();
         // PERF-SIDEBAR-VIRT: flatten the navigator into `self.sidebar.rows`
         // (honouring collapse + filter) so the "sidebar-list" uniform_list can
-        // virtualize it. Rebuilt every render; the processor reads the field.
+        // virtualize it. The processor reads the field.
+        //
+        // T-PERF-RENDER-002 (ADR-0116 Wave 2): only rebuild when the inputs
+        // change. A cheap, allocation-free fingerprint (view epoch + collection
+        // lengths + collapsed sets + filter text) gates the O(all-refs)
+        // clone+collect so unchanged frames reuse the cached `rows`. The filter
+        // `InputState` has no notification path into `KagiApp`, so its value is
+        // read+folded each frame rather than tracked via the epoch.
         let sidebar_filter_text: String = self
             .sidebar
             .filter
             .as_ref()
             .map(|ent| ent.read(cx).value().to_lowercase())
             .unwrap_or_default();
-        self.sidebar.rows = sidebar::build_sidebar_rows(
-            &self.active_view.branches,
-            &self.active_view.remote_branches,
-            &self.active_view.tags,
-            &self.active_view.stashes,
-            &self.active_view.worktrees,
+        let sidebar_fingerprint = sidebar::sidebar_rows_fingerprint(
+            self.view_epoch,
+            self.active_view.branches.len(),
+            self.active_view.remote_branches.len(),
+            self.active_view.tags.len(),
+            self.active_view.stashes.len(),
+            self.active_view.worktrees.len(),
             &self.sidebar.collapsed,
             &self.branch_groups_collapsed,
             &sidebar_filter_text,
         );
+        if sidebar_fingerprint != self.sidebar.rows_fingerprint {
+            self.sidebar.rows = sidebar::build_sidebar_rows(
+                &self.active_view.branches,
+                &self.active_view.remote_branches,
+                &self.active_view.tags,
+                &self.active_view.stashes,
+                &self.active_view.worktrees,
+                &self.sidebar.collapsed,
+                &self.branch_groups_collapsed,
+                &sidebar_filter_text,
+            );
+            self.sidebar.rows_fingerprint = sidebar_fingerprint;
+        }
         let sidebar_row_count = self.sidebar.rows.len();
         let sidebar_scroll_handle = self.sidebar.scroll_handle.clone();
         let plan_modal = self.plan_modal().cloned();

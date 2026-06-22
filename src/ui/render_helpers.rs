@@ -48,7 +48,11 @@ pub(crate) fn render_rows(
     range
         .filter_map(|i| rows.get(i).map(|row| (i, row)))
         .map(|(ix, row)| {
-            let row = row.clone();
+            // T-PERF-RENDER-002 (ADR-0116 Wave 2): `row` stays a `&CommitRow`
+            // borrowed from `rows`; the click/context handlers capture `ix`
+            // (not the row), and every field read either copies a `Copy` value
+            // or bumps an Arc (`SharedString`) / clones a small Vec, so the
+            // whole-row clone per visible row is unnecessary.
             let is_selected = selected == Some(ix);
             let is_dimmed = solo_visible.is_some_and(|visible| !visible.contains(&row.id));
 

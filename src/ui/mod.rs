@@ -803,6 +803,16 @@ pub struct KagiApp {
     /// truth; ADR-0075 P2). Inactive tabs live in `tab_cache`. Adding a
     /// field to `TabViewState` no longer needs an `apply_tab_view` edit.
     pub active_view: TabViewState,
+    /// T-PERF-RENDER-002 (ADR-0116 Wave 2): last rem size pushed to the window
+    /// via `set_rem_size`, so `render` only re-asserts it when the UI zoom
+    /// actually changes (NaN sentinel forces the first-frame assert).
+    pub last_rem_size: f32,
+    /// T-PERF-RENDER-002 (ADR-0116 Wave 2): monotonic counter bumped on every
+    /// `active_view` write so the sidebar can cheaply detect that its inputs
+    /// (branches/remotes/tags/stashes/worktrees) may have changed without
+    /// hashing the full ref lists each frame.  Read into the sidebar-rows
+    /// fingerprint in `render`.
+    pub view_epoch: u64,
     /// Pre-computed commit rows (built once from the snapshot).
     /// Stash nodes rendered in the graph below the WIP row (ADR-0088).
     /// Lanes used by stash branch lines (passed to the graph painter so those
@@ -1437,6 +1447,8 @@ impl KagiApp {
             op_log_seed: op_entries,
             root_focus: None,
             active_view: view,
+            view_epoch: 0,
+            last_rem_size: f32::NAN,
             selected: None,
             error: None,
             repo_path: None,
@@ -1544,6 +1556,8 @@ impl KagiApp {
                 header: SharedString::from("kagi"),
                 ..Default::default()
             },
+            view_epoch: 0,
+            last_rem_size: f32::NAN,
             selected: None,
             error: Some(SharedString::from(message.into())),
             repo_path: None,
@@ -1854,6 +1868,9 @@ impl KagiApp {
         // applying a freshly-built (or cached) view is one move — there is no
         // field-by-field copy to keep in sync when `TabViewState` gains a field.
         self.active_view = view;
+        // T-PERF-RENDER-002: a fresh view may change branches/tags/stashes/
+        // worktrees, so invalidate the sidebar-rows cache fingerprint.
+        self.view_epoch = self.view_epoch.wrapping_add(1);
 
         // Tie a worktree tab's colour to its WIP-row colour: the WIP row uses
         // lane_color(rank-in-worktrees-list), so record the same rank on the tab.

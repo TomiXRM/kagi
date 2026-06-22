@@ -334,32 +334,17 @@ impl Render for KagiApp {
         // for non-GitHub repos / offline / already-started).
         self.ensure_avatars(cx);
 
-        // W30-CONFLICT-UI: detect Conflict Mode once per repo path (no-op when
-        // already detected this cycle).  Covers the startup / tab-switch
-        // instant-apply paths where `reload()` did not run; the watcher and
-        // post-operation paths force re-detection via `reload()`.
-        self.detect_conflict_mode();
+        // T-PERF-RENDER-001 (ADR-0116 Wave 2): conflict detection, reflog seeding,
+        // and the auto-fetch ticker no longer run here.  `render()` must stay pure
+        // (no synchronous Git/index/file I/O on the UI thread), so those moved to
+        // the reload / tab-switch / app-init commit points via `background_spawn`
+        // + marshal-back (`ensure_startup_repo_io`, armed by `switch_repo` and
+        // `open_main_window`).  The watcher and post-operation paths still force
+        // re-detection through the synchronous `reload()`.
 
         // W3-NOTIFY: the toast auto-dismiss ticker now lives on the
         // `ToastStack` entity and is (re)started by `push_notify`, so KagiApp's
         // render no longer needs to nudge it (ADR-0110 Phase 5).
-
-        // Background auto-fetch ticker (periodic `git fetch` so the graph and
-        // ahead/behind stay fresh). Lazily spawned; no-op when off / no repo.
-        self.ensure_auto_fetch_ticker(cx);
-
-        // ADR-0084: seed the undo/redo history from the reflog once per repo, so
-        // Cmd+Z works on a freshly-opened repo (the initial CLI/snapshot path
-        // never calls `reload()`). `seed_history_from_reflog` is only-when-empty,
-        // so it never clobbers an in-session stack.
-        if !self.history_seed_attempted {
-            self.history_seed_attempted = true;
-            if let Some(repo_path) = self.repo_path.clone() {
-                if let Ok(backend) = kagi_git::Backend::open(&repo_path) {
-                    self.seed_history_from_reflog(&backend);
-                }
-            }
-        }
 
         // Modal text inputs: lazy-create + sync (needs Window).
         self.sync_modal_inputs(window, cx);

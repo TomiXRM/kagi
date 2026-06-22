@@ -57,7 +57,7 @@ pub use types::*;
 use kagi_git::message_gen;
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use gpui::{
@@ -1386,6 +1386,37 @@ fn now_unix_secs() -> i64 {
         .unwrap_or(0)
 }
 
+/// T-PERF-RENDER-001: the `Send` result of the read-only conflict-detection I/O
+/// (`KagiApp::detect_conflict_payload`), applied to `KagiApp` on the UI thread by
+/// `apply_conflict_detect`.  Splitting the I/O out of the state mutation lets the
+/// same detection run either synchronously (`reload`) or off the UI thread
+/// (`detect_conflict_mode_async`) without changing the emitted `[kagi]` lines.
+enum ConflictDetectOutcome {
+    /// `Backend::open` failed — leave `merge_commit_ready` untouched, clear mode.
+    OpenFailed,
+    /// No conflict session — clear Conflict Mode (emits `conflict-mode: cleared`
+    /// only when a mode was previously open).
+    Cleared,
+    /// A merge with MERGE_HEAD but no unmerged entries — resolved, ready to commit.
+    MergeResolvedReady,
+    /// An active conflict/merge with files to resolve.  Boxed: the session +
+    /// resolution buffer are large, and this variant is the rare case.
+    Detected(Box<ConflictDetected>),
+}
+
+/// Payload of [`ConflictDetectOutcome::Detected`] — the assembled conflict state
+/// the UI-thread apply moves into `self.conflict`.
+struct ConflictDetected {
+    session: kagi_git::conflicts::ConflictSession,
+    buffer: kagi_git::resolution::ResolutionBuffer,
+    current_branch: String,
+    selected_file: Option<usize>,
+    editing_file: Option<usize>,
+    /// Selected content file whose hunks were materialized; set as the open
+    /// editor file on apply.
+    editing_path: Option<PathBuf>,
+}
+
 impl KagiApp {
     /// Construct from a successful [`RepoSnapshot`].
     ///
@@ -1995,6 +2026,34 @@ impl KagiApp {
 
     // ── W30-CONFLICT-UI: Conflict Mode (ADR-0056) ────────────────────────
 
+    /// T-PERF-RENDER-001 (ADR-0116 Wave 2): arm the per-repo background I/O that
+    /// used to run synchronously in `render()` — conflict detection, undo/redo
+    /// reflog seeding, and the auto-fetch ticker.  Called from the reload /
+    /// tab-switch / app-init commit points (`switch_repo`, `open_main_window`)
+    /// rather than every frame.  Each sub-task carries its own run-once guard
+    /// (`conflict.detected_for`, `history_seed_attempted`, `auto_fetch_ticker_alive`)
+    /// — reset on tab switch / reload exactly as before — so repeated calls are
+    /// cheap no-ops and the emitted `[kagi]` contract lines fire once per repo.
+    pub fn ensure_startup_repo_io(&mut self, cx: &mut Context<Self>) {
+        // W30-CONFLICT-UI: detect Conflict Mode once per repo path (no-op when
+        // already detected this cycle). The watcher / post-operation paths force
+        // re-detection via the synchronous `reload()`.
+        self.detect_conflict_mode_async(cx);
+
+        // ADR-0084: seed the undo/redo history from the reflog once per repo so
+        // Cmd+Z works on a freshly-opened repo (the initial CLI/snapshot path
+        // never calls `reload()`). Only-when-empty, so it never clobbers an
+        // in-session stack.
+        if !self.history_seed_attempted {
+            self.history_seed_attempted = true;
+            self.seed_history_from_reflog_async(cx);
+        }
+
+        // Background auto-fetch ticker (periodic `git fetch` so the graph and
+        // ahead/behind stay fresh). Lazily spawned; no-op when off / no repo.
+        self.ensure_auto_fetch_ticker(cx);
+    }
+
     /// Detect (or clear) Conflict Mode for the currently-open repository.
     ///
     /// Runs at most once per `repo_path` per cycle (the `conflict_detected_for`
@@ -2018,52 +2077,101 @@ impl KagiApp {
         }
         self.conflict.detected_for = Some(repo_path.clone());
 
-        let repo = match kagi_git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => {
+        // Snapshot the preservation inputs the I/O step needs (prev selection /
+        // editing index), then run the read-only Git/index/file I/O synchronously.
+        let prev_selected = self.conflict.mode.as_ref().and_then(|c| c.selected_file);
+        let prev_editing_file = self.conflict.mode.as_ref().and_then(|c| c.editing_file);
+        let current_branch = self.active_view.status_summary.branch.clone();
+        let outcome = Self::detect_conflict_payload(
+            &repo_path,
+            prev_selected,
+            prev_editing_file,
+            current_branch,
+        );
+        self.apply_conflict_detect(outcome);
+    }
+
+    /// T-PERF-RENDER-001: async sibling of [`detect_conflict_mode`].
+    ///
+    /// Runs the same read-only Backend / index / `ResolutionBuffer` I/O on a
+    /// background thread (`cx.background_spawn`), then marshals the result back to
+    /// [`apply_conflict_detect`] on the UI thread.  The run-once `detected_for`
+    /// guard is armed up-front (mirroring the sync path's "set guard, then do
+    /// I/O" ordering) so repeated calls — including the per-frame render path that
+    /// used to live here — never re-launch the work.  Used by the startup /
+    /// tab-switch commit points where `reload()` (which calls the sync variant)
+    /// did not run.
+    pub fn detect_conflict_mode_async(&mut self, cx: &mut Context<Self>) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => {
                 self.conflict.mode = None;
                 return;
             }
         };
+        // Run-once guard per repo path (armed before the I/O launches).
+        if self.conflict.detected_for.as_deref() == Some(repo_path.as_path()) {
+            return;
+        }
+        self.conflict.detected_for = Some(repo_path.clone());
 
-        // Recomputed fresh every detection (the run-once guard is reset by
-        // reload / tab switch before each call).
-        self.merge_commit_ready = false;
+        let prev_selected = self.conflict.mode.as_ref().and_then(|c| c.selected_file);
+        let prev_editing_file = self.conflict.mode.as_ref().and_then(|c| c.editing_file);
+        let current_branch = self.active_view.status_summary.branch.clone();
+
+        let task = cx.background_spawn(async move {
+            Self::detect_conflict_payload(
+                &repo_path,
+                prev_selected,
+                prev_editing_file,
+                current_branch,
+            )
+        });
+        cx.spawn(async move |this, acx| {
+            let outcome = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.apply_conflict_detect(outcome);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Read-only conflict detection: opens the repo, detects the session, builds
+    /// the resolution buffer, recomputes per-file status, auto-selects a file, and
+    /// materializes zdiff3 markers for the selected content file.  This is the
+    /// **entire I/O half** of conflict detection — pure inputs/outputs (no `self`)
+    /// so it runs either synchronously (`detect_conflict_mode`) or on a background
+    /// thread (`detect_conflict_mode_async`).  `current_branch` and the `prev_*`
+    /// preservation indices are captured by the caller from `self`.
+    fn detect_conflict_payload(
+        repo_path: &Path,
+        prev_selected: Option<usize>,
+        prev_editing_file: Option<usize>,
+        current_branch: String,
+    ) -> ConflictDetectOutcome {
+        let repo = match kagi_git::Backend::open(repo_path) {
+            Ok(r) => r,
+            Err(_) => return ConflictDetectOutcome::OpenFailed,
+        };
 
         let session = match repo.detect_conflict_session() {
             Some(s) => s,
-            None => {
-                if self.conflict.mode.is_some() {
-                    klog!("conflict-mode: cleared");
-                }
-                self.conflict.mode = None;
-                self.conflict.editing = None;
-                return;
-            }
+            None => return ConflictDetectOutcome::Cleared,
         };
 
         // A merge with MERGE_HEAD present but no remaining unmerged index entries
         // is not a conflict to resolve — it is a resolved merge ready to commit.
-        // Show the commit panel (handled by `reload`), not an empty Conflict Mode
-        // editor.  Without this the FS-watcher reload that staging triggers would
-        // re-enter Conflict Mode with zero files and clobber the commit panel.
         if matches!(session.op, kagi_git::ConflictOp::Merge { .. }) && session.files.is_empty() {
-            klog!("conflict-mode: merge resolved — ready to commit");
-            self.merge_commit_ready = true;
-            self.conflict.mode = None;
-            self.conflict.editing = None;
-            return;
+            return ConflictDetectOutcome::MergeResolvedReady;
         }
 
         // Build / reload the resolution buffer.  A previously-autosaved buffer
         // (e.g. from before a restart) is preferred so partial work survives;
         // otherwise materialize a fresh buffer from the index conflicts.
-        let buffer = kagi_git::ResolutionBuffer::load(&repo_path)
+        let mut buffer = kagi_git::ResolutionBuffer::load(repo_path)
             .or_else(|| repo.resolution_buffer_from_repo().ok())
-            .unwrap_or_else(|| kagi_git::ResolutionBuffer::new(&repo_path));
-
-        // Current branch short name (for the side_labels left role).
-        let current_branch = self.active_view.status_summary.branch.clone();
+            .unwrap_or_else(|| kagi_git::ResolutionBuffer::new(repo_path));
 
         // Recompute per-file status from the buffer (detection seeds Unresolved).
         let mut session = session;
@@ -2082,7 +2190,6 @@ impl KagiApp {
 
         // Preserve the previously-selected file across re-detections; otherwise
         // open the first unresolved file (KDiff3-style "land on work to do").
-        let prev_selected = self.conflict.mode.as_ref().and_then(|c| c.selected_file);
         let selected_file = prev_selected
             .filter(|&i| i < session.files.len())
             .or_else(|| {
@@ -2093,45 +2200,99 @@ impl KagiApp {
             })
             .or_else(|| (!session.files.is_empty()).then_some(0));
 
-        eprintln!(
-            "[kagi] conflict-mode: {} {} file(s)",
-            session.op.slug(),
-            session.files.len()
-        );
+        // W33: preserve the dashboard editing-file index across re-detection.
+        let editing_file = prev_editing_file.filter(|&i| i < session.files.len());
 
-        // W32: close the editor if the file being edited is no longer conflicted.
-        if let Some(editing) = self.conflict.editing.clone() {
-            if !session.files.iter().any(|f| f.path == editing) {
-                self.conflict.editing = None;
+        // The center A/B editor renders from the hunk model, which needs the repo
+        // to materialize zdiff3 markers.  With auto-selection the user never
+        // clicked, so build the hunk model for the selected content file here.
+        let mut editing_path = None;
+        if let Some(idx) = selected_file {
+            if let Some(f) = session.files.get(idx) {
+                if f.kind == kagi_git::ConflictKind::Content {
+                    let path = f.path.clone();
+                    if let Some(markers) = repo.materialized_markers(&buffer, &path) {
+                        buffer.ensure_hunks(&path, &markers);
+                    }
+                    editing_path = Some(path);
+                }
             }
         }
-        // W33: preserve the dashboard editing-file index across re-detection.
-        let prev_editing = self.conflict.mode.as_ref().and_then(|c| c.editing_file);
-        let editing_file = prev_editing.filter(|&i| i < session.files.len());
 
-        self.conflict.mode = Some(conflict_view::ConflictMode {
+        ConflictDetectOutcome::Detected(Box::new(ConflictDetected {
             session,
             buffer,
             current_branch,
             selected_file,
             editing_file,
-            abort_armed: false,
-        });
+            editing_path,
+        }))
+    }
 
-        // The center A/B editor renders from the hunk model, which needs the
-        // repo to materialize zdiff3 markers. With auto-selection the user never
-        // clicked, so build the hunk model for the selected content file here
-        // (otherwise the editor shows the "no hunk model" fallback message).
-        if let Some(c) = self.conflict.mode.as_mut() {
-            if let Some(idx) = c.selected_file {
-                if let Some(f) = c.session.files.get(idx) {
-                    if f.kind == kagi_git::ConflictKind::Content {
-                        let path = f.path.clone();
-                        if let Some(markers) = repo.materialized_markers(&c.buffer, &path) {
-                            c.buffer.ensure_hunks(&path, &markers);
-                        }
-                        self.conflict.editing = Some(path);
+    /// Foreground half of conflict detection: apply a [`ConflictDetectOutcome`]
+    /// computed by [`detect_conflict_payload`] to `self`, emitting the same
+    /// `[kagi]` contract lines in the same order as the original synchronous
+    /// implementation.  Reads of `self.conflict.mode` / `self.conflict.editing`
+    /// (the "was a conflict open?" / editor-close checks) live here because they
+    /// must reflect the current UI state at apply time.
+    fn apply_conflict_detect(&mut self, outcome: ConflictDetectOutcome) {
+        match outcome {
+            ConflictDetectOutcome::OpenFailed => {
+                // Mirrors the original early-return on `Backend::open` failure,
+                // which happened before `merge_commit_ready` was reset — so that
+                // flag is intentionally left untouched here.
+                self.conflict.mode = None;
+            }
+            ConflictDetectOutcome::Cleared => {
+                self.merge_commit_ready = false;
+                if self.conflict.mode.is_some() {
+                    klog!("conflict-mode: cleared");
+                }
+                self.conflict.mode = None;
+                self.conflict.editing = None;
+            }
+            ConflictDetectOutcome::MergeResolvedReady => {
+                self.merge_commit_ready = false;
+                klog!("conflict-mode: merge resolved — ready to commit");
+                self.merge_commit_ready = true;
+                self.conflict.mode = None;
+                self.conflict.editing = None;
+            }
+            ConflictDetectOutcome::Detected(detected) => {
+                let ConflictDetected {
+                    session,
+                    buffer,
+                    current_branch,
+                    selected_file,
+                    editing_file,
+                    editing_path,
+                } = *detected;
+                self.merge_commit_ready = false;
+                eprintln!(
+                    "[kagi] conflict-mode: {} {} file(s)",
+                    session.op.slug(),
+                    session.files.len()
+                );
+
+                // W32: close the editor if the file being edited is no longer
+                // conflicted.
+                if let Some(editing) = self.conflict.editing.clone() {
+                    if !session.files.iter().any(|f| f.path == editing) {
+                        self.conflict.editing = None;
                     }
+                }
+
+                self.conflict.mode = Some(conflict_view::ConflictMode {
+                    session,
+                    buffer,
+                    current_branch,
+                    selected_file,
+                    editing_file,
+                    abort_armed: false,
+                });
+
+                if let Some(path) = editing_path {
+                    self.conflict.editing = Some(path);
                 }
             }
         }
@@ -5199,6 +5360,13 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
             kagi.update(cx, |app, cx| {
                 if app.repo_path.is_some() {
                     app.arm_watcher(cx);
+                    // T-PERF-RENDER-001 (ADR-0116 Wave 2): app-init commit point
+                    // for the per-repo background I/O (conflict detect + reflog
+                    // seed + auto-fetch ticker). The CLI-launch initial tab is
+                    // built by hand (main.rs) and never goes through
+                    // `switch_repo`, so render used to do this work on the first
+                    // frame; arm it here off the UI thread instead.
+                    app.ensure_startup_repo_io(cx);
                 }
             });
 

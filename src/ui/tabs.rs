@@ -206,6 +206,13 @@ impl KagiApp {
         self.arm_watcher(cx);
         cx.notify();
 
+        // T-PERF-RENDER-001 (ADR-0116 Wave 2): tab-switch commit point for the
+        // per-repo background I/O (conflict detect + reflog seed + auto-fetch
+        // ticker) that used to run synchronously in `render()`. Each sub-task is
+        // run-once guarded; the conflict/history guards were just reset by
+        // `reset_per_repo_ui`, so this re-detects for the newly-active repo.
+        self.ensure_startup_repo_io(cx);
+
         // Background (re)load to refresh / fill the cache.
         self.load_repo_async(tab.path.clone(), tab.name.clone(), generation, cx);
     }

@@ -247,6 +247,8 @@ pub enum Msg {
     // ── Misc footers ────────────────────────────────────────────────
     Refreshed,
     OpenedInFinder,
+    /// Label on the "load more commits" row at the bottom of the commit list.
+    LoadMoreCommits,
 
     // ── W30-CONFLICT-UI: Conflict Mode (banner / list / choose / preview) ──
     // Operation headings (domain words rebase/merge/cherry-pick/revert kept
@@ -591,6 +593,8 @@ impl Msg {
             // ── Misc footers ────────────────────────────────────────
             (En, Refreshed) => "Refreshed",
             (Ja, Refreshed) => "更新しました",
+            (En, LoadMoreCommits) => "Load more commits",
+            (Ja, LoadMoreCommits) => "コミットをさらに読み込む",
             (En, OpenedInFinder) => "Opened in Finder",
             (Ja, OpenedInFinder) => "Finder で開きました",
 

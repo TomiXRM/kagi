@@ -300,8 +300,10 @@ impl KagiApp {
         cx.notify();
 
         let (host_load, root_load) = (host.clone(), root.clone());
+        let commit_limit = self.commit_limit;
         let task = cx.background_spawn(async move {
-            kagi::remote::remote_snapshot(&host_load, &root_load, 10_000).map_err(|e| e.to_string())
+            kagi::remote::remote_snapshot(&host_load, &root_load, commit_limit)
+                .map_err(|e| e.to_string())
         });
         cx.spawn(async move |this, acx| {
             let result = task.await;
@@ -360,11 +362,12 @@ impl KagiApp {
     ) {
         let bg_path = path.clone();
         let bg_name = name.clone();
+        let commit_limit = self.commit_limit;
         let task = cx.background_spawn(async move {
             let mut backend =
                 kagi_git::Backend::open(&bg_path).map_err(|e| format!("repo open error: {}", e))?;
             let snap = backend
-                .snapshot(10_000)
+                .snapshot(commit_limit)
                 .map_err(|e| format!("snapshot error: {e}"))?;
             let repo_name = bg_path
                 .file_name()

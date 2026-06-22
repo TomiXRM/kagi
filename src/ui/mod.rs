@@ -215,6 +215,13 @@ const GRAPH_COL_DEFAULT: f32 = 8.0 * graph_view::LANE_W;
 // Height of the column header row above the commit list.
 const COL_HEADER_H: f32 = 20.0;
 
+/// Default number of commits loaded into the graph on first load / tab switch.
+/// The graph can grow past this via the bottom-of-list "load more" affordance
+/// (see [`KagiApp::load_more_commits`]).
+pub const DEFAULT_COMMIT_LIMIT: usize = 10_000;
+/// How many additional commits each "load more" click pulls in.
+pub const COMMIT_PAGE_STEP: usize = 1_000;
+
 // W7-INSPECTOR2: inspector message/files vertical split.
 /// Default split ratio (message:files = 1:1).
 const INSPECTOR_SPLIT_DEFAULT: f32 = 0.35; // message 35% : files 65% (user request: files +30%)
@@ -931,6 +938,12 @@ pub struct KagiApp {
     /// Scroll handle for the "commit-list" uniform_list.
     /// Stored in KagiApp so it persists across render frames.
     pub commit_scroll_handle: UniformListScrollHandle,
+    /// Current commit-walk limit for the main graph. Starts at
+    /// [`DEFAULT_COMMIT_LIMIT`] and grows by [`COMMIT_PAGE_STEP`] each time the
+    /// user clicks "load more" at the bottom of the commit list. All paths that
+    /// rebuild the main view (`reload`, `reload_external`, tab load) snapshot at
+    /// this limit so loaded-more commits survive a refresh.
+    pub commit_limit: usize,
     /// PERF: scroll handle for the commit panel's Unstaged `uniform_list`
     /// (shared across flat/tree views — only one is visible at a time).
     pub cp_unstaged_scroll_handle: UniformListScrollHandle,
@@ -1434,6 +1447,7 @@ impl KagiApp {
             smart_commit_detected_for: None,
             pending_smart_msg: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
+            commit_limit: DEFAULT_COMMIT_LIMIT,
             cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
             cp_staged_scroll_handle: UniformListScrollHandle::new(),
             operation_history: kagi_git::OperationHistory::new(),
@@ -1540,6 +1554,7 @@ impl KagiApp {
             smart_commit_detected_for: None,
             pending_smart_msg: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
+            commit_limit: DEFAULT_COMMIT_LIMIT,
             cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
             cp_staged_scroll_handle: UniformListScrollHandle::new(),
             op_log: None,
@@ -1617,7 +1632,7 @@ impl KagiApp {
                 return;
             }
         };
-        let snap = match repo.snapshot(10_000) {
+        let snap = match repo.snapshot(self.commit_limit) {
             Ok(s) => s,
             Err(e) => {
                 klog!("reload: snapshot error: {}", e);
@@ -1751,6 +1766,52 @@ impl KagiApp {
         }
     }
 
+    /// Grow the commit graph by [`COMMIT_PAGE_STEP`] and re-snapshot.
+    ///
+    /// Triggered by the "load more" row at the bottom of the commit list, which
+    /// only appears once the graph holds at least `commit_limit` commits (i.e.
+    /// the walk may have been truncated). Unlike [`reload`], this is a
+    /// view-only refresh: it rebuilds `active_view` (and the tab cache) at the
+    /// new limit but leaves selection, scroll position, open panels and modals
+    /// untouched. Existing rows keep their indices because the additional
+    /// commits are older and append at the bottom of the topological order.
+    pub fn load_more_commits(&mut self, cx: &mut Context<Self>) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        self.commit_limit = self.commit_limit.saturating_add(COMMIT_PAGE_STEP);
+
+        let mut repo = match kagi_git::Backend::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                klog!("load more: repo open error: {}", e);
+                return;
+            }
+        };
+        let snap = match repo.snapshot(self.commit_limit) {
+            Ok(s) => s,
+            Err(e) => {
+                klog!("load more: snapshot error: {}", e);
+                return;
+            }
+        };
+        let repo_name = repo_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| repo_path.display().to_string());
+
+        let view = build_tab_view(&snap, &repo_name);
+        self.tab_cache.insert(repo_path.clone(), view.clone());
+        self.apply_tab_view(view);
+        klog!(
+            "load more: limit={} rows={}",
+            self.commit_limit,
+            self.active_view.rows.len()
+        );
+        cx.notify();
+    }
+
     /// W6-TABSPEED: assign a [`TabViewState`] into `self` (main thread, no I/O).
     ///
     /// This is pure field assignment — the snapshot read + `build_tab_view`
@@ -1807,9 +1868,10 @@ impl KagiApp {
         // this guard the snapshot would overwrite the NEW tab's freshly-loaded
         // view with the OLD tab's data (cross-review N4).
         let gen_at_spawn = self.switch_generation;
+        let commit_limit = self.commit_limit;
         let task = cx.background_spawn(async move {
             let mut backend = kagi_git::Backend::open(&bg_path).ok()?;
-            let snap = backend.snapshot(10_000).ok()?;
+            let snap = backend.snapshot(commit_limit).ok()?;
             let wip = KagiApp::wip_diffstat_from_backend(&backend);
             // RepoSnapshot is pure domain (Send); build_tab_view constructs
             // SharedString-bearing TabViewState, so we return the raw pieces

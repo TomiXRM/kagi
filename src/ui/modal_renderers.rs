@@ -232,6 +232,47 @@ pub(crate) fn modal_overlay(card: impl IntoElement) -> gpui::Div {
 /// Shared plan-confirmation card: title / current→predicted / warnings /
 /// blockers / recovery / error / Cancel + confirm buttons.  The confirm
 /// button is hidden whenever the plan has blockers.
+/// Shared scaffold for the plan-confirmation modals. Builds the cancel/confirm
+/// `cx.listener` pair — each runs its action, then restores root focus and
+/// notifies (the identical boilerplate that was hand-repeated in ~14 per-modal
+/// renderers) — and delegates to [`render_plan_modal_card`]. A per-modal
+/// renderer now supplies only what differs: the plan/error/label, the optional
+/// create-branch target, and the two actions.
+pub(crate) fn render_plan_modal_wrapper(
+    plan: std::sync::Arc<OperationPlan>,
+    error: Option<SharedString>,
+    confirm_label: impl Into<SharedString>,
+    create_branch_target: Option<CommitId>,
+    cancel_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
+    confirm_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let cancel_handler = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+        cancel_action(this, cx);
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    let confirm_handler = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+        confirm_action(this, cx);
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    render_plan_modal_card(
+        plan,
+        error,
+        confirm_label,
+        cancel_handler,
+        confirm_handler,
+        create_branch_target,
+        cx,
+    )
+    .into_any_element()
+}
+
 pub(crate) fn render_plan_modal_card(
     plan: std::sync::Arc<OperationPlan>,
     error: Option<SharedString>,

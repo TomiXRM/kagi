@@ -1184,9 +1184,19 @@ impl KagiApp {
                 if self.remote_view.is_some() {
                     self.refresh_remote_view(cx);
                 } else {
-                    self.reload();
-                    self.status_footer = FooterStatus::Idle(SharedString::from(Msg::Refreshed.t()));
-                    self.push_toast(ToastKind::Success, Msg::Refreshed.t(), cx);
+                    match self.reload_checked() {
+                        Ok(()) => {
+                            self.status_footer =
+                                FooterStatus::Idle(SharedString::from(Msg::Refreshed.t()));
+                            self.push_toast(ToastKind::Success, Msg::Refreshed.t(), cx);
+                        }
+                        Err(e) => {
+                            let msg = format!("Refresh failed: {e}");
+                            self.status_footer =
+                                FooterStatus::Idle(SharedString::from(msg.clone()));
+                            self.push_toast(ToastKind::Error, msg, cx);
+                        }
+                    }
                     // Also fetch the remote (quiet) so changes pushed elsewhere
                     // show up — success reloads the graph, failure is silent.
                     self.fetch_async(true, cx);

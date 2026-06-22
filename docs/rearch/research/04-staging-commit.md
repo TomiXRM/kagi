@@ -1,5 +1,7 @@
 # 04 — Staging / Commit / Amend / Templates / Drafts / Checklist / Smart Commit
 
+> NOTE (2026-06-22): `src/git` was extracted to `crates/kagi-git` in ADR-0115; paths below describe the pre-extraction layout.
+
 Re-architecture research (sub-agent #4). Scope: staging, commit, amend, message
 template, draft autosave, pre-commit checklist, smart commit messages.
 

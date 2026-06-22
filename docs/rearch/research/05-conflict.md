@@ -1,5 +1,7 @@
 # 05 — Conflict Resolution (Conflict Mode / 3-pane editor / dashboard / flow)
 
+> NOTE (2026-06-22): `src/git` was extracted to `crates/kagi-git` in ADR-0115; paths below describe the pre-extraction layout.
+
 Re-architecture research (sub-agent #5). Scope: Conflict Mode state machine, the
 3-pane conflict editor, file/chunk/line-level accept, live Result preview/edit,
 the conflict dashboard, the Save→stage / Continue / Abort / Skip flow, and

@@ -68,7 +68,8 @@ The `Operation` request types the UI needs live in `kagi-domain`, so the UI can
 
 ### 2.1 `kagi-domain` — pure Rust, no I/O, no frameworks
 The home of everything unit-testable without a window or a repo. Migrated from the
-already-pure parts of today's `src/git/` and `src/graph/`:
+already-pure parts of the git backend (now `crates/kagi-git/`, extracted in ADR-0115;
+formerly `src/git/`) and `src/graph/`:
 
 - **Models**: `CommitId`, `Commit`, `Signature`, `Branch`/`RemoteBranch`/`Tag`/`Stash`/`Worktree`, `Head`, `WorkingTreeStatus`/`FileStatus`/`ChangeKind`, `RepoSnapshot`.
 - **Graph layout** (`graph::layout`): the gitk-style lane/edge algorithm — already pure (`src/graph/mod.rs`), moved verbatim with its 12 tests + `check_invariants`. Output `GraphLayout`/`GraphRow`/`GraphEdge` stays free of display concerns.

@@ -177,19 +177,32 @@ pub(crate) fn render_rows(
                 .flex_row()
                 .items_center()
                 .w_full()
-                // W2-GRAPH item 3: 2px accent bar on the left edge of selected rows.
-                // We use pl_3() normally and reduce the inner padding by 2px when
-                // selected to make room for the bar without changing total row width.
+                // W2-GRAPH item 3: 2px accent bar on the left edge of selected
+                // rows. Drawn as an ABSOLUTE overlay (the child below) so
+                // selection does NOT change the row's horizontal layout — both
+                // states use the same `px_3()`, keeping the graph column origin
+                // (and thus the graph lanes) aligned across selected and
+                // unselected rows at every zoom level.
+                //
+                // Previously the selected row used `pl(scaled_px(12) - 2) +
+                // border_l_2`, whose left inset scales with zoom while `px_3`
+                // does NOT (gpui 0.2.2 resolves rem-size for text, not for this
+                // padding — see theme.rs scaled_px notes). After the rem-size
+                // gating in T-PERF-RENDER-002 that mismatch became visible: at
+                // zoom > 100% the selected row's graph lane drifted right, at
+                // zoom < 100% it drifted left, off the unselected rows' lanes.
+                .px_3()
                 .when(is_selected, |el| {
-                    // W28: non-selected rows use px_3 (0.75rem) which scales with
-                    // zoom; the selected row must match so the graph column origin
-                    // doesn't shift horizontally on selection. Left inset =
-                    // scaled px_3 minus the fixed 2px accent bar.
-                    el.pl(theme::scaled_px(12.) - px(2.))
-                        .border_l_2()
-                        .border_color(rgb(theme().color_branch))
+                    el.child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top_0()
+                            .bottom_0()
+                            .w(px(2.))
+                            .bg(rgb(theme().color_branch)),
+                    )
                 })
-                .when(!is_selected, |el| el.px_3())
                 .h(px(rh))
                 .bg(rgb(row_bg))
                 .on_click(click_handler)

@@ -414,6 +414,9 @@ pub(crate) fn render_rows(
                     div()
                         .w(theme::scaled_px(130.))
                         .flex_shrink_0()
+                        // Gap before the committer name so a long, truncated
+                        // commit summary doesn't visually run straight into it.
+                        .pl(theme::scaled_px(8.))
                         .text_color(rgb(theme().text_sub))
                         .truncate()
                         .child(row.author.clone()),

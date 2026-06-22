@@ -9,6 +9,27 @@
 use gpui::{hsla, Hsla};
 
 // ──────────────────────────────────────────────────────────────
+// Avatar cache store
+// ──────────────────────────────────────────────────────────────
+
+/// Cohesive cache for resolved commit-author avatars (ADR-0118 Phase 5.2).
+///
+/// Groups the two formerly-flat `KagiApp` fields so the avatar cache moves as a
+/// unit. Behaviour-preserving.
+#[derive(Default)]
+pub struct AvatarStore {
+    /// Resolved avatar images keyed by author email.  Populated by a background
+    /// resolution pass for GitHub repos; rows/inspector swap the initial circle
+    /// for `img(...)` when an entry exists.  Memory cache (the disk cache lives
+    /// under `~/.kagi/avatars/`).
+    pub images: std::collections::HashMap<String, std::sync::Arc<gpui::Image>>,
+    /// Guard so avatar resolution runs at most once per repository path (avoids
+    /// re-hitting the network on every reload / render).  Holds the repo path
+    /// whose avatars have been (or are being) resolved.
+    pub fetch_for: Option<std::path::PathBuf>,
+}
+
+// ──────────────────────────────────────────────────────────────
 // FNV-1a hash (32-bit)
 // ──────────────────────────────────────────────────────────────
 

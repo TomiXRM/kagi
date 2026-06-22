@@ -1131,15 +1131,9 @@ pub struct KagiApp {
     /// (uncached first open) until the background load completes.
     pub loading_tab: Option<SharedString>,
     // ── W11-AVATAR: GitHub avatar images (ADR-0037) ──────────────
-    /// Resolved avatar images keyed by author email.  Populated by a background
-    /// resolution pass for GitHub repos; rows/inspector swap the initial circle
-    /// for `img(...)` when an entry exists.  Memory cache (the disk cache lives
-    /// under `~/.kagi/avatars/`).
-    pub avatar_images: HashMap<String, std::sync::Arc<gpui::Image>>,
-    /// Guard so avatar resolution runs at most once per repository path (avoids
-    /// re-hitting the network on every reload / render).  Holds the repo path
-    /// whose avatars have been (or are being) resolved.
-    pub avatar_fetch_for: Option<PathBuf>,
+    /// Resolved-avatar cache (memory images + per-repo fetch guard), grouped
+    /// into one cohesive sub-struct (ADR-0118 Phase 5.2).
+    pub avatars: avatar::AvatarStore,
     // ── W30-CONFLICT-UI: Conflict Mode (ADR-0056) ────────────────
     /// Conflict-Editor view state: detected mode, the open editor file, the
     /// A/B/Result inputs, splits/geometry, and merge-commit-pending. Consolidated
@@ -1548,8 +1542,7 @@ impl KagiApp {
             switch_generation: 0,
             loading_tab: None,
             // W11-AVATAR
-            avatar_images: HashMap::new(),
-            avatar_fetch_for: None,
+            avatars: avatar::AvatarStore::default(),
             // W30-CONFLICT-UI
             conflict: conflict_view::ConflictState::new(),
             merge_commit_ready: false,
@@ -1658,8 +1651,7 @@ impl KagiApp {
             switch_generation: 0,
             loading_tab: None,
             // W11-AVATAR
-            avatar_images: HashMap::new(),
-            avatar_fetch_for: None,
+            avatars: avatar::AvatarStore::default(),
             // W30-CONFLICT-UI
             conflict: conflict_view::ConflictState::new(),
             merge_commit_ready: false,
@@ -2352,7 +2344,7 @@ impl KagiApp {
     /// it determines the GitHub `(owner, repo)` from the repo's remotes, then
     /// resolves each distinct author email to an avatar image (noreply parse →
     /// Commits API batch → disk/network fetch).  When it completes the resolved
-    /// images are merged into `self.avatar_images` on the main thread and a
+    /// images are merged into `self.avatars.images` on the main thread and a
     /// `cx.notify()` repaints rows/inspector with real avatars.
     ///
     /// No-op for non-GitHub repos, `KAGI_OFFLINE=1`, or a repo already started.
@@ -2363,10 +2355,10 @@ impl KagiApp {
         };
 
         // Run at most once per repository path.
-        if self.avatar_fetch_for.as_deref() == Some(repo_path.as_path()) {
+        if self.avatars.fetch_for.as_deref() == Some(repo_path.as_path()) {
             return;
         }
-        self.avatar_fetch_for = Some(repo_path.clone());
+        self.avatars.fetch_for = Some(repo_path.clone());
 
         // Distinct author emails across the loaded commit rows.
         let mut seen: HashSet<String> = HashSet::new();
@@ -2397,7 +2389,7 @@ impl KagiApp {
             let outcome = task.await;
             let _ = this.update(acx, |app, cx| {
                 for (email, img) in outcome.images {
-                    app.avatar_images.insert(email, img);
+                    app.avatars.images.insert(email, img);
                 }
                 eprintln!(
                     "[kagi] avatar: resolved={} pending={} offline={}",

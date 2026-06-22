@@ -53,6 +53,30 @@ impl KagiApp {
         }
     }
 
+    /// Double-click a local-branch pill → switch to that branch.
+    ///
+    /// Reuses [`open_plan_modal`](Self::open_plan_modal) to plan the checkout
+    /// (and emit the same `[kagi] plan: checkout …` contract line + set the
+    /// modal). When the plan is completely clean — no blockers **and** no
+    /// warnings — the switch runs straight away via
+    /// [`start_checkout`](Self::start_checkout), which consumes the modal before
+    /// any render so the user never sees a popup. If the plan carries blockers
+    /// or warnings the modal stays open so the user can review them first.
+    pub fn dblclick_checkout_branch(&mut self, branch: impl Into<String>, cx: &mut Context<Self>) {
+        let branch = branch.into();
+        self.open_plan_modal(branch.clone());
+        // `open_plan_modal` only sets the modal on a successful plan; treat a
+        // missing modal (plan error) as "not clean" so nothing switches.
+        let clean = self
+            .plan_modal()
+            .map(|m| m.plan.blockers.is_empty() && m.plan.warnings.is_empty())
+            .unwrap_or(false);
+        if clean {
+            klog!("dblclick checkout: {} (clean, no modal)", branch);
+            self.start_checkout(cx);
+        }
+    }
+
     /// Open the detached checkout plan modal for commit `commit_id`.
     pub fn open_checkout_commit_modal(&mut self, commit_id: CommitId) {
         let _repo_path = match self.repo_path.clone() {

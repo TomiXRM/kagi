@@ -407,7 +407,12 @@ impl Render for KagiApp {
             }
         }
 
-        let row_count = self.active_view.rows.len();
+        // When the walk filled the current limit there may be more history to
+        // pull in, so we append one extra "load more" row at the bottom of the
+        // virtual list (rendered specially in the uniform_list processor).
+        let has_more_commits =
+            self.commit_limit > 0 && self.active_view.rows.len() >= self.commit_limit;
+        let row_count = self.active_view.rows.len() + usize::from(has_more_commits);
         let selected = self.selected;
 
         // W4-TABS / ADR-0028: a non-empty error string still shows the error
@@ -2315,15 +2320,21 @@ impl KagiApp {
                     uniform_list(
                         "commit-list",
                         row_count,
-                        cx.processor(move |this, range, _window, cx| {
-                            render_rows(
+                        cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                            let rows_len = this.active_view.rows.len();
+                            let compact = this.graph_compact;
+                            // Real commit rows for the part of the range that
+                            // maps to commits; the trailing synthetic index
+                            // (== rows_len) is the "load more" row.
+                            let commit_range = range.start..range.end.min(rows_len);
+                            let mut els: Vec<gpui::AnyElement> = render_rows(
                                 &this.active_view.rows,
                                 &this.avatar_images,
-                                range,
+                                commit_range,
                                 selected,
                                 this.badge_col_w,
                                 this.graph_col_w,
-                                this.graph_compact,
+                                compact,
                                 this.graph_scroll_x,
                                 &this.active_view.stash_graph_lanes,
                                 this.active_view
@@ -2332,6 +2343,13 @@ impl KagiApp {
                                     .map(|solo| &solo.visible_commits),
                                 cx,
                             )
+                            .into_iter()
+                            .map(gpui::IntoElement::into_any_element)
+                            .collect();
+                            if range.end > rows_len {
+                                els.push(render_load_more_row(compact, cx));
+                            }
+                            els
                         }),
                     )
                     // T028: wire scroll handle so jump_to_branch can scroll the list.

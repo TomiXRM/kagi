@@ -412,35 +412,8 @@ pub(crate) fn render_amend_modal(
 
     card = card.child(button_row);
 
-    // ── Full-screen overlay wrapper (matches render_plan_modal_card) ──
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .occlude()
-                .bg(rgb(current_theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(card),
-        )
-        .into_any_element()
+    // ── Full-screen overlay wrapper (shared chrome, T-SPLIT-HELPERS-001) ──
+    modal_overlay(card).into_any_element()
 }
 
 /// Stash-pop confirmation overlay (T-HT-007).
@@ -715,34 +688,7 @@ pub(crate) fn render_input_plan_modal(
     }
     card = card.child(buttons);
 
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .occlude()
-                .bg(rgb(current_theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(card),
-        )
-        .into_any_element()
+    modal_overlay(card).into_any_element()
 }
 
 pub(crate) fn render_set_upstream_modal(
@@ -1158,37 +1104,13 @@ pub(crate) fn render_discard_modal(
     }
     card = card.child(button_row);
 
-    // ── Full-screen overlay: backdrop + card, BOTH occluded ──
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
+    // ── Full-screen overlay (shared chrome, T-SPLIT-HELPERS-001) ──
+    // ESC cancels via the root key handler; the card itself also occludes
+    // (ADR-0046 / W17), else clicks fall through to the UI beneath. Chaining
+    // `.on_key_down` onto the shared overlay is DOM-equivalent — event handlers
+    // are stored independently of the child element list.
+    modal_overlay(card.occlude())
         .on_key_down(esc_cancel)
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .occlude()
-                .bg(rgb(current_theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                // ADR-0046 / W17: the card itself must also occlude, else clicks
-                // fall through to the UI beneath (known click-through bug).
-                .child(card.occlude()),
-        )
         .into_any_element()
 }
 
@@ -1221,6 +1143,57 @@ pub(crate) fn render_revert_modal(
         cx,
     )
     .into_any_element()
+}
+
+/// Shared full-screen modal overlay chrome (T-SPLIT-HELPERS-001 / ADR-0116
+/// Wave 3). Every modal renderer wrapped its card in the same two-layer
+/// structure: a semi-transparent, occluding backdrop + a centred flex column
+/// holding the card. This factors that DOM into one place so each renderer
+/// only builds its card and calls `modal_overlay(card)`.
+///
+/// Produces exactly the tree the renderers built inline:
+/// ```text
+/// div.size_full.absolute.top_0.left_0
+///   ├─ div.size_full.absolute.top_0.left_0.occlude.bg(modal_overlay).opacity(0.65)   // backdrop
+///   └─ div.size_full.absolute.top_0.left_0.flex.flex_col.justify_center.items_center  // centring
+///        └─ {card}
+/// ```
+/// Returns a `Div` (not `impl IntoElement`) so callers that additionally
+/// attached a root-level `.on_key_down(..)` (the discard modal's ESC handler)
+/// can keep chaining it — event handlers are stored independently of children,
+/// so chaining order does not change the rendered tree. Callers that occluded
+/// the card itself pass `card.occlude()` in the `card` slot.
+pub(crate) fn modal_overlay(card: impl IntoElement) -> gpui::Div {
+    div()
+        .size_full()
+        .absolute()
+        .top_0()
+        .left_0()
+        // Backdrop (dark, semi-transparent). `.occlude()` blocks mouse events
+        // from reaching the UI beneath the modal (click-through bug).
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .occlude()
+                .bg(rgb(current_theme().modal_overlay))
+                .opacity(0.65),
+        )
+        // Card centred on top of the backdrop.
+        .child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .items_center()
+                .child(card),
+        )
 }
 
 /// Shared plan-confirmation card: title / current→predicted / warnings /
@@ -1441,39 +1414,8 @@ pub(crate) fn render_plan_modal_card(
 
     card = card.child(button_row);
 
-    // ── Full-screen overlay wrapper ─────────────────────────────────────
-    // Two layers: backdrop (semi-transparent) + centred card.
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        // Backdrop (dark, semi-transparent).
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                // Block mouse events from reaching the UI beneath the modal
-                // (user-reported click-through on the create-branch dialog).
-                .occlude()
-                .bg(rgb(current_theme().modal_overlay))
-                .opacity(0.65),
-        )
-        // Card centred on top of the backdrop.
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(card),
-        )
+    // ── Full-screen overlay wrapper (shared chrome, T-SPLIT-HELPERS-001) ──
+    modal_overlay(card)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1716,36 +1658,8 @@ pub(crate) fn render_create_branch_modal(
         }
     };
 
-    // ── Full-screen overlay wrapper ─────────────────────────
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                // Block mouse events from reaching the UI beneath the modal
-                // (user-reported click-through on the create-branch dialog).
-                .occlude()
-                .bg(rgb(current_theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(focusable_card),
-        )
+    // ── Full-screen overlay wrapper (shared chrome, T-SPLIT-HELPERS-001) ──
+    modal_overlay(focusable_card)
 }
 
 pub(crate) fn render_create_worktree_modal(
@@ -1958,35 +1872,8 @@ pub(crate) fn render_create_worktree_modal(
         }
     };
 
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                // Block mouse events from reaching the UI beneath the modal
-                // (user-reported click-through on the create-branch dialog).
-                .occlude()
-                .bg(rgb(current_theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(focusable_card),
-        )
+    // ── Full-screen overlay wrapper (shared chrome, T-SPLIT-HELPERS-001) ──
+    modal_overlay(focusable_card)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -2211,36 +2098,8 @@ pub(crate) fn render_stash_push_modal(
         }
     };
 
-    // ── Full-screen overlay wrapper ─────────────────────────
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                // Block mouse events from reaching the UI beneath the modal
-                // (user-reported click-through on the create-branch dialog).
-                .occlude()
-                .bg(rgb(current_theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(focusable_card),
-        )
+    // ── Full-screen overlay wrapper (shared chrome, T-SPLIT-HELPERS-001) ──
+    modal_overlay(focusable_card)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -2410,35 +2269,7 @@ pub(crate) fn render_stash_apply_modal(
     card = card.child(button_row);
 
     // ── Full-screen overlay wrapper ─────────────────────────
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                // Block mouse events from reaching the UI beneath the modal
-                // (user-reported click-through on the create-branch dialog).
-                .occlude()
-                .bg(rgb(current_theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(card),
-        )
+    modal_overlay(card)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -2706,35 +2537,7 @@ pub(crate) fn render_cherry_pick_modal(
     card = card.child(button_row);
 
     // ── Full-screen overlay wrapper ─────────────────────────
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                // Block mouse events from reaching the UI beneath the modal
-                // (user-reported click-through on the create-branch dialog).
-                .occlude()
-                .bg(rgb(current_theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(card),
-        )
+    modal_overlay(card)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -2963,35 +2766,7 @@ pub(crate) fn render_commit_plan_modal(
 
     card = card.child(button_row);
 
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                // Block mouse events from reaching the UI beneath the modal
-                // (user-reported click-through on the create-branch dialog).
-                .occlude()
-                .bg(rgb(current_theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(card),
-        )
+    modal_overlay(card)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -3145,33 +2920,7 @@ pub(crate) fn render_smart_commit_modal(
         }
     };
 
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .occlude()
-                .bg(rgb(current_theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(card),
-        )
+    modal_overlay(card)
 }
 
 /// Auto-update detail modal (ADR-0082, T-AUTOUPDATE-001).
@@ -3358,34 +3107,7 @@ pub(crate) fn render_update_modal(
     }
     card = card.child(actions);
 
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .occlude()
-                .bg(rgb(current_theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(card),
-        )
-        .into_any_element()
+    modal_overlay(card).into_any_element()
 }
 
 // ──────────────────────────────────────────────────────────────

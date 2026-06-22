@@ -453,10 +453,9 @@ impl Render for KagiApp {
         // T025/T026: extract commit panel state for render.
         let commit_panel_open = self.commit_panel_open;
         let commit_panel = self.commit_panel.clone();
-        let commit_input = self.commit_input.clone();
-        // T-COMMIT-009 / W14-TEMPLATE: structured template mode + field inputs.
-        let commit_template_mode = self.commit_template_mode;
-        let commit_template_inputs = self.commit_template_inputs.clone();
+        // T-SPLIT-HELPERS-001 / ADR-0116 Wave 3: commit_input + template mode/inputs
+        // are read directly from `self` inside `render_commit_panel` (now a `&self`
+        // method), so they no longer need to be hoisted/threaded through render_body.
 
         // T-BP-002: bottom panel state.
         let bottom_panel_open = self.bottom_panel_open;
@@ -640,9 +639,6 @@ impl Render for KagiApp {
                     commit_scroll_handle,
                     commit_panel_open,
                     commit_panel.clone(),
-                    commit_input.clone(),
-                    commit_template_mode,
-                    commit_template_inputs.clone(),
                     wip_diffstat,
                     cx,
                 ))

@@ -41,9 +41,9 @@ impl KagiApp {
         commit_scroll_handle: UniformListScrollHandle,
         commit_panel_open: bool,
         commit_panel: Option<commit_panel::CommitPanelState>,
-        commit_input: Option<Entity<InputState>>,
-        commit_template_mode: bool,
-        commit_template_inputs: Option<[Entity<InputState>; 6]>,
+        // T-SPLIT-HELPERS-001 / ADR-0116 Wave 3: commit_input / template mode +
+        // inputs are now read from `self` inside `render_commit_panel` (now a
+        // `&self` method), so they no longer thread through render_body.
         wip_diffstat: Option<WipDiffStat>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -365,11 +365,6 @@ impl KagiApp {
             Some(MainDiffSource::Compare { file_index, .. }) => Some(*file_index),
             _ => None,
         };
-        let active_wip: Option<(bool, PathBuf)> = match &active_src {
-            Some(MainDiffSource::Unstaged { path }) => Some((false, path.clone())),
-            Some(MainDiffSource::Staged { path }) => Some((true, path.clone())),
-            _ => None,
-        };
         let main_diff_for_center = main_diff;
 
         // W5-MENU: View → Toggle Sidebar hides the navigator + its divider.
@@ -464,17 +459,10 @@ impl KagiApp {
                 // computing it here ran a full working_tree_status *every frame*,
                 // which froze the panel to ~6fps on large repos (PERF fix).
                 let preview = panel_state.preview.clone();
-                body_row = body_row.child(divider2).child(render_commit_panel(
+                body_row = body_row.child(divider2).child(self.render_commit_panel(
                     panel_state,
                     panel_width,
-                    commit_input.clone(),
-                    commit_template_mode,
-                    commit_template_inputs.clone(),
-                    active_wip.clone(),
-                    self.smart_commit.clone(),
                     preview,
-                    self.cp_unstaged_scroll_handle.clone(),
-                    self.cp_staged_scroll_handle.clone(),
                     cx,
                 ));
             }

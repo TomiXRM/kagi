@@ -167,11 +167,21 @@ impl FileHistoryView {
     }
 
     /// Build the `MainDiffView` for the currently-selected entry, reusing the
-    /// existing diff renderer pipeline. Single-file diffs are cheap, so this runs
-    /// synchronously. Never panics on missing / binary / deleted files — falls
+    /// existing diff renderer pipeline. The git diff computation (Backend open +
+    /// per-file diff) runs **off the UI thread** via `cx.background_spawn` so
+    /// selecting a row on a large file/repo can't jank the frame. Only the plain
+    /// `kagi_git::FileDiff` crosses back; the row build + syntax highlight then
+    /// run on the UI thread in the marshalled result, because `MainDiffView` /
+    /// `DiffRow` hold GPUI types and are therefore `!Send`.
+    ///
+    /// The result is guarded by the monotonic `diff_req` token (bumped here on
+    /// every call) plus `generation`: a newer diff load (rapid arrowing / Refresh,
+    /// including A→B→A) bumps `diff_req`, and a history reload bumps `generation`,
+    /// so a superseded load is discarded instead of overwriting the current
+    /// selection's diff. Never panics on missing / binary / deleted files — falls
     /// back to `diff = None` so the banner messaging covers it. (Moved from
     /// `KagiApp::load_file_history_diff`, sourcing `repo_path` from `self`.)
-    pub fn load_diff(&mut self, _cx: &mut Context<Self>) {
+    pub fn load_diff(&mut self, cx: &mut Context<Self>) {
         use kagi_git::FileHistoryEntryKind;
 
         let repo_path = self.repo_path.clone();
@@ -184,69 +194,87 @@ impl FileHistoryView {
         let kind = entry.kind;
         let commit_id = entry.commit.as_ref().map(|c| CommitId(c.full_hash.clone()));
 
-        let repo = match kagi_git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(_) => {
-                self.data.diff = None;
-                return;
-            }
-        };
+        // Bump a monotonic per-diff token and capture it (plus `generation`) so
+        // the marshalled result is applied only if neither a newer diff load nor
+        // a history reload has superseded it. `diff_req` alone covers row changes
+        // (incl. A→B→A); `generation` additionally covers the window after a
+        // reload but before its post-load `load_diff` runs.
+        let req = self.data.diff_req.wrapping_add(1);
+        self.data.diff_req = req;
+        let generation = self.data.generation;
 
-        let file_diff_result = match kind {
-            FileHistoryEntryKind::Wip => {
-                // Prefer the unstaged diff; fall back to staged (e.g. fully
-                // staged change) so the WIP entry still shows something.
-                match repo.unstaged_file_diff(&path) {
-                    Ok(d) if !d.hunks.is_empty() || d.is_binary => Ok(d),
-                    _ => repo.staged_file_diff(&path),
+        // Off-thread: open the repo and compute the per-file diff (the expensive
+        // I/O + diff work). `FileDiff` is plain `kagi_git` data (`Send`); the GPUI
+        // view types are built on the UI thread in the marshalled result below.
+        let diff_path = path.clone();
+        let task = cx.background_spawn(async move {
+            let repo = kagi_git::Backend::open(&repo_path).ok()?;
+            let result = match kind {
+                FileHistoryEntryKind::Wip => {
+                    // Prefer the unstaged diff; fall back to staged (e.g. fully
+                    // staged change) so the WIP entry still shows something.
+                    match repo.unstaged_file_diff(&diff_path) {
+                        Ok(d) if !d.hunks.is_empty() || d.is_binary => Ok(d),
+                        _ => repo.staged_file_diff(&diff_path),
+                    }
                 }
-            }
-            FileHistoryEntryKind::Commit => match commit_id {
-                Some(id) => repo.commit_file_diff(&id, &path),
-                None => {
-                    self.data.diff = None;
+                FileHistoryEntryKind::Commit => match commit_id {
+                    Some(id) => repo.commit_file_diff(&id, &diff_path),
+                    None => return None,
+                },
+            };
+            Some(result.map_err(|e| e.to_string()))
+        });
+
+        cx.spawn(async move |view, acx| {
+            let result = task.await;
+            let _ = view.update(acx, |v, cx| {
+                // Discard a superseded diff load (newer selection) or one
+                // invalidated by a history reload.
+                if v.data.diff_req != req || v.data.generation != generation {
                     return;
                 }
-            },
-        };
+                let built = match result {
+                    Some(Ok(file_diff)) => {
+                        let added: usize = file_diff
+                            .hunks
+                            .iter()
+                            .flat_map(|h| h.lines.iter())
+                            .filter(|l| l.kind == DiffLineKind::Added)
+                            .count();
+                        let removed: usize = file_diff
+                            .hunks
+                            .iter()
+                            .flat_map(|h| h.lines.iter())
+                            .filter(|l| l.kind == DiffLineKind::Removed)
+                            .count();
 
-        let view = match file_diff_result {
-            Ok(file_diff) => {
-                let added: usize = file_diff
-                    .hunks
-                    .iter()
-                    .flat_map(|h| h.lines.iter())
-                    .filter(|l| l.kind == DiffLineKind::Added)
-                    .count();
-                let removed: usize = file_diff
-                    .hunks
-                    .iter()
-                    .flat_map(|h| h.lines.iter())
-                    .filter(|l| l.kind == DiffLineKind::Removed)
-                    .count();
+                        let fdv = FileDiffView::from_file_diff(&file_diff, 0);
+                        let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
+                        let title = fdv.file_name.clone();
+                        let mut rows = fdv.rows;
+                        let _ = highlight_diff_rows(&mut rows, &path);
 
-                let fdv = FileDiffView::from_file_diff(&file_diff, 0);
-                let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
-                let title = fdv.file_name.clone();
-                let mut rows = fdv.rows;
-                let _ = highlight_diff_rows(&mut rows, &path);
-
-                Some(MainDiffView {
-                    title,
-                    stats,
-                    rows,
-                    // The source is unused by the File History renderer; Unstaged
-                    // carries the path for completeness.
-                    source: MainDiffSource::Unstaged { path: path.clone() },
-                })
-            }
-            Err(e) => {
-                klog!("file-history diff error: {}", e);
-                None
-            }
-        };
-
-        self.data.diff = view;
+                        Some(MainDiffView {
+                            title,
+                            stats,
+                            rows,
+                            // The source is unused by the File History renderer;
+                            // Unstaged carries the path for completeness.
+                            source: MainDiffSource::Unstaged { path: path.clone() },
+                        })
+                    }
+                    Some(Err(e)) => {
+                        klog!("file-history diff error: {}", e);
+                        None
+                    }
+                    None => None,
+                };
+                v.data.diff = built;
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }
 

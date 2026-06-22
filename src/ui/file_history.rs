@@ -38,8 +38,13 @@ pub struct FileHistoryState {
     pub diff_scroll: UniformListScrollHandle,
     /// List/diff vertical split — fraction of the region given to the list.
     pub split: f32,
-    /// Monotonic load generation, used to discard stale async results.
+    /// Monotonic load generation, used to discard stale async *history* results.
     pub generation: u64,
+    /// Monotonic per-diff request token, bumped on every `load_diff`. Discards a
+    /// superseded async *diff* result (rapid arrowing — including A→B→A on a WIP
+    /// entry whose working-tree contents can change between reads) instead of
+    /// letting an older load overwrite the current selection's diff.
+    pub diff_req: u64,
 }
 
 impl FileHistoryState {

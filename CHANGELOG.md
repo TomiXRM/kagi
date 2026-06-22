@@ -3,7 +3,20 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
-## [Unreleased] — 2026-06-20 rearch sprint
+## [0.6.0] — 2026-06-22
+
+### Added
+- **Activity tab.** A new repository Activity view shows commit/merge history
+  as a compact chart plus contributor rankings. Granularity now covers fixed
+  recent windows (Day / Week / Month / Year) and an **All** mode for whole-history
+  analysis.
+- **Instant chart inspection.** Hovering an activity bucket now updates the
+  read-out immediately, with per-bucket tooltips, axes, and clearer commit vs
+  merge colours.
+- **Gitru-style graph lanes.** The commit graph gained stable lane colours,
+  compact swimlane rendering, branch-lane tinting, and optional author avatar
+  nodes. The setting is framed around avatar nodes; lane colours and compaction
+  stay available independently.
 
 ### Security & safety
 - **`Backend::run` scaffolds the enforced plan→preflight→execute pipeline**
@@ -43,14 +56,56 @@ All notable changes to Kagi are documented here. Format loosely follows
   commits to compare the same file previously recomputed the full tree-diff +
   hunk extraction on every toggle; now the `FileDiff` is cached by
   `(row, file_index)` and invalidated together with the file-list cache.
+- **Diff rendering is text-first with off-thread tree-sitter highlighting**
+  (ADR-0109), so large file diffs become readable before syntax highlighting
+  finishes.
+
+### Fixed
+- **CLI-argument tabs now open a real `RepoSession` on startup.** Passing a repo
+  path on the command line no longer leaves the tab in a partially initialized
+  state.
+- **Operation errors now surface the real failure text** instead of the literal
+  `"session unavailable"` placeholder.
+- **The file-diff center pane no longer pushes the Inspector off-screen** on
+  narrow or content-heavy layouts.
+- **Worktree WIP row markers are clearer and complete.** Main/worktree WIP rows
+  use distinct glyphs and count untracked files in the row status.
+- **Swimlane graph polish.** Lane bands no longer protrude into the branch/tag
+  column, avatar nodes are not clipped at the left edge, and label-to-node
+  connectors align with the graph padding.
 
 ### Changed
 - **`src/git/history.rs` renamed to `file_history.rs`** (ADR-0108). It
   collided with `kagi_domain::history` (the undo/redo operation history); the
   two describe different concepts and the collision made it unclear which
   `history::Foo` a caller meant.
+- **Activity ranking now focuses on authors and windows** rather than per-window
+  line-add/delete totals, keeping the UI compact and fast to scan.
 
-### Removed
+### Changed (internal)
+- **Extracted `kagi-git` as a workspace crate** (ADR-0115). The Git backend now
+  lives under `crates/kagi-git`, owns the `git2` dependency, and is imported by
+  callers/tests through `kagi_git::`.
+- **Added `RepoSession` / `RepoWorker` infrastructure** (ADR-0073 / ADR-0107):
+  per-tab backend ownership plus a dedicated repository worker thread for the
+  next OperationController migration step.
+- **Added pure domain activity aggregation** in `kagi-domain`, with unit coverage
+  for bucket generation and contributor ranking.
+- **Moved UI subsystems out of `KagiApp`**: `ToastStack`, `OpLogPanel`,
+  `blocking_ops`, `render_helpers`, `modal_renderers`, and the Activity view now
+  live in focused modules/entities.
+- **Consolidated UI state** by grouping conflict fields into `ConflictState`,
+  sidebar fields into `SidebarState`, and holding toast/oplog panels as GPUI
+  entities.
+- **Retired mutating `KAGI_*` headless hooks** in favour of direct git-layer
+  integration tests; read-only harness hooks remain for UI-state smoke coverage.
+- **Threaded GPUI context through operation logging/toasts**, removing deferred
+  toast plumbing and making user-facing error paths more direct.
+- **CI and docs now reflect the extracted backend boundary**, including updated
+  grep-gate guidance, ADRs 0104–0108 / 0110 / 0115, the architecture cleanup
+  roadmap, and the release/refactor handoff docs.
+
+### Removed (internal)
 - Dead code (Phase 0 sweep): `Backend::repo()` escape hatch (0 callers), the
   redundant `tempfile` under `[dev-dependencies]`, 23 dead `take_*` and 15
   dead `*_mut` modal accessors, the unused `CommandState::Hidden` variant,

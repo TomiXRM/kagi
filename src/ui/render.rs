@@ -12,7 +12,6 @@
 use super::render_helpers::*;
 use super::*;
 use crate::ui::modal_renderers::*;
-use gpui_component::button::ButtonVariants as _;
 
 impl KagiApp {
     /// Render the toast / busy overlay as an absolute container (bottom-left,

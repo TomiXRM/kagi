@@ -36,7 +36,7 @@ fn render_help(cx: &mut Context<EcosystemView>) -> AnyElement {
     let close = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.toggle_help(cx));
     let backdrop_close = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.toggle_help(cx));
 
-    let mut card = div()
+    let card = div()
         .id("eco-help-card")
         // Occlude so clicks inside the card don't fall through to the backdrop
         // (which would toggle help a second time and cancel the ✕ close).
@@ -64,28 +64,8 @@ fn render_help(cx: &mut Context<EcosystemView>) -> AnyElement {
                         .child(Msg::EcoHelpTitle.t()),
                 )
                 .child(text_button("eco-help-close", "✕", true).on_click(close)),
-        );
-    for (heading, body) in crate::ui::i18n::eco_help_sections() {
-        card = card.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_size(theme::scaled_px(13.0))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(rgb(theme().accent))
-                        .child(heading),
-                )
-                .child(
-                    div()
-                        .text_size(theme::scaled_px(12.5))
-                        .text_color(rgb(theme().text_sub))
-                        .child(body),
-                ),
-        );
-    }
+        )
+        .child(help_section_list());
 
     div()
         .absolute()
@@ -582,8 +562,37 @@ fn stat(text: &str) -> gpui::Div {
         .child(text.to_string())
 }
 
+/// The "How to read Analyze" section blocks (heading + body), shared by the
+/// help overlay and the loading screen.
+fn help_section_list() -> gpui::Div {
+    let mut col = div().flex().flex_col().gap_3();
+    for (heading, body) in crate::ui::i18n::eco_help_sections() {
+        col = col.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_size(theme::scaled_px(13.0))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(theme().accent))
+                        .child(heading),
+                )
+                .child(
+                    div()
+                        .text_size(theme::scaled_px(12.5))
+                        .text_color(rgb(theme().text_sub))
+                        .child(body),
+                ),
+        );
+    }
+    col
+}
+
 /// Loading state: a Claude-style spinning loader + an indeterminate progress
-/// bar (the mine reports no increments) + a "large repos take a while" hint.
+/// bar (the mine reports no increments) + a hint, and — while the user waits —
+/// the "How to read Analyze" explainer so the wait doubles as onboarding.
 fn loading_view() -> AnyElement {
     use gpui::AnimationExt as _;
     let spinner = gpui::svg()
@@ -621,11 +630,14 @@ fn loading_view() -> AnyElement {
         );
 
     div()
+        .id("eco-loading")
         .flex()
         .flex_col()
         .size_full()
         .items_center()
-        .justify_center()
+        .overflow_y_scroll()
+        .pt_8()
+        .pb_4()
         .gap_3()
         .child(spinner)
         .child(
@@ -640,6 +652,20 @@ fn loading_view() -> AnyElement {
                 .text_size(theme::scaled_px(12.0))
                 .text_color(rgb(theme().text_muted))
                 .child(Msg::EcoLoadingHint.t()),
+        )
+        // While the mine runs, show the explainer (the wait = onboarding).
+        .child(
+            div()
+                .w(theme::scaled_px(620.0))
+                .pt_4()
+                .child(
+                    div()
+                        .pb_2()
+                        .text_size(theme::scaled_px(14.0))
+                        .text_color(rgb(theme().text_main))
+                        .child(Msg::EcoHelpTitle.t()),
+                )
+                .child(help_section_list()),
         )
         .into_any_element()
 }

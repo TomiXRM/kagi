@@ -127,8 +127,9 @@ pub use kagi_domain::head::Head;
 pub use kagi_domain::history::{HistoryEntry, OperationHistory, OperationKind};
 #[allow(unused_imports)]
 pub use kagi_domain::hotspot::{
-    analyze as analyze_hotspots, coupling_for, CommitChanges, CouplingEdge, Ecosystem,
-    EcosystemMode, FileChange, FileMetric, RawEcosystem,
+    analyze as analyze_hotspots, coupling_for, ownership, top_couplings, CommitChanges,
+    CouplingEdge, CouplingPair, Ecosystem, EcosystemMode, FileChange, FileMetric, FileOwnership,
+    RawEcosystem,
 };
 pub use kagi_domain::operation::{Operation, OperationOutcome};
 

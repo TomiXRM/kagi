@@ -396,16 +396,18 @@ pub fn ownership(raw: &RawEcosystem, now: i64, g: Granularity, n: usize) -> Vec<
             }
         })
         .collect();
-    // Single-owner first, then highest share, then most-changed, then path.
+    // Most-changed files first (the ones that matter), so the real authorship
+    // mix is visible up top instead of a wall of single-author files; ties go
+    // to fewer authors (the bus-factor risk) then highest share, then path.
     owners.sort_by(|a, b| {
-        a.authors
-            .cmp(&b.authors)
+        b.commits
+            .cmp(&a.commits)
+            .then(a.authors.cmp(&b.authors))
             .then(
                 b.primary_share
                     .partial_cmp(&a.primary_share)
                     .unwrap_or(Ordering::Equal),
             )
-            .then(b.commits.cmp(&a.commits))
             .then(a.path.cmp(&b.path))
     });
     owners.truncate(n);
@@ -550,26 +552,30 @@ mod tests {
     }
 
     #[test]
-    fn ownership_flags_single_owner_first() {
+    fn ownership_ranks_most_changed_first_with_real_author_mix() {
         let r = raw(
             vec![
-                // solo.rs: only ever touched by alice → bus factor 1.
-                commit_by(NOW - 100, "alice", &["solo.rs"]),
-                commit_by(NOW - 200, "alice", &["solo.rs"]),
-                // shared.rs: alice + bob.
-                commit_by(NOW - 300, "alice", &["shared.rs"]),
-                commit_by(NOW - 400, "bob", &["shared.rs"]),
+                // shared.rs: most-changed (3) and multi-author (alice×2, bob).
+                commit_by(NOW - 100, "alice", &["shared.rs"]),
+                commit_by(NOW - 150, "bob", &["shared.rs"]),
+                commit_by(NOW - 200, "alice", &["shared.rs"]),
+                // solo.rs: single-owner but less active (2).
+                commit_by(NOW - 300, "alice", &["solo.rs"]),
+                commit_by(NOW - 400, "alice", &["solo.rs"]),
             ],
             &[],
         );
         let owners = ownership(&r, NOW, Granularity::All, 10);
-        assert_eq!(owners[0].path, "solo.rs"); // single-owner ranks first
-        assert_eq!(owners[0].authors, 1);
+        // Most-changed file leads, showing its real 2-author / 67% split — not a
+        // wall of single-owner files.
+        assert_eq!(owners[0].path, "shared.rs");
+        assert_eq!(owners[0].authors, 2);
         assert_eq!(owners[0].primary_author, "alice");
-        assert!((owners[0].primary_share - 1.0).abs() < 1e-9);
-        let shared = owners.iter().find(|o| o.path == "shared.rs").unwrap();
-        assert_eq!(shared.authors, 2);
-        assert!((shared.primary_share - 0.5).abs() < 1e-9);
+        assert!((owners[0].primary_share - 2.0 / 3.0).abs() < 1e-9);
+        // The single-owner file is still reported (bus-factor flagged in the UI).
+        let solo = owners.iter().find(|o| o.path == "solo.rs").unwrap();
+        assert_eq!(solo.authors, 1);
+        assert!((solo.primary_share - 1.0).abs() < 1e-9);
     }
 
     #[test]

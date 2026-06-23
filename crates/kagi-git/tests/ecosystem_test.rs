@@ -55,6 +55,25 @@ fn commit_at(dir: &Path, date: &str, msg: &str) {
     assert!(status.success());
 }
 
+/// Commit authored by a specific person (distinct author email per call).
+fn commit_as(dir: &Path, date: &str, name: &str, email: &str, msg: &str) {
+    git(dir, &["add", "-A"]);
+    let status = Command::new("git")
+        .args(["commit", "-m", msg])
+        .current_dir(dir)
+        .env("GIT_AUTHOR_NAME", name)
+        .env("GIT_AUTHOR_EMAIL", email)
+        .env("GIT_COMMITTER_NAME", name)
+        .env("GIT_COMMITTER_EMAIL", email)
+        .env("GIT_AUTHOR_DATE", date)
+        .env("GIT_COMMITTER_DATE", date)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("HOME", dir)
+        .status()
+        .expect("commit failed");
+    assert!(status.success());
+}
+
 fn init(tmp: &TempDir) -> &Path {
     let dir = tmp.path();
     git(dir, &["init", "-b", "main", "."]);
@@ -122,6 +141,40 @@ fn backend_facade_matches_free_function() {
     .expect("free ecosystem");
     assert_eq!(via_backend, via_free);
     assert_eq!(via_backend.loc.get("a.txt"), Some(&2));
+}
+
+#[test]
+fn mine_captures_distinct_authors_for_ownership() {
+    use kagi_git::ownership;
+
+    let tmp = TempDir::new().unwrap();
+    let dir = init(&tmp);
+
+    // shared.rs touched by alice (twice) and bob (once) → 3 commits, 2 authors.
+    write(dir, "shared.rs", "1\n");
+    commit_as(dir, "2026-01-01T00:00:00", "Alice", "alice@x", "a1");
+    write(dir, "shared.rs", "1\n2\n");
+    commit_as(dir, "2026-01-02T00:00:00", "Bob", "bob@x", "b1");
+    write(dir, "shared.rs", "1\n2\n3\n");
+    commit_as(dir, "2026-01-03T00:00:00", "Alice", "alice@x", "a2");
+
+    let raw = repo_ecosystem(&EcosystemRequest {
+        repo_dir: dir.to_path_buf(),
+        limit: 0,
+    })
+    .expect("ecosystem");
+
+    // The mine must record the real, distinct author emails.
+    let authors: Vec<&str> = raw.commits.iter().map(|c| c.author.as_str()).collect();
+    assert!(authors.contains(&"alice@x"), "authors were {authors:?}");
+    assert!(authors.contains(&"bob@x"), "authors were {authors:?}");
+
+    let now = 1_767_500_000;
+    let owners = ownership(&raw, now, Granularity::All, 10);
+    let shared = owners.iter().find(|o| o.path == "shared.rs").unwrap();
+    assert_eq!(shared.authors, 2, "expected 2 authors, got {shared:?}");
+    assert_eq!(shared.primary_author, "alice@x");
+    assert!((shared.primary_share - 2.0 / 3.0).abs() < 1e-9);
 }
 
 #[test]

@@ -19,12 +19,91 @@ pub(super) fn render_ecosystem(
     cx: &mut Context<EcosystemView>,
 ) -> AnyElement {
     div()
+        .relative()
         .flex()
         .flex_col()
         .size_full()
         .bg(rgb(theme().bg_base))
         .child(render_header(view, cx))
         .child(render_body(view, cx))
+        .when(view.data.help_open, |d| d.child(render_help(cx)))
+        .into_any_element()
+}
+
+/// "How to read Analyze" help overlay — a centered, scrollable card over a dim
+/// backdrop (click the backdrop or ✕ to close).
+fn render_help(cx: &mut Context<EcosystemView>) -> AnyElement {
+    let close = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.toggle_help(cx));
+    let backdrop_close = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.toggle_help(cx));
+
+    let mut card = div()
+        .id("eco-help-card")
+        .flex()
+        .flex_col()
+        .gap_3()
+        .w(theme::scaled_px(580.0))
+        .max_h(relative(0.82))
+        .overflow_y_scroll()
+        .p_4()
+        .bg(rgb(theme().modal))
+        .border_1()
+        .border_color(rgb(theme().surface))
+        .rounded(theme::scaled_px(8.0))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_size(theme::scaled_px(16.0))
+                        .text_color(rgb(theme().text_main))
+                        .child(Msg::EcoHelpTitle.t()),
+                )
+                .child(text_button("eco-help-close", "✕", true).on_click(close)),
+        );
+    for (heading, body) in crate::ui::i18n::eco_help_sections() {
+        card = card.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_size(theme::scaled_px(13.0))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(theme().accent))
+                        .child(heading),
+                )
+                .child(
+                    div()
+                        .text_size(theme::scaled_px(12.5))
+                        .text_color(rgb(theme().text_sub))
+                        .child(body),
+                ),
+        );
+    }
+
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .id("eco-help-backdrop")
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .bg(rgb(theme().modal_overlay))
+                .opacity(0.7)
+                .on_click(backdrop_close),
+        )
+        .child(card)
         .into_any_element()
 }
 
@@ -32,6 +111,7 @@ pub(super) fn render_ecosystem(
 fn render_header(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElement {
     let copy_enabled = view.data.ecosystem.is_some();
     let copy_click = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.copy_diagnostic(cx));
+    let help_click = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.toggle_help(cx));
     let close_click = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.request_close(cx));
 
     div()
@@ -61,6 +141,7 @@ fn render_header(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyEl
         .child(
             text_button("eco-copy", Msg::EcoCopyDiagnostic.t(), copy_enabled).on_click(copy_click),
         )
+        .child(text_button("eco-help", "?", true).on_click(help_click))
         .child(text_button("eco-close", "✕", true).on_click(close_click))
         .into_any_element()
 }

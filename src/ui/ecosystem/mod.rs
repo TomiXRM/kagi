@@ -79,6 +79,8 @@ pub struct EcosystemData {
     /// Per-file ownership for the current granularity (Ownership mode).
     pub ownership: Vec<FileOwnership>,
     pub mode: EcosystemMode,
+    /// Whether the "How to read Analyze" help overlay is open.
+    pub help_open: bool,
     /// Hotspots sub-view: `false` = ranked list, `true` = treemap heatmap.
     pub map: bool,
     pub granularity: Granularity,
@@ -102,6 +104,7 @@ impl EcosystemData {
             graph_bounds: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0, 0.0, 0.0))),
             ownership: Vec::new(),
             mode: EcosystemMode::Hotspots,
+            help_open: false,
             map: false,
             granularity: Granularity::All,
             loading: true,
@@ -260,6 +263,12 @@ impl EcosystemView {
             );
             self.data.coupling_focus = Some(row);
         }
+        cx.notify();
+    }
+
+    /// Toggle the "How to read Analyze" help overlay.
+    pub fn toggle_help(&mut self, cx: &mut Context<Self>) {
+        self.data.help_open = !self.data.help_open;
         cx.notify();
     }
 

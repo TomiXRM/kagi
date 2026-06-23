@@ -43,7 +43,7 @@ const ITERS: usize = 300;
 
 /// Centre-gravity strength (linear in distance) — keeps disconnected components
 /// from drifting far apart so the graph stays compact.
-const GRAVITY: f64 = 0.1;
+const GRAVITY: f64 = 0.3;
 
 /// Build and lay out a graph from the top `max_edges` coupling pairs.
 pub fn build_graph(pairs: &[CouplingPair], max_edges: usize) -> CouplingGraph {

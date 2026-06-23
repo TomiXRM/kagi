@@ -443,6 +443,8 @@ pub enum Msg {
     EcoGraph,
     /// Graph viewport reset button (zoom/pan back to fit).
     EcoResetView,
+    /// Help overlay title.
+    EcoHelpTitle,
 }
 
 impl Msg {
@@ -919,6 +921,8 @@ impl Msg {
             (Ja, EcoGraph) => "グラフ",
             (En, EcoResetView) => "Reset",
             (Ja, EcoResetView) => "リセット",
+            (En, EcoHelpTitle) => "How to read Analyze",
+            (Ja, EcoHelpTitle) => "Analyze の見方",
         }
     }
 }
@@ -926,6 +930,57 @@ impl Msg {
 // ──────────────────────────────────────────────────────────────────────────
 // Parameterized helpers (format! lives here, not at the call sites)
 // ──────────────────────────────────────────────────────────────────────────
+
+/// Help-overlay sections for the Analyze view: `(heading, body)` in the active
+/// language. Kept here so EN/JA stay side by side (ADR-0119).
+pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
+    match lang() {
+        Lang::En => vec![
+            (
+                "What is Analyze?",
+                "A read-only look at your Git history — no changes are made. Pick a time window (Day … All) top-right; every view re-ranks for that window. Binary / asset files (images, PDF, CAD, KiCad, .icns, .zip) are excluded since churn × size is meaningless for them.",
+            ),
+            (
+                "Hotspots",
+                "Files ranked by risk = how often a file changes (commits) × how big it is (LOC). The top of the list is where bugs are most likely — busy AND complex code. List shows the ranking with a risk bar; Map shows a treemap (tile size = LOC, colour = risk, green → red). It is a hint to look, not a verdict.",
+            ),
+            (
+                "Coupling",
+                "Pairs of files that tend to change in the same commit — hidden dependencies. 'N×' = times they changed together; '%' = how strongly they overlap. Click a row to expand one file's full set of partners (1:many). 'Graph' draws it as a network: drag to pan, scroll to zoom toward the pointer, 'Reset' to refit.",
+            ),
+            (
+                "Ownership",
+                "Who maintains each file: the primary author, their share of the commits, and how many distinct authors have touched it. '1 author' (highlighted) is a bus-factor risk — only one person knows that file.",
+            ),
+            (
+                "Copy diagnostic",
+                "Copies the current Hotspots ranking as Markdown, ready to paste into an AI chat as context (\"here is where the risk is — help me refactor\").",
+            ),
+        ],
+        Lang::Ja => vec![
+            (
+                "Analyze とは",
+                "Git 履歴を読み取り専用で分析します（変更は加えません）。右上で期間（Day … All）を選ぶと、各ビューがその期間で再集計されます。バイナリ/アセット（画像・PDF・CAD・KiCad・.icns・.zip）は churn×規模が無意味なため除外しています。",
+            ),
+            (
+                "Hotspots（ホットスポット）",
+                "リスク = 変更頻度（commit 数）× 規模（行数 LOC）でファイルを順位付け。上位ほどバグが出やすい＝「よく触られて、かつ複雑」な場所です。List はリスクバー付きランキング、Map はツリーマップ（面積=LOC、色=リスク、緑→赤）。断定ではなく「注目の目安」です。",
+            ),
+            (
+                "Coupling（結合）",
+                "同じ commit で一緒に変わりがちなファイルの組＝隠れた依存。『N×』= 一緒に変わった回数、『%』= 結びつきの強さ。行をクリックすると、そのファイルの全パートナー（1:多）が展開されます。『グラフ』はネットワーク表示：ドラッグで移動、スクロールでカーソル位置を中心に拡大、『リセット』で初期表示。",
+            ),
+            (
+                "Ownership（所有）",
+                "各ファイルの担当：主著者・その commit 占有率・関わった著者数。『1 author』（強調表示）はバス係数リスク＝そのファイルを知るのが 1 人だけ、という危険信号です。",
+            ),
+            (
+                "診断をコピー",
+                "現在の Hotspots ランキングを Markdown でコピーします。AI チャットに貼って文脈として渡せます（「ここがリスク。リファクタを手伝って」）。",
+            ),
+        ],
+    }
+}
 
 /// WIP row note shown above the commit list when the working tree is dirty.
 /// Was the hardcoded `"// WIP — N change(s)(クリックで commit panel)"`.

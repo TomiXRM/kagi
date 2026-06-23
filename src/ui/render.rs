@@ -193,22 +193,10 @@ impl Render for KagiApp {
             }
         }
 
-        // T-COMMIT-016: a Smart Commit message generated on a background thread
-        // is pushed into the commit-message Input here, where `&mut Window` is
-        // available (set_value requires it).
-        if let Some(msg) = self.pending_smart_msg.take() {
-            if self.commit_template_mode {
-                // Template mode: parse the generated Conventional subject into
-                // the type/scope/summary (+body) fields so each goes into its own
-                // box (ADR-0090).
-                let fields = kagi_git::parse_message(&msg);
-                self.set_template_inputs(&fields, window, cx);
-            } else if let Some(input) = self.commit_input.clone() {
-                input.update(cx, |state, cx| {
-                    state.set_value(msg, window, cx);
-                });
-            }
-        }
+        // ADR-0118 (Phase 5.2) / T-ENTITY-COMMITPANEL-001 (corrections #1/#2): the
+        // queued smart-commit message push AND the per-branch draft autosave moved
+        // ONTO the `CommitPanelView` entity (`sync_inputs`), run from the entity's
+        // own render path. The parent no longer reads the child's input each frame.
 
         // Graph horizontal scroll: clamp against the current repo's lane
         // count so the offset self-heals after tab switches and column
@@ -274,7 +262,9 @@ impl Render for KagiApp {
         // selection path (click / keyboard / jump) uniformly.
         if self.remote_view.is_some() {
             if let Some(i) = selected {
-                if !self.diff_cache.contains_key(&i) && !self.remote_diff_inflight.contains(&i) {
+                if !self.diff_caches.changed_files.contains_key(&i)
+                    && !self.diff_caches.remote_inflight.contains(&i)
+                {
                     self.load_remote_changed_files(i, cx);
                 }
             }
@@ -283,7 +273,9 @@ impl Render for KagiApp {
             // changed files + diffstat off the UI thread (once per row), so no
             // selection path (click / keyboard / jump) blocks the frame. `select`
             // only records the selection; this fires the async load.
-            if !self.diff_cache.contains_key(&i) && !self.local_diff_inflight.contains(&i) {
+            if !self.diff_caches.changed_files.contains_key(&i)
+                && !self.diff_caches.local_inflight.contains(&i)
+            {
                 self.load_local_changed_files(i, cx);
             }
         }
@@ -294,11 +286,16 @@ impl Render for KagiApp {
             .cloned();
         // Clone cached changed-files list for the render closure.
         // `None` outer = no selection; `Some(None)` = diff unavailable; `Some(Some(v))` = files.
-        let changed_files: Option<Option<Vec<FileStatus>>> =
-            selected.map(|i| self.diff_cache.get(&i).cloned().unwrap_or(None));
+        let changed_files: Option<Option<Vec<FileStatus>>> = selected.map(|i| {
+            self.diff_caches
+                .changed_files
+                .get(&i)
+                .cloned()
+                .unwrap_or(None)
+        });
         // W16-DIFFSTAT: per-file additions/deletions for the selected commit.
         let changed_diffstat: Option<Vec<FileDiffStat>> =
-            selected.and_then(|i| self.diffstat_cache.get(&i).cloned());
+            selected.and_then(|i| self.diff_caches.diffstat.get(&i).cloned());
         let wip_diffstat = self.wip_diffstat;
         // W2-INSPECTOR: badges for the selected commit row and tree-view toggle state.
         let selected_badges: Vec<commit_list::RefBadge> = selected
@@ -388,34 +385,17 @@ impl Render for KagiApp {
         let revert_modal = self.revert_modal().cloned();
         let conflict_continue_modal = self.conflict_continue_modal().cloned();
         let status_footer = self.status_footer.clone();
-        // W30-CONFLICT-UI: clone the Conflict Mode snapshot for render (free
-        // functions in `conflict_view` render from this immutable copy).
-        let conflict = self.conflict.mode.clone();
+        // ADR-0118 / T-ENTITY-CONFLICT-001: the conflict body is its own
+        // `Entity<ConflictView>`. The entity renders itself (`el.child(entity)`);
+        // the banner is a free function fed a cloned `ConflictMode` read out of
+        // the entity here so the entity is never rendered twice in one frame.
+        let conflict_entity = self.conflict.clone();
+        let conflict_banner_mode = self.conflict.as_ref().and_then(|e| e.read(cx).mode.clone());
         // T-CONFLICT-FLOW-030: while a continued merge waits for its commit
         // message, show the normal body (commit panel) instead of the conflict
         // resolution body (ADR-0068). Conflict Mode is still active (MERGE_HEAD
         // present) but the editor is hidden behind the commit message panel.
-        let conflict_merge_pending = self.conflict.merge_commit_pending;
-        // T-CONFLICT-UI: chrome the 3-pane Conflict Editor needs from the app
-        // (the editors live on `self`, not on the cloned `ConflictMode`).
-        let conflict_chrome = conflict_view::EditorChrome {
-            inputs: self
-                .conflict
-                .editor_inputs
-                .as_ref()
-                .map(|i| conflict_view::EditorInputs {
-                    path: i.path.clone(),
-                    result: i.result.clone(),
-                }),
-            ab_scroll: self.conflict.ab_scroll_handle.clone(),
-            result_editing: self.conflict.result_editing,
-            reset_all_armed: self.conflict.reset_all_armed,
-            ab_split: self.conflict.ab_split,
-            result_split: self.conflict.result_split,
-            selected_hunk: self.conflict.selected_hunk,
-            geom: self.conflict.geom.clone(),
-            ab_geom: self.conflict.ab_geom.clone(),
-        };
+        let conflict_merge_pending = self.conflict_merge_pending;
         let commit_menu_overlay = self
             .commit_menu
             .clone()
@@ -429,12 +409,23 @@ impl Render for KagiApp {
             .clone()
             .and_then(|state| self.render_stash_menu_overlay(state, window, cx));
         // T-CONFLICT-DASH-022: per-file "…" overflow menu overlay (anchored at the
-        // click position; rendered top-level so it floats over the body).
-        let conflict_file_menu_overlay = match (&conflict, self.conflict.file_menu) {
-            (Some(m), Some((idx, pos))) => {
-                Some(conflict_view::render_file_menu(m, idx, pos, window, cx))
+        // click position; rendered TOP-LEVEL on the `KagiApp` context — never
+        // inside the entity render — so its actions defer/dispatch on the parent
+        // without leasing the entity. Reads `file_menu` + `mode` from the entity.
+        let conflict_file_menu_overlay = match conflict_entity.as_ref() {
+            Some(entity) => {
+                let (file_menu, mode) = {
+                    let v = entity.read(cx);
+                    (v.file_menu, v.mode.clone())
+                };
+                match (mode, file_menu) {
+                    (Some(m), Some((idx, pos))) => Some(conflict_view::render_file_menu(
+                        entity, &m, idx, pos, window, cx,
+                    )),
+                    _ => None,
+                }
             }
-            _ => None,
+            None => None,
         };
         // T-HT-001: clone toolbar/summary state for header render.
         // W3-NOTIFY: while a background git op runs, disable every git button
@@ -621,20 +612,26 @@ impl Render for KagiApp {
                 cx,
             ))
             // ── W30-CONFLICT-UI: persistent conflict banner (under header) ──
+            // Free function fed a cloned `ConflictMode` (the entity itself renders
+            // only the body — rendering it twice in one frame is unsound).
             .children(
-                conflict
+                conflict_banner_mode
                     .as_ref()
-                    .map(|m| conflict_view::render_banner(m, cx)),
+                    .map(conflict_view::render_banner),
             )
             // ── Body slot: in Conflict Mode the conflict resolution pane
             //    replaces the normal sidebar | list | panel body. The center is
             //    the A/B hunk editor + Result Preview; the right is always the
-            //    Conflict Dashboard (GitKraken-style — see render_body).
-            .when(conflict.is_some() && !conflict_merge_pending, |el| {
-                let m = conflict.clone().unwrap();
-                el.child(conflict_view::render_body(&m, &conflict_chrome, cx))
+            //    Conflict Dashboard (GitKraken-style — see render_body). The
+            //    `ConflictView` entity renders its own body.
+            .when(conflict_entity.is_some() && !conflict_merge_pending, |el| {
+                if let Some(entity) = conflict_entity.clone() {
+                    el.child(entity)
+                } else {
+                    el
+                }
             })
-            .when(conflict.is_none() || conflict_merge_pending, |el| {
+            .when(conflict_entity.is_none() || conflict_merge_pending, |el| {
                 el.child(self.render_body(
                     row_count,
                     selected,
@@ -665,7 +662,7 @@ impl Render for KagiApp {
             // Hidden on the conflict-resolution screen (user request): the
             // 3-pane editor + dashboard own the whole body there. The terminal
             // returns once the conflict is resolved / the commit panel shows.
-            .when(!(conflict.is_some() && !conflict_merge_pending), |el| {
+            .when(conflict_entity.is_none() || conflict_merge_pending, |el| {
                 el.children(self.render_bottom_panel_slot(
                     bottom_panel_open,
                     bottom_panel_height,

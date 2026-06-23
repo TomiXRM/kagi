@@ -1,10 +1,20 @@
 //! Commit Panel rendering, split out of `render_helpers.rs` (T-SPLIT-HELPERS-001
-//! / ADR-0116 Wave 3). These are pure-data-in / element-out builders for the
-//! Commit Panel view tree; they sit next to the panel state in `commit_panel.rs`.
-//! Behaviour-preserving move — no DOM, style, handler, [kagi] line, or i18n change.
+//! / ADR-0116 Wave 3). These build the Commit Panel view tree.
+//!
+//! ADR-0118 (Phase 5.2) / T-ENTITY-COMMITPANEL-001: the Commit Panel is now an
+//! `Entity<CommitPanelView>` (correction #6). The per-row builders are pure
+//! `&CommitPanelView` reads; the 22 listeners are `|view: &mut CommitPanelView|`.
+//! Every listener that touches `app.commit_panel` (stage/unstage, file select,
+//! commit/amend, discard, smart-commit, the parent `file_menu` overlay) DEFERS to
+//! the parent via `cx.spawn_in(window, …)` + `weak_app.update_in(acx, …)` so the
+//! leased entity is never re-entered. Pure entity-internal mutations (tree↔flat,
+//! plain↔template, type-chip pick) stay synchronous + a child `cx.notify()`.
+//! Element tree / styles / [kagi] lines / i18n are byte-identical to the
+//! pre-entity version.
 
 #![allow(clippy::too_many_arguments)]
 
+use super::commit_panel::CommitPanelView;
 use super::render_helpers::*;
 use super::*;
 use crate::ui::button_style::KagiButton;
@@ -14,32 +24,21 @@ use gpui_component::button::{Button, ButtonVariants};
 // Commit Panel — virtualized per-row builders (PERF)
 // ──────────────────────────────────────────────────────────────
 //
-// These free functions build a SINGLE file row, reading live data from
-// `this.commit_panel` (NOT a captured-by-value clone).  They are invoked from
-// the `uniform_list` processors below for only the visible `range`, so the
+// These free functions build a SINGLE file row, reading live data from the
+// `CommitPanelView` entity (NOT a captured-by-value clone). They are invoked
+// from the `uniform_list` processors below for only the visible `range`, so the
 // commit panel costs O(visible rows) per frame instead of O(all files).
-
-/// PERF: recompute the WIP-highlight target from the open main diff.
-/// `Some((staged, path))` when a WIP (unstaged/staged) file is open in the
-/// center diff; mirrors the value the old call site passed in by value.
-pub(crate) fn cp_active_wip(this: &KagiApp) -> Option<(bool, PathBuf)> {
-    match this.main_diff.as_ref().map(|d| &d.source) {
-        Some(MainDiffSource::Unstaged { path }) => Some((false, path.clone())),
-        Some(MainDiffSource::Staged { path }) => Some((true, path.clone())),
-        _ => None,
-    }
-}
 
 /// PERF: build one unstaged row in flat view (index `fi` into `unstaged`).
 pub(crate) fn render_unstaged_flat_row(
-    this: &KagiApp,
+    view: &CommitPanelView,
     fi: usize,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
-    let panel = this.commit_panel.as_ref()?;
+    let panel = &view.state;
     let f = panel.unstaged.get(fi)?;
     let selected_file = panel.selected_file.clone();
-    let active_wip = cp_active_wip(this);
+    let active_wip = view.active_wip.clone();
 
     let name = f
         .path
@@ -54,13 +53,11 @@ pub(crate) fn render_unstaged_flat_row(
         .as_ref()
         .is_some_and(|(st, p)| !*st && &f.path == p);
 
-    let file_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.select_commit_panel_file(CommitPanelFileRef::Unstaged { index: fi });
-        cx.notify();
+    let file_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
+        view.defer_select_file(CommitPanelFileRef::Unstaged { index: fi }, window, cx);
     });
-    let stage_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.do_stage_file(fi);
-        cx.notify();
+    let stage_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
+        view.defer_stage_file(fi, window, cx);
     });
     // Row background: conflicted files get red tint
     let row_bg = if is_conflicted_file {
@@ -106,10 +103,9 @@ pub(crate) fn render_unstaged_flat_row(
         // W17-DISCARD / ADR-0083: right-click opens the file context menu
         // (Discard lives there). Tracked rows are restored from the index;
         // untracked rows are deleted (after an ODB backup).
-        let menu_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
-            this.file_menu = Some((fi, e.position));
+        let menu_click = cx.listener(move |view, e: &gpui::MouseDownEvent, window, cx| {
             cx.stop_propagation();
-            cx.notify();
+            view.defer_open_file_menu(fi, e.position, window, cx);
         });
         file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
         file_row = file_row.child(
@@ -144,14 +140,14 @@ pub(crate) fn render_unstaged_flat_row(
 
 /// PERF: build one unstaged tree row (index `row_index` into `unstaged_tree`).
 pub(crate) fn render_unstaged_tree_row(
-    this: &KagiApp,
+    view: &CommitPanelView,
     row_index: usize,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
-    let panel = this.commit_panel.as_ref()?;
+    let panel = &view.state;
     let row = panel.unstaged_tree.get(row_index)?.clone();
     let selected_file = panel.selected_file.clone();
-    let active_wip = cp_active_wip(this);
+    let active_wip = view.active_wip.clone();
 
     match row {
         file_tree::TreeRow::Dir { depth, name } => {
@@ -189,13 +185,11 @@ pub(crate) fn render_unstaged_tree_row(
                 .zip(path.as_ref())
                 .is_some_and(|((st, p), fp)| !*st && fp == p);
 
-            let file_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                this.select_commit_panel_file(CommitPanelFileRef::Unstaged { index: fi });
-                cx.notify();
+            let file_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
+                view.defer_select_file(CommitPanelFileRef::Unstaged { index: fi }, window, cx);
             });
-            let stage_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                this.do_stage_file(fi);
-                cx.notify();
+            let stage_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
+                view.defer_stage_file(fi, window, cx);
             });
             let row_bg = if is_conflicted_file {
                 theme().diff_removed_bg
@@ -240,10 +234,9 @@ pub(crate) fn render_unstaged_tree_row(
                 // W17-DISCARD / ADR-0083: right-click opens the file context menu
                 // (Discard lives there). Untracked rows are discardable too —
                 // deleted from disk after an ODB backup.
-                let menu_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
-                    this.file_menu = Some((fi, e.position));
+                let menu_click = cx.listener(move |view, e: &gpui::MouseDownEvent, window, cx| {
                     cx.stop_propagation();
-                    cx.notify();
+                    view.defer_open_file_menu(fi, e.position, window, cx);
                 });
                 file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
                 file_row = file_row.child(
@@ -275,14 +268,14 @@ pub(crate) fn render_unstaged_tree_row(
 
 /// PERF: build one staged row in flat view (index `fi` into `staged`).
 pub(crate) fn render_staged_flat_row(
-    this: &KagiApp,
+    view: &CommitPanelView,
     fi: usize,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
-    let panel = this.commit_panel.as_ref()?;
+    let panel = &view.state;
     let f = panel.staged.get(fi)?;
     let selected_file = panel.selected_file.clone();
-    let active_wip = cp_active_wip(this);
+    let active_wip = view.active_wip.clone();
 
     let name = f
         .path
@@ -296,13 +289,11 @@ pub(crate) fn render_staged_flat_row(
         .as_ref()
         .is_some_and(|(st, p)| *st && &f.path == p);
 
-    let file_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.select_commit_panel_file(CommitPanelFileRef::Staged { index: fi });
-        cx.notify();
+    let file_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
+        view.defer_select_file(CommitPanelFileRef::Staged { index: fi }, window, cx);
     });
-    let unstage_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.do_unstage_file(fi);
-        cx.notify();
+    let unstage_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
+        view.defer_unstage_file(fi, window, cx);
     });
     Some(
         div()
@@ -358,14 +349,14 @@ pub(crate) fn render_staged_flat_row(
 
 /// PERF: build one staged tree row (index `row_index` into `staged_tree`).
 pub(crate) fn render_staged_tree_row(
-    this: &KagiApp,
+    view: &CommitPanelView,
     row_index: usize,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
-    let panel = this.commit_panel.as_ref()?;
+    let panel = &view.state;
     let row = panel.staged_tree.get(row_index)?.clone();
     let selected_file = panel.selected_file.clone();
-    let active_wip = cp_active_wip(this);
+    let active_wip = view.active_wip.clone();
 
     match row {
         file_tree::TreeRow::Dir { depth, name } => {
@@ -398,13 +389,11 @@ pub(crate) fn render_staged_tree_row(
                 .zip(path.as_ref())
                 .is_some_and(|((st, p), fp)| *st && fp == p);
 
-            let file_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                this.select_commit_panel_file(CommitPanelFileRef::Staged { index: fi });
-                cx.notify();
+            let file_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
+                view.defer_select_file(CommitPanelFileRef::Staged { index: fi }, window, cx);
             });
-            let unstage_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                this.do_unstage_file(fi);
-                cx.notify();
+            let unstage_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
+                view.defer_unstage_file(fi, window, cx);
             });
             Some(
                 div()
@@ -462,42 +451,169 @@ pub(crate) fn render_staged_tree_row(
 }
 
 // ──────────────────────────────────────────────────────────────
-// Commit Panel renderer (T025)
+// CommitPanelView — deferred Backend dispatch (re-entrancy invariant)
+// ──────────────────────────────────────────────────────────────
+//
+// Every method here marshals to the parent `KagiApp` via `spawn_in`/`update_in`:
+// the called `KagiApp` method reads/updates `app.commit_panel` (this very
+// entity), so calling it synchronously from a leased listener would re-lease the
+// entity and panic ("already borrowed"). By the time the spawned task runs the
+// listener has returned and the lease is released. Mirrors `ConflictView`.
+
+impl CommitPanelView {
+    fn defer_stage_file(&self, fi: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let weak_app = self.app.clone();
+        cx.spawn_in(window, async move |_v, acx| {
+            let _ = weak_app.update_in(acx, |app, _window, cx| app.do_stage_file(fi, cx));
+        })
+        .detach();
+    }
+
+    fn defer_unstage_file(&self, fi: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let weak_app = self.app.clone();
+        cx.spawn_in(window, async move |_v, acx| {
+            let _ = weak_app.update_in(acx, |app, _window, cx| app.do_unstage_file(fi, cx));
+        })
+        .detach();
+    }
+
+    fn defer_stage_all(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let weak_app = self.app.clone();
+        cx.spawn_in(window, async move |_v, acx| {
+            let _ = weak_app.update_in(acx, |app, _window, cx| app.do_stage_all(cx));
+        })
+        .detach();
+    }
+
+    fn defer_unstage_all(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let weak_app = self.app.clone();
+        cx.spawn_in(window, async move |_v, acx| {
+            let _ = weak_app.update_in(acx, |app, _window, cx| app.do_unstage_all(cx));
+        })
+        .detach();
+    }
+
+    fn defer_select_file(
+        &self,
+        file_ref: CommitPanelFileRef,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let weak_app = self.app.clone();
+        cx.spawn_in(window, async move |_v, acx| {
+            let _ = weak_app.update_in(acx, |app, _window, cx| {
+                app.select_commit_panel_file(file_ref, cx)
+            });
+        })
+        .detach();
+    }
+
+    fn defer_open_commit_plan_modal(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let weak_app = self.app.clone();
+        cx.spawn_in(window, async move |_v, acx| {
+            let _ = weak_app.update_in(acx, |app, _window, cx| app.open_commit_plan_modal(cx));
+        })
+        .detach();
+    }
+
+    fn defer_open_discard_all(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let weak_app = self.app.clone();
+        cx.spawn_in(window, async move |_v, acx| {
+            let _ = weak_app.update_in(acx, |app, _window, cx| app.open_discard_all_modal(cx));
+        })
+        .detach();
+    }
+
+    fn defer_open_file_menu(
+        &self,
+        fi: usize,
+        pos: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // `file_menu` is the shared parent overlay (correction #6b: kept on the
+        // parent — its dismiss/discard/history actions read `app.commit_panel`).
+        let weak_app = self.app.clone();
+        cx.spawn_in(window, async move |_v, acx| {
+            let _ = weak_app.update_in(acx, |app, _window, cx| {
+                app.file_menu = Some((fi, pos));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn defer_amend(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let weak_app = self.app.clone();
+        cx.spawn_in(window, async move |_v, acx| {
+            let _ = weak_app.update_in(acx, |app, _window, cx| app.commit_panel_amend(cx));
+        })
+        .detach();
+    }
+
+    fn defer_smart_suggest(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let weak_app = self.app.clone();
+        cx.spawn_in(window, async move |_v, acx| {
+            let _ = weak_app.update_in(acx, |app, window, cx| app.smart_suggest(window, cx));
+        })
+        .detach();
+    }
+
+    fn defer_smart_generate(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let weak_app = self.app.clone();
+        cx.spawn_in(window, async move |_v, acx| {
+            let _ = weak_app.update_in(acx, |app, window, cx| app.smart_generate(window, cx));
+        })
+        .detach();
+    }
+
+    fn defer_smart_toggle_lang(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let weak_app = self.app.clone();
+        cx.spawn_in(window, async move |_v, acx| {
+            let _ = weak_app.update_in(acx, |app, _window, cx| {
+                app.smart_commit.toggle_lang();
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Commit Panel renderer (T025) — now self-rendering on the entity
 // ──────────────────────────────────────────────────────────────
 
-/// Render the Commit Panel: unstaged/staged sections + diff viewer + message input + commit button.
-///
-/// Layout (top to bottom in right panel):
-/// 1. Unstaged (N)  [flat|tree] toggle
-/// 2. Staged (M)
-/// 3. Diff viewer (flex_1)
-/// 4. Message input (T014 pattern — simple key handler)
-/// 5. Warning (if unstaged remain)
-/// 6. Commit button (disabled when staged=0 or message empty)
-// T-SPLIT-HELPERS-001 / ADR-0116 Wave 3: `render_commit_panel` was an 11-argument
-// free function. Six of those arguments were verbatim `KagiApp` fields (commit
-// input, template mode/inputs, smart-commit state, the two scroll handles) and one
-// (`_active_wip`) was already dead (PERF: recomputed per row). Making this an
-// inherent `&self` method lets it read those six from `self` directly and drop the
-// dead one — exactly how `render_body` (also `&self`) feeds it. This is a pure
-// argument-list reduction: the field reads below reproduce the previous call-site
-// clones one-for-one, so the local bindings and the element tree are unchanged.
-// Entity-ising the panel (Phase 5.1) is intentionally NOT done here.
-impl KagiApp {
-    pub(crate) fn render_commit_panel(
+impl Render for CommitPanelView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Correction #1/#2: input sync + draft autosave run on the entity's own
+        // render path (with `&mut Window`), never as a parent per-frame read of
+        // the child's input.
+        self.sync_inputs(window, cx);
+        let panel_width = self.panel_render_width;
+        self.render_panel(panel_width, cx)
+    }
+}
+
+impl CommitPanelView {
+    /// Render the Commit Panel: unstaged/staged sections + diff viewer + message
+    /// input + commit button. (Was `KagiApp::render_commit_panel`; retargeted to
+    /// the entity — reads `self.state` + the entity's own inputs/scroll handles.
+    /// `smart` is read off the parent `KagiApp` via the weak handle: it is safe
+    /// because render runs after the parent's render returns, and the value is
+    /// pushed in by the parent each frame via `set_smart_snapshot`.)
+    pub(crate) fn render_panel(
         &self,
-        panel: CommitPanelState,
         panel_width: f32,
-        preview: Option<kagi_git::CommitPreview>,
-        cx: &mut Context<KagiApp>,
+        cx: &mut Context<CommitPanelView>,
     ) -> impl IntoElement {
+        let panel = &self.state;
+        let preview = panel.preview.clone();
         let commit_input = self.commit_input.clone();
         let template_mode = self.commit_template_mode;
         let template_inputs = self.commit_template_inputs.clone();
-        let smart = self.smart_commit.clone();
-        let unstaged_scroll_handle = self.cp_unstaged_scroll_handle.clone();
-        let staged_scroll_handle = self.cp_staged_scroll_handle.clone();
-        // theme().change_dir now sourced from theme().change_dir (W9-THEME).
+        let smart = self.smart_snapshot.clone();
+        let unstaged_scroll_handle = self.unstaged_scroll_handle.clone();
+        let staged_scroll_handle = self.staged_scroll_handle.clone();
 
         let tree_view = panel.tree_view;
         let unstaged_count = panel.unstaged.len();
@@ -538,22 +654,22 @@ impl KagiApp {
         };
         let can_commit = !panel.staged.is_empty() && input_msg_nonempty;
         let has_unstaged_warning = !panel.unstaged.is_empty() && staged_count > 0;
-        // PERF: selected_file is read per visible row from `this.commit_panel`
-        // inside the uniform_list processors, not captured here.
+        // PERF: selected_file is read per visible row from the entity inside the
+        // uniform_list processors, not captured here.
 
         // ── View switch: segmented [List | Tree] (T-UI-002) ──────
-        let list_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-            if let Some(panel) = this.commit_panel.as_mut() {
-                panel.tree_view = false;
-            }
-            cx.notify();
-        });
-        let tree_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-            if let Some(panel) = this.commit_panel.as_mut() {
-                panel.tree_view = true;
-            }
-            cx.notify();
-        });
+        let list_click = cx.listener(
+            |view: &mut CommitPanelView, _e: &gpui::ClickEvent, _w, cx| {
+                view.state.tree_view = false;
+                cx.notify();
+            },
+        );
+        let tree_click = cx.listener(
+            |view: &mut CommitPanelView, _e: &gpui::ClickEvent, _w, cx| {
+                view.state.tree_view = true;
+                cx.notify();
+            },
+        );
         let seg = |id: &'static str, label: &'static str, active: bool| {
             div()
                 .id(id)
@@ -606,10 +722,11 @@ impl KagiApp {
                     .child(SharedString::from(format!("Unstaged ({})", unstaged_count))),
             )
             .when(unstaged_count > 0, |el| {
-                let stage_all_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                    this.do_stage_all();
-                    cx.notify();
-                });
+                let stage_all_click = cx.listener(
+                    |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
+                        view.defer_stage_all(window, cx);
+                    },
+                );
                 el.child(
                     div()
                         .id("cp-stage-all")
@@ -627,10 +744,11 @@ impl KagiApp {
             })
             // W17-DISCARD: "Discard all" — disabled (muted, no handler) at 0 targets.
             .when(unstaged_count > 0, |el| {
-                let discard_all_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                    this.open_discard_all_modal();
-                    cx.notify();
-                });
+                let discard_all_click = cx.listener(
+                    |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
+                        view.defer_open_discard_all(window, cx);
+                    },
+                );
                 let enabled = discard_eligible_count > 0;
                 let mut btn = div()
                     .id("cp-discard-all")
@@ -654,7 +772,7 @@ impl KagiApp {
             .child(toggle_btn);
 
         // PERF: unstaged file rows are virtualized via `uniform_list` (built from
-        // free row functions reading `this.commit_panel`), not a prebuilt div.
+        // free row functions reading the entity), not a prebuilt div.
         let unstaged_row_count = if tree_view {
             panel.unstaged_tree.len()
         } else {
@@ -680,10 +798,11 @@ impl KagiApp {
                     .child(SharedString::from(format!("Staged ({})", staged_count))),
             )
             .when(staged_count > 0, |el| {
-                let unstage_all_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                    this.do_unstage_all();
-                    cx.notify();
-                });
+                let unstage_all_click = cx.listener(
+                    |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
+                        view.defer_unstage_all(window, cx);
+                    },
+                );
                 el.child(
                     div()
                         .id("cp-unstage-all")
@@ -700,7 +819,7 @@ impl KagiApp {
             });
 
         // PERF: staged file rows are virtualized via `uniform_list` (built from
-        // free row functions reading `this.commit_panel`), not a prebuilt div.
+        // free row functions reading the entity), not a prebuilt div.
         let staged_row_count = if tree_view {
             panel.staged_tree.len()
         } else {
@@ -709,9 +828,11 @@ impl KagiApp {
 
         // ── plain ⇄ template mode toggle (T-COMMIT-009) ───────────────
         let mode_toggle = {
-            let toggle_click = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-                this.toggle_commit_template_mode(window, cx);
-            });
+            let toggle_click = cx.listener(
+                |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
+                    view.toggle_template_mode(window, cx);
+                },
+            );
             let label = if template_mode {
                 "Plain message"
             } else {
@@ -756,9 +877,12 @@ impl KagiApp {
                 let mut chips = div().flex().flex_row().flex_wrap().gap_1();
                 for &choice in kagi_git::TYPE_CHOICES {
                     let ty_state = ty.clone();
-                    let pick = cx.listener(move |_this, _e: &gpui::ClickEvent, window, cx| {
-                        ty_state.update(cx, |s, cx| s.set_value(choice.to_string(), window, cx));
-                    });
+                    let pick = cx.listener(
+                        move |_view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
+                            ty_state
+                                .update(cx, |s, cx| s.set_value(choice.to_string(), window, cx));
+                        },
+                    );
                     chips = chips.child(
                         div()
                             .id(SharedString::from(format!("cp-type-chip-{}", choice)))
@@ -830,10 +954,11 @@ impl KagiApp {
 
         // ── Commit button ─────────────────────────────────────────
         let commit_btn = if can_commit {
-            let commit_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
-                this.open_commit_plan_modal(cx);
-                cx.notify();
-            });
+            let commit_click = cx.listener(
+                |view: &mut CommitPanelView, _event: &gpui::ClickEvent, window, cx| {
+                    view.defer_open_commit_plan_modal(window, cx);
+                },
+            );
             Button::new("cp-commit-btn")
                 .label(SharedString::from(format!(
                     "Commit ({} file{})",
@@ -944,14 +1069,15 @@ impl KagiApp {
                     suggest_color,
                 );
                 if suggest_enabled {
-                    let suggest_click =
-                        cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+                    let suggest_click = cx.listener(
+                        move |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
                             if llm_on {
-                                this.smart_generate(window, cx);
+                                view.defer_smart_generate(window, cx);
                             } else {
-                                this.smart_suggest(window, cx);
+                                view.defer_smart_suggest(window, cx);
                             }
-                        });
+                        },
+                    );
                     b = b.on_click(suggest_click);
                 }
                 b.into_any_element()
@@ -962,10 +1088,11 @@ impl KagiApp {
                 message_gen::Lang::En => "Lang: EN",
                 message_gen::Lang::Ja => "Lang: 日本語",
             };
-            let lang_click = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                this.smart_commit.toggle_lang();
-                cx.notify();
-            });
+            let lang_click = cx.listener(
+                |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
+                    view.defer_smart_toggle_lang(window, cx);
+                },
+            );
             let lang_btn = pill(
                 "cp-smart-lang",
                 SharedString::from(lang_label),
@@ -990,9 +1117,11 @@ impl KagiApp {
             // is detected but not yet enabled, offer an opt-in affordance so the user
             // can turn it on (after which Suggest goes green and uses it).
             if smart.ollama_available && !smart.llm_enabled {
-                let enable_click = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-                    this.smart_generate(window, cx);
-                });
+                let enable_click = cx.listener(
+                    |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
+                        view.defer_smart_generate(window, cx);
+                    },
+                );
                 let enable_btn = pill(
                     "cp-smart-enable-llm",
                     SharedString::from("Enable Local LLM…"),
@@ -1139,21 +1268,17 @@ impl KagiApp {
                                         "cp-unstaged-list",
                                         unstaged_row_count,
                                         cx.processor(
-                                            move |this,
+                                            move |view,
                                                   range: std::ops::Range<usize>,
                                                   _window,
                                                   cx| {
-                                                let tree = this
-                                                    .commit_panel
-                                                    .as_ref()
-                                                    .map(|p| p.tree_view)
-                                                    .unwrap_or(false);
+                                                let tree = view.state.tree_view;
                                                 range
                                                     .filter_map(|i| {
                                                         if tree {
-                                                            render_unstaged_tree_row(this, i, cx)
+                                                            render_unstaged_tree_row(view, i, cx)
                                                         } else {
-                                                            render_unstaged_flat_row(this, i, cx)
+                                                            render_unstaged_flat_row(view, i, cx)
                                                         }
                                                     })
                                                     .collect::<Vec<_>>()
@@ -1191,21 +1316,17 @@ impl KagiApp {
                                         "cp-staged-list",
                                         staged_row_count,
                                         cx.processor(
-                                            move |this,
+                                            move |view,
                                                   range: std::ops::Range<usize>,
                                                   _window,
                                                   cx| {
-                                                let tree = this
-                                                    .commit_panel
-                                                    .as_ref()
-                                                    .map(|p| p.tree_view)
-                                                    .unwrap_or(false);
+                                                let tree = view.state.tree_view;
                                                 range
                                                     .filter_map(|i| {
                                                         if tree {
-                                                            render_staged_tree_row(this, i, cx)
+                                                            render_staged_tree_row(view, i, cx)
                                                         } else {
-                                                            render_staged_flat_row(this, i, cx)
+                                                            render_staged_flat_row(view, i, cx)
                                                         }
                                                     })
                                                     .collect::<Vec<_>>()
@@ -1279,32 +1400,11 @@ impl KagiApp {
                     // the plan blocks pushed/merge/etc.). Mode follows what the
                     // user has provided: staged changes, a new message, or both.
                     .child({
-                        let amend_click = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-                            let staged = this
-                                .commit_panel
-                                .as_ref()
-                                .map(|p| !p.staged.is_empty())
-                                .unwrap_or(false);
-                            let msg = this
-                                .commit_input
-                                .as_ref()
-                                .map(|i| !i.read(cx).value().trim().is_empty())
-                                .unwrap_or(false);
-                            let mode = match (msg, staged) {
-                                (true, true) => AmendMode::Both,
-                                (false, true) => AmendMode::Staged,
-                                (true, false) => AmendMode::MessageOnly,
-                                (false, false) => {
-                                    this.status_footer = FooterStatus::Idle(SharedString::from(
-                                        Msg::AmendNeedMessageOrStaged.t(),
-                                    ));
-                                    cx.notify();
-                                    return;
-                                }
-                            };
-                            this.open_amend_modal(mode, cx);
-                            cx.notify();
-                        });
+                        let amend_click = cx.listener(
+                            |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
+                                view.defer_amend(window, cx);
+                            },
+                        );
                         div()
                             .id("cp-amend-btn")
                             .mt_1()

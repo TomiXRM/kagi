@@ -347,10 +347,14 @@ impl KagiApp {
         modal_focus: Option<FocusHandle>,
         stash_push_focus: Option<FocusHandle>,
         commit_panel_open: bool,
-        commit_panel: Option<CommitPanelState>,
+        commit_panel: Option<Entity<commit_panel::CommitPanelView>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
+        // ADR-0118: the plan modal now lives on the entity (`state.plan_modal`).
+        let commit_plan_modal = commit_panel
+            .as_ref()
+            .and_then(|e| e.read(cx).state.plan_modal.clone());
         el.when_some(plan_modal, |el, modal| {
             el.child(render_plan_modal(modal, cx))
         })
@@ -441,21 +445,13 @@ impl KagiApp {
             el.child(render_file_menu_overlay(fi, pos, cx))
         })
         // ── Commit plan modal overlay (T025) ─────────────
-        .when(
-            commit_panel_open
-                && commit_panel
-                    .as_ref()
-                    .and_then(|p| p.plan_modal.as_ref())
-                    .is_some(),
-            |el| {
-                if let Some(Some(plan_modal)) = commit_panel.as_ref().map(|p| p.plan_modal.clone())
-                {
-                    el.child(render_commit_plan_modal(plan_modal, cx))
-                } else {
-                    el
-                }
-            },
-        )
+        .when(commit_panel_open && commit_plan_modal.is_some(), |el| {
+            if let Some(plan_modal) = commit_plan_modal.clone() {
+                el.child(render_commit_plan_modal(plan_modal, cx))
+            } else {
+                el
+            }
+        })
         // ── Smart Commit modal overlay (T-COMMIT-016) ────
         .when_some(self.smart_commit.modal.clone(), |el, modal| {
             el.child(render_smart_commit_modal(modal, cx))

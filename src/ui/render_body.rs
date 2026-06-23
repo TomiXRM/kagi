@@ -40,10 +40,11 @@ impl KagiApp {
         graph_col_w: f32,
         commit_scroll_handle: UniformListScrollHandle,
         commit_panel_open: bool,
-        commit_panel: Option<commit_panel::CommitPanelState>,
-        // T-SPLIT-HELPERS-001 / ADR-0116 Wave 3: commit_input / template mode +
-        // inputs are now read from `self` inside `render_commit_panel` (now a
-        // `&self` method), so they no longer thread through render_body.
+        // ADR-0118 (Phase 5.2): the Commit Panel is now an `Entity<CommitPanelView>`
+        // that self-renders. render_body pushes the parent-owned render inputs
+        // (active_wip / scaled width / smart-commit snapshot) into it, then embeds
+        // `entity.clone()` as a child.
+        commit_panel: Option<Entity<commit_panel::CommitPanelView>>,
         wip_diffstat: Option<WipDiffStat>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -435,18 +436,24 @@ impl KagiApp {
 
         if commit_panel_open {
             // ── Commit Panel mode (T025) ──────────────
-            if let Some(panel_state) = commit_panel.clone() {
-                // T-COMMIT-001: staged preview (count / A·M·D / target branch /
-                // author). Cached on the panel state (computed in reload_status) —
-                // computing it here ran a full working_tree_status *every frame*,
-                // which froze the panel to ~6fps on large repos (PERF fix).
-                let preview = panel_state.preview.clone();
-                body_row = body_row.child(divider2).child(self.render_commit_panel(
-                    panel_state,
-                    panel_width,
-                    preview,
-                    cx,
-                ));
+            if let Some(entity) = commit_panel.clone() {
+                // ADR-0118: push the parent-owned render inputs into the entity,
+                // then embed it as a self-rendering child (`el.child(entity)`).
+                // `active_wip` mirrors the old `cp_active_wip(this)` (derived from
+                // the open main diff); the entity may not read the parent's
+                // `main_diff` from its own render path (re-entrancy).
+                let active_wip = match &active_src {
+                    Some(MainDiffSource::Unstaged { path }) => Some((false, path.clone())),
+                    Some(MainDiffSource::Staged { path }) => Some((true, path.clone())),
+                    _ => None,
+                };
+                let smart = self.smart_commit.clone();
+                entity.update(cx, |v, _| {
+                    v.active_wip = active_wip;
+                    v.panel_render_width = panel_width;
+                    v.smart_snapshot = smart;
+                });
+                body_row = body_row.child(divider2).child(entity);
             }
         } else if self.inspector_visible {
             // ── Commit Inspector panel (W2-INSPECTOR; W5-MENU toggle) ──

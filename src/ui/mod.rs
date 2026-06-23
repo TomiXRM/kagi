@@ -20,6 +20,7 @@ pub mod conflict_editor;
 pub mod conflict_view;
 pub mod context_menu;
 pub mod detail_panel;
+mod diff_cache;
 pub mod diff_view;
 pub mod diffstat_bar;
 pub mod file_history;
@@ -321,7 +322,9 @@ use branch_menu::{
     BranchAction, BranchConflictMode, BranchKind, BranchMenuContext, BranchMenuState,
 };
 use commit_list::{BadgeKind, CommitRow};
-use commit_panel::{status_badge, CommitPanelFileRef, CommitPanelState, CommitPlanModal};
+use commit_panel::{
+    status_badge, CommitPanelFileRef, CommitPanelState, CommitPanelView, CommitPlanModal,
+};
 use context_menu::{CommitAction, CommitMenuState, MenuContext};
 use detail_panel::{build_commit_details, CommitDetail};
 use graph_view::graph_canvas;
@@ -845,26 +848,11 @@ pub struct KagiApp {
     /// because `run()` needs `&mut self` and the session is `Rc`, not
     /// `Arc+Mutex` — that collapses when the worker thread (ADR-0073) lands.
     pub repo_session: Option<kagi_git::session::RepoSession>,
-    /// Cache of changed-files results keyed by row index.
-    /// `None` value means the diff was attempted but failed (show unavailable).
-    pub diff_cache: HashMap<usize, Option<Vec<FileStatus>>>,
-    /// Per-(commit-row, file-index) cached `FileDiff` content (T-REARCH-031).
-    /// `diff_cache` above only holds the file *list*; without this content
-    /// cache, clicking between two commits to compare the same file recomputes
-    /// the full git2 tree-diff + hunk extraction on every toggle. The key is
-    /// `(selected_row, file_index)`; invalidated together with `diff_cache`.
-    pub file_diff_cache: HashMap<(usize, usize), std::sync::Arc<FileDiff>>,
-    /// Row indices whose remote changed-files load is in flight over SSH
-    /// (ADR-0089 Phase 2c), so the render trigger spawns it only once.
-    pub remote_diff_inflight: std::collections::HashSet<usize>,
-    /// Row indices whose LOCAL changed-files + diffstat load is in flight off
-    /// the UI thread, so the render trigger (`load_local_changed_files`) spawns
-    /// it only once per row. The local counterpart of `remote_diff_inflight`.
-    pub local_diff_inflight: std::collections::HashSet<usize>,
-    /// W16-DIFFSTAT: per-file additions/deletions for the selected commit,
-    /// keyed by row index. Computed lazily alongside `diff_cache` and consumed
-    /// by the Inspector changed-files list (truncated set only).
-    pub diffstat_cache: HashMap<usize, Vec<FileDiffStat>>,
+    /// Per-row diff / changed-files cache cluster (T-DECOMP-002, ADR-0118).
+    /// The five formerly-flat fields (`changed_files` / `file_content` /
+    /// `remote_inflight` / `local_inflight` / `diffstat`) now move and
+    /// invalidate as a unit via `diff_caches.clear()`.
+    pub diff_caches: diff_cache::DiffCaches,
     /// Aggregated staged + unstaged additions/deletions for the synthetic WIP row.
     pub wip_diffstat: Option<WipDiffStat>,
     /// T-UI-003: When `Some`, the main pane shows this diff (full-width) instead
@@ -937,30 +925,20 @@ pub struct KagiApp {
     // ── T025: Commit Panel ───────────────────────────────────────
     /// Whether the commit panel is currently open (WIP row selected).
     pub commit_panel_open: bool,
-    /// Commit panel state (staging lists, diff, message, modal).
-    pub commit_panel: Option<CommitPanelState>,
-    // ── T026: gpui-component Input for commit message (IME対応) ───
-    /// InputState entity for the commit message field (gpui-component IME対応).
-    /// Created lazily when the commit panel is first opened (requires &mut Window).
-    pub commit_input: Option<Entity<InputState>>,
-    // ── T-COMMIT-009 / W14-TEMPLATE: structured template mode ─────
-    /// `true` when the commit message is being authored via the structured
-    /// template fields (type/scope/summary/body/test/risk); `false` = the plain
-    /// single Input. Persisted to / restored from the draft's `mode` field.
-    pub commit_template_mode: bool,
-    /// Lazily-created `InputState`s for the six template fields, in order:
-    /// `[type, scope, summary, body, test, risk]`. Created on first switch into
-    /// template mode (requires `&mut Window`). Same gpui-component widget as the
-    /// plain Input — no hand-written input widgets.
-    pub commit_template_inputs: Option<[Entity<InputState>; 6]>,
+    /// ADR-0118 (Phase 5.2) / T-ENTITY-COMMITPANEL-001: the Commit Panel promoted
+    /// to its own `Entity<CommitPanelView>` (self-rendering child with its own
+    /// notify scope). The entity OWNS the staging lists + the message/template
+    /// `InputState`s + the per-branch draft autosave + the queued smart message.
+    /// `commit_panel_open` is the visibility gate (set by graph `select`);
+    /// `Some(entity)` = cached panel state. Read its data via `e.read(cx).state`.
+    pub commit_panel: Option<Entity<commit_panel::CommitPanelView>>,
     // ── T-COMMIT-016: Smart Commit Message (W14-SMART) ───────────
-    /// Smart Commit state: rule-based always on, LLM opt-in + detection.
+    /// Smart Commit state: rule-based always on, LLM opt-in + detection. Stays on
+    /// `KagiApp` (read by the Settings overlay + command palette, written by the
+    /// background detection probe — cross-cutting, not commit-panel-private).
     pub smart_commit: smart_commit::SmartCommitState,
     /// Guard so Ollama detection runs at most once per repo path.
     pub smart_commit_detected_for: Option<PathBuf>,
-    /// A generated message produced on a background thread, queued for the next
-    /// render to push into the commit-message Input (which needs `&mut Window`).
-    pub pending_smart_msg: Option<String>,
     // ── T028: branch jump (scroll to commit) ─────────────────
     /// Scroll handle for the "commit-list" uniform_list.
     /// Stored in KagiApp so it persists across render frames.
@@ -971,11 +949,6 @@ pub struct KagiApp {
     /// rebuild the main view (`reload`, `reload_external`, tab load) snapshot at
     /// this limit so loaded-more commits survive a refresh.
     pub commit_limit: usize,
-    /// PERF: scroll handle for the commit panel's Unstaged `uniform_list`
-    /// (shared across flat/tree views — only one is visible at a time).
-    pub cp_unstaged_scroll_handle: UniformListScrollHandle,
-    /// PERF: scroll handle for the commit panel's Staged `uniform_list`.
-    pub cp_staged_scroll_handle: UniformListScrollHandle,
     /// Maps local branch name → the CommitId it points to.
     /// Built at snapshot time; used by jump_to_branch.
     /// Maps CommitId → row index in `self.active_view.rows`.
@@ -1083,11 +1056,6 @@ pub struct KagiApp {
     /// When `Some`, the refresh icon spins (set on click; cleared after one
     /// full rotation in render).
     pub refresh_spin_started: Option<Instant>,
-    /// Last commit-message value mirrored to the per-branch draft file
-    /// (T-COMMIT-007). Compared each frame to detect edits cheaply.
-    pub last_draft_value: String,
-    /// Debounce generation for the draft autosave writer.
-    pub draft_save_gen: u64,
     /// Debounce generation for modal live re-planning. Each input change
     /// bumps it; a 250ms timer task re-plans only if no newer change arrived.
     /// Per-keystroke synchronous re-planning (backend open + plan build,
@@ -1135,12 +1103,27 @@ pub struct KagiApp {
     /// into one cohesive sub-struct (ADR-0118 Phase 5.2).
     pub avatars: avatar::AvatarStore,
     // ── W30-CONFLICT-UI: Conflict Mode (ADR-0056) ────────────────
-    /// Conflict-Editor view state: detected mode, the open editor file, the
-    /// A/B/Result inputs, splits/geometry, and merge-commit-pending. Consolidated
-    /// from 13 flat `conflict_*` fields (ADR-0110 Phase 5 Step 5.1). App-global;
-    /// cleared on reload / abort. (`conflict_count` badge and `merge_commit_ready`
-    /// stay separate.)
-    pub conflict: conflict_view::ConflictState,
+    /// Conflict-resolution panel, promoted to its own `Entity<ConflictView>`
+    /// (ADR-0118 Phase 5.2 / T-ENTITY-CONFLICT-001, mirroring the ADR-0117
+    /// FileHistory fat-entity template). `Some` while a conflict/merge is in
+    /// progress; the entity owns the detected mode, the open editor file, the
+    /// A/B/Result inputs, splits/geometry, and its own `cx.notify()` scope.
+    /// Built / dropped by `apply_conflict_detect`; cleared on reload / abort /
+    /// tab switch. The per-repo run-once guard (`detected_for`),
+    /// `conflict_merge_pending`, the `conflict_count` badge, and
+    /// `merge_commit_ready` stay on `KagiApp` (separate concerns).
+    pub conflict: Option<Entity<conflict_view::ConflictView>>,
+    /// Per-repo run-once guard for conflict detection (was `ConflictState.
+    /// detected_for`). Holds the repo path whose conflict state has been detected
+    /// this cycle; invalidated on reload / repo change. Parent-owned because it
+    /// must survive an entity rebuild and be readable without leasing the entity.
+    pub conflict_detected_for: Option<PathBuf>,
+    /// T-CONFLICT-FLOW-030/031 (ADR-0068): showing the merge commit panel
+    /// (every file saved + staged, MERGE_HEAD still present). Cleared on commit /
+    /// abort / reload. Parent-owned (read by the body-gate render and the FS
+    /// watcher) — kept off `ConflictState` so the upcoming `ConflictView` entity
+    /// flip never has to be leased just to test the gate (ADR-0118 Mechanism B).
+    pub conflict_merge_pending: bool,
     /// Set by `detect_conflict_mode` when the in-progress operation is a **merge**
     /// whose conflicts are all resolved (MERGE_HEAD present, no remaining unmerged
     /// index entries).  This is the "ready to create the merge commit" state — the
@@ -1462,11 +1445,7 @@ impl KagiApp {
             error: None,
             repo_path: None,
             repo_session: None,
-            diff_cache: HashMap::new(),
-            file_diff_cache: HashMap::new(),
-            remote_diff_inflight: std::collections::HashSet::new(),
-            local_diff_inflight: std::collections::HashSet::new(),
-            diffstat_cache: HashMap::new(),
+            diff_caches: diff_cache::DiffCaches::default(),
             wip_diffstat: None,
             main_diff: None,
             pending_diff_highlight: None,
@@ -1493,16 +1472,10 @@ impl KagiApp {
             activity_hover: None,
             commit_panel_open: false,
             commit_panel: None,
-            commit_input: None,
-            commit_template_mode: false,
-            commit_template_inputs: None,
             smart_commit: smart_commit::SmartCommitState::load(),
             smart_commit_detected_for: None,
-            pending_smart_msg: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
             commit_limit: DEFAULT_COMMIT_LIMIT,
-            cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
-            cp_staged_scroll_handle: UniformListScrollHandle::new(),
             operation_history: kagi_git::OperationHistory::new(),
             history_seed_attempted: false,
             terminal_sessions: HashMap::new(),
@@ -1525,8 +1498,6 @@ impl KagiApp {
             auto_fetch_ticker_alive: false,
             busy_op: None,
             modal_replan_gen: 0,
-            last_draft_value: String::new(),
-            draft_save_gen: 0,
             refresh_spin_started: None,
             // W2-DELETE
             commit_menu: None,
@@ -1544,7 +1515,9 @@ impl KagiApp {
             // W11-AVATAR
             avatars: avatar::AvatarStore::default(),
             // W30-CONFLICT-UI
-            conflict: conflict_view::ConflictState::new(),
+            conflict: None,
+            conflict_detected_for: None,
+            conflict_merge_pending: false,
             merge_commit_ready: false,
             update_available: None,
             update_checked: false,
@@ -1569,11 +1542,7 @@ impl KagiApp {
             error: Some(SharedString::from(message.into())),
             repo_path: None,
             repo_session: None,
-            diff_cache: HashMap::new(),
-            file_diff_cache: HashMap::new(),
-            remote_diff_inflight: std::collections::HashSet::new(),
-            local_diff_inflight: std::collections::HashSet::new(),
-            diffstat_cache: HashMap::new(),
+            diff_caches: diff_cache::DiffCaches::default(),
             wip_diffstat: None,
             main_diff: None,
             pending_diff_highlight: None,
@@ -1600,16 +1569,10 @@ impl KagiApp {
             activity_hover: None,
             commit_panel_open: false,
             commit_panel: None,
-            commit_input: None,
-            commit_template_mode: false,
-            commit_template_inputs: None,
             smart_commit: smart_commit::SmartCommitState::load(),
             smart_commit_detected_for: None,
-            pending_smart_msg: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
             commit_limit: DEFAULT_COMMIT_LIMIT,
-            cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
-            cp_staged_scroll_handle: UniformListScrollHandle::new(),
             op_log: None,
             op_log_seed: VecDeque::new(),
             operation_history: kagi_git::OperationHistory::new(),
@@ -1634,8 +1597,6 @@ impl KagiApp {
             auto_fetch_ticker_alive: false,
             busy_op: None,
             modal_replan_gen: 0,
-            last_draft_value: String::new(),
-            draft_save_gen: 0,
             refresh_spin_started: None,
             // W2-DELETE
             commit_menu: None,
@@ -1653,7 +1614,9 @@ impl KagiApp {
             // W11-AVATAR
             avatars: avatar::AvatarStore::default(),
             // W30-CONFLICT-UI
-            conflict: conflict_view::ConflictState::new(),
+            conflict: None,
+            conflict_detected_for: None,
+            conflict_merge_pending: false,
             merge_commit_ready: false,
             update_available: None,
             update_checked: false,
@@ -1669,8 +1632,55 @@ impl KagiApp {
     ///
     /// Called after a successful checkout to update the commit list, header,
     /// branch list, and badges without restarting the application.
-    pub fn reload(&mut self) {
-        let _ = self.reload_checked();
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
+        let _ = self.reload_checked(cx);
+    }
+
+    /// Pre-launch reload (headless `init_tab` / session restore). Runs before the
+    /// gpui window exists, so there is no `Context` and no `Entity<KagiApp>` to
+    /// hand a `ConflictView` — the conflict panel cannot be built here. Does the
+    /// snapshot/view rebuild (so the commit list / header are populated and the
+    /// `build_tab_view` `[kagi]` lines fire) but SKIPS conflict detection: the
+    /// `conflict_detected_for` guard is left UNSET so the first cx-bearing detect
+    /// at launch (`ensure_startup_repo_io` → `detect_conflict_mode_async`) builds
+    /// the entity and emits the `conflict-mode:` line. ADR-0118 /
+    /// T-ENTITY-CONFLICT-001.
+    pub fn reload_prelaunch(&mut self) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let mut repo = match kagi_git::Backend::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                klog!("reload: repo open error: {}", e);
+                return;
+            }
+        };
+        let snap = match repo.snapshot(self.commit_limit) {
+            Ok(s) => s,
+            Err(e) => {
+                klog!("reload: snapshot error: {}", e);
+                return;
+            }
+        };
+        let wip_diffstat = Self::wip_diffstat_from_backend(&repo);
+        let repo_name = repo_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| repo_path.display().to_string());
+        let view = build_tab_view(&snap, &repo_name);
+        self.selected = None;
+        self.diff_caches.clear();
+        self.wip_diffstat = Some(wip_diffstat);
+        self.main_diff = None;
+        self.compare_view = None;
+        self.tab_cache.insert(repo_path.clone(), view.clone());
+        self.apply_tab_view(view);
+        self.seed_history_from_reflog(&repo);
+        self.last_working_status = Some(snap.status.clone());
+        // Conflict detection intentionally deferred to the launch-time
+        // cx-bearing path (see the doc comment).
     }
 
     /// Like [`reload`] but reports failure. Returns `Err(msg)` when the repo
@@ -1678,7 +1688,7 @@ impl KagiApp {
     /// user-initiated refresh can surface the error instead of falsely reporting
     /// success. `Ok(())` also covers "no repo open" (nothing to refresh). The
     /// passive FS-watcher path uses [`reload_external`], which stays silent.
-    pub fn reload_checked(&mut self) -> Result<(), String> {
+    pub fn reload_checked(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return Ok(()),
@@ -1714,11 +1724,7 @@ impl KagiApp {
 
         // Per-repo transient state reset (unchanged behaviour).
         self.selected = None;
-        self.diff_cache = HashMap::new();
-        self.file_diff_cache = HashMap::new();
-        self.remote_diff_inflight.clear();
-        self.local_diff_inflight.clear();
-        self.diffstat_cache = HashMap::new();
+        self.diff_caches.clear();
         self.wip_diffstat = Some(wip_diffstat);
         self.main_diff = None;
         self.compare_view = None;
@@ -1750,20 +1756,17 @@ impl KagiApp {
         // the commit panel + merge message across that self-induced reload so the
         // user is not bounced out of the commit screen; the post-detect block
         // below confirms the merge is still pending (else it resets everything).
-        let was_merge_commit_pending = self.conflict.merge_commit_pending;
+        let was_merge_commit_pending = self.conflict_merge_pending;
         self.commit_menu = None;
         self.file_menu = None;
         self.stash_menu = None;
         if !was_merge_commit_pending {
             // ADR-0068: a reload after commit / abort ends any continued-merge flow.
-            self.conflict.merge_commit_pending = false;
-            // T025/T026: reset commit panel and input so it reflects fresh status after reload.
+            self.conflict_merge_pending = false;
+            // T025/T026: drop the commit-panel entity (state + inputs + template)
+            // so it reflects fresh status after reload (ADR-0118: one entity).
             self.commit_panel_open = false;
             self.commit_panel = None;
-            self.commit_input = None;
-            // T-COMMIT-009: reset template mode + field inputs to match commit_input.
-            self.commit_template_mode = false;
-            self.commit_template_inputs = None;
         }
         // commit_scroll_handle is preserved so the existing Rc<RefCell<...>> reference
         // wired into the uniform_list continues to work after reload.
@@ -1796,9 +1799,9 @@ impl KagiApp {
         // W30-CONFLICT-UI / ADR-0056: re-detect Conflict Mode every reload so a
         // conflict produced by the GUI's own operation OR by external CLI (the
         // watcher path runs through reload) puts the app into / out of Conflict
-        // Mode.  Force re-detection by invalidating the render-time guard.
-        self.conflict.detected_for = None;
-        self.detect_conflict_mode();
+        // Mode.  Force re-detection by invalidating the run-once guard.
+        self.conflict_detected_for = None;
+        self.detect_conflict_mode(cx);
 
         // Re-resolve the continued-merge flow after detection.
         if was_merge_commit_pending {
@@ -1806,23 +1809,29 @@ impl KagiApp {
                 // Still a resolved merge awaiting its commit: keep the commit
                 // panel up (refresh the staged list from the index) and keep the
                 // pre-filled / user-edited merge message entity untouched.
+                // ADR-0118: update the entity's `state` IN PLACE so its inputs /
+                // template mode (the pre-filled merge message) survive the reload.
                 let mut panel = CommitPanelState::from_repo(&repo_path);
-                if let Some(ref existing) = self.commit_panel {
-                    panel.tree_view = existing.tree_view;
+                if let Some(entity) = self.commit_panel.clone() {
+                    entity.update(cx, |v, _| {
+                        panel.tree_view = v.state.tree_view;
+                        v.state = panel;
+                    });
+                } else {
+                    let weak_app = cx.weak_entity();
+                    let entity =
+                        cx.new(|_| CommitPanelView::new(panel, weak_app, repo_path.clone()));
+                    self.commit_panel = Some(entity);
                 }
-                self.commit_panel = Some(panel);
                 self.commit_panel_open = true;
-                self.conflict.mode = None;
-                self.conflict.merge_commit_pending = true;
+                self.conflict = None;
+                self.conflict_merge_pending = true;
             } else {
                 // The merge commit was created (MERGE_HEAD gone) or aborted — end
-                // the flow and reset the deferred commit-panel state.
-                self.conflict.merge_commit_pending = false;
+                // the flow and drop the commit-panel entity.
+                self.conflict_merge_pending = false;
                 self.commit_panel_open = false;
                 self.commit_panel = None;
-                self.commit_input = None;
-                self.commit_template_mode = false;
-                self.commit_template_inputs = None;
             }
         }
         Ok(())
@@ -1970,11 +1979,7 @@ impl KagiApp {
                 // already done in the background) and apply it.
                 let view = build_tab_view(&snap, &repo_name);
                 app.apply_tab_view(view);
-                app.diff_cache = HashMap::new();
-                app.file_diff_cache = HashMap::new();
-                app.remote_diff_inflight.clear();
-                app.local_diff_inflight.clear();
-                app.diffstat_cache = HashMap::new();
+                app.diff_caches.clear();
                 app.wip_diffstat = Some(wip);
                 app.main_diff = None;
                 app.compare_view = None;
@@ -2046,12 +2051,11 @@ impl KagiApp {
                 app.last_working_status = Some(new_status);
                 app.wip_diffstat = Some(wip_diffstat);
                 // Refresh the open commit panel's lists in place (keeps it open).
-                if app.commit_panel.is_some() {
-                    if let Some(rp) = app.repo_path.clone() {
-                        if let Some(panel) = app.commit_panel.as_mut() {
-                            panel.reload_status(&rp);
-                        }
-                    }
+                // ADR-0118 (correction #6c): update the entity, never rebuild via
+                // a parent render read.
+                if let (Some(entity), Some(rp)) = (app.commit_panel.clone(), app.repo_path.clone())
+                {
+                    entity.update(cx, |v, _| v.state.reload_status(&rp));
                 }
                 cx.notify();
             });
@@ -2096,26 +2100,37 @@ impl KagiApp {
     /// read-only, calls `detect_conflict_session`, and on a hit builds a fresh
     /// `ResolutionBuffer` from the index (preferring a previously autosaved
     /// buffer so a partial resolution survives a restart), recomputes each
-    /// file's status from the buffer, and stores the `ConflictMode`.  On a miss
-    /// it clears `self.conflict.mode`.  The repository is never mutated here.
-    pub fn detect_conflict_mode(&mut self) {
+    /// file's status from the buffer, and stores the `ConflictMode` (via
+    /// `apply_conflict_detect`, which builds / updates the `ConflictView` entity).
+    /// On a miss it drops the entity (`self.conflict = None`). The repository is
+    /// never mutated here.
+    pub fn detect_conflict_mode(&mut self, cx: &mut Context<Self>) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
-                self.conflict.mode = None;
+                self.conflict = None;
                 return;
             }
         };
         // Run-once guard per repo path.
-        if self.conflict.detected_for.as_deref() == Some(repo_path.as_path()) {
+        if self.conflict_detected_for.as_deref() == Some(repo_path.as_path()) {
             return;
         }
-        self.conflict.detected_for = Some(repo_path.clone());
+        self.conflict_detected_for = Some(repo_path.clone());
 
         // Snapshot the preservation inputs the I/O step needs (prev selection /
         // editing index), then run the read-only Git/index/file I/O synchronously.
-        let prev_selected = self.conflict.mode.as_ref().and_then(|c| c.selected_file);
-        let prev_editing_file = self.conflict.mode.as_ref().and_then(|c| c.editing_file);
+        let (prev_selected, prev_editing_file) = self
+            .conflict
+            .as_ref()
+            .map(|e| {
+                let v = e.read(cx);
+                (
+                    v.mode.as_ref().and_then(|c| c.selected_file),
+                    v.mode.as_ref().and_then(|c| c.editing_file),
+                )
+            })
+            .unwrap_or((None, None));
         let current_branch = self.active_view.status_summary.branch.clone();
         let outcome = Self::detect_conflict_payload(
             &repo_path,
@@ -2123,7 +2138,7 @@ impl KagiApp {
             prev_editing_file,
             current_branch,
         );
-        self.apply_conflict_detect(outcome);
+        self.apply_conflict_detect(outcome, cx);
     }
 
     /// T-PERF-RENDER-001: async sibling of [`detect_conflict_mode`].
@@ -2140,20 +2155,33 @@ impl KagiApp {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
-                self.conflict.mode = None;
+                self.conflict = None;
                 return;
             }
         };
         // Run-once guard per repo path (armed before the I/O launches).
-        if self.conflict.detected_for.as_deref() == Some(repo_path.as_path()) {
+        if self.conflict_detected_for.as_deref() == Some(repo_path.as_path()) {
             return;
         }
-        self.conflict.detected_for = Some(repo_path.clone());
+        self.conflict_detected_for = Some(repo_path.clone());
 
-        let prev_selected = self.conflict.mode.as_ref().and_then(|c| c.selected_file);
-        let prev_editing_file = self.conflict.mode.as_ref().and_then(|c| c.editing_file);
+        let (prev_selected, prev_editing_file) = self
+            .conflict
+            .as_ref()
+            .map(|e| {
+                let v = e.read(cx);
+                (
+                    v.mode.as_ref().and_then(|c| c.selected_file),
+                    v.mode.as_ref().and_then(|c| c.editing_file),
+                )
+            })
+            .unwrap_or((None, None));
         let current_branch = self.active_view.status_summary.branch.clone();
 
+        // codex Q5: capture the repo path the task ran against so a repo switch
+        // mid-task discards the stale result at apply time (the `detected_for`
+        // guard alone is insufficient — the guard is set for the NEW repo too).
+        let task_repo = repo_path.clone();
         let task = cx.background_spawn(async move {
             Self::detect_conflict_payload(
                 &repo_path,
@@ -2165,7 +2193,12 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let outcome = task.await;
             let _ = this.update(acx, |app, cx| {
-                app.apply_conflict_detect(outcome);
+                // Repo-match check: drop the result if the repo switched while the
+                // read-only I/O was in flight.
+                if app.repo_path.as_deref() != Some(task_repo.as_path()) {
+                    return;
+                }
+                app.apply_conflict_detect(outcome, cx);
                 cx.notify();
             });
         })
@@ -2267,31 +2300,39 @@ impl KagiApp {
     /// Foreground half of conflict detection: apply a [`ConflictDetectOutcome`]
     /// computed by [`detect_conflict_payload`] to `self`, emitting the same
     /// `[kagi]` contract lines in the same order as the original synchronous
-    /// implementation.  Reads of `self.conflict.mode` / `self.conflict.editing`
-    /// (the "was a conflict open?" / editor-close checks) live here because they
-    /// must reflect the current UI state at apply time.
-    fn apply_conflict_detect(&mut self, outcome: ConflictDetectOutcome) {
+    /// implementation. ADR-0118: this is the single point that builds / updates /
+    /// drops the `Entity<ConflictView>` — `Detected` updates an existing entity in
+    /// place (preserving its splits / editor inputs / before-text) or creates a
+    /// new one; `Cleared` / `MergeResolvedReady` / `OpenFailed` drop it. The
+    /// "was a conflict open?" (Cleared) and editor-close (Detected) checks read
+    /// the entity here because they must reflect the current UI state at apply
+    /// time. Needs `cx` (entity create / read / update).
+    fn apply_conflict_detect(&mut self, outcome: ConflictDetectOutcome, cx: &mut Context<Self>) {
         match outcome {
             ConflictDetectOutcome::OpenFailed => {
                 // Mirrors the original early-return on `Backend::open` failure,
                 // which happened before `merge_commit_ready` was reset — so that
                 // flag is intentionally left untouched here.
-                self.conflict.mode = None;
+                self.conflict = None;
             }
             ConflictDetectOutcome::Cleared => {
                 self.merge_commit_ready = false;
-                if self.conflict.mode.is_some() {
+                if self
+                    .conflict
+                    .as_ref()
+                    .is_some_and(|e| e.read(cx).mode.is_some())
+                {
                     klog!("conflict-mode: cleared");
                 }
-                self.conflict.mode = None;
-                self.conflict.editing = None;
+                // Drop the entity (clears mode + editing + splits + before-text;
+                // the accepted Stage-1 reset delta on re-entry).
+                self.conflict = None;
             }
             ConflictDetectOutcome::MergeResolvedReady => {
                 self.merge_commit_ready = false;
                 klog!("conflict-mode: merge resolved — ready to commit");
                 self.merge_commit_ready = true;
-                self.conflict.mode = None;
-                self.conflict.editing = None;
+                self.conflict = None;
             }
             ConflictDetectOutcome::Detected(detected) => {
                 let ConflictDetected {
@@ -2309,25 +2350,47 @@ impl KagiApp {
                     session.files.len()
                 );
 
-                // W32: close the editor if the file being edited is no longer
-                // conflicted.
-                if let Some(editing) = self.conflict.editing.clone() {
-                    if !session.files.iter().any(|f| f.path == editing) {
-                        self.conflict.editing = None;
-                    }
-                }
-
-                self.conflict.mode = Some(conflict_view::ConflictMode {
+                let mode = conflict_view::ConflictMode {
                     session,
                     buffer,
                     current_branch,
                     selected_file,
                     editing_file,
                     abort_armed: false,
-                });
+                };
+                let files = mode.session.files.clone();
 
-                if let Some(path) = editing_path {
-                    self.conflict.editing = Some(path);
+                match self.conflict.clone() {
+                    // Re-detect: update the existing entity in place so its splits
+                    // / editor inputs / before-text / scroll survive the reload.
+                    Some(entity) => {
+                        entity.update(cx, |v, _| {
+                            // W32: close the editor if the edited file is no longer
+                            // conflicted (reads the entity's current `editing`).
+                            if let Some(editing) = v.editing.clone() {
+                                if !files.iter().any(|f| f.path == editing) {
+                                    v.editing = None;
+                                }
+                            }
+                            v.mode = Some(mode);
+                            if let Some(path) = editing_path {
+                                v.editing = Some(path);
+                            }
+                        });
+                    }
+                    // Fresh conflict: build the entity, capturing the repo path +
+                    // a weak back-ref for its deferred parent callbacks.
+                    None => {
+                        let weak_app = cx.weak_entity();
+                        let repo_path = self.repo_path.clone().unwrap_or_default();
+                        let entity = cx.new(|_| {
+                            let mut v = conflict_view::ConflictView::new(weak_app, repo_path);
+                            v.mode = Some(mode);
+                            v.editing = editing_path;
+                            v
+                        });
+                        self.conflict = Some(entity);
+                    }
                 }
             }
         }
@@ -2615,47 +2678,10 @@ impl KagiApp {
         }
 
         // ── Commit-message draft autosave (T-COMMIT-007 / T-COMMIT-009) ──
-        // In template mode the saved message is the *assembled* plain text
-        // (ADR-0042) — edits to any of the six fields are detected via the
-        // assembled value changing.
-        if self.commit_panel_open {
-            let has_input = self.commit_input.is_some()
-                || (self.commit_template_mode && self.commit_template_inputs.is_some());
-            if has_input {
-                let v = self.effective_commit_message(cx);
-                if v != self.last_draft_value {
-                    self.last_draft_value = v;
-                    self.draft_save_gen = self.draft_save_gen.wrapping_add(1);
-                    let gen = self.draft_save_gen;
-                    let mode = if self.commit_template_mode {
-                        "template"
-                    } else {
-                        "plain"
-                    };
-                    let mode = mode.to_string();
-                    cx.spawn(async move |this, acx| {
-                        gpui::Timer::after(Duration::from_millis(250)).await;
-                        let _ = this.update(acx, |app, _cx| {
-                            if app.draft_save_gen != gen {
-                                return;
-                            }
-                            let Some(rp) = app.repo_path.clone() else {
-                                return;
-                            };
-                            let branch = app.active_view.status_summary.branch.clone();
-                            let msg = app.last_draft_value.clone();
-                            if msg.trim().is_empty() {
-                                let _ = kagi_git::clear_draft(&rp, &branch);
-                            } else {
-                                let _ = kagi_git::save_draft(&rp, &branch, &msg, &mode);
-                                klog!("draft: saved {}", branch);
-                            }
-                        });
-                    })
-                    .detach();
-                }
-            }
-        }
+        // ADR-0118 (Phase 5.2) / T-ENTITY-COMMITPANEL-001 (correction #1): moved
+        // ONTO the `CommitPanelView` entity (`sync_inputs`), so the parent never
+        // reads the child's commit input each frame (the re-entrancy-in-render
+        // surface ADR-0118 forbids).
 
         // ── Stash push (message) ────────────────────────────
         if let Some(m) = self.stash_push_modal_mut() {
@@ -2724,101 +2750,12 @@ impl KagiApp {
         }
 
         // ── T-CONFLICT-UI-001/005/UX-015: Conflict Editor code editors ──
-        self.sync_conflict_editor_inputs(window, cx);
-    }
-
-    /// T-CONFLICT-UI-001: lazily create / refresh the Result CodeEditor
-    /// `InputState` backing the Conflict Editor (ADR-0071).
-    ///
-    /// `InputState` needs a `Window`, so this runs from `sync_modal_inputs`
-    /// (already on the window-context render path).  A and B are row lists;
-    /// `result` mirrors the assembled Result in Preview mode and is the
-    /// editable surface in Edit mode (UX-015).  The text is only re-pushed when
-    /// the file or the assembled content changes
-    /// (tracked by `content_sig`) so an in-progress manual edit is never
-    /// clobbered every frame.  When Edit mode is on we instead *pull* the
-    /// Result editor's text into the buffer via `set_manual_text`.
-    fn sync_conflict_editor_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Only relevant while editing a content file with a hunk model.
-        let Some(path) = self.conflict.editing.clone() else {
-            self.conflict.editor_inputs = None;
-            return;
-        };
-        let Some(c) = self.conflict.mode.as_ref() else {
-            self.conflict.editor_inputs = None;
-            return;
-        };
-        let Some(model) = c.buffer.hunk_model(&path) else {
-            self.conflict.editor_inputs = None;
-            return;
-        };
-
-        // Assemble the Result text block (chars/line-safe join).
-        let result_text = model.assembled_text();
-        let edit_mode = self.conflict.result_editing;
-
-        // Edit mode: pull the user's edits out of the Result editor into the
-        // buffer (set_manual_text), then return (do not overwrite their text).
-        if edit_mode {
-            if let Some(inputs) = self.conflict.editor_inputs.as_ref() {
-                if inputs.path == path {
-                    let edited = inputs.result.read(cx).value().to_string();
-                    if edited != result_text {
-                        if let Some(c) = self.conflict.mode.as_mut() {
-                            let _ = c.buffer.set_manual_text(&path, &edited);
-                            let _ = c.buffer.autosave();
-                            // Refresh the file status from the buffer.
-                            let residue = c.buffer.files_with_marker_residue();
-                            if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
-                                f.status = if residue.contains(&f.path) {
-                                    kagi_git::ConflictStatus::NeedsReview
-                                } else if c.buffer.has_resolution(&path) {
-                                    kagi_git::ConflictStatus::Resolved
-                                } else {
-                                    kagi_git::ConflictStatus::Unresolved
-                                };
-                            }
-                        }
-                    }
-                    // A/B row lists never change while editing the Result; keep as-is.
-                    return;
-                }
-            }
-        }
-
-        let sig = conflict_content_sig(&path, &result_text, edit_mode);
-
-        // Reuse existing inputs if the path + content + mode are unchanged.
-        if let Some(inputs) = self.conflict.editor_inputs.as_ref() {
-            if inputs.path == path && inputs.content_sig == sig {
-                return;
-            }
-        }
-
-        // Build or refresh.  Create the entities once per path; otherwise reuse.
-        let need_create = self
-            .conflict
-            .editor_inputs
-            .as_ref()
-            .map(|i| i.path != path)
-            .unwrap_or(true);
-
-        if need_create {
-            let result = cx.new(|cx| InputState::new(window, cx).code_editor("text"));
-            self.conflict.editor_inputs = Some(ConflictEditorInputs {
-                path: path.clone(),
-                result,
-                content_sig: 0,
-            });
-        }
-
-        if let Some(inputs) = self.conflict.editor_inputs.as_ref() {
-            inputs
-                .result
-                .update(cx, |s, cx| s.set_value(result_text.clone(), window, cx));
-        }
-        if let Some(inputs) = self.conflict.editor_inputs.as_mut() {
-            inputs.content_sig = sig;
+        // ADR-0118: the sync logic moved into the entity (it owns `editor_inputs`
+        // + `editing` + `mode`). Drive it via `update_in` (it needs a `Window` to
+        // create `InputState`). Safe here: this runs on the parent render-sync
+        // path, NOT a leased `ConflictView` listener.
+        if let Some(entity) = self.conflict.clone() {
+            entity.update(cx, |v, cx| v.sync_editor_inputs(window, cx));
         }
     }
 
@@ -3168,19 +3105,20 @@ impl KagiApp {
         if self.selected != Some(index) {
             return;
         }
-        if !self.diff_cache.contains_key(&index) {
+        if !self.diff_caches.changed_files.contains_key(&index) {
             let files_opt = self.fetch_changed_files(index);
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             klog!("changed files: {}", n);
-            self.diff_cache.insert(index, files_opt);
+            self.diff_caches.changed_files.insert(index, files_opt);
             // W16-DIFFSTAT: aggregate per-file additions/deletions alongside.
             if let Some(stats) = self.fetch_diffstat(index) {
-                self.diffstat_cache.insert(index, stats);
+                self.diff_caches.diffstat.insert(index, stats);
             }
         } else {
             // Already cached — still emit the log (matches the old select()).
             let n = self
-                .diff_cache
+                .diff_caches
+                .changed_files
                 .get(&index)
                 .and_then(|v| v.as_ref())
                 .map(|v| v.len())
@@ -3191,7 +3129,7 @@ impl KagiApp {
         // T018: emit tree structure log when KAGI_SELECT_FIRST=1.
         if std::env::var("KAGI_SELECT_FIRST").as_deref() == Ok("1") {
             const MAX_FILES: usize = 100;
-            if let Some(Some(files)) = self.diff_cache.get(&index) {
+            if let Some(Some(files)) = self.diff_caches.changed_files.get(&index) {
                 let truncated: Vec<_> = files.iter().take(MAX_FILES).cloned().collect();
                 let rows = file_tree::build_file_tree(&truncated);
                 for row in &rows {
@@ -3237,7 +3175,8 @@ impl KagiApp {
                 file_index,
             } => {
                 let len = self
-                    .diff_cache
+                    .diff_caches
+                    .changed_files
                     .get(&row_index)
                     .and_then(|o| o.as_ref())
                     .map(|v| v.len())
@@ -3269,10 +3208,13 @@ impl KagiApp {
             }
             MainDiffSource::Unstaged { path } => {
                 let (cur, len) = match self.commit_panel.as_ref() {
-                    Some(p) => (
-                        p.unstaged.iter().position(|f| f.path == path),
-                        p.unstaged.len(),
-                    ),
+                    Some(e) => {
+                        let p = &e.read(cx).state;
+                        (
+                            p.unstaged.iter().position(|f| f.path == path),
+                            p.unstaged.len(),
+                        )
+                    }
                     None => return,
                 };
                 let cur = match cur {
@@ -3284,14 +3226,18 @@ impl KagiApp {
                 }
                 let next = (cur as i64 + delta).clamp(0, len as i64 - 1) as usize;
                 if next != cur {
-                    self.open_main_diff_wip(commit_panel::CommitPanelFileRef::Unstaged {
-                        index: next,
-                    });
+                    self.open_main_diff_wip(
+                        commit_panel::CommitPanelFileRef::Unstaged { index: next },
+                        cx,
+                    );
                 }
             }
             MainDiffSource::Staged { path } => {
                 let (cur, len) = match self.commit_panel.as_ref() {
-                    Some(p) => (p.staged.iter().position(|f| f.path == path), p.staged.len()),
+                    Some(e) => {
+                        let p = &e.read(cx).state;
+                        (p.staged.iter().position(|f| f.path == path), p.staged.len())
+                    }
                     None => return,
                 };
                 let cur = match cur {
@@ -3303,9 +3249,10 @@ impl KagiApp {
                 }
                 let next = (cur as i64 + delta).clamp(0, len as i64 - 1) as usize;
                 if next != cur {
-                    self.open_main_diff_wip(commit_panel::CommitPanelFileRef::Staged {
-                        index: next,
-                    });
+                    self.open_main_diff_wip(
+                        commit_panel::CommitPanelFileRef::Staged { index: next },
+                        cx,
+                    );
                 }
             }
         }
@@ -3398,7 +3345,8 @@ impl KagiApp {
         };
         let origin = self.commit_id_for_row(selected);
         let path = self
-            .diff_cache
+            .diff_caches
+            .changed_files
             .get(&selected)
             .and_then(|v| v.as_ref())
             .and_then(|files| files.get(file_index))
@@ -3424,7 +3372,8 @@ impl KagiApp {
                 file_index,
             } => {
                 let path = self
-                    .diff_cache
+                    .diff_caches
+                    .changed_files
                     .get(row_index)
                     .and_then(|v| v.as_ref())
                     .and_then(|files| files.get(*file_index))
@@ -3493,7 +3442,12 @@ impl KagiApp {
             Some(d) => d,
             None => return,
         };
-        let files = match self.diff_cache.get(&selected).and_then(|v| v.as_ref()) {
+        let files = match self
+            .diff_caches
+            .changed_files
+            .get(&selected)
+            .and_then(|v| v.as_ref())
+        {
             Some(f) => f,
             None => return,
         };
@@ -3508,7 +3462,12 @@ impl KagiApp {
         // T-REARCH-031: per-(row, file) content cache. Clicking between two
         // commits to compare the same file previously recomputed the full git2
         // tree-diff + hunk extraction on every toggle. Hit the cache first.
-        if let Some(cached) = self.file_diff_cache.get(&(selected, file_index)).cloned() {
+        if let Some(cached) = self
+            .diff_caches
+            .file_content
+            .get(&(selected, file_index))
+            .cloned()
+        {
             self.set_commit_main_diff(&cached, &path, selected, file_index, cx.as_deref_mut());
             return;
         }
@@ -3522,7 +3481,8 @@ impl KagiApp {
         match repo.commit_file_diff(&id, &path) {
             Ok(file_diff) => {
                 let arc = std::sync::Arc::new(file_diff);
-                self.file_diff_cache
+                self.diff_caches
+                    .file_content
                     .insert((selected, file_index), arc.clone());
                 self.set_commit_main_diff(&arc, &path, selected, file_index, cx.as_deref_mut());
             }
@@ -3656,11 +3616,13 @@ impl KagiApp {
 
     /// Load the selected remote commit's changed files over SSH (ADR-0089 Phase
     /// 2c) and cache them under `index`. Runs off the UI thread; idempotent via
-    /// `remote_diff_inflight`.
+    /// `diff_caches.remote_inflight`.
     fn load_remote_changed_files(&mut self, index: usize, cx: &mut Context<Self>) {
         // Idempotent: skip if already loaded or a load is in flight, so it is
         // safe to call from both the click handler and the render trigger.
-        if self.diff_cache.contains_key(&index) || self.remote_diff_inflight.contains(&index) {
+        if self.diff_caches.changed_files.contains_key(&index)
+            || self.diff_caches.remote_inflight.contains(&index)
+        {
             return;
         }
         let (host, root) = match &self.remote_view {
@@ -3671,7 +3633,7 @@ impl KagiApp {
             Some(d) => d.full_sha.as_ref().to_string(),
             None => return,
         };
-        self.remote_diff_inflight.insert(index);
+        self.diff_caches.remote_inflight.insert(index);
 
         let task = cx.background_spawn(async move {
             kagi::remote::remote_commit_changed_files(&host, &root, &sha).map_err(|e| e.to_string())
@@ -3679,14 +3641,14 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                app.remote_diff_inflight.remove(&index);
+                app.diff_caches.remote_inflight.remove(&index);
                 match result {
                     Ok(files) => {
-                        app.diff_cache.insert(index, Some(files));
+                        app.diff_caches.changed_files.insert(index, Some(files));
                     }
                     Err(e) => {
                         klog!("remote changed-files error: {e}");
-                        app.diff_cache.insert(index, None);
+                        app.diff_caches.changed_files.insert(index, None);
                     }
                 }
                 cx.notify();
@@ -3696,7 +3658,7 @@ impl KagiApp {
     }
 
     /// Load the selected LOCAL commit's changed files + per-file diffstat OFF the
-    /// UI thread and cache them under `index`. Idempotent via `local_diff_inflight`
+    /// UI thread and cache them under `index`. Idempotent via `diff_caches.local_inflight`
     /// so it is safe to call every frame from the render trigger; `select` only
     /// records the selection. Emits the `[kagi] changed files: N` contract on
     /// completion — the interactive counterpart of `select_headless`.
@@ -3707,7 +3669,9 @@ impl KagiApp {
     /// (the captured SHA no longer matches the row), so a late load can't show
     /// the wrong commit's files.
     fn load_local_changed_files(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.diff_cache.contains_key(&index) || self.local_diff_inflight.contains(&index) {
+        if self.diff_caches.changed_files.contains_key(&index)
+            || self.diff_caches.local_inflight.contains(&index)
+        {
             return;
         }
         let Some(repo_path) = self.repo_path.clone() else {
@@ -3718,7 +3682,7 @@ impl KagiApp {
         };
         let sha = detail.full_sha.as_ref().to_string();
         let sha_guard = sha.clone();
-        self.local_diff_inflight.insert(index);
+        self.diff_caches.local_inflight.insert(index);
 
         let task = cx.background_spawn(async move {
             let repo = kagi_git::Backend::open(&repo_path).ok()?;
@@ -3730,7 +3694,7 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                app.local_diff_inflight.remove(&index);
+                app.diff_caches.local_inflight.remove(&index);
                 // Drop the result if a reload remapped this row to another commit.
                 let still_current = app
                     .active_view
@@ -3743,9 +3707,9 @@ impl KagiApp {
                 let (files, stats) = result.unwrap_or((None, None));
                 let n = files.as_ref().map(|v| v.len()).unwrap_or(0);
                 klog!("changed files: {}", n);
-                app.diff_cache.insert(index, files);
+                app.diff_caches.changed_files.insert(index, files);
                 if let Some(stats) = stats {
-                    app.diffstat_cache.insert(index, stats);
+                    app.diff_caches.diffstat.insert(index, stats);
                 }
                 cx.notify();
             });
@@ -3769,7 +3733,8 @@ impl KagiApp {
             None => return,
         };
         let path = match self
-            .diff_cache
+            .diff_caches
+            .changed_files
             .get(&selected)
             .and_then(|v| v.as_ref())
             .and_then(|files| files.get(file_index))
@@ -3888,29 +3853,36 @@ impl KagiApp {
     }
 
     /// T-UI-003: Open the diff for a Commit Panel file in the full-width main pane.
-    pub fn open_main_diff_wip(&mut self, file_ref: commit_panel::CommitPanelFileRef) {
+    pub fn open_main_diff_wip(
+        &mut self,
+        file_ref: commit_panel::CommitPanelFileRef,
+        cx: &mut Context<Self>,
+    ) {
         let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let panel = match self.commit_panel.as_ref() {
-            Some(p) => p,
+        let entity = match self.commit_panel.as_ref() {
+            Some(e) => e.clone(),
             None => return,
         };
 
-        let (is_staged, path) = match &file_ref {
-            commit_panel::CommitPanelFileRef::Unstaged { index } => {
-                if let Some(f) = panel.unstaged.get(*index) {
-                    (false, f.path.clone())
-                } else {
-                    return;
+        let (is_staged, path) = {
+            let panel = &entity.read(cx).state;
+            match &file_ref {
+                commit_panel::CommitPanelFileRef::Unstaged { index } => {
+                    if let Some(f) = panel.unstaged.get(*index) {
+                        (false, f.path.clone())
+                    } else {
+                        return;
+                    }
                 }
-            }
-            commit_panel::CommitPanelFileRef::Staged { index } => {
-                if let Some(f) = panel.staged.get(*index) {
-                    (true, f.path.clone())
-                } else {
-                    return;
+                commit_panel::CommitPanelFileRef::Staged { index } => {
+                    if let Some(f) = panel.staged.get(*index) {
+                        (true, f.path.clone())
+                    } else {
+                        return;
+                    }
                 }
             }
         };
@@ -4052,13 +4024,13 @@ impl KagiApp {
         self.close_compare_view();
         if self.selected != Some(row_index) {
             self.select(row_index);
-        } else if !self.diff_cache.contains_key(&row_index) {
+        } else if !self.diff_caches.changed_files.contains_key(&row_index) {
             let files_opt = self.fetch_changed_files(row_index);
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             klog!("changed files: {}", n);
-            self.diff_cache.insert(row_index, files_opt);
+            self.diff_caches.changed_files.insert(row_index, files_opt);
             if let Some(stats) = self.fetch_diffstat(row_index) {
-                self.diffstat_cache.insert(row_index, stats);
+                self.diff_caches.diffstat.insert(row_index, stats);
             }
         }
     }
@@ -4813,7 +4785,7 @@ impl KagiApp {
         } else if self
             .commit_panel
             .as_ref()
-            .is_some_and(|p| p.plan_modal.is_some())
+            .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
         {
             self.start_commit(cx);
         } else if self.update_modal_open || self.menu_overlay.is_some() {
@@ -4879,9 +4851,9 @@ impl KagiApp {
         } else if self
             .commit_panel
             .as_ref()
-            .is_some_and(|p| p.plan_modal.is_some())
+            .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
         {
-            self.cancel_commit_plan_modal();
+            self.cancel_commit_plan_modal(cx);
         } else if self.update_modal_open {
             self.update_modal_open = false;
         } else if self.menu_overlay.is_some() {
@@ -5515,7 +5487,7 @@ fn short_hash(text: &str) -> String {
 /// T-CONFLICT-UI-001: cheap FNV-1a content signature for the Conflict Editor's
 /// three panes, so the editors only re-`set_value` when something actually
 /// changes (avoids clobbering an in-progress manual edit every frame).
-fn conflict_content_sig(path: &std::path::Path, result: &str, edit_mode: bool) -> u64 {
+pub(crate) fn conflict_content_sig(path: &std::path::Path, result: &str, edit_mode: bool) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut mix = |bytes: &[u8]| {
         for byte in bytes {

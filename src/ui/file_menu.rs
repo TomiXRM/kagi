@@ -19,7 +19,7 @@ pub(crate) fn render_file_menu_overlay(
     });
     let discard_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
         this.file_menu = None;
-        this.open_discard_modal_for_index(fi);
+        this.open_discard_modal_for_index(fi, cx);
         cx.notify();
     });
     // ADR-0089: open File History for this unstaged file.
@@ -28,8 +28,7 @@ pub(crate) fn render_file_menu_overlay(
         if let Some(path) = this
             .commit_panel
             .as_ref()
-            .and_then(|p| p.unstaged.get(fi))
-            .map(|f| f.path.clone())
+            .and_then(|e| e.read(cx).state.unstaged.get(fi).map(|f| f.path.clone()))
         {
             this.open_file_history(path, None, cx);
         }

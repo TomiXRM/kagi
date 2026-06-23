@@ -217,7 +217,7 @@ impl KagiApp {
                             &repo_path,
                             cx,
                         );
-                        app.reload();
+                        app.reload(cx);
                     }
                     Err(err_msg) => {
                         klog!("async: create-worktree failed — {}", err_msg);

@@ -48,17 +48,18 @@ use kagi_git::resolution::{LineOrder, Region, SelectionSide, TriState};
 
 use super::button_style::KagiButton;
 use super::conflict_view::ConflictMode;
+use super::conflict_view::ConflictView;
 use super::conflict_view::EditorChrome;
 use super::i18n::Msg;
 use super::theme::{self, theme};
-use super::{terminal, DividerDrag, DividerGhost, DividerKind, KagiApp};
+use super::{terminal, DividerDrag, DividerGhost, DividerKind};
 
 /// Render the full Conflict Editor, replacing the normal body while editing.
 pub fn render_editor(
     mode: &ConflictMode,
     chrome: &EditorChrome,
     path: &std::path::Path,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     // Embedded as the CENTER main area; the right Conflict Dashboard is always
     // rendered alongside, so flex within the row instead of taking the window.
@@ -82,7 +83,7 @@ fn render_toolbar(
     mode: &ConflictMode,
     chrome: &EditorChrome,
     path: &std::path::Path,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     let path_str = path.to_string_lossy().into_owned();
     let total = mode.buffer.hunk_count(path);
@@ -235,7 +236,7 @@ fn render_panes(
     mode: &ConflictMode,
     chrome: &EditorChrome,
     path: &std::path::Path,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     // No hunk model (binary / single-sided) → guidance message.
     let Some(_inputs) = chrome.inputs.as_ref().filter(|i| i.path == path) else {
@@ -406,7 +407,7 @@ fn side_file_checkbox(
     path: &std::path::Path,
     state: TriState,
     side: SelectionSide,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<ConflictView>,
 ) -> gpui::Stateful<gpui::Div> {
     let p = path.to_path_buf();
     let next = state != TriState::All;
@@ -498,7 +499,7 @@ fn side_row_list(
     side: SelectionSide,
     scroll: UniformListScrollHandle,
     selected_hunk: usize,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<ConflictView>,
 ) -> gpui::Stateful<gpui::Div> {
     let rows = Arc::new(build_side_rows(model, side));
     let row_count = rows.len();
@@ -538,7 +539,7 @@ fn render_side_rows(
     side: SelectionSide,
     selected_hunk: usize,
     range: std::ops::Range<usize>,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<ConflictView>,
 ) -> Vec<AnyElement> {
     range
         .filter_map(|i| rows.get(i).map(|row| (i, row.clone())))
@@ -644,7 +645,7 @@ fn render_hunk_header_row(
     order: LineOrder,
     side: SelectionSide,
     selected_hunk: usize,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<ConflictView>,
 ) -> AnyElement {
     let next = state != TriState::All;
     let p = path.clone();
@@ -734,7 +735,7 @@ fn render_code_line_row(
     taken: bool,
     side: SelectionSide,
     selected_hunk: usize,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<ConflictView>,
 ) -> AnyElement {
     let p = path.clone();
     let toggle = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
@@ -929,7 +930,7 @@ fn render_result_pane(
     mode: &ConflictMode,
     chrome: &EditorChrome,
     path: &std::path::Path,
-    cx: &mut Context<KagiApp>,
+    cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     let Some(inputs) = chrome.inputs.as_ref().filter(|i| i.path == path) else {
         return div().flex_1().into_any_element();
@@ -956,11 +957,22 @@ fn render_result_pane(
         cx.notify();
     });
     // File-level "Save resolution" lives near the Result (deliverable #4).
+    // Save writes the working tree + stages + re-detects (reload) → it touches
+    // `app.conflict`, so it MUST defer to the parent (calling it synchronously
+    // here would re-lease this leased entity and panic).
     let p_save = path.to_path_buf();
-    let save = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_editor_save(&p_save, cx);
-        cx.notify();
-    });
+    let save = cx.listener(
+        move |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
+            let weak_app = view.app.clone();
+            let p_save = p_save.clone();
+            cx.spawn_in(window, async move |_view, acx| {
+                let _ = weak_app.update_in(acx, |app, _window, cx| {
+                    app.conflict_editor_save(&p_save, cx)
+                });
+            })
+            .detach();
+        },
+    );
 
     // Header: "Result", a Preview|Edit segmented toggle, status, editing badge,
     // and the file-level Save resolution button.

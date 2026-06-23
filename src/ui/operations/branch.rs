@@ -193,7 +193,7 @@ impl KagiApp {
             Ok(r) => r,
             Err(e) => {
                 klog!("verify: repo open error: {}", e);
-                self.reload();
+                self.reload(cx);
                 return;
             }
         };
@@ -295,7 +295,7 @@ impl KagiApp {
         }
 
         // Reload display data (new branch badge should appear).
-        self.reload();
+        self.reload(cx);
     }
 
     pub fn open_branch_plan_modal(&mut self, branch_name: String, kind: BranchPlanKind) {
@@ -403,7 +403,7 @@ impl KagiApp {
                             "{}: {}",
                             op_name, after.dirty
                         )));
-                        app.reload();
+                        app.reload(cx);
                     }
                     Err(err_msg) => {
                         app.record_op(
@@ -535,7 +535,7 @@ impl KagiApp {
                             &repo_path,
                             cx,
                         );
-                        app.reload();
+                        app.reload(cx);
                     }
                     Err(err_msg) => {
                         app.record_op(
@@ -675,7 +675,7 @@ impl KagiApp {
                             &repo_path,
                             cx,
                         );
-                        app.reload();
+                        app.reload(cx);
                     }
                     Err(err_msg) => {
                         app.record_op(
@@ -892,7 +892,7 @@ impl KagiApp {
                         // re-runs detect_conflict_mode(); a merge that left
                         // conflict markers (MergeKind::Conflicts) therefore enters
                         // Conflict Mode here. Non-conflict merges stay Normal.
-                        app.reload();
+                        app.reload(cx);
                     }
                     Err(err_msg) => {
                         klog!("async: merge failed — {}", err_msg);
@@ -1025,7 +1025,7 @@ impl KagiApp {
                             &repo_path,
                             cx,
                         );
-                        app.reload();
+                        app.reload(cx);
                     }
                     Err(err_msg) => {
                         klog!("async: checkout-tracking failed — {}", err_msg);
@@ -1157,7 +1157,7 @@ impl KagiApp {
                             &repo_path,
                             cx,
                         );
-                        app.reload();
+                        app.reload(cx);
                     }
                     Err(err_msg) => {
                         klog!("async: switch-to-latest failed — {}", err_msg);
@@ -1337,7 +1337,7 @@ impl KagiApp {
                     modal.branch_name,
                     modal.plan.recovery.lines().nth(1).unwrap_or("git branch …")
                 )));
-                self.reload();
+                self.reload(cx);
             }
             Err(e) => {
                 let err_msg = format!("Delete failed: {}", e);
@@ -1432,7 +1432,7 @@ impl KagiApp {
                             "delete-branch: '{}' deleted (restore: {})",
                             branch_name, recovery_line
                         )));
-                        app.reload();
+                        app.reload(cx);
                     }
                     Err(err_msg) => {
                         klog!("async: delete-branch failed — {}", err_msg);

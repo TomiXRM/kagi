@@ -227,7 +227,7 @@ impl KagiApp {
             // W3-NOTIFY: explicit refresh gets a completion toast (the watcher's
             // automatic reloads stay silent to avoid spam). A failed reload now
             // surfaces an error toast instead of a misleading "Refreshed".
-            match this.reload_checked() {
+            match this.reload_checked(cx) {
                 Ok(()) => {
                     this.status_footer = FooterStatus::Idle(SharedString::from(Msg::Refreshed.t()));
                     this.push_toast(ToastKind::Success, Msg::Refreshed.t(), cx);

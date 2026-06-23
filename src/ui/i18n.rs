@@ -435,6 +435,8 @@ pub enum Msg {
     Ecosystem,
     /// "Copy diagnostic" button (export hot-spots as LLM context).
     EcoCopyDiagnostic,
+    /// Toast confirming the diagnostic was copied to the clipboard.
+    EcoDiagnosticCopied,
     /// Body placeholder while the repo is being mined.
     EcoLoading,
     /// Secondary line under the loading spinner (large-repo expectation).
@@ -926,6 +928,8 @@ impl Msg {
             (Ja, Ecosystem) => "解析",
             (En, EcoCopyDiagnostic) => "Copy diagnostic",
             (Ja, EcoCopyDiagnostic) => "診断をコピー",
+            (En, EcoDiagnosticCopied) => "Diagnostic copied to clipboard",
+            (Ja, EcoDiagnosticCopied) => "診断をクリップボードにコピーしました",
             (En, EcoLoading) => "Analyzing repository…",
             (Ja, EcoLoading) => "リポジトリを解析中…",
             (En, EcoLoadingHint) => "Large repositories can take a minute.",

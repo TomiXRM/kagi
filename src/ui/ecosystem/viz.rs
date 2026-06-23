@@ -8,6 +8,7 @@
 
 use super::*;
 use gpui::{relative, AnyElement};
+use gpui_component::tooltip::Tooltip;
 use kagi_domain::hotspot::Ecosystem;
 use kagi_domain::hotspot_layout::{treemap, Rect};
 
@@ -41,9 +42,13 @@ pub(super) fn render_hotspot_map(eco: &Ecosystem) -> AnyElement {
 }
 
 /// One treemap tile: a heat-coloured rectangle, labelled with the file's base
-/// name when it is large enough to fit text.
+/// name when it is large enough to fit text. Every tile carries a hover tooltip
+/// with the **full path**, so tiles too small to show (or that clip) their name
+/// are still identifiable on hover.
 fn tile(path: &str, risk: f64, r: &Rect) -> AnyElement {
+    let full = SharedString::from(path.to_string());
     let mut el = div()
+        .id(SharedString::from(format!("eco-tile-{path}")))
         .absolute()
         .left(relative(r.x as f32))
         .top(relative(r.y as f32))
@@ -52,9 +57,11 @@ fn tile(path: &str, risk: f64, r: &Rect) -> AnyElement {
         .bg(rgb(heat(risk)))
         .border_1()
         .border_color(rgb(theme().bg_base))
-        .overflow_hidden();
+        .overflow_hidden()
+        .tooltip(move |window, cx| Tooltip::new(full.clone()).build(window, cx));
 
-    // Only label tiles with room for it (avoid a wall of clipped text).
+    // Only label tiles with room for it (avoid a wall of clipped text); the
+    // tooltip covers the rest.
     if r.w > 0.07 && r.h > 0.045 {
         let name = path.rsplit('/').next().unwrap_or(path);
         el = el.child(

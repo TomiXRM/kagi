@@ -305,6 +305,10 @@ impl EcosystemView {
                 "ecosystem: diagnostic copied ({} files)",
                 eco.files.len().min(DIAGNOSTIC_TOP_N)
             );
+            // Confirm the (otherwise invisible) clipboard write with a toast.
+            let _ = self.app.update(cx, |app, cx| {
+                app.push_toast(ToastKind::Info, Msg::EcoDiagnosticCopied.t(), cx);
+            });
         }
     }
 

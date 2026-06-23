@@ -90,6 +90,10 @@ Open **File History** on any file to walk every commit that touched it: the per-
 
 ## See where change concentrates
 
+<div align="center">
+<img src="docs/images/analyze.png" width="900" alt="Analyze view — a risk-ranked Hotspots list of files by churn × size, with a window selector, a List / Map toggle, Hotspots / Coupling / Ownership modes, and a Copy diagnostic action" />
+</div>
+
 **Analyze** (a read-only toolbar view, next to Settings) mines your whole Git history into a map of the repo's "code ecosystem" — it adds no write operation and no new Git command, and it's framed as *attention*, never a verdict. Three modes share one **window selector** (Day / Week / Month / Year / All):
 
 - **Hotspots** — files risk-ranked by *churn × size* (how often a file changes, weighted by how large it is): the small fraction that concentrates change, where bugs tend to cluster. View it as a ranked list or a **treemap heatmap** (tile size = LOC, colour = risk).

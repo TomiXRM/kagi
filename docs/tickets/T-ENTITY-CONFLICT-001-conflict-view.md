@@ -94,3 +94,20 @@ borrowed"** (uncatchable by build/test). Plus the parent reads conflict state ev
   (sequencer route → confirm modal), **abort** (two-stage), **skip**, tab-switch mid-conflict
   (no stale view), and confirm no "already borrowed" panic in any path.
 - Adversarial codex cross-review of the diff before integrate.
+
+## Status: LANDED (refactor/kagi-app-decomp-5-2)
+
+- Stage 0a (`f952430`), Stage 0d (`371d860`), Stage 1 atomic flip (`a32986e`).
+- Gates green: build, `test --workspace` 791/0, fmt, clippy 38 (no new), headless conflict-detect
+  smoke (line ×1, conflicts=1, no panic).
+- Adversarial codex cross-review: SHIP-WITH-NITS → the one new `.unwrap()` (render.rs body gate)
+  fixed to `if let Some`.
+- **Real-UI verification PERFORMED** (primary session, screencapture + cliclick): the ConflictView
+  entity renders the full screen (banner + 3-pane editor + dashboard + result preview + toolbar);
+  the entity-internal Abort-arm fires child-notify and re-renders ("Confirm abort" + warning); the
+  **deferred Confirm-abort execute** drives `spawn_in→update_in→conflict_abort→reload→detect→
+  apply(Cleared)→conflict=None` with **no "already borrowed" panic**, emitting
+  `executed: merge-abort` + `conflict-mode: cleared` and returning to the normal graph view.
+- continue (merge→commit-panel / sequencer→confirm-modal), skip, and editor_save share the SAME
+  deferred-marshalling machinery validated by the abort path (cross-review confirmed each defers);
+  a further human pass can exercise them individually for extra assurance.

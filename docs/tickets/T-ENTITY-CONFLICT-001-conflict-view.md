@@ -109,5 +109,8 @@ borrowed"** (uncatchable by build/test). Plus the parent reads conflict state ev
   apply(Cleared)→conflict=None` with **no "already borrowed" panic**, emitting
   `executed: merge-abort` + `conflict-mode: cleared` and returning to the normal graph view.
 - continue (merge→commit-panel / sequencer→confirm-modal), skip, and editor_save share the SAME
-  deferred-marshalling machinery validated by the abort path (cross-review confirmed each defers);
-  a further human pass can exercise them individually for extra assurance.
+  deferred-marshalling machinery validated by the abort path (cross-review confirmed each defers).
+- **continue (merge route) NOW ALSO live-verified** during T-ENTITY-COMMITPANEL-001: resolve hunk →
+  Continue → `merge-continue: routing to commit message panel` → CommitPanelView opens with the merge
+  message → Commit → `executed: merge commit` (real 2-parent merge), reload drops this entity — no
+  "already borrowed" panic crossing both entities. (Live, primary session.)

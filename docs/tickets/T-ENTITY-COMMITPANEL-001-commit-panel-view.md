@@ -133,3 +133,9 @@
   **Commit** (deferred → open_commit_plan_modal → start_commit → reload → entity rebuild) created a
   real commit (`executed: commit …`, working tree clean, graph updated), with **no "already
   borrowed" panic** on any path.
+- **Cross-entity flow VERIFIED (the highest integration risk)**: conflict → resolve hunk → **Continue
+  (merge route)** → `merge-continue: routing to commit message panel` → `open_commit_panel` creates
+  the CommitPanelView entity pre-filled with `Merge branch 'feature'` (+`conflict_merge_pending`) →
+  **Commit** → `start_commit` → `finish_merge_commit` → `executed: merge commit 64c16553` (real
+  2-parent merge, MERGE_HEAD gone) → reload drops the ConflictView + rebuilds. **No panic** crossing
+  both new entities + the parent handoff. (Live, primary session.)

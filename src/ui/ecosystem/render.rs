@@ -7,6 +7,7 @@
 
 use super::*;
 use gpui::{relative, AnyElement};
+use gpui_component::tooltip::Tooltip;
 
 /// Root element of the full-screen ecosystem view.
 pub(super) fn render_ecosystem(
@@ -119,10 +120,15 @@ fn render_header(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyEl
             d.child(render_coupling_toggle(view, cx))
         });
 
-    // Right cluster: window + export format + actions. Kept on one line so it
-    // wraps as a whole, never splitting "診断をコピー" from its format chips.
+    // Right cluster: window + export format + actions. `flex_wrap` lets the
+    // controls themselves spill onto a second line on a narrow / zoomed-in
+    // window instead of being clipped off the right edge (which hid the
+    // format chips, Copy, ? and ✕ — user report). `justify_end` keeps them
+    // right-aligned when they do.
     let right = div()
         .flex()
+        .flex_wrap()
+        .justify_end()
         .items_center()
         .gap_2()
         .child(render_granularity_toggle(view, cx))
@@ -133,10 +139,16 @@ fn render_header(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyEl
         .child(text_button("eco-help", "?", true).on_click(help_click))
         .child(text_button("eco-close", "✕", true).on_click(close_click));
 
+    // `justify_between` (instead of a flexible spacer) splits the two clusters
+    // to the edges on a wide window but, combined with `flex_wrap`, lets the
+    // right cluster drop to its own line when they no longer fit — a `flex_1`
+    // spacer absorbed the slack and suppressed that wrap, so the right cluster
+    // overflowed the edge instead.
     div()
         .flex()
         .flex_wrap()
         .items_center()
+        .justify_between()
         .gap_3()
         .px_3()
         .py_2()
@@ -144,7 +156,6 @@ fn render_header(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyEl
         .border_b_1()
         .border_color(rgb(theme().surface))
         .child(left)
-        .child(div().flex_1().min_w(px(16.0)))
         .child(right)
         .into_any_element()
 }
@@ -296,11 +307,23 @@ fn render_body(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElem
         .into_any_element()
 }
 
-/// The left "name" cell of a list row: takes the flexible space but, crucially,
-/// `min_w(0)` + `overflow_x_scroll` so a very long path scrolls **inside the
-/// cell** instead of pushing the fixed numeric columns / bar off the right edge
-/// (user request). `whitespace_nowrap` keeps it on one line so it scrolls.
+/// The left "name" cell of a list row. The cell takes the flexible space, but a
+/// `flex_1` child's flex **min-width defaults to its content width** — so a very
+/// long path (e.g. deep STM32 build artifacts, 200+ chars) refuses to shrink and
+/// shoves the fixed numeric columns + risk bar off the right edge where they
+/// vanish (user report). The fix is the same one the commit-list centre column
+/// uses (`render_body.rs`): the flex participant carries `min_w(0)` +
+/// `overflow_hidden`, which lets it shrink below the path's intrinsic width and
+/// keeps every right-hand column on-screen. A nested `overflow_x_scroll` child
+/// preserves the earlier "scroll the long path inside its cell" behaviour.
 pub(super) fn scroll_path_cell(id: String, text: String) -> gpui::Stateful<gpui::Div> {
+    // `flex_1` + `min_w(0)` + `overflow_x_scroll` is the proven shrink pattern
+    // (cf. the commit-list centre column); it lets the cell shrink below the
+    // path's intrinsic width so every right-hand column stays on-screen. The
+    // path scrolls horizontally *inside* this clipped cell, and a hover tooltip
+    // shows the full path so a clipped name is always readable (user request:
+    // "hidden text is unusable").
+    let full = SharedString::from(text.clone());
     div()
         .id(SharedString::from(id))
         .flex_1()
@@ -309,6 +332,7 @@ pub(super) fn scroll_path_cell(id: String, text: String) -> gpui::Stateful<gpui:
         .whitespace_nowrap()
         .text_size(theme::scaled_px(13.0))
         .text_color(rgb(theme().text_main))
+        .tooltip(move |window, cx| Tooltip::new(full.clone()).build(window, cx))
         .child(text)
 }
 

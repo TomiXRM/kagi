@@ -407,8 +407,14 @@ impl KagiApp {
 
         // ADR-0119: Code Ecosystem view (full-screen, read-only). Like File
         // History, the entity renders its own body in an isolated notify scope.
+        // Wrap it in a `flex_1` + `min_w(0)` cell so the entity gets a *definite*
+        // width to fill (the body minus the sidebar). Mounted bare, the entity
+        // is a flex item with `flex-basis: auto`, so it sizes to its content —
+        // the longest hot-spot path — and its inner `flex_1` columns never get a
+        // bounded width to shrink into, pushing the numeric columns + risk bar
+        // off the right edge (user report on deep STM32 build paths).
         if let Some(eco) = ecosystem {
-            body_row = body_row.child(eco);
+            body_row = body_row.child(div().flex_1().min_w(px(0.)).child(eco));
             return body_row;
         }
 

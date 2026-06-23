@@ -28,6 +28,11 @@ pub(super) fn render_hotspot_list(eco: &Ecosystem) -> AnyElement {
         .flex()
         .flex_col()
         .size_full()
+        // Clip the X axis (overflow_hidden sets both axes, then re-enable Y
+        // scroll) so rows can't widen the scroll content box past the viewport.
+        // Without this the list scrolls horizontally to fit the longest path and
+        // the right-hand numeric columns / risk bar fall off the visible edge.
+        .overflow_hidden()
         .overflow_y_scroll();
     for (i, f) in eco.files.iter().take(MAX_ROWS).enumerate() {
         list = list.child(render_row(i + 1, f, max_risk));
@@ -40,6 +45,15 @@ fn render_row(rank: usize, f: &FileMetric, max_risk: f64) -> AnyElement {
     let frac = (f.risk / max_risk).clamp(0.0, 1.0) as f32;
     div()
         .flex()
+        // Bound the row to the list width and clip overflow, so the flexible
+        // path cell shrinks (rather than the whole row growing past the window
+        // and shoving the commits / LOC / risk-bar columns off the right edge).
+        .w_full()
+        .overflow_hidden()
+        // overflow_hidden zeroes a flex item's automatic min-size on BOTH axes,
+        // which would let the row shrink vertically inside the scroll list and
+        // squash every row. Pin the row height so the list scrolls instead.
+        .flex_shrink_0()
         .items_center()
         .gap_3()
         .px_3()
@@ -48,6 +62,7 @@ fn render_row(rank: usize, f: &FileMetric, max_risk: f64) -> AnyElement {
         .border_color(rgb(theme().surface))
         .child(
             div()
+                .flex_shrink_0()
                 .w(theme::scaled_px(36.0))
                 .text_size(theme::scaled_px(12.0))
                 .text_color(rgb(theme().text_muted))
@@ -151,6 +166,11 @@ pub(super) fn render_coupling_list(
         .flex()
         .flex_col()
         .size_full()
+        // Clip the X axis (overflow_hidden sets both axes, then re-enable Y
+        // scroll) so rows can't widen the scroll content box past the viewport.
+        // Without this the list scrolls horizontally to fit the longest path and
+        // the right-hand numeric columns / risk bar fall off the visible edge.
+        .overflow_hidden()
         .overflow_y_scroll();
     for (i, p) in pairs.iter().enumerate() {
         let a = p.a.clone();
@@ -176,6 +196,12 @@ fn render_coupling_row(
     div()
         .id(SharedString::from(format!("eco-coup-row-{rank}")))
         .flex()
+        .w_full()
+        .overflow_hidden()
+        // overflow_hidden zeroes a flex item's automatic min-size on BOTH axes,
+        // which would let the row shrink vertically inside the scroll list and
+        // squash every row. Pin the row height so the list scrolls instead.
+        .flex_shrink_0()
         .items_center()
         .gap_3()
         .px_3()
@@ -243,6 +269,12 @@ fn render_partner_row(idx: usize, e: &CouplingEdge, max_together: u32) -> AnyEle
     let frac = (e.together as f32 / max_together as f32).clamp(0.0, 1.0);
     div()
         .flex()
+        .w_full()
+        .overflow_hidden()
+        // overflow_hidden zeroes a flex item's automatic min-size on BOTH axes,
+        // which would let the row shrink vertically inside the scroll list and
+        // squash every row. Pin the row height so the list scrolls instead.
+        .flex_shrink_0()
         .items_center()
         .gap_3()
         .px_3()
@@ -284,6 +316,11 @@ pub(super) fn render_ownership_list(owners: &[FileOwnership]) -> AnyElement {
         .flex()
         .flex_col()
         .size_full()
+        // Clip the X axis (overflow_hidden sets both axes, then re-enable Y
+        // scroll) so rows can't widen the scroll content box past the viewport.
+        // Without this the list scrolls horizontally to fit the longest path and
+        // the right-hand numeric columns / risk bar fall off the visible edge.
+        .overflow_hidden()
         .overflow_y_scroll();
     for (i, o) in owners.iter().enumerate() {
         list = list.child(render_ownership_row(i + 1, o));
@@ -302,6 +339,12 @@ fn render_ownership_row(rank: usize, o: &FileOwnership) -> AnyElement {
     };
     div()
         .flex()
+        .w_full()
+        .overflow_hidden()
+        // overflow_hidden zeroes a flex item's automatic min-size on BOTH axes,
+        // which would let the row shrink vertically inside the scroll list and
+        // squash every row. Pin the row height so the list scrolls instead.
+        .flex_shrink_0()
         .items_center()
         .gap_3()
         .px_3()
@@ -310,6 +353,7 @@ fn render_ownership_row(rank: usize, o: &FileOwnership) -> AnyElement {
         .border_color(rgb(theme().surface))
         .child(
             div()
+                .flex_shrink_0()
                 .w(theme::scaled_px(36.0))
                 .text_size(theme::scaled_px(12.0))
                 .text_color(rgb(theme().text_muted))

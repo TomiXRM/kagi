@@ -392,7 +392,7 @@ impl KagiApp {
     /// 032).  Gates through `plan_conflict_continue_route`, then:
     ///
     /// - **merge** → transition to the commit message panel pre-filled with the
-    ///   merge message (`conflict_merge_commit_pending = true`).  **No commit is
+    ///   merge message (`conflict_merge_pending = true`).  **No commit is
     ///   created here** — the commit panel's commit button calls
     ///   `start_merge_commit`, which creates the 2-parent merge commit.
     /// - **rebase / cherry-pick / revert** → open the `<op> --continue`
@@ -483,7 +483,7 @@ impl KagiApp {
                 if let Some(panel) = self.commit_panel.as_mut() {
                     panel.commit_msg = message.clone();
                 }
-                self.conflict.merge_commit_pending = true;
+                self.conflict_merge_pending = true;
             }
             kagi_git::ContinueRoute::SequencerPlan(plan) => {
                 // Confirmation modal before advancing the sequencer.

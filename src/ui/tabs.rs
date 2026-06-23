@@ -624,7 +624,7 @@ impl KagiApp {
                         if saw_git {
                             app.reload_external(cx);
                         } else if saw_index {
-                            if app.conflict.mode.is_some() || app.conflict.merge_commit_pending {
+                            if app.conflict.mode.is_some() || app.conflict_merge_pending {
                                 app.reload_external(cx);
                             } else {
                                 app.refresh_working_tree_external(cx);

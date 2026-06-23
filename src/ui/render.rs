@@ -404,7 +404,7 @@ impl Render for KagiApp {
         // message, show the normal body (commit panel) instead of the conflict
         // resolution body (ADR-0068). Conflict Mode is still active (MERGE_HEAD
         // present) but the editor is hidden behind the commit message panel.
-        let conflict_merge_pending = self.conflict.merge_commit_pending;
+        let conflict_merge_pending = self.conflict_merge_pending;
         // T-CONFLICT-UI: chrome the 3-pane Conflict Editor needs from the app
         // (the editors live on `self`, not on the cloned `ConflictMode`).
         let conflict_chrome = conflict_view::EditorChrome {

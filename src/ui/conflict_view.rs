@@ -126,10 +126,6 @@ pub struct ConflictState {
     /// T-CONFLICT-UI-003: measured (left, right) screen-px bounds of the A·B
     /// row, for the vertical A|B divider drag.
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
-    /// T-CONFLICT-FLOW-030/031 (ADR-0068): showing the merge commit panel
-    /// (every file saved + staged, MERGE_HEAD still present). Cleared on commit /
-    /// abort / reload.
-    pub merge_commit_pending: bool,
     /// T-CONFLICT-UX-010/012: index (among conflict hunks) of the focused hunk
     /// in the per-hunk Conflict Editor.
     pub selected_hunk: usize,
@@ -156,7 +152,6 @@ impl ConflictState {
             result_split: super::CONFLICT_RESULT_DEFAULT,
             geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
-            merge_commit_pending: false,
             selected_hunk: 0,
             ab_scroll_handle: UniformListScrollHandle::new(),
             file_menu: None,

@@ -1122,11 +1122,17 @@ pub struct KagiApp {
     pub avatars: avatar::AvatarStore,
     // ── W30-CONFLICT-UI: Conflict Mode (ADR-0056) ────────────────
     /// Conflict-Editor view state: detected mode, the open editor file, the
-    /// A/B/Result inputs, splits/geometry, and merge-commit-pending. Consolidated
+    /// A/B/Result inputs, and splits/geometry. Consolidated
     /// from 13 flat `conflict_*` fields (ADR-0110 Phase 5 Step 5.1). App-global;
-    /// cleared on reload / abort. (`conflict_count` badge and `merge_commit_ready`
-    /// stay separate.)
+    /// cleared on reload / abort. (`conflict_count` badge, `conflict_merge_pending`,
+    /// and `merge_commit_ready` stay separate.)
     pub conflict: conflict_view::ConflictState,
+    /// T-CONFLICT-FLOW-030/031 (ADR-0068): showing the merge commit panel
+    /// (every file saved + staged, MERGE_HEAD still present). Cleared on commit /
+    /// abort / reload. Parent-owned (read by the body-gate render and the FS
+    /// watcher) — kept off `ConflictState` so the upcoming `ConflictView` entity
+    /// flip never has to be leased just to test the gate (ADR-0118 Mechanism B).
+    pub conflict_merge_pending: bool,
     /// Set by `detect_conflict_mode` when the in-progress operation is a **merge**
     /// whose conflicts are all resolved (MERGE_HEAD present, no remaining unmerged
     /// index entries).  This is the "ready to create the merge commit" state — the
@@ -1527,6 +1533,7 @@ impl KagiApp {
             avatars: avatar::AvatarStore::default(),
             // W30-CONFLICT-UI
             conflict: conflict_view::ConflictState::new(),
+            conflict_merge_pending: false,
             merge_commit_ready: false,
             update_available: None,
             update_checked: false,
@@ -1632,6 +1639,7 @@ impl KagiApp {
             avatars: avatar::AvatarStore::default(),
             // W30-CONFLICT-UI
             conflict: conflict_view::ConflictState::new(),
+            conflict_merge_pending: false,
             merge_commit_ready: false,
             update_available: None,
             update_checked: false,
@@ -1724,13 +1732,13 @@ impl KagiApp {
         // the commit panel + merge message across that self-induced reload so the
         // user is not bounced out of the commit screen; the post-detect block
         // below confirms the merge is still pending (else it resets everything).
-        let was_merge_commit_pending = self.conflict.merge_commit_pending;
+        let was_merge_commit_pending = self.conflict_merge_pending;
         self.commit_menu = None;
         self.file_menu = None;
         self.stash_menu = None;
         if !was_merge_commit_pending {
             // ADR-0068: a reload after commit / abort ends any continued-merge flow.
-            self.conflict.merge_commit_pending = false;
+            self.conflict_merge_pending = false;
             // T025/T026: reset commit panel and input so it reflects fresh status after reload.
             self.commit_panel_open = false;
             self.commit_panel = None;
@@ -1787,11 +1795,11 @@ impl KagiApp {
                 self.commit_panel = Some(panel);
                 self.commit_panel_open = true;
                 self.conflict.mode = None;
-                self.conflict.merge_commit_pending = true;
+                self.conflict_merge_pending = true;
             } else {
                 // The merge commit was created (MERGE_HEAD gone) or aborted — end
                 // the flow and reset the deferred commit-panel state.
-                self.conflict.merge_commit_pending = false;
+                self.conflict_merge_pending = false;
                 self.commit_panel_open = false;
                 self.commit_panel = None;
                 self.commit_input = None;

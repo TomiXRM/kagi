@@ -208,8 +208,11 @@ cross-model review (codex), per the ADR-0118 pipeline.
   Jaccard degree) and `ownership` (per-file primary author + share + author count, single-owner /
   bus-factor-of-one flagged). Required adding `author` (email) to `CommitChanges` and `%ae` to the
   mine format.
-- **Still pending:** `T-ECO-VIZ-004` (circle-pack / heatmap `viz.rs`); function-level X-Ray; headless
-  `klog` assertions; preflight hot-spot warnings.
+- **T-ECO-VIZ-004 shipped:** Hotspots gains a List ⇄ Map sub-toggle; Map is a GPUI-native **treemap
+  heatmap** (tile size = LOC, colour = risk) via a pure binary-split layout in `hotspot_layout.rs`
+  (unit-square rects positioned with `relative()` lengths — no canvas, labels stay plain elements).
+- **Still pending:** function-level X-Ray (tree-sitter / `rust-code-analysis`); headless `klog`
+  assertions; preflight hot-spot warnings; circle-packing (the treemap covers the heatmap need).
 
 ## Consequences
 

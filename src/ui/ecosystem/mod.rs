@@ -5,14 +5,14 @@
 //! maintenance risk is visible at a glance, and exports that picture as
 //! LLM-ready text ("Copy diagnostic").
 //!
-//! Follows the ADR-0117 `Entity<T>` template **verbatim**: the entity is "fat"
-//! (it holds `repo_path` and drives the `Backend` mining on its **own**
-//! `cx.spawn`, updating *itself*), a `WeakEntity<KagiApp>` back-ref is used only
-//! in event closures (never in `Render`), and an atomic `generation` guard
-//! discards stale async results. The only parent callback is `close`.
-//!
-//! The visualization (circle-pack / heatmap) and the Coupling / Ownership modes
-//! are stubs here — their paint/data land in later ADR-0119 tickets.
+//! The `Entity<EcosystemView>` is a **thin reflector**: it renders cached/loading
+//! state and owns only its view-local toggles (mode / granularity / list-vs-map).
+//! The slow whole-repo mine is **app-owned** (`KagiApp::start_ecosystem_mine`) so
+//! it keeps running if the user closes the view, caches its result per repo,
+//! writes an Operation Log row, and shows a completion snackbar. A
+//! `WeakEntity<KagiApp>` back-ref is used only in event closures (close), never
+//! in `Render`. The app seeds the view on completion **only if it still shows
+//! the same repo** (`repo_matches`).
 
 mod render;
 mod viz;
@@ -43,8 +43,8 @@ const COUPLING_TOP_N: usize = 100;
 /// How many files the Ownership mode lists (single-owner / high-share first).
 const OWNERSHIP_TOP_N: usize = 200;
 
-/// View-model data for the ecosystem view (loaded snapshot, selection, async
-/// generation). Separated from the entity so the render path reads plain data.
+/// View-model data for the ecosystem view (mined snapshot + per-mode rankings +
+/// view-local toggles). Separated from the entity so render reads plain data.
 pub struct EcosystemData {
     /// The mined raw history (kept so a granularity change re-ranks without a
     /// re-mine). `None` until the first load resolves.
@@ -61,9 +61,6 @@ pub struct EcosystemData {
     pub granularity: Granularity,
     pub loading: bool,
     pub error: Option<String>,
-    /// Monotonic load generation; bumped per (re)load, checked before applying
-    /// an async result so a stale mine is dropped.
-    pub generation: u64,
 }
 
 impl EcosystemData {
@@ -78,7 +75,6 @@ impl EcosystemData {
             granularity: Granularity::All,
             loading: true,
             error: None,
-            generation: 0,
         }
     }
 }
@@ -90,7 +86,8 @@ impl EcosystemData {
 /// commits make that mine stale). (ADR-0119)
 pub type EcosystemCache = HashMap<PathBuf, RawEcosystem>;
 
-/// The Code Ecosystem view entity (ADR-0119). "Fat": owns its Backend mining.
+/// The Code Ecosystem view entity (ADR-0119). A thin reflector of cached /
+/// loading state; the mine itself is app-owned (`start_ecosystem_mine`).
 pub struct EcosystemView {
     pub(crate) data: EcosystemData,
     /// Back-ref to the app — used ONLY in event closures (close), never in render.
@@ -107,7 +104,7 @@ impl EcosystemView {
         }
     }
 
-    /// Seed from a cached mine (instant; no Backend work) and rank immediately.
+    /// Seed from a completed mine (instant; no Backend work) and rank.
     pub fn seed(&mut self, raw: RawEcosystem) {
         self.data.raw = Some(raw);
         self.data.loading = false;
@@ -115,55 +112,17 @@ impl EcosystemView {
         self.recompute();
     }
 
-    /// Kick off the async whole-repo mine on a background thread, then re-rank
-    /// on the UI thread. Stale results (superseded by a newer load) are dropped
-    /// via the generation guard. On success the mine is cached on the parent.
-    pub fn load(&mut self, cx: &mut Context<Self>) {
-        self.data.generation += 1;
-        let generation = self.data.generation;
-        self.data.loading = true;
-        self.data.error = None;
+    /// Show a mine error in the body (clears the loading spinner).
+    pub fn set_error(&mut self, error: String) {
+        self.data.ecosystem = None;
+        self.data.loading = false;
+        self.data.error = Some(error);
+    }
 
-        let repo_path = self.repo_path.clone();
-        let task = cx.background_spawn(async move {
-            kagi_git::Backend::open(&repo_path)
-                .map_err(|e| e.to_string())
-                .and_then(|b| {
-                    b.ecosystem(ECOSYSTEM_COMMIT_LIMIT)
-                        .map_err(|e| e.to_string())
-                })
-        });
-
-        cx.spawn(async move |view, acx| {
-            let result = task.await;
-            let _ = view.update(acx, |v, cx| {
-                if v.data.generation != generation {
-                    return; // a newer load supersedes this one
-                }
-                match result {
-                    Ok(raw) => {
-                        klog!("ecosystem: loaded {} commits", raw.commits.len());
-                        // Cache the mine on the parent (keyed by repo) so reopen
-                        // / tab-switch-and-back reuses it (invalidated on reload).
-                        let repo_path = v.repo_path.clone();
-                        let cached = raw.clone();
-                        let _ = v.app.update(cx, |app, _| {
-                            app.ecosystem_cache.insert(repo_path, cached);
-                        });
-                        v.data.raw = Some(raw);
-                        v.recompute();
-                    }
-                    Err(e) => {
-                        klog!("ecosystem: load failed: {}", e);
-                        v.data.ecosystem = None;
-                        v.data.error = Some(e);
-                    }
-                }
-                v.data.loading = false;
-                cx.notify();
-            });
-        })
-        .detach();
+    /// True when this view belongs to `repo` — guards an app-driven seed so a
+    /// completed mine never lands on a view that has since switched repos.
+    pub fn repo_matches(&self, repo: &std::path::Path) -> bool {
+        self.repo_path == repo
     }
 
     /// Re-rank the already-mined history for the current granularity (cheap,
@@ -243,20 +202,139 @@ impl super::KagiApp {
         // Reuse a cached mine for this repo if present (instant reopen, even
         // after switching to another repo tab and back).
         let cached = self.ecosystem_cache.get(&repo_path).cloned();
-        let entity = cx.new(|cx| {
-            let mut v = EcosystemView::new(weak, repo_path);
-            match cached {
-                Some(raw) => v.seed(raw),
-                None => v.load(cx),
-            }
+        let has_cache = cached.is_some();
+        let entity = cx.new(|_| {
+            let mut v = EcosystemView::new(weak, repo_path.clone());
+            if let Some(raw) = cached {
+                v.seed(raw); // instant
+            } // else: stays in the loading state; the app drives the mine
             v
         });
         self.ecosystem = Some(entity);
         klog!("ecosystem: opened");
+        // No cache → start (or join) the app-owned mine, which survives the
+        // view being closed and notifies on completion.
+        if !has_cache {
+            self.start_ecosystem_mine(repo_path, cx);
+        }
         cx.notify();
     }
 
-    /// Close the Ecosystem view (drops the entity + any in-flight mine).
+    /// Start the whole-repo mine for `repo_path` **on the app** (not the view),
+    /// so it keeps running if the user closes the Analyze view, caches the
+    /// result, logs to the Operation Log, and shows a completion snackbar
+    /// (ADR-0119). Single-flighted per repo; no-op if already mining or cached.
+    pub fn start_ecosystem_mine(&mut self, repo_path: PathBuf, cx: &mut Context<Self>) {
+        if self.ecosystem_inflight.as_ref() == Some(&repo_path)
+            || self.ecosystem_cache.contains_key(&repo_path)
+        {
+            return;
+        }
+        self.ecosystem_inflight = Some(repo_path.clone());
+        klog!("ecosystem: analyzing {}", repo_path.display());
+
+        let bg_path = repo_path.clone();
+        let task = cx.background_spawn(async move {
+            kagi_git::Backend::open(&bg_path)
+                .map_err(|e| e.to_string())
+                .and_then(|b| {
+                    b.ecosystem(ECOSYSTEM_COMMIT_LIMIT)
+                        .map_err(|e| e.to_string())
+                })
+        });
+
+        cx.spawn(async move |app, acx| {
+            let result = task.await;
+            let _ = app.update(acx, |app, cx| {
+                // Drop the result if this mine was superseded (repo reloaded /
+                // a newer mine took over) — `inflight` no longer points at us.
+                let still_ours = app.ecosystem_inflight.as_deref() == Some(repo_path.as_path());
+                if still_ours {
+                    app.ecosystem_inflight = None;
+                }
+                if !still_ours {
+                    return;
+                }
+                match result {
+                    Ok(raw) => {
+                        klog!("ecosystem: loaded {} commits", raw.commits.len());
+                        let commits = raw.commits.len();
+                        let files = raw.loc.len();
+                        app.ecosystem_cache.insert(repo_path.clone(), raw.clone());
+                        app.record_ecosystem_done(&repo_path, commits, files, cx);
+                        // Update the view only if it is still showing this repo.
+                        if let Some(view) = app.ecosystem.clone() {
+                            view.update(cx, |v, cx| {
+                                if v.repo_matches(&repo_path) {
+                                    v.seed(raw);
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        klog!("ecosystem: load failed: {}", e);
+                        app.push_toast(ToastKind::Error, format!("Analyze failed: {e}"), cx);
+                        if let Some(view) = app.ecosystem.clone() {
+                            view.update(cx, |v, cx| {
+                                if v.repo_matches(&repo_path) {
+                                    v.set_error(e.clone());
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Push a completion snackbar + a read-only Operation Log row for a finished
+    /// Analyze mine. (Not persisted to the on-disk oplog — it's not a mutation.)
+    fn record_ecosystem_done(
+        &mut self,
+        repo: &std::path::Path,
+        commits: usize,
+        files: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let summary = format!("{files} files · {commits} commits");
+        self.push_toast(
+            ToastKind::Success,
+            format!("Analyze complete — {summary}"),
+            cx,
+        );
+        let repo_name = repo
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| repo.display().to_string());
+        let before = StateSummary {
+            head: repo_name,
+            dirty: "read-only".into(),
+        };
+        let entry = OpLogEntry::new(
+            "analyze",
+            repo.display().to_string(),
+            before,
+            OpOutcome::Success {
+                after: StateSummary {
+                    head: summary,
+                    dirty: "read-only".into(),
+                },
+            },
+        );
+        if let Some(panel) = self.op_log.clone() {
+            panel.update(cx, |panel, cx| {
+                panel.push(entry);
+                panel.collapse();
+                cx.notify();
+            });
+        }
+    }
+
+    /// Close the Ecosystem view (the app-owned mine keeps running if in flight).
     pub fn close_ecosystem_view(&mut self) {
         self.ecosystem = None;
     }

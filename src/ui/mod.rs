@@ -1168,6 +1168,9 @@ pub struct KagiApp {
     /// ADR-0119: cached completed mine so reopening the Ecosystem view reuses
     /// the slow `git log` scan. Invalidated on reload / repo switch.
     pub ecosystem_cache: ecosystem::EcosystemCache,
+    /// ADR-0119: repo whose Analyze mine is currently running (app-owned, so it
+    /// survives the view being closed). `None` when idle.
+    pub ecosystem_inflight: Option<std::path::PathBuf>,
 }
 
 /// T-CONFLICT-UI-001: the Result `InputState` entity backing the Conflict
@@ -1536,6 +1539,7 @@ impl KagiApp {
             file_history: None,
             ecosystem: None,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
+            ecosystem_inflight: None,
         }
     }
 
@@ -1637,6 +1641,7 @@ impl KagiApp {
             file_history: None,
             ecosystem: None,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
+            ecosystem_inflight: None,
         }
     }
 
@@ -1751,6 +1756,11 @@ impl KagiApp {
         self.ecosystem = None;
         if let Some(p) = self.repo_path.clone() {
             self.ecosystem_cache.remove(&p);
+            // Supersede an in-flight mine for this repo: its result would be
+            // stale after the new commits, so let the completion drop it.
+            if self.ecosystem_inflight.as_deref() == Some(p.as_path()) {
+                self.ecosystem_inflight = None;
+            }
         }
         self.clear_plan_modal();
         self.clear_pull_modal();

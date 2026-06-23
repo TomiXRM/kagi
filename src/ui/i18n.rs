@@ -981,7 +981,7 @@ pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
             ),
             (
                 "Copy diagnostic",
-                "Copies the current view (Hotspots ranking, Coupling pairs, or Ownership) as Markdown, ready to paste into an AI chat as context (\"here is where the risk is — help me refactor\"). Switch modes to export that view.",
+                "Copies the current view (Hotspots ranking, Coupling pairs, or Ownership) ready to paste into an AI chat as context (\"here is where the risk is — help me refactor\"). Switch modes to export that view. Pick the format next to the button: MD (Markdown table) or JSON for any mode, plus Mermaid in Coupling mode — a flowchart that makes the 1:many co-change structure visible.",
             ),
         ],
         Lang::Ja => vec![
@@ -1003,7 +1003,7 @@ pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
             ),
             (
                 "診断をコピー",
-                "現在表示中のビュー（Hotspots ランキング / Coupling の組 / Ownership）を Markdown でコピーします。AI チャットに貼って文脈として渡せます（「ここがリスク。リファクタを手伝って」）。モードを切り替えると、そのビューが書き出されます。",
+                "現在表示中のビュー（Hotspots ランキング / Coupling の組 / Ownership）をコピーします。AI チャットに貼って文脈として渡せます（「ここがリスク。リファクタを手伝って」）。モードを切り替えると、そのビューが書き出されます。ボタン横で形式を選べます：どのモードでも MD（Markdown 表）か JSON、Coupling では加えて Mermaid（1:多の共変化構造が見えるフローチャート）。",
             ),
         ],
     }

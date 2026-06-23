@@ -122,6 +122,7 @@ fn render_header(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyEl
         })
         .child(div().flex_1())
         .child(render_granularity_toggle(view, cx))
+        .child(render_format_toggle(view, cx))
         .child(
             text_button("eco-copy", Msg::EcoCopyDiagnostic.t(), copy_enabled).on_click(copy_click),
         )
@@ -176,6 +177,30 @@ fn render_coupling_toggle(view: &EcosystemView, cx: &mut Context<EcosystemView>)
         .child(chip(Msg::EcoList.t(), !graph, "eco-coup-list".into()).on_click(list_click))
         .child(chip(Msg::EcoGraph.t(), graph, "eco-coup-graph".into()).on_click(graph_click))
         .into_any_element()
+}
+
+/// "Copy diagnostic" output-format switch (MD / JSON, plus Mermaid in Coupling
+/// mode where the 1:many co-change structure is best read as a graph).
+fn render_format_toggle(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElement {
+    let active = view.data.export_format;
+    let mut formats = vec![ExportFormat::Markdown, ExportFormat::Json];
+    if view.data.mode == EcosystemMode::Coupling {
+        formats.push(ExportFormat::Mermaid);
+    }
+    let mut row = div().flex().items_center().gap_1().child(vsep());
+    for fmt in formats {
+        let click =
+            cx.listener(move |v, _: &gpui::ClickEvent, _w, cx| v.set_export_format(fmt, cx));
+        row = row.child(
+            chip(
+                fmt.label(),
+                fmt == active,
+                format!("eco-fmt-{}", fmt.label()),
+            )
+            .on_click(click),
+        );
+    }
+    row.into_any_element()
 }
 
 /// A thin vertical divider separating the mode toggle from the sub-view toggle.

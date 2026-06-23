@@ -30,7 +30,8 @@ use kagi_domain::hotspot::{
     EcosystemMode, FileOwnership, RawEcosystem,
 };
 use kagi_domain::hotspot_report::{
-    render as render_report, render_couplings, render_ownership, ReportFormat,
+    render as render_report, render_coupling_mermaid, render_couplings, render_ownership,
+    ReportFormat,
 };
 
 /// Commits scanned per load. Generous but bounded so a pathologically large
@@ -40,6 +41,28 @@ const ECOSYSTEM_COMMIT_LIMIT: usize = 10_000;
 
 /// How many top hot-spots the "Copy diagnostic" export includes.
 const DIAGNOSTIC_TOP_N: usize = 30;
+
+/// Output format for the "Copy diagnostic" export. Markdown and JSON apply to
+/// every mode; Mermaid is a graph diagram that only makes sense for Coupling
+/// (where the 1:many co-change structure is the signal), so it is offered only
+/// in that mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportFormat {
+    Markdown,
+    Json,
+    Mermaid,
+}
+
+impl ExportFormat {
+    /// Short toggle-chip label.
+    pub fn label(self) -> &'static str {
+        match self {
+            ExportFormat::Markdown => "MD",
+            ExportFormat::Json => "JSON",
+            ExportFormat::Mermaid => "Mermaid",
+        }
+    }
+}
 
 /// How many change-coupling pairs the Coupling mode lists.
 const COUPLING_TOP_N: usize = 100;
@@ -81,6 +104,8 @@ pub struct EcosystemData {
     /// Per-file ownership for the current granularity (Ownership mode).
     pub ownership: Vec<FileOwnership>,
     pub mode: EcosystemMode,
+    /// Selected "Copy diagnostic" output format (Markdown / JSON / Mermaid).
+    pub export_format: ExportFormat,
     /// Whether the "How to read Analyze" help overlay is open.
     pub help_open: bool,
     /// Hotspots sub-view: `false` = ranked list, `true` = treemap heatmap.
@@ -106,6 +131,7 @@ impl EcosystemData {
             graph_bounds: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0, 0.0, 0.0))),
             ownership: Vec::new(),
             mode: EcosystemMode::Hotspots,
+            export_format: ExportFormat::Markdown,
             help_open: false,
             map: false,
             granularity: Granularity::All,
@@ -277,6 +303,20 @@ impl EcosystemView {
     pub fn set_mode(&mut self, mode: EcosystemMode, cx: &mut Context<Self>) {
         if self.data.mode != mode {
             self.data.mode = mode;
+            // Mermaid only exists for Coupling; leaving that mode falls back to a
+            // format that every mode supports so the toggle never shows a stale
+            // selection that the new mode can't render.
+            if mode != EcosystemMode::Coupling && self.data.export_format == ExportFormat::Mermaid {
+                self.data.export_format = ExportFormat::Markdown;
+            }
+            cx.notify();
+        }
+    }
+
+    /// Set the "Copy diagnostic" output format (Markdown / JSON / Mermaid).
+    pub fn set_export_format(&mut self, fmt: ExportFormat, cx: &mut Context<Self>) {
+        if self.data.export_format != fmt {
+            self.data.export_format = fmt;
             cx.notify();
         }
     }
@@ -307,32 +347,41 @@ impl EcosystemView {
             return;
         };
         let window = eco.granularity.window_label();
+        // Markdown / JSON share a tabular path; Mermaid is a Coupling-only graph.
+        let tabular = match self.data.export_format {
+            ExportFormat::Json => ReportFormat::Json,
+            _ => ReportFormat::Markdown,
+        };
         let (text, what) = match self.data.mode {
-            EcosystemMode::Hotspots => (
-                render_report(eco, DIAGNOSTIC_TOP_N, ReportFormat::Markdown),
-                "hotspots",
-            ),
-            EcosystemMode::Coupling => (
-                render_couplings(
-                    &self.data.couplings,
-                    window,
-                    self.data.couplings.len(),
-                    ReportFormat::Markdown,
-                ),
-                "coupling",
-            ),
+            EcosystemMode::Hotspots => (render_report(eco, DIAGNOSTIC_TOP_N, tabular), "hotspots"),
+            EcosystemMode::Coupling => {
+                let text = if self.data.export_format == ExportFormat::Mermaid {
+                    render_coupling_mermaid(&self.data.couplings, window)
+                } else {
+                    render_couplings(
+                        &self.data.couplings,
+                        window,
+                        self.data.couplings.len(),
+                        tabular,
+                    )
+                };
+                (text, "coupling")
+            }
             EcosystemMode::Ownership => (
                 render_ownership(
                     &self.data.ownership,
                     window,
                     self.data.ownership.len(),
-                    ReportFormat::Markdown,
+                    tabular,
                 ),
                 "ownership",
             ),
         };
         cx.write_to_clipboard(ClipboardItem::new_string(text));
-        klog!("ecosystem: diagnostic copied ({what})");
+        klog!(
+            "ecosystem: diagnostic copied ({what} {})",
+            self.data.export_format.label()
+        );
         // Confirm the (otherwise invisible) clipboard write with a toast.
         let _ = self.app.update(cx, |app, cx| {
             app.push_toast(ToastKind::Info, Msg::EcoDiagnosticCopied.t(), cx);

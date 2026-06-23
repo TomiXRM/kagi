@@ -147,6 +147,48 @@ fn couplings_json(pairs: &[CouplingPair], window: &str, total: usize) -> String 
     out
 }
 
+/// Serialize the change-coupling pairs as a **Mermaid flowchart**, so the
+/// 1:many structure (one file coupled to many partners) reads as a graph — the
+/// risk-sharing signal a flat table hides. Each node is a file; each edge is
+/// labelled `together× degree`. Paste into any Mermaid renderer (GitHub,
+/// Obsidian, mermaid.live) or hand to an AI as a diagram spec.
+pub fn render_coupling_mermaid(pairs: &[CouplingPair], window: &str) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("%% Change coupling — window: {}\n", window));
+    out.push_str("flowchart LR\n");
+
+    // Assign a stable, syntax-safe node id (`n0`, `n1`, …) the first time each
+    // file is seen, declaring the labelled node then; edges reference the ids.
+    let mut ids: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    let mut nodes = String::new();
+    let mut edges = String::new();
+    for p in pairs {
+        for f in [p.a.as_str(), p.b.as_str()] {
+            if !ids.contains_key(f) {
+                let id = ids.len();
+                ids.insert(f, id);
+                nodes.push_str(&format!("  n{}[\"{}\"]\n", id, mermaid_label(f)));
+            }
+        }
+        edges.push_str(&format!(
+            "  n{} ---|\"{}× {:.2}\"| n{}\n",
+            ids[p.a.as_str()],
+            p.together,
+            p.degree,
+            ids[p.b.as_str()],
+        ));
+    }
+    out.push_str(&nodes);
+    out.push_str(&edges);
+    out
+}
+
+/// Make a path safe inside a Mermaid `["…"]` quoted label: the double quote is
+/// the only char that would close the label early; swap it for a single quote.
+fn mermaid_label(s: &str) -> String {
+    s.replace('"', "'")
+}
+
 // ── Ownership (bus-factor) ──────────────────────────────────────────────
 
 fn ownership_markdown(owns: &[FileOwnership], window: &str, total: usize) -> String {
@@ -310,6 +352,32 @@ mod tests {
         // Single row → no trailing comma before the closing bracket.
         assert!(!js.contains("},\n  ]"));
         assert!(js.trim_end().ends_with('}'));
+    }
+
+    #[test]
+    fn coupling_mermaid_declares_nodes_and_edges() {
+        let pairs = vec![
+            CouplingPair {
+                a: "src/a.rs".into(),
+                b: "src/b.rs".into(),
+                together: 7,
+                degree: 0.5,
+            },
+            CouplingPair {
+                a: "src/a.rs".into(),
+                b: "src/c.rs".into(),
+                together: 4,
+                degree: 0.25,
+            },
+        ];
+        let mm = render_coupling_mermaid(&pairs, "all time");
+        assert!(mm.contains("flowchart LR"));
+        // Each file declared once as a labelled node (a, b, c → 3 nodes).
+        assert_eq!(mm.matches("[\"").count(), 3);
+        assert!(mm.contains("n0[\"src/a.rs\"]"));
+        // The shared file `a` (n0) links to both partners → 1:many is visible.
+        assert!(mm.contains("n0 ---|\"7× 0.50\"| n1"));
+        assert!(mm.contains("n0 ---|\"4× 0.25\"| n2"));
     }
 
     #[test]

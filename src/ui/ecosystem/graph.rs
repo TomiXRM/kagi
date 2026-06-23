@@ -14,9 +14,6 @@ use gpui::{
 };
 use kagi_domain::coupling_graph::GraphNode;
 
-/// How many of the highest-degree nodes get a text label (avoids a hairball).
-const LABELS: usize = 14;
-
 /// Apply zoom-about-centre to a normalized coordinate (pan is added later, in px).
 fn zoomed(v: f32, zoom: f32) -> f32 {
     0.5 + (v - 0.5) * zoom
@@ -43,6 +40,7 @@ pub(super) fn render_coupling_graph(
     let edge_color: Hsla = gpui::rgb(theme().text_muted).into();
 
     let canvas_positions = positions.clone();
+    let bounds_cell = view.data.graph_bounds.clone();
     let edge_layer = canvas(
         move |_bounds, _window, _cx| {},
         move |bounds: Bounds<Pixels>, _prepaint, window, _cx| {
@@ -50,6 +48,8 @@ pub(super) fn render_coupling_graph(
             let oy = f32::from(bounds.origin.y);
             let w = f32::from(bounds.size.width);
             let h = f32::from(bounds.size.height);
+            // Record bounds so cursor-anchored zoom can map window px → graph.
+            bounds_cell.set((ox, oy, w, h));
             let mut b = PathBuilder::stroke(theme::scaled_px(1.0));
             for &(a, c) in &edges {
                 let (ax, ay) = canvas_positions[a];
@@ -65,7 +65,6 @@ pub(super) fn render_coupling_graph(
     .absolute()
     .size_full();
 
-    // Label the highest-degree nodes only.
     let max_deg = graph
         .nodes
         .iter()
@@ -73,9 +72,6 @@ pub(super) fn render_coupling_graph(
         .max()
         .unwrap_or(1)
         .max(1);
-    let mut order: Vec<usize> = (0..graph.nodes.len()).collect();
-    order.sort_by(|&i, &j| graph.nodes[j].degree.cmp(&graph.nodes[i].degree));
-    let labelled: std::collections::HashSet<usize> = order.into_iter().take(LABELS).collect();
 
     // ── pan / zoom handlers ──────────────────────────────────────
     let wheel = cx.listener(|v, e: &ScrollWheelEvent, _w, cx| {
@@ -83,7 +79,8 @@ pub(super) fn render_coupling_graph(
             ScrollDelta::Pixels(p) => f32::from(p.y),
             ScrollDelta::Lines(l) => l.y * 18.0,
         };
-        v.graph_zoom_by(dy, cx);
+        let cursor = (f32::from(e.position.x), f32::from(e.position.y));
+        v.graph_zoom_by(dy, cursor, cx);
     });
     let down = cx.listener(|v, e: &MouseDownEvent, _w, _cx| {
         v.graph_drag_start(f32::from(e.position.x), f32::from(e.position.y));
@@ -111,15 +108,7 @@ pub(super) fn render_coupling_graph(
         .child(edge_layer);
     for (i, n) in graph.nodes.iter().enumerate() {
         let (fx, fy) = positions[i];
-        container = container.child(node_dot(
-            n,
-            max_deg,
-            labelled.contains(&i),
-            fx,
-            fy,
-            pan_x,
-            pan_y,
-        ));
+        container = container.child(node_dot(n, max_deg, fx, fy, pan_x, pan_y));
     }
     let reset_btn = div()
         .absolute()
@@ -138,19 +127,11 @@ pub(super) fn render_coupling_graph(
     container.child(reset_btn).into_any_element()
 }
 
-/// A node: a degree-sized dot at its (transformed) position, optionally labelled.
-fn node_dot(
-    n: &GraphNode,
-    max_deg: u32,
-    labelled: bool,
-    fx: f32,
-    fy: f32,
-    pan_x: f32,
-    pan_y: f32,
-) -> AnyElement {
+/// A node: a degree-sized dot at its (transformed) position, with its base name.
+fn node_dot(n: &GraphNode, max_deg: u32, fx: f32, fy: f32, pan_x: f32, pan_y: f32) -> AnyElement {
     let frac = n.degree as f32 / max_deg as f32;
     let sz = 6.0 + frac * 10.0;
-    let mut el = div()
+    let el = div()
         .absolute()
         .left(relative(fx))
         .top(relative(fy))
@@ -167,15 +148,13 @@ fn node_dot(
                 .rounded_full()
                 .bg(rgb(theme().accent)),
         );
-    if labelled {
-        let name = n.file.rsplit('/').next().unwrap_or(&n.file);
-        el = el.child(
-            div()
-                .whitespace_nowrap()
-                .text_size(theme::scaled_px(11.0))
-                .text_color(rgb(theme().text_sub))
-                .child(name.to_string()),
-        );
-    }
-    el.into_any_element()
+    let name = n.file.rsplit('/').next().unwrap_or(&n.file);
+    el.child(
+        div()
+            .whitespace_nowrap()
+            .text_size(theme::scaled_px(11.0))
+            .text_color(rgb(theme().text_sub))
+            .child(name.to_string()),
+    )
+    .into_any_element()
 }

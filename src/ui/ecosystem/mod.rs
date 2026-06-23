@@ -73,6 +73,9 @@ pub struct EcosystemData {
     pub graph_zoom: f32,
     pub graph_pan: (f32, f32),
     pub graph_drag: Option<(f32, f32)>,
+    /// Last painted graph canvas bounds `(origin_x, origin_y, w, h)` in window
+    /// px — written during paint, read by zoom to anchor on the cursor.
+    pub graph_bounds: std::rc::Rc<std::cell::Cell<(f32, f32, f32, f32)>>,
     /// Per-file ownership for the current granularity (Ownership mode).
     pub ownership: Vec<FileOwnership>,
     pub mode: EcosystemMode,
@@ -96,6 +99,7 @@ impl EcosystemData {
             graph_zoom: 1.0,
             graph_pan: (0.0, 0.0),
             graph_drag: None,
+            graph_bounds: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0, 0.0, 0.0))),
             ownership: Vec::new(),
             mode: EcosystemMode::Hotspots,
             map: false,
@@ -179,10 +183,25 @@ impl EcosystemView {
         self.data.graph_drag = None;
     }
 
-    /// Zoom the graph about its centre by a scroll delta (multiplicative).
-    pub fn graph_zoom_by(&mut self, dy: f32, cx: &mut Context<Self>) {
+    /// Zoom the graph by a scroll delta (multiplicative), anchored on the
+    /// cursor: the point under `cursor` (window px) stays fixed.
+    pub fn graph_zoom_by(&mut self, dy: f32, cursor: (f32, f32), cx: &mut Context<Self>) {
         let factor = (1.0 + dy * 0.0015).clamp(0.5, 1.5);
-        self.data.graph_zoom = (self.data.graph_zoom * factor).clamp(0.2, 12.0);
+        let old = self.data.graph_zoom;
+        let new = (old * factor).clamp(0.2, 12.0);
+        if (new - old).abs() < f32::EPSILON {
+            return;
+        }
+        let ratio = new / old;
+        let (ox, oy, w, h) = self.data.graph_bounds.get();
+        let (mx, my) = cursor;
+        // On-screen position of the zoom centre (normalized 0.5) right now.
+        let center_x = ox + 0.5 * w + self.data.graph_pan.0;
+        let center_y = oy + 0.5 * h + self.data.graph_pan.1;
+        // Shift pan so the cursor's offset from that centre scales with the zoom.
+        self.data.graph_pan.0 -= (mx - center_x) * (ratio - 1.0);
+        self.data.graph_pan.1 -= (my - center_y) * (ratio - 1.0);
+        self.data.graph_zoom = new;
         cx.notify();
     }
 

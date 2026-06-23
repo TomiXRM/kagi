@@ -41,6 +41,10 @@ pub struct CouplingGraph {
 /// Number of force-simulation iterations (fixed for determinism).
 const ITERS: usize = 300;
 
+/// Centre-gravity strength (linear in distance) — keeps disconnected components
+/// from drifting far apart so the graph stays compact.
+const GRAVITY: f64 = 0.1;
+
 /// Build and lay out a graph from the top `max_edges` coupling pairs.
 pub fn build_graph(pairs: &[CouplingPair], max_edges: usize) -> CouplingGraph {
     let pairs = &pairs[..pairs.len().min(max_edges)];
@@ -133,6 +137,13 @@ fn layout(nodes: &mut [GraphNode], edges: &[GraphEdge]) {
             disp[e.a].1 -= uy * f;
             disp[e.b].0 += ux * f;
             disp[e.b].1 += uy * f;
+        }
+        // Gravity toward the centre, proportional to distance — pulls drifting
+        // disconnected components back in so the layout stays compact (far
+        // outliers feel it most; the central cluster barely moves).
+        for (i, node) in nodes.iter().enumerate() {
+            disp[i].0 += (0.5 - node.x) * GRAVITY;
+            disp[i].1 += (0.5 - node.y) * GRAVITY;
         }
         // Apply, capped by the current temperature.
         for (i, node) in nodes.iter_mut().enumerate() {

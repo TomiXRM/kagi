@@ -83,6 +83,11 @@ const ASSETS: &[(&str, &[u8])] = &[
         "icons/settings.svg",
         include_bytes!("../../assets/icons/settings.svg"),
     ),
+    // ADR-0119: Analyze / Code Ecosystem toolbar button (IconName::ChartPie).
+    (
+        "icons/chart-pie.svg",
+        include_bytes!("../../assets/icons/chart-pie.svg"),
+    ),
     // T-UNDOREDO-001: toolbar Redo button (gpui_component IconName::Redo2).
     (
         "icons/redo-2.svg",

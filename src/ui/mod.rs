@@ -1165,6 +1165,9 @@ pub struct KagiApp {
     /// read-only analysis view occupies the center+right area; `None` shows the
     /// normal body. Its own `Entity<EcosystemView>` owns the mining + ranking.
     pub ecosystem: Option<Entity<ecosystem::EcosystemView>>,
+    /// ADR-0119: cached completed mine so reopening the Ecosystem view reuses
+    /// the slow `git log` scan. Invalidated on reload / repo switch.
+    pub ecosystem_cache: Option<ecosystem::EcosystemCache>,
 }
 
 /// T-CONFLICT-UI-001: the Result `InputState` entity backing the Conflict
@@ -1532,6 +1535,7 @@ impl KagiApp {
             last_working_status: None,
             file_history: None,
             ecosystem: None,
+            ecosystem_cache: None,
         }
     }
 
@@ -1632,6 +1636,7 @@ impl KagiApp {
             last_working_status: None,
             file_history: None,
             ecosystem: None,
+            ecosystem_cache: None,
         }
     }
 
@@ -1740,8 +1745,10 @@ impl KagiApp {
         // the `reload_external` path re-opens fresh when needed.
         self.file_history = None;
         // ADR-0119: reload() has no `cx` to re-spawn the async mine; drop the
-        // Ecosystem view like File History (reopened fresh on demand).
+        // Ecosystem view like File History (reopened fresh on demand). New
+        // commits make the cached mine stale → invalidate it too.
         self.ecosystem = None;
+        self.ecosystem_cache = None;
         self.clear_plan_modal();
         self.clear_pull_modal();
         self.clear_undo_modal();

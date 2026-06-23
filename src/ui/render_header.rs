@@ -542,18 +542,6 @@ impl KagiApp {
                         .on_click(push_click),
                     )
                     .child(sep())
-                    // Ecosystem (ADR-0119) — read-only hot-spot analysis
-                    .child(
-                        make_btn(
-                            "tb-ecosystem",
-                            "Ecosystem",
-                            gpui_component::IconName::ChartPie,
-                            ecosystem_on,
-                            0,
-                        )
-                        .on_click(ecosystem_click),
-                    )
-                    .child(sep())
                     // Branch
                     .child(
                         make_btn(
@@ -682,6 +670,19 @@ impl KagiApp {
                             )
                         },
                     )
+                    // Analyze / Code Ecosystem (ADR-0119) — read-only hot-spot
+                    // analysis; placed just left of Settings.
+                    .child(
+                        make_btn(
+                            "tb-ecosystem",
+                            "Analyze",
+                            gpui_component::IconName::ChartPie,
+                            ecosystem_on,
+                            0,
+                        )
+                        .on_click(ecosystem_click),
+                    )
+                    .child(sep())
                     .child({
                         let settings_click =
                             cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {

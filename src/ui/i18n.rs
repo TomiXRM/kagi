@@ -427,6 +427,8 @@ pub enum Msg {
     EcoCopyDiagnostic,
     /// Body placeholder while the repo is being mined.
     EcoLoading,
+    /// Secondary line under the loading spinner (large-repo expectation).
+    EcoLoadingHint,
     /// Body message when the mine fails (followed by the error detail).
     EcoLoadFailed,
     /// Body message when there is no churn to show.
@@ -887,12 +889,14 @@ impl Msg {
             }
 
             // ── Code Ecosystem / hot-spots (ADR-0119) ───────────────
-            (En, Ecosystem) => "Ecosystem",
-            (Ja, Ecosystem) => "エコシステム",
+            (En, Ecosystem) => "Analyze",
+            (Ja, Ecosystem) => "解析",
             (En, EcoCopyDiagnostic) => "Copy diagnostic",
             (Ja, EcoCopyDiagnostic) => "診断をコピー",
             (En, EcoLoading) => "Analyzing repository…",
             (Ja, EcoLoading) => "リポジトリを解析中…",
+            (En, EcoLoadingHint) => "Large repositories can take a minute.",
+            (Ja, EcoLoadingHint) => "大きいリポジトリでは1分ほどかかることがあります。",
             (En, EcoLoadFailed) => "analysis failed",
             (Ja, EcoLoadFailed) => "解析に失敗しました",
             (En, EcoEmpty) => "No activity to analyze",

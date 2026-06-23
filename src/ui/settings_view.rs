@@ -22,11 +22,13 @@
 //! restart. No new persistence layer is introduced.
 
 use gpui::{
-    div, px, rgb, AnyElement, Context, Entity, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
+    div, px, rgb, AnyElement, AppContext as _, Context, Entity, InteractiveElement as _,
+    IntoElement, MouseButton, ParentElement as _, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Window,
 };
 
 use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::input::{Input, InputState};
 use gpui_component::radio::RadioGroup;
 use gpui_component::select::{Select, SelectItem, SelectState};
 use gpui_component::switch::Switch;
@@ -34,7 +36,27 @@ use gpui_component::{IndexPath, Sizable as _};
 
 use super::i18n::{self, Lang, Msg};
 use super::theme::{self, theme};
-use super::KagiApp;
+use super::{settings, KagiApp};
+
+impl KagiApp {
+    /// Lazily build the multiline `analyze_ignore` editor input, seeded from the
+    /// on-disk `analyze_ignore` file. Called when the Settings overlay opens so
+    /// the editor has live text to show (the input needs `&mut Window`, which is
+    /// unavailable during `render`).
+    pub fn ensure_analyze_ignore_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.analyze_ignore_input.is_some() {
+            return;
+        }
+        let content = settings::read_analyze_ignore_text();
+        let input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .multi_line(true)
+                .auto_grow(8, 22)
+        });
+        input.update(cx, |s, cx| s.set_value(content, window, cx));
+        self.analyze_ignore_input = Some(input);
+    }
+}
 
 /// The gpui-component `Select` state entity for the appearance theme picker.
 /// Held by [`KagiApp`] (built in the window context, see `ui::run`).
@@ -93,6 +115,10 @@ pub fn render_settings_overlay(
     // Smart Commit state (detected models + current selection), passed in for the
     // same reason — never `app.read(cx)` during this render.
     smart: super::smart_commit::SmartCommitState,
+    // The Analyze-ignore editor's InputState entity, passed in by the caller for
+    // the same reason (no `app.read(cx)` during render). Built lazily via
+    // `KagiApp::ensure_analyze_ignore_input` when the overlay opens.
+    analyze_ignore_input: Option<Entity<InputState>>,
     window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
@@ -168,7 +194,8 @@ pub fn render_settings_overlay(
                 .gap_6()
                 .child(appearance_section(&app, theme_select))
                 .child(language_section(&app))
-                .child(smart_commit_section(&app, &smart)),
+                .child(smart_commit_section(&app, &smart))
+                .child(analyze_ignore_section(&app, analyze_ignore_input)),
         );
 
     // Scrim + centred panel.
@@ -664,4 +691,87 @@ fn smart_commit_section(
     }
 
     section
+}
+
+// ────────────────────────────────────────────────────────────
+// Analyze ignore (ADR-0119): edit the gitignore-syntax exclude list used by
+// the Analyze view, persisted to the sibling `analyze_ignore` file.
+// ────────────────────────────────────────────────────────────
+
+fn analyze_ignore_section(
+    app: &Entity<KagiApp>,
+    input: Option<Entity<InputState>>,
+) -> impl IntoElement {
+    // Multiline editor (or a fallback note pre-window / headless).
+    let editor: AnyElement = match input.clone() {
+        Some(state) => Input::new(&state)
+            .appearance(true)
+            .bordered(true)
+            .into_any_element(),
+        None => div()
+            .text_sm()
+            .text_color(rgb(theme().text_sub))
+            .child(SharedString::from(Msg::SettingsAnalyzeIgnoreDesc.t()))
+            .into_any_element(),
+    };
+
+    // ── Save: write the editor's current text to the analyze_ignore file ──
+    let save_btn = {
+        let input = input.clone();
+        let app = app.clone();
+        Button::new("analyze-ignore-save")
+            .label(Msg::SettingsAnalyzeIgnoreSave.t())
+            .primary()
+            .small()
+            .on_click(move |_, _w, cx| {
+                if let Some(state) = &input {
+                    let text = state.read(cx).value().to_string();
+                    settings::write_analyze_ignore(&text);
+                    app.update(cx, |_a, cx| cx.notify());
+                }
+            })
+    };
+
+    // ── Reset: restore the documented defaults (both editor + file) ──
+    let reset_btn = {
+        let input = input.clone();
+        let app = app.clone();
+        Button::new("analyze-ignore-reset")
+            .label(Msg::SettingsAnalyzeIgnoreReset.t())
+            .outline()
+            .small()
+            .on_click(move |_, window, cx| {
+                if let Some(state) = &input {
+                    state.update(cx, |s, cx| {
+                        s.set_value(settings::DEFAULT_ANALYZE_IGNORE, window, cx)
+                    });
+                    settings::write_analyze_ignore(settings::DEFAULT_ANALYZE_IGNORE);
+                    app.update(cx, |_a, cx| cx.notify());
+                }
+            })
+    };
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(section_header(SharedString::from(
+            Msg::SettingsAnalyzeIgnore.t(),
+        )))
+        .child(
+            div()
+                .text_sm()
+                .text_color(rgb(theme().text_sub))
+                .child(SharedString::from(Msg::SettingsAnalyzeIgnoreDesc.t())),
+        )
+        .child(editor)
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .justify_end()
+                .child(reset_btn)
+                .child(save_btn),
+        )
 }

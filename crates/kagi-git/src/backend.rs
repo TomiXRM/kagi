@@ -5,11 +5,12 @@ use kagi_domain::history::HistoryEntry;
 use kagi_domain::operation::{Operation, OperationOutcome};
 
 use super::{
-    conflicts, diff, diffstat, file_history, message_gen, ops, resolution::ResolutionBuffer,
-    resolve_head, snapshot, staging, status, AmendMode, AmendOutcome, BranchRenameValidation,
-    CommitId, CommitPreview, DiscardOutcome, FetchOutcome, FileDiff, FileDiffStat, FileHistory,
-    FileHistoryRequest, FileStatus, GitError, Head, MergeKind, OperationPlan, PullOutcome,
-    PushOutcome, RepoSnapshot, UndoOutcome, WorkingTreeStatus,
+    conflicts, diff, diffstat, file_history, hotspot, message_gen, ops,
+    resolution::ResolutionBuffer, resolve_head, snapshot, staging, status, AmendMode, AmendOutcome,
+    BranchRenameValidation, CommitId, CommitPreview, DiscardOutcome, FetchOutcome, FileDiff,
+    FileDiffStat, FileHistory, FileHistoryRequest, FileStatus, GitError, Head, MergeKind,
+    OperationPlan, PullOutcome, PushOutcome, RawEcosystem, RepoSnapshot, UndoOutcome,
+    WorkingTreeStatus,
 };
 
 pub struct Backend {
@@ -211,6 +212,23 @@ impl Backend {
     /// `self.repo`, but lives on [`Backend`] so the UI can call it uniformly.
     pub fn file_history(&self, req: &FileHistoryRequest) -> Result<FileHistory, GitError> {
         file_history::file_history(req)
+    }
+
+    /// Mine the whole repository into a [`RawEcosystem`] for the Code Ecosystem
+    /// / hot-spot view (ADR-0119). Read-only; backed by the `git` CLI
+    /// (`hotspot::repo_ecosystem`), not `self.repo`. `limit` caps the number of
+    /// commits scanned (`0` = unlimited).
+    pub fn ecosystem(
+        &self,
+        limit: usize,
+        ignore_patterns: Vec<String>,
+    ) -> Result<RawEcosystem, GitError> {
+        let repo_dir = self.workdir().unwrap_or_else(|| self.path.to_path_buf());
+        hotspot::repo_ecosystem(&hotspot::EcosystemRequest {
+            repo_dir,
+            limit,
+            ignore_patterns,
+        })
     }
 
     pub fn commit_preview(&self) -> Result<CommitPreview, GitError> {

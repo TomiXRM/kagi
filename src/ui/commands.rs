@@ -1164,6 +1164,8 @@ impl KagiApp {
                 // Ensure an Ollama probe has run so the Smart Commit model picker
                 // is usable even if the commit panel was never opened.
                 self.refresh_smart_commit_detection(cx);
+                // Seed the Analyze-ignore editor with the on-disk file contents.
+                self.ensure_analyze_ignore_input(window, cx);
                 cx.notify();
             }
             "app.quit" => cx.quit(),
@@ -1564,6 +1566,7 @@ impl KagiApp {
                 cx.entity(),
                 self.theme_select.clone(),
                 self.smart_commit.clone(),
+                self.analyze_ignore_input.clone(),
                 window,
                 cx,
             )),

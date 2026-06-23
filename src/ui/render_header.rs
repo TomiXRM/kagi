@@ -153,6 +153,13 @@ impl KagiApp {
             cx.notify();
         });
 
+        // Ecosystem (ADR-0119) — read-only hot-spot analysis; open the
+        // full-screen view. Disabled when no repo is open.
+        let ecosystem_on = self.repo_path.is_some();
+        let ecosystem_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
+            this.open_ecosystem_view(cx);
+        });
+
         // Branch — always enabled; use selected commit if any, else HEAD.
         let branch_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
             // Resolve target commit: selected row → HEAD commit (first detail).
@@ -663,13 +670,28 @@ impl KagiApp {
                             )
                         },
                     )
+                    // Analyze / Code Ecosystem (ADR-0119) — read-only hot-spot
+                    // analysis; placed just left of Settings.
+                    .child(
+                        make_btn(
+                            "tb-ecosystem",
+                            "Analyze",
+                            gpui_component::IconName::ChartPie,
+                            ecosystem_on,
+                            0,
+                        )
+                        .on_click(ecosystem_click),
+                    )
+                    .child(sep())
                     .child({
                         let settings_click =
-                            cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
+                            cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
                                 this.menu_overlay = Some(commands::MenuOverlay::Settings);
                                 // Probe Ollama so the Smart Commit model picker is
                                 // usable without first opening the commit panel.
                                 this.refresh_smart_commit_detection(cx);
+                                // Seed the Analyze-ignore editor from disk.
+                                this.ensure_analyze_ignore_input(window, cx);
                                 cx.notify();
                             });
                         make_btn(

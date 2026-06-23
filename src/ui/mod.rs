@@ -23,6 +23,7 @@ pub mod detail_panel;
 mod diff_cache;
 pub mod diff_view;
 pub mod diffstat_bar;
+pub mod ecosystem;
 pub mod file_history;
 mod file_history_render;
 mod file_menu;
@@ -1005,6 +1006,10 @@ pub struct KagiApp {
     /// until then / in headless paths; a `SelectEvent::Confirm` subscription
     /// applies the chosen theme via `set_theme`.
     pub theme_select: Option<Entity<settings_view::ThemeSelectState>>,
+    /// ADR-0119: multi-line editor backing the Settings → "Analyze ignore"
+    /// section (the gitignore-format exclude file). Lazily created when Settings
+    /// opens (needs a `Window`).
+    pub analyze_ignore_input: Option<Entity<InputState>>,
     /// Horizontal scroll offset (px) of the graph column. Lanes hidden by a
     /// narrow column width are revealed by horizontal scrolling (clamped in
     /// render against the current lane count).
@@ -1160,6 +1165,21 @@ pub struct KagiApp {
     /// single-file history view occupies the center+right area; `None` shows the
     /// normal commit graph / diff body. The entity owns its loads + row menu.
     pub file_history: Option<Entity<file_history::FileHistoryView>>,
+    /// ADR-0119: Code Ecosystem / hot-spot view. `Some` while the full-screen
+    /// read-only analysis view occupies the center+right area; `None` shows the
+    /// normal body. Its own `Entity<EcosystemView>` owns the mining + ranking.
+    pub ecosystem: Option<Entity<ecosystem::EcosystemView>>,
+    /// ADR-0119: cached completed mine so reopening the Ecosystem view reuses
+    /// the slow `git log` scan. Invalidated on reload / repo switch.
+    pub ecosystem_cache: ecosystem::EcosystemCache,
+    /// ADR-0119: repo whose Analyze mine is currently running (app-owned, so it
+    /// survives the view being closed). `None` when idle.
+    pub ecosystem_inflight: Option<std::path::PathBuf>,
+    /// Monotonic token identifying the *current* Analyze mine. A completing
+    /// background task only wins if this still equals the value it captured at
+    /// start — so a stale same-repo mine (e.g. one started before a reload
+    /// superseded it) can't cache/seed its result over a newer one.
+    pub ecosystem_gen: u64,
 }
 
 /// T-CONFLICT-UI-001: the Result `InputState` entity backing the Conflict
@@ -1488,6 +1508,7 @@ impl KagiApp {
             file_history_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: theme::compact_graph(),
             theme_select: None,
+            analyze_ignore_input: None,
             graph_scroll_x: 0.0,
             // W2-SIDEBAR
             branch_groups_collapsed: HashSet::new(),
@@ -1526,6 +1547,10 @@ impl KagiApp {
             update_status: None,
             last_working_status: None,
             file_history: None,
+            ecosystem: None,
+            ecosystem_cache: ecosystem::EcosystemCache::new(),
+            ecosystem_inflight: None,
+            ecosystem_gen: 0,
         }
     }
 
@@ -1587,6 +1612,7 @@ impl KagiApp {
             file_history_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: theme::compact_graph(),
             theme_select: None,
+            analyze_ignore_input: None,
             graph_scroll_x: 0.0,
             // W2-SIDEBAR
             branch_groups_collapsed: HashSet::new(),
@@ -1625,6 +1651,10 @@ impl KagiApp {
             update_status: None,
             last_working_status: None,
             file_history: None,
+            ecosystem: None,
+            ecosystem_cache: ecosystem::EcosystemCache::new(),
+            ecosystem_inflight: None,
+            ecosystem_gen: 0,
         }
     }
 
@@ -1732,6 +1762,19 @@ impl KagiApp {
         // and any in-flight load tear down. `reload()` has no `cx` to re-spawn;
         // the `reload_external` path re-opens fresh when needed.
         self.file_history = None;
+        // ADR-0119: reload() has no `cx` to re-spawn the async mine; drop the
+        // Ecosystem view like File History (reopened fresh on demand). New
+        // commits make THIS repo's cached mine stale → drop just that entry
+        // (other repos' caches stay warm for tab-switch-and-back).
+        self.ecosystem = None;
+        if let Some(p) = self.repo_path.clone() {
+            self.ecosystem_cache.remove(&p);
+            // Supersede an in-flight mine for this repo: its result would be
+            // stale after the new commits, so let the completion drop it.
+            if self.ecosystem_inflight.as_deref() == Some(p.as_path()) {
+                self.ecosystem_inflight = None;
+            }
+        }
         self.clear_plan_modal();
         self.clear_pull_modal();
         self.clear_undo_modal();

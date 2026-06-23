@@ -401,6 +401,16 @@ pub enum Msg {
     /// Language → Interface language row description.
     SettingsInterfaceLangDesc,
 
+    // ── ADR-0119: Analyze (Code Ecosystem) ignore section in Settings ─────
+    /// Analyze-ignore section header.
+    SettingsAnalyzeIgnore,
+    /// Analyze-ignore section description (gitignore-syntax editor).
+    SettingsAnalyzeIgnoreDesc,
+    /// Analyze-ignore → Save button.
+    SettingsAnalyzeIgnoreSave,
+    /// Analyze-ignore → Reset-to-defaults button.
+    SettingsAnalyzeIgnoreReset,
+
     // ── ADR-0090 / ADR-0099: Smart Commit section (prose localized; the
     //    domain words "commit" / "LLM" / "Ollama" / "CLI" stay English) ──────
     /// Smart Commit section header (product feature name — English in both arms).
@@ -419,6 +429,40 @@ pub enum Msg {
     SettingsSmartModelDesc,
     /// Smart Commit → model picker note when no local models are detected.
     SettingsSmartNoModels,
+
+    // ── Code Ecosystem / hot-spots (ADR-0119) ───────────────────────
+    /// Ecosystem view title / toolbar button label.
+    Ecosystem,
+    /// "Copy diagnostic" button (export the current mode's view as LLM context).
+    EcoCopyDiagnostic,
+    /// Toast confirming the diagnostic was copied to the clipboard.
+    EcoDiagnosticCopied,
+    /// Body placeholder while the repo is being mined.
+    EcoLoading,
+    /// Secondary line under the loading spinner (large-repo expectation).
+    EcoLoadingHint,
+    /// Body message when the mine fails (followed by the error detail).
+    EcoLoadFailed,
+    /// Body message when there is no churn to show.
+    EcoEmpty,
+    /// Hotspots sub-view toggle: ranked list.
+    EcoList,
+    /// Hotspots sub-view toggle: treemap heatmap.
+    EcoMap,
+    /// Header of the expanded 1:many coupling panel ("couples with <file>").
+    EcoCouplesWith,
+    /// Coupling sub-view toggle: force-directed graph.
+    EcoGraph,
+    /// Coupling sub-view toggle: Mermaid flowchart source.
+    EcoMermaid,
+    /// Mermaid sub-view: "open in mermaid.live" button.
+    EcoOpenMermaidLive,
+    /// Mermaid sub-view: hint under the action bar.
+    EcoMermaidHint,
+    /// Graph viewport reset button (zoom/pan back to fit).
+    EcoResetView,
+    /// Help overlay title.
+    EcoHelpTitle,
 }
 
 impl Msg {
@@ -840,6 +884,19 @@ impl Msg {
                 "説明文の言語(Git の用語は英語のままです)。"
             }
 
+            // ── Analyze ignore section (ADR-0119) ────────────────────
+            (En, SettingsAnalyzeIgnore) | (Ja, SettingsAnalyzeIgnore) => "Analyze ignore",
+            (En, SettingsAnalyzeIgnoreDesc) => {
+                "Files matching these patterns are excluded from Analyze (Hotspots / Coupling / Ownership). One pattern per line, .gitignore syntax — wildcards (* ** ?) and negation (!) work. Saved to the analyze_ignore file. Reload the repository to apply."
+            }
+            (Ja, SettingsAnalyzeIgnoreDesc) => {
+                "これらのパターンに一致するファイルは Analyze(Hotspots / Coupling / Ownership)から除外されます。1 行 1 パターン、.gitignore と同じ書式でワイルドカード(* ** ?)や否定(!)が使えます。analyze_ignore ファイルに保存されます。反映にはリポジトリの再読み込みが必要です。"
+            }
+            (En, SettingsAnalyzeIgnoreSave) => "Save",
+            (Ja, SettingsAnalyzeIgnoreSave) => "保存",
+            (En, SettingsAnalyzeIgnoreReset) => "Reset to defaults",
+            (Ja, SettingsAnalyzeIgnoreReset) => "デフォルトに戻す",
+
             // ── Smart Commit section (ADR-0090 / ADR-0099) ───────────
             // "Smart Commit" is a product feature name and stays English.
             (En, SettingsSmartCommit) | (Ja, SettingsSmartCommit) => "Smart Commit",
@@ -871,6 +928,43 @@ impl Msg {
             (Ja, SettingsSmartNoModels) => {
                 "ローカルモデルが検出されませんでした — Ollama を起動してください"
             }
+
+            // ── Code Ecosystem / hot-spots (ADR-0119) ───────────────
+            (En, Ecosystem) => "Analyze",
+            (Ja, Ecosystem) => "解析",
+            (En, EcoCopyDiagnostic) => "Copy diagnostic",
+            (Ja, EcoCopyDiagnostic) => "診断をコピー",
+            (En, EcoDiagnosticCopied) => "Diagnostic copied to clipboard",
+            (Ja, EcoDiagnosticCopied) => "診断をクリップボードにコピーしました",
+            (En, EcoLoading) => "Analyzing repository…",
+            (Ja, EcoLoading) => "リポジトリを解析中…",
+            (En, EcoLoadingHint) => "Large repositories can take a minute.",
+            (Ja, EcoLoadingHint) => "大きいリポジトリでは1分ほどかかることがあります。",
+            (En, EcoLoadFailed) => "analysis failed",
+            (Ja, EcoLoadFailed) => "解析に失敗しました",
+            (En, EcoEmpty) => "No activity to analyze",
+            (Ja, EcoEmpty) => "解析できる変更がありません",
+            (En, EcoList) => "List",
+            (Ja, EcoList) => "リスト",
+            (En, EcoMap) => "Map",
+            (Ja, EcoMap) => "マップ",
+            (En, EcoCouplesWith) => "couples with",
+            (Ja, EcoCouplesWith) => "と結合:",
+            (En, EcoGraph) => "Graph",
+            (Ja, EcoGraph) => "グラフ",
+            (En, EcoMermaid) | (Ja, EcoMermaid) => "Mermaid",
+            (En, EcoOpenMermaidLive) => "Open in mermaid.live ↗",
+            (Ja, EcoOpenMermaidLive) => "mermaid.live で開く ↗",
+            (En, EcoMermaidHint) => {
+                "Native view is text-only; open mermaid.live to render the diagram (the whole graph travels in the URL — nothing is uploaded)."
+            }
+            (Ja, EcoMermaidHint) => {
+                "アプリ内ではテキスト表示です。mermaid.live を開くと図として描画されます（グラフ全体は URL に載るだけで、アップロードはされません）。"
+            }
+            (En, EcoResetView) => "Reset",
+            (Ja, EcoResetView) => "リセット",
+            (En, EcoHelpTitle) => "How to read Analyze",
+            (Ja, EcoHelpTitle) => "Analyze の見方",
         }
     }
 }
@@ -878,6 +972,57 @@ impl Msg {
 // ──────────────────────────────────────────────────────────────────────────
 // Parameterized helpers (format! lives here, not at the call sites)
 // ──────────────────────────────────────────────────────────────────────────
+
+/// Help-overlay sections for the Analyze view: `(heading, body)` in the active
+/// language. Kept here so EN/JA stay side by side (ADR-0119).
+pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
+    match lang() {
+        Lang::En => vec![
+            (
+                "What is Analyze?",
+                "A read-only look at your Git history — no changes are made. Pick a time window (Day … All) top-right; every view re-ranks for that window. Excluded files are fully configurable in the \"analyze_ignore\" file (gitignore syntax, next to settings.json) — it is seeded with sensible defaults (images, PDF, CAD, KiCad, fonts, archives); edit or clear it freely.",
+            ),
+            (
+                "Hotspots",
+                "Files ranked by risk = how often a file changes (commits) × how big it is (LOC). The top of the list is where bugs are most likely — busy AND complex code. List shows the ranking with a risk bar; Map shows a treemap (tile size = LOC, colour = risk, green → red). It is a hint to look, not a verdict.",
+            ),
+            (
+                "Coupling",
+                "Pairs of files that tend to change in the same commit — hidden dependencies. 'N×' = times they changed together; '%' = how strongly they overlap. Click a row to expand one file's full set of partners (1:many). 'Graph' draws it as a network: drag to pan, scroll to zoom toward the pointer, 'Reset' to refit. 'Mermaid' shows the same graph as Mermaid source with one-click open in mermaid.live.",
+            ),
+            (
+                "Ownership",
+                "Who maintains each file: the primary author, their share of the commits, and how many distinct authors have touched it. '1 author' (highlighted) is a bus-factor risk — only one person knows that file.",
+            ),
+            (
+                "Copy diagnostic",
+                "Copies the current view (Hotspots ranking, Coupling pairs, or Ownership) ready to paste into an AI chat as context (\"here is where the risk is — help me refactor\"). Switch modes to export that view. Pick the format next to the button: MD (Markdown table) or JSON for any mode, plus Mermaid in Coupling mode — a flowchart that makes the 1:many co-change structure visible.",
+            ),
+        ],
+        Lang::Ja => vec![
+            (
+                "Analyze とは",
+                "Git 履歴を読み取り専用で分析します（変更は加えません）。右上で期間（Day … All）を選ぶと、各ビューがその期間で再集計されます。除外対象は settings.json の隣の \"analyze_ignore\" ファイル（gitignore 形式）で完全に設定可能で、初回に既定値（画像・PDF・CAD・KiCad・フォント・アーカイブ）が書き込まれます。自由に編集・全削除できます。",
+            ),
+            (
+                "Hotspots（ホットスポット）",
+                "リスク = 変更頻度（commit 数）× 規模（行数 LOC）でファイルを順位付け。上位ほどバグが出やすい＝「よく触られて、かつ複雑」な場所です。List はリスクバー付きランキング、Map はツリーマップ（面積=LOC、色=リスク、緑→赤）。断定ではなく「注目の目安」です。",
+            ),
+            (
+                "Coupling（結合）",
+                "同じ commit で一緒に変わりがちなファイルの組＝隠れた依存。『N×』= 一緒に変わった回数、『%』= 結びつきの強さ。行をクリックすると、そのファイルの全パートナー（1:多）が展開されます。『グラフ』はネットワーク表示：ドラッグで移動、スクロールでカーソル位置を中心に拡大、『リセット』で初期表示。『Mermaid』は同じグラフを Mermaid ソースで表示し、ワンクリックで mermaid.live を開けます。",
+            ),
+            (
+                "Ownership（所有）",
+                "各ファイルの担当：主著者・その commit 占有率・関わった著者数。『1 author』（強調表示）はバス係数リスク＝そのファイルを知るのが 1 人だけ、という危険信号です。",
+            ),
+            (
+                "診断をコピー",
+                "現在表示中のビュー（Hotspots ランキング / Coupling の組 / Ownership）をコピーします。AI チャットに貼って文脈として渡せます（「ここがリスク。リファクタを手伝って」）。モードを切り替えると、そのビューが書き出されます。ボタン横で形式を選べます：どのモードでも MD（Markdown 表）か JSON、Coupling では加えて Mermaid（1:多の共変化構造が見えるフローチャート）。",
+            ),
+        ],
+    }
+}
 
 /// WIP row note shown above the commit list when the working tree is dirty.
 /// Was the hardcoded `"// WIP — N change(s)(クリックで commit panel)"`.

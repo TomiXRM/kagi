@@ -124,6 +124,104 @@ impl Settings {
     }
 }
 
+/// Default contents of the `analyze_ignore` file (gitignore syntax), seeded on
+/// first run. There are **no hardcoded exclusions** beyond this editable file —
+/// clear it to analyze everything (ADR-0119).
+pub const DEFAULT_ANALYZE_IGNORE: &str = "\
+# Analyze ignore — gitignore syntax. Files matching any pattern are excluded
+# from Hotspots / Coupling / Ownership. Edit freely: wildcards (* ** ?) and
+# negation (!) work exactly like .gitignore. Delete everything to analyze all.
+
+# Documents
+*.pdf
+
+# Images
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.webp
+*.ico
+*.icns
+*.tif
+*.tiff
+*.svg
+*.heic
+*.heif
+*.avif
+*.psd
+*.ai
+*.eps
+
+# CAD / 3D models
+*.step
+*.stp
+*.stl
+*.iges
+*.igs
+*.3mf
+
+# Fonts
+*.ttf
+*.otf
+*.ttc
+*.woff
+*.woff2
+*.eot
+
+# Archives
+*.zip
+
+# KiCad
+*.kicad_*
+fp-info-cache
+";
+
+/// Path to the `analyze_ignore` file (sibling of `settings.json`).
+pub fn analyze_ignore_path() -> Option<PathBuf> {
+    Some(settings_path()?.with_file_name("analyze_ignore"))
+}
+
+/// Read the full text of the `analyze_ignore` file, seeding it with
+/// [`DEFAULT_ANALYZE_IGNORE`] on first run so the user has an editable,
+/// documented starting point.
+pub fn read_analyze_ignore_text() -> String {
+    let Some(path) = analyze_ignore_path() else {
+        return DEFAULT_ANALYZE_IGNORE.to_string();
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(_) => {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&path, DEFAULT_ANALYZE_IGNORE);
+            DEFAULT_ANALYZE_IGNORE.to_string()
+        }
+    }
+}
+
+/// Persist new `analyze_ignore` contents (the Settings pane editor). Best-effort.
+pub fn write_analyze_ignore(content: &str) {
+    let Some(path) = analyze_ignore_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, content);
+}
+
+/// The Analyze exclude patterns (gitignore syntax, one per line) — comments /
+/// blanks included (the matcher ignores them).
+pub fn analyze_ignore_patterns() -> Vec<String> {
+    read_analyze_ignore_text()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
 /// Resolve the path to `settings.json` (`$KAGI_LOG_DIR/settings.json` first,
 /// then `$HOME/.kagi/settings.json`).  Returns `None` if no directory can be
 /// determined.

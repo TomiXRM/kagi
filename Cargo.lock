@@ -3163,6 +3163,7 @@ name = "kagi-git"
 version = "0.1.0"
 dependencies = [
  "git2",
+ "ignore",
  "kagi-domain",
  "tempfile",
  "ureq",

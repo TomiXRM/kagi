@@ -629,35 +629,46 @@ fn loading_view() -> AnyElement {
                 ),
         );
 
+    // The animated block stays OUTSIDE any scroll container — `with_animation`
+    // doesn't tick inside an `overflow_y_scroll` element. Only the help scrolls.
     div()
-        .id("eco-loading")
         .flex()
         .flex_col()
         .size_full()
         .items_center()
-        .overflow_y_scroll()
-        .pt_8()
-        .pb_4()
-        .gap_3()
-        .child(spinner)
         .child(
             div()
-                .text_size(theme::scaled_px(14.0))
-                .text_color(rgb(theme().text_main))
-                .child(Msg::EcoLoading.t()),
-        )
-        .child(bar)
-        .child(
-            div()
-                .text_size(theme::scaled_px(12.0))
-                .text_color(rgb(theme().text_muted))
-                .child(Msg::EcoLoadingHint.t()),
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap_3()
+                .pt_8()
+                .pb_4()
+                .child(spinner)
+                .child(
+                    div()
+                        .text_size(theme::scaled_px(14.0))
+                        .text_color(rgb(theme().text_main))
+                        .child(Msg::EcoLoading.t()),
+                )
+                .child(bar)
+                .child(
+                    div()
+                        .text_size(theme::scaled_px(12.0))
+                        .text_color(rgb(theme().text_muted))
+                        .child(Msg::EcoLoadingHint.t()),
+                ),
         )
         // While the mine runs, show the explainer (the wait = onboarding).
         .child(
             div()
+                .id("eco-loading-help")
+                .flex_1()
+                .min_h(px(0.0))
                 .w(theme::scaled_px(620.0))
-                .pt_4()
+                .overflow_y_scroll()
+                .pt_2()
+                .pb_4()
                 .child(
                     div()
                         .pb_2()

@@ -185,17 +185,15 @@ fn render_row(rank: usize, f: &FileMetric, max_risk: f64) -> AnyElement {
                 .text_color(rgb(theme().text_muted))
                 .child(format!("#{rank}")),
         )
-        .child(
-            div()
-                .flex_1()
-                .text_size(theme::scaled_px(13.0))
-                .text_color(rgb(theme().text_main))
-                .child(f.path.clone()),
-        )
+        .child(scroll_path_cell(
+            format!("eco-hot-path-{rank}"),
+            f.path.clone(),
+        ))
         .child(stat(&format!("{} commits", f.commits)))
         .child(stat(&format!("{} LOC", f.loc)))
         .child(
             div()
+                .flex_shrink_0()
                 .w(theme::scaled_px(120.0))
                 .h(theme::scaled_px(6.0))
                 .bg(rgb(theme().surface))
@@ -242,16 +240,14 @@ fn render_coupling_row(rank: usize, p: &CouplingPair, max_together: u32) -> AnyE
                 .text_color(rgb(theme().text_muted))
                 .child(format!("#{rank}")),
         )
-        .child(
-            div()
-                .flex_1()
-                .text_size(theme::scaled_px(13.0))
-                .text_color(rgb(theme().text_main))
-                .child(format!("{}  ⇄  {}", p.a, p.b)),
-        )
+        .child(scroll_path_cell(
+            format!("eco-coup-path-{rank}"),
+            format!("{}  ⇄  {}", p.a, p.b),
+        ))
         .child(stat(&format!("{}×", p.together)))
         .child(
             div()
+                .flex_shrink_0()
                 .w(theme::scaled_px(120.0))
                 .h(theme::scaled_px(6.0))
                 .bg(rgb(theme().surface))
@@ -304,17 +300,15 @@ fn render_ownership_row(rank: usize, o: &FileOwnership) -> AnyElement {
                 .text_color(rgb(theme().text_muted))
                 .child(format!("#{rank}")),
         )
-        .child(
-            div()
-                .flex_1()
-                .text_size(theme::scaled_px(13.0))
-                .text_color(rgb(theme().text_main))
-                .child(o.path.clone()),
-        )
+        .child(scroll_path_cell(
+            format!("eco-own-path-{rank}"),
+            o.path.clone(),
+        ))
         .child(stat(&o.primary_author))
         .child(stat(&format!("{:.0}%", o.primary_share * 100.0)))
         .child(
             div()
+                .flex_shrink_0()
                 .text_size(theme::scaled_px(12.0))
                 .text_color(rgb(authors_color))
                 .child(format!(
@@ -327,6 +321,22 @@ fn render_ownership_row(rank: usize, o: &FileOwnership) -> AnyElement {
 }
 
 // ── small shared element helpers ────────────────────────────────
+
+/// The left "name" cell of a list row: takes the flexible space but, crucially,
+/// `min_w(0)` + `overflow_x_scroll` so a very long path scrolls **inside the
+/// cell** instead of pushing the fixed numeric columns / bar off the right edge
+/// (user request). `whitespace_nowrap` keeps it on one line so it scrolls.
+fn scroll_path_cell(id: String, text: String) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(SharedString::from(id))
+        .flex_1()
+        .min_w(px(0.0))
+        .overflow_x_scroll()
+        .whitespace_nowrap()
+        .text_size(theme::scaled_px(13.0))
+        .text_color(rgb(theme().text_main))
+        .child(text)
+}
 
 /// A toggle chip; highlighted when `active`.
 fn chip(label: &str, active: bool, id: String) -> gpui::Stateful<gpui::Div> {
@@ -366,9 +376,10 @@ fn text_button(id: &'static str, label: &str, enabled: bool) -> gpui::Stateful<g
         .child(label.to_string())
 }
 
-/// A muted right-aligned stat cell.
+/// A muted, fixed (non-shrinking) stat cell — stays visible at the right edge.
 fn stat(text: &str) -> gpui::Div {
     div()
+        .flex_shrink_0()
         .text_size(theme::scaled_px(12.0))
         .text_color(rgb(theme().text_sub))
         .child(text.to_string())

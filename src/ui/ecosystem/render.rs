@@ -50,6 +50,9 @@ fn render_header(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyEl
                 .child(Msg::Ecosystem.t()),
         )
         .child(render_mode_toggle(view, cx))
+        .when(view.data.mode == EcosystemMode::Hotspots, |d| {
+            d.child(render_view_toggle(view, cx))
+        })
         .child(div().flex_1())
         .child(render_granularity_toggle(view, cx))
         .child(
@@ -77,6 +80,20 @@ fn render_mode_toggle(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> 
     row.into_any_element()
 }
 
+/// List ⇄ Map sub-view switch, shown only in Hotspots mode.
+fn render_view_toggle(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElement {
+    let map = view.data.map;
+    let list_click = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.set_map(false, cx));
+    let map_click = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.set_map(true, cx));
+    div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .child(chip(Msg::EcoList.t(), !map, "eco-view-list".into()).on_click(list_click))
+        .child(chip(Msg::EcoMap.t(), map, "eco-view-map".into()).on_click(map_click))
+        .into_any_element()
+}
+
 /// Granularity (window) switch, mirroring the Activity tab.
 fn render_granularity_toggle(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElement {
     let active = view.data.granularity;
@@ -98,7 +115,13 @@ fn render_body(view: &EcosystemView, _cx: &mut Context<EcosystemView>) -> AnyEle
     } else {
         match view.data.mode {
             EcosystemMode::Hotspots => match &view.data.ecosystem {
-                Some(eco) if !eco.files.is_empty() => render_hotspot_list(eco),
+                Some(eco) if !eco.files.is_empty() => {
+                    if view.data.map {
+                        super::viz::render_hotspot_map(eco)
+                    } else {
+                        render_hotspot_list(eco)
+                    }
+                }
                 _ => centered(Msg::EcoEmpty.t()),
             },
             EcosystemMode::Coupling => {

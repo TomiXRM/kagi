@@ -433,6 +433,10 @@ pub enum Msg {
     EcoLoadFailed,
     /// Body message when there is no churn to show.
     EcoEmpty,
+    /// Hotspots sub-view toggle: ranked list.
+    EcoList,
+    /// Hotspots sub-view toggle: treemap heatmap.
+    EcoMap,
 }
 
 impl Msg {
@@ -899,6 +903,10 @@ impl Msg {
             (Ja, EcoLoadFailed) => "解析に失敗しました",
             (En, EcoEmpty) => "No activity to analyze",
             (Ja, EcoEmpty) => "解析できる変更がありません",
+            (En, EcoList) => "List",
+            (Ja, EcoList) => "リスト",
+            (En, EcoMap) => "Map",
+            (Ja, EcoMap) => "マップ",
         }
     }
 }

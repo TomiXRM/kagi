@@ -15,6 +15,7 @@
 //! are stubs here — their paint/data land in later ADR-0119 tickets.
 
 mod render;
+mod viz;
 
 use std::path::PathBuf;
 
@@ -54,6 +55,8 @@ pub struct EcosystemData {
     /// Per-file ownership for the current granularity (Ownership mode).
     pub ownership: Vec<FileOwnership>,
     pub mode: EcosystemMode,
+    /// Hotspots sub-view: `false` = ranked list, `true` = treemap heatmap.
+    pub map: bool,
     pub granularity: Granularity,
     pub loading: bool,
     pub error: Option<String>,
@@ -70,6 +73,7 @@ impl EcosystemData {
             couplings: Vec::new(),
             ownership: Vec::new(),
             mode: EcosystemMode::Hotspots,
+            map: false,
             granularity: Granularity::All,
             loading: true,
             error: None,
@@ -180,6 +184,14 @@ impl EcosystemView {
     pub fn set_mode(&mut self, mode: EcosystemMode, cx: &mut Context<Self>) {
         if self.data.mode != mode {
             self.data.mode = mode;
+            cx.notify();
+        }
+    }
+
+    /// Toggle the Hotspots sub-view between the ranked list and the heatmap.
+    pub fn set_map(&mut self, map: bool, cx: &mut Context<Self>) {
+        if self.data.map != map {
+            self.data.map = map;
             cx.notify();
         }
     }

@@ -433,8 +433,6 @@ pub enum Msg {
     EcoLoadFailed,
     /// Body message when there is no churn to show.
     EcoEmpty,
-    /// Body placeholder for the not-yet-implemented Coupling / Ownership modes.
-    EcoComingSoon,
 }
 
 impl Msg {
@@ -901,8 +899,6 @@ impl Msg {
             (Ja, EcoLoadFailed) => "解析に失敗しました",
             (En, EcoEmpty) => "No activity to analyze",
             (Ja, EcoEmpty) => "解析できる変更がありません",
-            (En, EcoComingSoon) => "Coming soon",
-            (Ja, EcoComingSoon) => "近日対応",
         }
     }
 }

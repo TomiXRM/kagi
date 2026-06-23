@@ -108,6 +108,7 @@ mod tests {
         let commits = vec![
             CommitChanges {
                 time: NOW - 100,
+                author: "a@x".into(),
                 files: vec![
                     FileChange {
                         path: "src/a.rs".into(),
@@ -123,6 +124,7 @@ mod tests {
             },
             CommitChanges {
                 time: NOW - 200,
+                author: "a@x".into(),
                 files: vec![FileChange {
                     path: "src/a.rs".into(),
                     insertions: 3,

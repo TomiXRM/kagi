@@ -1,6 +1,6 @@
 # ADR-0119: Code Ecosystem / Hotspot viewer (read-only behavioral-analysis main-pane view)
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-06-23
 - Follows: ADR-0117 (FileHistory → `Entity<FileHistoryView>`), ADR-0118 (KagiApp decomposition Phase 5.2),
   `docs/rearch/migration/README.md` S6
@@ -185,6 +185,31 @@ risk(file) = normalize(churn_count) × normalize(complexity)
 
 Each PR: green on `cargo build` + `cargo test --workspace` + `cargo fmt --check` + no new clippy,
 cross-model review (codex), per the ADR-0118 pipeline.
+
+## Implementation status (as built — deltas from the plan above)
+
+- **DOMAIN-001 / GIT-002 / VIEW-003** landed as planned (`kagi_domain::hotspot` + `hotspot_report`,
+  `kagi_git::hotspot::repo_ecosystem` + `Backend::ecosystem`, `src/ui/ecosystem/{mod,render}.rs`).
+  **Copy diagnostic (DIAG-005) was folded into VIEW-003** rather than a separate ticket.
+- **Window reuse:** the granularity selector reuses `activity::Granularity` instead of a new enum.
+- **Icon registration gotcha:** gpui-component `IconName` SVGs only render if the app registers them
+  in `KagiAssets` (`src/ui/assets.rs`). The Analyze button needed a new `assets/icons/chart-pie.svg`
+  **and** an `ASSETS` table entry — a blank icon otherwise. Button label is "**Analyze**" (was
+  "Ecosystem"); placed just left of Settings.
+- **Loading UX:** a spinning `loader-circle` + indeterminate progress bar + "large repos take a
+  minute" hint (the mine reports no increments, so the bar is indeterminate by necessity).
+- **Mine cache:** a completed mine is cached on `KagiApp.ecosystem_cache` (keyed by repo path) so
+  reopening the view reuses the ~minute-long `git log` scan; invalidated on reload / repo switch.
+  Granularity switches re-rank in-memory (no re-mine).
+- **Artifact exclusion (user request):** `kagi_domain::hotspot::is_excluded` drops PDFs, raster /
+  vector images, CAD/3D models (`step`/`stp`/`stl`/`iges`/`3mf`) and KiCad files (`*.kicad_*`) from
+  analysis — enforced in `analyze`/`coupling`/`ownership` and at the git mining boundary.
+- **Coupling + Ownership modes shipped** (were stubs): `top_couplings` (Gall-style logical coupling,
+  Jaccard degree) and `ownership` (per-file primary author + share + author count, single-owner /
+  bus-factor-of-one flagged). Required adding `author` (email) to `CommitChanges` and `%ae` to the
+  mine format.
+- **Still pending:** `T-ECO-VIZ-004` (circle-pack / heatmap `viz.rs`); function-level X-Ray; headless
+  `klog` assertions; preflight hot-spot warnings.
 
 ## Consequences
 

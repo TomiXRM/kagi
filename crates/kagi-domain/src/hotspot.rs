@@ -58,10 +58,12 @@ pub fn is_excluded(path: &str) -> bool {
     ext.starts_with("kicad") || EXCLUDED_EXTENSIONS.contains(&ext.as_str())
 }
 
-/// One commit's changed-file set, tagged with its author time (epoch secs).
+/// One commit's changed-file set, tagged with its author time (epoch secs) and
+/// author identity (email — the stable key, like [`crate::activity`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitChanges {
     pub time: i64,
+    pub author: String,
     pub files: Vec<FileChange>,
 }
 
@@ -262,6 +264,154 @@ pub fn coupling_for(
     edges
 }
 
+/// A repository-wide change-coupling pair: two files that tend to change in the
+/// same commit (Gall et al. 1998 logical coupling).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CouplingPair {
+    pub a: String,
+    pub b: String,
+    pub together: u32,
+    /// Jaccard overlap `together / (changes_a + changes_b − together)`, in
+    /// `(0, 1]` — 1.0 means the two files *only ever* change together.
+    pub degree: f64,
+}
+
+/// Commits touching more files than this are skipped for pair enumeration:
+/// sweeping refactors / vendored drops would dominate the O(k²) pairing without
+/// signalling real coupling (they still count toward per-file change totals).
+const COUPLING_MAX_FILES_PER_COMMIT: usize = 40;
+
+/// Top-`n` change-coupling pairs over the granularity window, ranked by
+/// co-change count then Jaccard degree. Excluded artifacts are ignored.
+pub fn top_couplings(raw: &RawEcosystem, now: i64, g: Granularity, n: usize) -> Vec<CouplingPair> {
+    let start = window_start(raw, now, g);
+    let mut changes: BTreeMap<&str, u32> = BTreeMap::new();
+    let mut together: BTreeMap<(&str, &str), u32> = BTreeMap::new();
+
+    for c in &raw.commits {
+        if c.time < start || c.time > now {
+            continue;
+        }
+        let files: Vec<&str> = c
+            .files
+            .iter()
+            .map(|f| f.path.as_str())
+            .filter(|p| !is_excluded(p))
+            .collect();
+        for f in &files {
+            *changes.entry(f).or_default() += 1;
+        }
+        if files.len() > COUPLING_MAX_FILES_PER_COMMIT {
+            continue; // counted toward totals, but not paired
+        }
+        for i in 0..files.len() {
+            for j in (i + 1)..files.len() {
+                let (a, b) = if files[i] <= files[j] {
+                    (files[i], files[j])
+                } else {
+                    (files[j], files[i])
+                };
+                *together.entry((a, b)).or_default() += 1;
+            }
+        }
+    }
+
+    let mut pairs: Vec<CouplingPair> = together
+        .into_iter()
+        .map(|((a, b), t)| {
+            let ca = changes.get(a).copied().unwrap_or(0);
+            let cb = changes.get(b).copied().unwrap_or(0);
+            let denom = (ca + cb).saturating_sub(t).max(1) as f64;
+            CouplingPair {
+                a: a.to_string(),
+                b: b.to_string(),
+                together: t,
+                degree: t as f64 / denom,
+            }
+        })
+        .collect();
+    pairs.sort_by(|x, y| {
+        y.together
+            .cmp(&x.together)
+            .then(y.degree.partial_cmp(&x.degree).unwrap_or(Ordering::Equal))
+            .then(x.a.cmp(&y.a))
+            .then(x.b.cmp(&y.b))
+    });
+    pairs.truncate(n);
+    pairs
+}
+
+/// Per-file authorship for the Ownership mode: who touches a file most, their
+/// share, and how many distinct authors have touched it (the bus-factor
+/// signal — `authors == 1` is a single-owner risk).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileOwnership {
+    pub path: String,
+    pub primary_author: String,
+    /// Primary author's share of in-window commits to this file, in `(0, 1]`.
+    pub primary_share: f64,
+    pub authors: u32,
+    /// Total in-window commits touching this file.
+    pub commits: u32,
+}
+
+/// Per-file ownership over the granularity window, ranked single-owner /
+/// highest-share first (the files most exposed to a bus-factor of one).
+/// Excluded artifacts are ignored.
+pub fn ownership(raw: &RawEcosystem, now: i64, g: Granularity, n: usize) -> Vec<FileOwnership> {
+    let start = window_start(raw, now, g);
+    // path → (author → commits)
+    let mut by_path: BTreeMap<&str, BTreeMap<&str, u32>> = BTreeMap::new();
+    for c in &raw.commits {
+        if c.time < start || c.time > now {
+            continue;
+        }
+        for f in &c.files {
+            if is_excluded(&f.path) {
+                continue;
+            }
+            *by_path
+                .entry(f.path.as_str())
+                .or_default()
+                .entry(c.author.as_str())
+                .or_default() += 1;
+        }
+    }
+
+    let mut owners: Vec<FileOwnership> = by_path
+        .into_iter()
+        .map(|(path, authors)| {
+            let total: u32 = authors.values().sum();
+            let (primary, top) = authors
+                .iter()
+                .max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0)))
+                .map(|(a, c)| (a.to_string(), *c))
+                .unwrap_or_default();
+            FileOwnership {
+                path: path.to_string(),
+                primary_author: primary,
+                primary_share: top as f64 / total.max(1) as f64,
+                authors: authors.len() as u32,
+                commits: total,
+            }
+        })
+        .collect();
+    // Single-owner first, then highest share, then most-changed, then path.
+    owners.sort_by(|a, b| {
+        a.authors
+            .cmp(&b.authors)
+            .then(
+                b.primary_share
+                    .partial_cmp(&a.primary_share)
+                    .unwrap_or(Ordering::Equal),
+            )
+            .then(b.commits.cmp(&a.commits))
+            .then(a.path.cmp(&b.path))
+    });
+    owners.truncate(n);
+    owners
+}
+
 // ────────────────────────────────────────────────────────────
 // Tests
 // ────────────────────────────────────────────────────────────
@@ -281,8 +431,13 @@ mod tests {
     }
 
     fn commit(time: i64, paths: &[&str]) -> CommitChanges {
+        commit_by(time, "a@x", paths)
+    }
+
+    fn commit_by(time: i64, author: &str, paths: &[&str]) -> CommitChanges {
         CommitChanges {
             time,
+            author: author.into(),
             files: paths.iter().map(|p| fc(p)).collect(),
         }
     }
@@ -373,6 +528,48 @@ mod tests {
         assert!((edges[0].ratio - 0.5).abs() < 1e-9);
         assert_eq!(edges[1].partner, "c");
         assert_eq!(edges[1].together, 1);
+    }
+
+    #[test]
+    fn top_couplings_ranks_co_changed_pairs() {
+        let r = raw(
+            vec![
+                commit(NOW - 100, &["a", "b"]),
+                commit(NOW - 200, &["a", "b"]),
+                commit(NOW - 300, &["a", "c"]),
+                commit(NOW - 400, &["out.pdf", "a"]), // pdf excluded → no pair
+            ],
+            &[],
+        );
+        let pairs = top_couplings(&r, NOW, Granularity::All, 10);
+        assert_eq!((pairs[0].a.as_str(), pairs[0].b.as_str()), ("a", "b"));
+        assert_eq!(pairs[0].together, 2);
+        // (a,c) once; (a,pdf) excluded.
+        assert!(pairs.iter().all(|p| p.a != "out.pdf" && p.b != "out.pdf"));
+        assert_eq!(pairs.iter().find(|p| p.b == "c").unwrap().together, 1);
+    }
+
+    #[test]
+    fn ownership_flags_single_owner_first() {
+        let r = raw(
+            vec![
+                // solo.rs: only ever touched by alice → bus factor 1.
+                commit_by(NOW - 100, "alice", &["solo.rs"]),
+                commit_by(NOW - 200, "alice", &["solo.rs"]),
+                // shared.rs: alice + bob.
+                commit_by(NOW - 300, "alice", &["shared.rs"]),
+                commit_by(NOW - 400, "bob", &["shared.rs"]),
+            ],
+            &[],
+        );
+        let owners = ownership(&r, NOW, Granularity::All, 10);
+        assert_eq!(owners[0].path, "solo.rs"); // single-owner ranks first
+        assert_eq!(owners[0].authors, 1);
+        assert_eq!(owners[0].primary_author, "alice");
+        assert!((owners[0].primary_share - 1.0).abs() < 1e-9);
+        let shared = owners.iter().find(|o| o.path == "shared.rs").unwrap();
+        assert_eq!(shared.authors, 2);
+        assert!((shared.primary_share - 0.5).abs() < 1e-9);
     }
 
     #[test]

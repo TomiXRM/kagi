@@ -9,8 +9,9 @@
 //!
 //! One `git log --numstat` invocation with a record separator per commit:
 //!
-//! - `--format=%x1e%at` prefixes each commit with `\x1e` (record separator)
-//!   followed by the author time (epoch secs).
+//! - `--format=%x1e%at%x1f%ae` prefixes each commit with `\x1e` (record
+//!   separator) then the author time (epoch secs), a `\x1f` unit separator, and
+//!   the author email.
 //! - `--numstat` then lists `<ins>\t<del>\t<path>` rows (`-` for binary).
 //! - `--no-renames` keeps every path plain (a rename reads as delete + add,
 //!   which is fine for churn counting) and avoids the `{old => new}` numstat
@@ -27,6 +28,8 @@ use kagi_domain::hotspot::{is_excluded, CommitChanges, FileChange, RawEcosystem}
 
 /// Record separator emitted by `--format=%x1e…` before each commit.
 const RS: char = '\u{1e}';
+/// Unit separator between the author time and author email in the header line.
+const US: char = '\u{1f}';
 
 /// Parameters for a whole-repo ecosystem scan.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,7 +53,7 @@ pub fn repo_ecosystem(req: &EcosystemRequest) -> Result<RawEcosystem, GitError> 
         "log",
         "--no-renames",
         "--numstat",
-        "--format=%x1e%at",
+        "--format=%x1e%at%x1f%ae",
     ];
     if req.limit > 0 {
         limit_arg = format!("-n{}", req.limit);
@@ -79,11 +82,14 @@ fn parse_numstat_log(stdout: &str) -> Vec<CommitChanges> {
             continue;
         }
         let mut lines = record.lines();
-        // First line is the author epoch; skip the record if it is not a number.
-        let time = match lines.next().and_then(|l| l.trim().parse::<i64>().ok()) {
-            Some(t) => t,
-            None => continue,
+        // Header line: `<epoch>\x1f<author-email>`. Skip if epoch isn't a number.
+        let header = lines.next().unwrap_or("");
+        let (time_str, author) = header.split_once(US).unwrap_or((header, ""));
+        let time = match time_str.trim().parse::<i64>() {
+            Ok(t) => t,
+            Err(_) => continue,
         };
+        let author = author.to_string();
         let mut files = Vec::new();
         for line in lines {
             let line = line.trim_end_matches('\r');
@@ -100,7 +106,11 @@ fn parse_numstat_log(stdout: &str) -> Vec<CommitChanges> {
                 files.push(change);
             }
         }
-        commits.push(CommitChanges { time, files });
+        commits.push(CommitChanges {
+            time,
+            author,
+            files,
+        });
     }
     commits
 }
@@ -173,6 +183,15 @@ mod tests {
         assert_eq!(commits[0].files[0].insertions, 12);
         assert_eq!(commits[0].files[0].deletions, 4);
         assert_eq!(commits[1].files.len(), 1);
+    }
+
+    #[test]
+    fn parses_author_email_from_header() {
+        let stdout = format!("{RS}1700000100{US}alice@x\n\n3\t0\tsrc/a.rs\n");
+        let commits = parse_numstat_log(&stdout);
+        assert_eq!(commits[0].time, 1_700_000_100);
+        assert_eq!(commits[0].author, "alice@x");
+        assert_eq!(commits[0].files[0].path, "src/a.rs");
     }
 
     #[test]

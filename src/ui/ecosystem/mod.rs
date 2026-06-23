@@ -21,7 +21,10 @@ use std::path::PathBuf;
 use super::*;
 use gpui::WeakEntity;
 use kagi_domain::activity::Granularity;
-use kagi_domain::hotspot::{analyze, Ecosystem, EcosystemMode, RawEcosystem};
+use kagi_domain::hotspot::{
+    analyze, ownership, top_couplings, CouplingPair, Ecosystem, EcosystemMode, FileOwnership,
+    RawEcosystem,
+};
 use kagi_domain::hotspot_report::{render as render_report, ReportFormat};
 
 /// Commits scanned per load. Generous but bounded so a pathologically large
@@ -32,6 +35,12 @@ const ECOSYSTEM_COMMIT_LIMIT: usize = 10_000;
 /// How many top hot-spots the "Copy diagnostic" export includes.
 const DIAGNOSTIC_TOP_N: usize = 30;
 
+/// How many change-coupling pairs the Coupling mode lists.
+const COUPLING_TOP_N: usize = 100;
+
+/// How many files the Ownership mode lists (single-owner / high-share first).
+const OWNERSHIP_TOP_N: usize = 200;
+
 /// View-model data for the ecosystem view (loaded snapshot, selection, async
 /// generation). Separated from the entity so the render path reads plain data.
 pub struct EcosystemData {
@@ -40,6 +49,10 @@ pub struct EcosystemData {
     pub raw: Option<RawEcosystem>,
     /// The ranked ecosystem for the current granularity. `None` while loading.
     pub ecosystem: Option<Ecosystem>,
+    /// Top change-coupling pairs for the current granularity (Coupling mode).
+    pub couplings: Vec<CouplingPair>,
+    /// Per-file ownership for the current granularity (Ownership mode).
+    pub ownership: Vec<FileOwnership>,
     pub mode: EcosystemMode,
     pub granularity: Granularity,
     pub loading: bool,
@@ -54,6 +67,8 @@ impl EcosystemData {
         Self {
             raw: None,
             ecosystem: None,
+            couplings: Vec::new(),
+            ownership: Vec::new(),
             mode: EcosystemMode::Hotspots,
             granularity: Granularity::All,
             loading: true,
@@ -155,7 +170,10 @@ impl EcosystemView {
     fn recompute(&mut self) {
         if let Some(raw) = &self.data.raw {
             let now = super::commit_list::now_unix_secs();
-            self.data.ecosystem = Some(analyze(raw, now, self.data.granularity));
+            let g = self.data.granularity;
+            self.data.ecosystem = Some(analyze(raw, now, g));
+            self.data.couplings = top_couplings(raw, now, g, COUPLING_TOP_N);
+            self.data.ownership = ownership(raw, now, g, OWNERSHIP_TOP_N);
         }
     }
 

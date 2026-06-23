@@ -7,7 +7,7 @@
 
 use super::*;
 use gpui::{relative, AnyElement};
-use kagi_domain::hotspot::{Ecosystem, FileMetric};
+use kagi_domain::hotspot::{CouplingPair, Ecosystem, FileMetric, FileOwnership};
 
 /// Cap on rendered rows — the power-law means the top slice carries the signal,
 /// and it bounds the element count without virtualization.
@@ -101,7 +101,20 @@ fn render_body(view: &EcosystemView, _cx: &mut Context<EcosystemView>) -> AnyEle
                 Some(eco) if !eco.files.is_empty() => render_hotspot_list(eco),
                 _ => centered(Msg::EcoEmpty.t()),
             },
-            _ => centered(Msg::EcoComingSoon.t()),
+            EcosystemMode::Coupling => {
+                if view.data.couplings.is_empty() {
+                    centered(Msg::EcoEmpty.t())
+                } else {
+                    render_coupling_list(&view.data.couplings)
+                }
+            }
+            EcosystemMode::Ownership => {
+                if view.data.ownership.is_empty() {
+                    centered(Msg::EcoEmpty.t())
+                } else {
+                    render_ownership_list(&view.data.ownership)
+                }
+            }
         }
     };
     div()
@@ -169,6 +182,123 @@ fn render_row(rank: usize, f: &FileMetric, max_risk: f64) -> AnyElement {
                         .w(relative(frac))
                         .bg(rgb(theme().color_warning)),
                 ),
+        )
+        .into_any_element()
+}
+
+/// The change-coupling list: file pairs that change together, top first.
+fn render_coupling_list(pairs: &[CouplingPair]) -> AnyElement {
+    let max_together = pairs.first().map(|p| p.together).unwrap_or(1).max(1);
+    let mut list = div()
+        .id("eco-coupling-list")
+        .flex()
+        .flex_col()
+        .size_full()
+        .overflow_y_scroll();
+    for (i, p) in pairs.iter().enumerate() {
+        list = list.child(render_coupling_row(i + 1, p, max_together));
+    }
+    list.into_any_element()
+}
+
+/// One coupling row: `#rank  a ⇄ b   N together   degree-bar  degree%`.
+fn render_coupling_row(rank: usize, p: &CouplingPair, max_together: u32) -> AnyElement {
+    let frac = (p.together as f32 / max_together as f32).clamp(0.0, 1.0);
+    div()
+        .flex()
+        .items_center()
+        .gap_3()
+        .px_3()
+        .py_1()
+        .border_b_1()
+        .border_color(rgb(theme().surface))
+        .child(
+            div()
+                .w(theme::scaled_px(36.0))
+                .text_size(theme::scaled_px(12.0))
+                .text_color(rgb(theme().text_muted))
+                .child(format!("#{rank}")),
+        )
+        .child(
+            div()
+                .flex_1()
+                .text_size(theme::scaled_px(13.0))
+                .text_color(rgb(theme().text_main))
+                .child(format!("{}  ⇄  {}", p.a, p.b)),
+        )
+        .child(stat(&format!("{}×", p.together)))
+        .child(
+            div()
+                .w(theme::scaled_px(120.0))
+                .h(theme::scaled_px(6.0))
+                .bg(rgb(theme().surface))
+                .child(
+                    div()
+                        .h_full()
+                        .w(relative(frac))
+                        .bg(rgb(theme().color_branch)),
+                ),
+        )
+        .child(stat(&format!("{:.0}%", p.degree * 100.0)))
+        .into_any_element()
+}
+
+/// The ownership list: single-owner / high-share files first (bus-factor risk).
+fn render_ownership_list(owners: &[FileOwnership]) -> AnyElement {
+    let mut list = div()
+        .id("eco-ownership-list")
+        .flex()
+        .flex_col()
+        .size_full()
+        .overflow_y_scroll();
+    for (i, o) in owners.iter().enumerate() {
+        list = list.child(render_ownership_row(i + 1, o));
+    }
+    list.into_any_element()
+}
+
+/// One ownership row: `#rank  path   owner   share%   N authors`.
+/// A single author is flagged in the blocker colour (bus factor of one).
+fn render_ownership_row(rank: usize, o: &FileOwnership) -> AnyElement {
+    let solo = o.authors <= 1;
+    let authors_color = if solo {
+        theme().color_warning
+    } else {
+        theme().text_sub
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap_3()
+        .px_3()
+        .py_1()
+        .border_b_1()
+        .border_color(rgb(theme().surface))
+        .child(
+            div()
+                .w(theme::scaled_px(36.0))
+                .text_size(theme::scaled_px(12.0))
+                .text_color(rgb(theme().text_muted))
+                .child(format!("#{rank}")),
+        )
+        .child(
+            div()
+                .flex_1()
+                .text_size(theme::scaled_px(13.0))
+                .text_color(rgb(theme().text_main))
+                .child(o.path.clone()),
+        )
+        .child(stat(&o.primary_author))
+        .child(stat(&format!("{:.0}%", o.primary_share * 100.0)))
+        .child(
+            div()
+                .text_size(theme::scaled_px(12.0))
+                .text_color(rgb(authors_color))
+                .child(format!(
+                    "{} author{}",
+                    o.authors,
+                    if o.authors == 1 { "" } else { "s" }
+                )),
         )
         .into_any_element()
 }

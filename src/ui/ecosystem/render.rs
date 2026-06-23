@@ -92,6 +92,7 @@ fn render_view_toggle(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> 
         .flex()
         .items_center()
         .gap_1()
+        .child(vsep())
         .child(chip(Msg::EcoList.t(), !map, "eco-view-list".into()).on_click(list_click))
         .child(chip(Msg::EcoMap.t(), map, "eco-view-map".into()).on_click(map_click))
         .into_any_element()
@@ -106,9 +107,19 @@ fn render_coupling_toggle(view: &EcosystemView, cx: &mut Context<EcosystemView>)
         .flex()
         .items_center()
         .gap_1()
+        .child(vsep())
         .child(chip(Msg::EcoList.t(), !graph, "eco-coup-list".into()).on_click(list_click))
         .child(chip(Msg::EcoGraph.t(), graph, "eco-coup-graph".into()).on_click(graph_click))
         .into_any_element()
+}
+
+/// A thin vertical divider separating the mode toggle from the sub-view toggle.
+fn vsep() -> gpui::Div {
+    div()
+        .w(px(1.0))
+        .h(theme::scaled_px(16.0))
+        .mx_1()
+        .bg(rgb(theme().text_muted))
 }
 
 /// Granularity (window) switch, mirroring the Activity tab.

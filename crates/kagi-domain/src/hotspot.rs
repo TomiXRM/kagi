@@ -213,6 +213,13 @@ pub fn coupling_for(
             continue;
         }
         own += 1;
+        // Mirror `top_couplings`: a sweeping commit (vendored drop / mass
+        // refactor) still counts toward the focus file's change total (the
+        // denominator) but is skipped for partner enumeration, so the 1:many
+        // panel can't fill with partners the main coupling list excludes.
+        if c.files.len() > COUPLING_MAX_FILES_PER_COMMIT {
+            continue;
+        }
         for f in &c.files {
             if f.path != path {
                 *partners.entry(f.path.as_str()).or_default() += 1;
@@ -492,6 +499,33 @@ mod tests {
         assert!((edges[0].ratio - 0.5).abs() < 1e-9);
         assert_eq!(edges[1].partner, "c");
         assert_eq!(edges[1].together, 1);
+    }
+
+    #[test]
+    fn coupling_for_skips_sweeping_commits_but_counts_denominator() {
+        // One huge commit (> COUPLING_MAX_FILES_PER_COMMIT) touches the focus
+        // file `a` plus a vendored blob `v`; a normal commit pairs a+b.
+        let huge: Vec<String> = std::iter::once("a".to_string())
+            .chain((0..COUPLING_MAX_FILES_PER_COMMIT).map(|i| format!("v{i}")))
+            .collect();
+        let huge_refs: Vec<&str> = huge.iter().map(String::as_str).collect();
+        let r = raw(
+            vec![
+                commit(NOW - 100, &huge_refs),
+                commit(NOW - 200, &["a", "b"]),
+            ],
+            &[],
+        );
+        let edges = coupling_for(&r, "a", NOW, Granularity::All, 50);
+        // The sweeping commit's partners (v*) are excluded, like top_couplings.
+        assert!(edges.iter().all(|e| !e.partner.starts_with('v')));
+        // Only `b` survives, co-changed once.
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].partner, "b");
+        assert_eq!(edges[0].together, 1);
+        // …but the huge commit still counts in the denominator: a changed in 2
+        // commits → ratio = 1/2.
+        assert!((edges[0].ratio - 0.5).abs() < 1e-9);
     }
 
     #[test]

@@ -1175,6 +1175,11 @@ pub struct KagiApp {
     /// ADR-0119: repo whose Analyze mine is currently running (app-owned, so it
     /// survives the view being closed). `None` when idle.
     pub ecosystem_inflight: Option<std::path::PathBuf>,
+    /// Monotonic token identifying the *current* Analyze mine. A completing
+    /// background task only wins if this still equals the value it captured at
+    /// start — so a stale same-repo mine (e.g. one started before a reload
+    /// superseded it) can't cache/seed its result over a newer one.
+    pub ecosystem_gen: u64,
 }
 
 /// T-CONFLICT-UI-001: the Result `InputState` entity backing the Conflict
@@ -1545,6 +1550,7 @@ impl KagiApp {
             ecosystem: None,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
+            ecosystem_gen: 0,
         }
     }
 
@@ -1648,6 +1654,7 @@ impl KagiApp {
             ecosystem: None,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
+            ecosystem_gen: 0,
         }
     }
 

@@ -445,6 +445,11 @@ impl super::KagiApp {
             return;
         }
         self.ecosystem_inflight = Some(repo_path.clone());
+        // Stamp this mine with a fresh generation token; the completion handler
+        // only accepts the result if this token is still current (guards the
+        // same-repo reload race where an older task could otherwise win).
+        self.ecosystem_gen += 1;
+        let my_gen = self.ecosystem_gen;
         klog!("ecosystem: analyzing {}", repo_path.display());
 
         let bg_path = repo_path.clone();
@@ -462,9 +467,12 @@ impl super::KagiApp {
         cx.spawn(async move |app, acx| {
             let result = task.await;
             let _ = app.update(acx, |app, cx| {
-                // Drop the result if this mine was superseded (repo reloaded /
-                // a newer mine took over) — `inflight` no longer points at us.
-                let still_ours = app.ecosystem_inflight.as_deref() == Some(repo_path.as_path());
+                // Drop the result if this mine was superseded — either the repo
+                // reloaded (inflight cleared) or a newer same-repo mine took
+                // over (generation bumped). Path alone is not enough: a stale
+                // task for the same path must lose to the newer one.
+                let still_ours = app.ecosystem_gen == my_gen
+                    && app.ecosystem_inflight.as_deref() == Some(repo_path.as_path());
                 if still_ours {
                     app.ecosystem_inflight = None;
                 }

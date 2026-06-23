@@ -17,6 +17,8 @@ pub mod diffstat;
 pub mod graph;
 pub mod head;
 pub mod history;
+pub mod hotspot;
+pub mod hotspot_report;
 pub mod message_gen;
 pub mod message_template;
 pub mod operation;

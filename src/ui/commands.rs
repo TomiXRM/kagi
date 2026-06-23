@@ -1445,7 +1445,13 @@ impl KagiApp {
                 app.fetch_in_flight = false;
                 match result {
                     Ok(outcome) => {
-                        app.reload(cx);
+                        // Only reload when the fetch actually moved a ref. A no-op
+                        // fetch (the common auto-fetch case) used to re-snapshot the
+                        // whole graph AND close + discard the HEAD-versioned overlays
+                        // (Analyze / File History) every interval for nothing.
+                        if outcome.changed {
+                            app.reload(cx);
+                        }
                         if silent {
                             klog!("auto-fetch: ok remote={}", outcome.remote);
                         } else {

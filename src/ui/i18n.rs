@@ -938,7 +938,7 @@ pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
         Lang::En => vec![
             (
                 "What is Analyze?",
-                "A read-only look at your Git history — no changes are made. Pick a time window (Day … All) top-right; every view re-ranks for that window. Binary / asset files (images, PDF, CAD, KiCad, .icns, .zip) are excluded since churn × size is meaningless for them; add more via the \"analyze_ignore\" setting (e.g. \"csv log txt\").",
+                "A read-only look at your Git history — no changes are made. Pick a time window (Day … All) top-right; every view re-ranks for that window. Excluded files are fully configurable in the \"analyze_ignore\" file (gitignore syntax, next to settings.json) — it is seeded with sensible defaults (images, PDF, CAD, KiCad, fonts, archives); edit or clear it freely.",
             ),
             (
                 "Hotspots",
@@ -960,7 +960,7 @@ pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
         Lang::Ja => vec![
             (
                 "Analyze とは",
-                "Git 履歴を読み取り専用で分析します（変更は加えません）。右上で期間（Day … All）を選ぶと、各ビューがその期間で再集計されます。バイナリ/アセット（画像・PDF・CAD・KiCad・.icns・.zip）は churn×規模が無意味なため除外。設定 \"analyze_ignore\"（例: \"csv log txt\"）で除外形式を追加できます。",
+                "Git 履歴を読み取り専用で分析します（変更は加えません）。右上で期間（Day … All）を選ぶと、各ビューがその期間で再集計されます。除外対象は settings.json の隣の \"analyze_ignore\" ファイル（gitignore 形式）で完全に設定可能で、初回に既定値（画像・PDF・CAD・KiCad・フォント・アーカイブ）が書き込まれます。自由に編集・全削除できます。",
             ),
             (
                 "Hotspots（ホットスポット）",

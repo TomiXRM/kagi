@@ -369,13 +369,13 @@ impl super::KagiApp {
         klog!("ecosystem: analyzing {}", repo_path.display());
 
         let bg_path = repo_path.clone();
-        // User-configured extra ignore extensions (on top of the defaults).
-        let extra_ignore = super::settings::Settings::load().analyze_ignore();
+        // Exclude patterns (gitignore syntax) from the user's analyze_ignore file.
+        let ignore_patterns = super::settings::analyze_ignore_patterns();
         let task = cx.background_spawn(async move {
             kagi_git::Backend::open(&bg_path)
                 .map_err(|e| e.to_string())
                 .and_then(|b| {
-                    b.ecosystem(ECOSYSTEM_COMMIT_LIMIT, extra_ignore)
+                    b.ecosystem(ECOSYSTEM_COMMIT_LIMIT, ignore_patterns)
                         .map_err(|e| e.to_string())
                 })
         });

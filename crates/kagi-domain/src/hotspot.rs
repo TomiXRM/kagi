@@ -34,48 +34,6 @@ pub struct FileChange {
     pub deletions: u64,
 }
 
-/// Extensions excluded from hot-spot analysis: binary / non-source artifacts
-/// (PDFs, raster & vector images, CAD / 3D models) where "churn × line count"
-/// is meaningless. Lowercased, without the leading dot. KiCad project files
-/// (`*.kicad_pcb`, `*.kicad_sch`, …) are matched separately by extension prefix.
-const EXCLUDED_EXTENSIONS: &[&str] = &[
-    "pdf", // documents
-    // raster / vector image data
-    "png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "icns", "tif", "tiff", "svg", "heic", "heif",
-    "avif", "psd", "ai", "eps", // CAD / 3D models
-    "step", "stp", "stl", "iges", "igs", "3mf", // archives / binary bundles
-    "zip", // fonts
-    "ttf", "otf", "ttc", "woff", "woff2", "eot",
-];
-
-/// File **base names** excluded regardless of extension — generated caches and
-/// the like that have no useful extension (e.g. KiCad's `fp-info-cache`).
-const EXCLUDED_FILENAMES: &[&str] = &["fp-info-cache"];
-
-/// Lowercased file extension (text after the last `.`), or `None` when the path
-/// has no extension.
-pub fn ext_lower(path: &str) -> Option<String> {
-    match path.rsplit_once('.') {
-        Some((_, e)) if !e.is_empty() => Some(e.to_ascii_lowercase()),
-        _ => None,
-    }
-}
-
-/// True when `path` is an excluded binary / non-source artifact, judged by its
-/// extension (case-insensitive) against the built-in defaults. KiCad files are
-/// matched by the `kicad` extension prefix (`kicad_pcb`, `kicad_sch`, …). The
-/// `kagi-git` mining layer additionally honours a user-configured list.
-pub fn is_excluded(path: &str) -> bool {
-    let base = path.rsplit('/').next().unwrap_or(path);
-    if EXCLUDED_FILENAMES.contains(&base) {
-        return true;
-    }
-    match ext_lower(path) {
-        Some(ext) => ext.starts_with("kicad") || EXCLUDED_EXTENSIONS.contains(&ext.as_str()),
-        None => false,
-    }
-}
-
 /// One commit's changed-file set, tagged with its author time (epoch secs) and
 /// author identity (email — the stable key, like [`crate::activity`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,9 +151,6 @@ pub fn analyze(raw: &RawEcosystem, now: i64, g: Granularity) -> Ecosystem {
             continue;
         }
         for f in &c.files {
-            if is_excluded(&f.path) {
-                continue;
-            }
             let e = by_path.entry(f.path.as_str()).or_default();
             e.0 += 1;
             e.1 += f.insertions;
@@ -247,9 +202,6 @@ pub fn coupling_for(
     g: Granularity,
     n: usize,
 ) -> Vec<CouplingEdge> {
-    if is_excluded(path) {
-        return Vec::new();
-    }
     let start = window_start(raw, now, g);
     let mut own = 0u32;
     let mut partners: BTreeMap<&str, u32> = BTreeMap::new();
@@ -262,7 +214,7 @@ pub fn coupling_for(
         }
         own += 1;
         for f in &c.files {
-            if f.path != path && !is_excluded(&f.path) {
+            if f.path != path {
                 *partners.entry(f.path.as_str()).or_default() += 1;
             }
         }
@@ -310,12 +262,7 @@ pub fn top_couplings(raw: &RawEcosystem, now: i64, g: Granularity, n: usize) -> 
         if c.time < start || c.time > now {
             continue;
         }
-        let files: Vec<&str> = c
-            .files
-            .iter()
-            .map(|f| f.path.as_str())
-            .filter(|p| !is_excluded(p))
-            .collect();
+        let files: Vec<&str> = c.files.iter().map(|f| f.path.as_str()).collect();
         for f in &files {
             *changes.entry(f).or_default() += 1;
         }
@@ -385,9 +332,6 @@ pub fn ownership(raw: &RawEcosystem, now: i64, g: Granularity, n: usize) -> Vec<
             continue;
         }
         for f in &c.files {
-            if is_excluded(&f.path) {
-                continue;
-            }
             *by_path
                 .entry(f.path.as_str())
                 .or_default()
@@ -557,15 +501,12 @@ mod tests {
                 commit(NOW - 100, &["a", "b"]),
                 commit(NOW - 200, &["a", "b"]),
                 commit(NOW - 300, &["a", "c"]),
-                commit(NOW - 400, &["out.pdf", "a"]), // pdf excluded → no pair
             ],
             &[],
         );
         let pairs = top_couplings(&r, NOW, Granularity::All, 10);
         assert_eq!((pairs[0].a.as_str(), pairs[0].b.as_str()), ("a", "b"));
         assert_eq!(pairs[0].together, 2);
-        // (a,c) once; (a,pdf) excluded.
-        assert!(pairs.iter().all(|p| p.a != "out.pdf" && p.b != "out.pdf"));
         assert_eq!(pairs.iter().find(|p| p.b == "c").unwrap().together, 1);
     }
 
@@ -594,72 +535,6 @@ mod tests {
         let solo = owners.iter().find(|o| o.path == "solo.rs").unwrap();
         assert_eq!(solo.authors, 1);
         assert!((solo.primary_share - 1.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn is_excluded_matches_binaries_cad_and_kicad() {
-        for p in [
-            "doc/spec.pdf",
-            "img/logo.PNG",
-            "a/b.jpeg",
-            "icons/x.svg",
-            "board.kicad_pcb",
-            "sheet.kicad_sch",
-            "proj.kicad_pro",
-            "model.step",
-            "part.STP",
-            "mesh.stl",
-            "icon.icns",
-            "bundle.zip",
-            "assets/Inter.ttf",
-            "fonts/x.woff2",
-            "hw/proj/fp-info-cache",
-        ] {
-            assert!(is_excluded(p), "{p} should be excluded");
-        }
-        for p in [
-            "src/main.rs",
-            "README.md",
-            "Makefile",
-            ".gitignore",
-            "a.toml",
-        ] {
-            assert!(!is_excluded(p), "{p} should NOT be excluded");
-        }
-    }
-
-    #[test]
-    fn analyze_drops_excluded_files() {
-        let r = raw(
-            vec![
-                commit(
-                    NOW - 100,
-                    &["src/a.rs", "doc/manual.pdf", "board.kicad_pcb"],
-                ),
-                commit(NOW - 200, &["src/a.rs", "doc/manual.pdf"]),
-            ],
-            &[
-                ("src/a.rs", 50),
-                ("doc/manual.pdf", 9000),
-                ("board.kicad_pcb", 9000),
-            ],
-        );
-        let eco = analyze(&r, NOW, Granularity::All);
-        // Only the .rs file survives — the PDF / KiCad artifacts are gone even
-        // though their "LOC" is huge.
-        assert_eq!(eco.files.len(), 1);
-        assert_eq!(eco.files[0].path, "src/a.rs");
-    }
-
-    #[test]
-    fn coupling_ignores_excluded_partners() {
-        let r = raw(
-            vec![commit(NOW - 100, &["src/a.rs", "out.pdf", "src/b.rs"])],
-            &[],
-        );
-        let edges = coupling_for(&r, "src/a.rs", NOW, Granularity::All, 10);
-        assert_eq!(edges.len(), 1);
-        assert_eq!(edges[0].partner, "src/b.rs");
     }
 
     #[test]

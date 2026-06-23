@@ -122,19 +122,86 @@ impl Settings {
     pub fn auto_fetch(&self) -> Option<bool> {
         self.get_str("auto_fetch").map(|s| s.trim() != "false")
     }
+}
 
-    /// Extra file extensions the Analyze view ignores (`"analyze_ignore"`), on
-    /// top of the built-in defaults. Stored as a comma/whitespace-separated
-    /// string (e.g. `"csv, log txt"`); returned lowercased without leading dots.
-    pub fn analyze_ignore(&self) -> Vec<String> {
-        self.get_str("analyze_ignore")
-            .map(|s| {
-                s.split(|c: char| c == ',' || c.is_whitespace())
-                    .map(|e| e.trim().trim_start_matches('.').to_ascii_lowercase())
-                    .filter(|e| !e.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default()
+/// Default contents of the `analyze_ignore` file (gitignore syntax), seeded on
+/// first run. There are **no hardcoded exclusions** beyond this editable file —
+/// clear it to analyze everything (ADR-0119).
+pub const DEFAULT_ANALYZE_IGNORE: &str = "\
+# Analyze ignore — gitignore syntax. Files matching any pattern are excluded
+# from Hotspots / Coupling / Ownership. Edit freely: wildcards (* ** ?) and
+# negation (!) work exactly like .gitignore. Delete everything to analyze all.
+
+# Documents
+*.pdf
+
+# Images
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.webp
+*.ico
+*.icns
+*.tif
+*.tiff
+*.svg
+*.heic
+*.heif
+*.avif
+*.psd
+*.ai
+*.eps
+
+# CAD / 3D models
+*.step
+*.stp
+*.stl
+*.iges
+*.igs
+*.3mf
+
+# Fonts
+*.ttf
+*.otf
+*.ttc
+*.woff
+*.woff2
+*.eot
+
+# Archives
+*.zip
+
+# KiCad
+*.kicad_*
+fp-info-cache
+";
+
+/// Path to the `analyze_ignore` file (sibling of `settings.json`).
+pub fn analyze_ignore_path() -> Option<PathBuf> {
+    Some(settings_path()?.with_file_name("analyze_ignore"))
+}
+
+/// Load the Analyze exclude patterns (gitignore syntax, one per line) from the
+/// `analyze_ignore` file. On first run the file is created with
+/// [`DEFAULT_ANALYZE_IGNORE`] so the user has an editable, documented starting
+/// point. Returns the raw lines (comments / blanks included — the matcher
+/// ignores them).
+pub fn analyze_ignore_patterns() -> Vec<String> {
+    let Some(path) = analyze_ignore_path() else {
+        return DEFAULT_ANALYZE_IGNORE.lines().map(str::to_owned).collect();
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(s) => s.lines().map(str::to_owned).collect(),
+        Err(_) => {
+            // Seed the default file (best-effort) and return its lines.
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&path, DEFAULT_ANALYZE_IGNORE);
+            DEFAULT_ANALYZE_IGNORE.lines().map(str::to_owned).collect()
+        }
     }
 }
 

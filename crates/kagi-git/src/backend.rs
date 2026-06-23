@@ -221,13 +221,13 @@ impl Backend {
     pub fn ecosystem(
         &self,
         limit: usize,
-        extra_ignore: Vec<String>,
+        ignore_patterns: Vec<String>,
     ) -> Result<RawEcosystem, GitError> {
         let repo_dir = self.workdir().unwrap_or_else(|| self.path.to_path_buf());
         hotspot::repo_ecosystem(&hotspot::EcosystemRequest {
             repo_dir,
             limit,
-            extra_ignore,
+            ignore_patterns,
         })
     }
 

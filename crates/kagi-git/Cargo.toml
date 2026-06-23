@@ -16,3 +16,6 @@ git2 = { version = "0.21", default-features = false }
 # and stages the request body in a tempfile; both stay inside this crate.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 tempfile = "3"
+# gitignore-format matching for the Analyze exclude list (ADR-0119) — already
+# in the workspace lock transitively, so this adds no new download.
+ignore = "0.4"

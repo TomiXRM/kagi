@@ -106,7 +106,7 @@ fn mines_churn_and_loc_then_ranks_hotspots() {
     let raw = repo_ecosystem(&EcosystemRequest {
         repo_dir: dir.to_path_buf(),
         limit: 0,
-        extra_ignore: Vec::new(),
+        ignore_patterns: Vec::new(),
     })
     .expect("ecosystem");
 
@@ -138,7 +138,7 @@ fn backend_facade_matches_free_function() {
     let via_free = repo_ecosystem(&EcosystemRequest {
         repo_dir: dir.to_path_buf(),
         limit: 0,
-        extra_ignore: Vec::new(),
+        ignore_patterns: Vec::new(),
     })
     .expect("free ecosystem");
     assert_eq!(via_backend, via_free);
@@ -163,7 +163,7 @@ fn mine_captures_distinct_authors_for_ownership() {
     let raw = repo_ecosystem(&EcosystemRequest {
         repo_dir: dir.to_path_buf(),
         limit: 0,
-        extra_ignore: Vec::new(),
+        ignore_patterns: Vec::new(),
     })
     .expect("ecosystem");
 
@@ -189,7 +189,7 @@ fn empty_repo_is_not_an_error() {
     let res = repo_ecosystem(&EcosystemRequest {
         repo_dir: dir.to_path_buf(),
         limit: 0,
-        extra_ignore: Vec::new(),
+        ignore_patterns: Vec::new(),
     });
     assert!(res.is_err());
 }

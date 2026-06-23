@@ -193,22 +193,10 @@ impl Render for KagiApp {
             }
         }
 
-        // T-COMMIT-016: a Smart Commit message generated on a background thread
-        // is pushed into the commit-message Input here, where `&mut Window` is
-        // available (set_value requires it).
-        if let Some(msg) = self.pending_smart_msg.take() {
-            if self.commit_template_mode {
-                // Template mode: parse the generated Conventional subject into
-                // the type/scope/summary (+body) fields so each goes into its own
-                // box (ADR-0090).
-                let fields = kagi_git::parse_message(&msg);
-                self.set_template_inputs(&fields, window, cx);
-            } else if let Some(input) = self.commit_input.clone() {
-                input.update(cx, |state, cx| {
-                    state.set_value(msg, window, cx);
-                });
-            }
-        }
+        // ADR-0118 (Phase 5.2) / T-ENTITY-COMMITPANEL-001 (corrections #1/#2): the
+        // queued smart-commit message push AND the per-branch draft autosave moved
+        // ONTO the `CommitPanelView` entity (`sync_inputs`), run from the entity's
+        // own render path. The parent no longer reads the child's input each frame.
 
         // Graph horizontal scroll: clamp against the current repo's lane
         // count so the offset self-heals after tab switches and column

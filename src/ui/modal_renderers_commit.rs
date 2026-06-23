@@ -306,7 +306,7 @@ pub(crate) fn render_commit_plan_modal(
 
     // T-BP-003: return focus to root_focus on cancel/confirm.
     let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
-        this.cancel_commit_plan_modal();
+        this.cancel_commit_plan_modal(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh);
         }

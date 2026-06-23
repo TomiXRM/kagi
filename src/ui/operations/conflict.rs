@@ -243,12 +243,19 @@ impl KagiApp {
                     op_name
                 );
                 self.open_commit_panel(window, cx);
-                self.commit_template_mode = false;
-                if let Some(input) = self.commit_input.clone() {
-                    input.update(cx, |state, cx| state.set_value(message.clone(), window, cx));
-                }
-                if let Some(panel) = self.commit_panel.as_mut() {
-                    panel.commit_msg = message.clone();
+                // ADR-0118: seed the merge message into the entity's input + state.
+                // `open_commit_panel` runs on the parent (this method is the parent,
+                // deferred from the ConflictView Continue listener — correction #6),
+                // so updating the freshly-created CommitPanelView here is safe.
+                if let Some(entity) = self.commit_panel.clone() {
+                    let input = entity.read(cx).commit_input.clone();
+                    if let Some(input) = input {
+                        input.update(cx, |state, cx| state.set_value(message.clone(), window, cx));
+                    }
+                    entity.update(cx, |v, _| {
+                        v.commit_template_mode = false;
+                        v.state.commit_msg = message.clone();
+                    });
                 }
                 self.conflict_merge_pending = true;
             }

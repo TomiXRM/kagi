@@ -494,13 +494,16 @@ impl KagiApp {
     /// the W14-PREVIEW/TEMPLATE commit-panel lanes merge (this lane owns the
     /// backend + modal/confirm plumbing, not `commit_panel.rs`).
     pub fn open_amend_modal(&mut self, mode: AmendMode, cx: &mut Context<Self>) {
-        let message: String = if let Some(ref input_entity) = self.commit_input {
-            input_entity.read(cx).value().to_string()
-        } else {
-            self.commit_panel
-                .as_ref()
-                .map(|p| p.commit_msg.clone())
-                .unwrap_or_default()
+        // ADR-0118: the commit input + message live on the `CommitPanelView` entity.
+        let message: String = match self.commit_panel.as_ref() {
+            Some(e) => {
+                let v = e.read(cx);
+                match v.commit_input.as_ref() {
+                    Some(input) => input.read(cx).value().to_string(),
+                    None => v.state.commit_msg.clone(),
+                }
+            }
+            None => String::new(),
         };
         self.open_amend_modal_with_message(mode, message);
     }

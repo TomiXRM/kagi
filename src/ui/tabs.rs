@@ -344,8 +344,9 @@ impl KagiApp {
         self.clear_cherry_pick_modal();
         self.clear_delete_branch_modal();
         self.commit_panel_open = false;
+        // ADR-0118: dropping the single `commit_panel` entity also drops its
+        // `commit_input` / template inputs / draft state (all entity-owned).
         self.commit_panel = None;
-        self.commit_input = None;
         // ADR-0117: File History is per-repo; drop the entity on repo/tab switch
         // so its captured `repo_path` can't keep reading the previous repo (and
         // the stale view doesn't linger over the newly-activated tab).
@@ -533,8 +534,9 @@ impl KagiApp {
         self.clear_cherry_pick_modal();
         self.clear_delete_branch_modal();
         self.commit_panel_open = false;
+        // ADR-0118: dropping the single `commit_panel` entity also drops its
+        // `commit_input` / template inputs / draft state (all entity-owned).
         self.commit_panel = None;
-        self.commit_input = None;
         // ADR-0118: drop the conflict entity (captured prev-repo `repo_path`) +
         // merge gate + run-once guard so a stale conflict screen never lingers
         // behind the Welcome overlay.

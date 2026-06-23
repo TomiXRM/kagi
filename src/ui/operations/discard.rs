@@ -13,10 +13,11 @@ impl KagiApp {
     /// Collect the eligible unstaged paths (excluding untracked / conflicted)
     /// plus the skipped set, from the current commit-panel status.
     /// Returns `(eligible, skipped)` as repo-relative forward-slash strings.
-    fn discard_partition(&self) -> (Vec<String>, Vec<String>) {
+    fn discard_partition(&self, cx: &Context<Self>) -> (Vec<String>, Vec<String>) {
         let mut eligible = Vec::new();
         let mut skipped = Vec::new();
-        if let Some(panel) = self.commit_panel.as_ref() {
+        if let Some(entity) = self.commit_panel.as_ref() {
+            let panel = &entity.read(cx).state;
             for f in &panel.unstaged {
                 let rel = f.path.to_string_lossy().replace('\\', "/");
                 // Conflicted rows are not discardable. Untracked rows (surfaced as
@@ -36,17 +37,19 @@ impl KagiApp {
     /// commit panel's `unstaged` vector). Conflicted rows are not offered a
     /// Discard menu; untracked rows are (they are deleted after an ODB backup,
     /// ADR-0083).
-    pub fn open_discard_modal_for_index(&mut self, index: usize) {
+    pub fn open_discard_modal_for_index(&mut self, index: usize, cx: &mut Context<Self>) {
         let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let path = match self
-            .commit_panel
-            .as_ref()
-            .and_then(|p| p.unstaged.get(index))
-        {
-            Some(f) => f.path.to_string_lossy().replace('\\', "/"),
+        let path = match self.commit_panel.as_ref().and_then(|e| {
+            e.read(cx)
+                .state
+                .unstaged
+                .get(index)
+                .map(|f| f.path.to_string_lossy().replace('\\', "/"))
+        }) {
+            Some(p) => p,
             None => return,
         };
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
@@ -83,12 +86,12 @@ impl KagiApp {
 
     /// Open the "Discard all" modal: every eligible unstaged file in one
     /// operation; untracked / conflicted files are listed as skipped.
-    pub fn open_discard_all_modal(&mut self) {
+    pub fn open_discard_all_modal(&mut self, cx: &mut Context<Self>) {
         let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let (eligible, skipped) = self.discard_partition();
+        let (eligible, skipped) = self.discard_partition(cx);
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
         let repo = match self.repo_session.as_ref() {
             Some(s) => s.backend(),

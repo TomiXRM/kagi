@@ -322,7 +322,9 @@ use branch_menu::{
     BranchAction, BranchConflictMode, BranchKind, BranchMenuContext, BranchMenuState,
 };
 use commit_list::{BadgeKind, CommitRow};
-use commit_panel::{status_badge, CommitPanelFileRef, CommitPanelState, CommitPlanModal};
+use commit_panel::{
+    status_badge, CommitPanelFileRef, CommitPanelState, CommitPanelView, CommitPlanModal,
+};
 use context_menu::{CommitAction, CommitMenuState, MenuContext};
 use detail_panel::{build_commit_details, CommitDetail};
 use graph_view::graph_canvas;
@@ -923,30 +925,20 @@ pub struct KagiApp {
     // ── T025: Commit Panel ───────────────────────────────────────
     /// Whether the commit panel is currently open (WIP row selected).
     pub commit_panel_open: bool,
-    /// Commit panel state (staging lists, diff, message, modal).
-    pub commit_panel: Option<CommitPanelState>,
-    // ── T026: gpui-component Input for commit message (IME対応) ───
-    /// InputState entity for the commit message field (gpui-component IME対応).
-    /// Created lazily when the commit panel is first opened (requires &mut Window).
-    pub commit_input: Option<Entity<InputState>>,
-    // ── T-COMMIT-009 / W14-TEMPLATE: structured template mode ─────
-    /// `true` when the commit message is being authored via the structured
-    /// template fields (type/scope/summary/body/test/risk); `false` = the plain
-    /// single Input. Persisted to / restored from the draft's `mode` field.
-    pub commit_template_mode: bool,
-    /// Lazily-created `InputState`s for the six template fields, in order:
-    /// `[type, scope, summary, body, test, risk]`. Created on first switch into
-    /// template mode (requires `&mut Window`). Same gpui-component widget as the
-    /// plain Input — no hand-written input widgets.
-    pub commit_template_inputs: Option<[Entity<InputState>; 6]>,
+    /// ADR-0118 (Phase 5.2) / T-ENTITY-COMMITPANEL-001: the Commit Panel promoted
+    /// to its own `Entity<CommitPanelView>` (self-rendering child with its own
+    /// notify scope). The entity OWNS the staging lists + the message/template
+    /// `InputState`s + the per-branch draft autosave + the queued smart message.
+    /// `commit_panel_open` is the visibility gate (set by graph `select`);
+    /// `Some(entity)` = cached panel state. Read its data via `e.read(cx).state`.
+    pub commit_panel: Option<Entity<commit_panel::CommitPanelView>>,
     // ── T-COMMIT-016: Smart Commit Message (W14-SMART) ───────────
-    /// Smart Commit state: rule-based always on, LLM opt-in + detection.
+    /// Smart Commit state: rule-based always on, LLM opt-in + detection. Stays on
+    /// `KagiApp` (read by the Settings overlay + command palette, written by the
+    /// background detection probe — cross-cutting, not commit-panel-private).
     pub smart_commit: smart_commit::SmartCommitState,
     /// Guard so Ollama detection runs at most once per repo path.
     pub smart_commit_detected_for: Option<PathBuf>,
-    /// A generated message produced on a background thread, queued for the next
-    /// render to push into the commit-message Input (which needs `&mut Window`).
-    pub pending_smart_msg: Option<String>,
     // ── T028: branch jump (scroll to commit) ─────────────────
     /// Scroll handle for the "commit-list" uniform_list.
     /// Stored in KagiApp so it persists across render frames.
@@ -957,11 +949,6 @@ pub struct KagiApp {
     /// rebuild the main view (`reload`, `reload_external`, tab load) snapshot at
     /// this limit so loaded-more commits survive a refresh.
     pub commit_limit: usize,
-    /// PERF: scroll handle for the commit panel's Unstaged `uniform_list`
-    /// (shared across flat/tree views — only one is visible at a time).
-    pub cp_unstaged_scroll_handle: UniformListScrollHandle,
-    /// PERF: scroll handle for the commit panel's Staged `uniform_list`.
-    pub cp_staged_scroll_handle: UniformListScrollHandle,
     /// Maps local branch name → the CommitId it points to.
     /// Built at snapshot time; used by jump_to_branch.
     /// Maps CommitId → row index in `self.active_view.rows`.
@@ -1069,11 +1056,6 @@ pub struct KagiApp {
     /// When `Some`, the refresh icon spins (set on click; cleared after one
     /// full rotation in render).
     pub refresh_spin_started: Option<Instant>,
-    /// Last commit-message value mirrored to the per-branch draft file
-    /// (T-COMMIT-007). Compared each frame to detect edits cheaply.
-    pub last_draft_value: String,
-    /// Debounce generation for the draft autosave writer.
-    pub draft_save_gen: u64,
     /// Debounce generation for modal live re-planning. Each input change
     /// bumps it; a 250ms timer task re-plans only if no newer change arrived.
     /// Per-keystroke synchronous re-planning (backend open + plan build,
@@ -1490,16 +1472,10 @@ impl KagiApp {
             activity_hover: None,
             commit_panel_open: false,
             commit_panel: None,
-            commit_input: None,
-            commit_template_mode: false,
-            commit_template_inputs: None,
             smart_commit: smart_commit::SmartCommitState::load(),
             smart_commit_detected_for: None,
-            pending_smart_msg: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
             commit_limit: DEFAULT_COMMIT_LIMIT,
-            cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
-            cp_staged_scroll_handle: UniformListScrollHandle::new(),
             operation_history: kagi_git::OperationHistory::new(),
             history_seed_attempted: false,
             terminal_sessions: HashMap::new(),
@@ -1522,8 +1498,6 @@ impl KagiApp {
             auto_fetch_ticker_alive: false,
             busy_op: None,
             modal_replan_gen: 0,
-            last_draft_value: String::new(),
-            draft_save_gen: 0,
             refresh_spin_started: None,
             // W2-DELETE
             commit_menu: None,
@@ -1595,16 +1569,10 @@ impl KagiApp {
             activity_hover: None,
             commit_panel_open: false,
             commit_panel: None,
-            commit_input: None,
-            commit_template_mode: false,
-            commit_template_inputs: None,
             smart_commit: smart_commit::SmartCommitState::load(),
             smart_commit_detected_for: None,
-            pending_smart_msg: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
             commit_limit: DEFAULT_COMMIT_LIMIT,
-            cp_unstaged_scroll_handle: UniformListScrollHandle::new(),
-            cp_staged_scroll_handle: UniformListScrollHandle::new(),
             op_log: None,
             op_log_seed: VecDeque::new(),
             operation_history: kagi_git::OperationHistory::new(),
@@ -1629,8 +1597,6 @@ impl KagiApp {
             auto_fetch_ticker_alive: false,
             busy_op: None,
             modal_replan_gen: 0,
-            last_draft_value: String::new(),
-            draft_save_gen: 0,
             refresh_spin_started: None,
             // W2-DELETE
             commit_menu: None,
@@ -1797,13 +1763,10 @@ impl KagiApp {
         if !was_merge_commit_pending {
             // ADR-0068: a reload after commit / abort ends any continued-merge flow.
             self.conflict_merge_pending = false;
-            // T025/T026: reset commit panel and input so it reflects fresh status after reload.
+            // T025/T026: drop the commit-panel entity (state + inputs + template)
+            // so it reflects fresh status after reload (ADR-0118: one entity).
             self.commit_panel_open = false;
             self.commit_panel = None;
-            self.commit_input = None;
-            // T-COMMIT-009: reset template mode + field inputs to match commit_input.
-            self.commit_template_mode = false;
-            self.commit_template_inputs = None;
         }
         // commit_scroll_handle is preserved so the existing Rc<RefCell<...>> reference
         // wired into the uniform_list continues to work after reload.
@@ -1846,23 +1809,29 @@ impl KagiApp {
                 // Still a resolved merge awaiting its commit: keep the commit
                 // panel up (refresh the staged list from the index) and keep the
                 // pre-filled / user-edited merge message entity untouched.
+                // ADR-0118: update the entity's `state` IN PLACE so its inputs /
+                // template mode (the pre-filled merge message) survive the reload.
                 let mut panel = CommitPanelState::from_repo(&repo_path);
-                if let Some(ref existing) = self.commit_panel {
-                    panel.tree_view = existing.tree_view;
+                if let Some(entity) = self.commit_panel.clone() {
+                    entity.update(cx, |v, _| {
+                        panel.tree_view = v.state.tree_view;
+                        v.state = panel;
+                    });
+                } else {
+                    let weak_app = cx.weak_entity();
+                    let entity =
+                        cx.new(|_| CommitPanelView::new(panel, weak_app, repo_path.clone()));
+                    self.commit_panel = Some(entity);
                 }
-                self.commit_panel = Some(panel);
                 self.commit_panel_open = true;
                 self.conflict = None;
                 self.conflict_merge_pending = true;
             } else {
                 // The merge commit was created (MERGE_HEAD gone) or aborted — end
-                // the flow and reset the deferred commit-panel state.
+                // the flow and drop the commit-panel entity.
                 self.conflict_merge_pending = false;
                 self.commit_panel_open = false;
                 self.commit_panel = None;
-                self.commit_input = None;
-                self.commit_template_mode = false;
-                self.commit_template_inputs = None;
             }
         }
         Ok(())
@@ -2082,12 +2051,11 @@ impl KagiApp {
                 app.last_working_status = Some(new_status);
                 app.wip_diffstat = Some(wip_diffstat);
                 // Refresh the open commit panel's lists in place (keeps it open).
-                if app.commit_panel.is_some() {
-                    if let Some(rp) = app.repo_path.clone() {
-                        if let Some(panel) = app.commit_panel.as_mut() {
-                            panel.reload_status(&rp);
-                        }
-                    }
+                // ADR-0118 (correction #6c): update the entity, never rebuild via
+                // a parent render read.
+                if let (Some(entity), Some(rp)) = (app.commit_panel.clone(), app.repo_path.clone())
+                {
+                    entity.update(cx, |v, _| v.state.reload_status(&rp));
                 }
                 cx.notify();
             });
@@ -2710,47 +2678,10 @@ impl KagiApp {
         }
 
         // ── Commit-message draft autosave (T-COMMIT-007 / T-COMMIT-009) ──
-        // In template mode the saved message is the *assembled* plain text
-        // (ADR-0042) — edits to any of the six fields are detected via the
-        // assembled value changing.
-        if self.commit_panel_open {
-            let has_input = self.commit_input.is_some()
-                || (self.commit_template_mode && self.commit_template_inputs.is_some());
-            if has_input {
-                let v = self.effective_commit_message(cx);
-                if v != self.last_draft_value {
-                    self.last_draft_value = v;
-                    self.draft_save_gen = self.draft_save_gen.wrapping_add(1);
-                    let gen = self.draft_save_gen;
-                    let mode = if self.commit_template_mode {
-                        "template"
-                    } else {
-                        "plain"
-                    };
-                    let mode = mode.to_string();
-                    cx.spawn(async move |this, acx| {
-                        gpui::Timer::after(Duration::from_millis(250)).await;
-                        let _ = this.update(acx, |app, _cx| {
-                            if app.draft_save_gen != gen {
-                                return;
-                            }
-                            let Some(rp) = app.repo_path.clone() else {
-                                return;
-                            };
-                            let branch = app.active_view.status_summary.branch.clone();
-                            let msg = app.last_draft_value.clone();
-                            if msg.trim().is_empty() {
-                                let _ = kagi_git::clear_draft(&rp, &branch);
-                            } else {
-                                let _ = kagi_git::save_draft(&rp, &branch, &msg, &mode);
-                                klog!("draft: saved {}", branch);
-                            }
-                        });
-                    })
-                    .detach();
-                }
-            }
-        }
+        // ADR-0118 (Phase 5.2) / T-ENTITY-COMMITPANEL-001 (correction #1): moved
+        // ONTO the `CommitPanelView` entity (`sync_inputs`), so the parent never
+        // reads the child's commit input each frame (the re-entrancy-in-render
+        // surface ADR-0118 forbids).
 
         // ── Stash push (message) ────────────────────────────
         if let Some(m) = self.stash_push_modal_mut() {
@@ -3277,10 +3208,13 @@ impl KagiApp {
             }
             MainDiffSource::Unstaged { path } => {
                 let (cur, len) = match self.commit_panel.as_ref() {
-                    Some(p) => (
-                        p.unstaged.iter().position(|f| f.path == path),
-                        p.unstaged.len(),
-                    ),
+                    Some(e) => {
+                        let p = &e.read(cx).state;
+                        (
+                            p.unstaged.iter().position(|f| f.path == path),
+                            p.unstaged.len(),
+                        )
+                    }
                     None => return,
                 };
                 let cur = match cur {
@@ -3292,14 +3226,18 @@ impl KagiApp {
                 }
                 let next = (cur as i64 + delta).clamp(0, len as i64 - 1) as usize;
                 if next != cur {
-                    self.open_main_diff_wip(commit_panel::CommitPanelFileRef::Unstaged {
-                        index: next,
-                    });
+                    self.open_main_diff_wip(
+                        commit_panel::CommitPanelFileRef::Unstaged { index: next },
+                        cx,
+                    );
                 }
             }
             MainDiffSource::Staged { path } => {
                 let (cur, len) = match self.commit_panel.as_ref() {
-                    Some(p) => (p.staged.iter().position(|f| f.path == path), p.staged.len()),
+                    Some(e) => {
+                        let p = &e.read(cx).state;
+                        (p.staged.iter().position(|f| f.path == path), p.staged.len())
+                    }
                     None => return,
                 };
                 let cur = match cur {
@@ -3311,9 +3249,10 @@ impl KagiApp {
                 }
                 let next = (cur as i64 + delta).clamp(0, len as i64 - 1) as usize;
                 if next != cur {
-                    self.open_main_diff_wip(commit_panel::CommitPanelFileRef::Staged {
-                        index: next,
-                    });
+                    self.open_main_diff_wip(
+                        commit_panel::CommitPanelFileRef::Staged { index: next },
+                        cx,
+                    );
                 }
             }
         }
@@ -3914,29 +3853,36 @@ impl KagiApp {
     }
 
     /// T-UI-003: Open the diff for a Commit Panel file in the full-width main pane.
-    pub fn open_main_diff_wip(&mut self, file_ref: commit_panel::CommitPanelFileRef) {
+    pub fn open_main_diff_wip(
+        &mut self,
+        file_ref: commit_panel::CommitPanelFileRef,
+        cx: &mut Context<Self>,
+    ) {
         let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        let panel = match self.commit_panel.as_ref() {
-            Some(p) => p,
+        let entity = match self.commit_panel.as_ref() {
+            Some(e) => e.clone(),
             None => return,
         };
 
-        let (is_staged, path) = match &file_ref {
-            commit_panel::CommitPanelFileRef::Unstaged { index } => {
-                if let Some(f) = panel.unstaged.get(*index) {
-                    (false, f.path.clone())
-                } else {
-                    return;
+        let (is_staged, path) = {
+            let panel = &entity.read(cx).state;
+            match &file_ref {
+                commit_panel::CommitPanelFileRef::Unstaged { index } => {
+                    if let Some(f) = panel.unstaged.get(*index) {
+                        (false, f.path.clone())
+                    } else {
+                        return;
+                    }
                 }
-            }
-            commit_panel::CommitPanelFileRef::Staged { index } => {
-                if let Some(f) = panel.staged.get(*index) {
-                    (true, f.path.clone())
-                } else {
-                    return;
+                commit_panel::CommitPanelFileRef::Staged { index } => {
+                    if let Some(f) = panel.staged.get(*index) {
+                        (true, f.path.clone())
+                    } else {
+                        return;
+                    }
                 }
             }
         };
@@ -4839,7 +4785,7 @@ impl KagiApp {
         } else if self
             .commit_panel
             .as_ref()
-            .is_some_and(|p| p.plan_modal.is_some())
+            .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
         {
             self.start_commit(cx);
         } else if self.update_modal_open || self.menu_overlay.is_some() {
@@ -4905,9 +4851,9 @@ impl KagiApp {
         } else if self
             .commit_panel
             .as_ref()
-            .is_some_and(|p| p.plan_modal.is_some())
+            .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
         {
-            self.cancel_commit_plan_modal();
+            self.cancel_commit_plan_modal(cx);
         } else if self.update_modal_open {
             self.update_modal_open = false;
         } else if self.menu_overlay.is_some() {

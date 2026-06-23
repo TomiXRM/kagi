@@ -218,9 +218,17 @@ impl Backend {
     /// / hot-spot view (ADR-0119). Read-only; backed by the `git` CLI
     /// (`hotspot::repo_ecosystem`), not `self.repo`. `limit` caps the number of
     /// commits scanned (`0` = unlimited).
-    pub fn ecosystem(&self, limit: usize) -> Result<RawEcosystem, GitError> {
+    pub fn ecosystem(
+        &self,
+        limit: usize,
+        extra_ignore: Vec<String>,
+    ) -> Result<RawEcosystem, GitError> {
         let repo_dir = self.workdir().unwrap_or_else(|| self.path.to_path_buf());
-        hotspot::repo_ecosystem(&hotspot::EcosystemRequest { repo_dir, limit })
+        hotspot::repo_ecosystem(&hotspot::EcosystemRequest {
+            repo_dir,
+            limit,
+            extra_ignore,
+        })
     }
 
     pub fn commit_preview(&self) -> Result<CommitPreview, GitError> {

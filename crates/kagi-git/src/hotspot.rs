@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 use super::cli::run_git;
 use super::GitError;
-use kagi_domain::hotspot::{is_excluded, CommitChanges, FileChange, RawEcosystem};
+use kagi_domain::hotspot::{ext_lower, is_excluded, CommitChanges, FileChange, RawEcosystem};
 
 /// Record separator emitted by `--format=%x1e…` before each commit.
 const RS: char = '\u{1e}';
@@ -32,12 +32,15 @@ const RS: char = '\u{1e}';
 const US: char = '\u{1f}';
 
 /// Parameters for a whole-repo ecosystem scan.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct EcosystemRequest {
     /// Working-tree root of the repository.
     pub repo_dir: PathBuf,
     /// Maximum number of commits to mine (`git log -n`); `0` means unlimited.
     pub limit: usize,
+    /// Extra file extensions to exclude (lowercased, no dot), on top of the
+    /// built-in defaults — sourced from the user's `analyze_ignore` setting.
+    pub extra_ignore: Vec<String>,
 }
 
 /// Mine the repository into a [`RawEcosystem`]: every commit's changed files
@@ -69,13 +72,18 @@ pub fn repo_ecosystem(req: &EcosystemRequest) -> Result<RawEcosystem, GitError> 
         )));
     }
 
-    let commits = parse_numstat_log(&out.stdout);
+    let commits = parse_numstat_log(&out.stdout, &req.extra_ignore);
     let loc = scan_loc(&req.repo_dir, &commits);
     Ok(RawEcosystem { commits, loc })
 }
 
+/// True when `path`'s extension is in the user's extra-ignore list.
+fn user_ignored(path: &str, extra: &[String]) -> bool {
+    !extra.is_empty() && ext_lower(path).is_some_and(|e| extra.iter().any(|x| *x == e))
+}
+
 /// Parse `git log --numstat --format=%x1e%at` output into per-commit changes.
-fn parse_numstat_log(stdout: &str) -> Vec<CommitChanges> {
+fn parse_numstat_log(stdout: &str, extra_ignore: &[String]) -> Vec<CommitChanges> {
     let mut commits = Vec::new();
     for record in stdout.split(RS) {
         if record.trim().is_empty() {
@@ -98,9 +106,10 @@ fn parse_numstat_log(stdout: &str) -> Vec<CommitChanges> {
             }
             if let Some(change) = parse_numstat_line(line) {
                 // Drop binary / non-source artifacts (PDF, images, CAD, KiCad)
-                // at the mining boundary so the cache stays small and we never
-                // read their bytes for the LOC scan (ADR-0119).
-                if is_excluded(&change.path) {
+                // and any user-configured extensions at the mining boundary, so
+                // the cache stays small and we never read their bytes for the
+                // LOC scan (ADR-0119).
+                if is_excluded(&change.path) || user_ignored(&change.path, extra_ignore) {
                     continue;
                 }
                 files.push(change);
@@ -175,7 +184,7 @@ mod tests {
         let stdout = format!(
             "{RS}1700000100\n\n12\t4\tsrc/a.rs\n1\t0\tsrc/b.rs\n{RS}1700000000\n\n3\t0\tsrc/a.rs\n"
         );
-        let commits = parse_numstat_log(&stdout);
+        let commits = parse_numstat_log(&stdout, &[]);
         assert_eq!(commits.len(), 2);
         assert_eq!(commits[0].time, 1_700_000_100);
         assert_eq!(commits[0].files.len(), 2);
@@ -188,7 +197,7 @@ mod tests {
     #[test]
     fn parses_author_email_from_header() {
         let stdout = format!("{RS}1700000100{US}alice@x\n\n3\t0\tsrc/a.rs\n");
-        let commits = parse_numstat_log(&stdout);
+        let commits = parse_numstat_log(&stdout, &[]);
         assert_eq!(commits[0].time, 1_700_000_100);
         assert_eq!(commits[0].author, "alice@x");
         assert_eq!(commits[0].files[0].path, "src/a.rs");
@@ -198,7 +207,7 @@ mod tests {
     fn binary_rows_count_as_zero() {
         // A non-excluded binary blob (`-`/`-` numstat) → counted, with 0 lines.
         let stdout = format!("{RS}1700000000\n\n-\t-\tdata/blob.bin\n");
-        let commits = parse_numstat_log(&stdout);
+        let commits = parse_numstat_log(&stdout, &[]);
         assert_eq!(commits[0].files[0].insertions, 0);
         assert_eq!(commits[0].files[0].deletions, 0);
         assert_eq!(commits[0].files[0].path, "data/blob.bin");
@@ -207,7 +216,7 @@ mod tests {
     #[test]
     fn merge_commit_with_no_numstat_yields_empty_files() {
         let stdout = format!("{RS}1700000000\n");
-        let commits = parse_numstat_log(&stdout);
+        let commits = parse_numstat_log(&stdout, &[]);
         assert_eq!(commits.len(), 1);
         assert!(commits[0].files.is_empty());
     }
@@ -215,7 +224,7 @@ mod tests {
     #[test]
     fn ignores_garbage_records() {
         let stdout = format!("{RS}not-a-number\n5\t5\tx\n{RS}1700000000\n\n1\t1\ty\n");
-        let commits = parse_numstat_log(&stdout);
+        let commits = parse_numstat_log(&stdout, &[]);
         assert_eq!(commits.len(), 1);
         assert_eq!(commits[0].files[0].path, "y");
     }
@@ -225,9 +234,23 @@ mod tests {
         let stdout = format!(
             "{RS}1700000000\n\n10\t2\tsrc/a.rs\n0\t0\tdoc/manual.pdf\n3\t1\tboard.kicad_pcb\n5\t5\tsrc/b.rs\n"
         );
-        let commits = parse_numstat_log(&stdout);
+        let commits = parse_numstat_log(&stdout, &[]);
         let paths: Vec<&str> = commits[0].files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(paths, vec!["src/a.rs", "src/b.rs"]);
+    }
+
+    #[test]
+    fn user_extra_ignore_drops_configured_extensions() {
+        let stdout =
+            format!("{RS}1700000000\n\n10\t2\tsrc/a.rs\n5\t1\tnotes.txt\n3\t0\tgen/out.csv\n");
+        // User ignores `txt` and `csv` on top of the defaults.
+        let extra = vec!["txt".to_string(), "csv".to_string()];
+        let commits = parse_numstat_log(&stdout, &extra);
+        let paths: Vec<&str> = commits[0].files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, vec!["src/a.rs"]);
+        // Empty list keeps everything (only defaults apply).
+        let all = parse_numstat_log(&stdout, &[]);
+        assert_eq!(all[0].files.len(), 3);
     }
 
     #[test]

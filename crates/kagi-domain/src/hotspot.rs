@@ -47,16 +47,24 @@ const EXCLUDED_EXTENSIONS: &[&str] = &[
     "zip",
 ];
 
+/// Lowercased file extension (text after the last `.`), or `None` when the path
+/// has no extension.
+pub fn ext_lower(path: &str) -> Option<String> {
+    match path.rsplit_once('.') {
+        Some((_, e)) if !e.is_empty() => Some(e.to_ascii_lowercase()),
+        _ => None,
+    }
+}
+
 /// True when `path` is an excluded binary / non-source artifact, judged by its
-/// extension (case-insensitive). KiCad files are matched by the `kicad`
-/// extension prefix (`kicad_pcb`, `kicad_sch`, `kicad_pro`, `kicad_mod`, …).
+/// extension (case-insensitive) against the built-in defaults. KiCad files are
+/// matched by the `kicad` extension prefix (`kicad_pcb`, `kicad_sch`, …). The
+/// `kagi-git` mining layer additionally honours a user-configured list.
 pub fn is_excluded(path: &str) -> bool {
-    // Extension = text after the last '.'; "no dot" → no extension.
-    let ext = match path.rsplit_once('.') {
-        Some((_, e)) if !e.is_empty() => e.to_ascii_lowercase(),
-        _ => return false,
-    };
-    ext.starts_with("kicad") || EXCLUDED_EXTENSIONS.contains(&ext.as_str())
+    match ext_lower(path) {
+        Some(ext) => ext.starts_with("kicad") || EXCLUDED_EXTENSIONS.contains(&ext.as_str()),
+        None => false,
+    }
 }
 
 /// One commit's changed-file set, tagged with its author time (epoch secs) and

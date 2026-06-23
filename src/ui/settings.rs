@@ -122,6 +122,20 @@ impl Settings {
     pub fn auto_fetch(&self) -> Option<bool> {
         self.get_str("auto_fetch").map(|s| s.trim() != "false")
     }
+
+    /// Extra file extensions the Analyze view ignores (`"analyze_ignore"`), on
+    /// top of the built-in defaults. Stored as a comma/whitespace-separated
+    /// string (e.g. `"csv, log txt"`); returned lowercased without leading dots.
+    pub fn analyze_ignore(&self) -> Vec<String> {
+        self.get_str("analyze_ignore")
+            .map(|s| {
+                s.split(|c: char| c == ',' || c.is_whitespace())
+                    .map(|e| e.trim().trim_start_matches('.').to_ascii_lowercase())
+                    .filter(|e| !e.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
 /// Resolve the path to `settings.json` (`$KAGI_LOG_DIR/settings.json` first,

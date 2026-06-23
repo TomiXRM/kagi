@@ -88,9 +88,20 @@ Select a commit to open the inspector: author, co-authors, and full message; a c
 
 Open **File History** on any file to walk every commit that touched it: the per-file commit list on the left, the selected entry's diff for that file on the right. Step through entries with the arrow keys, **follow renames** back through the file's past, copy its path or open it, and return to the full graph when you're done.
 
+## See where change concentrates
+
+**Analyze** (a read-only toolbar view, next to Settings) mines your whole Git history into a map of the repo's "code ecosystem" — it adds no write operation and no new Git command, and it's framed as *attention*, never a verdict. Three modes share one **window selector** (Day / Week / Month / Year / All):
+
+- **Hotspots** — files risk-ranked by *churn × size* (how often a file changes, weighted by how large it is): the small fraction that concentrates change, where bugs tend to cluster. View it as a ranked list or a **treemap heatmap** (tile size = LOC, colour = risk).
+- **Coupling** — files that change together (logical/temporal coupling), as a list of partner pairs or a zoomable, pannable **force-directed graph**; export it to Mermaid or open it in mermaid.live.
+- **Ownership** — each file's primary author, their share, and its author count, flagging single-owner / bus-factor-of-one files.
+
+A configurable ignore list (gitignore syntax, edited in Settings) keeps binaries and generated artifacts out of the picture, and **Copy diagnostic** serializes the current view (Markdown / JSON, + Mermaid for Coupling) to the clipboard — LLM-ready context to paste straight into a chat. The history scan is cached, so reopening the view is instant.
+
 ## And the rest of the daily driver
 
 - **Commit suite** — staging with `+N −M` diffstat bars, a pre-commit checklist (conflict markers / secrets / large binaries), per-branch draft autosave, `type(scope): summary` message templates, and amend with a SHA-change preview.
+- **Activity view** — commit and merge charts plus contributor rankings over Day / Week / Month / Year / All windows, with per-bucket tooltips and instant hover read-outs.
 - **Smart commit messages** — rule-based generation always available; a **local Ollama LLM is strictly opt-in** (staged diff only, localhost only, explicit consent).
 - **Async everything** — checkout, commit, stash, pull/push, merge… run off the UI thread with a spinning busy snackbar; the window never freezes.
 - **Make yourself at home** — 11 color themes, English / Japanese UI (Git domain words stay English in both), an integrated terminal, repo tabs, a branch-prefix tree sidebar, an operation log, and uniform UI zoom.

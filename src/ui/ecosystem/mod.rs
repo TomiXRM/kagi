@@ -145,12 +145,23 @@ impl EcosystemData {
     }
 }
 
+/// A completed mine plus the HEAD commit it reflects. The mine is `git log`
+/// (HEAD history) + a working-tree LOC scan, so its staleness is keyed on the
+/// HEAD OID: a reload whose HEAD is unchanged (e.g. an auto-fetch that only
+/// moved remote-tracking refs) leaves the mine valid and must NOT discard it.
+#[derive(Clone)]
+pub struct CachedMine {
+    pub raw: RawEcosystem,
+    /// HEAD OID the mine was started at (`None` for an unborn HEAD).
+    pub head: Option<String>,
+}
+
 /// App-level cache of completed mines, keyed by repository path, so reopening
 /// the view — or switching tabs to another repo and **back** — reuses the
 /// ~minute-long `git log` scan instead of re-running it. Entries persist across
-/// tab switches; an entry is invalidated only when its repo reloads (new
-/// commits make that mine stale). (ADR-0119)
-pub type EcosystemCache = HashMap<PathBuf, RawEcosystem>;
+/// tab switches; an entry is invalidated only when its repo's HEAD actually
+/// moves (see [`CachedMine`]). (ADR-0119)
+pub type EcosystemCache = HashMap<PathBuf, CachedMine>;
 
 /// The Code Ecosystem view entity (ADR-0119). A thin reflector of cached /
 /// loading state; the mine itself is app-owned (`start_ecosystem_mine`).
@@ -412,10 +423,20 @@ impl super::KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
+        let head = self.active_view.head_oid.clone();
         let weak = cx.weak_entity();
-        // Reuse a cached mine for this repo if present (instant reopen, even
-        // after switching to another repo tab and back).
-        let cached = self.ecosystem_cache.get(&repo_path).cloned();
+        // Reuse a cached mine only if it reflects the current HEAD (instant
+        // reopen, even after switching to another repo tab and back). A cache
+        // mined at a different HEAD is stale → drop it so the mine below isn't
+        // skipped by `start_ecosystem_mine`'s cache guard.
+        let cached = match self.ecosystem_cache.get(&repo_path) {
+            Some(c) if c.head == head => Some(c.raw.clone()),
+            Some(_) => {
+                self.ecosystem_cache.remove(&repo_path);
+                None
+            }
+            None => None,
+        };
         let has_cache = cached.is_some();
         let entity = cx.new(|_| {
             let mut v = EcosystemView::new(weak, repo_path.clone());
@@ -426,10 +447,10 @@ impl super::KagiApp {
         });
         self.ecosystem = Some(entity);
         klog!("ecosystem: opened");
-        // No cache → start (or join) the app-owned mine, which survives the
-        // view being closed and notifies on completion.
+        // No (fresh) cache → start (or join) the app-owned mine, which survives
+        // the view being closed and notifies on completion.
         if !has_cache {
-            self.start_ecosystem_mine(repo_path, cx);
+            self.start_ecosystem_mine(repo_path, head, cx);
         }
         cx.notify();
     }
@@ -438,7 +459,12 @@ impl super::KagiApp {
     /// so it keeps running if the user closes the Analyze view, caches the
     /// result, logs to the Operation Log, and shows a completion snackbar
     /// (ADR-0119). Single-flighted per repo; no-op if already mining or cached.
-    pub fn start_ecosystem_mine(&mut self, repo_path: PathBuf, cx: &mut Context<Self>) {
+    pub fn start_ecosystem_mine(
+        &mut self,
+        repo_path: PathBuf,
+        head: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         if self.ecosystem_inflight.as_ref() == Some(&repo_path)
             || self.ecosystem_cache.contains_key(&repo_path)
         {
@@ -484,7 +510,13 @@ impl super::KagiApp {
                         klog!("ecosystem: loaded {} commits", raw.commits.len());
                         let commits = raw.commits.len();
                         let files = raw.loc.len();
-                        app.ecosystem_cache.insert(repo_path.clone(), raw.clone());
+                        app.ecosystem_cache.insert(
+                            repo_path.clone(),
+                            CachedMine {
+                                raw: raw.clone(),
+                                head: head.clone(),
+                            },
+                        );
                         app.record_ecosystem_done(&repo_path, commits, files, cx);
                         // Update the view only if it is still showing this repo.
                         if let Some(view) = app.ecosystem.clone() {

@@ -32,6 +32,11 @@ pub fn fetch_remote(repo: &Repository, repo_path: &Path) -> Result<FetchOutcome,
         None => vec!["fetch", "--all"],
     };
 
+    // Snapshot remote-tracking refs before the fetch so we can tell whether it
+    // actually moved anything — a no-op fetch must NOT trigger a graph reload
+    // (which closes/re-mines HEAD-versioned overlays and re-walks the graph).
+    let before = remote_ref_oids(repo);
+
     let out =
         run_git(repo_path, &args).map_err(|e| GitError::Other(format!("fetch failed: {}", e)))?;
 
@@ -43,9 +48,28 @@ pub fn fetch_remote(repo: &Repository, repo_path: &Path) -> Result<FetchOutcome,
         )));
     }
 
+    let after = remote_ref_oids(repo);
+
     Ok(FetchOutcome {
         remote: remote.unwrap_or_else(|| "--all".to_string()),
+        changed: before != after,
     })
+}
+
+/// Snapshot every remote-tracking ref (`refs/remotes/**`) as `(name, oid hex)`,
+/// sorted, so two snapshots can be compared for equality. Symbolic refs (e.g.
+/// `origin/HEAD`) have no direct target and are skipped.
+fn remote_ref_oids(repo: &Repository) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    if let Ok(refs) = repo.references_glob("refs/remotes/**") {
+        for r in refs.flatten() {
+            if let (Ok(name), Some(oid)) = (r.name(), r.target()) {
+                out.push((name.to_string(), oid.to_string()));
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 /// Best-effort resolution of the remote to fetch: the current branch's

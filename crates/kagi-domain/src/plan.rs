@@ -153,6 +153,10 @@ pub enum PullOutcome {
 pub struct FetchOutcome {
     /// The remote name that was fetched, or "--all" when every remote was fetched.
     pub remote: String,
+    /// Whether the fetch actually moved any remote-tracking ref (a ref was
+    /// added, removed, or repointed). `false` means the fetch was a no-op, so
+    /// callers can skip the expensive graph reload it would otherwise trigger.
+    pub changed: bool,
 }
 
 /// The outcome of a successful push.

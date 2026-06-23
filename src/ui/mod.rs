@@ -1165,6 +1165,11 @@ pub struct KagiApp {
     /// single-file history view occupies the center+right area; `None` shows the
     /// normal commit graph / diff body. The entity owns its loads + row menu.
     pub file_history: Option<Entity<file_history::FileHistoryView>>,
+    /// HEAD OID the open File History view was last loaded at. On a reload the
+    /// view is reloaded in place only when this differs from the new HEAD —
+    /// an auto-fetch (remote refs only) leaves it unchanged, so the view is
+    /// neither closed nor reloaded.
+    pub file_history_head: Option<String>,
     /// ADR-0119: Code Ecosystem / hot-spot view. `Some` while the full-screen
     /// read-only analysis view occupies the center+right area; `None` shows the
     /// normal body. Its own `Entity<EcosystemView>` owns the mining + ranking.
@@ -1253,6 +1258,11 @@ pub struct TabViewState {
     pub branch_solo: Option<BranchSolo>,
     /// Commit-activity aggregation for the bottom-panel "Activity" chart.
     pub activity: kagi_domain::activity::ActivityData,
+    /// HEAD commit OID (hex) for this snapshot, or `None` for an unborn HEAD.
+    /// Used to decide whether HEAD-versioned overlays (Analyze, File History)
+    /// are stale on a reload — an auto-fetch that only moves remote-tracking
+    /// refs leaves this unchanged, so those overlays are kept as-is.
+    pub head_oid: Option<String>,
 }
 
 /// W6-TABSPEED: build the pure [`TabViewState`] from a snapshot.
@@ -1398,6 +1408,10 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
         worktrees: snap.worktrees.clone(),
         branch_solo: None,
         activity: kagi_domain::activity::aggregate(&snap.commits, now_unix_secs()),
+        head_oid: match &snap.head {
+            Head::Attached { target, .. } | Head::Detached { target } => Some(target.clone()),
+            Head::Unborn { .. } => None,
+        },
     }
 }
 
@@ -1547,6 +1561,7 @@ impl KagiApp {
             update_status: None,
             last_working_status: None,
             file_history: None,
+            file_history_head: None,
             ecosystem: None,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
@@ -1651,6 +1666,7 @@ impl KagiApp {
             update_status: None,
             last_working_status: None,
             file_history: None,
+            file_history_head: None,
             ecosystem: None,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
@@ -1758,23 +1774,12 @@ impl KagiApp {
         self.wip_diffstat = Some(wip_diffstat);
         self.main_diff = None;
         self.compare_view = None;
-        // ADR-0089 / ADR-0117: drop any open File History view — its `Entity`
-        // and any in-flight load tear down. `reload()` has no `cx` to re-spawn;
-        // the `reload_external` path re-opens fresh when needed.
-        self.file_history = None;
-        // ADR-0119: reload() has no `cx` to re-spawn the async mine; drop the
-        // Ecosystem view like File History (reopened fresh on demand). New
-        // commits make THIS repo's cached mine stale → drop just that entry
-        // (other repos' caches stay warm for tab-switch-and-back).
-        self.ecosystem = None;
-        if let Some(p) = self.repo_path.clone() {
-            self.ecosystem_cache.remove(&p);
-            // Supersede an in-flight mine for this repo: its result would be
-            // stale after the new commits, so let the completion drop it.
-            if self.ecosystem_inflight.as_deref() == Some(p.as_path()) {
-                self.ecosystem_inflight = None;
-            }
-        }
+        // ADR-0119 follow-up: the full-screen Analyze + File History overlays are
+        // HEAD-versioned and refreshed *in place* after the snapshot is applied
+        // (see `refresh_overlays_after_reload`), only when HEAD actually moved.
+        // They used to be dropped on EVERY reload, so a no-op auto-fetch (remote
+        // refs only, HEAD unchanged) yanked the user out of a full-screen view
+        // and discarded a ~minute-long Analyze mine.
         self.clear_plan_modal();
         self.clear_pull_modal();
         self.clear_undo_modal();
@@ -1830,6 +1835,9 @@ impl KagiApp {
 
         // Fold the snapshot-derived data in (assignment only).
         self.apply_tab_view(view);
+
+        // ADR-0119 follow-up: refresh (never close) the HEAD-versioned overlays.
+        self.refresh_overlays_after_reload(self.active_view.head_oid.clone(), cx);
 
         // ADR-0084: seed the undo/redo history from the branch reflog when it is
         // empty (freshly-opened repo / post-branch-switch) so Cmd+Z works
@@ -1951,6 +1959,55 @@ impl KagiApp {
         }
     }
 
+    /// HEAD-versioned refresh of the long-lived full-screen overlays (Analyze +
+    /// File History) after a repo reload (ADR-0119 follow-up). These views are
+    /// NOT closed on every reload — that yanks the user out of a full-screen
+    /// view and throws away a ~minute-long Analyze mine. Instead:
+    ///
+    /// - **HEAD unchanged** (an auto-fetch that only moved remote-tracking refs,
+    ///   a working-tree edit, a no-op manual refresh): the mined / loaded data is
+    ///   still valid → leave both views exactly as they are.
+    /// - **HEAD moved** (new commit / checkout / pull / reset): the data is stale
+    ///   → invalidate this repo's Analyze cache and re-mine *in place* if the
+    ///   view is open (the app-owned mine seeds the open view on completion), and
+    ///   reload the File History view *in place*. Neither view closes.
+    fn refresh_overlays_after_reload(&mut self, new_head: Option<String>, cx: &mut Context<Self>) {
+        let Some(repo) = self.repo_path.clone() else {
+            return;
+        };
+
+        // ── Analyze (Code Ecosystem) ──
+        // Staleness is keyed on the HEAD the cached mine reflects. A mine still
+        // in flight (no cache entry yet) is left to finish; the next reload
+        // re-checks it against the then-current HEAD.
+        let eco_stale = self
+            .ecosystem_cache
+            .get(&repo)
+            .is_some_and(|c| c.head != new_head);
+        if eco_stale {
+            self.ecosystem_cache.remove(&repo);
+            // Clear the in-flight guard so a fresh mine can start below.
+            if self.ecosystem_inflight.as_deref() == Some(repo.as_path()) {
+                self.ecosystem_inflight = None;
+            }
+            // Re-mine only when the view is actually open; otherwise just drop
+            // the stale entry (the next open will mine on demand).
+            if self.ecosystem.is_some() {
+                self.start_ecosystem_mine(repo.clone(), new_head.clone(), cx);
+            }
+        }
+
+        // ── File History ──
+        // Per-file history also reflects HEAD; reload it in place only when HEAD
+        // moved, and never drop the view on an unrelated reload.
+        if let Some(fh) = self.file_history.clone() {
+            if self.file_history_head != new_head {
+                fh.update(cx, |v, cx| v.reload(false, cx));
+                self.file_history_head = new_head;
+            }
+        }
+    }
+
     /// Reload triggered by an external git change (T029: FS watcher).
     ///
     /// Behaves identically to `reload()` but additionally:
@@ -2026,7 +2083,11 @@ impl KagiApp {
                 app.wip_diffstat = Some(wip);
                 app.main_diff = None;
                 app.compare_view = None;
-                app.file_history = None;
+                // ADR-0119 follow-up: refresh (never close) the HEAD-versioned
+                // overlays in place — only when HEAD actually moved. An external
+                // change that doesn't move HEAD (e.g. a sibling-worktree fetch)
+                // leaves Analyze + File History untouched.
+                app.refresh_overlays_after_reload(app.active_view.head_oid.clone(), cx);
 
                 // Attempt to restore selection by CommitId.
                 app.selected = None;
@@ -3359,6 +3420,9 @@ impl KagiApp {
         // Kick off the initial load on the (now fully-constructed) entity.
         view.update(cx, |v, cx| v.start_load(origin, true, cx));
         self.file_history = Some(view);
+        // Record the HEAD this history reflects so a later reload only reloads it
+        // in place when HEAD actually moves (see `refresh_overlays_after_reload`).
+        self.file_history_head = self.active_view.head_oid.clone();
     }
 
     /// Move the file-history entry selection up/down by `delta` (arrow keys),

@@ -44,8 +44,13 @@ const EXCLUDED_EXTENSIONS: &[&str] = &[
     "png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "icns", "tif", "tiff", "svg", "heic", "heif",
     "avif", "psd", "ai", "eps", // CAD / 3D models
     "step", "stp", "stl", "iges", "igs", "3mf", // archives / binary bundles
-    "zip",
+    "zip", // fonts
+    "ttf", "otf", "ttc", "woff", "woff2", "eot",
 ];
+
+/// File **base names** excluded regardless of extension — generated caches and
+/// the like that have no useful extension (e.g. KiCad's `fp-info-cache`).
+const EXCLUDED_FILENAMES: &[&str] = &["fp-info-cache"];
 
 /// Lowercased file extension (text after the last `.`), or `None` when the path
 /// has no extension.
@@ -61,6 +66,10 @@ pub fn ext_lower(path: &str) -> Option<String> {
 /// matched by the `kicad` extension prefix (`kicad_pcb`, `kicad_sch`, …). The
 /// `kagi-git` mining layer additionally honours a user-configured list.
 pub fn is_excluded(path: &str) -> bool {
+    let base = path.rsplit('/').next().unwrap_or(path);
+    if EXCLUDED_FILENAMES.contains(&base) {
+        return true;
+    }
     match ext_lower(path) {
         Some(ext) => ext.starts_with("kicad") || EXCLUDED_EXTENSIONS.contains(&ext.as_str()),
         None => false,
@@ -602,6 +611,9 @@ mod tests {
             "mesh.stl",
             "icon.icns",
             "bundle.zip",
+            "assets/Inter.ttf",
+            "fonts/x.woff2",
+            "hw/proj/fp-info-cache",
         ] {
             assert!(is_excluded(p), "{p} should be excluded");
         }

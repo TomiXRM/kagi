@@ -453,6 +453,12 @@ pub enum Msg {
     EcoCouplesWith,
     /// Coupling sub-view toggle: force-directed graph.
     EcoGraph,
+    /// Coupling sub-view toggle: Mermaid flowchart source.
+    EcoMermaid,
+    /// Mermaid sub-view: "open in mermaid.live" button.
+    EcoOpenMermaidLive,
+    /// Mermaid sub-view: hint under the action bar.
+    EcoMermaidHint,
     /// Graph viewport reset button (zoom/pan back to fit).
     EcoResetView,
     /// Help overlay title.
@@ -946,6 +952,15 @@ impl Msg {
             (Ja, EcoCouplesWith) => "と結合:",
             (En, EcoGraph) => "Graph",
             (Ja, EcoGraph) => "グラフ",
+            (En, EcoMermaid) | (Ja, EcoMermaid) => "Mermaid",
+            (En, EcoOpenMermaidLive) => "Open in mermaid.live ↗",
+            (Ja, EcoOpenMermaidLive) => "mermaid.live で開く ↗",
+            (En, EcoMermaidHint) => {
+                "Native view is text-only; open mermaid.live to render the diagram (the whole graph travels in the URL — nothing is uploaded)."
+            }
+            (Ja, EcoMermaidHint) => {
+                "アプリ内ではテキスト表示です。mermaid.live を開くと図として描画されます（グラフ全体は URL に載るだけで、アップロードはされません）。"
+            }
             (En, EcoResetView) => "Reset",
             (Ja, EcoResetView) => "リセット",
             (En, EcoHelpTitle) => "How to read Analyze",
@@ -973,7 +988,7 @@ pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
             ),
             (
                 "Coupling",
-                "Pairs of files that tend to change in the same commit — hidden dependencies. 'N×' = times they changed together; '%' = how strongly they overlap. Click a row to expand one file's full set of partners (1:many). 'Graph' draws it as a network: drag to pan, scroll to zoom toward the pointer, 'Reset' to refit.",
+                "Pairs of files that tend to change in the same commit — hidden dependencies. 'N×' = times they changed together; '%' = how strongly they overlap. Click a row to expand one file's full set of partners (1:many). 'Graph' draws it as a network: drag to pan, scroll to zoom toward the pointer, 'Reset' to refit. 'Mermaid' shows the same graph as Mermaid source with one-click open in mermaid.live.",
             ),
             (
                 "Ownership",
@@ -995,7 +1010,7 @@ pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
             ),
             (
                 "Coupling（結合）",
-                "同じ commit で一緒に変わりがちなファイルの組＝隠れた依存。『N×』= 一緒に変わった回数、『%』= 結びつきの強さ。行をクリックすると、そのファイルの全パートナー（1:多）が展開されます。『グラフ』はネットワーク表示：ドラッグで移動、スクロールでカーソル位置を中心に拡大、『リセット』で初期表示。",
+                "同じ commit で一緒に変わりがちなファイルの組＝隠れた依存。『N×』= 一緒に変わった回数、『%』= 結びつきの強さ。行をクリックすると、そのファイルの全パートナー（1:多）が展開されます。『グラフ』はネットワーク表示：ドラッグで移動、スクロールでカーソル位置を中心に拡大、『リセット』で初期表示。『Mermaid』は同じグラフを Mermaid ソースで表示し、ワンクリックで mermaid.live を開けます。",
             ),
             (
                 "Ownership（所有）",

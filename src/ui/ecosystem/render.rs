@@ -92,21 +92,24 @@ fn render_help(cx: &mut Context<EcosystemView>) -> AnyElement {
 }
 
 /// Top toolbar: title, mode toggle, granularity toggle, Copy diagnostic, close.
+///
+/// The controls are grouped into a left cluster (title + mode + sub-view) and a
+/// right cluster (window + format + copy/help/close), separated by a flexible
+/// spacer. The row is allowed to **wrap**: on a narrow / zoomed-in window the
+/// right cluster drops to a second line as a unit instead of being clipped off
+/// the right edge (which hid the Copy / ✕ buttons before).
 fn render_header(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElement {
     let copy_enabled = view.data.ecosystem.is_some();
     let copy_click = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.copy_diagnostic(cx));
     let help_click = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.toggle_help(cx));
     let close_click = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.request_close(cx));
 
-    div()
+    // Left cluster: title + mode toggle + the mode-specific sub-view toggle.
+    let left = div()
         .flex()
+        .flex_wrap()
         .items_center()
         .gap_3()
-        .px_3()
-        .py_2()
-        .bg(rgb(theme().panel))
-        .border_b_1()
-        .border_color(rgb(theme().surface))
         .child(
             div()
                 .text_size(theme::scaled_px(14.0))
@@ -119,15 +122,35 @@ fn render_header(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyEl
         })
         .when(view.data.mode == EcosystemMode::Coupling, |d| {
             d.child(render_coupling_toggle(view, cx))
-        })
-        .child(div().flex_1())
+        });
+
+    // Right cluster: window + export format + actions. Kept on one line so it
+    // wraps as a whole, never splitting "診断をコピー" from its format chips.
+    let right = div()
+        .flex()
+        .items_center()
+        .gap_2()
         .child(render_granularity_toggle(view, cx))
         .child(render_format_toggle(view, cx))
         .child(
             text_button("eco-copy", Msg::EcoCopyDiagnostic.t(), copy_enabled).on_click(copy_click),
         )
         .child(text_button("eco-help", "?", true).on_click(help_click))
-        .child(text_button("eco-close", "✕", true).on_click(close_click))
+        .child(text_button("eco-close", "✕", true).on_click(close_click));
+
+    div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap_3()
+        .px_3()
+        .py_2()
+        .bg(rgb(theme().panel))
+        .border_b_1()
+        .border_color(rgb(theme().surface))
+        .child(left)
+        .child(div().flex_1().min_w(px(16.0)))
+        .child(right)
         .into_any_element()
 }
 
@@ -164,19 +187,24 @@ fn render_view_toggle(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> 
         .into_any_element()
 }
 
-/// List ⇄ Graph sub-view switch, shown only in Coupling mode.
+/// List / Graph / Mermaid sub-view switch, shown only in Coupling mode.
 fn render_coupling_toggle(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElement {
-    let graph = view.data.coupling_graph_on;
-    let list_click = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.set_coupling_graph(false, cx));
-    let graph_click = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.set_coupling_graph(true, cx));
-    div()
-        .flex()
-        .items_center()
-        .gap_1()
-        .child(vsep())
-        .child(chip(Msg::EcoList.t(), !graph, "eco-coup-list".into()).on_click(list_click))
-        .child(chip(Msg::EcoGraph.t(), graph, "eco-coup-graph".into()).on_click(graph_click))
-        .into_any_element()
+    let cur = view.data.coupling_view;
+    let mut row = div().flex().items_center().gap_1().child(vsep());
+    for (label, v, id) in [
+        (Msg::EcoList.t(), CouplingView::List, "eco-coup-list"),
+        (Msg::EcoGraph.t(), CouplingView::Graph, "eco-coup-graph"),
+        (
+            Msg::EcoMermaid.t(),
+            CouplingView::Mermaid,
+            "eco-coup-mermaid",
+        ),
+    ] {
+        let click =
+            cx.listener(move |vw, _: &gpui::ClickEvent, _w, cx| vw.set_coupling_view(v, cx));
+        row = row.child(chip(label, cur == v, id.into()).on_click(click));
+    }
+    row.into_any_element()
 }
 
 /// "Copy diagnostic" output-format switch (MD / JSON, plus Mermaid in Coupling
@@ -245,10 +273,14 @@ fn render_body(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElem
             EcosystemMode::Coupling => {
                 if view.data.couplings.is_empty() {
                     centered(Msg::EcoEmpty.t())
-                } else if view.data.coupling_graph_on && view.data.coupling_graph.is_some() {
-                    super::graph::render_coupling_graph(view, cx)
                 } else {
-                    render_coupling_list(view, cx)
+                    match view.data.coupling_view {
+                        CouplingView::Graph if view.data.coupling_graph.is_some() => {
+                            super::graph::render_coupling_graph(view, cx)
+                        }
+                        CouplingView::Mermaid => render_coupling_mermaid_view(view, cx),
+                        _ => render_coupling_list(view, cx),
+                    }
                 }
             }
             EcosystemMode::Ownership => {
@@ -324,6 +356,68 @@ fn render_row(rank: usize, f: &FileMetric, max_risk: f64) -> AnyElement {
                         .bg(rgb(theme().color_warning)),
                 ),
         )
+        .into_any_element()
+}
+
+/// The Mermaid sub-view: the coupling flowchart **source**, with a one-click
+/// "Open in mermaid.live" that renders it in the browser. Kagi is GPUI-native
+/// (no embedded web renderer), so the diagram is shown as text here and handed
+/// off to mermaid.live for the rendered picture the user liked.
+fn render_coupling_mermaid_view(
+    view: &EcosystemView,
+    cx: &mut Context<EcosystemView>,
+) -> AnyElement {
+    let source = view.coupling_mermaid_source();
+    let open_click = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.open_in_mermaid_live(cx));
+
+    // Action bar: open-in-browser button + a short hint.
+    let bar = div()
+        .flex()
+        .items_center()
+        .gap_3()
+        .px_3()
+        .py_2()
+        .border_b_1()
+        .border_color(rgb(theme().surface))
+        .child(
+            text_button("eco-mermaid-open", Msg::EcoOpenMermaidLive.t(), true).on_click(open_click),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .text_size(theme::scaled_px(12.0))
+                .text_color(rgb(theme().text_sub))
+                .child(Msg::EcoMermaidHint.t()),
+        );
+
+    // Source panel: one div per line preserves the layout (GPUI doesn't honour
+    // embedded newlines in a single text node); monospaced, scrollable.
+    let mut code = div()
+        .id("eco-mermaid-src")
+        .flex()
+        .flex_col()
+        .size_full()
+        .overflow_scroll()
+        .px_3()
+        .py_2();
+    for line in source.lines() {
+        code = code.child(
+            div()
+                .font_family("monospace")
+                .text_size(theme::scaled_px(12.0))
+                .text_color(rgb(theme().text_main))
+                .whitespace_nowrap()
+                .child(line.to_string()),
+        );
+    }
+
+    div()
+        .flex()
+        .flex_col()
+        .size_full()
+        .child(bar)
+        .child(div().flex_1().min_h(px(0.0)).child(code))
         .into_any_element()
 }
 

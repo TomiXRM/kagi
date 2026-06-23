@@ -64,6 +64,15 @@ impl ExportFormat {
     }
 }
 
+/// Coupling sub-view: the pair list, the native force-directed graph, or the
+/// Mermaid source (with a one-click "open in mermaid.live").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CouplingView {
+    List,
+    Graph,
+    Mermaid,
+}
+
 /// How many change-coupling pairs the Coupling mode lists.
 const COUPLING_TOP_N: usize = 100;
 
@@ -90,8 +99,8 @@ pub struct EcosystemData {
     /// row's left file's full 1:many partner list.
     pub coupling_focus: Option<usize>,
     pub coupling_partners: Vec<CouplingEdge>,
-    /// Coupling sub-view: `false` = pair list, `true` = force-directed graph.
-    pub coupling_graph_on: bool,
+    /// Coupling sub-view: pair list / force-directed graph / Mermaid source.
+    pub coupling_view: CouplingView,
     /// Laid-out graph for the current window (built lazily when Graph is shown).
     pub coupling_graph: Option<CouplingGraph>,
     /// Graph viewport: zoom factor, pan offset (px), and the last drag point.
@@ -123,7 +132,7 @@ impl EcosystemData {
             couplings: Vec::new(),
             coupling_focus: None,
             coupling_partners: Vec::new(),
-            coupling_graph_on: false,
+            coupling_view: CouplingView::List,
             coupling_graph: None,
             graph_zoom: 1.0,
             graph_pan: (0.0, 0.0),
@@ -201,9 +210,7 @@ impl EcosystemView {
             self.data.ownership = ownership(raw, now, g, OWNERSHIP_TOP_N);
         }
         // Rebuild the graph only if it is currently being shown.
-        self.data.coupling_graph = self
-            .data
-            .coupling_graph_on
+        self.data.coupling_graph = (self.data.coupling_view == CouplingView::Graph)
             .then(|| build_graph(&self.data.couplings, GRAPH_MAX_EDGES));
         self.reset_graph_viewport();
     }
@@ -261,17 +268,38 @@ impl EcosystemView {
         cx.notify();
     }
 
-    /// Toggle the Coupling sub-view between the pair list and the graph; builds
-    /// the (force-directed) layout lazily the first time the graph is shown.
-    pub fn set_coupling_graph(&mut self, on: bool, cx: &mut Context<Self>) {
-        if self.data.coupling_graph_on != on {
-            self.data.coupling_graph_on = on;
-            if on && self.data.coupling_graph.is_none() {
+    /// Switch the Coupling sub-view (List / Graph / Mermaid); builds the
+    /// (force-directed) graph layout lazily the first time Graph is shown.
+    pub fn set_coupling_view(&mut self, v: CouplingView, cx: &mut Context<Self>) {
+        if self.data.coupling_view != v {
+            self.data.coupling_view = v;
+            if v == CouplingView::Graph && self.data.coupling_graph.is_none() {
                 self.data.coupling_graph = Some(build_graph(&self.data.couplings, GRAPH_MAX_EDGES));
                 self.reset_graph_viewport();
             }
             cx.notify();
         }
+    }
+
+    /// The current Coupling pairs as a Mermaid flowchart (shared by the Mermaid
+    /// sub-view, the export, and the "open in mermaid.live" link).
+    pub fn coupling_mermaid_source(&self) -> String {
+        let window = self
+            .data
+            .ecosystem
+            .as_ref()
+            .map(|e| e.granularity.window_label())
+            .unwrap_or("");
+        render_coupling_mermaid(&self.data.couplings, window)
+    }
+
+    /// Open the current coupling diagram in the mermaid.live editor (renders in
+    /// the browser). The whole diagram travels in the URL fragment as URL-safe
+    /// base64 of the editor's state JSON — mermaid.live decodes it client-side
+    /// (the fragment is never sent to a server), so this leaks nothing.
+    pub fn open_in_mermaid_live(&self, cx: &mut Context<Self>) {
+        let url = mermaid_live_url(&self.coupling_mermaid_source());
+        cx.open_url(&url);
     }
 
     /// Toggle the 1:many expansion of a Coupling row: show `focus_file`'s full
@@ -554,5 +582,94 @@ impl super::KagiApp {
     /// Close the Ecosystem view (the app-owned mine keeps running if in flight).
     pub fn close_ecosystem_view(&mut self) {
         self.ecosystem = None;
+    }
+}
+
+// ── mermaid.live link building ──────────────────────────────────────────
+
+/// Build a `https://mermaid.live/edit#base64:…` URL that pre-loads `code`.
+/// The editor state is JSON (`code` + a minimal `mermaid` config) encoded as
+/// URL-safe, unpadded base64 — the `base64:` (uncompressed) variant the live
+/// editor accepts, so no deflate dependency is needed.
+fn mermaid_live_url(code: &str) -> String {
+    let state = format!(
+        "{{\"code\":\"{}\",\"mermaid\":\"{{\\n  \\\"theme\\\": \\\"default\\\"\\n}}\",\"autoSync\":true,\"updateDiagram\":true}}",
+        json_escape(code)
+    );
+    format!(
+        "https://mermaid.live/edit#base64:{}",
+        base64_url_nopad(state.as_bytes())
+    )
+}
+
+/// Escape a string for embedding inside a JSON `"…"` literal.
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// URL-safe base64 (RFC 4648 §5) without padding — matches js-base64's
+/// `toBase64(state, true)` that the mermaid live editor decodes.
+fn base64_url_nopad(input: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(T[((n >> 18) & 63) as usize] as char);
+        out.push(T[((n >> 12) & 63) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(T[((n >> 6) & 63) as usize] as char);
+        }
+        if chunk.len() > 2 {
+            out.push(T[(n & 63) as usize] as char);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod mermaid_url_tests {
+    use super::*;
+
+    #[test]
+    fn base64_url_matches_known_vectors() {
+        assert_eq!(base64_url_nopad(b""), "");
+        assert_eq!(base64_url_nopad(b"f"), "Zg");
+        assert_eq!(base64_url_nopad(b"fo"), "Zm8");
+        assert_eq!(base64_url_nopad(b"foo"), "Zm9v");
+        assert_eq!(base64_url_nopad(b"foob"), "Zm9vYg");
+        // URL-safe alphabet: bytes that would yield '+' and '/' in std base64.
+        assert_eq!(base64_url_nopad(&[0xfb, 0xff]), "-_8");
+    }
+
+    #[test]
+    fn url_has_prefix_and_encodes_code() {
+        let url = mermaid_live_url("flowchart LR\n  a --> b\n");
+        assert!(url.starts_with("https://mermaid.live/edit#base64:"));
+        // Round-trippable shape: decoding isn't tested here, but the payload must
+        // be non-empty and contain only URL-safe base64 chars.
+        let payload = url.rsplit(':').next().unwrap();
+        assert!(!payload.is_empty());
+        assert!(payload
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+    }
+
+    #[test]
+    fn json_escape_handles_quotes_and_newlines() {
+        assert_eq!(json_escape("a\"b\nc"), "a\\\"b\\nc");
     }
 }

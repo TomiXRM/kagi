@@ -29,7 +29,9 @@ use kagi_domain::hotspot::{
     analyze, coupling_for, ownership, top_couplings, CouplingEdge, CouplingPair, Ecosystem,
     EcosystemMode, FileOwnership, RawEcosystem,
 };
-use kagi_domain::hotspot_report::{render as render_report, ReportFormat};
+use kagi_domain::hotspot_report::{
+    render as render_report, render_couplings, render_ownership, ReportFormat,
+};
 
 /// Commits scanned per load. Generous but bounded so a pathologically large
 /// history can't hang the background mine; the granularity windows filter
@@ -295,21 +297,46 @@ impl EcosystemView {
         }
     }
 
-    /// Copy the current Hotspots ranking as markdown to the clipboard (the
-    /// LLM-context "Copy diagnostic").
+    /// Copy the **current mode's** ranking as markdown to the clipboard (the
+    /// LLM-context "Copy diagnostic"). Hotspots exports the risk ranking,
+    /// Coupling the change-coupling pairs (which files move together), and
+    /// Ownership the per-file bus-factor — so the relationships of each view are
+    /// exportable, not just Hotspots.
     pub fn copy_diagnostic(&self, cx: &mut Context<Self>) {
-        if let Some(eco) = &self.data.ecosystem {
-            let text = render_report(eco, DIAGNOSTIC_TOP_N, ReportFormat::Markdown);
-            cx.write_to_clipboard(ClipboardItem::new_string(text));
-            klog!(
-                "ecosystem: diagnostic copied ({} files)",
-                eco.files.len().min(DIAGNOSTIC_TOP_N)
-            );
-            // Confirm the (otherwise invisible) clipboard write with a toast.
-            let _ = self.app.update(cx, |app, cx| {
-                app.push_toast(ToastKind::Info, Msg::EcoDiagnosticCopied.t(), cx);
-            });
-        }
+        let Some(eco) = &self.data.ecosystem else {
+            return;
+        };
+        let window = eco.granularity.window_label();
+        let (text, what) = match self.data.mode {
+            EcosystemMode::Hotspots => (
+                render_report(eco, DIAGNOSTIC_TOP_N, ReportFormat::Markdown),
+                "hotspots",
+            ),
+            EcosystemMode::Coupling => (
+                render_couplings(
+                    &self.data.couplings,
+                    window,
+                    self.data.couplings.len(),
+                    ReportFormat::Markdown,
+                ),
+                "coupling",
+            ),
+            EcosystemMode::Ownership => (
+                render_ownership(
+                    &self.data.ownership,
+                    window,
+                    self.data.ownership.len(),
+                    ReportFormat::Markdown,
+                ),
+                "ownership",
+            ),
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        klog!("ecosystem: diagnostic copied ({what})");
+        // Confirm the (otherwise invisible) clipboard write with a toast.
+        let _ = self.app.update(cx, |app, cx| {
+            app.push_toast(ToastKind::Info, Msg::EcoDiagnosticCopied.t(), cx);
+        });
     }
 
     /// Ask the parent to close this view (drops the entity). Safe per ADR-0117:

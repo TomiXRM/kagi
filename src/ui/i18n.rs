@@ -433,7 +433,7 @@ pub enum Msg {
     // ── Code Ecosystem / hot-spots (ADR-0119) ───────────────────────
     /// Ecosystem view title / toolbar button label.
     Ecosystem,
-    /// "Copy diagnostic" button (export hot-spots as LLM context).
+    /// "Copy diagnostic" button (export the current mode's view as LLM context).
     EcoCopyDiagnostic,
     /// Toast confirming the diagnostic was copied to the clipboard.
     EcoDiagnosticCopied,
@@ -981,7 +981,7 @@ pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
             ),
             (
                 "Copy diagnostic",
-                "Copies the current Hotspots ranking as Markdown, ready to paste into an AI chat as context (\"here is where the risk is — help me refactor\").",
+                "Copies the current view (Hotspots ranking, Coupling pairs, or Ownership) as Markdown, ready to paste into an AI chat as context (\"here is where the risk is — help me refactor\"). Switch modes to export that view.",
             ),
         ],
         Lang::Ja => vec![
@@ -1003,7 +1003,7 @@ pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
             ),
             (
                 "診断をコピー",
-                "現在の Hotspots ランキングを Markdown でコピーします。AI チャットに貼って文脈として渡せます（「ここがリスク。リファクタを手伝って」）。",
+                "現在表示中のビュー（Hotspots ランキング / Coupling の組 / Ownership）を Markdown でコピーします。AI チャットに貼って文脈として渡せます（「ここがリスク。リファクタを手伝って」）。モードを切り替えると、そのビューが書き出されます。",
             ),
         ],
     }

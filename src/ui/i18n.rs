@@ -437,6 +437,8 @@ pub enum Msg {
     EcoList,
     /// Hotspots sub-view toggle: treemap heatmap.
     EcoMap,
+    /// Header of the expanded 1:many coupling panel ("couples with <file>").
+    EcoCouplesWith,
 }
 
 impl Msg {
@@ -907,6 +909,8 @@ impl Msg {
             (Ja, EcoList) => "リスト",
             (En, EcoMap) => "Map",
             (Ja, EcoMap) => "マップ",
+            (En, EcoCouplesWith) => "couples with",
+            (Ja, EcoCouplesWith) => "と結合:",
         }
     }
 }

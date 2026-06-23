@@ -24,8 +24,8 @@ use super::*;
 use gpui::WeakEntity;
 use kagi_domain::activity::Granularity;
 use kagi_domain::hotspot::{
-    analyze, ownership, top_couplings, CouplingPair, Ecosystem, EcosystemMode, FileOwnership,
-    RawEcosystem,
+    analyze, coupling_for, ownership, top_couplings, CouplingEdge, CouplingPair, Ecosystem,
+    EcosystemMode, FileOwnership, RawEcosystem,
 };
 use kagi_domain::hotspot_report::{render as render_report, ReportFormat};
 
@@ -40,6 +40,9 @@ const DIAGNOSTIC_TOP_N: usize = 30;
 /// How many change-coupling pairs the Coupling mode lists.
 const COUPLING_TOP_N: usize = 100;
 
+/// How many partners the expanded (1:many) coupling row shows for a file.
+const COUPLING_PARTNERS_N: usize = 50;
+
 /// How many files the Ownership mode lists (single-owner / high-share first).
 const OWNERSHIP_TOP_N: usize = 200;
 
@@ -53,6 +56,10 @@ pub struct EcosystemData {
     pub ecosystem: Option<Ecosystem>,
     /// Top change-coupling pairs for the current granularity (Coupling mode).
     pub couplings: Vec<CouplingPair>,
+    /// The expanded coupling row (index into `couplings`), if any, and that
+    /// row's left file's full 1:many partner list.
+    pub coupling_focus: Option<usize>,
+    pub coupling_partners: Vec<CouplingEdge>,
     /// Per-file ownership for the current granularity (Ownership mode).
     pub ownership: Vec<FileOwnership>,
     pub mode: EcosystemMode,
@@ -69,6 +76,8 @@ impl EcosystemData {
             raw: None,
             ecosystem: None,
             couplings: Vec::new(),
+            coupling_focus: None,
+            coupling_partners: Vec::new(),
             ownership: Vec::new(),
             mode: EcosystemMode::Hotspots,
             map: false,
@@ -128,6 +137,9 @@ impl EcosystemView {
     /// Re-rank the already-mined history for the current granularity (cheap,
     /// pure). No-op until the first mine resolves.
     fn recompute(&mut self) {
+        // The pair list changes with the window, so any expanded row is stale.
+        self.data.coupling_focus = None;
+        self.data.coupling_partners.clear();
         if let Some(raw) = &self.data.raw {
             let now = super::commit_list::now_unix_secs();
             let g = self.data.granularity;
@@ -135,6 +147,26 @@ impl EcosystemView {
             self.data.couplings = top_couplings(raw, now, g, COUPLING_TOP_N);
             self.data.ownership = ownership(raw, now, g, OWNERSHIP_TOP_N);
         }
+    }
+
+    /// Toggle the 1:many expansion of a Coupling row: show `focus_file`'s full
+    /// set of co-change partners beneath it (or collapse if already open).
+    pub fn toggle_coupling(&mut self, row: usize, focus_file: String, cx: &mut Context<Self>) {
+        if self.data.coupling_focus == Some(row) {
+            self.data.coupling_focus = None;
+            self.data.coupling_partners.clear();
+        } else if let Some(raw) = &self.data.raw {
+            let now = super::commit_list::now_unix_secs();
+            self.data.coupling_partners = coupling_for(
+                raw,
+                &focus_file,
+                now,
+                self.data.granularity,
+                COUPLING_PARTNERS_N,
+            );
+            self.data.coupling_focus = Some(row);
+        }
+        cx.notify();
     }
 
     pub fn set_mode(&mut self, mode: EcosystemMode, cx: &mut Context<Self>) {

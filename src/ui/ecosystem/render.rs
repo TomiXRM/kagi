@@ -7,7 +7,7 @@
 
 use super::*;
 use gpui::{relative, AnyElement};
-use kagi_domain::hotspot::{CouplingPair, Ecosystem, FileMetric, FileOwnership};
+use kagi_domain::hotspot::{CouplingEdge, CouplingPair, Ecosystem, FileMetric, FileOwnership};
 
 /// Cap on rendered rows — the power-law means the top slice carries the signal,
 /// and it bounds the element count without virtualization.
@@ -107,7 +107,7 @@ fn render_granularity_toggle(view: &EcosystemView, cx: &mut Context<EcosystemVie
 }
 
 /// Body: loading / error / the mode panel.
-fn render_body(view: &EcosystemView, _cx: &mut Context<EcosystemView>) -> AnyElement {
+fn render_body(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElement {
     let inner = if view.data.loading {
         loading_view()
     } else if let Some(err) = &view.data.error {
@@ -128,7 +128,7 @@ fn render_body(view: &EcosystemView, _cx: &mut Context<EcosystemView>) -> AnyEle
                 if view.data.couplings.is_empty() {
                     centered(Msg::EcoEmpty.t())
                 } else {
-                    render_coupling_list(&view.data.couplings)
+                    render_coupling_list(view, cx)
                 }
             }
             EcosystemMode::Ownership => {
@@ -207,9 +207,12 @@ fn render_row(rank: usize, f: &FileMetric, max_risk: f64) -> AnyElement {
         .into_any_element()
 }
 
-/// The change-coupling list: file pairs that change together, top first.
-fn render_coupling_list(pairs: &[CouplingPair]) -> AnyElement {
+/// The change-coupling list: file pairs that change together, top first. A row
+/// click expands the left file's full 1:many partner set beneath it.
+fn render_coupling_list(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElement {
+    let pairs = &view.data.couplings;
     let max_together = pairs.first().map(|p| p.together).unwrap_or(1).max(1);
+    let focus = view.data.coupling_focus;
     let mut list = div()
         .id("eco-coupling-list")
         .flex()
@@ -217,15 +220,28 @@ fn render_coupling_list(pairs: &[CouplingPair]) -> AnyElement {
         .size_full()
         .overflow_y_scroll();
     for (i, p) in pairs.iter().enumerate() {
-        list = list.child(render_coupling_row(i + 1, p, max_together));
+        let a = p.a.clone();
+        let click =
+            cx.listener(move |v, _: &gpui::ClickEvent, _w, cx| v.toggle_coupling(i, a.clone(), cx));
+        list = list
+            .child(render_coupling_row(i + 1, p, max_together, focus == Some(i)).on_click(click));
+        if focus == Some(i) {
+            list = list.child(render_partners(&p.a, &view.data.coupling_partners));
+        }
     }
     list.into_any_element()
 }
 
 /// One coupling row: `#rank  a ⇄ b   N together   degree-bar  degree%`.
-fn render_coupling_row(rank: usize, p: &CouplingPair, max_together: u32) -> AnyElement {
+fn render_coupling_row(
+    rank: usize,
+    p: &CouplingPair,
+    max_together: u32,
+    expanded: bool,
+) -> gpui::Stateful<gpui::Div> {
     let frac = (p.together as f32 / max_together as f32).clamp(0.0, 1.0);
     div()
+        .id(SharedString::from(format!("eco-coup-row-{rank}")))
         .flex()
         .items_center()
         .gap_3()
@@ -233,8 +249,11 @@ fn render_coupling_row(rank: usize, p: &CouplingPair, max_together: u32) -> AnyE
         .py_1()
         .border_b_1()
         .border_color(rgb(theme().surface))
+        .cursor_pointer()
+        .when(expanded, |d| d.bg(rgb(theme().selected)))
         .child(
             div()
+                .flex_shrink_0()
                 .w(theme::scaled_px(36.0))
                 .text_size(theme::scaled_px(12.0))
                 .text_color(rgb(theme().text_muted))
@@ -259,6 +278,69 @@ fn render_coupling_row(rank: usize, p: &CouplingPair, max_together: u32) -> AnyE
                 ),
         )
         .child(stat(&format!("{:.0}%", p.degree * 100.0)))
+}
+
+/// The expanded 1:many panel: `focus`'s co-change partners, indented under the
+/// clicked row (`→ partner   N×   P(partner|focus)%`).
+fn render_partners(focus: &str, partners: &[CouplingEdge]) -> AnyElement {
+    let max_together = partners.first().map(|e| e.together).unwrap_or(1).max(1);
+    let mut panel = div()
+        .flex()
+        .flex_col()
+        .bg(rgb(theme().bg_row_alt))
+        .border_b_1()
+        .border_color(rgb(theme().surface))
+        .child(
+            div()
+                .px_3()
+                .py_1()
+                .pl_8()
+                .text_size(theme::scaled_px(11.0))
+                .text_color(rgb(theme().text_muted))
+                .child(format!("{} {}", Msg::EcoCouplesWith.t(), focus)),
+        );
+    for (j, e) in partners.iter().enumerate() {
+        panel = panel.child(render_partner_row(j, e, max_together));
+    }
+    panel.into_any_element()
+}
+
+/// One partner row inside the 1:many expansion.
+fn render_partner_row(idx: usize, e: &CouplingEdge, max_together: u32) -> AnyElement {
+    let frac = (e.together as f32 / max_together as f32).clamp(0.0, 1.0);
+    div()
+        .flex()
+        .items_center()
+        .gap_3()
+        .px_3()
+        .py_1()
+        .pl_8()
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_size(theme::scaled_px(12.0))
+                .text_color(rgb(theme().text_muted))
+                .child("↳"),
+        )
+        .child(scroll_path_cell(
+            format!("eco-coup-partner-{idx}"),
+            e.partner.clone(),
+        ))
+        .child(stat(&format!("{}×", e.together)))
+        .child(
+            div()
+                .flex_shrink_0()
+                .w(theme::scaled_px(120.0))
+                .h(theme::scaled_px(6.0))
+                .bg(rgb(theme().surface))
+                .child(
+                    div()
+                        .h_full()
+                        .w(relative(frac))
+                        .bg(rgb(theme().color_branch)),
+                ),
+        )
+        .child(stat(&format!("{:.0}%", e.ratio * 100.0)))
         .into_any_element()
 }
 

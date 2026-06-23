@@ -41,9 +41,10 @@ pub struct FileChange {
 const EXCLUDED_EXTENSIONS: &[&str] = &[
     "pdf", // documents
     // raster / vector image data
-    "png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "tif", "tiff", "svg", "heic", "heif", "avif",
-    "psd", "ai", "eps", // CAD / 3D models
-    "step", "stp", "stl", "iges", "igs", "3mf",
+    "png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "icns", "tif", "tiff", "svg", "heic", "heif",
+    "avif", "psd", "ai", "eps", // CAD / 3D models
+    "step", "stp", "stl", "iges", "igs", "3mf", // archives / binary bundles
+    "zip",
 ];
 
 /// True when `path` is an excluded binary / non-source artifact, judged by its
@@ -591,6 +592,8 @@ mod tests {
             "model.step",
             "part.STP",
             "mesh.stl",
+            "icon.icns",
+            "bundle.zip",
         ] {
             assert!(is_excluded(p), "{p} should be excluded");
         }

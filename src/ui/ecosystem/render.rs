@@ -53,6 +53,9 @@ fn render_header(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyEl
         .when(view.data.mode == EcosystemMode::Hotspots, |d| {
             d.child(render_view_toggle(view, cx))
         })
+        .when(view.data.mode == EcosystemMode::Coupling, |d| {
+            d.child(render_coupling_toggle(view, cx))
+        })
         .child(div().flex_1())
         .child(render_granularity_toggle(view, cx))
         .child(
@@ -94,6 +97,20 @@ fn render_view_toggle(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> 
         .into_any_element()
 }
 
+/// List ⇄ Graph sub-view switch, shown only in Coupling mode.
+fn render_coupling_toggle(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElement {
+    let graph = view.data.coupling_graph_on;
+    let list_click = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.set_coupling_graph(false, cx));
+    let graph_click = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.set_coupling_graph(true, cx));
+    div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .child(chip(Msg::EcoList.t(), !graph, "eco-coup-list".into()).on_click(list_click))
+        .child(chip(Msg::EcoGraph.t(), graph, "eco-coup-graph".into()).on_click(graph_click))
+        .into_any_element()
+}
+
 /// Granularity (window) switch, mirroring the Activity tab.
 fn render_granularity_toggle(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElement {
     let active = view.data.granularity;
@@ -127,6 +144,13 @@ fn render_body(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElem
             EcosystemMode::Coupling => {
                 if view.data.couplings.is_empty() {
                     centered(Msg::EcoEmpty.t())
+                } else if let Some(g) = view
+                    .data
+                    .coupling_graph
+                    .as_ref()
+                    .filter(|_| view.data.coupling_graph_on)
+                {
+                    super::graph::render_coupling_graph(g)
                 } else {
                     render_coupling_list(view, cx)
                 }

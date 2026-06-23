@@ -439,6 +439,8 @@ pub enum Msg {
     EcoMap,
     /// Header of the expanded 1:many coupling panel ("couples with <file>").
     EcoCouplesWith,
+    /// Coupling sub-view toggle: force-directed graph.
+    EcoGraph,
 }
 
 impl Msg {
@@ -911,6 +913,8 @@ impl Msg {
             (Ja, EcoMap) => "マップ",
             (En, EcoCouplesWith) => "couples with",
             (Ja, EcoCouplesWith) => "と結合:",
+            (En, EcoGraph) => "Graph",
+            (Ja, EcoGraph) => "グラフ",
         }
     }
 }

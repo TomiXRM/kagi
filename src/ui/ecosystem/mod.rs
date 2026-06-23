@@ -14,6 +14,7 @@
 //! in `Render`. The app seeds the view on completion **only if it still shows
 //! the same repo** (`repo_matches`).
 
+mod graph;
 mod render;
 mod viz;
 
@@ -23,6 +24,7 @@ use std::path::PathBuf;
 use super::*;
 use gpui::WeakEntity;
 use kagi_domain::activity::Granularity;
+use kagi_domain::coupling_graph::{build_graph, CouplingGraph};
 use kagi_domain::hotspot::{
     analyze, coupling_for, ownership, top_couplings, CouplingEdge, CouplingPair, Ecosystem,
     EcosystemMode, FileOwnership, RawEcosystem,
@@ -43,6 +45,9 @@ const COUPLING_TOP_N: usize = 100;
 /// How many partners the expanded (1:many) coupling row shows for a file.
 const COUPLING_PARTNERS_N: usize = 50;
 
+/// How many top pairs feed the Coupling graph (keeps it legible + fast).
+const GRAPH_MAX_EDGES: usize = 60;
+
 /// How many files the Ownership mode lists (single-owner / high-share first).
 const OWNERSHIP_TOP_N: usize = 200;
 
@@ -60,6 +65,10 @@ pub struct EcosystemData {
     /// row's left file's full 1:many partner list.
     pub coupling_focus: Option<usize>,
     pub coupling_partners: Vec<CouplingEdge>,
+    /// Coupling sub-view: `false` = pair list, `true` = force-directed graph.
+    pub coupling_graph_on: bool,
+    /// Laid-out graph for the current window (built lazily when Graph is shown).
+    pub coupling_graph: Option<CouplingGraph>,
     /// Per-file ownership for the current granularity (Ownership mode).
     pub ownership: Vec<FileOwnership>,
     pub mode: EcosystemMode,
@@ -78,6 +87,8 @@ impl EcosystemData {
             couplings: Vec::new(),
             coupling_focus: None,
             coupling_partners: Vec::new(),
+            coupling_graph_on: false,
+            coupling_graph: None,
             ownership: Vec::new(),
             mode: EcosystemMode::Hotspots,
             map: false,
@@ -146,6 +157,23 @@ impl EcosystemView {
             self.data.ecosystem = Some(analyze(raw, now, g));
             self.data.couplings = top_couplings(raw, now, g, COUPLING_TOP_N);
             self.data.ownership = ownership(raw, now, g, OWNERSHIP_TOP_N);
+        }
+        // Rebuild the graph only if it is currently being shown.
+        self.data.coupling_graph = self
+            .data
+            .coupling_graph_on
+            .then(|| build_graph(&self.data.couplings, GRAPH_MAX_EDGES));
+    }
+
+    /// Toggle the Coupling sub-view between the pair list and the graph; builds
+    /// the (force-directed) layout lazily the first time the graph is shown.
+    pub fn set_coupling_graph(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.data.coupling_graph_on != on {
+            self.data.coupling_graph_on = on;
+            if on && self.data.coupling_graph.is_none() {
+                self.data.coupling_graph = Some(build_graph(&self.data.couplings, GRAPH_MAX_EDGES));
+            }
+            cx.notify();
         }
     }
 

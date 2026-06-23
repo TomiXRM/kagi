@@ -12,6 +12,7 @@
 pub mod activity;
 pub mod checklist;
 pub mod commit;
+pub mod coupling_graph;
 pub mod diff;
 pub mod diffstat;
 pub mod graph;

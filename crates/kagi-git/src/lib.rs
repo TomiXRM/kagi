@@ -15,6 +15,7 @@ mod diff;
 mod diffstat;
 pub mod drafts;
 mod file_history;
+pub mod hotspot;
 mod log;
 pub mod message_gen;
 pub mod message_template;
@@ -61,6 +62,8 @@ pub use file_history::{
     file_history, CommitSummary, FileChangeSummary, FileChangeType, FileHistory, FileHistoryEntry,
     FileHistoryEntryKind, FileHistoryRequest,
 };
+#[allow(unused_imports)]
+pub use hotspot::{repo_ecosystem, EcosystemRequest};
 #[allow(unused_imports)]
 pub use log::{commit_log, Commit, CommitId, Signature};
 #[allow(unused_imports)]
@@ -122,6 +125,11 @@ use git2::Repository;
 pub use kagi_domain::head::Head;
 #[allow(unused_imports)]
 pub use kagi_domain::history::{HistoryEntry, OperationHistory, OperationKind};
+#[allow(unused_imports)]
+pub use kagi_domain::hotspot::{
+    analyze as analyze_hotspots, coupling_for, CommitChanges, CouplingEdge, Ecosystem,
+    EcosystemMode, FileChange, FileMetric, RawEcosystem,
+};
 pub use kagi_domain::operation::{Operation, OperationOutcome};
 
 /// Basic information about an opened repository.

@@ -43,46 +43,13 @@ impl KagiApp {
         self.conflict.selected_hunk = hunk_index;
     }
 
-    fn conflict_editor_after_selection_change(
-        &mut self,
-        path: &std::path::Path,
-        selected_hunk: Option<usize>,
-    ) {
-        self.conflict.reset_all_armed = false;
-        if let Some(hunk) = selected_hunk {
-            self.conflict.selected_hunk = hunk;
-        }
-        if let Some(i) = self.conflict.editor_inputs.as_mut() {
-            i.content_sig = 0;
-        }
-        let Some(c) = self.conflict.mode.as_mut() else {
-            return;
-        };
-        let residue = c.buffer.files_with_marker_residue();
-        if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
-            f.status = if !c.buffer.has_resolution(path) {
-                kagi_git::ConflictStatus::Unresolved
-            } else if residue.contains(&f.path) {
-                kagi_git::ConflictStatus::NeedsReview
-            } else {
-                kagi_git::ConflictStatus::Resolved
-            };
-        }
-        let _ = c.buffer.autosave();
-    }
-
     pub fn conflict_editor_set_file_side(
         &mut self,
         path: &std::path::Path,
         side: kagi_git::resolution::SelectionSide,
         taken: bool,
     ) {
-        let Some(c) = self.conflict.mode.as_mut() else {
-            return;
-        };
-        if c.buffer.set_file_side_selection(path, side, taken) {
-            self.conflict_editor_after_selection_change(path, None);
-        }
+        self.conflict.set_file_side(path, side, taken);
     }
 
     pub fn conflict_editor_set_hunk_side(
@@ -92,14 +59,7 @@ impl KagiApp {
         side: kagi_git::resolution::SelectionSide,
         taken: bool,
     ) {
-        let Some(c) = self.conflict.mode.as_mut() else {
-            return;
-        };
-        if c.buffer
-            .set_hunk_side_selection(path, hunk_index, side, taken)
-        {
-            self.conflict_editor_after_selection_change(path, Some(hunk_index));
-        }
+        self.conflict.set_hunk_side(path, hunk_index, side, taken);
     }
 
     pub fn conflict_editor_set_hunk_line(
@@ -110,14 +70,8 @@ impl KagiApp {
         line_index: usize,
         taken: bool,
     ) {
-        let Some(c) = self.conflict.mode.as_mut() else {
-            return;
-        };
-        if c.buffer
-            .set_hunk_line_selection(path, hunk_index, side, line_index, taken)
-        {
-            self.conflict_editor_after_selection_change(path, Some(hunk_index));
-        }
+        self.conflict
+            .set_hunk_line(path, hunk_index, side, line_index, taken);
     }
 
     pub fn conflict_editor_set_hunk_order(
@@ -126,12 +80,7 @@ impl KagiApp {
         hunk_index: usize,
         order: kagi_git::resolution::LineOrder,
     ) {
-        let Some(c) = self.conflict.mode.as_mut() else {
-            return;
-        };
-        if c.buffer.set_hunk_line_order(path, hunk_index, order) {
-            self.conflict_editor_after_selection_change(path, Some(hunk_index));
-        }
+        self.conflict.set_hunk_order(path, hunk_index, order);
     }
 
     /// T-CONFLICT-POLISH-042: "Reset all" is destructive (drops every hunk
@@ -412,22 +361,11 @@ impl KagiApp {
         choice: kagi_git::ResolutionChoice,
         cx: &mut Context<Self>,
     ) {
-        let Some(c) = self.conflict.mode.as_mut() else {
-            return;
-        };
-        match c.buffer.apply_choice(path, choice) {
-            Ok(()) => {
-                // Refresh status for this file from the buffer.
-                let residue = c.buffer.files_with_marker_residue();
-                if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
-                    f.status = if residue.contains(&f.path) {
-                        kagi_git::ConflictStatus::NeedsReview
-                    } else {
-                        kagi_git::ConflictStatus::Resolved
-                    };
-                }
-                // Autosave (ADR-0057): never lose a partial resolution.
-                let _ = c.buffer.autosave();
+        match self.conflict.apply_choice(path, choice) {
+            // No active conflict mode — no-op, and (matching the original early
+            // return) emit no `[kagi]` line.
+            None => {}
+            Some(Ok(())) => {
                 eprintln!(
                     "[kagi] conflict-mode: choice {} for {}",
                     match choice {
@@ -439,7 +377,7 @@ impl KagiApp {
                     path.display()
                 );
             }
-            Err(e) => {
+            Some(Err(e)) => {
                 eprintln!(
                     "[kagi] conflict-mode: choice failed for {}: {}",
                     path.display(),

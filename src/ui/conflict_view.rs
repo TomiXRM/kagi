@@ -162,6 +162,126 @@ impl ConflictState {
             file_menu: None,
         }
     }
+
+    /// Apply a per-file side choice to the in-memory resolution buffer, then
+    /// recompute that file's status.  The repository is untouched (in-memory
+    /// first); the buffer is autosaved so the partial resolution survives.
+    ///
+    /// On success this refreshes the file's status and autosaves; logging /
+    /// toasting is the caller's responsibility (the `KagiApp` wrapper).
+    ///
+    /// Returns `None` when there is no active conflict mode — a no-op the caller
+    /// must NOT log (mirrors the original early-return-without-logging path);
+    /// `Some(Ok(()))` on apply, `Some(Err(_))` on buffer failure.
+    pub fn apply_choice(
+        &mut self,
+        path: &std::path::Path,
+        choice: kagi_git::ResolutionChoice,
+    ) -> Option<Result<(), kagi_git::GitError>> {
+        let c = self.mode.as_mut()?;
+        if let Err(e) = c.buffer.apply_choice(path, choice) {
+            return Some(Err(e));
+        }
+        // Refresh status for this file from the buffer.
+        let residue = c.buffer.files_with_marker_residue();
+        if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
+            f.status = if residue.contains(&f.path) {
+                kagi_git::ConflictStatus::NeedsReview
+            } else {
+                kagi_git::ConflictStatus::Resolved
+            };
+        }
+        // Autosave (ADR-0057): never lose a partial resolution.
+        let _ = c.buffer.autosave();
+        Some(Ok(()))
+    }
+
+    pub fn set_file_side(
+        &mut self,
+        path: &std::path::Path,
+        side: kagi_git::resolution::SelectionSide,
+        taken: bool,
+    ) {
+        let Some(c) = self.mode.as_mut() else {
+            return;
+        };
+        if c.buffer.set_file_side_selection(path, side, taken) {
+            self.after_selection_change(path, None);
+        }
+    }
+
+    pub fn set_hunk_side(
+        &mut self,
+        path: &std::path::Path,
+        hunk_index: usize,
+        side: kagi_git::resolution::SelectionSide,
+        taken: bool,
+    ) {
+        let Some(c) = self.mode.as_mut() else {
+            return;
+        };
+        if c.buffer
+            .set_hunk_side_selection(path, hunk_index, side, taken)
+        {
+            self.after_selection_change(path, Some(hunk_index));
+        }
+    }
+
+    pub fn set_hunk_line(
+        &mut self,
+        path: &std::path::Path,
+        hunk_index: usize,
+        side: kagi_git::resolution::SelectionSide,
+        line_index: usize,
+        taken: bool,
+    ) {
+        let Some(c) = self.mode.as_mut() else {
+            return;
+        };
+        if c.buffer
+            .set_hunk_line_selection(path, hunk_index, side, line_index, taken)
+        {
+            self.after_selection_change(path, Some(hunk_index));
+        }
+    }
+
+    pub fn set_hunk_order(
+        &mut self,
+        path: &std::path::Path,
+        hunk_index: usize,
+        order: kagi_git::resolution::LineOrder,
+    ) {
+        let Some(c) = self.mode.as_mut() else {
+            return;
+        };
+        if c.buffer.set_hunk_line_order(path, hunk_index, order) {
+            self.after_selection_change(path, Some(hunk_index));
+        }
+    }
+
+    fn after_selection_change(&mut self, path: &std::path::Path, selected_hunk: Option<usize>) {
+        self.reset_all_armed = false;
+        if let Some(hunk) = selected_hunk {
+            self.selected_hunk = hunk;
+        }
+        if let Some(i) = self.editor_inputs.as_mut() {
+            i.content_sig = 0;
+        }
+        let Some(c) = self.mode.as_mut() else {
+            return;
+        };
+        let residue = c.buffer.files_with_marker_residue();
+        if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
+            f.status = if !c.buffer.has_resolution(path) {
+                kagi_git::ConflictStatus::Unresolved
+            } else if residue.contains(&f.path) {
+                kagi_git::ConflictStatus::NeedsReview
+            } else {
+                kagi_git::ConflictStatus::Resolved
+            };
+        }
+        let _ = c.buffer.autosave();
+    }
 }
 
 impl Default for ConflictState {

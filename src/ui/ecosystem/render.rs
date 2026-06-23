@@ -38,6 +38,9 @@ fn render_help(cx: &mut Context<EcosystemView>) -> AnyElement {
 
     let mut card = div()
         .id("eco-help-card")
+        // Occlude so clicks inside the card don't fall through to the backdrop
+        // (which would toggle help a second time and cancel the ✕ close).
+        .occlude()
         .flex()
         .flex_col()
         .gap_3()
@@ -99,6 +102,7 @@ fn render_help(cx: &mut Context<EcosystemView>) -> AnyElement {
                 .top_0()
                 .left_0()
                 .size_full()
+                .occlude()
                 .bg(rgb(theme().modal_overlay))
                 .opacity(0.7)
                 .on_click(backdrop_close),

@@ -337,7 +337,7 @@ fn appearance_section(
         let on = *checked;
         app_lc.update(cx, |app, cx| {
             theme::set_graph_lane_compact(on);
-            app.reload();
+            app.reload(cx);
             cx.notify();
         });
     };

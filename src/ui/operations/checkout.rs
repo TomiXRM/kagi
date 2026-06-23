@@ -188,7 +188,7 @@ impl KagiApp {
                 );
                 // Keep status fresh so the checkout preflight sees the
                 // now-clean tree.
-                self.reload();
+                self.reload(cx);
                 true
             }
             Err(e) => {
@@ -335,7 +335,7 @@ impl KagiApp {
             Ok(r) => r,
             Err(e) => {
                 klog!("verify: repo open error: {}", e);
-                self.reload();
+                self.reload(cx);
                 return;
             }
         };
@@ -390,7 +390,7 @@ impl KagiApp {
         );
 
         // Reload display data.
-        self.reload();
+        self.reload(cx);
     }
 
     /// W15-ASYNCOPS: UI-path checkout — runs `checkout_blocking` on a background
@@ -467,7 +467,7 @@ impl KagiApp {
                             &repo_path,
                             cx,
                         );
-                        app.reload();
+                        app.reload(cx);
                     }
                     Err(err_msg) => {
                         klog!("async: checkout failed — {}", err_msg);

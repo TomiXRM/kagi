@@ -1184,7 +1184,7 @@ impl KagiApp {
                 if self.remote_view.is_some() {
                     self.refresh_remote_view(cx);
                 } else {
-                    match self.reload_checked() {
+                    match self.reload_checked(cx) {
                         Ok(()) => {
                             self.status_footer =
                                 FooterStatus::Idle(SharedString::from(Msg::Refreshed.t()));
@@ -1443,7 +1443,7 @@ impl KagiApp {
                 app.fetch_in_flight = false;
                 match result {
                     Ok(outcome) => {
-                        app.reload();
+                        app.reload(cx);
                         if silent {
                             klog!("auto-fetch: ok remote={}", outcome.remote);
                         } else {

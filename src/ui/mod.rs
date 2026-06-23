@@ -1121,12 +1121,21 @@ pub struct KagiApp {
     /// into one cohesive sub-struct (ADR-0118 Phase 5.2).
     pub avatars: avatar::AvatarStore,
     // ── W30-CONFLICT-UI: Conflict Mode (ADR-0056) ────────────────
-    /// Conflict-Editor view state: detected mode, the open editor file, the
-    /// A/B/Result inputs, and splits/geometry. Consolidated
-    /// from 13 flat `conflict_*` fields (ADR-0110 Phase 5 Step 5.1). App-global;
-    /// cleared on reload / abort. (`conflict_count` badge, `conflict_merge_pending`,
-    /// and `merge_commit_ready` stay separate.)
-    pub conflict: conflict_view::ConflictState,
+    /// Conflict-resolution panel, promoted to its own `Entity<ConflictView>`
+    /// (ADR-0118 Phase 5.2 / T-ENTITY-CONFLICT-001, mirroring the ADR-0117
+    /// FileHistory fat-entity template). `Some` while a conflict/merge is in
+    /// progress; the entity owns the detected mode, the open editor file, the
+    /// A/B/Result inputs, splits/geometry, and its own `cx.notify()` scope.
+    /// Built / dropped by `apply_conflict_detect`; cleared on reload / abort /
+    /// tab switch. The per-repo run-once guard (`detected_for`),
+    /// `conflict_merge_pending`, the `conflict_count` badge, and
+    /// `merge_commit_ready` stay on `KagiApp` (separate concerns).
+    pub conflict: Option<Entity<conflict_view::ConflictView>>,
+    /// Per-repo run-once guard for conflict detection (was `ConflictState.
+    /// detected_for`). Holds the repo path whose conflict state has been detected
+    /// this cycle; invalidated on reload / repo change. Parent-owned because it
+    /// must survive an entity rebuild and be readable without leasing the entity.
+    pub conflict_detected_for: Option<PathBuf>,
     /// T-CONFLICT-FLOW-030/031 (ADR-0068): showing the merge commit panel
     /// (every file saved + staged, MERGE_HEAD still present). Cleared on commit /
     /// abort / reload. Parent-owned (read by the body-gate render and the FS
@@ -1532,7 +1541,8 @@ impl KagiApp {
             // W11-AVATAR
             avatars: avatar::AvatarStore::default(),
             // W30-CONFLICT-UI
-            conflict: conflict_view::ConflictState::new(),
+            conflict: None,
+            conflict_detected_for: None,
             conflict_merge_pending: false,
             merge_commit_ready: false,
             update_available: None,
@@ -1638,7 +1648,8 @@ impl KagiApp {
             // W11-AVATAR
             avatars: avatar::AvatarStore::default(),
             // W30-CONFLICT-UI
-            conflict: conflict_view::ConflictState::new(),
+            conflict: None,
+            conflict_detected_for: None,
             conflict_merge_pending: false,
             merge_commit_ready: false,
             update_available: None,
@@ -1655,8 +1666,55 @@ impl KagiApp {
     ///
     /// Called after a successful checkout to update the commit list, header,
     /// branch list, and badges without restarting the application.
-    pub fn reload(&mut self) {
-        let _ = self.reload_checked();
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
+        let _ = self.reload_checked(cx);
+    }
+
+    /// Pre-launch reload (headless `init_tab` / session restore). Runs before the
+    /// gpui window exists, so there is no `Context` and no `Entity<KagiApp>` to
+    /// hand a `ConflictView` — the conflict panel cannot be built here. Does the
+    /// snapshot/view rebuild (so the commit list / header are populated and the
+    /// `build_tab_view` `[kagi]` lines fire) but SKIPS conflict detection: the
+    /// `conflict_detected_for` guard is left UNSET so the first cx-bearing detect
+    /// at launch (`ensure_startup_repo_io` → `detect_conflict_mode_async`) builds
+    /// the entity and emits the `conflict-mode:` line. ADR-0118 /
+    /// T-ENTITY-CONFLICT-001.
+    pub fn reload_prelaunch(&mut self) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let mut repo = match kagi_git::Backend::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                klog!("reload: repo open error: {}", e);
+                return;
+            }
+        };
+        let snap = match repo.snapshot(self.commit_limit) {
+            Ok(s) => s,
+            Err(e) => {
+                klog!("reload: snapshot error: {}", e);
+                return;
+            }
+        };
+        let wip_diffstat = Self::wip_diffstat_from_backend(&repo);
+        let repo_name = repo_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| repo_path.display().to_string());
+        let view = build_tab_view(&snap, &repo_name);
+        self.selected = None;
+        self.diff_caches.clear();
+        self.wip_diffstat = Some(wip_diffstat);
+        self.main_diff = None;
+        self.compare_view = None;
+        self.tab_cache.insert(repo_path.clone(), view.clone());
+        self.apply_tab_view(view);
+        self.seed_history_from_reflog(&repo);
+        self.last_working_status = Some(snap.status.clone());
+        // Conflict detection intentionally deferred to the launch-time
+        // cx-bearing path (see the doc comment).
     }
 
     /// Like [`reload`] but reports failure. Returns `Err(msg)` when the repo
@@ -1664,7 +1722,7 @@ impl KagiApp {
     /// user-initiated refresh can surface the error instead of falsely reporting
     /// success. `Ok(())` also covers "no repo open" (nothing to refresh). The
     /// passive FS-watcher path uses [`reload_external`], which stays silent.
-    pub fn reload_checked(&mut self) -> Result<(), String> {
+    pub fn reload_checked(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return Ok(()),
@@ -1778,9 +1836,9 @@ impl KagiApp {
         // W30-CONFLICT-UI / ADR-0056: re-detect Conflict Mode every reload so a
         // conflict produced by the GUI's own operation OR by external CLI (the
         // watcher path runs through reload) puts the app into / out of Conflict
-        // Mode.  Force re-detection by invalidating the render-time guard.
-        self.conflict.detected_for = None;
-        self.detect_conflict_mode();
+        // Mode.  Force re-detection by invalidating the run-once guard.
+        self.conflict_detected_for = None;
+        self.detect_conflict_mode(cx);
 
         // Re-resolve the continued-merge flow after detection.
         if was_merge_commit_pending {
@@ -1794,7 +1852,7 @@ impl KagiApp {
                 }
                 self.commit_panel = Some(panel);
                 self.commit_panel_open = true;
-                self.conflict.mode = None;
+                self.conflict = None;
                 self.conflict_merge_pending = true;
             } else {
                 // The merge commit was created (MERGE_HEAD gone) or aborted — end
@@ -2074,26 +2132,37 @@ impl KagiApp {
     /// read-only, calls `detect_conflict_session`, and on a hit builds a fresh
     /// `ResolutionBuffer` from the index (preferring a previously autosaved
     /// buffer so a partial resolution survives a restart), recomputes each
-    /// file's status from the buffer, and stores the `ConflictMode`.  On a miss
-    /// it clears `self.conflict.mode`.  The repository is never mutated here.
-    pub fn detect_conflict_mode(&mut self) {
+    /// file's status from the buffer, and stores the `ConflictMode` (via
+    /// `apply_conflict_detect`, which builds / updates the `ConflictView` entity).
+    /// On a miss it drops the entity (`self.conflict = None`). The repository is
+    /// never mutated here.
+    pub fn detect_conflict_mode(&mut self, cx: &mut Context<Self>) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
-                self.conflict.mode = None;
+                self.conflict = None;
                 return;
             }
         };
         // Run-once guard per repo path.
-        if self.conflict.detected_for.as_deref() == Some(repo_path.as_path()) {
+        if self.conflict_detected_for.as_deref() == Some(repo_path.as_path()) {
             return;
         }
-        self.conflict.detected_for = Some(repo_path.clone());
+        self.conflict_detected_for = Some(repo_path.clone());
 
         // Snapshot the preservation inputs the I/O step needs (prev selection /
         // editing index), then run the read-only Git/index/file I/O synchronously.
-        let prev_selected = self.conflict.mode.as_ref().and_then(|c| c.selected_file);
-        let prev_editing_file = self.conflict.mode.as_ref().and_then(|c| c.editing_file);
+        let (prev_selected, prev_editing_file) = self
+            .conflict
+            .as_ref()
+            .map(|e| {
+                let v = e.read(cx);
+                (
+                    v.mode.as_ref().and_then(|c| c.selected_file),
+                    v.mode.as_ref().and_then(|c| c.editing_file),
+                )
+            })
+            .unwrap_or((None, None));
         let current_branch = self.active_view.status_summary.branch.clone();
         let outcome = Self::detect_conflict_payload(
             &repo_path,
@@ -2101,7 +2170,7 @@ impl KagiApp {
             prev_editing_file,
             current_branch,
         );
-        self.apply_conflict_detect(outcome);
+        self.apply_conflict_detect(outcome, cx);
     }
 
     /// T-PERF-RENDER-001: async sibling of [`detect_conflict_mode`].
@@ -2118,20 +2187,33 @@ impl KagiApp {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
-                self.conflict.mode = None;
+                self.conflict = None;
                 return;
             }
         };
         // Run-once guard per repo path (armed before the I/O launches).
-        if self.conflict.detected_for.as_deref() == Some(repo_path.as_path()) {
+        if self.conflict_detected_for.as_deref() == Some(repo_path.as_path()) {
             return;
         }
-        self.conflict.detected_for = Some(repo_path.clone());
+        self.conflict_detected_for = Some(repo_path.clone());
 
-        let prev_selected = self.conflict.mode.as_ref().and_then(|c| c.selected_file);
-        let prev_editing_file = self.conflict.mode.as_ref().and_then(|c| c.editing_file);
+        let (prev_selected, prev_editing_file) = self
+            .conflict
+            .as_ref()
+            .map(|e| {
+                let v = e.read(cx);
+                (
+                    v.mode.as_ref().and_then(|c| c.selected_file),
+                    v.mode.as_ref().and_then(|c| c.editing_file),
+                )
+            })
+            .unwrap_or((None, None));
         let current_branch = self.active_view.status_summary.branch.clone();
 
+        // codex Q5: capture the repo path the task ran against so a repo switch
+        // mid-task discards the stale result at apply time (the `detected_for`
+        // guard alone is insufficient — the guard is set for the NEW repo too).
+        let task_repo = repo_path.clone();
         let task = cx.background_spawn(async move {
             Self::detect_conflict_payload(
                 &repo_path,
@@ -2143,7 +2225,12 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let outcome = task.await;
             let _ = this.update(acx, |app, cx| {
-                app.apply_conflict_detect(outcome);
+                // Repo-match check: drop the result if the repo switched while the
+                // read-only I/O was in flight.
+                if app.repo_path.as_deref() != Some(task_repo.as_path()) {
+                    return;
+                }
+                app.apply_conflict_detect(outcome, cx);
                 cx.notify();
             });
         })
@@ -2245,31 +2332,39 @@ impl KagiApp {
     /// Foreground half of conflict detection: apply a [`ConflictDetectOutcome`]
     /// computed by [`detect_conflict_payload`] to `self`, emitting the same
     /// `[kagi]` contract lines in the same order as the original synchronous
-    /// implementation.  Reads of `self.conflict.mode` / `self.conflict.editing`
-    /// (the "was a conflict open?" / editor-close checks) live here because they
-    /// must reflect the current UI state at apply time.
-    fn apply_conflict_detect(&mut self, outcome: ConflictDetectOutcome) {
+    /// implementation. ADR-0118: this is the single point that builds / updates /
+    /// drops the `Entity<ConflictView>` — `Detected` updates an existing entity in
+    /// place (preserving its splits / editor inputs / before-text) or creates a
+    /// new one; `Cleared` / `MergeResolvedReady` / `OpenFailed` drop it. The
+    /// "was a conflict open?" (Cleared) and editor-close (Detected) checks read
+    /// the entity here because they must reflect the current UI state at apply
+    /// time. Needs `cx` (entity create / read / update).
+    fn apply_conflict_detect(&mut self, outcome: ConflictDetectOutcome, cx: &mut Context<Self>) {
         match outcome {
             ConflictDetectOutcome::OpenFailed => {
                 // Mirrors the original early-return on `Backend::open` failure,
                 // which happened before `merge_commit_ready` was reset — so that
                 // flag is intentionally left untouched here.
-                self.conflict.mode = None;
+                self.conflict = None;
             }
             ConflictDetectOutcome::Cleared => {
                 self.merge_commit_ready = false;
-                if self.conflict.mode.is_some() {
+                if self
+                    .conflict
+                    .as_ref()
+                    .is_some_and(|e| e.read(cx).mode.is_some())
+                {
                     klog!("conflict-mode: cleared");
                 }
-                self.conflict.mode = None;
-                self.conflict.editing = None;
+                // Drop the entity (clears mode + editing + splits + before-text;
+                // the accepted Stage-1 reset delta on re-entry).
+                self.conflict = None;
             }
             ConflictDetectOutcome::MergeResolvedReady => {
                 self.merge_commit_ready = false;
                 klog!("conflict-mode: merge resolved — ready to commit");
                 self.merge_commit_ready = true;
-                self.conflict.mode = None;
-                self.conflict.editing = None;
+                self.conflict = None;
             }
             ConflictDetectOutcome::Detected(detected) => {
                 let ConflictDetected {
@@ -2287,25 +2382,47 @@ impl KagiApp {
                     session.files.len()
                 );
 
-                // W32: close the editor if the file being edited is no longer
-                // conflicted.
-                if let Some(editing) = self.conflict.editing.clone() {
-                    if !session.files.iter().any(|f| f.path == editing) {
-                        self.conflict.editing = None;
-                    }
-                }
-
-                self.conflict.mode = Some(conflict_view::ConflictMode {
+                let mode = conflict_view::ConflictMode {
                     session,
                     buffer,
                     current_branch,
                     selected_file,
                     editing_file,
                     abort_armed: false,
-                });
+                };
+                let files = mode.session.files.clone();
 
-                if let Some(path) = editing_path {
-                    self.conflict.editing = Some(path);
+                match self.conflict.clone() {
+                    // Re-detect: update the existing entity in place so its splits
+                    // / editor inputs / before-text / scroll survive the reload.
+                    Some(entity) => {
+                        entity.update(cx, |v, _| {
+                            // W32: close the editor if the edited file is no longer
+                            // conflicted (reads the entity's current `editing`).
+                            if let Some(editing) = v.editing.clone() {
+                                if !files.iter().any(|f| f.path == editing) {
+                                    v.editing = None;
+                                }
+                            }
+                            v.mode = Some(mode);
+                            if let Some(path) = editing_path {
+                                v.editing = Some(path);
+                            }
+                        });
+                    }
+                    // Fresh conflict: build the entity, capturing the repo path +
+                    // a weak back-ref for its deferred parent callbacks.
+                    None => {
+                        let weak_app = cx.weak_entity();
+                        let repo_path = self.repo_path.clone().unwrap_or_default();
+                        let entity = cx.new(|_| {
+                            let mut v = conflict_view::ConflictView::new(weak_app, repo_path);
+                            v.mode = Some(mode);
+                            v.editing = editing_path;
+                            v
+                        });
+                        self.conflict = Some(entity);
+                    }
                 }
             }
         }
@@ -2702,101 +2819,12 @@ impl KagiApp {
         }
 
         // ── T-CONFLICT-UI-001/005/UX-015: Conflict Editor code editors ──
-        self.sync_conflict_editor_inputs(window, cx);
-    }
-
-    /// T-CONFLICT-UI-001: lazily create / refresh the Result CodeEditor
-    /// `InputState` backing the Conflict Editor (ADR-0071).
-    ///
-    /// `InputState` needs a `Window`, so this runs from `sync_modal_inputs`
-    /// (already on the window-context render path).  A and B are row lists;
-    /// `result` mirrors the assembled Result in Preview mode and is the
-    /// editable surface in Edit mode (UX-015).  The text is only re-pushed when
-    /// the file or the assembled content changes
-    /// (tracked by `content_sig`) so an in-progress manual edit is never
-    /// clobbered every frame.  When Edit mode is on we instead *pull* the
-    /// Result editor's text into the buffer via `set_manual_text`.
-    fn sync_conflict_editor_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Only relevant while editing a content file with a hunk model.
-        let Some(path) = self.conflict.editing.clone() else {
-            self.conflict.editor_inputs = None;
-            return;
-        };
-        let Some(c) = self.conflict.mode.as_ref() else {
-            self.conflict.editor_inputs = None;
-            return;
-        };
-        let Some(model) = c.buffer.hunk_model(&path) else {
-            self.conflict.editor_inputs = None;
-            return;
-        };
-
-        // Assemble the Result text block (chars/line-safe join).
-        let result_text = model.assembled_text();
-        let edit_mode = self.conflict.result_editing;
-
-        // Edit mode: pull the user's edits out of the Result editor into the
-        // buffer (set_manual_text), then return (do not overwrite their text).
-        if edit_mode {
-            if let Some(inputs) = self.conflict.editor_inputs.as_ref() {
-                if inputs.path == path {
-                    let edited = inputs.result.read(cx).value().to_string();
-                    if edited != result_text {
-                        if let Some(c) = self.conflict.mode.as_mut() {
-                            let _ = c.buffer.set_manual_text(&path, &edited);
-                            let _ = c.buffer.autosave();
-                            // Refresh the file status from the buffer.
-                            let residue = c.buffer.files_with_marker_residue();
-                            if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
-                                f.status = if residue.contains(&f.path) {
-                                    kagi_git::ConflictStatus::NeedsReview
-                                } else if c.buffer.has_resolution(&path) {
-                                    kagi_git::ConflictStatus::Resolved
-                                } else {
-                                    kagi_git::ConflictStatus::Unresolved
-                                };
-                            }
-                        }
-                    }
-                    // A/B row lists never change while editing the Result; keep as-is.
-                    return;
-                }
-            }
-        }
-
-        let sig = conflict_content_sig(&path, &result_text, edit_mode);
-
-        // Reuse existing inputs if the path + content + mode are unchanged.
-        if let Some(inputs) = self.conflict.editor_inputs.as_ref() {
-            if inputs.path == path && inputs.content_sig == sig {
-                return;
-            }
-        }
-
-        // Build or refresh.  Create the entities once per path; otherwise reuse.
-        let need_create = self
-            .conflict
-            .editor_inputs
-            .as_ref()
-            .map(|i| i.path != path)
-            .unwrap_or(true);
-
-        if need_create {
-            let result = cx.new(|cx| InputState::new(window, cx).code_editor("text"));
-            self.conflict.editor_inputs = Some(ConflictEditorInputs {
-                path: path.clone(),
-                result,
-                content_sig: 0,
-            });
-        }
-
-        if let Some(inputs) = self.conflict.editor_inputs.as_ref() {
-            inputs
-                .result
-                .update(cx, |s, cx| s.set_value(result_text.clone(), window, cx));
-        }
-        if let Some(inputs) = self.conflict.editor_inputs.as_mut() {
-            inputs.content_sig = sig;
+        // ADR-0118: the sync logic moved into the entity (it owns `editor_inputs`
+        // + `editing` + `mode`). Drive it via `update_in` (it needs a `Window` to
+        // create `InputState`). Safe here: this runs on the parent render-sync
+        // path, NOT a leased `ConflictView` listener.
+        if let Some(entity) = self.conflict.clone() {
+            entity.update(cx, |v, cx| v.sync_editor_inputs(window, cx));
         }
     }
 
@@ -5513,7 +5541,7 @@ fn short_hash(text: &str) -> String {
 /// T-CONFLICT-UI-001: cheap FNV-1a content signature for the Conflict Editor's
 /// three panes, so the editors only re-`set_value` when something actually
 /// changes (avoids clobbering an in-progress manual edit every frame).
-fn conflict_content_sig(path: &std::path::Path, result: &str, edit_mode: bool) -> u64 {
+pub(crate) fn conflict_content_sig(path: &std::path::Path, result: &str, edit_mode: bool) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut mix = |bytes: &[u8]| {
         for byte in bytes {

@@ -397,34 +397,17 @@ impl Render for KagiApp {
         let revert_modal = self.revert_modal().cloned();
         let conflict_continue_modal = self.conflict_continue_modal().cloned();
         let status_footer = self.status_footer.clone();
-        // W30-CONFLICT-UI: clone the Conflict Mode snapshot for render (free
-        // functions in `conflict_view` render from this immutable copy).
-        let conflict = self.conflict.mode.clone();
+        // ADR-0118 / T-ENTITY-CONFLICT-001: the conflict body is its own
+        // `Entity<ConflictView>`. The entity renders itself (`el.child(entity)`);
+        // the banner is a free function fed a cloned `ConflictMode` read out of
+        // the entity here so the entity is never rendered twice in one frame.
+        let conflict_entity = self.conflict.clone();
+        let conflict_banner_mode = self.conflict.as_ref().and_then(|e| e.read(cx).mode.clone());
         // T-CONFLICT-FLOW-030: while a continued merge waits for its commit
         // message, show the normal body (commit panel) instead of the conflict
         // resolution body (ADR-0068). Conflict Mode is still active (MERGE_HEAD
         // present) but the editor is hidden behind the commit message panel.
         let conflict_merge_pending = self.conflict_merge_pending;
-        // T-CONFLICT-UI: chrome the 3-pane Conflict Editor needs from the app
-        // (the editors live on `self`, not on the cloned `ConflictMode`).
-        let conflict_chrome = conflict_view::EditorChrome {
-            inputs: self
-                .conflict
-                .editor_inputs
-                .as_ref()
-                .map(|i| conflict_view::EditorInputs {
-                    path: i.path.clone(),
-                    result: i.result.clone(),
-                }),
-            ab_scroll: self.conflict.ab_scroll_handle.clone(),
-            result_editing: self.conflict.result_editing,
-            reset_all_armed: self.conflict.reset_all_armed,
-            ab_split: self.conflict.ab_split,
-            result_split: self.conflict.result_split,
-            selected_hunk: self.conflict.selected_hunk,
-            geom: self.conflict.geom.clone(),
-            ab_geom: self.conflict.ab_geom.clone(),
-        };
         let commit_menu_overlay = self
             .commit_menu
             .clone()
@@ -438,12 +421,23 @@ impl Render for KagiApp {
             .clone()
             .and_then(|state| self.render_stash_menu_overlay(state, window, cx));
         // T-CONFLICT-DASH-022: per-file "…" overflow menu overlay (anchored at the
-        // click position; rendered top-level so it floats over the body).
-        let conflict_file_menu_overlay = match (&conflict, self.conflict.file_menu) {
-            (Some(m), Some((idx, pos))) => {
-                Some(conflict_view::render_file_menu(m, idx, pos, window, cx))
+        // click position; rendered TOP-LEVEL on the `KagiApp` context — never
+        // inside the entity render — so its actions defer/dispatch on the parent
+        // without leasing the entity. Reads `file_menu` + `mode` from the entity.
+        let conflict_file_menu_overlay = match conflict_entity.as_ref() {
+            Some(entity) => {
+                let (file_menu, mode) = {
+                    let v = entity.read(cx);
+                    (v.file_menu, v.mode.clone())
+                };
+                match (mode, file_menu) {
+                    (Some(m), Some((idx, pos))) => Some(conflict_view::render_file_menu(
+                        entity, &m, idx, pos, window, cx,
+                    )),
+                    _ => None,
+                }
             }
-            _ => None,
+            None => None,
         };
         // T-HT-001: clone toolbar/summary state for header render.
         // W3-NOTIFY: while a background git op runs, disable every git button
@@ -630,20 +624,26 @@ impl Render for KagiApp {
                 cx,
             ))
             // ── W30-CONFLICT-UI: persistent conflict banner (under header) ──
+            // Free function fed a cloned `ConflictMode` (the entity itself renders
+            // only the body — rendering it twice in one frame is unsound).
             .children(
-                conflict
+                conflict_banner_mode
                     .as_ref()
-                    .map(|m| conflict_view::render_banner(m, cx)),
+                    .map(conflict_view::render_banner),
             )
             // ── Body slot: in Conflict Mode the conflict resolution pane
             //    replaces the normal sidebar | list | panel body. The center is
             //    the A/B hunk editor + Result Preview; the right is always the
-            //    Conflict Dashboard (GitKraken-style — see render_body).
-            .when(conflict.is_some() && !conflict_merge_pending, |el| {
-                let m = conflict.clone().unwrap();
-                el.child(conflict_view::render_body(&m, &conflict_chrome, cx))
+            //    Conflict Dashboard (GitKraken-style — see render_body). The
+            //    `ConflictView` entity renders its own body.
+            .when(conflict_entity.is_some() && !conflict_merge_pending, |el| {
+                if let Some(entity) = conflict_entity.clone() {
+                    el.child(entity)
+                } else {
+                    el
+                }
             })
-            .when(conflict.is_none() || conflict_merge_pending, |el| {
+            .when(conflict_entity.is_none() || conflict_merge_pending, |el| {
                 el.child(self.render_body(
                     row_count,
                     selected,
@@ -674,7 +674,7 @@ impl Render for KagiApp {
             // Hidden on the conflict-resolution screen (user request): the
             // 3-pane editor + dashboard own the whole body there. The terminal
             // returns once the conflict is resolved / the commit panel shows.
-            .when(!(conflict.is_some() && !conflict_merge_pending), |el| {
+            .when(conflict_entity.is_none() || conflict_merge_pending, |el| {
                 el.children(self.render_bottom_panel_slot(
                     bottom_panel_open,
                     bottom_panel_height,

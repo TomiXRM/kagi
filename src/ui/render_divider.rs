@@ -148,8 +148,14 @@ impl KagiApp {
                 // measured A·B row width given to A.  The cursor sits on
                 // the divider center, while flex layout assigns the ratio
                 // to the space excluding the scaled divider.
+                // ADR-0118: the measured `ab_geom` cell + the `ab_split` live on
+                // the `ConflictView` entity now; read the shared cell and push the
+                // new ratio in via `entity.update` (mirrors FileHistory).
                 let cursor_x = f32::from(event.event.position.x);
-                let (left, right) = self.conflict.ab_geom.get();
+                let Some(entity) = self.conflict.clone() else {
+                    return;
+                };
+                let (left, right) = entity.read(cx).ab_geom.get();
                 if let Some(ratio) = conflict_split_ratio_from_cursor(
                     cursor_x,
                     left,
@@ -158,10 +164,7 @@ impl KagiApp {
                     CONFLICT_AB_MIN,
                     CONFLICT_AB_MAX,
                 ) {
-                    if (ratio - self.conflict.ab_split).abs() > 0.001 {
-                        self.conflict.ab_split = ratio;
-                        cx.notify();
-                    }
+                    entity.update(cx, |v, cx| v.set_ab_split(ratio, cx));
                 }
             }
             DividerKind::FileHistoryRows => {
@@ -199,8 +202,12 @@ impl KagiApp {
                 // The previous separate hunk-control strip is gone; chunk
                 // controls live inside the A/B lists, so this measured
                 // region now matches the rendered split exactly.
+                // ADR-0118: `geom` cell + `result_split` live on the entity now.
                 let cursor_y = f32::from(event.event.position.y);
-                let (top, bottom) = self.conflict.geom.get();
+                let Some(entity) = self.conflict.clone() else {
+                    return;
+                };
+                let (top, bottom) = entity.read(cx).geom.get();
                 if let Some(ratio) = conflict_split_ratio_from_cursor(
                     cursor_y,
                     top,
@@ -209,10 +216,7 @@ impl KagiApp {
                     CONFLICT_RESULT_MIN,
                     CONFLICT_RESULT_MAX,
                 ) {
-                    if (ratio - self.conflict.result_split).abs() > 0.001 {
-                        self.conflict.result_split = ratio;
-                        cx.notify();
-                    }
+                    entity.update(cx, |v, cx| v.set_result_split(ratio, cx));
                 }
             }
         }

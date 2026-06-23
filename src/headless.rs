@@ -37,7 +37,7 @@ pub(crate) fn init_tab(app: &mut KagiApp, path: &PathBuf) {
     if let Some(idx) = app.tabs.iter().position(|t| t.path == path) {
         app.active_tab = idx;
         app.repo_path = Some(path.clone());
-        app.reload();
+        app.reload_prelaunch();
         app.log_tabs();
         return;
     }
@@ -60,7 +60,7 @@ pub(crate) fn init_tab(app: &mut KagiApp, path: &PathBuf) {
     app.active_tab = app.tabs.len() - 1;
     app.repo_path = Some(path.clone());
     // Rebuild the heavyweight per-repo display state from a fresh snapshot.
-    app.reload();
+    app.reload_prelaunch();
     app.log_tabs();
 }
 

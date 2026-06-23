@@ -251,7 +251,7 @@ impl KagiApp {
                             "discard: {}",
                             summary
                         )));
-                        app.reload();
+                        app.reload(cx);
                     }
                     Err(err_msg) => {
                         klog!("async: discard failed — {}", err_msg);

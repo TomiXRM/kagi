@@ -350,6 +350,13 @@ impl KagiApp {
         // so its captured `repo_path` can't keep reading the previous repo (and
         // the stale view doesn't linger over the newly-activated tab).
         self.file_history = None;
+        // ADR-0118 / T-ENTITY-CONFLICT-001: the ConflictView entity captures the
+        // previous repo's `repo_path`; a tab switch MUST drop it (and the merge
+        // gate + run-once guard) so a stale conflict screen never survives. The
+        // new repo re-detects via the launch / `ensure_startup_repo_io` path.
+        self.conflict = None;
+        self.conflict_merge_pending = false;
+        self.conflict_detected_for = None;
         // ADR-0084: drop the previous repo's undo/redo history and re-arm the
         // reflog seed so the next repo seeds its own (else Cmd+Z would target
         // the old repo's branch).
@@ -528,6 +535,12 @@ impl KagiApp {
         self.commit_panel_open = false;
         self.commit_panel = None;
         self.commit_input = None;
+        // ADR-0118: drop the conflict entity (captured prev-repo `repo_path`) +
+        // merge gate + run-once guard so a stale conflict screen never lingers
+        // behind the Welcome overlay.
+        self.conflict = None;
+        self.conflict_merge_pending = false;
+        self.conflict_detected_for = None;
         self.status_footer = FooterStatus::Idle(SharedString::from(Msg::Ready.t()));
     }
 
@@ -624,7 +637,7 @@ impl KagiApp {
                         if saw_git {
                             app.reload_external(cx);
                         } else if saw_index {
-                            if app.conflict.mode.is_some() || app.conflict_merge_pending {
+                            if app.conflict.is_some() || app.conflict_merge_pending {
                                 app.reload_external(cx);
                             } else {
                                 app.refresh_working_tree_external(cx);
@@ -1081,6 +1094,6 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
     app.repo_path = Some(app.tabs[active].path.clone());
     app.repo_session = kagi_git::session::RepoSession::open(&app.tabs[active].path).ok();
     app.error = None;
-    app.reload();
+    app.reload_prelaunch();
     klog!("session: restored {} tab(s)", app.tabs.len());
 }

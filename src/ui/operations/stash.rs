@@ -145,7 +145,7 @@ impl KagiApp {
                             "stash: {}",
                             summary
                         )));
-                        app.reload();
+                        app.reload(cx);
                     }
                     Err(err_msg) => {
                         klog!("async: stash-push failed — {}", err_msg);
@@ -290,7 +290,7 @@ impl KagiApp {
             Ok(r) => r,
             Err(e) => {
                 klog!("verify: repo open error: {}", e);
-                self.reload();
+                self.reload(cx);
                 return;
             }
         };
@@ -343,7 +343,7 @@ impl KagiApp {
         );
 
         // Reload display data.
-        self.reload();
+        self.reload(cx);
     }
 
     /// Build a stash-pop plan and open the confirmation modal.
@@ -609,7 +609,7 @@ impl KagiApp {
                             "stash drop: {}",
                             summary
                         )));
-                        app.reload();
+                        app.reload(cx);
                     }
                     Err(err_msg) => {
                         klog!("async: stash-drop failed — {}", err_msg);
@@ -702,7 +702,7 @@ impl KagiApp {
                 );
                 self.status_footer =
                     FooterStatus::Success(SharedString::from("stash pop: applied and dropped"));
-                self.reload();
+                self.reload(cx);
             }
             Err(e) => {
                 let err_msg = format!("Pop failed: {}", e);
@@ -784,7 +784,7 @@ impl KagiApp {
                             "stash pop: {}",
                             summary
                         )));
-                        app.reload();
+                        app.reload(cx);
                     }
                     Err(err_msg) => {
                         klog!("async: stash-pop failed — {}", err_msg);

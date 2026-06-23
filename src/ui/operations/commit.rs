@@ -912,7 +912,7 @@ impl KagiApp {
                                 summary,
                             );
                         }
-                        app.reload();
+                        app.reload(cx);
                     }
                     Err(err_msg) => {
                         klog!("async: commit failed — {}", err_msg);
@@ -1014,7 +1014,7 @@ impl KagiApp {
                 if let Some(panel) = self.commit_panel.as_mut() {
                     panel.plan_modal = None;
                 }
-                self.reload();
+                self.reload(cx);
             }
             Ok(_) => {
                 // MergeCommit only yields OperationOutcome::Commit; any other

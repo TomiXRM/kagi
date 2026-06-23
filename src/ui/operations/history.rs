@@ -153,7 +153,7 @@ impl KagiApp {
                     outcome.undone.short(),
                     outcome.undone.short()
                 )));
-                self.reload();
+                self.reload(cx);
             }
             Ok(_) => {
                 // UndoCommit only yields OperationOutcome::Undo.
@@ -459,7 +459,7 @@ impl KagiApp {
                     outcome.from.short(),
                     outcome.to.short()
                 )));
-                self.reload();
+                self.reload(cx);
             }
             Err(e) => {
                 let err_msg = format!(
@@ -684,7 +684,7 @@ impl KagiApp {
                     outcome.new.short(),
                     outcome.old.short()
                 )));
-                self.reload();
+                self.reload(cx);
             }
             Ok(_) => {
                 // Amend only yields OperationOutcome::Amend.
@@ -787,7 +787,7 @@ impl KagiApp {
                             new.short(),
                             old.short()
                         )));
-                        app.reload();
+                        app.reload(cx);
                     }
                     Err(err_msg) => {
                         klog!("async: amend failed — {}", err_msg);

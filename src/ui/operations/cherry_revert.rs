@@ -132,7 +132,7 @@ impl KagiApp {
                                 format!("cherry-pick {}", commit_id.short()),
                             );
                         }
-                        app.reload();
+                        app.reload(cx);
                     }
                     Err(err_msg) => {
                         klog!("async: cherry-pick failed — {}", err_msg);
@@ -274,7 +274,7 @@ impl KagiApp {
                                 format!("revert {}", commit_id.short()),
                             );
                         }
-                        app.reload();
+                        app.reload(cx);
                     }
                     Err(err_msg) => {
                         klog!("async: revert failed — {}", err_msg);

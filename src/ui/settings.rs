@@ -183,26 +183,43 @@ pub fn analyze_ignore_path() -> Option<PathBuf> {
     Some(settings_path()?.with_file_name("analyze_ignore"))
 }
 
-/// Load the Analyze exclude patterns (gitignore syntax, one per line) from the
-/// `analyze_ignore` file. On first run the file is created with
-/// [`DEFAULT_ANALYZE_IGNORE`] so the user has an editable, documented starting
-/// point. Returns the raw lines (comments / blanks included — the matcher
-/// ignores them).
-pub fn analyze_ignore_patterns() -> Vec<String> {
+/// Read the full text of the `analyze_ignore` file, seeding it with
+/// [`DEFAULT_ANALYZE_IGNORE`] on first run so the user has an editable,
+/// documented starting point.
+pub fn read_analyze_ignore_text() -> String {
     let Some(path) = analyze_ignore_path() else {
-        return DEFAULT_ANALYZE_IGNORE.lines().map(str::to_owned).collect();
+        return DEFAULT_ANALYZE_IGNORE.to_string();
     };
     match std::fs::read_to_string(&path) {
-        Ok(s) => s.lines().map(str::to_owned).collect(),
+        Ok(s) => s,
         Err(_) => {
-            // Seed the default file (best-effort) and return its lines.
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
             let _ = std::fs::write(&path, DEFAULT_ANALYZE_IGNORE);
-            DEFAULT_ANALYZE_IGNORE.lines().map(str::to_owned).collect()
+            DEFAULT_ANALYZE_IGNORE.to_string()
         }
     }
+}
+
+/// Persist new `analyze_ignore` contents (the Settings pane editor). Best-effort.
+pub fn write_analyze_ignore(content: &str) {
+    let Some(path) = analyze_ignore_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, content);
+}
+
+/// The Analyze exclude patterns (gitignore syntax, one per line) — comments /
+/// blanks included (the matcher ignores them).
+pub fn analyze_ignore_patterns() -> Vec<String> {
+    read_analyze_ignore_text()
+        .lines()
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Resolve the path to `settings.json` (`$KAGI_LOG_DIR/settings.json` first,

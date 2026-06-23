@@ -1006,6 +1006,10 @@ pub struct KagiApp {
     /// until then / in headless paths; a `SelectEvent::Confirm` subscription
     /// applies the chosen theme via `set_theme`.
     pub theme_select: Option<Entity<settings_view::ThemeSelectState>>,
+    /// ADR-0119: multi-line editor backing the Settings → "Analyze ignore"
+    /// section (the gitignore-format exclude file). Lazily created when Settings
+    /// opens (needs a `Window`).
+    pub analyze_ignore_input: Option<Entity<InputState>>,
     /// Horizontal scroll offset (px) of the graph column. Lanes hidden by a
     /// narrow column width are revealed by horizontal scrolling (clamped in
     /// render against the current lane count).
@@ -1499,6 +1503,7 @@ impl KagiApp {
             file_history_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: theme::compact_graph(),
             theme_select: None,
+            analyze_ignore_input: None,
             graph_scroll_x: 0.0,
             // W2-SIDEBAR
             branch_groups_collapsed: HashSet::new(),
@@ -1601,6 +1606,7 @@ impl KagiApp {
             file_history_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: theme::compact_graph(),
             theme_select: None,
+            analyze_ignore_input: None,
             graph_scroll_x: 0.0,
             // W2-SIDEBAR
             branch_groups_collapsed: HashSet::new(),

@@ -401,6 +401,16 @@ pub enum Msg {
     /// Language → Interface language row description.
     SettingsInterfaceLangDesc,
 
+    // ── ADR-0119: Analyze (Code Ecosystem) ignore section in Settings ─────
+    /// Analyze-ignore section header.
+    SettingsAnalyzeIgnore,
+    /// Analyze-ignore section description (gitignore-syntax editor).
+    SettingsAnalyzeIgnoreDesc,
+    /// Analyze-ignore → Save button.
+    SettingsAnalyzeIgnoreSave,
+    /// Analyze-ignore → Reset-to-defaults button.
+    SettingsAnalyzeIgnoreReset,
+
     // ── ADR-0090 / ADR-0099: Smart Commit section (prose localized; the
     //    domain words "commit" / "LLM" / "Ollama" / "CLI" stay English) ──────
     /// Smart Commit section header (product feature name — English in both arms).
@@ -865,6 +875,19 @@ impl Msg {
             (Ja, SettingsInterfaceLangDesc) => {
                 "説明文の言語(Git の用語は英語のままです)。"
             }
+
+            // ── Analyze ignore section (ADR-0119) ────────────────────
+            (En, SettingsAnalyzeIgnore) | (Ja, SettingsAnalyzeIgnore) => "Analyze ignore",
+            (En, SettingsAnalyzeIgnoreDesc) => {
+                "Files matching these patterns are excluded from Analyze (Hotspots / Coupling / Ownership). One pattern per line, .gitignore syntax — wildcards (* ** ?) and negation (!) work. Saved to the analyze_ignore file. Reload the repository to apply."
+            }
+            (Ja, SettingsAnalyzeIgnoreDesc) => {
+                "これらのパターンに一致するファイルは Analyze(Hotspots / Coupling / Ownership)から除外されます。1 行 1 パターン、.gitignore と同じ書式でワイルドカード(* ** ?)や否定(!)が使えます。analyze_ignore ファイルに保存されます。反映にはリポジトリの再読み込みが必要です。"
+            }
+            (En, SettingsAnalyzeIgnoreSave) => "Save",
+            (Ja, SettingsAnalyzeIgnoreSave) => "保存",
+            (En, SettingsAnalyzeIgnoreReset) => "Reset to defaults",
+            (Ja, SettingsAnalyzeIgnoreReset) => "デフォルトに戻す",
 
             // ── Smart Commit section (ADR-0090 / ADR-0099) ───────────
             // "Smart Commit" is a product feature name and stays English.

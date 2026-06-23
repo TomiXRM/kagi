@@ -69,6 +69,10 @@ pub struct EcosystemData {
     pub coupling_graph_on: bool,
     /// Laid-out graph for the current window (built lazily when Graph is shown).
     pub coupling_graph: Option<CouplingGraph>,
+    /// Graph viewport: zoom factor, pan offset (px), and the last drag point.
+    pub graph_zoom: f32,
+    pub graph_pan: (f32, f32),
+    pub graph_drag: Option<(f32, f32)>,
     /// Per-file ownership for the current granularity (Ownership mode).
     pub ownership: Vec<FileOwnership>,
     pub mode: EcosystemMode,
@@ -89,6 +93,9 @@ impl EcosystemData {
             coupling_partners: Vec::new(),
             coupling_graph_on: false,
             coupling_graph: None,
+            graph_zoom: 1.0,
+            graph_pan: (0.0, 0.0),
+            graph_drag: None,
             ownership: Vec::new(),
             mode: EcosystemMode::Hotspots,
             map: false,
@@ -163,6 +170,45 @@ impl EcosystemView {
             .data
             .coupling_graph_on
             .then(|| build_graph(&self.data.couplings, GRAPH_MAX_EDGES));
+        self.reset_graph_viewport();
+    }
+
+    fn reset_graph_viewport(&mut self) {
+        self.data.graph_zoom = 1.0;
+        self.data.graph_pan = (0.0, 0.0);
+        self.data.graph_drag = None;
+    }
+
+    /// Zoom the graph about its centre by a scroll delta (multiplicative).
+    pub fn graph_zoom_by(&mut self, dy: f32, cx: &mut Context<Self>) {
+        let factor = (1.0 + dy * 0.0015).clamp(0.5, 1.5);
+        self.data.graph_zoom = (self.data.graph_zoom * factor).clamp(0.2, 12.0);
+        cx.notify();
+    }
+
+    /// Begin a pan drag at the given window pixel position.
+    pub fn graph_drag_start(&mut self, x: f32, y: f32) {
+        self.data.graph_drag = Some((x, y));
+    }
+
+    /// Continue a pan drag — translate the viewport by the pointer delta.
+    pub fn graph_drag_move(&mut self, x: f32, y: f32, cx: &mut Context<Self>) {
+        if let Some((lx, ly)) = self.data.graph_drag {
+            self.data.graph_pan.0 += x - lx;
+            self.data.graph_pan.1 += y - ly;
+            self.data.graph_drag = Some((x, y));
+            cx.notify();
+        }
+    }
+
+    pub fn graph_drag_end(&mut self) {
+        self.data.graph_drag = None;
+    }
+
+    /// Reset zoom + pan to the default fit.
+    pub fn graph_reset(&mut self, cx: &mut Context<Self>) {
+        self.reset_graph_viewport();
+        cx.notify();
     }
 
     /// Toggle the Coupling sub-view between the pair list and the graph; builds
@@ -172,6 +218,7 @@ impl EcosystemView {
             self.data.coupling_graph_on = on;
             if on && self.data.coupling_graph.is_none() {
                 self.data.coupling_graph = Some(build_graph(&self.data.couplings, GRAPH_MAX_EDGES));
+                self.reset_graph_viewport();
             }
             cx.notify();
         }

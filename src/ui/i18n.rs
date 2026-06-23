@@ -441,6 +441,8 @@ pub enum Msg {
     EcoCouplesWith,
     /// Coupling sub-view toggle: force-directed graph.
     EcoGraph,
+    /// Graph viewport reset button (zoom/pan back to fit).
+    EcoResetView,
 }
 
 impl Msg {
@@ -915,6 +917,8 @@ impl Msg {
             (Ja, EcoCouplesWith) => "と結合:",
             (En, EcoGraph) => "Graph",
             (Ja, EcoGraph) => "グラフ",
+            (En, EcoResetView) => "Reset",
+            (Ja, EcoResetView) => "リセット",
         }
     }
 }

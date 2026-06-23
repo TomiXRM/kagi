@@ -155,13 +155,8 @@ fn render_body(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElem
             EcosystemMode::Coupling => {
                 if view.data.couplings.is_empty() {
                     centered(Msg::EcoEmpty.t())
-                } else if let Some(g) = view
-                    .data
-                    .coupling_graph
-                    .as_ref()
-                    .filter(|_| view.data.coupling_graph_on)
-                {
-                    super::graph::render_coupling_graph(g)
+                } else if view.data.coupling_graph_on && view.data.coupling_graph.is_some() {
+                    super::graph::render_coupling_graph(view, cx)
                 } else {
                     render_coupling_list(view, cx)
                 }

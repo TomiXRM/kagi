@@ -17,6 +17,7 @@
 mod render;
 mod viz;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::*;
@@ -82,13 +83,12 @@ impl EcosystemData {
     }
 }
 
-/// App-level cache of a completed mine, so reopening the view (or switching
-/// tabs and back) reuses the ~minute-long `git log` scan instead of re-running
-/// it. Invalidated on reload / repo switch (ADR-0119).
-pub struct EcosystemCache {
-    pub repo_path: PathBuf,
-    pub raw: RawEcosystem,
-}
+/// App-level cache of completed mines, keyed by repository path, so reopening
+/// the view — or switching tabs to another repo and **back** — reuses the
+/// ~minute-long `git log` scan instead of re-running it. Entries persist across
+/// tab switches; an entry is invalidated only when its repo reloads (new
+/// commits make that mine stale). (ADR-0119)
+pub type EcosystemCache = HashMap<PathBuf, RawEcosystem>;
 
 /// The Code Ecosystem view entity (ADR-0119). "Fat": owns its Backend mining.
 pub struct EcosystemView {
@@ -143,15 +143,12 @@ impl EcosystemView {
                 match result {
                     Ok(raw) => {
                         klog!("ecosystem: loaded {} commits", raw.commits.len());
-                        // Cache the mine on the parent so reopen / tab-switch
-                        // reuses it (invalidated on reload / repo switch).
+                        // Cache the mine on the parent (keyed by repo) so reopen
+                        // / tab-switch-and-back reuses it (invalidated on reload).
                         let repo_path = v.repo_path.clone();
                         let cached = raw.clone();
                         let _ = v.app.update(cx, |app, _| {
-                            app.ecosystem_cache = Some(EcosystemCache {
-                                repo_path,
-                                raw: cached,
-                            });
+                            app.ecosystem_cache.insert(repo_path, cached);
                         });
                         v.data.raw = Some(raw);
                         v.recompute();
@@ -243,12 +240,9 @@ impl super::KagiApp {
             return;
         };
         let weak = cx.weak_entity();
-        // Reuse a cached mine for this repo if present (instant reopen).
-        let cached = self
-            .ecosystem_cache
-            .as_ref()
-            .filter(|c| c.repo_path == repo_path)
-            .map(|c| c.raw.clone());
+        // Reuse a cached mine for this repo if present (instant reopen, even
+        // after switching to another repo tab and back).
+        let cached = self.ecosystem_cache.get(&repo_path).cloned();
         let entity = cx.new(|cx| {
             let mut v = EcosystemView::new(weak, repo_path);
             match cached {

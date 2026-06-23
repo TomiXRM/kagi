@@ -1167,7 +1167,7 @@ pub struct KagiApp {
     pub ecosystem: Option<Entity<ecosystem::EcosystemView>>,
     /// ADR-0119: cached completed mine so reopening the Ecosystem view reuses
     /// the slow `git log` scan. Invalidated on reload / repo switch.
-    pub ecosystem_cache: Option<ecosystem::EcosystemCache>,
+    pub ecosystem_cache: ecosystem::EcosystemCache,
 }
 
 /// T-CONFLICT-UI-001: the Result `InputState` entity backing the Conflict
@@ -1535,7 +1535,7 @@ impl KagiApp {
             last_working_status: None,
             file_history: None,
             ecosystem: None,
-            ecosystem_cache: None,
+            ecosystem_cache: ecosystem::EcosystemCache::new(),
         }
     }
 
@@ -1636,7 +1636,7 @@ impl KagiApp {
             last_working_status: None,
             file_history: None,
             ecosystem: None,
-            ecosystem_cache: None,
+            ecosystem_cache: ecosystem::EcosystemCache::new(),
         }
     }
 
@@ -1746,9 +1746,12 @@ impl KagiApp {
         self.file_history = None;
         // ADR-0119: reload() has no `cx` to re-spawn the async mine; drop the
         // Ecosystem view like File History (reopened fresh on demand). New
-        // commits make the cached mine stale → invalidate it too.
+        // commits make THIS repo's cached mine stale → drop just that entry
+        // (other repos' caches stay warm for tab-switch-and-back).
         self.ecosystem = None;
-        self.ecosystem_cache = None;
+        if let Some(p) = self.repo_path.clone() {
+            self.ecosystem_cache.remove(&p);
+        }
         self.clear_plan_modal();
         self.clear_pull_modal();
         self.clear_undo_modal();

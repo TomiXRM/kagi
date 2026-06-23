@@ -352,10 +352,11 @@ impl KagiApp {
         // the stale view doesn't linger over the newly-activated tab).
         self.file_history = None;
         // ADR-0119: the EcosystemView entity captures the previous repo's
-        // `repo_path`; drop it on repo/tab switch like File History, and drop
-        // the cached mine (it belongs to the previous repo).
+        // `repo_path`; drop the view on repo/tab switch like File History. The
+        // mine CACHE (`ecosystem_cache`) is keyed by repo and deliberately kept
+        // across tab switches, so returning to a repo and pressing Analyze
+        // reuses its previous scan instead of recomputing from scratch.
         self.ecosystem = None;
-        self.ecosystem_cache = None;
         // ADR-0118 / T-ENTITY-CONFLICT-001: the ConflictView entity captures the
         // previous repo's `repo_path`; a tab switch MUST drop it (and the merge
         // gate + run-once guard) so a stale conflict screen never survives. The

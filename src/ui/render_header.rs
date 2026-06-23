@@ -153,6 +153,13 @@ impl KagiApp {
             cx.notify();
         });
 
+        // Ecosystem (ADR-0119) — read-only hot-spot analysis; open the
+        // full-screen view. Disabled when no repo is open.
+        let ecosystem_on = self.repo_path.is_some();
+        let ecosystem_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
+            this.open_ecosystem_view(cx);
+        });
+
         // Branch — always enabled; use selected commit if any, else HEAD.
         let branch_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
             // Resolve target commit: selected row → HEAD commit (first detail).
@@ -533,6 +540,18 @@ impl KagiApp {
                             toolbar.ahead,
                         )
                         .on_click(push_click),
+                    )
+                    .child(sep())
+                    // Ecosystem (ADR-0119) — read-only hot-spot analysis
+                    .child(
+                        make_btn(
+                            "tb-ecosystem",
+                            "Ecosystem",
+                            gpui_component::IconName::ChartPie,
+                            ecosystem_on,
+                            0,
+                        )
+                        .on_click(ecosystem_click),
                     )
                     .child(sep())
                     // Branch

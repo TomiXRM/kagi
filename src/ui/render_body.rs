@@ -374,6 +374,8 @@ impl KagiApp {
         // ADR-0117: it is now its own Entity<FileHistoryView>; clone the handle so
         // we can embed it below (GPUI renders the entity directly).
         let file_history = self.file_history.clone();
+        // ADR-0119: Code Ecosystem view — same full-screen center+right takeover.
+        let ecosystem = self.ecosystem.clone();
         let mut body_row = div()
             .flex()
             .flex_row()
@@ -400,6 +402,13 @@ impl KagiApp {
         // `Entity<FileHistoryView>` gives it an isolated `cx.notify()` scope.
         if let Some(fh) = file_history {
             body_row = body_row.child(fh);
+            return body_row;
+        }
+
+        // ADR-0119: Code Ecosystem view (full-screen, read-only). Like File
+        // History, the entity renders its own body in an isolated notify scope.
+        if let Some(eco) = ecosystem {
+            body_row = body_row.child(eco);
             return body_row;
         }
 

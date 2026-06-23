@@ -419,6 +419,20 @@ pub enum Msg {
     SettingsSmartModelDesc,
     /// Smart Commit → model picker note when no local models are detected.
     SettingsSmartNoModels,
+
+    // ── Code Ecosystem / hot-spots (ADR-0119) ───────────────────────
+    /// Ecosystem view title / toolbar button label.
+    Ecosystem,
+    /// "Copy diagnostic" button (export hot-spots as LLM context).
+    EcoCopyDiagnostic,
+    /// Body placeholder while the repo is being mined.
+    EcoLoading,
+    /// Body message when the mine fails (followed by the error detail).
+    EcoLoadFailed,
+    /// Body message when there is no churn to show.
+    EcoEmpty,
+    /// Body placeholder for the not-yet-implemented Coupling / Ownership modes.
+    EcoComingSoon,
 }
 
 impl Msg {
@@ -871,6 +885,20 @@ impl Msg {
             (Ja, SettingsSmartNoModels) => {
                 "ローカルモデルが検出されませんでした — Ollama を起動してください"
             }
+
+            // ── Code Ecosystem / hot-spots (ADR-0119) ───────────────
+            (En, Ecosystem) => "Ecosystem",
+            (Ja, Ecosystem) => "エコシステム",
+            (En, EcoCopyDiagnostic) => "Copy diagnostic",
+            (Ja, EcoCopyDiagnostic) => "診断をコピー",
+            (En, EcoLoading) => "Analyzing repository…",
+            (Ja, EcoLoading) => "リポジトリを解析中…",
+            (En, EcoLoadFailed) => "analysis failed",
+            (Ja, EcoLoadFailed) => "解析に失敗しました",
+            (En, EcoEmpty) => "No activity to analyze",
+            (Ja, EcoEmpty) => "解析できる変更がありません",
+            (En, EcoComingSoon) => "Coming soon",
+            (Ja, EcoComingSoon) => "近日対応",
         }
     }
 }

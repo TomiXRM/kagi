@@ -23,6 +23,7 @@ pub mod detail_panel;
 mod diff_cache;
 pub mod diff_view;
 pub mod diffstat_bar;
+pub mod ecosystem;
 pub mod file_history;
 mod file_history_render;
 mod file_menu;
@@ -1160,6 +1161,10 @@ pub struct KagiApp {
     /// single-file history view occupies the center+right area; `None` shows the
     /// normal commit graph / diff body. The entity owns its loads + row menu.
     pub file_history: Option<Entity<file_history::FileHistoryView>>,
+    /// ADR-0119: Code Ecosystem / hot-spot view. `Some` while the full-screen
+    /// read-only analysis view occupies the center+right area; `None` shows the
+    /// normal body. Its own `Entity<EcosystemView>` owns the mining + ranking.
+    pub ecosystem: Option<Entity<ecosystem::EcosystemView>>,
 }
 
 /// T-CONFLICT-UI-001: the Result `InputState` entity backing the Conflict
@@ -1526,6 +1531,7 @@ impl KagiApp {
             update_status: None,
             last_working_status: None,
             file_history: None,
+            ecosystem: None,
         }
     }
 
@@ -1625,6 +1631,7 @@ impl KagiApp {
             update_status: None,
             last_working_status: None,
             file_history: None,
+            ecosystem: None,
         }
     }
 
@@ -1732,6 +1739,9 @@ impl KagiApp {
         // and any in-flight load tear down. `reload()` has no `cx` to re-spawn;
         // the `reload_external` path re-opens fresh when needed.
         self.file_history = None;
+        // ADR-0119: reload() has no `cx` to re-spawn the async mine; drop the
+        // Ecosystem view like File History (reopened fresh on demand).
+        self.ecosystem = None;
         self.clear_plan_modal();
         self.clear_pull_modal();
         self.clear_undo_modal();

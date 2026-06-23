@@ -351,6 +351,9 @@ impl KagiApp {
         // so its captured `repo_path` can't keep reading the previous repo (and
         // the stale view doesn't linger over the newly-activated tab).
         self.file_history = None;
+        // ADR-0119: the EcosystemView entity captures the previous repo's
+        // `repo_path`; drop it on repo/tab switch like File History.
+        self.ecosystem = None;
         // ADR-0118 / T-ENTITY-CONFLICT-001: the ConflictView entity captures the
         // previous repo's `repo_path`; a tab switch MUST drop it (and the merge
         // gate + run-once guard) so a stale conflict screen never survives. The

@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 
 use super::cli::run_git;
 use super::GitError;
-use kagi_domain::hotspot::{CommitChanges, FileChange, RawEcosystem};
+use kagi_domain::hotspot::{is_excluded, CommitChanges, FileChange, RawEcosystem};
 
 /// Record separator emitted by `--format=%x1e…` before each commit.
 const RS: char = '\u{1e}';
@@ -91,6 +91,12 @@ fn parse_numstat_log(stdout: &str) -> Vec<CommitChanges> {
                 continue;
             }
             if let Some(change) = parse_numstat_line(line) {
+                // Drop binary / non-source artifacts (PDF, images, CAD, KiCad)
+                // at the mining boundary so the cache stays small and we never
+                // read their bytes for the LOC scan (ADR-0119).
+                if is_excluded(&change.path) {
+                    continue;
+                }
                 files.push(change);
             }
         }
@@ -171,11 +177,12 @@ mod tests {
 
     #[test]
     fn binary_rows_count_as_zero() {
-        let stdout = format!("{RS}1700000000\n\n-\t-\tassets/logo.png\n");
+        // A non-excluded binary blob (`-`/`-` numstat) → counted, with 0 lines.
+        let stdout = format!("{RS}1700000000\n\n-\t-\tdata/blob.bin\n");
         let commits = parse_numstat_log(&stdout);
         assert_eq!(commits[0].files[0].insertions, 0);
         assert_eq!(commits[0].files[0].deletions, 0);
-        assert_eq!(commits[0].files[0].path, "assets/logo.png");
+        assert_eq!(commits[0].files[0].path, "data/blob.bin");
     }
 
     #[test]
@@ -192,6 +199,16 @@ mod tests {
         let commits = parse_numstat_log(&stdout);
         assert_eq!(commits.len(), 1);
         assert_eq!(commits[0].files[0].path, "y");
+    }
+
+    #[test]
+    fn excluded_artifacts_are_dropped_while_mining() {
+        let stdout = format!(
+            "{RS}1700000000\n\n10\t2\tsrc/a.rs\n0\t0\tdoc/manual.pdf\n3\t1\tboard.kicad_pcb\n5\t5\tsrc/b.rs\n"
+        );
+        let commits = parse_numstat_log(&stdout);
+        let paths: Vec<&str> = commits[0].files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, vec!["src/a.rs", "src/b.rs"]);
     }
 
     #[test]

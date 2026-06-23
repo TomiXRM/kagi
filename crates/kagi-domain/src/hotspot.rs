@@ -34,6 +34,30 @@ pub struct FileChange {
     pub deletions: u64,
 }
 
+/// Extensions excluded from hot-spot analysis: binary / non-source artifacts
+/// (PDFs, raster & vector images, CAD / 3D models) where "churn × line count"
+/// is meaningless. Lowercased, without the leading dot. KiCad project files
+/// (`*.kicad_pcb`, `*.kicad_sch`, …) are matched separately by extension prefix.
+const EXCLUDED_EXTENSIONS: &[&str] = &[
+    "pdf", // documents
+    // raster / vector image data
+    "png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "tif", "tiff", "svg", "heic", "heif", "avif",
+    "psd", "ai", "eps", // CAD / 3D models
+    "step", "stp", "stl", "iges", "igs", "3mf",
+];
+
+/// True when `path` is an excluded binary / non-source artifact, judged by its
+/// extension (case-insensitive). KiCad files are matched by the `kicad`
+/// extension prefix (`kicad_pcb`, `kicad_sch`, `kicad_pro`, `kicad_mod`, …).
+pub fn is_excluded(path: &str) -> bool {
+    // Extension = text after the last '.'; "no dot" → no extension.
+    let ext = match path.rsplit_once('.') {
+        Some((_, e)) if !e.is_empty() => e.to_ascii_lowercase(),
+        _ => return false,
+    };
+    ext.starts_with("kicad") || EXCLUDED_EXTENSIONS.contains(&ext.as_str())
+}
+
 /// One commit's changed-file set, tagged with its author time (epoch secs).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitChanges {
@@ -149,6 +173,9 @@ pub fn analyze(raw: &RawEcosystem, now: i64, g: Granularity) -> Ecosystem {
             continue;
         }
         for f in &c.files {
+            if is_excluded(&f.path) {
+                continue;
+            }
             let e = by_path.entry(f.path.as_str()).or_default();
             e.0 += 1;
             e.1 += f.insertions;
@@ -200,6 +227,9 @@ pub fn coupling_for(
     g: Granularity,
     n: usize,
 ) -> Vec<CouplingEdge> {
+    if is_excluded(path) {
+        return Vec::new();
+    }
     let start = window_start(raw, now, g);
     let mut own = 0u32;
     let mut partners: BTreeMap<&str, u32> = BTreeMap::new();
@@ -212,7 +242,7 @@ pub fn coupling_for(
         }
         own += 1;
         for f in &c.files {
-            if f.path != path {
+            if f.path != path && !is_excluded(&f.path) {
                 *partners.entry(f.path.as_str()).or_default() += 1;
             }
         }
@@ -343,6 +373,67 @@ mod tests {
         assert!((edges[0].ratio - 0.5).abs() < 1e-9);
         assert_eq!(edges[1].partner, "c");
         assert_eq!(edges[1].together, 1);
+    }
+
+    #[test]
+    fn is_excluded_matches_binaries_cad_and_kicad() {
+        for p in [
+            "doc/spec.pdf",
+            "img/logo.PNG",
+            "a/b.jpeg",
+            "icons/x.svg",
+            "board.kicad_pcb",
+            "sheet.kicad_sch",
+            "proj.kicad_pro",
+            "model.step",
+            "part.STP",
+            "mesh.stl",
+        ] {
+            assert!(is_excluded(p), "{p} should be excluded");
+        }
+        for p in [
+            "src/main.rs",
+            "README.md",
+            "Makefile",
+            ".gitignore",
+            "a.toml",
+        ] {
+            assert!(!is_excluded(p), "{p} should NOT be excluded");
+        }
+    }
+
+    #[test]
+    fn analyze_drops_excluded_files() {
+        let r = raw(
+            vec![
+                commit(
+                    NOW - 100,
+                    &["src/a.rs", "doc/manual.pdf", "board.kicad_pcb"],
+                ),
+                commit(NOW - 200, &["src/a.rs", "doc/manual.pdf"]),
+            ],
+            &[
+                ("src/a.rs", 50),
+                ("doc/manual.pdf", 9000),
+                ("board.kicad_pcb", 9000),
+            ],
+        );
+        let eco = analyze(&r, NOW, Granularity::All);
+        // Only the .rs file survives — the PDF / KiCad artifacts are gone even
+        // though their "LOC" is huge.
+        assert_eq!(eco.files.len(), 1);
+        assert_eq!(eco.files[0].path, "src/a.rs");
+    }
+
+    #[test]
+    fn coupling_ignores_excluded_partners() {
+        let r = raw(
+            vec![commit(NOW - 100, &["src/a.rs", "out.pdf", "src/b.rs"])],
+            &[],
+        );
+        let edges = coupling_for(&r, "src/a.rs", NOW, Granularity::All, 10);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].partner, "src/b.rs");
     }
 
     #[test]

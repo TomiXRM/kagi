@@ -116,3 +116,20 @@
 - PM real-UI verification: open panel, stage/unstage, type message, commit (plain), amend, and the
   **conflict→resolve→Continue(merge)→commit panel→commit** cross-flow; no "already borrowed" panic.
 - Adversarial codex cross-review of the diff before integrate.
+
+## Status: LANDED (refactor/kagi-app-decomp-5-2, `63b3bf4`)
+
+- Gates: build, `test --workspace` 791/0, fmt, clippy 38 (no new), headless `KAGI_COMMIT_PANEL`
+  smoke (`commit-panel:` line, no panic).
+- Adversarial codex cross-review: BLOCK → BLOCK → **SHIP** over 3 rounds. Caught + fixed two real
+  behaviour regressions build/tests missed: (1) reopen recreated the entity and dropped the unsaved
+  commit message → now REUSES the existing entity (refresh `state` only); (2) draft-restore keyed off
+  the empty plain input and clobbered TEMPLATE fields / flipped mode on reopen → gated on `is_new`
+  (first open only). Plus FIX 2: smart-commit apply re-checks `still_empty` at apply time.
+- **Real-UI verification PERFORMED** (primary session, standalone `KAGI_NO_SINGLE_INSTANCE=1` build,
+  screencapture + cliclick): WIP-row → panel opens (entity renders full Unstaged/Staged/message/
+  toolbar); **Stage all** (deferred) moved both files to Staged with correct child re-render;
+  message entry + focus work; message **persisted across close→reopen** (draft autosave→load);
+  **Commit** (deferred → open_commit_plan_modal → start_commit → reload → entity rebuild) created a
+  real commit (`executed: commit …`, working tree clean, graph updated), with **no "already
+  borrowed" panic** on any path.

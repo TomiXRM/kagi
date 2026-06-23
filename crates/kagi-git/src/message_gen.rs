@@ -651,6 +651,15 @@ fn is_executable_file(path: &Path) -> bool {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    /// Serializes the tests that mutate the process-global `KAGI_OFFLINE` env
+    /// var. The default harness runs tests in parallel, so without this the two
+    /// offline tests race: one can `remove_var` the flag while the other is
+    /// between `set_var` and its `offline()` check — that check then sees the
+    /// flag unset, the CLI/Ollama arm proceeds, and the test fails with e.g.
+    /// `Err(Http("claude not found on PATH"))` instead of `Err(Offline)`.
+    static OFFLINE_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn fs(path: &str, change: ChangeKind) -> FileStatus {
         FileStatus {
@@ -800,6 +809,7 @@ mod tests {
     fn generate_ollama_offline_is_err() {
         // Force offline so no network is touched; Ollama must Err → caller
         // falls back to rule_based.
+        let _env = OFFLINE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prev = std::env::var("KAGI_OFFLINE").ok();
         std::env::set_var("KAGI_OFFLINE", "1");
         let files = vec![fs("src/a.rs", ChangeKind::Modified)];
@@ -828,6 +838,7 @@ mod tests {
     fn generate_cli_offline_is_err() {
         // Force offline so no CLI is ever spawned (no quota is consumed); the
         // Cli backend must Err so the caller falls back to rule_based.
+        let _env = OFFLINE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prev = std::env::var("KAGI_OFFLINE").ok();
         std::env::set_var("KAGI_OFFLINE", "1");
         let files = vec![fs("src/a.rs", ChangeKind::Modified)];

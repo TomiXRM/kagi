@@ -408,37 +408,37 @@ pub const COMMANDS: &[Command] = &[
     Command {
         id: "app.settings",
         label: "Settings…",
-        keystroke: Some("cmd-,"),
+        keystroke: Some("secondary-,"),
         dangerous: false,
     },
     Command {
         id: "app.quit",
         label: "Quit kagi",
-        keystroke: Some("cmd-q"),
+        keystroke: Some("secondary-q"),
         dangerous: false,
     },
     Command {
         id: "file.newTab",
         label: "New Tab",
-        keystroke: Some("cmd-t"),
+        keystroke: Some("secondary-t"),
         dangerous: false,
     },
     Command {
         id: "file.closeTab",
         label: "Close Tab",
-        keystroke: Some("cmd-w"),
+        keystroke: Some("secondary-w"),
         dangerous: false,
     },
     Command {
         id: "file.cloneRepository",
         label: "Clone Repository…",
-        keystroke: Some("cmd-shift-o"),
+        keystroke: Some("secondary-shift-o"),
         dangerous: false,
     },
     Command {
         id: "file.openRepository",
         label: "Open Repository…",
-        keystroke: Some("cmd-o"),
+        keystroke: Some("secondary-o"),
         dangerous: false,
     },
     Command {
@@ -456,25 +456,25 @@ pub const COMMANDS: &[Command] = &[
     Command {
         id: "file.refresh",
         label: "Refresh Repository",
-        keystroke: Some("cmd-r"),
+        keystroke: Some("secondary-r"),
         dangerous: false,
     },
     Command {
         id: "view.zoomIn",
         label: "Zoom In",
-        keystroke: Some("cmd-="),
+        keystroke: Some("secondary-="),
         dangerous: false,
     },
     Command {
         id: "view.zoomOut",
         label: "Zoom Out",
-        keystroke: Some("cmd--"),
+        keystroke: Some("secondary--"),
         dangerous: false,
     },
     Command {
         id: "view.zoomReset",
         label: "Actual Size",
-        keystroke: Some("cmd-0"),
+        keystroke: Some("secondary-0"),
         dangerous: false,
     },
     Command {
@@ -492,7 +492,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         id: "view.toggleTerminal",
         label: "Toggle Terminal",
-        keystroke: Some("cmd-j"),
+        keystroke: Some("secondary-j"),
         dangerous: false,
     },
     Command {
@@ -600,7 +600,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         id: "window.minimize",
         label: "Minimize",
-        keystroke: Some("cmd-m"),
+        keystroke: Some("secondary-m"),
         dangerous: false,
     },
     Command {
@@ -1046,23 +1046,80 @@ actions!(
 /// - all Edit actions (os_action only — must not shadow text-input).
 pub fn register_keybindings(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("cmd-q", Quit, None),
-        // T-SETTINGS-001: cmd-, opens the Settings window (macOS convention).
-        KeyBinding::new("cmd-,", OpenSettings, None),
-        KeyBinding::new("cmd-t", NewTab, None),
-        KeyBinding::new("cmd-w", CloseTab, None),
-        KeyBinding::new("cmd-shift-o", CloneRepository, None),
-        KeyBinding::new("cmd-o", OpenRepository, None),
-        KeyBinding::new("cmd-r", RefreshRepository, None),
-        // W27-UIPOLISH: UI zoom. `cmd-=` is the conventional "zoom in" (so the
-        // user doesn't need shift for `+`); `cmd--` zoom out; `cmd-0` reset.
-        KeyBinding::new("cmd-=", ZoomIn, None),
-        KeyBinding::new("cmd-+", ZoomIn, None),
-        KeyBinding::new("cmd--", ZoomOut, None),
-        KeyBinding::new("cmd-0", ZoomReset, None),
+        KeyBinding::new("secondary-q", Quit, None),
+        // T-SETTINGS-001: secondary-, opens Settings (Cmd-, on macOS / Ctrl-, elsewhere).
+        KeyBinding::new("secondary-,", OpenSettings, None),
+        KeyBinding::new("secondary-t", NewTab, None),
+        KeyBinding::new("secondary-w", CloseTab, None),
+        KeyBinding::new("secondary-shift-o", CloneRepository, None),
+        KeyBinding::new("secondary-o", OpenRepository, None),
+        KeyBinding::new("secondary-r", RefreshRepository, None),
+        // W27-UIPOLISH: UI zoom. `secondary-=` is the conventional "zoom in" (so
+        // the user doesn't need shift for `+`); `secondary--` zoom out; `0` reset.
+        // `secondary` = Cmd on macOS, Ctrl on Linux/Windows (GUI-CLICK: the keys
+        // were `cmd-*`, which on Linux is the Super key — so Ctrl-+ never fired).
+        KeyBinding::new("secondary-=", ZoomIn, None),
+        KeyBinding::new("secondary-+", ZoomIn, None),
+        KeyBinding::new("secondary--", ZoomOut, None),
+        KeyBinding::new("secondary-0", ZoomReset, None),
         KeyBinding::new("ctrl-cmd-f", EnterFullScreen, None),
-        KeyBinding::new("cmd-m", MinimizeWindow, None),
+        KeyBinding::new("secondary-m", MinimizeWindow, None),
     ]);
+}
+
+/// Human-readable rendering of a registry keystroke string for the in-app
+/// (Linux/FreeBSD) menu dropdown. The stored notation uses gpui's `secondary`
+/// token (Cmd on macOS, Ctrl elsewhere); expand it and the other modifiers into
+/// a `Ctrl+Shift+O`-style label so the menu shows what the user must actually
+/// press. (The macOS native menu derives its accelerator from the keymap, so it
+/// does not go through here.)
+pub fn display_keystroke(ks: &str) -> String {
+    // Peel the key (last segment) off the modifiers. The key itself may be "-"
+    // (zoom out, written "secondary--"), so handle that trailing case first.
+    let (mods_str, key) = if let Some(m) = ks.strip_suffix("--") {
+        (m, "-")
+    } else if let Some(i) = ks.rfind('-') {
+        (&ks[..i], &ks[i + 1..])
+    } else {
+        ("", ks)
+    };
+
+    let mut parts: Vec<String> = Vec::new();
+    if !mods_str.is_empty() {
+        for m in mods_str.split('-') {
+            parts.push(
+                match m {
+                    "secondary" => {
+                        if cfg!(target_os = "macos") {
+                            "Cmd"
+                        } else {
+                            "Ctrl"
+                        }
+                    }
+                    "cmd" | "super" | "win" => {
+                        if cfg!(target_os = "macos") {
+                            "Cmd"
+                        } else {
+                            "Super"
+                        }
+                    }
+                    "ctrl" => "Ctrl",
+                    "alt" => "Alt",
+                    "shift" => "Shift",
+                    "fn" => "Fn",
+                    other => other,
+                }
+                .to_string(),
+            );
+        }
+    }
+    // Uppercase a single-character key (j → J); leave named keys (escape) alone.
+    parts.push(if key.chars().count() == 1 {
+        key.to_uppercase()
+    } else {
+        key.to_string()
+    });
+    parts.join("+")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

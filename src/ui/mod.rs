@@ -5068,9 +5068,11 @@ pub fn run_app(app_state: KagiApp) {
         // render in kagi's colours rather than the system default.
         theme::sync_gpui_component_theme(cx);
 
-        // T-BP-002: register cmd-j as the toggle key for the bottom panel.
-        // context = None means the binding fires regardless of focus context.
-        cx.bind_keys([KeyBinding::new("cmd-j", ToggleBottomPanel, None)]);
+        // T-BP-002: register secondary-j (Cmd-J on macOS / Ctrl-J elsewhere) as
+        // the toggle key for the bottom panel. context = None means the binding
+        // fires regardless of focus context. GUI-CLICK: was `cmd-j`, which on
+        // Linux is Super-J — so Ctrl-J never toggled the panel.
+        cx.bind_keys([KeyBinding::new("secondary-j", ToggleBottomPanel, None)]);
         // T-UI-003: Esc closes the main diff view (no-op when main_diff is None).
         // Scoped `!Terminal` so Escape reaches a focused terminal (vim/less/etc.).
         cx.bind_keys([KeyBinding::new("escape", CloseMainDiff, Some("!Terminal"))]);
@@ -5087,9 +5089,13 @@ pub fn run_app(app_state: KagiApp) {
         // Cmd+Z — the app history move only fires elsewhere (e.g. commit graph).
         // gpui 0.2.2 only accepts `&&`/`||` (single `&` fails to parse).
         cx.bind_keys([
-            KeyBinding::new("cmd-z", commands::HistoryUndo, Some("!Input && !Terminal")),
             KeyBinding::new(
-                "cmd-shift-z",
+                "secondary-z",
+                commands::HistoryUndo,
+                Some("!Input && !Terminal"),
+            ),
+            KeyBinding::new(
+                "secondary-shift-z",
                 commands::HistoryRedo,
                 Some("!Input && !Terminal"),
             ),
@@ -5296,6 +5302,16 @@ fn main_window_titlebar() -> Option<gpui::TitlebarOptions> {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn main_window_decorations() -> Option<gpui::WindowDecorations> {
+    // Escape hatch for the Wayland client-side-decoration (CSD) click-offset
+    // issue: on some native-Wayland + fractional-scaling setups, gpui's CSD
+    // inset shifts the hit-test geometry so toolbar clicks land low (a stray
+    // resize cursor appears and buttons don't fire). `KAGI_NO_CSD=1` requests
+    // server-side decorations instead, which drops the inset and realigns input
+    // (Kagi draws its own title bar, so the only loss is the drop shadow / round
+    // corners). Documented in docs/linux-development.md. Default stays Client.
+    if std::env::var("KAGI_NO_CSD").as_deref() == Ok("1") {
+        return Some(gpui::WindowDecorations::Server);
+    }
     Some(gpui::WindowDecorations::Client)
 }
 
@@ -5409,7 +5425,12 @@ impl KagiApp {
             // `platform_menu_label` adds the "✓ " active marker for the current
             // theme / language (no-op for ordinary commands).
             let label = platform_menu_label(id, command.map(|c| c.label).unwrap_or(id));
-            let key = command.and_then(|c| c.keystroke).unwrap_or("");
+            // Render the stored `secondary-*` notation as a platform label
+            // (Ctrl+J on Linux), so the menu matches what the user must press.
+            let key = command
+                .and_then(|c| c.keystroke)
+                .map(commands::display_keystroke)
+                .unwrap_or_default();
             let invoke = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
                 if commands::is_enabled(this, id) {
                     this.platform_menu_open = None;
@@ -5448,7 +5469,7 @@ impl KagiApp {
                     s.tooltip(move |window, cx| Tooltip::new(reason.to_string()).build(window, cx))
                 })
                 .child(div().flex_1().truncate().child(SharedString::from(label)))
-                .when(!key.is_empty(), |s| {
+                .when(!key.is_empty(), move |s| {
                     s.child(
                         div()
                             .text_xs()

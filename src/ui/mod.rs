@@ -5302,11 +5302,13 @@ fn main_window_titlebar() -> Option<gpui::TitlebarOptions> {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn main_window_decorations() -> Option<gpui::WindowDecorations> {
-    // GUI-CLICK-DEBUG: KAGI_NO_CSD=1 switches off client-side decorations as an
-    // A/B test for a CSD-related hit-test offset on Wayland. If clicks land
-    // correctly (buttons respond, no stray resize cursor) with this set, the
-    // client-side-decoration inset is the culprit. Default stays Client because
-    // GNOME/Mutter does not draw server-side decorations (see linux-development.md).
+    // Escape hatch for the Wayland client-side-decoration (CSD) click-offset
+    // issue: on some native-Wayland + fractional-scaling setups, gpui's CSD
+    // inset shifts the hit-test geometry so toolbar clicks land low (a stray
+    // resize cursor appears and buttons don't fire). `KAGI_NO_CSD=1` requests
+    // server-side decorations instead, which drops the inset and realigns input
+    // (Kagi draws its own title bar, so the only loss is the drop shadow / round
+    // corners). Documented in docs/linux-development.md. Default stays Client.
     if std::env::var("KAGI_NO_CSD").as_deref() == Ok("1") {
         return Some(gpui::WindowDecorations::Server);
     }

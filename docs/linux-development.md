@@ -90,6 +90,28 @@ and Kagi's own in-app menu bar / title bar (`src/ui/mod.rs`,
 `render_platform_titlebar`), since GNOME/Mutter does not do server-side
 decorations.
 
+### Gotcha: clicks land low / toolbar buttons don't respond (Wayland CSD offset)
+
+On some **native-Wayland + fractional-scaling** sessions (e.g. GNOME at 125 %/
+150 %), the client-side-decoration inset shifts hit-testing so clicks land a bit
+**below** where they render: top-of-window controls (Pull, Settings, the Analyze
+✕) stop responding and a horizontal **resize cursor** flickers on the dead
+clicks, while large areas (branch list, commit graph) still work. It is
+intermittent and depends on which output/scale the window opens on. This is an
+upstream gpui CSD/coordinate issue, not Kagi's wiring.
+
+Workarounds:
+
+```sh
+KAGI_NO_CSD=1 ./target/release/kagi .   # server-side decorations: drops the inset, realigns input
+WAYLAND_DISPLAY="" ./target/release/kagi .   # or fall back to XWayland (also unaffected)
+```
+
+`KAGI_NO_CSD=1` keeps native Wayland and only loses the drop shadow / rounded
+corners (Kagi draws its own title bar). If you can reproduce it reliably, grab
+the offset so it can be fixed properly: build with a click logger and compare the
+reported position to where the button renders.
+
 ## 5. GPU / Vulkan (Blade renderer)
 
 GPUI renders via **Blade → Vulkan**, so a working Vulkan driver is required.
@@ -147,3 +169,4 @@ Both produce **release** builds. For local install onto `PATH`:
 | `-lxkbcommon-x11` link error | `libxkbcommon-x11-dev` missing | install it (§1) |
 | Blank/unresponsive window, very slow | software Vulkan (lvp) or no GPU | check §5, pin hardware ICD |
 | Wayland-only weirdness | GPUI Wayland backend | retest with `WAYLAND_DISPLAY=""` (§4) |
+| Top buttons dead, clicks land low, resize cursor flickers | Wayland CSD + fractional-scale offset | `KAGI_NO_CSD=1` (§4) or `WAYLAND_DISPLAY=""` |

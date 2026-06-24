@@ -508,24 +508,6 @@ impl Render for KagiApp {
             .when_some(self.root_focus.clone(), |el, fh| el.track_focus(&fh))
             // T023: capture drag-move for both dividers on the root element.
             .on_drag_move::<DividerDrag>(divider_drag_move)
-            // GUI-CLICK-DEBUG: with KAGI_DEBUG_MOUSE=1, log every press's window
-            // position in the *capture* phase (fires before any child consumes
-            // it). Lets us measure a Linux/Wayland hit-test offset: click a known
-            // button and compare the reported y to where the button renders.
-            // Plain `eprintln!` (NOT a `[kagi]` contract line — see CLAUDE.md).
-            .when(
-                std::env::var("KAGI_DEBUG_MOUSE").as_deref() == Ok("1"),
-                |el| {
-                    el.capture_any_mouse_down(|e: &gpui::MouseDownEvent, _window, _cx| {
-                        eprintln!(
-                            "[mouse-debug] down x={:.1} y={:.1} button={:?}",
-                            f32::from(e.position.x),
-                            f32::from(e.position.y),
-                            e.button
-                        );
-                    })
-                },
-            )
             // T-BP-002: cmd-j toggle action (window-wide via on_action on root div).
             .on_action(toggle_bottom_panel)
             // T-UI-003: Esc closes the main diff view.

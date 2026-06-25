@@ -9,6 +9,22 @@ name = "kagi"
 version = "0.7.2"
 license = "MIT"
 edition = "2021"
+repository = "https://github.com/TomiXRM/kagi"
+
+# Prebuilt-binary install via `cargo binstall` (ADR-0120). Each release publishes
+# per-target archives `kagi-<version>-<target-triple>.{tar.gz|zip}` (built by
+# `xtask bundle-binarchive` in `release.yml`) with the `kagi` binary at the
+# archive root. Because the crate uses path/vendored deps and is not on crates.io,
+# install with: `cargo binstall --git https://github.com/TomiXRM/kagi kagi`.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.tar.gz"
+bin-dir = "{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+# Windows ships a .zip (kagi.exe at the root) instead of a tarball.
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.zip"
+pkg-fmt = "zip"
 
 [dependencies]
 # Pure domain layer (ADR-0072). The git2-using code in kagi-git depends on it

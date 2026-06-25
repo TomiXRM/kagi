@@ -117,6 +117,25 @@ A configurable ignore list (gitignore syntax, edited in Settings) keeps binaries
 
 ## 📦 Install
 
+### Package managers
+
+Prebuilt binaries are published per release for each platform (ADR-0120), so Kagi installs through your usual tool:
+
+```sh
+# Homebrew (macOS Apple Silicon / Linux) — installs the `kagi` CLI
+brew install https://github.com/TomiXRM/kagi/releases/latest/download/kagi.rb
+
+# cargo binstall (not on crates.io → install from the repo)
+cargo binstall --git https://github.com/TomiXRM/kagi kagi
+
+# mise (ubi backend)
+mise use -g "ubi:TomiXRM/kagi[exe=kagi]"
+```
+
+Verify any install with `kagi --version`. (Homebrew via the raw URL is a one-shot install; a `homebrew-kagi` tap for `brew upgrade` is planned. Kagi's in-app updater handles upgrades meanwhile.)
+
+### Direct download
+
 Grab the latest build from [**GitHub Releases**](https://github.com/TomiXRM/kagi/releases). Each release ships `SHA256SUMS-*.txt` — please verify your download. From v0.3.4 on, Kagi can also check for and install updates from within the app.
 
 | OS | Asset |
@@ -124,6 +143,8 @@ Grab the latest build from [**GitHub Releases**](https://github.com/TomiXRM/kagi
 | macOS (Apple Silicon) | `Kagi-<version>-arm64.dmg` |
 | Linux (x86_64 / arm64) | `kagi-<version>-<arch>.tar.gz` (binary + `.desktop` + icon), or the AppImage zip `kagi_Linux-AppImage_<arch>.zip` |
 | Windows (x86_64) | `kagi-<version>-x86_64-windows.zip` — extract and run `kagi.exe` (self-contained) |
+
+Package managers consume the per-target `kagi-<version>-<target-triple>.{tar.gz,zip}` archives (bare binary), also attached to each release.
 
 <details>
 <summary><b>macOS — first launch on an unsigned build</b></summary>

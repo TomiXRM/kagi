@@ -6,10 +6,12 @@
 //!   dmg-macos     hdiutil DMG (Kagi.app + /Applications) → target/dist/Kagi-<v>-<arch>.dmg
 //!   bundle-linux  tar.gz layout (bin + .desktop + 512px icon) → target/dist/
 //!   bundle-appimage  Kagi.AppDir → Kagi-<arch>.AppImage (appimagetool) + zip
+//!   bundle-binarchive  bare-binary kagi-<v>-<triple>.{tar.gz|zip} (binstall/mise/brew)
 //!
 //! Run via: `cargo run -p xtask -- <subcommand>`
 
 mod appimage;
+mod binarchive;
 mod icon;
 mod linux;
 mod macos;
@@ -30,6 +32,8 @@ subcommands:
   bundle-windows [--bin P]  zip kagi.exe (+ LICENSE) → kagi-<v>-x86_64-windows.zip (Windows)
   bundle-appimage --bin P [--arch x86_64|aarch64]
                            assemble Kagi.AppDir, run appimagetool when present, and zip
+  bundle-binarchive --target TRIPLE [--bin P]
+                           archive the bare binary as kagi-<v>-<triple>.{tar.gz|zip}
 "
 }
 
@@ -85,6 +89,20 @@ fn run() -> Result<(), String> {
                 }
             }
             appimage::bundle(&root, override_bin, &arch)
+        }
+        Some("bundle-binarchive") => {
+            let mut override_bin = None;
+            let mut target = None;
+            let mut it = args.iter().skip(1);
+            while let Some(a) = it.next() {
+                match a.as_str() {
+                    "--bin" => override_bin = it.next().map(String::as_str),
+                    "--target" => target = it.next().cloned(),
+                    other => return Err(format!("unknown argument: {other}\n\n{}", usage())),
+                }
+            }
+            let target = target.ok_or_else(|| format!("--target is required\n\n{}", usage()))?;
+            binarchive::bundle(&root, override_bin, &target)
         }
         Some("-h") | Some("--help") | Some("help") => {
             print!("{}", usage());

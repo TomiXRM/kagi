@@ -3,6 +3,19 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [Unreleased]
+
+### Added
+- **Install via package managers** (ADR-0120). Kagi can now be installed with
+  **Homebrew** (`brew install <releases/latest/download/kagi.rb>`),
+  **`cargo binstall`** (`cargo binstall --git https://github.com/TomiXRM/kagi kagi`),
+  and **mise** (`mise use -g "ubi:TomiXRM/kagi[exe=kagi]"`). Each release now
+  ships per-target `kagi-<version>-<target-triple>.{tar.gz,zip}` archives (bare
+  binary) plus a generated `kagi.rb` Homebrew formula; the existing
+  `.dmg`/AppImage/Windows-zip artifacts and the in-app updater are unchanged.
+- **`kagi --version` / `kagi --help`.** The CLI now prints version/usage and
+  exits before any GUI setup — a GUI-free way to verify an install.
+
 ## [0.6.0] — 2026-06-22
 
 ### Added

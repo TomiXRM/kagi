@@ -35,6 +35,29 @@ fn main() {
     // Collect CLI arguments (skip argv[0]).
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    // `--version` / `--help` short-circuit before any theme / single-instance /
+    // GUI setup (ADR-0120). These give `cargo binstall`, Homebrew, and mise a
+    // cheap, GUI-free way to verify the installed binary works.
+    match args.first().map(String::as_str) {
+        Some("--version" | "-V") => {
+            println!("kagi {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        Some("--help" | "-h") => {
+            println!(
+                "kagi {} — safety-first, commit-graph Git GUI\n\n\
+                 Usage:\n  \
+                 kagi [REPO_PATH]   open a repository (bare `kagi` shows the Welcome screen)\n\n\
+                 Options:\n  \
+                 -V, --version      print version and exit\n  \
+                 -h, --help         print this help and exit",
+                env!("CARGO_PKG_VERSION")
+            );
+            return;
+        }
+        _ => {}
+    }
+
     // W9-THEME / ADR-0036: resolve the active colour theme before anything
     // renders.  Priority: KAGI_THEME env → ~/.kagi/settings.json → default
     // (Catppuccin Mocha).  Logs `[kagi] theme: <slug> dark=<bool>`.

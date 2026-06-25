@@ -29,18 +29,22 @@ jobs:
             target: macos-arm64
             kind: macos
             arch: arm64
+            triple: aarch64-apple-darwin
           - os: ubuntu-latest
             target: linux-x86_64
             kind: linux
             arch: x86_64
+            triple: x86_64-unknown-linux-gnu
           - os: ubuntu-24.04-arm
             target: linux-arm64
             kind: linux
             arch: aarch64
+            triple: aarch64-unknown-linux-gnu
           - os: windows-latest
             target: windows-x86_64
             kind: windows
             arch: x86_64
+            triple: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
 
@@ -111,6 +115,19 @@ jobs:
         if: matrix.kind == 'windows'
         run: cargo run -p xtask -- bundle-windows --bin target/release/kagi.exe
 
+      # ── Bare-binary archive for cargo-binstall / mise (ubi) / Homebrew ────
+      # ADR-0120: kagi-<version>-<triple>.{tar.gz|zip} with `kagi` at the root.
+      # Named with the full Rust target triple so those tools auto-resolve it.
+      - name: Bundle bare-binary archive
+        shell: bash
+        run: |
+          if [ "${{ matrix.kind }}" = "windows" ]; then
+            bin="target/release/kagi.exe"
+          else
+            bin="target/release/kagi"
+          fi
+          cargo run -p xtask -- bundle-binarchive --bin "$bin" --target ${{ matrix.triple }}
+
       # ── Checksums over this leg's artifacts ───────────────────────────────
       - name: Generate SHA256SUMS
         shell: bash
@@ -147,6 +164,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -155,6 +174,16 @@ jobs:
 
       - name: List artifacts
         run: ls -la dist/
+
+      # ADR-0120: emit the Homebrew formula from this release's checksums and
+      # ship it as `kagi.rb`. `brew install <releases/latest/download/kagi.rb>`
+      # then always resolves to the newest published version.
+      - name: Generate Homebrew formula
+        run: |
+          VERSION="$(awk '/^\[package\]/{p=1;next} /^\[/{p=0} p && /^version[[:space:]]*=/{gsub(/[",]/,"",$3); print $3; exit}' Cargo.toml)"
+          echo "kagi version: ${VERSION}"
+          bash scripts/gen_homebrew_formula.sh "${VERSION}" dist dist/kagi.rb
+          cat dist/kagi.rb
 
       - name: Create draft release
         uses: softprops/action-gh-release@v2

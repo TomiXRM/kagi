@@ -1,6 +1,6 @@
 # T-OPS-DEDUP-001: src/ui/operations/* の execute フロー重複を測って共通化する
 
-- Status: todo
+- Status: done
 - Group: アーキテクチャ / S5 前準備
 - 仕様の正: CLAUDE.md「plan → confirm → preflight → execute → verify → oplog」、migration README S5
 

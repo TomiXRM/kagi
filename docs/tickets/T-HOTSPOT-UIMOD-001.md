@@ -1,6 +1,6 @@
 # T-HOTSPOT-UIMOD-001: src/ui/mod.rs をさらに分割する(S6 続き・Analyze hotspot #1)
 
-- Status: todo
+- Status: done
 - Group: アーキテクチャ / S6(view split)
 - 仕様の正: docs/rearch/migration/README.md S6、ADR-0075/0093/0095、CLAUDE.md「≤800 LOC/file」
 

@@ -107,56 +107,47 @@ impl KagiApp {
         let history_before = self.head_branch_and_sha();
         let task = cx
             .background_spawn(async move { cherry_pick_blocking(&bg_path, &bg_plan, &bg_commit) });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok((_summary, after)) => {
-                        klog!("async: cherry-pick finished");
-                        app.record_op(
-                            "cherry-pick",
-                            plan.current.clone(),
-                            OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
-                        if let (Some((branch, before)), Some((_, after_sha))) =
-                            (history_before.clone(), app.head_branch_and_sha())
-                        {
-                            app.record_history(
-                                kagi_git::OperationKind::CherryPick,
-                                &branch,
-                                before,
-                                after_sha,
-                                format!("cherry-pick {}", commit_id.short()),
-                            );
-                        }
-                        app.reload(cx);
-                    }
-                    Err(err_msg) => {
-                        klog!("async: cherry-pick failed — {}", err_msg);
-                        app.record_op(
-                            "cherry-pick",
-                            plan.current.clone(),
-                            OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.set_cherry_pick_modal(CherryPickModal {
-                            commit_id: commit_id.clone(),
-                            plan: plan.clone(),
-                            error: Some(SharedString::from(err_msg)),
-                        });
-                    }
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok((_summary, after)) => {
+                klog!("async: cherry-pick finished");
+                app.record_op(
+                    "cherry-pick",
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                if let (Some((branch, before)), Some((_, after_sha))) =
+                    (history_before.clone(), app.head_branch_and_sha())
+                {
+                    app.record_history(
+                        kagi_git::OperationKind::CherryPick,
+                        &branch,
+                        before,
+                        after_sha,
+                        format!("cherry-pick {}", commit_id.short()),
+                    );
                 }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                klog!("async: cherry-pick failed — {}", err_msg);
+                app.record_op(
+                    "cherry-pick",
+                    plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                app.set_cherry_pick_modal(CherryPickModal {
+                    commit_id: commit_id.clone(),
+                    plan: plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
+            }
+        });
     }
 
     /// Open the revert plan modal for commit `id`.
@@ -249,55 +240,46 @@ impl KagiApp {
         let history_before = self.head_branch_and_sha();
         let task =
             cx.background_spawn(async move { revert_blocking(&bg_path, &bg_plan, &bg_commit) });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok((_summary, after)) => {
-                        klog!("async: revert finished");
-                        app.record_op(
-                            "revert",
-                            plan.current.clone(),
-                            OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
-                        if let (Some((branch, before)), Some((_, after_sha))) =
-                            (history_before.clone(), app.head_branch_and_sha())
-                        {
-                            app.record_history(
-                                kagi_git::OperationKind::Revert,
-                                &branch,
-                                before,
-                                after_sha,
-                                format!("revert {}", commit_id.short()),
-                            );
-                        }
-                        app.reload(cx);
-                    }
-                    Err(err_msg) => {
-                        klog!("async: revert failed — {}", err_msg);
-                        app.record_op(
-                            "revert",
-                            plan.current.clone(),
-                            OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.set_revert_modal(RevertModal {
-                            commit_id: commit_id.clone(),
-                            plan: plan.clone(),
-                            error: Some(SharedString::from(err_msg)),
-                        });
-                    }
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok((_summary, after)) => {
+                klog!("async: revert finished");
+                app.record_op(
+                    "revert",
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                if let (Some((branch, before)), Some((_, after_sha))) =
+                    (history_before.clone(), app.head_branch_and_sha())
+                {
+                    app.record_history(
+                        kagi_git::OperationKind::Revert,
+                        &branch,
+                        before,
+                        after_sha,
+                        format!("revert {}", commit_id.short()),
+                    );
                 }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                klog!("async: revert failed — {}", err_msg);
+                app.record_op(
+                    "revert",
+                    plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                app.set_revert_modal(RevertModal {
+                    commit_id: commit_id.clone(),
+                    plan: plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
+            }
+        });
     }
 }

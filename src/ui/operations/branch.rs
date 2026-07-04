@@ -384,50 +384,41 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_modal = modal.clone();
         let task = cx.background_spawn(async move { branch_plan_blocking(&bg_path, &bg_modal) });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok(after) => {
-                        app.record_op(
-                            op_name,
-                            modal.plan.current.clone(),
-                            OpOutcome::Success {
-                                after: after.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                            "{}: {}",
-                            op_name, after.dirty
-                        )));
-                        app.reload(cx);
-                    }
-                    Err(err_msg) => {
-                        app.record_op(
-                            op_name,
-                            modal.plan.current.clone(),
-                            OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.set_branch_plan_modal(BranchPlanModal {
-                            kind: modal.kind.clone(),
-                            branch_name: modal.branch_name.clone(),
-                            plan: modal.plan.clone(),
-                            error: Some(SharedString::from(err_msg)),
-                        });
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok(after) => {
+                app.record_op(
+                    op_name,
+                    modal.plan.current.clone(),
+                    OpOutcome::Success {
+                        after: after.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                    "{}: {}",
+                    op_name, after.dirty
+                )));
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                app.record_op(
+                    op_name,
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                app.set_branch_plan_modal(BranchPlanModal {
+                    kind: modal.kind.clone(),
+                    branch_name: modal.branch_name.clone(),
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
+            }
+        });
     }
 
     pub fn open_set_upstream_modal(&mut self, branch_name: String) {
@@ -522,45 +513,36 @@ impl KagiApp {
         let task = cx.background_spawn(async move {
             set_upstream_blocking(&bg_path, &bg_plan, &branch_name, &upstream)
         });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok(after) => {
-                        app.record_op(
-                            "set-upstream",
-                            plan.current.clone(),
-                            OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
-                        app.reload(cx);
-                    }
-                    Err(err_msg) => {
-                        app.record_op(
-                            "set-upstream",
-                            plan.current.clone(),
-                            OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.set_set_upstream_modal(SetUpstreamModal {
-                            branch_name: modal.branch_name.clone(),
-                            input: modal.input.clone(),
-                            input_state: None,
-                            plan: Some(plan.clone()),
-                            error: Some(SharedString::from(err_msg)),
-                        });
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok(after) => {
+                app.record_op(
+                    "set-upstream",
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                app.record_op(
+                    "set-upstream",
+                    plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                app.set_set_upstream_modal(SetUpstreamModal {
+                    branch_name: modal.branch_name.clone(),
+                    input: modal.input.clone(),
+                    input_state: None,
+                    plan: Some(plan.clone()),
+                    error: Some(SharedString::from(err_msg)),
+                });
+            }
+        });
     }
 
     pub fn open_rename_branch_modal(&mut self, branch_name: String) {
@@ -662,46 +644,37 @@ impl KagiApp {
         let task = cx.background_spawn(async move {
             rename_branch_blocking(&bg_path, &bg_plan, &old_name, &new_name)
         });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok(after) => {
-                        app.record_op(
-                            "rename-branch",
-                            plan.current.clone(),
-                            OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
-                        app.reload(cx);
-                    }
-                    Err(err_msg) => {
-                        app.record_op(
-                            "rename-branch",
-                            plan.current.clone(),
-                            OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.set_rename_branch_modal(RenameBranchModal {
-                            old_name: modal.old_name.clone(),
-                            input: modal.input.clone(),
-                            input_state: None,
-                            validation: modal.validation.clone(),
-                            plan: Some(plan.clone()),
-                            error: Some(SharedString::from(err_msg)),
-                        });
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok(after) => {
+                app.record_op(
+                    "rename-branch",
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                app.record_op(
+                    "rename-branch",
+                    plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                app.set_rename_branch_modal(RenameBranchModal {
+                    old_name: modal.old_name.clone(),
+                    input: modal.input.clone(),
+                    input_state: None,
+                    validation: modal.validation.clone(),
+                    plan: Some(plan.clone()),
+                    error: Some(SharedString::from(err_msg)),
+                });
+            }
+        });
     }
 
     pub fn open_merge_modal(&mut self, target: String, cx: &mut Context<Self>) {
@@ -859,66 +832,57 @@ impl KagiApp {
         let history_before = self.head_branch_and_sha();
         let task =
             cx.background_spawn(async move { merge_blocking(&bg_path, &plan, &target, &kind) });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok((summary, after)) => {
-                        klog!("async: merge finished — {}", summary);
-                        app.record_op(
-                            "merge",
-                            modal.plan.current.clone(),
-                            OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
-                        // Record for undo/redo only when the merge actually moved
-                        // the branch ref (clean merge / fast-forward). A merge
-                        // left in conflict has not moved HEAD, so before==after
-                        // and record_history is a no-op.
-                        if let (Some((branch, before)), Some((_, after_sha))) =
-                            (history_before.clone(), app.head_branch_and_sha())
-                        {
-                            app.record_history(
-                                kagi_git::OperationKind::Merge,
-                                &branch,
-                                before,
-                                after_sha,
-                                format!("merge {}", history_target),
-                            );
-                        }
-                        // reload() resets the conflict-mode detection guard and
-                        // re-runs detect_conflict_mode(); a merge that left
-                        // conflict markers (MergeKind::Conflicts) therefore enters
-                        // Conflict Mode here. Non-conflict merges stay Normal.
-                        app.reload(cx);
-                    }
-                    Err(err_msg) => {
-                        klog!("async: merge failed — {}", err_msg);
-                        app.record_op(
-                            "merge",
-                            modal.plan.current.clone(),
-                            OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.set_merge_modal(MergePlanModal {
-                            target: modal.target.clone(),
-                            into_branch: modal.into_branch.clone(),
-                            plan: modal.plan.clone(),
-                            kind: modal.kind.clone(),
-                            error: Some(SharedString::from(err_msg)),
-                        });
-                    }
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok((summary, after)) => {
+                klog!("async: merge finished — {}", summary);
+                app.record_op(
+                    "merge",
+                    modal.plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                // Record for undo/redo only when the merge actually moved
+                // the branch ref (clean merge / fast-forward). A merge
+                // left in conflict has not moved HEAD, so before==after
+                // and record_history is a no-op.
+                if let (Some((branch, before)), Some((_, after_sha))) =
+                    (history_before.clone(), app.head_branch_and_sha())
+                {
+                    app.record_history(
+                        kagi_git::OperationKind::Merge,
+                        &branch,
+                        before,
+                        after_sha,
+                        format!("merge {}", history_target),
+                    );
                 }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+                // reload() resets the conflict-mode detection guard and
+                // re-runs detect_conflict_mode(); a merge that left
+                // conflict markers (MergeKind::Conflicts) therefore enters
+                // Conflict Mode here. Non-conflict merges stay Normal.
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                klog!("async: merge failed — {}", err_msg);
+                app.record_op(
+                    "merge",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                app.set_merge_modal(MergePlanModal {
+                    target: modal.target.clone(),
+                    into_branch: modal.into_branch.clone(),
+                    plan: modal.plan.clone(),
+                    kind: modal.kind.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
+            }
+        });
     }
 
     pub fn open_tracking_checkout_modal(&mut self, remote_branch: String) {
@@ -1011,46 +975,37 @@ impl KagiApp {
         let task = cx.background_spawn(async move {
             checkout_tracking_blocking(&bg_path, &plan, &remote_branch, &local_branch)
         });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok((summary, after)) => {
-                        klog!("async: checkout-tracking finished — {}", summary);
-                        app.record_op(
-                            "checkout-tracking",
-                            modal.plan.current.clone(),
-                            OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
-                        app.reload(cx);
-                    }
-                    Err(err_msg) => {
-                        klog!("async: checkout-tracking failed — {}", err_msg);
-                        app.record_op(
-                            "checkout-tracking",
-                            modal.plan.current.clone(),
-                            OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.set_tracking_checkout_modal(TrackingCheckoutPlanModal {
-                            remote_branch: modal.remote_branch.clone(),
-                            local_branch: modal.local_branch.clone(),
-                            plan: modal.plan.clone(),
-                            error: Some(SharedString::from(err_msg)),
-                        });
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok((summary, after)) => {
+                klog!("async: checkout-tracking finished — {}", summary);
+                app.record_op(
+                    "checkout-tracking",
+                    modal.plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                klog!("async: checkout-tracking failed — {}", err_msg);
+                app.record_op(
+                    "checkout-tracking",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                app.set_tracking_checkout_modal(TrackingCheckoutPlanModal {
+                    remote_branch: modal.remote_branch.clone(),
+                    local_branch: modal.local_branch.clone(),
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
+            }
+        });
     }
 
     /// Build a "switch to latest" plan (ADR-0101) and open the confirmation modal.
@@ -1143,46 +1098,37 @@ impl KagiApp {
         let task = cx.background_spawn(async move {
             switch_to_latest_blocking(&bg_path, &plan, &branch_name, &remote_branch)
         });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok((summary, after)) => {
-                        klog!("async: switch-to-latest finished — {}", summary);
-                        app.record_op(
-                            "switch-to-latest",
-                            modal.plan.current.clone(),
-                            OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
-                        app.reload(cx);
-                    }
-                    Err(err_msg) => {
-                        klog!("async: switch-to-latest failed — {}", err_msg);
-                        app.record_op(
-                            "switch-to-latest",
-                            modal.plan.current.clone(),
-                            OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.set_switch_to_latest_modal(SwitchToLatestPlanModal {
-                            branch_name: modal.branch_name.clone(),
-                            remote_branch: modal.remote_branch.clone(),
-                            plan: modal.plan.clone(),
-                            error: Some(SharedString::from(err_msg)),
-                        });
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok((summary, after)) => {
+                klog!("async: switch-to-latest finished — {}", summary);
+                app.record_op(
+                    "switch-to-latest",
+                    modal.plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                klog!("async: switch-to-latest failed — {}", err_msg);
+                app.record_op(
+                    "switch-to-latest",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                app.set_switch_to_latest_modal(SwitchToLatestPlanModal {
+                    branch_name: modal.branch_name.clone(),
+                    remote_branch: modal.remote_branch.clone(),
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
+            }
+        });
     }
 
     /// Double-click a remote-branch pill → switch to its latest.
@@ -1408,54 +1354,199 @@ impl KagiApp {
             cx.background_spawn(
                 async move { delete_branch_blocking(&bg_path, &bg_plan, &bg_branch) },
             );
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok(after) => {
-                        klog!("async: delete-branch finished");
-                        let recovery_line = plan
-                            .recovery
-                            .lines()
-                            .nth(1)
-                            .unwrap_or("git branch …")
-                            .to_string();
-                        app.record_op(
-                            "delete-branch",
-                            plan.current.clone(),
-                            kagi_git::oplog::OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
-                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                            "delete-branch: '{}' deleted (restore: {})",
-                            branch_name, recovery_line
-                        )));
-                        app.reload(cx);
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok(after) => {
+                klog!("async: delete-branch finished");
+                let recovery_line = plan
+                    .recovery
+                    .lines()
+                    .nth(1)
+                    .unwrap_or("git branch …")
+                    .to_string();
+                app.record_op(
+                    "delete-branch",
+                    plan.current.clone(),
+                    kagi_git::oplog::OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                    "delete-branch: '{}' deleted (restore: {})",
+                    branch_name, recovery_line
+                )));
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                klog!("async: delete-branch failed — {}", err_msg);
+                app.record_op(
+                    "delete-branch",
+                    plan.current.clone(),
+                    kagi_git::oplog::OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                app.set_delete_branch_modal(DeleteBranchModal {
+                    branch_name: branch_name.clone(),
+                    plan: plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
+            }
+        });
+    }
+}
+
+// `dispatch_branch_action`, moved from `src/ui/mod.rs` (T-HOTSPOT-UIMOD-001).
+// Behaviour-preserving relocation.
+impl KagiApp {
+    pub fn dispatch_branch_action(
+        &mut self,
+        action: BranchAction,
+        state: BranchMenuState,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            BranchAction::CopyBranchName => {
+                branch_menu::copy_branch_name(self, state.name, cx);
+            }
+            BranchAction::CopyHeadSha => {
+                branch_menu::copy_head_sha(self, state.target.0, cx);
+            }
+            BranchAction::CopyUpstreamName => {
+                let upstream = self
+                    .active_view
+                    .branch_upstream_info
+                    .get(&state.name)
+                    .map(|u| u.remote_branch.clone());
+                if let Some(upstream) = upstream {
+                    branch_menu::copy_upstream_name(self, upstream, cx);
+                }
+            }
+            BranchAction::RevealHead => {
+                self.jump_to_commit(&state.target);
+            }
+            BranchAction::ToggleSolo => {
+                self.toggle_branch_solo(state.name, state.target, cx);
+            }
+            BranchAction::Checkout => {
+                if matches!(state.kind, BranchKind::Local) {
+                    self.open_plan_modal(state.name);
+                } else {
+                    self.open_tracking_checkout_modal(state.name);
+                }
+            }
+            BranchAction::SwitchToLatest => {
+                let (branch_name, remote_branch) = if matches!(state.kind, BranchKind::Local) {
+                    let upstream = self
+                        .active_view
+                        .branch_upstream_info
+                        .get(&state.name)
+                        .map(|u| u.remote_branch.clone());
+                    (state.name.clone(), upstream)
+                } else {
+                    (
+                        default_tracking_branch_name(&state.name),
+                        Some(state.name.clone()),
+                    )
+                };
+                match remote_branch {
+                    Some(remote_branch) => {
+                        self.open_switch_to_latest_modal(branch_name, remote_branch);
                     }
-                    Err(err_msg) => {
-                        klog!("async: delete-branch failed — {}", err_msg);
-                        app.record_op(
-                            "delete-branch",
-                            plan.current.clone(),
-                            kagi_git::oplog::OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.set_delete_branch_modal(DeleteBranchModal {
-                            branch_name: branch_name.clone(),
-                            plan: plan.clone(),
-                            error: Some(SharedString::from(err_msg)),
-                        });
+                    None => {
+                        self.status_footer =
+                            FooterStatus::Idle(SharedString::from(Msg::BcmNoUpstream.t()));
                     }
                 }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+            }
+            BranchAction::CreateBranchFromHere => {
+                self.open_create_branch_modal(state.target, cx);
+            }
+            BranchAction::DeleteBranch => {
+                if matches!(state.kind, BranchKind::Local) {
+                    self.open_delete_branch_modal(state.name);
+                }
+            }
+            BranchAction::Pull => {
+                if matches!(state.kind, BranchKind::Local) {
+                    let is_current = self
+                        .active_view
+                        .branches
+                        .iter()
+                        .any(|(name, current)| name == &state.name && *current);
+                    if is_current {
+                        self.open_pull_modal(cx);
+                    } else {
+                        self.open_branch_plan_modal(state.name, BranchPlanKind::PullFfOnly);
+                    }
+                }
+            }
+            BranchAction::Push => {
+                if matches!(state.kind, BranchKind::Local) {
+                    let is_current = self
+                        .active_view
+                        .branches
+                        .iter()
+                        .any(|(name, current)| name == &state.name && *current);
+                    if is_current {
+                        self.open_push_modal(cx);
+                    } else {
+                        self.open_branch_plan_modal(state.name, BranchPlanKind::Push);
+                    }
+                }
+            }
+            BranchAction::PushAndCreateUpstream => {
+                if matches!(state.kind, BranchKind::Local) {
+                    self.open_branch_plan_modal(state.name, BranchPlanKind::PushSetUpstream);
+                }
+            }
+            BranchAction::SetUpstream => {
+                if matches!(state.kind, BranchKind::Local) {
+                    self.open_set_upstream_modal(state.name);
+                }
+            }
+            BranchAction::RenameBranch => {
+                if matches!(state.kind, BranchKind::Local) {
+                    self.open_rename_branch_modal(state.name);
+                }
+            }
+            BranchAction::OpenWorktreeFromBranch => {
+                let existing_path = self
+                    .active_view
+                    .worktrees
+                    .iter()
+                    .find(|wt| wt.branch.as_deref() == Some(state.name.as_str()))
+                    .map(|wt| wt.path.display().to_string());
+                if let Some(path) = existing_path {
+                    self.status_footer = FooterStatus::Idle(SharedString::from(format!(
+                        "worktree already exists: {}",
+                        path
+                    )));
+                    self.push_toast(ToastKind::Info, format!("Worktree: {}", path), cx);
+                } else if matches!(state.kind, BranchKind::Local) {
+                    self.open_create_worktree_modal_prefilled(state.target, state.name, true, cx);
+                }
+            }
+            BranchAction::MergeIntoCurrent => {
+                self.open_merge_modal(state.name, cx);
+            }
+            BranchAction::CreateWorktreeFromHere => {
+                self.open_create_worktree_modal_prefilled(state.target, state.name, false, cx);
+            }
+            BranchAction::NoUpstreamInfo
+            | BranchAction::PullFfOnly
+            | BranchAction::FetchRemoteBranch
+            | BranchAction::CreatePr
+            | BranchAction::RebaseCurrentOnto
+            | BranchAction::CreateTagHere
+            | BranchAction::ResetCurrentToHead
+            | BranchAction::ForceWithLeasePush
+            | BranchAction::DeleteRemoteBranch => {
+                self.status_footer =
+                    FooterStatus::Idle(SharedString::from(Msg::BcmNotImplementedYet.t()));
+            }
+        }
     }
 }

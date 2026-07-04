@@ -863,75 +863,64 @@ impl KagiApp {
             .take(72)
             .collect();
         let task = cx.background_spawn(async move { commit_blocking(&bg_path, &bg_plan, &bg_msg) });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok((_new_short, after)) => {
-                        klog!("async: commit finished");
-                        // A successful commit clears the branch draft (T-COMMIT-007).
-                        let branch = app.active_view.status_summary.branch.clone();
-                        let _ = kagi_git::clear_draft(&repo_path, &branch);
-                        klog!("draft: cleared {}", branch);
-                        if let Some(entity) = app.commit_panel.clone() {
-                            entity.update(cx, |v, _| v.last_draft_value = String::new());
-                        }
-
-                        app.record_op(
-                            "commit",
-                            plan.current.clone(),
-                            OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
-                        if let (Some((hbranch, before)), Some((_, after_sha))) =
-                            (history_before.clone(), app.head_branch_and_sha())
-                        {
-                            let summary =
-                                format!("commit {} '{}'", after_sha.short(), history_summary_line);
-                            app.record_history(
-                                kagi_git::OperationKind::Commit,
-                                &hbranch,
-                                before,
-                                after_sha,
-                                summary,
-                            );
-                        }
-                        app.reload(cx);
-                    }
-                    Err(err_msg) => {
-                        klog!("async: commit failed — {}", err_msg);
-                        app.record_op(
-                            "commit",
-                            plan.current.clone(),
-                            OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        if let Some(entity) = app.commit_panel.clone() {
-                            entity.update(cx, |v, _| {
-                                if let Some(ref mut modal) = v.state.plan_modal {
-                                    modal.error = Some(SharedString::from(err_msg.clone()));
-                                }
-                            });
-                        }
-                        // Surface commit failures in the status footer too, so the
-                        // error is visible even for the smooth (no-popup) commit path
-                        // where the plan modal isn't shown.
-                        app.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                            "commit failed: {}",
-                            err_msg
-                        )));
-                    }
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok((_new_short, after)) => {
+                klog!("async: commit finished");
+                // A successful commit clears the branch draft (T-COMMIT-007).
+                let branch = app.active_view.status_summary.branch.clone();
+                let _ = kagi_git::clear_draft(&repo_path, &branch);
+                klog!("draft: cleared {}", branch);
+                if let Some(entity) = app.commit_panel.clone() {
+                    entity.update(cx, |v, _| v.last_draft_value = String::new());
                 }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+
+                app.record_op(
+                    "commit",
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                if let (Some((hbranch, before)), Some((_, after_sha))) =
+                    (history_before.clone(), app.head_branch_and_sha())
+                {
+                    let summary =
+                        format!("commit {} '{}'", after_sha.short(), history_summary_line);
+                    app.record_history(
+                        kagi_git::OperationKind::Commit,
+                        &hbranch,
+                        before,
+                        after_sha,
+                        summary,
+                    );
+                }
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                klog!("async: commit failed — {}", err_msg);
+                app.record_op(
+                    "commit",
+                    plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                if let Some(entity) = app.commit_panel.clone() {
+                    entity.update(cx, |v, _| {
+                        if let Some(ref mut modal) = v.state.plan_modal {
+                            modal.error = Some(SharedString::from(err_msg.clone()));
+                        }
+                    });
+                }
+                // Surface commit failures in the status footer too, so the
+                // error is visible even for the smooth (no-popup) commit path
+                // where the plan modal isn't shown.
+                app.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("commit failed: {}", err_msg)));
+            }
+        });
     }
 
     /// Create the 2-parent merge commit for the continued-merge flow (ADR-0068 /
@@ -1068,5 +1057,121 @@ impl KagiApp {
         };
         self.open_amend_modal(mode, cx);
         cx.notify();
+    }
+}
+
+// `dispatch_commit_action`, moved from `src/ui/mod.rs` (T-HOTSPOT-UIMOD-001).
+// Behaviour-preserving relocation.
+impl KagiApp {
+    pub fn dispatch_commit_action(
+        &mut self,
+        action: CommitAction,
+        target: CommitId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            CommitAction::ShowDetails => {
+                if let Some(row_index) = self.row_for_commit_id(&target) {
+                    if self.selected != Some(row_index) {
+                        self.select(row_index);
+                    }
+                }
+            }
+            CommitAction::CopySha => {
+                if let Some(row_index) = self.row_for_commit_id(&target) {
+                    if let Some(detail) = self.active_view.details.get(row_index) {
+                        let full_sha = detail.full_sha.as_ref().to_string();
+                        let short: String = full_sha.chars().take(8).collect();
+                        context_menu::copy_full_sha(self, full_sha, cx);
+                        // W18-COAUTHOR-COPY: surface a toast so the copy is
+                        // visible regardless of where it was triggered
+                        // (hash chip click or the "Copy SHA" action button).
+                        self.push_toast(ToastKind::Info, format!("Copied {}", short), cx);
+                    }
+                }
+            }
+            CommitAction::CopyShortSha => {
+                if let Some(row_index) = self.row_for_commit_id(&target) {
+                    if let Some(detail) = self.active_view.details.get(row_index) {
+                        let full_sha = detail.full_sha.as_ref().to_string();
+                        context_menu::copy_short_sha(self, &full_sha, cx);
+                    }
+                }
+            }
+            CommitAction::CopyMessage => {
+                if let Some(row_index) = self.row_for_commit_id(&target) {
+                    if let Some(detail) = self.active_view.details.get(row_index) {
+                        let full_sha = detail.full_sha.as_ref().to_string();
+                        context_menu::copy_message(
+                            self,
+                            &full_sha,
+                            detail.full_message.as_ref().to_string(),
+                            cx,
+                        );
+                    }
+                }
+            }
+            CommitAction::CheckoutCommit => {
+                self.open_checkout_commit_modal(target);
+            }
+            CommitAction::CheckoutRef(ref_name) => {
+                if ref_name.is_empty() {
+                    self.status_footer =
+                        FooterStatus::Idle(SharedString::from("Checkout ref unavailable"));
+                    eprintln!(
+                        "[kagi] context-menu: checkout-ref unavailable {}",
+                        target.short()
+                    );
+                } else {
+                    self.open_plan_modal(ref_name);
+                }
+            }
+            CommitAction::CheckoutTrackingBranch(remote_name) => {
+                // Remote-only branch: create a local tracking branch + checkout
+                // (same flow as the sidebar remote-branch menu).
+                self.open_tracking_checkout_modal(remote_name);
+            }
+            CommitAction::CreateBranchHere => {
+                self.open_create_branch_modal(target, cx);
+                eprintln!(
+                    "[kagi] context-menu: create-branch {}",
+                    self.create_branch_modal()
+                        .map(|m| m.at.short())
+                        .unwrap_or_default()
+                );
+            }
+            CommitAction::CreateWorktreeHere => {
+                self.open_create_worktree_modal(target, cx);
+                eprintln!(
+                    "[kagi] context-menu: create-worktree {}",
+                    self.create_worktree_modal()
+                        .map(|m| m.at.short())
+                        .unwrap_or_default()
+                );
+            }
+            CommitAction::CherryPick => {
+                self.open_cherry_pick_modal(target);
+            }
+            CommitAction::Revert => {
+                self.open_revert_modal(target);
+            }
+            // ADR-0024: reset stays unimplemented; the menu item is disabled,
+            // this arm is defence in depth.
+            CommitAction::ResetToCommit => {
+                self.status_footer =
+                    FooterStatus::Idle(SharedString::from(Msg::ResetUnimplemented.t()));
+                klog!("context-menu: stub Reset {}", target.short());
+            }
+            CommitAction::CompareWithHead => {
+                self.open_compare_with_head(target);
+            }
+            CommitAction::CompareWithWorkingTree => {
+                self.open_compare_with_working_tree(target);
+            }
+            CommitAction::ShowChangedFiles => {
+                self.show_changed_files_for_commit(target);
+            }
+        }
     }
 }

@@ -196,52 +196,42 @@ impl KagiApp {
             let task = cx.background_spawn(async move {
                 kagi::remote::remote_pull(&host, &root).map_err(|e| e.to_string())
             });
-            cx.spawn(async move |this, acx| {
-                let result = task.await;
-                let _ = this.update(acx, |app, cx| {
-                    app.busy_op = None;
-                    match result {
-                        Ok(summary) => {
-                            klog!("async: remote pull finished — {summary}");
-                            app.record_op(
-                                "pull",
-                                before.clone(),
-                                OpOutcome::Success {
-                                    after: kagi_git::StateSummary {
-                                        head: before.head.clone(),
-                                        dirty: summary.clone(),
-                                    },
-                                },
-                                &oplog_path,
-                                cx,
-                            );
-                            app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                                "pull: {summary}"
-                            )));
-                            app.refresh_remote_view(cx);
-                        }
-                        Err(err_msg) => {
-                            klog!("async: remote pull failed — {err_msg}");
-                            app.record_op(
-                                "pull",
-                                before.clone(),
-                                OpOutcome::Failed {
-                                    error: err_msg.clone(),
-                                },
-                                &oplog_path,
-                                cx,
-                            );
-                            app.set_pull_modal(PullPlanModal {
-                                plan: modal.plan.clone(),
-                                error: Some(SharedString::from(err_msg)),
-                            });
-                        }
-                    }
-                    cx.notify();
-                });
-            })
-            .detach();
-            cx.notify();
+            self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+                Ok(summary) => {
+                    klog!("async: remote pull finished — {summary}");
+                    app.record_op(
+                        "pull",
+                        before.clone(),
+                        OpOutcome::Success {
+                            after: kagi_git::StateSummary {
+                                head: before.head.clone(),
+                                dirty: summary.clone(),
+                            },
+                        },
+                        &oplog_path,
+                        cx,
+                    );
+                    app.status_footer =
+                        FooterStatus::Success(SharedString::from(format!("pull: {summary}")));
+                    app.refresh_remote_view(cx);
+                }
+                Err(err_msg) => {
+                    klog!("async: remote pull failed — {err_msg}");
+                    app.record_op(
+                        "pull",
+                        before.clone(),
+                        OpOutcome::Failed {
+                            error: err_msg.clone(),
+                        },
+                        &oplog_path,
+                        cx,
+                    );
+                    app.set_pull_modal(PullPlanModal {
+                        plan: modal.plan.clone(),
+                        error: Some(SharedString::from(err_msg)),
+                    });
+                }
+            });
             return;
         }
 
@@ -273,18 +263,13 @@ impl KagiApp {
         let plan = modal.plan.clone();
         let bg_path = repo_path.clone();
         let task = cx.background_spawn(async move { pull_blocking(&bg_path, &plan) });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.finish_pull(result, modal, repo_path, cx);
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+        self.finish_op_on_main(cx, task, move |app, result, cx| {
+            app.finish_pull(result, modal, repo_path, cx);
+        });
     }
 
     /// Apply the result of a background pull on the main thread.
+    /// `busy_op` is cleared by the `finish_op_on_main` caller before this runs.
     fn finish_pull(
         &mut self,
         result: Result<(String, StateSummary), String>,
@@ -292,7 +277,6 @@ impl KagiApp {
         repo_path: PathBuf,
         cx: &mut Context<Self>,
     ) {
-        self.busy_op = None;
         match result {
             Ok((summary, after_summary)) => {
                 klog!("async: pull finished — {}", summary);
@@ -481,18 +465,13 @@ impl KagiApp {
         let plan = modal.plan.clone();
         let bg_path = repo_path.clone();
         let task = cx.background_spawn(async move { push_blocking(&bg_path, &plan) });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.finish_push(result, modal, repo_path, cx);
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+        self.finish_op_on_main(cx, task, move |app, result, cx| {
+            app.finish_push(result, modal, repo_path, cx);
+        });
     }
 
     /// Apply the result of a background push on the main thread.
+    /// `busy_op` is cleared by the `finish_op_on_main` caller before this runs.
     fn finish_push(
         &mut self,
         result: Result<(String, StateSummary), String>,
@@ -500,7 +479,6 @@ impl KagiApp {
         repo_path: PathBuf,
         cx: &mut Context<Self>,
     ) {
-        self.busy_op = None;
         match result {
             Ok((summary, after_summary)) => {
                 klog!("async: push finished — {}", summary);

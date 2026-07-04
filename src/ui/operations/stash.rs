@@ -127,42 +127,31 @@ impl KagiApp {
         let bg_plan = plan.clone();
         let task =
             cx.background_spawn(async move { stash_push_blocking(&bg_path, &bg_plan, msg_opt) });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok((summary, after)) => {
-                        klog!("async: stash-push finished");
-                        app.record_op(
-                            "stash-push",
-                            plan.current.clone(),
-                            OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
-                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                            "stash: {}",
-                            summary
-                        )));
-                        app.reload(cx);
-                    }
-                    Err(err_msg) => {
-                        klog!("async: stash-push failed — {}", err_msg);
-                        app.record_op(
-                            "stash-push",
-                            plan.current.clone(),
-                            OpOutcome::Failed { error: err_msg },
-                            &repo_path,
-                            cx,
-                        );
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok((summary, after)) => {
+                klog!("async: stash-push finished");
+                app.record_op(
+                    "stash-push",
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                app.status_footer =
+                    FooterStatus::Success(SharedString::from(format!("stash: {}", summary)));
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                klog!("async: stash-push failed — {}", err_msg);
+                app.record_op(
+                    "stash-push",
+                    plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg },
+                    &repo_path,
+                    cx,
+                );
+            }
+        });
     }
 
     /// Open the stash apply modal for stash entry at `index`.
@@ -508,55 +497,45 @@ impl KagiApp {
                 kagi::remote::remote_stash_drop(&host, &root, stash_index)
                     .map_err(|e| e.to_string())
             });
-            cx.spawn(async move |this, acx| {
-                let result = task.await;
-                let _ = this.update(acx, |app, cx| {
-                    app.busy_op = None;
-                    match result {
-                        Ok(summary) => {
-                            klog!("async: remote stash-drop finished");
-                            app.record_op(
-                                "stash-drop",
-                                before.clone(),
-                                OpOutcome::Success {
-                                    after: kagi_git::StateSummary {
-                                        head: before.head.clone(),
-                                        dirty: "stash entry removed".to_string(),
-                                    },
-                                },
-                                &oplog_path,
-                                cx,
-                            );
-                            app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                                "stash drop: {summary}"
-                            )));
-                            // Re-snapshot the remote so the dropped entry and its
-                            // graph row disappear (indices shift; one drop at a time).
-                            app.refresh_remote_view(cx);
-                        }
-                        Err(err_msg) => {
-                            klog!("async: remote stash-drop failed — {err_msg}");
-                            app.record_op(
-                                "stash-drop",
-                                before.clone(),
-                                OpOutcome::Failed {
-                                    error: err_msg.clone(),
-                                },
-                                &oplog_path,
-                                cx,
-                            );
-                            app.set_stash_drop_modal(StashDropModal {
-                                plan: plan.clone(),
-                                error: Some(SharedString::from(err_msg)),
-                                stash_index,
-                            });
-                        }
-                    }
-                    cx.notify();
-                });
-            })
-            .detach();
-            cx.notify();
+            self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+                Ok(summary) => {
+                    klog!("async: remote stash-drop finished");
+                    app.record_op(
+                        "stash-drop",
+                        before.clone(),
+                        OpOutcome::Success {
+                            after: kagi_git::StateSummary {
+                                head: before.head.clone(),
+                                dirty: "stash entry removed".to_string(),
+                            },
+                        },
+                        &oplog_path,
+                        cx,
+                    );
+                    app.status_footer =
+                        FooterStatus::Success(SharedString::from(format!("stash drop: {summary}")));
+                    // Re-snapshot the remote so the dropped entry and its
+                    // graph row disappear (indices shift; one drop at a time).
+                    app.refresh_remote_view(cx);
+                }
+                Err(err_msg) => {
+                    klog!("async: remote stash-drop failed — {err_msg}");
+                    app.record_op(
+                        "stash-drop",
+                        before.clone(),
+                        OpOutcome::Failed {
+                            error: err_msg.clone(),
+                        },
+                        &oplog_path,
+                        cx,
+                    );
+                    app.set_stash_drop_modal(StashDropModal {
+                        plan: plan.clone(),
+                        error: Some(SharedString::from(err_msg)),
+                        stash_index,
+                    });
+                }
+            });
             return;
         }
 
@@ -591,49 +570,38 @@ impl KagiApp {
         let bg_plan = plan.clone();
         let task = cx
             .background_spawn(async move { stash_drop_blocking(&bg_path, &bg_plan, stash_index) });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok((summary, after)) => {
-                        klog!("async: stash-drop finished");
-                        app.record_op(
-                            "stash-drop",
-                            plan.current.clone(),
-                            OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
-                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                            "stash drop: {}",
-                            summary
-                        )));
-                        app.reload(cx);
-                    }
-                    Err(err_msg) => {
-                        klog!("async: stash-drop failed — {}", err_msg);
-                        app.record_op(
-                            "stash-drop",
-                            plan.current.clone(),
-                            OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.set_stash_drop_modal(StashDropModal {
-                            plan: plan.clone(),
-                            error: Some(SharedString::from(err_msg)),
-                            stash_index,
-                        });
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok((summary, after)) => {
+                klog!("async: stash-drop finished");
+                app.record_op(
+                    "stash-drop",
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                app.status_footer =
+                    FooterStatus::Success(SharedString::from(format!("stash drop: {}", summary)));
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                klog!("async: stash-drop failed — {}", err_msg);
+                app.record_op(
+                    "stash-drop",
+                    plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                app.set_stash_drop_modal(StashDropModal {
+                    plan: plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                    stash_index,
+                });
+            }
+        });
     }
 
     /// Confirm stash pop: preflight → apply-then-drop → oplog → reload.
@@ -766,48 +734,37 @@ impl KagiApp {
         let bg_plan = plan.clone();
         let task =
             cx.background_spawn(async move { stash_pop_blocking(&bg_path, &bg_plan, stash_index) });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok((summary, after)) => {
-                        klog!("async: stash-pop finished");
-                        app.record_op(
-                            "stash-pop",
-                            plan.current.clone(),
-                            OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
-                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                            "stash pop: {}",
-                            summary
-                        )));
-                        app.reload(cx);
-                    }
-                    Err(err_msg) => {
-                        klog!("async: stash-pop failed — {}", err_msg);
-                        app.record_op(
-                            "stash-pop",
-                            plan.current.clone(),
-                            OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.set_pop_modal(PopPlanModal {
-                            plan: plan.clone(),
-                            error: Some(SharedString::from(err_msg)),
-                            stash_index,
-                        });
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok((summary, after)) => {
+                klog!("async: stash-pop finished");
+                app.record_op(
+                    "stash-pop",
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                app.status_footer =
+                    FooterStatus::Success(SharedString::from(format!("stash pop: {}", summary)));
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                klog!("async: stash-pop failed — {}", err_msg);
+                app.record_op(
+                    "stash-pop",
+                    plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                app.set_pop_modal(PopPlanModal {
+                    plan: plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                    stash_index,
+                });
+            }
+        });
     }
 }

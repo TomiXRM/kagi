@@ -213,3 +213,11 @@
 | T-CONFLICT-LINE-001 | line 単位採用モデル(resolution.rs) | todo |
 | T-CONFLICT-LINE-002 | A/B を行リスト+左チェックボックス化 | todo |
 | T-CONFLICT-LINE-003 | file/chunk/line tri-state UI | todo |
+
+## Analyze 起点の構造改善(2026-07-05、hotspot/coupling 分析より)
+
+| ID | 内容 | 依存 | Status |
+|----|------|------|--------|
+| T-HOTSPOT-UIMOD-001 | src/ui/mod.rs を 4,500 LOC 未満へ分割(S6 続き、risk 0.686) | - | todo |
+| T-OPS-DEDUP-001 | operations/* の execute フロー重複を測定・共通化(S5 前準備) | - | todo |
+| T-LOC-GATE-001 | ファイル LOC ラチェットを CI に追加(god-file 再成長防止) | - | todo |

@@ -2819,18 +2819,6 @@ impl KagiApp {
         }
     }
 
-    pub fn open_main_diff_inspector_file(&mut self, file_index: usize, cx: &mut Context<Self>) {
-        if self.remote_view.is_some() {
-            // Remote read-only view (ADR-0089 Phase 2c): the file diff is an SSH
-            // round-trip, loaded off-thread.
-            self.open_remote_main_diff(file_index, cx);
-        } else if self.compare_view.is_some() {
-            self.open_main_diff_compare(file_index);
-        } else {
-            self.open_main_diff_commit(file_index, cx);
-        }
-    }
-
     // ──────────────────────────────────────────────────────────────
     // ADR-0089: File History view
     // ──────────────────────────────────────────────────────────────
@@ -2973,115 +2961,6 @@ impl KagiApp {
         self.file_history = None;
     }
 
-    /// Open the first changed file's diff in the main pane (headless path).
-    /// Calls the synchronous highlight variant since headless has no cx and is
-    /// test-only (no UI latency concern).
-    pub fn open_main_diff_commit_headless(&mut self, file_index: usize) {
-        // Delegate to the shared open path with a dummy sync-highlight by
-        // calling set_commit_main_diff_sync directly after acquiring the diff.
-        self.open_main_diff_commit_inner(file_index, None);
-    }
-
-    /// Open the main diff with async highlight (UI path).
-    pub fn open_main_diff_commit(&mut self, file_index: usize, cx: &mut Context<Self>) {
-        self.open_main_diff_commit_inner(file_index, Some(cx));
-    }
-
-    fn open_main_diff_commit_inner(
-        &mut self,
-        file_index: usize,
-        mut cx: Option<&mut Context<Self>>,
-    ) {
-        use kagi_git::CommitId;
-
-        let selected = match self.selected {
-            Some(s) => s,
-            None => return,
-        };
-        let _repo_path = match self.repo_path.as_ref() {
-            Some(p) => p.clone(),
-            None => return,
-        };
-        let detail = match self.active_view.details.get(selected) {
-            Some(d) => d,
-            None => return,
-        };
-        let files = match self
-            .diff_caches
-            .changed_files
-            .get(&selected)
-            .and_then(|v| v.as_ref())
-        {
-            Some(f) => f,
-            None => return,
-        };
-        let file_status = match files.get(file_index) {
-            Some(f) => f,
-            None => return,
-        };
-
-        let id = CommitId(detail.full_sha.as_ref().to_string());
-        let path = file_status.path.clone();
-
-        // T-REARCH-031: per-(row, file) content cache. Clicking between two
-        // commits to compare the same file previously recomputed the full git2
-        // tree-diff + hunk extraction on every toggle. Hit the cache first.
-        if let Some(cached) = self
-            .diff_caches
-            .file_content
-            .get(&(selected, file_index))
-            .cloned()
-        {
-            self.set_commit_main_diff(&cached, &path, selected, file_index, cx.as_deref_mut());
-            return;
-        }
-
-        // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let Some(session) = self.repo_session.as_ref() else {
-            return;
-        };
-        let repo = session.backend();
-
-        match repo.commit_file_diff(&id, &path) {
-            Ok(file_diff) => {
-                let arc = std::sync::Arc::new(file_diff);
-                self.diff_caches
-                    .file_content
-                    .insert((selected, file_index), arc.clone());
-                self.set_commit_main_diff(&arc, &path, selected, file_index, cx.as_deref_mut());
-            }
-            Err(e) => {
-                klog!("diff error: {}", e);
-            }
-        }
-    }
-
-    /// Apply a pending background highlight result to `main_diff` if it still
-    /// matches the current view (same row/file index). Called from render so
-    /// the swap happens on the next frame after the background task completes.
-    /// Stale results (view changed) are discarded.
-    fn apply_pending_highlights(&mut self) {
-        let Some((row, file, highlights)) = self.pending_diff_highlight.take() else {
-            return;
-        };
-        let Some(view) = self.main_diff.as_mut() else {
-            return;
-        };
-        // Only apply if the view hasn't changed since the highlight was requested.
-        match view.source {
-            MainDiffSource::Commit {
-                row_index,
-                file_index,
-            } if row_index == row && file_index == file => {}
-            _ => return,
-        }
-        for (row_i, row_highlights) in highlights {
-            if let Some(DiffRow::Line { highlights: hl, .. }) = view.rows.get_mut(row_i) {
-                *hl = row_highlights;
-            }
-        }
-    }
-
     /// Load the selected remote commit's changed files over SSH (ADR-0089 Phase
     /// 2c) and cache them under `index`. Runs off the UI thread; idempotent via
     /// `diff_caches.remote_inflight`.
@@ -3183,58 +3062,6 @@ impl KagiApp {
             });
         })
         .detach();
-    }
-
-    /// Open the full-width diff for a clicked file of the selected remote commit,
-    /// loading the unified diff over SSH off the UI thread (ADR-0089 Phase 2c).
-    fn open_remote_main_diff(&mut self, file_index: usize, cx: &mut Context<Self>) {
-        let (host, root) = match &self.remote_view {
-            Some(v) => (v.host.clone(), v.root.clone()),
-            None => return,
-        };
-        let selected = match self.selected {
-            Some(s) => s,
-            None => return,
-        };
-        let sha = match self.active_view.details.get(selected) {
-            Some(d) => d.full_sha.as_ref().to_string(),
-            None => return,
-        };
-        let path = match self
-            .diff_caches
-            .changed_files
-            .get(&selected)
-            .and_then(|v| v.as_ref())
-            .and_then(|files| files.get(file_index))
-        {
-            Some(f) => f.path.clone(),
-            None => return,
-        };
-        let path_str = path.to_string_lossy().into_owned();
-
-        let task = cx.background_spawn(async move {
-            kagi::remote::remote_commit_file_diff(&host, &root, &sha, &path_str)
-                .map_err(|e| e.to_string())
-        });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                match result {
-                    Ok(file_diff) => {
-                        app.set_commit_main_diff(&file_diff, &path, selected, file_index, Some(cx))
-                    }
-                    Err(e) => klog!("remote diff error: {e}"),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// T-UI-003: Close the main diff view and return to the commit graph.
-    /// No-op when main_diff is None.
-    pub fn close_main_diff(&mut self) {
-        self.main_diff = None;
     }
 
     /// Fetch changed files for the commit at `index`.  Returns `None` on

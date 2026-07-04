@@ -125,3 +125,5 @@ jobs:
             libasound2-dev libvulkan-dev libzstd-dev
       - name: cargo clippy --workspace
         run: cargo clippy --workspace
+      - name: LOC ratchet (T-LOC-GATE-001)
+        run: bash ci/check-loc.sh

@@ -453,46 +453,37 @@ impl KagiApp {
         let bg_target = target.clone();
         let task =
             cx.background_spawn(async move { checkout_blocking(&bg_path, &bg_plan, &bg_target) });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok((_summary, after)) => {
-                        klog!("async: checkout finished");
-                        app.record_op(
-                            op_name,
-                            plan.current.clone(),
-                            OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
-                        app.reload(cx);
-                    }
-                    Err(err_msg) => {
-                        klog!("async: checkout failed — {}", err_msg);
-                        app.record_op(
-                            op_name,
-                            plan.current.clone(),
-                            OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.set_plan_modal(CheckoutPlanModal {
-                            stash_first: false,
-                            target: target.clone(),
-                            plan: plan.clone(),
-                            error: Some(SharedString::from(err_msg)),
-                        });
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok((_summary, after)) => {
+                klog!("async: checkout finished");
+                app.record_op(
+                    op_name,
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                klog!("async: checkout failed — {}", err_msg);
+                app.record_op(
+                    op_name,
+                    plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                app.set_plan_modal(CheckoutPlanModal {
+                    stash_first: false,
+                    target: target.clone(),
+                    plan: plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
+            }
+        });
     }
 
     /// Enter on a selected commit: open the checkout plan for it

@@ -203,37 +203,28 @@ impl KagiApp {
                 allow_existing_branch,
             )
         });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok(after) => {
-                        klog!("async: create-worktree finished");
-                        app.record_op(
-                            "create-worktree",
-                            plan.current.clone(),
-                            OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
-                        app.reload(cx);
-                    }
-                    Err(err_msg) => {
-                        klog!("async: create-worktree failed — {}", err_msg);
-                        app.record_op(
-                            "create-worktree",
-                            plan.current.clone(),
-                            OpOutcome::Failed { error: err_msg },
-                            &repo_path,
-                            cx,
-                        );
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok(after) => {
+                klog!("async: create-worktree finished");
+                app.record_op(
+                    "create-worktree",
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                klog!("async: create-worktree failed — {}", err_msg);
+                app.record_op(
+                    "create-worktree",
+                    plan.current.clone(),
+                    OpOutcome::Failed { error: err_msg },
+                    &repo_path,
+                    cx,
+                );
+            }
+        });
     }
 }

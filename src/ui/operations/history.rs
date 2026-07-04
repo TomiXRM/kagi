@@ -770,52 +770,43 @@ impl KagiApp {
         let bg_msg = message.clone();
         let task =
             cx.background_spawn(async move { amend_blocking(&bg_path, &bg_plan, mode, &bg_msg) });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok((after, old, new)) => {
-                        klog!("async: amend finished");
-                        app.record_op(
-                            "amend",
-                            plan.current.clone(),
-                            OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
-                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                            "amend: {} → {} (restore: git reset --hard {})",
-                            old.short(),
-                            new.short(),
-                            old.short()
-                        )));
-                        app.reload(cx);
-                    }
-                    Err(err_msg) => {
-                        klog!("async: amend failed — {}", err_msg);
-                        app.record_op(
-                            "amend",
-                            plan.current.clone(),
-                            OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.set_amend_modal(AmendPlanModal {
-                            plan: plan.clone(),
-                            error: Some(SharedString::from(err_msg)),
-                            mode,
-                            message: message.clone(),
-                            confirm_armed: false,
-                        });
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok((after, old, new)) => {
+                klog!("async: amend finished");
+                app.record_op(
+                    "amend",
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                    "amend: {} → {} (restore: git reset --hard {})",
+                    old.short(),
+                    new.short(),
+                    old.short()
+                )));
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                klog!("async: amend failed — {}", err_msg);
+                app.record_op(
+                    "amend",
+                    plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                app.set_amend_modal(AmendPlanModal {
+                    plan: plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                    mode,
+                    message: message.clone(),
+                    confirm_armed: false,
+                });
+            }
+        });
     }
 }

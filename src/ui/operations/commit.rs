@@ -863,75 +863,64 @@ impl KagiApp {
             .take(72)
             .collect();
         let task = cx.background_spawn(async move { commit_blocking(&bg_path, &bg_plan, &bg_msg) });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok((_new_short, after)) => {
-                        klog!("async: commit finished");
-                        // A successful commit clears the branch draft (T-COMMIT-007).
-                        let branch = app.active_view.status_summary.branch.clone();
-                        let _ = kagi_git::clear_draft(&repo_path, &branch);
-                        klog!("draft: cleared {}", branch);
-                        if let Some(entity) = app.commit_panel.clone() {
-                            entity.update(cx, |v, _| v.last_draft_value = String::new());
-                        }
-
-                        app.record_op(
-                            "commit",
-                            plan.current.clone(),
-                            OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
-                        if let (Some((hbranch, before)), Some((_, after_sha))) =
-                            (history_before.clone(), app.head_branch_and_sha())
-                        {
-                            let summary =
-                                format!("commit {} '{}'", after_sha.short(), history_summary_line);
-                            app.record_history(
-                                kagi_git::OperationKind::Commit,
-                                &hbranch,
-                                before,
-                                after_sha,
-                                summary,
-                            );
-                        }
-                        app.reload(cx);
-                    }
-                    Err(err_msg) => {
-                        klog!("async: commit failed — {}", err_msg);
-                        app.record_op(
-                            "commit",
-                            plan.current.clone(),
-                            OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        if let Some(entity) = app.commit_panel.clone() {
-                            entity.update(cx, |v, _| {
-                                if let Some(ref mut modal) = v.state.plan_modal {
-                                    modal.error = Some(SharedString::from(err_msg.clone()));
-                                }
-                            });
-                        }
-                        // Surface commit failures in the status footer too, so the
-                        // error is visible even for the smooth (no-popup) commit path
-                        // where the plan modal isn't shown.
-                        app.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                            "commit failed: {}",
-                            err_msg
-                        )));
-                    }
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok((_new_short, after)) => {
+                klog!("async: commit finished");
+                // A successful commit clears the branch draft (T-COMMIT-007).
+                let branch = app.active_view.status_summary.branch.clone();
+                let _ = kagi_git::clear_draft(&repo_path, &branch);
+                klog!("draft: cleared {}", branch);
+                if let Some(entity) = app.commit_panel.clone() {
+                    entity.update(cx, |v, _| v.last_draft_value = String::new());
                 }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+
+                app.record_op(
+                    "commit",
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                if let (Some((hbranch, before)), Some((_, after_sha))) =
+                    (history_before.clone(), app.head_branch_and_sha())
+                {
+                    let summary =
+                        format!("commit {} '{}'", after_sha.short(), history_summary_line);
+                    app.record_history(
+                        kagi_git::OperationKind::Commit,
+                        &hbranch,
+                        before,
+                        after_sha,
+                        summary,
+                    );
+                }
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                klog!("async: commit failed — {}", err_msg);
+                app.record_op(
+                    "commit",
+                    plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                if let Some(entity) = app.commit_panel.clone() {
+                    entity.update(cx, |v, _| {
+                        if let Some(ref mut modal) = v.state.plan_modal {
+                            modal.error = Some(SharedString::from(err_msg.clone()));
+                        }
+                    });
+                }
+                // Surface commit failures in the status footer too, so the
+                // error is visible even for the smooth (no-popup) commit path
+                // where the plan modal isn't shown.
+                app.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("commit failed: {}", err_msg)));
+            }
+        });
     }
 
     /// Create the 2-parent merge commit for the continued-merge flow (ADR-0068 /

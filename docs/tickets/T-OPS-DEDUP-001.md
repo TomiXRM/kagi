@@ -59,3 +59,76 @@ S5 の設計を先取りしそうになったら止めて報告する。
 ## やってはいけないこと
 
 OperationController の先行実装 / trait 導入 / modal 規約の変更 / ログ文字列変更。
+
+## Implementation memo
+
+### 測定結果(Phase 1)
+
+`start_*` / `confirm_stash_push` 系 21 関数の spawn ブロックを比較。**外殻シェルは
+完全に同型** で、各 7 行が機械的に同一:
+
+```rust
+cx.spawn(async move |this, acx| {
+    let result = task.await;
+    let _ = this.update(acx, |app, cx| {
+        app.busy_op = None;
+        // <per-op BODY>
+        cx.notify();
+    });
+})
+.detach();
+cx.notify();
+```
+
+`<per-op BODY>` の差異はすべて BODY 内に閉じる(シェルの外には漏れない):
+- 成功時 `record_op(Success)` → 失敗時 `record_op(Failed)` の op 名・`after` 形状
+- 成功後の `reload(cx)` vs `refresh_remote_view(cx)`(remote 系)
+- 失敗時のモーダル再表示 `set_X_modal`(op 固有のフィールド)
+- `record_history`(commit / merge / cherry-pick / revert のみ)
+- `status_footer = Success(...)` の有無(discard / stash / delete-branch / pull / push / amend)
+- discard の `confirm_armed` リセット
+
+### 抽出するもの / 残すもの
+
+- **抽出**: 上記シェル(7 行)を `KagiApp::finish_op_on_main(cx, task, on_done)` 1 個に集約。
+  `on_done` クロージャに `<per-op BODY>` をそのまま移動(バイト同一・順序維持)。
+  `app.busy_op = None;` は helper 側で実行(BODY が常に最初にやっていた行を引き継ぐ)。
+- **残す(同型ではない)**:
+  - `open_merge_modal`(branch.rs): 計画系 spawn。シェル後の `cx.notify()` が無く、
+    BODY も `set_merge_modal` で `record_op/reload` を通らない → 残す。
+  - commit.rs の smart-commit 検出 / メッセージ生成 spawn(2 箇所): `busy_op` 未使用、
+   BODY が LLM 系 → 残す。
+  - `seed_history_from_reflog_async`(history.rs): `busy_op=None` 無し・空チェック → 残す。
+  - `confirm_*` 同期系(checkout/pop/stash-apply/pull/push/delete-branch/conflict-continue/
+    smart-consent/amend/undo/history): spawn 無し → 対象外。
+- **pull_push の `finish_pull`/`finish_push`**: 既存の独自抽出。start_pull/start_push の
+  シェルは他と同型なので helper 経由に統一し、`finish_*` 側の `self.busy_op = None;` は
+  helper と重複するため削除(各 1 行)。`finish_*` 自体はインデントの読みやすさから残置。
+
+### 移行対象 21 サイト
+
+cherry_revert(start_cherry_pick / start_revert=2), discard(start_discard=1),
+worktree(start_create_worktree=1), checkout(start_checkout=1),
+stash(confirm_stash_push / start_stash_drop[remote+local] / start_pop=4),
+pull_push(start_pull[remote+local] / start_push=3), branch(start_branch_plan /
+start_set_upstream / start_rename_branch / start_merge / start_tracking_checkout /
+start_switch_to_latest / start_delete_branch=7), commit(start_commit=1),
+history(start_amend=1)。
+
+### helper シグネチャ
+
+```rust
+fn finish_op_on_main<R, F>(
+    &mut self,
+    cx: &mut Context<Self>,
+    task: impl std::future::Future<Output = R> + 'static,
+    on_done: F,
+) where
+    R: 'static,
+    F: FnOnce(&mut Self, R, &mut Context<Self>) + 'static,
+```
+
+`gpui::Task<R>`(`background_spawn` の戻り値)は `Future<Output=R>` を実装するので
+`impl Future` で受ける(型名を仮定しない)。trait / enum dispatch / macro なし・クロージャ
+1 個が上限。
+

@@ -236,53 +236,42 @@ impl KagiApp {
         let bg_paths = paths.clone();
         let task =
             cx.background_spawn(async move { discard_blocking(&bg_path, &bg_plan, &bg_paths) });
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok((summary, after)) => {
-                        klog!("async: discard finished");
-                        app.record_op(
-                            "discard",
-                            plan.current.clone(),
-                            OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
-                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                            "discard: {}",
-                            summary
-                        )));
-                        app.reload(cx);
-                    }
-                    Err(err_msg) => {
-                        klog!("async: discard failed — {}", err_msg);
-                        app.record_op(
-                            "discard",
-                            plan.current.clone(),
-                            OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.set_discard_modal(DiscardModal {
-                            plan: plan.clone(),
-                            paths: paths.clone(),
-                            skipped: modal.skipped.clone(),
-                            is_all: modal.is_all,
-                            error: Some(SharedString::from(err_msg)),
-                            // Force re-arm after a failure: the user is
-                            // re-confirming, so require the two-stage flow again.
-                            confirm_armed: false,
-                        });
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok((summary, after)) => {
+                klog!("async: discard finished");
+                app.record_op(
+                    "discard",
+                    plan.current.clone(),
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                app.status_footer =
+                    FooterStatus::Success(SharedString::from(format!("discard: {}", summary)));
+                app.reload(cx);
+            }
+            Err(err_msg) => {
+                klog!("async: discard failed — {}", err_msg);
+                app.record_op(
+                    "discard",
+                    plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                app.set_discard_modal(DiscardModal {
+                    plan: plan.clone(),
+                    paths: paths.clone(),
+                    skipped: modal.skipped.clone(),
+                    is_all: modal.is_all,
+                    error: Some(SharedString::from(err_msg)),
+                    // Force re-arm after a failure: the user is
+                    // re-confirming, so require the two-stage flow again.
+                    confirm_armed: false,
+                });
+            }
+        });
     }
 }

@@ -1070,3 +1070,119 @@ impl KagiApp {
         cx.notify();
     }
 }
+
+// `dispatch_commit_action`, moved from `src/ui/mod.rs` (T-HOTSPOT-UIMOD-001).
+// Behaviour-preserving relocation.
+impl KagiApp {
+    pub fn dispatch_commit_action(
+        &mut self,
+        action: CommitAction,
+        target: CommitId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            CommitAction::ShowDetails => {
+                if let Some(row_index) = self.row_for_commit_id(&target) {
+                    if self.selected != Some(row_index) {
+                        self.select(row_index);
+                    }
+                }
+            }
+            CommitAction::CopySha => {
+                if let Some(row_index) = self.row_for_commit_id(&target) {
+                    if let Some(detail) = self.active_view.details.get(row_index) {
+                        let full_sha = detail.full_sha.as_ref().to_string();
+                        let short: String = full_sha.chars().take(8).collect();
+                        context_menu::copy_full_sha(self, full_sha, cx);
+                        // W18-COAUTHOR-COPY: surface a toast so the copy is
+                        // visible regardless of where it was triggered
+                        // (hash chip click or the "Copy SHA" action button).
+                        self.push_toast(ToastKind::Info, format!("Copied {}", short), cx);
+                    }
+                }
+            }
+            CommitAction::CopyShortSha => {
+                if let Some(row_index) = self.row_for_commit_id(&target) {
+                    if let Some(detail) = self.active_view.details.get(row_index) {
+                        let full_sha = detail.full_sha.as_ref().to_string();
+                        context_menu::copy_short_sha(self, &full_sha, cx);
+                    }
+                }
+            }
+            CommitAction::CopyMessage => {
+                if let Some(row_index) = self.row_for_commit_id(&target) {
+                    if let Some(detail) = self.active_view.details.get(row_index) {
+                        let full_sha = detail.full_sha.as_ref().to_string();
+                        context_menu::copy_message(
+                            self,
+                            &full_sha,
+                            detail.full_message.as_ref().to_string(),
+                            cx,
+                        );
+                    }
+                }
+            }
+            CommitAction::CheckoutCommit => {
+                self.open_checkout_commit_modal(target);
+            }
+            CommitAction::CheckoutRef(ref_name) => {
+                if ref_name.is_empty() {
+                    self.status_footer =
+                        FooterStatus::Idle(SharedString::from("Checkout ref unavailable"));
+                    eprintln!(
+                        "[kagi] context-menu: checkout-ref unavailable {}",
+                        target.short()
+                    );
+                } else {
+                    self.open_plan_modal(ref_name);
+                }
+            }
+            CommitAction::CheckoutTrackingBranch(remote_name) => {
+                // Remote-only branch: create a local tracking branch + checkout
+                // (same flow as the sidebar remote-branch menu).
+                self.open_tracking_checkout_modal(remote_name);
+            }
+            CommitAction::CreateBranchHere => {
+                self.open_create_branch_modal(target, cx);
+                eprintln!(
+                    "[kagi] context-menu: create-branch {}",
+                    self.create_branch_modal()
+                        .map(|m| m.at.short())
+                        .unwrap_or_default()
+                );
+            }
+            CommitAction::CreateWorktreeHere => {
+                self.open_create_worktree_modal(target, cx);
+                eprintln!(
+                    "[kagi] context-menu: create-worktree {}",
+                    self.create_worktree_modal()
+                        .map(|m| m.at.short())
+                        .unwrap_or_default()
+                );
+            }
+            CommitAction::CherryPick => {
+                self.open_cherry_pick_modal(target);
+            }
+            CommitAction::Revert => {
+                self.open_revert_modal(target);
+            }
+            // ADR-0024: reset stays unimplemented; the menu item is disabled,
+            // this arm is defence in depth.
+            CommitAction::ResetToCommit => {
+                self.status_footer =
+                    FooterStatus::Idle(SharedString::from(Msg::ResetUnimplemented.t()));
+                klog!("context-menu: stub Reset {}", target.short());
+            }
+            CommitAction::CompareWithHead => {
+                self.open_compare_with_head(target);
+            }
+            CommitAction::CompareWithWorkingTree => {
+                self.open_compare_with_working_tree(target);
+            }
+            CommitAction::ShowChangedFiles => {
+                self.show_changed_files_for_commit(target);
+            }
+        }
+    }
+}

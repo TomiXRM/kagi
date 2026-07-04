@@ -1459,3 +1459,157 @@ impl KagiApp {
         cx.notify();
     }
 }
+
+// `dispatch_branch_action`, moved from `src/ui/mod.rs` (T-HOTSPOT-UIMOD-001).
+// Behaviour-preserving relocation.
+impl KagiApp {
+    pub fn dispatch_branch_action(
+        &mut self,
+        action: BranchAction,
+        state: BranchMenuState,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            BranchAction::CopyBranchName => {
+                branch_menu::copy_branch_name(self, state.name, cx);
+            }
+            BranchAction::CopyHeadSha => {
+                branch_menu::copy_head_sha(self, state.target.0, cx);
+            }
+            BranchAction::CopyUpstreamName => {
+                let upstream = self
+                    .active_view
+                    .branch_upstream_info
+                    .get(&state.name)
+                    .map(|u| u.remote_branch.clone());
+                if let Some(upstream) = upstream {
+                    branch_menu::copy_upstream_name(self, upstream, cx);
+                }
+            }
+            BranchAction::RevealHead => {
+                self.jump_to_commit(&state.target);
+            }
+            BranchAction::ToggleSolo => {
+                self.toggle_branch_solo(state.name, state.target, cx);
+            }
+            BranchAction::Checkout => {
+                if matches!(state.kind, BranchKind::Local) {
+                    self.open_plan_modal(state.name);
+                } else {
+                    self.open_tracking_checkout_modal(state.name);
+                }
+            }
+            BranchAction::SwitchToLatest => {
+                let (branch_name, remote_branch) = if matches!(state.kind, BranchKind::Local) {
+                    let upstream = self
+                        .active_view
+                        .branch_upstream_info
+                        .get(&state.name)
+                        .map(|u| u.remote_branch.clone());
+                    (state.name.clone(), upstream)
+                } else {
+                    (
+                        default_tracking_branch_name(&state.name),
+                        Some(state.name.clone()),
+                    )
+                };
+                match remote_branch {
+                    Some(remote_branch) => {
+                        self.open_switch_to_latest_modal(branch_name, remote_branch);
+                    }
+                    None => {
+                        self.status_footer =
+                            FooterStatus::Idle(SharedString::from(Msg::BcmNoUpstream.t()));
+                    }
+                }
+            }
+            BranchAction::CreateBranchFromHere => {
+                self.open_create_branch_modal(state.target, cx);
+            }
+            BranchAction::DeleteBranch => {
+                if matches!(state.kind, BranchKind::Local) {
+                    self.open_delete_branch_modal(state.name);
+                }
+            }
+            BranchAction::Pull => {
+                if matches!(state.kind, BranchKind::Local) {
+                    let is_current = self
+                        .active_view
+                        .branches
+                        .iter()
+                        .any(|(name, current)| name == &state.name && *current);
+                    if is_current {
+                        self.open_pull_modal(cx);
+                    } else {
+                        self.open_branch_plan_modal(state.name, BranchPlanKind::PullFfOnly);
+                    }
+                }
+            }
+            BranchAction::Push => {
+                if matches!(state.kind, BranchKind::Local) {
+                    let is_current = self
+                        .active_view
+                        .branches
+                        .iter()
+                        .any(|(name, current)| name == &state.name && *current);
+                    if is_current {
+                        self.open_push_modal(cx);
+                    } else {
+                        self.open_branch_plan_modal(state.name, BranchPlanKind::Push);
+                    }
+                }
+            }
+            BranchAction::PushAndCreateUpstream => {
+                if matches!(state.kind, BranchKind::Local) {
+                    self.open_branch_plan_modal(state.name, BranchPlanKind::PushSetUpstream);
+                }
+            }
+            BranchAction::SetUpstream => {
+                if matches!(state.kind, BranchKind::Local) {
+                    self.open_set_upstream_modal(state.name);
+                }
+            }
+            BranchAction::RenameBranch => {
+                if matches!(state.kind, BranchKind::Local) {
+                    self.open_rename_branch_modal(state.name);
+                }
+            }
+            BranchAction::OpenWorktreeFromBranch => {
+                let existing_path = self
+                    .active_view
+                    .worktrees
+                    .iter()
+                    .find(|wt| wt.branch.as_deref() == Some(state.name.as_str()))
+                    .map(|wt| wt.path.display().to_string());
+                if let Some(path) = existing_path {
+                    self.status_footer = FooterStatus::Idle(SharedString::from(format!(
+                        "worktree already exists: {}",
+                        path
+                    )));
+                    self.push_toast(ToastKind::Info, format!("Worktree: {}", path), cx);
+                } else if matches!(state.kind, BranchKind::Local) {
+                    self.open_create_worktree_modal_prefilled(state.target, state.name, true, cx);
+                }
+            }
+            BranchAction::MergeIntoCurrent => {
+                self.open_merge_modal(state.name, cx);
+            }
+            BranchAction::CreateWorktreeFromHere => {
+                self.open_create_worktree_modal_prefilled(state.target, state.name, false, cx);
+            }
+            BranchAction::NoUpstreamInfo
+            | BranchAction::PullFfOnly
+            | BranchAction::FetchRemoteBranch
+            | BranchAction::CreatePr
+            | BranchAction::RebaseCurrentOnto
+            | BranchAction::CreateTagHere
+            | BranchAction::ResetCurrentToHead
+            | BranchAction::ForceWithLeasePush
+            | BranchAction::DeleteRemoteBranch => {
+                self.status_footer =
+                    FooterStatus::Idle(SharedString::from(Msg::BcmNotImplementedYet.t()));
+            }
+        }
+    }
+}

@@ -218,6 +218,6 @@
 
 | ID | 内容 | 依存 | Status |
 |----|------|------|--------|
-| T-HOTSPOT-UIMOD-001 | src/ui/mod.rs を 4,500 LOC 未満へ分割(S6 続き、risk 0.686) | - | todo |
-| T-OPS-DEDUP-001 | operations/* の execute フロー重複を測定・共通化(S5 前準備) | - | todo |
-| T-LOC-GATE-001 | ファイル LOC ラチェットを CI に追加(god-file 再成長防止) | - | todo |
+| T-HOTSPOT-UIMOD-001 | src/ui/mod.rs を 4,500 LOC 未満へ分割(S6 続き、risk 0.686) | - | done |
+| T-OPS-DEDUP-001 | operations/* の execute フロー重複を測定・共通化(S5 前準備) | - | done |
+| T-LOC-GATE-001 | ファイル LOC ラチェットを CI に追加(god-file 再成長防止) | - | done |

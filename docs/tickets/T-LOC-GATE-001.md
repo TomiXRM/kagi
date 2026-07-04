@@ -1,6 +1,6 @@
 # T-LOC-GATE-001: ファイル LOC ラチェットを CI に追加する(god-file 再成長防止)
 
-- Status: todo
+- Status: done
 - Group: CI / 予防
 - 仕様の正: CLAUDE.md「≤800 LOC/file 目標」、ci.yml の grep gate 前例(ADR-0078)
 

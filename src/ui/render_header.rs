@@ -294,9 +294,13 @@ impl KagiApp {
         // 0 hides it (ADR-0013: Pull ↓N / Push ↑N).
         // `enabled` drives muted colour; disabled buttons keep their click
         // handler (which sets the reason footer) but render in muted colour.
+        // Takes a full `gpui_component::Icon` (not `IconName`) so buttons can
+        // use custom embedded SVGs (`Icon::default().path("icons/…")`) for
+        // glyphs gpui-component has no variant for (e.g. the Editor button's
+        // square-pen). IconName callers wrap with `Icon::new(..)`.
         let make_btn = |id: &'static str,
                         label: &'static str,
-                        icon: gpui_component::IconName,
+                        icon: gpui_component::Icon,
                         enabled: bool,
                         count: usize| {
             let text_color = if enabled {
@@ -318,8 +322,7 @@ impl KagiApp {
                 .w(theme::scaled_px(22.0))
                 .h(theme::scaled_px(22.0))
                 .child(
-                    gpui_component::Icon::new(icon)
-                        .with_size(gpui_component::Size::Size(theme::scaled_px(20.0)))
+                    icon.with_size(gpui_component::Size::Size(theme::scaled_px(20.0)))
                         .text_color(rgb(text_color)),
                 );
             if count > 0 {
@@ -540,7 +543,7 @@ impl KagiApp {
                         make_btn(
                             "tb-pull",
                             "Pull",
-                            gpui_component::IconName::ArrowDown,
+                            gpui_component::Icon::new(gpui_component::IconName::ArrowDown),
                             toolbar.pull_on,
                             toolbar.behind,
                         )
@@ -552,7 +555,7 @@ impl KagiApp {
                         make_btn(
                             "tb-push",
                             "Push",
-                            gpui_component::IconName::ArrowUp,
+                            gpui_component::Icon::new(gpui_component::IconName::ArrowUp),
                             toolbar.push_on,
                             toolbar.ahead,
                         )
@@ -564,7 +567,7 @@ impl KagiApp {
                         make_btn(
                             "tb-branch",
                             "Branch",
-                            gpui_component::IconName::Plus,
+                            gpui_component::Icon::new(gpui_component::IconName::Plus),
                             true,
                             0,
                         )
@@ -576,7 +579,7 @@ impl KagiApp {
                         make_btn(
                             "tb-stash",
                             "Stash",
-                            gpui_component::IconName::Inbox,
+                            gpui_component::Icon::new(gpui_component::IconName::Inbox),
                             toolbar.stash_on,
                             0,
                         )
@@ -588,7 +591,7 @@ impl KagiApp {
                         make_btn(
                             "tb-pop",
                             "Pop",
-                            gpui_component::IconName::FolderOpen,
+                            gpui_component::Icon::new(gpui_component::IconName::FolderOpen),
                             toolbar.pop_on,
                             0,
                         )
@@ -601,7 +604,7 @@ impl KagiApp {
                         make_btn(
                             "tb-undo",
                             Msg::Undo.t(),
-                            gpui_component::IconName::Undo2,
+                            gpui_component::Icon::new(gpui_component::IconName::Undo2),
                             undo_on,
                             0,
                         )
@@ -617,7 +620,7 @@ impl KagiApp {
                         make_btn(
                             "tb-redo",
                             Msg::Redo.t(),
-                            gpui_component::IconName::Redo2,
+                            gpui_component::Icon::new(gpui_component::IconName::Redo2),
                             redo_on,
                             0,
                         )
@@ -634,7 +637,7 @@ impl KagiApp {
                         make_btn(
                             "tb-terminal",
                             "Terminal",
-                            gpui_component::IconName::SquareTerminal,
+                            gpui_component::Icon::new(gpui_component::IconName::SquareTerminal),
                             terminal_on,
                             0,
                         )
@@ -688,13 +691,14 @@ impl KagiApp {
                         },
                     )
                     // Editor Workspace toggle (T-WS-EDITOR-004) — just left of
-                    // Analyze. No pencil/edit icon exists in gpui-component
-                    // 0.5.1's `IconName`; `File` is the stand-in.
+                    // Analyze. gpui-component 0.5.1 has no pencil/edit
+                    // `IconName`, so this uses the embedded lucide square-pen
+                    // via a custom `Icon` path (see assets.rs).
                     .child(
                         make_btn(
                             "tb-editor-ws",
                             "Editor",
-                            gpui_component::IconName::File,
+                            gpui_component::Icon::default().path("icons/square-pen.svg"),
                             editor_ws_on,
                             0,
                         )
@@ -707,7 +711,7 @@ impl KagiApp {
                         make_btn(
                             "tb-ecosystem",
                             "Analyze",
-                            gpui_component::IconName::ChartPie,
+                            gpui_component::Icon::new(gpui_component::IconName::ChartPie),
                             ecosystem_on,
                             0,
                         )
@@ -728,7 +732,7 @@ impl KagiApp {
                         make_btn(
                             "tb-settings",
                             "Settings",
-                            gpui_component::IconName::Settings,
+                            gpui_component::Icon::new(gpui_component::IconName::Settings),
                             true,
                             0,
                         )

@@ -1,6 +1,6 @@
 # T-WS-EDITOR-002: エディタワークスペース編集可能化(保存・再読込)
 
-- Status: review
+- Status: done (PM accepted 2026-07-07 — tests+headless+render verified; interaction GUI checklist pending user)
 - Group: workspace framework / エディタモード
 - 仕様の正: ADR-0120 §Decision 4。依存: T-WS-EDITOR-001。
 

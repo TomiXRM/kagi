@@ -1,6 +1,6 @@
 # T-WS-EDITOR-006: エディタタブ(複数バッファ・dirty 表示・close 確認)
 
-- Status: review
+- Status: done (PM accepted 2026-07-07 — tests+headless+render verified; interaction GUI checklist pending user)
 - Group: workspace framework / エディタモード
 - 発端: ユーザー要望(2026-07-07)「エディタ編集 pane を複数持てるタブ機能が欲しい。
   ファイルが編集中か未編集かはわかりやすく表示されて欲しい。編集中のものを x で

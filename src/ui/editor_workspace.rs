@@ -705,11 +705,7 @@ impl EditorWorkspaceView {
                 v.content_too_large = too_large;
                 v.content_missing = missing || deleted;
                 v.content_undecodable = undecodable;
-                v.content_lang = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .and_then(lang_for_ext)
-                    .unwrap_or("text");
+                v.content_lang = lang_for_path(&path).unwrap_or("text");
                 // T-WS-EDITOR-005 finding #9: compute the content signature
                 // ONCE here (load time), not every render.
                 v.content_sig = text

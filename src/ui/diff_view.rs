@@ -160,30 +160,70 @@ pub struct MainDiffView {
 /// Map a file extension to a language name understood by `gpui_component`'s
 /// `LanguageRegistry`.  Returns `None` for unknown extensions.
 pub(crate) fn lang_for_ext(ext: &str) -> Option<&'static str> {
+    // Every language gpui-component 0.5.1's `tree-sitter-languages` feature
+    // actually bundles (highlighter/languages.rs) with a comprehensive
+    // extension set for each — anything not listed simply renders unhighlighted.
     match ext.to_ascii_lowercase().as_str() {
         "rs" => Some("rust"),
-        "py" => Some("python"),
-        "js" | "jsx" => Some("javascript"),
-        "ts" => Some("typescript"),
+        "py" | "pyi" | "pyw" => Some("python"),
+        "js" | "jsx" | "mjs" | "cjs" => Some("javascript"),
+        "ts" | "mts" | "cts" => Some("typescript"),
         "tsx" => Some("tsx"),
-        "json" | "jsonc" => Some("json"),
+        "json" | "jsonc" | "geojson" | "webmanifest" => Some("json"),
         "toml" => Some("toml"),
         "yaml" | "yml" => Some("yaml"),
-        "md" | "mdx" => Some("markdown"),
-        "sh" | "bash" => Some("bash"),
+        "md" | "mdx" | "markdown" => Some("markdown"),
+        "sh" | "bash" | "zsh" | "ksh" => Some("bash"),
         "c" => Some("c"),
-        "cpp" | "cc" | "cxx" => Some("cpp"),
-        "h" | "hpp" => Some("cpp"),
+        // .h is ambiguous between C and C++; cpp highlights plain C fine.
+        "cpp" | "cc" | "cxx" | "c++" | "h" | "hpp" | "hxx" | "hh" | "ipp" | "ino" => Some("cpp"),
+        "cs" => Some("csharp"),
+        "cmake" => Some("cmake"),
         "css" | "scss" => Some("css"),
-        "html" | "htm" => Some("html"),
+        "html" | "htm" | "xhtml" => Some("html"),
         "go" => Some("go"),
         "java" => Some("java"),
-        "rb" => Some("ruby"),
+        "rb" | "rake" | "gemspec" => Some("ruby"),
+        "ex" | "exs" => Some("elixir"),
+        "erb" => Some("erb"),
+        "ejs" => Some("ejs"),
+        "scala" | "sc" | "sbt" => Some("scala"),
+        "proto" => Some("proto"),
+        "graphql" | "gql" => Some("graphql"),
+        "mk" | "make" => Some("make"),
+        "diff" | "patch" => Some("diff"),
         "zig" => Some("zig"),
         "sql" => Some("sql"),
         "swift" => Some("swift"),
         _ => None,
     }
+}
+
+/// Language for a path: well-known extension-less FILENAMES first
+/// (Makefile, CMakeLists.txt, Cargo.lock, shell dotfiles, …), then the
+/// extension via [`lang_for_ext`]. Use this instead of hand-rolling
+/// `path.extension() + lang_for_ext` — it's what the diff panes and the
+/// Editor Workspace viewer share.
+pub(crate) fn lang_for_path(path: &std::path::Path) -> Option<&'static str> {
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        let by_name = match name {
+            "Makefile" | "makefile" | "GNUmakefile" => Some("make"),
+            "CMakeLists.txt" => Some("cmake"),
+            // Cargo.lock is TOML; Gemfile/Rakefile are Ruby DSLs.
+            "Cargo.lock" => Some("toml"),
+            "Gemfile" | "Rakefile" => Some("ruby"),
+            "Dockerfile" => None, // no bundled grammar — stays plain
+            ".bashrc" | ".bash_profile" | ".bash_aliases" | ".zshrc" | ".zshenv" | ".zprofile"
+            | ".profile" => Some("bash"),
+            _ => None,
+        };
+        if by_name.is_some() {
+            return by_name;
+        }
+    }
+    path.extension()
+        .and_then(|e| e.to_str())
+        .and_then(lang_for_ext)
 }
 
 /// T-UI-004: Apply syntax highlighting to a slice of `DiffRow`s in-place.
@@ -200,13 +240,8 @@ pub(crate) fn highlight_diff_rows(
     use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};
     use gpui_component::Rope;
 
-    // Determine language from extension.
-    let lang = file_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .and_then(lang_for_ext);
-
-    let lang = match lang {
+    // Determine language from the path (well-known filenames + extension).
+    let lang = match lang_for_path(file_path) {
         Some(l) => l,
         None => return "none",
     };
@@ -312,11 +347,7 @@ pub(crate) fn highlight_diff_rows_send(
     use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};
     use gpui_component::Rope;
 
-    let lang = file_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .and_then(lang_for_ext)
-        .unwrap_or("none");
+    let lang = lang_for_path(file_path).unwrap_or("none");
 
     // Collect (row_index, rope_byte_start) for each Line row and build the
     // combined source text — same one-pass approach as highlight_diff_rows.
@@ -761,11 +792,7 @@ impl KagiApp {
                 // plumbing it out of `build_main_diff_view`) keeps this log
                 // line's value identical without widening the shared fn's
                 // return type for one caller.
-                let hl_lang = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .and_then(diff_view::lang_for_ext)
-                    .unwrap_or("none");
+                let hl_lang = diff_view::lang_for_path(&path).unwrap_or("none");
                 eprintln!(
                     "[kagi] main-diff: open {} rows={} highlight={}",
                     path.display(),
@@ -1142,5 +1169,65 @@ impl KagiApp {
     /// No-op when main_diff is None.
     pub fn close_main_diff(&mut self) {
         self.main_diff = None;
+    }
+}
+
+#[cfg(test)]
+mod lang_tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn basics_map_to_bundled_grammars() {
+        for (p, want) in [
+            ("main.c", "c"),
+            ("main.cpp", "cpp"),
+            ("main.ino", "cpp"),
+            ("lib.rs", "rust"),
+            ("app.py", "python"),
+            ("run.sh", "bash"),
+            ("conf.zsh", "bash"),
+            ("Program.cs", "csharp"),
+            ("mix.ex", "elixir"),
+            ("schema.proto", "proto"),
+            ("query.graphql", "graphql"),
+            ("build.mk", "make"),
+            ("fix.patch", "diff"),
+            ("Main.scala", "scala"),
+            ("index.mjs", "javascript"),
+            ("util.mts", "typescript"),
+        ] {
+            assert_eq!(lang_for_path(Path::new(p)), Some(want), "{p}");
+        }
+    }
+
+    #[test]
+    fn well_known_filenames_without_extension() {
+        for (p, want) in [
+            ("Makefile", "make"),
+            ("GNUmakefile", "make"),
+            ("CMakeLists.txt", "cmake"),
+            ("Cargo.lock", "toml"),
+            ("Gemfile", "ruby"),
+            ("Rakefile", "ruby"),
+            (".zshrc", "bash"),
+            (".bash_profile", "bash"),
+            ("src/deep/Makefile", "make"),
+        ] {
+            assert_eq!(lang_for_path(Path::new(p)), Some(want), "{p}");
+        }
+    }
+
+    #[test]
+    fn unknown_stays_unhighlighted() {
+        assert_eq!(lang_for_path(Path::new("Dockerfile")), None);
+        assert_eq!(lang_for_path(Path::new("data.bin")), None);
+        assert_eq!(lang_for_path(Path::new("noext")), None);
+    }
+
+    #[test]
+    fn extension_is_case_insensitive() {
+        assert_eq!(lang_for_path(Path::new("MAIN.C")), Some("c"));
+        assert_eq!(lang_for_path(Path::new("App.RS")), Some("rust"));
     }
 }

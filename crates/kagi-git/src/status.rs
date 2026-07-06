@@ -160,6 +160,42 @@ pub fn working_tree_status(repo: &Repository) -> Result<WorkingTreeStatus, GitEr
     Ok(result)
 }
 
+/// Every tracked file (including unmodified) plus every untracked-but-not-
+/// ignored file, sorted and repo-relative (T-WS-EDITOR-004: Editor Workspace
+/// "All files" tree source, ADR-0120 §4).
+///
+/// ponytail: one index walk + one `statuses` call (`include_unmodified`
+/// reuses the exact same machinery as `working_tree_status` above — no
+/// hand-rolled `.gitignore` parsing). Eager and full, no lazy per-directory
+/// expansion; if that's too slow on huge repos, lazy expansion is
+/// T-WS-EDITOR-003's remaining scope.
+pub fn worktree_files(repo: &Repository) -> Result<Vec<PathBuf>, GitError> {
+    let mut opts = StatusOptions::new();
+    opts.include_ignored(false)
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .include_unmodified(true);
+
+    let statuses = repo
+        .statuses(Some(&mut opts))
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+
+    let workdir = repo.workdir().map(|p| p.to_path_buf());
+    let mut files: Vec<PathBuf> = Vec::new();
+    for entry in statuses.iter() {
+        let Some(path) = entry_path(&entry) else {
+            continue;
+        };
+        if is_nested_git_dir(workdir.as_deref(), &path) {
+            continue;
+        }
+        files.push(path);
+    }
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
 /// Whether `rel` (relative to `workdir`) is a nested git repository or linked
 /// worktree — i.e. a directory that itself contains a `.git` (a real `.git`
 /// directory for a nested clone, or a `.git` *file* for a linked worktree).

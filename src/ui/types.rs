@@ -63,6 +63,12 @@ pub enum DividerKind {
     /// ADR-0089: horizontal divider between the File History commit list (top)
     /// and the diff viewer (bottom).  Adjusts the list/diff vertical split.
     FileHistoryRows,
+    /// T-WS-EDITOR-004: vertical divider between the Editor Workspace's left
+    /// file tree and its center code viewer. Adjusts `EditorWorkspaceView::tree_w`.
+    EditorTree,
+    /// T-WS-EDITOR-004: vertical divider between the Editor Workspace's center
+    /// code viewer and its right hunks pane. Adjusts `EditorWorkspaceView::hunks_w`.
+    EditorHunks,
 }
 
 /// Drag payload for a divider drag.  Only the divider kind is needed: widths

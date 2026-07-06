@@ -9,6 +9,13 @@
 001/002 の tree は「変更ファイルのみ」(データ源が既存の `working_tree_status` のため)。
 本チケットで worktree 全体のブラウズと使い勝手を仕上げる。
 
+> **Note(T-WS-EDITOR-004)**: full-worktree 列挙(`Backend::worktree_files` +
+> `TreeSource::All` チップ切替 + 変更バッジの合成 — 下記スコープ 1〜2 相当)は
+> ユーザーフィードバック対応として T-WS-EDITOR-004 で前倒し実装済み(eager 列挙、
+> ponytail: 遅延展開なし)。本チケットの残スコープは **遅延展開**(大規模 repo 対策)・
+> **フィルタ入力**・**tree→hunk→エディタ行ジャンプ**、およびモード状態の per-tab
+> 保持検討に絞られる。
+
 ## スコープ
 
 1. **full tree**: 変更有無に関わらず worktree の全ファイルを tree 表示。

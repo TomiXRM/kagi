@@ -88,11 +88,12 @@ pub(crate) fn render_cherry_pick_modal(
                 } => {
                     let indent = (*depth as f32) * 12.0;
                     let (badge_char, badge_color) = match change {
-                        ChangeKind::Added => ("A", current_theme().change_added),
-                        ChangeKind::Modified => ("M", current_theme().change_modified),
-                        ChangeKind::Deleted => ("D", current_theme().change_deleted),
-                        ChangeKind::Renamed { .. } => ("R", current_theme().change_renamed),
-                        ChangeKind::TypeChange => ("T", current_theme().change_typechange),
+                        Some(ChangeKind::Added) => ("A", current_theme().change_added),
+                        Some(ChangeKind::Modified) => ("M", current_theme().change_modified),
+                        Some(ChangeKind::Deleted) => ("D", current_theme().change_deleted),
+                        Some(ChangeKind::Renamed { .. }) => ("R", current_theme().change_renamed),
+                        Some(ChangeKind::TypeChange) => ("T", current_theme().change_typechange),
+                        None => ("", current_theme().text_muted),
                     };
                     let _ = file_index; // not clickable in preview
                     div()
@@ -359,7 +360,7 @@ pub(crate) fn render_commit_plan_modal(
                 change,
             } => {
                 let indent = (*depth as f32) * 12.0;
-                let (badge, badge_color, _) = status_badge(change, false);
+                let (badge, badge_color, _) = status_badge(change.as_ref(), false);
                 let _ = file_index;
                 preview_col = preview_col.child(
                     div()

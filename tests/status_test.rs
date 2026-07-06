@@ -283,3 +283,44 @@ fn test_staged_deleted() {
 // `conflicted` field is exercised by the domain model and is wire-correct
 // (uses `Status::CONFLICTED` bit); a dedicated conflict test can be added in a
 // follow-up ticket.
+
+// ────────────────────────────────────────────────────────────
+// Test: worktree_files (T-WS-EDITOR-004) — tracked + untracked, ignored excluded
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn test_worktree_files_tracked_untracked_ignored() {
+    let tmp = TempDir::new().unwrap();
+    let _repo = init_repo(&tmp); // creates + commits base.txt
+    let dir = tmp.path();
+
+    // Untracked file.
+    write_file(dir, "untracked.txt", "untracked\n");
+    // Ignored file (+ .gitignore itself becomes a new tracked-able file, but
+    // we don't add it — it stays untracked, which is fine, it's not ignored).
+    write_file(dir, ".gitignore", "ignored.txt\n");
+    write_file(dir, "ignored.txt", "should not appear\n");
+
+    let backend = kagi_git::Backend::open(dir).expect("open failed");
+    let files = backend.worktree_files().expect("worktree_files failed");
+
+    assert!(
+        files.contains(&Path::new("base.txt").to_path_buf()),
+        "expected tracked base.txt in {:?}",
+        files
+    );
+    assert!(
+        files.contains(&Path::new("untracked.txt").to_path_buf()),
+        "expected untracked.txt in {:?}",
+        files
+    );
+    assert!(
+        !files.contains(&Path::new("ignored.txt").to_path_buf()),
+        "ignored.txt must be excluded from {:?}",
+        files
+    );
+    // Sorted.
+    let mut sorted = files.clone();
+    sorted.sort();
+    assert_eq!(files, sorted, "worktree_files must be sorted");
+}

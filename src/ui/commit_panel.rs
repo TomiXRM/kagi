@@ -542,16 +542,20 @@ impl CommitPanelView {
 
 /// Map a `ChangeKind` to a 1-char status badge and its colour.
 /// Returns `(char, color_u32, is_conflicted)`.
-pub fn status_badge(change: &ChangeKind, is_conflicted: bool) -> (&'static str, u32, bool) {
+///
+/// `change: None` (T-WS-EDITOR-004 — an unmodified file in the Editor
+/// Workspace's `TreeSource::All`) renders a blank, muted badge.
+pub fn status_badge(change: Option<&ChangeKind>, is_conflicted: bool) -> (&'static str, u32, bool) {
     let t = crate::ui::theme::theme();
     if is_conflicted {
         return ("C", t.color_blocker, true); // red background for conflicted
     }
     match change {
-        ChangeKind::Added => ("A", t.change_added, false),
-        ChangeKind::Modified => ("M", t.change_modified, false),
-        ChangeKind::Deleted => ("D", t.change_deleted, false),
-        ChangeKind::Renamed { .. } => ("R", t.change_renamed, false),
-        ChangeKind::TypeChange => ("T", t.change_typechange, false),
+        Some(ChangeKind::Added) => ("A", t.change_added, false),
+        Some(ChangeKind::Modified) => ("M", t.change_modified, false),
+        Some(ChangeKind::Deleted) => ("D", t.change_deleted, false),
+        Some(ChangeKind::Renamed { .. }) => ("R", t.change_renamed, false),
+        Some(ChangeKind::TypeChange) => ("T", t.change_typechange, false),
+        None => ("", t.text_muted, false),
     }
 }

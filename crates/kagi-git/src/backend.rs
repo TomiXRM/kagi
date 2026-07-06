@@ -137,6 +137,13 @@ impl Backend {
         status::working_tree_status(&self.repo)
     }
 
+    /// All tracked + untracked (non-ignored) files in the working tree,
+    /// sorted, repo-relative (T-WS-EDITOR-004 Editor Workspace "All files"
+    /// tree source).
+    pub fn worktree_files(&self) -> Result<Vec<PathBuf>, GitError> {
+        status::worktree_files(&self.repo)
+    }
+
     pub fn commit_changed_files(&self, id: &CommitId) -> Result<Vec<FileStatus>, GitError> {
         diff::commit_changed_files(&self.repo, id)
     }

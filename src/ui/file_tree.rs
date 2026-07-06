@@ -45,8 +45,10 @@ pub enum TreeRow {
         name: SharedString,
         /// Index into the original `files` slice — passed to `open_file_diff`.
         file_index: usize,
-        /// Change kind, forwarded from [`FileStatus`].
-        change: ChangeKind,
+        /// Change kind, forwarded from [`FileStatus`]. `None` for a file with
+        /// no working-tree change (T-WS-EDITOR-004 `TreeSource::All` — an
+        /// unmodified file shown in the full-worktree tree carries no badge).
+        change: Option<ChangeKind>,
     },
 }
 
@@ -64,7 +66,23 @@ pub fn build_file_tree(files: &[FileStatus]) -> Vec<TreeRow> {
     let mut root = DirNode::default();
 
     for (idx, f) in files.iter().enumerate() {
-        root.insert(&f.path, idx, &f.change);
+        root.insert(&f.path, idx, Some(f.change.clone()));
+    }
+
+    let mut out = Vec::new();
+    root.flatten_into(&mut out, 0);
+    out
+}
+
+/// Like [`build_file_tree`], but for inputs that may have no change kind
+/// (T-WS-EDITOR-004: the Editor Workspace's "All files" tree source, where an
+/// unmodified file has nothing to badge). Shares the same `DirNode`
+/// insert/flatten — no duplicated compression algorithm.
+pub fn build_file_tree_opt(files: &[(PathBuf, Option<ChangeKind>)]) -> Vec<TreeRow> {
+    let mut root = DirNode::default();
+
+    for (idx, (path, change)) in files.iter().enumerate() {
+        root.insert(path, idx, change.clone());
     }
 
     let mut out = Vec::new();
@@ -81,7 +99,7 @@ pub fn build_file_tree(files: &[FileStatus]) -> Vec<TreeRow> {
 struct FileLeaf {
     name: String,
     file_index: usize,
-    change: ChangeKind,
+    change: Option<ChangeKind>,
 }
 
 /// An n-ary directory node.
@@ -99,7 +117,7 @@ impl DirNode {
     /// Insert a file at the given path.
     ///
     /// All intermediate directory components are created on demand.
-    fn insert(&mut self, path: &PathBuf, file_index: usize, change: &ChangeKind) {
+    fn insert(&mut self, path: &PathBuf, file_index: usize, change: Option<ChangeKind>) {
         use std::path::Component;
 
         let components: Vec<String> = path
@@ -127,7 +145,7 @@ impl DirNode {
         node.files.push(FileLeaf {
             name: file_name,
             file_index,
-            change: change.clone(),
+            change,
         });
     }
 
@@ -458,7 +476,7 @@ mod tests {
         assert_file_count(&rows, 1);
         match &rows[0] {
             TreeRow::File { change, .. } => {
-                assert!(matches!(change, ChangeKind::Renamed { .. }));
+                assert!(matches!(change, Some(ChangeKind::Renamed { .. })));
             }
             other => panic!("expected File, got {:?}", other),
         }

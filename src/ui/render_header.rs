@@ -165,6 +165,17 @@ impl KagiApp {
             this.open_ecosystem_view(cx);
         });
 
+        // Editor Workspace toggle (T-WS-EDITOR-004 / ADR-0120 §4) — placed
+        // just left of Analyze. Routes through the exact same
+        // `handle_menu_command` path as the View menu item / secondary-shift-e
+        // shortcut, so behaviour (open/close + the `[kagi] menu:
+        // workspace_mode=…` log line) stays byte-identical.
+        let editor_ws_on = self.repo_path.is_some();
+        let editor_ws_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
+            this.handle_menu_command("view.toggleEditorWorkspace", window, cx);
+            cx.notify();
+        });
+
         // Branch — always enabled; use selected commit if any, else HEAD.
         let branch_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
             // Resolve target commit: selected row → HEAD commit (first detail).
@@ -675,6 +686,20 @@ impl KagiApp {
                             )
                         },
                     )
+                    // Editor Workspace toggle (T-WS-EDITOR-004) — just left of
+                    // Analyze. No pencil/edit icon exists in gpui-component
+                    // 0.5.1's `IconName`; `File` is the stand-in.
+                    .child(
+                        make_btn(
+                            "tb-editor-ws",
+                            "Editor",
+                            gpui_component::IconName::File,
+                            editor_ws_on,
+                            0,
+                        )
+                        .on_click(editor_ws_click),
+                    )
+                    .child(div().w(theme::scaled_px(2.0)))
                     // Analyze / Code Ecosystem (ADR-0119) — read-only hot-spot
                     // analysis; placed just left of Settings.
                     .child(

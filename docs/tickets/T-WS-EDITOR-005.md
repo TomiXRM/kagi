@@ -1,6 +1,6 @@
 # T-WS-EDITOR-005: エディタワークスペース コードレビュー是正(10件)
 
-- Status: review
+- Status: done (PM accepted 2026-07-07 — tests+headless verified; GUI behavior items listed in PR for user check)
 - Group: workspace framework / review remediation
 - 仕様の正: 本チケットの findings リスト(下記 1–11)+ ADR-0120。設計判断は
   PM 確定済み — 実装のみ(再議論なし)。

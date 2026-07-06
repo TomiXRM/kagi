@@ -248,8 +248,14 @@ impl EditorWorkspaceView {
                             .and_then(|i| v.files.get(i))
                             .map(|f| f.path.clone());
                         v.tree = build_workspace_tree(&files);
-                        // Collapse indices key into the OLD tree — reset.
-                        v.collapsed.clear();
+                        // Collapse indices key into the OLD tree — reset to
+                        // the source's default: Changes opens fully expanded
+                        // (small, curated set), All opens fully collapsed
+                        // (whole worktree — user request).
+                        v.collapsed = match v.source {
+                            TreeSource::Changes => HashSet::new(),
+                            TreeSource::All => all_dir_indices(&v.tree),
+                        };
                         klog!("editor-ws: files {}", files.len());
                         let was_empty = files.is_empty();
                         v.files = files;
@@ -535,6 +541,18 @@ impl EditorWorkspaceView {
         cx.notify();
     }
 
+    /// Expand every directory (the ⌄⌄ button in the chip row).
+    pub fn expand_all(&mut self, cx: &mut Context<Self>) {
+        self.collapsed.clear();
+        cx.notify();
+    }
+
+    /// Collapse every directory (the ⌃⌃ button in the chip row).
+    pub fn collapse_all(&mut self, cx: &mut Context<Self>) {
+        self.collapsed = all_dir_indices(&self.tree);
+        cx.notify();
+    }
+
     /// Ask the parent to close this view (drops the entity). Safe per
     /// ADR-0117: only clears fields, never re-leases this entity.
     fn request_close(&self, cx: &mut Context<Self>) {
@@ -543,6 +561,16 @@ impl EditorWorkspaceView {
             cx.notify();
         });
     }
+}
+
+/// Every directory row's index into `tree` — the "fully collapsed" set used
+/// by `collapse_all` and as `TreeSource::All`'s initial state.
+fn all_dir_indices(tree: &[TreeRow]) -> HashSet<usize> {
+    tree.iter()
+        .enumerate()
+        .filter(|(_, row)| matches!(row, TreeRow::Dir { .. }))
+        .map(|(i, _)| i)
+        .collect()
 }
 
 /// Indices into `tree` that are visible given the collapsed dir set: children
@@ -864,8 +892,40 @@ fn render_source_chip(
         .into_any_element()
 }
 
-/// The Changes/All tree-source toggle row, pinned above the tree list
-/// (T-WS-EDITOR-004 user feedback #1).
+/// A small fold/unfold icon button in the chip row (expand-all /
+/// collapse-all — user request).
+fn render_fold_button(
+    id: &'static str,
+    icon_path: &'static str,
+    on_click: impl Fn(&mut EditorWorkspaceView, &mut Context<EditorWorkspaceView>) + 'static,
+    cx: &mut Context<EditorWorkspaceView>,
+) -> gpui::AnyElement {
+    let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+        on_click(this, cx);
+    });
+    div()
+        .id(id)
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .w(theme::scaled_px(20.0))
+        .h(theme::scaled_px(18.0))
+        .rounded_sm()
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(theme().surface)))
+        .on_click(click)
+        .child(
+            gpui_component::Icon::default()
+                .path(icon_path)
+                .with_size(gpui_component::Size::Size(theme::scaled_px(13.0)))
+                .text_color(rgb(theme().text_muted)),
+        )
+        .into_any_element()
+}
+
+/// The Changes/All tree-source toggle row + expand/collapse-all buttons,
+/// pinned above the tree list (T-WS-EDITOR-004 user feedback #1).
 fn render_source_chips(
     view: &EditorWorkspaceView,
     cx: &mut Context<EditorWorkspaceView>,
@@ -874,6 +934,7 @@ fn render_source_chips(
         .id("ews-source-chips")
         .flex()
         .flex_row()
+        .items_center()
         .flex_shrink_0()
         .gap_1()
         .px_2()
@@ -891,6 +952,19 @@ fn render_source_chips(
             Msg::EditorWorkspaceSourceAll.t(),
             view.source == TreeSource::All,
             TreeSource::All,
+            cx,
+        ))
+        // Expand-all (⌄⌄) / collapse-all (⌃⌃), lucide unfold/fold glyphs.
+        .child(render_fold_button(
+            "ews-expand-all",
+            "icons/chevrons-up-down.svg",
+            |this, cx| this.expand_all(cx),
+            cx,
+        ))
+        .child(render_fold_button(
+            "ews-collapse-all",
+            "icons/chevrons-down-up.svg",
+            |this, cx| this.collapse_all(cx),
             cx,
         ))
         .into_any_element()
@@ -1232,6 +1306,16 @@ mod tests {
         // Collapse the nested ui (idx 2) only: hides b.rs.
         let collapsed: HashSet<usize> = [2].into_iter().collect();
         assert_eq!(visible_tree_indices(&tree, &collapsed), vec![0, 1, 2, 4]);
+    }
+
+    #[test]
+    fn all_dir_indices_collects_every_dir() {
+        let tree = sample_tree();
+        // sample_tree: dirs at 0 (src) and 2 (ui).
+        let dirs = all_dir_indices(&tree);
+        assert_eq!(dirs, [0, 2].into_iter().collect());
+        // Fully collapsed: only top-level rows remain visible.
+        assert_eq!(visible_tree_indices(&tree, &dirs), vec![0, 4]);
     }
 
     #[test]

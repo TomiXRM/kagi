@@ -25,8 +25,33 @@
 //! | `Event::ChildExit(_)` | `Exit` | Child process exited |
 //! | `Event::ResetTitle` | `Title("")` | Reset to empty title |
 //!
-//! Events like `MouseCursorDirty`, `PtyWrite`, and `CursorBlinkingChange` are
-//! ignored as they're handled internally or not needed for GPUI integration.
+//! `Event::PtyWrite` is **not** forwarded through the `TerminalEvent` channel
+//! (that channel is only drained on render, which is too slow — see below).
+//! Instead its bytes are pushed onto [`GpuiEventProxy::pty_responses_handle`],
+//! a small queue the owner drains right after each `process_bytes` call.
+//!
+//! `Event::MouseCursorDirty` and `Event::CursorBlinkingChange` are ignored as
+//! they're handled internally or not needed for GPUI integration.
+//!
+//! # `PtyWrite`: terminal-query responses (T-TERM-INTERACT-001)
+//!
+//! alacritty emits `Event::PtyWrite(String)` when the terminal itself must
+//! answer a query from the running program — DSR cursor-position reports,
+//! DA1/DA2 device attributes, bracketed-paste acknowledgement, keyboard-mode
+//! reports, text-area-size reports, etc. These bytes are a reply that must go
+//! back to the PTY, not to the GPUI event loop. Programs that query-and-wait
+//! at startup (zellij is the reported case) hang forever if this is dropped
+//! on the floor, which is what this module used to do.
+//!
+//! Because `send_event` fires synchronously from inside alacritty's VTE
+//! handler dispatch (itself called while [`TerminalState`](crate::terminal::TerminalState)
+//! holds its `Term` mutex locked), we do not write to the PTY writer here —
+//! that would nest the writer lock inside the term lock on every query
+//! response. Instead we buffer the bytes in a plain `Vec<u8>` behind a
+//! second, independent lock; `TerminalState::process_bytes` drains that queue
+//! immediately after releasing the term lock, and the caller (the terminal
+//! view's PTY reader task) writes the drained bytes to the PTY right away —
+//! before the next render, not gated by one.
 //!
 //! # Example
 //!
@@ -44,6 +69,8 @@
 //! [`EventListener`]: alacritty_terminal::event::EventListener
 
 use alacritty_terminal::event::{Event, EventListener};
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::sync::mpsc::Sender;
 
 /// Events emitted by the terminal that the GPUI application cares about.
@@ -78,6 +105,13 @@ pub enum TerminalEvent {
 pub struct GpuiEventProxy {
     /// Channel sender for forwarding events to the GPUI application.
     tx: Sender<TerminalEvent>,
+
+    /// kagi (T-TERM-INTERACT-001): queue of pending `Event::PtyWrite` bytes
+    /// (terminal-query responses). Shared with whoever holds a handle from
+    /// [`pty_responses_handle`](Self::pty_responses_handle) — normally
+    /// [`TerminalState`](crate::terminal::TerminalState), which drains it in
+    /// `process_bytes` right after each batch of PTY bytes is parsed.
+    pty_responses: Arc<Mutex<Vec<u8>>>,
 }
 
 impl GpuiEventProxy {
@@ -101,7 +135,20 @@ impl GpuiEventProxy {
     /// let proxy = GpuiEventProxy::new(tx);
     /// ```
     pub fn new(tx: Sender<TerminalEvent>) -> Self {
-        Self { tx }
+        Self {
+            tx,
+            pty_responses: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Get a shared handle to the pending `PtyWrite` response queue.
+    ///
+    /// Call this *before* handing the proxy to `Term::new` (which consumes
+    /// it by value), so the caller keeps a clone of the queue to drain later.
+    /// See the module docs for why this is a queue rather than a direct
+    /// writer handle.
+    pub fn pty_responses_handle(&self) -> Arc<Mutex<Vec<u8>>> {
+        Arc::clone(&self.pty_responses)
     }
 
     /// Sends a terminal event through the channel.
@@ -144,8 +191,12 @@ impl EventListener for GpuiEventProxy {
             }
             // Ignore events we don't care about
             Event::MouseCursorDirty => {}
-            Event::PtyWrite(ref _data) => {
-                // This is handled internally by alacritty
+            Event::PtyWrite(data) => {
+                // kagi (T-TERM-INTERACT-001): queue the response bytes for
+                // the owner to write back to the PTY. See module docs for
+                // why this doesn't write directly (term-lock/writer-lock
+                // ordering).
+                self.pty_responses.lock().extend_from_slice(data.as_bytes());
             }
             Event::ColorRequest(ref _index, ref _format) => {
                 // Color requests are not commonly used
@@ -286,6 +337,39 @@ mod tests {
 
         // The channel should be empty
         assert!(rx.try_recv().is_err());
+    }
+
+    // kagi (T-TERM-INTERACT-001): PtyWrite must be queued for the PTY, not
+    // forwarded through the TerminalEvent channel — the channel is only
+    // drained on render, which is too slow for a program that queries the
+    // terminal and blocks waiting for the answer (root cause of zellij
+    // hanging at startup).
+    #[test]
+    fn test_pty_write_queues_bytes_not_channel() {
+        let (tx, rx) = channel();
+        let proxy = GpuiEventProxy::new(tx);
+        let handle = proxy.pty_responses_handle();
+
+        proxy.send_event(Event::PtyWrite("\x1b[?6c".to_string()));
+
+        // Nothing goes through the TerminalEvent channel for PtyWrite.
+        assert!(rx.try_recv().is_err());
+
+        // The bytes land in the queue, verbatim.
+        let queued = handle.lock().clone();
+        assert_eq!(queued, b"\x1b[?6c");
+    }
+
+    #[test]
+    fn test_pty_write_queue_accumulates_across_events() {
+        let (tx, _rx) = channel();
+        let proxy = GpuiEventProxy::new(tx);
+        let handle = proxy.pty_responses_handle();
+
+        proxy.send_event(Event::PtyWrite("abc".to_string()));
+        proxy.send_event(Event::PtyWrite("def".to_string()));
+
+        assert_eq!(&*handle.lock(), b"abcdef");
     }
 
     #[test]

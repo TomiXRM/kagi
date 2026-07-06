@@ -227,10 +227,11 @@
 | ID | 内容 | 依存 | Status |
 |----|------|------|--------|
 | T-WS-EDITOR-001 | WorkspaceMode 導入 + エディタワークスペース v1(file tree / read-only viewer / hunk) | ADR-0120(枠組み実装済み) | done |
-| T-WS-EDITOR-002 | エディタ編集可能化(保存・dirty・watcher 再読込) | T-WS-EDITOR-001 | todo |
+| T-WS-EDITOR-002 | エディタ編集可能化(保存・dirty・watcher 再読込) | T-WS-EDITOR-001 | done |
 | T-WS-EDITOR-003 | full worktree tree + 磨き(遅延展開・フィルタ・ジャンプ) | T-WS-EDITOR-002 | todo |
 | T-WS-EDITOR-004 | フィードバック第2弾(Changes⇄All切替・pane resize・ヘッダーボタン) | T-WS-EDITOR-001 | done |
 | T-WS-EDITOR-005 | コードレビュー是正(10件: OOM guard・resolver push・take over close・履歴 dedup 等) | T-WS-EDITOR-004 | done |
+| T-WS-EDITOR-006 | エディタタブ(複数バッファ・dirty 表示・close 確認、ユーザー要望) | T-WS-EDITOR-002 | done |
 
 ## Terminal interactivity(ADR-0035 vendored gpui-terminal、2026-07-07)
 

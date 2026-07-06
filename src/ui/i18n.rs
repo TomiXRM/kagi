@@ -489,6 +489,19 @@ pub enum Msg {
     /// (and weren't flagged binary by the NUL-byte probe; T-WS-EDITOR-005
     /// finding #6).
     EditorWorkspaceUndecodable,
+
+    // ── Editor Workspace editable buffer (T-WS-EDITOR-002) ──────
+    /// Banner shown above a dirty buffer when the FS watcher sees the file
+    /// change on disk (not auto-reloaded, to avoid clobbering the edit).
+    EditorWorkspaceExternalChanged,
+    /// Button on the external-change banner: discard the buffer and re-read.
+    EditorWorkspaceReload,
+    /// Unsaved-changes confirmation title (file/source switch, close).
+    EditorWorkspaceUnsavedTitle,
+    /// Unsaved-changes confirmation: destructive "discard and proceed" button.
+    EditorWorkspaceDiscard,
+    /// Unsaved-changes confirmation: cancel button (stay on the buffer).
+    EditorWorkspaceCancel,
 }
 
 impl Msg {
@@ -1013,6 +1026,18 @@ impl Msg {
             (Ja, EditorWorkspaceDeleted) => "作業ツリーに存在しません(削除済み)。",
             (En, EditorWorkspaceUndecodable) => "Cannot decode as UTF-8 — preview not available.",
             (Ja, EditorWorkspaceUndecodable) => "UTF-8として読めないためプレビューできません。",
+
+            // ── Editor Workspace editable buffer (T-WS-EDITOR-002) ──
+            (En, EditorWorkspaceExternalChanged) => "File changed on disk.",
+            (Ja, EditorWorkspaceExternalChanged) => "ファイルがディスク上で変更されました。",
+            (En, EditorWorkspaceReload) => "Reload",
+            (Ja, EditorWorkspaceReload) => "再読み込み",
+            (En, EditorWorkspaceUnsavedTitle) => "Unsaved changes — discard?",
+            (Ja, EditorWorkspaceUnsavedTitle) => "未保存の変更があります — 破棄しますか?",
+            (En, EditorWorkspaceDiscard) => "Discard",
+            (Ja, EditorWorkspaceDiscard) => "破棄",
+            (En, EditorWorkspaceCancel) => "Cancel",
+            (Ja, EditorWorkspaceCancel) => "キャンセル",
         }
     }
 }

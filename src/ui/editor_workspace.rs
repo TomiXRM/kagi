@@ -22,6 +22,7 @@
 //! header toolbar button.
 
 use gpui::WeakEntity;
+use gpui_component::input::InputEvent;
 use kagi_git::ChangeKind;
 
 use super::commit_panel;
@@ -76,6 +77,29 @@ pub struct WorkspaceFile {
     pub change: Option<ChangeKind>,
 }
 
+/// One open-but-INACTIVE editor tab's buffer (user request: editor tabs).
+/// The same per-file fields `EditorWorkspaceView` holds flattened for the
+/// active buffer — swapped wholesale on tab switch (`stash_active` /
+/// `open_tab`), mirroring `KagiApp`'s `active_view`/`tab_cache` pattern
+/// (ADR-0075). Each tab keeps its OWN `InputState`: sharing one and
+/// `set_value`-swapping text would leak the undo history across files
+/// (gpui-component's `set_value` ignores history, so Cmd-Z in tab B would
+/// replay tab A's edits).
+struct EditorBufferState {
+    content: Option<String>,
+    content_lang: &'static str,
+    content_binary: bool,
+    content_too_large: bool,
+    content_missing: bool,
+    content_undecodable: bool,
+    content_sig: u64,
+    editor: Option<Entity<InputState>>,
+    pushed_sig: u64,
+    dirty: bool,
+    external_changed: bool,
+    diff: Option<MainDiffView>,
+}
+
 /// The Editor workspace view-model + entity (ADR-0117 fat-entity template).
 pub struct EditorWorkspaceView {
     /// Weak back-ref to the parent, used ONLY in event listeners (close) —
@@ -111,8 +135,26 @@ pub struct EditorWorkspaceView {
     /// keeps the entity robust against a future refresh action).
     generation: u64,
 
-    /// Index into `files` of the selected row, if any.
+    /// Index into `files` of the highlighted tree row, if any. Purely a tree
+    /// highlight — the open buffer is identified by `open_path`
+    /// (T-WS-EDITOR-002 spec change: the tree source is a view filter, so
+    /// the open file may legitimately be absent from `files`, e.g. a clean
+    /// open file after switching All → Changes; then `selected` is `None`
+    /// while the buffer stays open).
     pub selected: Option<usize>,
+    /// Repo-relative path of the file the ACTIVE buffer holds (set by
+    /// `open_tab`). The header path, the content/diff loader, and save all
+    /// key off this — NOT off `selected` — so a tree-source switch can
+    /// rebuild the list without touching the open buffer.
+    pub open_path: Option<PathBuf>,
+    /// Editor tab order (user request: multiple open buffers). Contains the
+    /// active tab too; the ACTIVE buffer's fields stay flattened on this
+    /// struct, inactive buffers live in `tab_cache` — the same
+    /// active+cache swap pattern as `KagiApp.active_view`/`tab_cache`
+    /// (ADR-0075), so the render/loader code keeps reading the flat fields.
+    pub open_tabs: Vec<PathBuf>,
+    /// Stashed per-file state for the INACTIVE tabs, keyed by path.
+    tab_cache: HashMap<PathBuf, EditorBufferState>,
     /// `true` while the selected file's content + diff load is in flight.
     pub file_loading: bool,
     /// The selected file's raw text, once loaded. `None` while loading, on a
@@ -158,6 +200,27 @@ pub struct EditorWorkspaceView {
     /// against clobbering the viewer every frame — same technique as
     /// `ConflictEditorInputs.content_sig`, reusing `conflict_content_sig`).
     pushed_sig: u64,
+    /// `true` once `editor`'s live text differs from `content` (the last
+    /// loaded/saved snapshot) — set by the `InputEvent::Change` subscription
+    /// in `sync_editor` (T-WS-EDITOR-002). Drives the `●` dirty indicators,
+    /// the Cmd-S save gate, and the unsaved-changes guard on file/source
+    /// switch and close.
+    ///
+    /// The subscription compares the editor's current text against
+    /// `content` rather than using a synchronous "am I mid-push" flag: a
+    /// gpui-component `set_value` push ALSO fires `InputEvent::Change`, but
+    /// `cx.emit` queues it as a deferred effect (`Context::emit` pushes onto
+    /// `pending_effects`) — it is delivered after `sync_editor` returns, by
+    /// which point a plain bool flag set/cleared synchronously around the
+    /// push would already be back to its resting value. Comparing text is
+    /// immune to that ordering.
+    pub dirty: bool,
+    /// `true` when the FS watcher observed a working-tree change while
+    /// `dirty` was set (T-WS-EDITOR-002 §4) — the buffer was NOT
+    /// auto-reloaded (that would clobber the unsaved edit), so a banner asks
+    /// the user to reload or keep editing. Cleared on save, reload, or
+    /// switching away from the file.
+    pub external_changed: bool,
 
     /// Scroll handle for the virtualized left tree list.
     pub tree_scroll: UniformListScrollHandle,
@@ -189,6 +252,9 @@ impl EditorWorkspaceView {
             error: None,
             generation: 0,
             selected: None,
+            open_path: None,
+            open_tabs: Vec::new(),
+            tab_cache: HashMap::new(),
             file_loading: false,
             content: None,
             content_lang: "text",
@@ -201,6 +267,8 @@ impl EditorWorkspaceView {
             file_req: 0,
             editor: None,
             pushed_sig: 0,
+            dirty: false,
+            external_changed: false,
             tree_scroll: UniformListScrollHandle::new(),
             diff_scroll: UniformListScrollHandle::new(),
             show_tree: true,
@@ -243,10 +311,6 @@ impl EditorWorkspaceView {
                 v.loading = false;
                 match result {
                     Ok(files) => {
-                        let prev_selected_path = v
-                            .selected
-                            .and_then(|i| v.files.get(i))
-                            .map(|f| f.path.clone());
                         v.tree = build_workspace_tree(&files);
                         // Collapse indices key into the OLD tree — reset to
                         // the source's default: Changes opens fully expanded
@@ -272,14 +336,24 @@ impl EditorWorkspaceView {
                             return;
                         }
 
-                        // Keep the selection if the file is still listed
-                        // (source toggle / reload); else select the first
-                        // file, or clear selection if the list is empty.
-                        let restore = prev_selected_path
-                            .and_then(|p| v.files.iter().position(|f| f.path == p));
-                        match restore.or(if v.files.is_empty() { None } else { Some(0) }) {
-                            Some(i) => v.select(i, cx),
-                            None => v.selected = None,
+                        // T-WS-EDITOR-002 spec change (user): a tree reload
+                        // (source switch / watcher / post-save) is a VIEW
+                        // update — it must never touch the open buffer.
+                        // With a buffer open, only remap the highlight to
+                        // the open file's new row (or clear it if the file
+                        // isn't listed — the buffer stays open, identified
+                        // by the header path). `select` (which reloads
+                        // content and resets `dirty`) runs only on the very
+                        // first load, when nothing is open yet.
+                        let restore = v
+                            .open_path
+                            .as_ref()
+                            .and_then(|p| v.files.iter().position(|f| &f.path == p));
+                        let (sel, load) =
+                            restore_selection(v.open_path.is_some(), restore, v.files.len());
+                        match (sel, load) {
+                            (Some(i), true) => v.select(i, cx),
+                            (sel, _) => v.selected = sel,
                         }
                     }
                     Err(e) => v.error = Some(e),
@@ -290,18 +364,9 @@ impl EditorWorkspaceView {
         .detach();
     }
 
-    /// Switch the tree source and reload (T-WS-EDITOR-004: the Changes/All
-    /// chips, and the clean-worktree auto-switch in `start_load`). No-ops if
-    /// already on `source`.
-    pub fn set_source(&mut self, source: TreeSource, cx: &mut Context<Self>) {
-        if self.source == source {
-            return;
-        }
-        self.switch_source(source, cx);
-    }
-
-    /// Shared by the manual toggle and the auto-switch: set `source`, emit
-    /// the contract log line, and reload.
+    /// Shared by `set_source` (the manual chip toggle) and the
+    /// clean-worktree auto-switch in `start_load`: set `source`, emit the
+    /// contract log line, and reload.
     fn switch_source(&mut self, source: TreeSource, cx: &mut Context<Self>) {
         self.source = source;
         klog!(
@@ -314,22 +379,193 @@ impl EditorWorkspaceView {
         self.start_load(cx);
     }
 
-    /// Select a tree row's file (index into `files`) and kick off its
-    /// content + diff load.
+    /// Select a tree row's file (index into `files`): make it the active
+    /// tab. NOT a destructive action anymore (editor tabs, user request) —
+    /// a dirty buffer is stashed into its tab, never discarded, so no
+    /// dirty guard is needed on file switch.
     pub fn select(&mut self, file_index: usize, cx: &mut Context<Self>) {
         let Some(file) = self.files.get(file_index) else {
             return;
         };
         self.selected = Some(file_index);
+        self.open_tab(file.path.clone(), cx);
+    }
+
+    /// Make `path` the active tab: stash (or replace) the current active
+    /// buffer, then restore `path`'s cached buffer or load it fresh.
+    ///
+    /// ponytail: a CLEAN active tab is replaced (not stashed) when opening
+    /// a file that isn't already a tab — otherwise ↑/↓ browsing through the
+    /// tree would spam one tab per step. Dirty tabs always survive. Upgrade
+    /// path if users want sticky clean tabs: a pinned/preview distinction
+    /// (VSCode-style), tracked per tab.
+    pub fn open_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.open_path.as_ref() == Some(&path) {
+            return;
+        }
+        let is_new = !self.open_tabs.contains(&path);
+        if let Some(active) = self.open_path.clone() {
+            if is_new && !self.dirty {
+                self.open_tabs.retain(|p| p != &active);
+                self.open_path = None;
+                self.reset_active_buffer();
+            } else {
+                self.stash_active();
+            }
+        }
+        if is_new {
+            self.open_tabs.push(path.clone());
+        }
+        klog!("editor-ws: file {}", path.display());
+        if let Some(buf) = self.tab_cache.remove(&path) {
+            let clean = !buf.dirty;
+            self.content = buf.content;
+            self.content_lang = buf.content_lang;
+            self.content_binary = buf.content_binary;
+            self.content_too_large = buf.content_too_large;
+            self.content_missing = buf.content_missing;
+            self.content_undecodable = buf.content_undecodable;
+            self.content_sig = buf.content_sig;
+            self.editor = buf.editor;
+            self.pushed_sig = buf.pushed_sig;
+            self.dirty = buf.dirty;
+            self.external_changed = buf.external_changed;
+            self.diff = buf.diff;
+            self.open_path = Some(path);
+            if clean {
+                // Refresh a clean buffer on activation: covers external
+                // changes while it was backgrounded AND a load that was
+                // dropped mid-flight by a tab switch. Sig-guarded push —
+                // an unchanged file is a no-op for the editor.
+                self.load_selected(cx);
+            }
+        } else {
+            self.reset_active_buffer();
+            self.open_path = Some(path);
+            self.load_selected(cx);
+        }
+        cx.notify();
+    }
+
+    /// Tab-strip click: activate an already-open tab (also remaps the tree
+    /// highlight, which may be `None` if the file isn't in the current
+    /// source's list).
+    pub fn activate_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.selected = self.files.iter().position(|f| f.path == path);
+        self.open_tab(path, cx);
+    }
+
+    /// Tab ×-button click: close the tab, with the unsaved-changes guard
+    /// when its buffer is dirty (user request: closing a dirty tab must ask).
+    pub fn request_close_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.tab_dirty(&path) {
+            self.open_dirty_guard(EditorPendingIntent::CloseTab(path), cx);
+            return;
+        }
+        self.close_tab_now(&path, cx);
+    }
+
+    /// Close a tab unconditionally (clean tab, or dirty after the guard's
+    /// Discard). Closing the active tab activates its neighbor (next,
+    /// falling back to previous — `next_active_tab`), or empties the pane.
+    pub fn close_tab_now(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let next = next_active_tab(&self.open_tabs, path, self.open_path.as_deref());
+        self.open_tabs.retain(|p| p != path);
+        self.tab_cache.remove(path);
+        if self.open_path.as_deref() == Some(path) {
+            self.open_path = None;
+            self.reset_active_buffer();
+            match next {
+                Some(next) => self.activate_tab(next, cx),
+                None => self.selected = None,
+            }
+        }
+        cx.notify();
+    }
+
+    /// Move the ACTIVE buffer's fields into `tab_cache` (tab switch).
+    fn stash_active(&mut self) {
+        let Some(path) = self.open_path.take() else {
+            return;
+        };
+        let buf = EditorBufferState {
+            content: self.content.take(),
+            content_lang: self.content_lang,
+            content_binary: self.content_binary,
+            content_too_large: self.content_too_large,
+            content_missing: self.content_missing,
+            content_undecodable: self.content_undecodable,
+            content_sig: self.content_sig,
+            editor: self.editor.take(),
+            pushed_sig: self.pushed_sig,
+            dirty: self.dirty,
+            external_changed: self.external_changed,
+            diff: self.diff.take(),
+        };
+        self.tab_cache.insert(path, buf);
+        self.reset_active_buffer();
+    }
+
+    /// Reset every ACTIVE-buffer field to its empty state (fresh open /
+    /// close of the active tab). `open_path`/`selected` are the caller's job.
+    fn reset_active_buffer(&mut self) {
         self.content = None;
+        self.content_lang = "text";
         self.content_binary = false;
         self.content_too_large = false;
         self.content_missing = false;
         self.content_undecodable = false;
+        self.content_sig = 0;
+        self.editor = None;
+        self.pushed_sig = 0;
+        self.dirty = false;
+        self.external_changed = false;
+        self.file_loading = false;
         self.diff = None;
-        klog!("editor-ws: file {}", file.path.display());
-        self.load_selected(cx);
-        cx.notify();
+    }
+
+    /// Whether the tab holding `path` (active or cached) has unsaved edits.
+    pub fn tab_dirty(&self, path: &Path) -> bool {
+        if self.open_path.as_deref() == Some(path) {
+            self.dirty
+        } else {
+            self.tab_cache.get(path).is_some_and(|b| b.dirty)
+        }
+    }
+
+    /// Whether ANY open tab has unsaved edits — the workspace-close guard
+    /// must cover backgrounded tabs too.
+    pub fn any_dirty(&self) -> bool {
+        self.dirty || self.tab_cache.values().any(|b| b.dirty)
+    }
+
+    /// Chip-click entry point for switching the tree source. T-WS-EDITOR-002
+    /// spec change (user): this is a VIEW filter, not a navigation — it never
+    /// touches the open buffer and never opens the dirty guard. `start_load`'s
+    /// marshal-back re-highlights the open file if listed, or just clears the
+    /// highlight (buffer stays open, header path still identifies it).
+    pub fn set_source(&mut self, source: TreeSource, cx: &mut Context<Self>) {
+        if self.source == source {
+            return;
+        }
+        self.switch_source(source, cx);
+    }
+
+    /// Defer to the parent to open the unsaved-changes confirmation
+    /// (`ActiveModal` lives on `KagiApp`, ADR-0076/0093). Deferred via
+    /// `cx.spawn` rather than a synchronous `self.app.update` — the arrow-key
+    /// path (`KagiApp::step_editor_ws_selection`) calls into this entity from
+    /// within an already-leased `KagiApp` listener, so a synchronous call
+    /// back into `KagiApp` here would double-lease it and panic (same
+    /// hazard as `conflict_view`'s `marshal_error_toast`).
+    fn open_dirty_guard(&self, intent: EditorPendingIntent, cx: &mut Context<Self>) {
+        let weak_app = self.app.clone();
+        cx.spawn(async move |_view, acx| {
+            let _ = weak_app.update(acx, |app, cx| {
+                app.open_editor_dirty_guard(intent, cx);
+            });
+        })
+        .detach();
     }
 
     /// Load the selected file's raw text (off-thread, guarded by
@@ -343,19 +579,22 @@ impl EditorWorkspaceView {
     /// `BINARY_PROBE_BYTES` of the raw bytes, and the line count is computed
     /// here in the background task — the marshal-back below only assigns.
     fn load_selected(&mut self, cx: &mut Context<Self>) {
-        let Some(idx) = self.selected else { return };
-        let Some(file) = self.files.get(idx) else {
+        // Keyed off `open_path`, not the tree highlight (T-WS-EDITOR-002 spec
+        // change) — the open file may not be listed in the current source.
+        let Some(path) = self.open_path.clone() else {
             return;
         };
-        let path = file.path.clone();
         // T-WS-EDITOR-005 finding #6: a file git already reports as deleted
         // always gets the "deleted" placeholder, even if a stale read somehow
         // still succeeds (e.g. a race with the working tree).
-        let deleted = matches!(file.change, Some(ChangeKind::Deleted));
+        let deleted = self
+            .files
+            .iter()
+            .find(|f| f.path == path)
+            .is_some_and(|f| matches!(f.change, Some(ChangeKind::Deleted)));
         self.file_loading = true;
         self.file_req = self.file_req.wrapping_add(1);
         let file_req = self.file_req;
-        let generation = self.generation;
         let repo_path = self.repo_path.clone();
         let bg_path = path.clone();
 
@@ -409,7 +648,19 @@ impl EditorWorkspaceView {
         cx.spawn(async move |view, acx| {
             let (text, is_binary, missing, undecodable, too_large, file_diff) = task.await;
             let _ = view.update(acx, |v, cx| {
-                if v.file_req != file_req || v.generation != generation {
+                // `file_req` alone guards staleness — the buffer is decoupled
+                // from the tree generation (T-WS-EDITOR-002 spec change: a
+                // source switch mid-load must not discard the content read).
+                // The `dirty` check closes a race: if the user typed while a
+                // watcher-driven clean re-read was in flight, dropping the
+                // result is the only option that doesn't clobber the edit.
+                // The `open_path` check keeps a load started for one tab from
+                // landing in another after a tab switch (editor tabs) — the
+                // switched-to tab re-triggers its own load, so nothing stalls.
+                if v.file_req != file_req
+                    || v.dirty
+                    || v.open_path.as_deref() != Some(path.as_path())
+                {
                     return;
                 }
                 v.file_loading = false;
@@ -462,6 +713,44 @@ impl EditorWorkspaceView {
                     .code_editor(self.content_lang)
                     .line_number(true)
             });
+            // T-WS-EDITOR-002: track user edits for the dirty indicator/
+            // guard/save-gate. `InputState` emits `InputEvent::Change` (see
+            // gpui-component 0.5.1 `src/input/state.rs::replace_text_in_range`)
+            // on every keystroke/paste/cut/undo AND on our own `set_value`
+            // push below — see `dirty`'s doc comment for why the handler
+            // compares text against `content` instead of a synchronous
+            // "am I mid-push" flag. Detached rather than stored: same
+            // pattern as the theme-select `Confirm` subscription in
+            // `mod.rs`'s `open_main_window` (holds a weak ref internally, so
+            // a dropped entity — workspace closed — just makes the callback
+            // a no-op).
+            cx.subscribe(&state, |this: &mut Self, state, event: &InputEvent, cx| {
+                if !matches!(event, InputEvent::Change) {
+                    return;
+                }
+                let current = state.read(cx).value();
+                if this.editor.as_ref() == Some(&state) {
+                    let dirty = this.content.as_deref() != Some(current.as_ref());
+                    if this.dirty != dirty {
+                        this.dirty = dirty;
+                        cx.notify();
+                    }
+                } else if let Some(buf) = this
+                    .tab_cache
+                    .values_mut()
+                    .find(|b| b.editor.as_ref() == Some(&state))
+                {
+                    // A deferred Change event can land after its tab was
+                    // stashed (editor tabs) — book the dirty bit on the
+                    // right buffer instead of the active one.
+                    let dirty = buf.content.as_deref() != Some(current.as_ref());
+                    if buf.dirty != dirty {
+                        buf.dirty = dirty;
+                        cx.notify();
+                    }
+                }
+            })
+            .detach();
             self.editor = Some(state);
         }
         if self.content_sig == self.pushed_sig {
@@ -525,6 +814,9 @@ impl EditorWorkspaceView {
         if self.selected == Some(file_index) {
             return;
         }
+        // No dirty guard here (editor tabs, user request): stepping opens
+        // the file as the active tab; a dirty buffer is stashed into its
+        // tab, never discarded.
         // gpui 0.2.2 has no `Nearest`; `Center` matches the commit list's
         // jump behaviour (`mod.rs` scroll_to_item call sites).
         self.tree_scroll
@@ -554,12 +846,183 @@ impl EditorWorkspaceView {
     }
 
     /// Ask the parent to close this view (drops the entity). Safe per
-    /// ADR-0117: only clears fields, never re-leases this entity.
+    /// ADR-0117: only clears fields, never re-leases this entity. Guarded by
+    /// the unsaved-changes modal when ANY tab is dirty (T-WS-EDITOR-002 §5;
+    /// backgrounded tabs count — dropping the entity loses them all) — this
+    /// is a plain header-click listener (not nested inside another `KagiApp`
+    /// lease), so the direct `self.app.update` call is safe either way, same
+    /// as the existing clean-close path below.
     fn request_close(&self, cx: &mut Context<Self>) {
+        if self.any_dirty() {
+            self.open_dirty_guard(EditorPendingIntent::Close, cx);
+            return;
+        }
         let _ = self.app.update(cx, |app, cx| {
             app.close_editor_workspace();
             cx.notify();
         });
+    }
+
+    /// Cmd-S (T-WS-EDITOR-002 §3): write `editor`'s current full text to
+    /// `repo_path.join(path)` on a background thread. No-op if there's
+    /// nothing to save (defensive — `KagiApp::save_editor_file` already
+    /// checks `dirty` before calling this).
+    ///
+    /// This is a plain file write, NOT a Git operation — ADR-0120 §4
+    /// explicitly scopes saving out of the plan→confirm→execute pipeline
+    /// (invariant 4 governs Git writes; `std::fs::write` here is not one).
+    pub fn save(&mut self, cx: &mut Context<Self>) {
+        if !self.dirty {
+            return;
+        }
+        // Keyed off `open_path`, not the tree highlight — the open file may
+        // not be listed in the current source (T-WS-EDITOR-002 spec change).
+        let Some(path) = self.open_path.clone() else {
+            return;
+        };
+        let Some(editor) = self.editor.clone() else {
+            return;
+        };
+        let full_path = editor_save_path(&self.repo_path, &path);
+        let text = editor.read(cx).value().to_string();
+
+        let task = cx.background_spawn(async move {
+            std::fs::write(&full_path, text.as_bytes())
+                .map(|()| text)
+                .map_err(|e| e.to_string())
+        });
+        cx.spawn(async move |view, acx| {
+            let result = task.await;
+            let _ = view.update(acx, |v, cx| match result {
+                Ok(text) => {
+                    klog!("editor-ws: saved {}", path.display());
+                    v.dirty = false;
+                    v.external_changed = false;
+                    // Adopt the saved text as the buffer's snapshot NOW —
+                    // and mark it as already pushed (the editor holds this
+                    // exact text), so the disk re-read below computes the
+                    // same sig and never `set_value`s (which would reset
+                    // the cursor/scroll on every save).
+                    let sig = conflict_content_sig(&path, &text, false);
+                    v.content = Some(text);
+                    v.content_sig = sig;
+                    v.pushed_sig = sig;
+                    // Refresh the tree badges and the right-pane diff
+                    // (T-WS-EDITOR-002 spec change: the tree reload is
+                    // highlight-only, so the diff refresh runs explicitly).
+                    v.start_load(cx);
+                    v.load_selected(cx);
+                    cx.notify();
+                }
+                Err(e) => {
+                    klog!("editor-ws: save failed: {}", e);
+                    // Non-git file error: surface via toast + footer (the
+                    // established precedent for a background op outside the
+                    // plan pipeline — e.g. `repo.fetch`'s failure path,
+                    // `commands.rs`), not a git plan modal.
+                    let msg = format!("Save failed: {}: {}", path.display(), e);
+                    let _ = v.app.update(cx, |app, cx| {
+                        app.push_toast(ToastKind::Error, msg.clone(), cx);
+                        app.status_footer = FooterStatus::Failed(SharedString::from(msg));
+                        cx.notify();
+                    });
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// FS-watcher nudge (T-WS-EDITOR-002 §4), called from
+    /// `KagiApp::refresh_working_tree_external` on every debounced
+    /// `WatchEvent::WorkTree`. Always refreshes the tree/badges (also covers
+    /// the tree-side of a just-completed save); additionally re-reads the
+    /// open file's content when the buffer is clean (the tree reload itself
+    /// is highlight-only per the spec change), or raises the "changed on
+    /// disk" banner when it's dirty (never clobbers an edit).
+    pub fn on_worktree_changed(&mut self, cx: &mut Context<Self>) {
+        self.start_load(cx);
+        if self.dirty {
+            self.external_changed = true;
+        } else {
+            // Clean buffer: re-read content + diff. The content-sig guard in
+            // `sync_editor` makes an unchanged re-read a no-op push, so the
+            // cursor/scroll survive routine watcher ticks.
+            self.load_selected(cx);
+        }
+        // Backgrounded tabs: a dirty one gets the banner when reactivated
+        // (same watcher coarseness as the active buffer — we don't know
+        // WHICH file changed); a clean one re-reads on activation anyway
+        // (`open_tab`'s clean-refresh), so nothing to do for it here.
+        for buf in self.tab_cache.values_mut() {
+            if buf.dirty {
+                buf.external_changed = true;
+            }
+        }
+        cx.notify();
+    }
+
+    /// Discard the buffer and re-read the open file from disk (the confirmed
+    /// outcome of the external-change banner's Reload button — the button
+    /// itself opens the dirty guard first, T-WS-EDITOR-002 §5 spec change).
+    pub fn reload_from_disk(&mut self, cx: &mut Context<Self>) {
+        self.dirty = false;
+        self.external_changed = false;
+        // Force the editor push even when the disk text hashes back to the
+        // pre-edit snapshot (the user's edit is being discarded either way).
+        self.pushed_sig = 0;
+        self.load_selected(cx);
+        cx.notify();
+    }
+}
+
+/// T-WS-EDITOR-002 §3: resolve the on-disk path `save` writes to. Pure —
+/// extracted so the join is unit-testable without a `Context` (`repo_path`
+/// is absolute, `rel` is repo-relative — same shape `load_selected` already
+/// uses for reads).
+fn editor_save_path(repo_path: &Path, rel: &Path) -> PathBuf {
+    repo_path.join(rel)
+}
+
+/// Editor tabs (user request): which tab becomes active after closing
+/// `closing`. `None` when the closed tab wasn't active (nothing changes) or
+/// it was the last tab. Prefers the next tab, falling back to the previous
+/// one — the usual browser/editor behaviour. Pure — unit-tested below.
+fn next_active_tab(tabs: &[PathBuf], closing: &Path, active: Option<&Path>) -> Option<PathBuf> {
+    if active != Some(closing) {
+        return None;
+    }
+    let idx = tabs.iter().position(|p| p == closing)?;
+    if idx + 1 < tabs.len() {
+        Some(tabs[idx + 1].clone())
+    } else if idx > 0 {
+        Some(tabs[idx - 1].clone())
+    } else {
+        None
+    }
+}
+
+/// T-WS-EDITOR-002 spec change (user): the tree listing is a view filter,
+/// decoupled from the open buffer. Decide what `start_load`'s marshal-back
+/// does with the selection: returns `(new_selected, should_load)`.
+///
+/// - With an open buffer: highlight-only — remap to the open file's new row
+///   (`restore`), or clear the highlight when the file isn't listed. NEVER
+///   load (the buffer — dirty or clean — survives any tree rebuild).
+/// - With no buffer yet (initial load): select + load the first file.
+///
+/// Pure — unit-tested below ("open buffer survives source switch").
+fn restore_selection(
+    has_open_buffer: bool,
+    restore: Option<usize>,
+    file_count: usize,
+) -> (Option<usize>, bool) {
+    if has_open_buffer {
+        (restore, false)
+    } else if file_count > 0 {
+        (restore.or(Some(0)), true)
+    } else {
+        (None, false)
     }
 }
 
@@ -732,6 +1195,61 @@ impl super::KagiApp {
             ev.update(cx, |v, cx| v.step_selection(delta, cx));
         }
     }
+
+    /// Cmd-S root handler (T-WS-EDITOR-002 §3): save the Editor Workspace's
+    /// buffer if it's open and dirty; no-op otherwise (closed workspace,
+    /// clean buffer, or the "Save" keystroke firing on the wrong tab).
+    pub fn save_editor_file(&mut self, cx: &mut Context<Self>) {
+        let Some(ev) = self.editor_workspace.clone() else {
+            return;
+        };
+        if !ev.read(cx).dirty {
+            return;
+        }
+        ev.update(cx, |v, cx| v.save(cx));
+    }
+
+    /// Open the unsaved-changes confirmation before discarding the Editor
+    /// Workspace's dirty buffer (T-WS-EDITOR-002 §5). `ActiveModal` lives on
+    /// `KagiApp` per the CLAUDE.md state-update rules; `intent` is what to do
+    /// once the user confirms Discard.
+    pub fn open_editor_dirty_guard(&mut self, intent: EditorPendingIntent, cx: &mut Context<Self>) {
+        self.set_editor_dirty_guard_modal(EditorDirtyGuardModal { intent });
+        klog!("editor-ws: dirty-guard");
+        cx.notify();
+    }
+
+    /// Esc / Cancel on the unsaved-changes modal: dismiss without acting.
+    pub fn cancel_editor_dirty_guard(&mut self) {
+        self.clear_editor_dirty_guard_modal();
+    }
+
+    /// Enter / Discard on the unsaved-changes modal: drop the confirmation
+    /// and run the pending action. The entity's `select`/`reload_from_disk`
+    /// reset `dirty` as part of navigating/reloading, so no separate
+    /// "discard" step is needed here.
+    pub fn confirm_editor_dirty_guard(&mut self, cx: &mut Context<Self>) {
+        let Some(modal) = self.editor_dirty_guard_modal().cloned() else {
+            return;
+        };
+        self.clear_editor_dirty_guard_modal();
+        match modal.intent {
+            EditorPendingIntent::Reload => {
+                if let Some(ev) = self.editor_workspace.clone() {
+                    ev.update(cx, |v, cx| v.reload_from_disk(cx));
+                }
+            }
+            EditorPendingIntent::CloseTab(path) => {
+                if let Some(ev) = self.editor_workspace.clone() {
+                    ev.update(cx, |v, cx| v.close_tab_now(&path, cx));
+                }
+            }
+            EditorPendingIntent::Close => {
+                self.close_editor_workspace();
+            }
+        }
+        cx.notify();
+    }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -746,10 +1264,18 @@ fn render_editor_workspace(
     view: &EditorWorkspaceView,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
-    let selected_path = view
-        .selected
-        .and_then(|i| view.files.get(i))
-        .map(|f| SharedString::from(f.path.to_string_lossy().into_owned()));
+    // T-WS-EDITOR-002 §2: "● " prefix while the open buffer has unsaved
+    // edits. Keyed off `open_path` (not the tree highlight) — after a source
+    // switch the open file may not be listed, and the header is then the
+    // only thing identifying the buffer (spec change).
+    let selected_path = view.open_path.as_ref().map(|p| {
+        let path = p.to_string_lossy();
+        if view.dirty {
+            SharedString::from(format!("\u{25cf} {}", path))
+        } else {
+            SharedString::from(path.into_owned())
+        }
+    });
 
     let close = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
         this.request_close(cx);
@@ -1103,6 +1629,12 @@ fn render_tree_row(
             } else {
                 theme().panel
             };
+            // T-WS-EDITOR-002 §2 + editor tabs: any row whose file is open
+            // in a tab with unsaved edits gets the dot, active or not.
+            let show_dirty_dot = view
+                .files
+                .get(file_index)
+                .is_some_and(|f| view.tab_dirty(&f.path));
             let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
                 this.select(file_index, cx);
             });
@@ -1137,16 +1669,122 @@ fn render_tree_row(
                             .truncate()
                             .child(name),
                     )
+                    .when(show_dirty_dot, |el| {
+                        el.child(
+                            div()
+                                .flex_shrink_0()
+                                .pl(theme::scaled_px(4.))
+                                .text_xs()
+                                .text_color(rgb(theme().color_warning))
+                                .child(SharedString::from("\u{25cf}")),
+                        )
+                    })
                     .into_any_element(),
             )
         }
     }
 }
 
-/// Center pane: the selected file's read-only code viewer, or a placeholder.
+/// Center pane: the selected file's editable code viewer, or a placeholder.
+/// The editor tab strip (user request): one chip per open buffer — file
+/// name, `●` when dirty, and a × close button (dirty close routes through
+/// the unsaved-changes guard). `None` when no tabs are open.
+///
+/// ponytail: no horizontal scrolling — many tabs just shrink/truncate.
+/// Add an overflow scroll if real usage ever opens that many.
+fn render_tab_strip(
+    view: &EditorWorkspaceView,
+    cx: &mut Context<EditorWorkspaceView>,
+) -> Option<gpui::AnyElement> {
+    if view.open_tabs.is_empty() {
+        return None;
+    }
+    let mut strip = div()
+        .id("ews-tabs")
+        .flex()
+        .flex_row()
+        .items_center()
+        .flex_shrink_0()
+        .w_full()
+        .bg(rgb(theme().panel));
+    for (i, path) in view.open_tabs.iter().enumerate() {
+        let is_active = view.open_path.as_ref() == Some(path);
+        let dirty = view.tab_dirty(path);
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        let activate_path = path.clone();
+        let close_path = path.clone();
+        let activate = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+            this.activate_tab(activate_path.clone(), cx);
+        });
+        let close = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+            // Don't also fire the chip's activate handler underneath.
+            cx.stop_propagation();
+            this.request_close_tab(close_path.clone(), cx);
+        });
+        strip = strip.child(
+            div()
+                .id(("ews-tab", i))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .py_px()
+                .max_w(theme::scaled_px(180.))
+                .min_w(px(0.))
+                .cursor_pointer()
+                .text_xs()
+                .bg(rgb(if is_active {
+                    theme().bg_base
+                } else {
+                    theme().panel
+                }))
+                .when(!is_active, |el| el.hover(|s| s.bg(rgb(theme().surface))))
+                .on_click(activate)
+                .when(dirty, |el| {
+                    el.child(
+                        div()
+                            .flex_shrink_0()
+                            .text_color(rgb(theme().color_warning))
+                            .child(SharedString::from("\u{25cf}")),
+                    )
+                })
+                .child(
+                    div()
+                        .min_w(px(0.))
+                        .truncate()
+                        .text_color(rgb(if is_active {
+                            theme().text_main
+                        } else {
+                            theme().text_sub
+                        }))
+                        .child(SharedString::from(name)),
+                )
+                .child(
+                    div()
+                        .id(("ews-tab-x", i))
+                        .flex_shrink_0()
+                        .px_1()
+                        .rounded_sm()
+                        .text_color(rgb(theme().text_muted))
+                        .hover(|s| {
+                            s.bg(rgb(theme().selected))
+                                .text_color(rgb(theme().text_main))
+                        })
+                        .on_click(close)
+                        .child(SharedString::from("\u{00d7}")),
+                ),
+        );
+    }
+    Some(strip.into_any_element())
+}
+
 fn render_center_pane(
     view: &EditorWorkspaceView,
-    _cx: &mut Context<EditorWorkspaceView>,
+    cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     let mut pane = div()
         .flex_1()
@@ -1156,15 +1794,71 @@ fn render_center_pane(
         .flex_col()
         .bg(rgb(theme().bg_base));
 
+    // Editor tab strip (user request: multiple open buffers).
+    if let Some(strip) = render_tab_strip(view, cx) {
+        pane = pane.child(strip);
+    }
+
+    // T-WS-EDITOR-002 §4: external-change banner — only when the buffer is
+    // dirty (a clean buffer just silently re-reads via `on_worktree_changed`).
+    // Reload replaces an unsaved edit with the on-disk text, so it routes
+    // through the dirty guard (§5 spec change) rather than firing directly.
+    if view.external_changed {
+        let reload = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+            this.open_dirty_guard(EditorPendingIntent::Reload, cx);
+        });
+        pane = pane.child(
+            div()
+                .id("ews-external-changed")
+                .flex()
+                .flex_row()
+                .items_center()
+                .flex_shrink_0()
+                .w_full()
+                .gap_2()
+                .px_3()
+                .py_1()
+                .bg(rgb(theme().color_warning))
+                .child(
+                    div()
+                        .flex_1()
+                        .text_xs()
+                        .text_color(rgb(theme().bg_base))
+                        .child(Msg::EditorWorkspaceExternalChanged.t()),
+                )
+                .child(
+                    div()
+                        .id("ews-reload")
+                        .px_2()
+                        .py_px()
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .text_xs()
+                        .bg(rgb(theme().bg_base))
+                        .text_color(rgb(theme().text_main))
+                        .hover(|s| s.bg(rgb(theme().selected)))
+                        .on_click(reload)
+                        .child(Msg::EditorWorkspaceReload.t()),
+                ),
+        );
+    }
+
     // T-WS-EDITOR-005 finding #6: deleted/missing and non-UTF-8 files used to
     // both fall through to the generic "select a file" placeholder even
     // though a row was actually selected — distinguish why `content` is
     // `None` instead.
-    let placeholder = if view.loading {
-        Some(Msg::EditorWorkspaceLoading.t())
-    } else if view.selected.is_none() {
-        Some(Msg::EditorWorkspaceSelectFile.t())
-    } else if view.file_loading {
+    //
+    // T-WS-EDITOR-002 spec change: keyed off `open_path`/`content`, not the
+    // tree state — a tree reload (`loading`, e.g. a source switch) and a
+    // sig-guarded background re-read (`file_loading` with content already
+    // present) must NOT blank an open buffer.
+    let placeholder = if view.open_path.is_none() {
+        Some(if view.loading {
+            Msg::EditorWorkspaceLoading.t()
+        } else {
+            Msg::EditorWorkspaceSelectFile.t()
+        })
+    } else if view.file_loading && view.content.is_none() {
         Some(Msg::EditorWorkspaceLoading.t())
     } else if view.content_missing {
         Some(Msg::EditorWorkspaceDeleted.t())
@@ -1195,14 +1889,14 @@ fn render_center_pane(
             .min_h(px(0.))
             .w_full()
             .child(
-                // `disabled` is the only read-only gate gpui-component 0.5.1
-                // offers, but its appearance paints the muted (gray) disabled
-                // background — user report: the viewer looked like a disabled
-                // form field. `appearance(false)` drops the component's own
-                // bg/border so the pane's dark `bg_base` shows through, like a
-                // real code viewer.
+                // T-WS-EDITOR-002: editable now — `disabled(true)` gated
+                // typing/paste/cut/undo behind gpui-component 0.5.1's
+                // `!disabled` check AND kept a disabled input from taking
+                // focus at all, which is why ↑/↓ fell through to the root
+                // file-stepping handlers instead of moving the cursor
+                // (user-reported). `appearance(false)` / `bordered(false)`
+                // are kept so it still doesn't look like a form field.
                 Input::new(&editor)
-                    .disabled(true)
                     .appearance(false)
                     .bordered(false)
                     .h_full(),
@@ -1422,5 +2116,55 @@ mod tests {
         assert!(rows
             .iter()
             .any(|r| matches!(r, TreeRow::Dir { name, .. } if name.as_ref() == "a/b")));
+    }
+
+    // ── T-WS-EDITOR-002: editable-buffer pure logic ────────────────────────
+
+    #[test]
+    fn editor_save_path_joins_repo_root_and_relative_path() {
+        let repo = Path::new("/repo");
+        let rel = Path::new("src/main.rs");
+        assert_eq!(
+            editor_save_path(repo, rel),
+            PathBuf::from("/repo/src/main.rs")
+        );
+    }
+
+    #[test]
+    fn next_active_tab_prefers_next_then_previous() {
+        let tabs: Vec<PathBuf> = ["a", "b", "c"].iter().map(PathBuf::from).collect();
+        let (a, b, c) = (Path::new("a"), Path::new("b"), Path::new("c"));
+        // Closing an INACTIVE tab: the active tab doesn't change.
+        assert_eq!(next_active_tab(&tabs, a, Some(b)), None);
+        // Closing the active middle tab → the next one.
+        assert_eq!(next_active_tab(&tabs, b, Some(b)), Some(PathBuf::from("c")));
+        // Closing the active last tab → the previous one.
+        assert_eq!(next_active_tab(&tabs, c, Some(c)), Some(PathBuf::from("b")));
+        // Closing the only tab → nothing left.
+        let only = vec![PathBuf::from("a")];
+        assert_eq!(next_active_tab(&only, a, Some(a)), None);
+    }
+
+    #[test]
+    fn open_buffer_survives_source_switch() {
+        // T-WS-EDITOR-002 spec change (user): a tree rebuild (source switch /
+        // watcher / post-save) never loads over an open buffer.
+        //
+        // Open file still listed → remap the highlight, no load.
+        assert_eq!(restore_selection(true, Some(3), 10), (Some(3), false));
+        // Open file NOT in the new list (All→Changes) → clear the highlight,
+        // keep the buffer (no load — `select` would clobber it).
+        assert_eq!(restore_selection(true, None, 10), (None, false));
+        // Even with an empty list the buffer stays.
+        assert_eq!(restore_selection(true, None, 0), (None, false));
+    }
+
+    #[test]
+    fn initial_load_selects_and_loads_first_file() {
+        // No buffer yet: select + load the restored (or first) file.
+        assert_eq!(restore_selection(false, None, 5), (Some(0), true));
+        assert_eq!(restore_selection(false, Some(2), 5), (Some(2), true));
+        // Empty worktree list: nothing to select.
+        assert_eq!(restore_selection(false, None, 0), (None, false));
     }
 }

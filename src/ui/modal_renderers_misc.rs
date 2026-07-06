@@ -5,7 +5,9 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::button_style::KagiButton;
+use super::i18n::Msg;
 use super::modal_renderers::modal_overlay;
+use super::modals::EditorDirtyGuardModal;
 use super::theme::{self, theme as current_theme};
 use super::{smart_commit, KagiApp};
 use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
@@ -349,6 +351,74 @@ pub(crate) fn render_update_modal(
         );
     }
     card = card.child(actions);
+
+    modal_overlay(card).into_any_element()
+}
+
+/// Editor Workspace unsaved-changes confirmation (T-WS-EDITOR-002 §5). Not a
+/// Git write — no `OperationPlan`/current↔predicted card — just a plain
+/// discard-or-cancel gate before switching file/source or closing the
+/// workspace while its buffer is dirty. Enter/Esc come free from the
+/// existing `confirm_active_modal`/`cancel_active_modal` root plumbing.
+pub(crate) fn render_editor_dirty_guard_modal(
+    _modal: EditorDirtyGuardModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let cancel = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.cancel_editor_dirty_guard();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+    let discard = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+        this.confirm_editor_dirty_guard(cx);
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh);
+        }
+        cx.notify();
+    });
+
+    let card = div()
+        .w(theme::scaled_px(420.))
+        .bg(rgb(current_theme().modal))
+        .border_1()
+        .border_color(rgb(current_theme().color_blocker))
+        .rounded_lg()
+        .p_4()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(
+            div()
+                .text_color(rgb(current_theme().color_blocker))
+                .text_lg()
+                .child(Msg::EditorWorkspaceUnsavedTitle.t()),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .justify_end()
+                .child(
+                    Button::new("editor-dirty-guard-cancel")
+                        .label(Msg::EditorWorkspaceCancel.t())
+                        .ghost()
+                        .small()
+                        .on_click(cancel),
+                )
+                .child(
+                    KagiButton::accent(
+                        "editor-dirty-guard-discard",
+                        Msg::EditorWorkspaceDiscard.t(),
+                        current_theme().color_blocker,
+                        cx,
+                    )
+                    .small()
+                    .on_click(discard),
+                ),
+        );
 
     modal_overlay(card).into_any_element()
 }

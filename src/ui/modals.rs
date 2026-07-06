@@ -375,6 +375,34 @@ pub struct DiscardModal {
 // Modal renderer functions (render_plan_modal, render_pull_modal, etc.)
 // have been extracted to modal_renderers.rs (ADR-0114).
 
+/// Pending action to run once the user confirms discarding a dirty Editor
+/// Workspace buffer (T-WS-EDITOR-002 §5, unsaved-changes guard).
+///
+/// Spec changes (user): switching the tree source or FILE is a view/tab
+/// action, NOT destructive — a dirty buffer survives as its tab, so there
+/// is no SwitchSource/SelectFile intent. The guard covers the genuinely
+/// destructive paths only: replacing an edit with disk text (Reload),
+/// closing a dirty tab (CloseTab), and dropping the whole workspace (Close).
+#[derive(Clone, Debug)]
+pub enum EditorPendingIntent {
+    /// Discard the buffer and re-read the open file from disk (the
+    /// external-change banner's Reload button).
+    Reload,
+    /// Close one editor tab (the tab's × button), discarding its edits.
+    CloseTab(std::path::PathBuf),
+    /// Close the Editor Workspace (← Graph, toolbar, Cmd-Shift-E).
+    Close,
+}
+
+/// State for the Editor Workspace "unsaved changes" confirmation
+/// (T-WS-EDITOR-002 §5). Not a Git write — no `OperationPlan` here, just a
+/// discard-the-buffer-or-cancel gate before switching file/source or closing
+/// the workspace while its buffer is dirty.
+#[derive(Clone, Debug)]
+pub struct EditorDirtyGuardModal {
+    pub intent: EditorPendingIntent,
+}
+
 pub enum ActiveModal {
     Checkout(CheckoutPlanModal),
     Pull(PullPlanModal),
@@ -399,4 +427,5 @@ pub enum ActiveModal {
     DeleteBranch(DeleteBranchModal),
     Discard(DiscardModal),
     ConflictContinue(ConflictContinuePlanModal),
+    EditorDirtyGuard(EditorDirtyGuardModal),
 }

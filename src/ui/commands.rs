@@ -45,7 +45,7 @@ const AUTO_FETCH_INTERVAL_SECS: u64 = 180;
 use super::context_menu::CommitAction;
 use super::i18n::{self, Lang, Msg};
 use super::theme::{self, theme};
-use super::{BottomTab, FooterStatus, KagiApp, ToastKind, ToggleBottomPanel};
+use super::{BottomTab, EditorPendingIntent, FooterStatus, KagiApp, ToastKind, ToggleBottomPanel};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Actions — one gpui Action per command (1:1, ADR-0029).
@@ -1315,8 +1315,17 @@ impl KagiApp {
                 }
             }
             "view.toggleEditorWorkspace" => {
-                if self.editor_workspace.is_some() {
-                    self.close_editor_workspace();
+                // T-WS-EDITOR-002 §5: don't silently discard dirty buffers —
+                // this dispatch is shared by the View menu item, Cmd-Shift-E,
+                // and the header toolbar button (all three route through
+                // `handle_menu_command`), so guarding here covers all three.
+                // `any_dirty` includes backgrounded editor tabs.
+                if let Some(ev) = self.editor_workspace.clone() {
+                    if ev.read(cx).any_dirty() {
+                        self.open_editor_dirty_guard(EditorPendingIntent::Close, cx);
+                    } else {
+                        self.close_editor_workspace();
+                    }
                 } else {
                     self.open_editor_workspace(cx);
                 }

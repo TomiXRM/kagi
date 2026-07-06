@@ -114,6 +114,15 @@ use gpui::Keystroke;
 /// assert_eq!(bytes, Some(b"\r".to_vec()));
 /// ```
 pub fn keystroke_to_bytes(keystroke: &Keystroke, mode: TermMode) -> Option<Vec<u8>> {
+    // kagi: platform-modified chords (Cmd on macOS, Super on Linux/Windows) are
+    // GUI shortcuts, never terminal input — terminals only know Ctrl/Alt.
+    // Without this guard, Cmd+V fell through to the single-character fallback
+    // below and typed a literal "v" into the PTY *before* the app-level paste
+    // listener wrote the clipboard (user report: paste comes out as "v<text>").
+    if keystroke.modifiers.platform {
+        return None;
+    }
+
     // Handle special keys first
     match keystroke.key.as_str() {
         // Basic control characters
@@ -428,5 +437,23 @@ mod tests {
 
         let space = Keystroke::parse("space").unwrap();
         assert_eq!(keystroke_to_bytes(&space, mode), Some(b" ".to_vec()));
+    }
+
+    #[test]
+    fn test_platform_chords_produce_no_output() {
+        // kagi: Cmd/Super chords are GUI shortcuts. Cmd+V used to leak a
+        // literal "v" into the PTY ahead of the app-level clipboard paste.
+        let mode = TermMode::empty();
+
+        for chord in ["cmd-v", "cmd-c", "cmd-a", "cmd-enter", "cmd-shift-v"] {
+            let ks = Keystroke::parse(chord).unwrap();
+            assert_eq!(keystroke_to_bytes(&ks, mode), None, "chord {chord}");
+        }
+
+        // Ctrl/Alt chords are real terminal input and must keep working.
+        let ctrl_c = Keystroke::parse("ctrl-c").unwrap();
+        assert_eq!(keystroke_to_bytes(&ctrl_c, mode), Some(vec![0x03]));
+        let alt_a = Keystroke::parse("alt-a").unwrap();
+        assert_eq!(keystroke_to_bytes(&alt_a, mode), Some(b"\x1ba".to_vec()));
     }
 }

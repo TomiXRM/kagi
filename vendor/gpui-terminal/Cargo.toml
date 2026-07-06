@@ -48,6 +48,10 @@ version = "0.12"
 
 [dependencies.gpui]
 version = "0.2.2"
+# kagi: match the app's gpui features so standalone `cargo test -p gpui-terminal`
+# compiles on CLT-only Macs (no `xcrun metal`); unified to this anyway when
+# building the workspace.
+features = ["runtime_shaders"]
 
 [dependencies.parking_lot]
 version = "0.12"

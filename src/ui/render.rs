@@ -376,6 +376,7 @@ impl Render for KagiApp {
         let remote_browse_modal = self.remote_browse_modal.clone();
         let delete_branch_modal = self.delete_branch_modal().cloned();
         let discard_modal = self.discard_modal().cloned();
+        let editor_dirty_guard_modal = self.editor_dirty_guard_modal().cloned();
         let file_menu = self.file_menu;
         let modal_focus = self.modal_focus.clone();
         let stash_push_modal = self.stash_push_modal().cloned();
@@ -495,6 +496,12 @@ impl Render for KagiApp {
             }
         });
 
+        // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
+        // No-ops when the workspace is closed or the buffer is clean.
+        let save_editor_file = cx.listener(|this, _: &SaveEditorFile, _window, cx| {
+            this.save_editor_file(cx);
+        });
+
         // ── Normal state: header + body + bottom panel slot + status bar ─────
         let root = div()
             .flex()
@@ -512,6 +519,8 @@ impl Render for KagiApp {
             .on_action(toggle_bottom_panel)
             // T-UI-003: Esc closes the main diff view.
             .on_action(close_main_diff)
+            // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
+            .on_action(save_editor_file)
             // Arrows: step diff files while the main diff is open, otherwise
             // move the commit selection (user request).
             .on_action(cx.listener(|this, _: &DiffPrevFile, window, cx| {
@@ -717,6 +726,7 @@ impl Render for KagiApp {
             revert_modal,
             delete_branch_modal,
             discard_modal,
+            editor_dirty_guard_modal,
             file_menu,
             modal_focus,
             stash_push_focus,

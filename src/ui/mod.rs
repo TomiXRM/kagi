@@ -105,7 +105,9 @@ actions!(
         CloseMainDiff,
         DiffPrevFile,
         DiffNextFile,
-        CheckoutSelected
+        CheckoutSelected,
+        // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
+        SaveEditorFile
     ]
 );
 
@@ -2122,6 +2124,15 @@ impl KagiApp {
                 let Some((new_status, wip_diffstat)) = refreshed else {
                     return;
                 };
+                // T-WS-EDITOR-002 §4: nudge the Editor Workspace on every
+                // worktree watch event, unconditionally — a content-only
+                // edit to an already-`Modified` tracked file may not change
+                // `WorkingTreeStatus` (no `ChangeKind` transition), so this
+                // must not be gated behind the "status unchanged" early
+                // return below.
+                if let Some(ev) = app.editor_workspace.clone() {
+                    ev.update(cx, |v, cx| v.on_worktree_changed(cx));
+                }
                 if app.last_working_status.as_ref() == Some(&new_status) {
                     if app.wip_diffstat != Some(wip_diffstat) {
                         app.wip_diffstat = Some(wip_diffstat);
@@ -3597,7 +3608,9 @@ impl KagiApp {
     /// choice overlays (update, menu/settings) are consumed but not actioned.
     /// (User request: Enter approves a modal, Esc cancels it.)
     fn confirm_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.discard_modal().is_some() {
+        if self.editor_dirty_guard_modal().is_some() {
+            self.confirm_editor_dirty_guard(cx);
+        } else if self.discard_modal().is_some() {
             self.start_discard(cx);
         } else if self.conflict_continue_modal().is_some() {
             self.confirm_conflict_continue(cx);
@@ -3663,7 +3676,9 @@ impl KagiApp {
     /// Esc while a modal is open: cancel/close the active modal (same priority
     /// order as `confirm_active_modal`). Returns `true` if a modal was open.
     fn cancel_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.discard_modal().is_some() {
+        if self.editor_dirty_guard_modal().is_some() {
+            self.cancel_editor_dirty_guard();
+        } else if self.discard_modal().is_some() {
             self.cancel_discard_modal();
         } else if self.conflict_continue_modal().is_some() {
             self.cancel_conflict_continue();
@@ -3837,6 +3852,12 @@ pub fn run_app(app_state: KagiApp) {
             KeyBinding::new("up", DiffPrevFile, Some("!Terminal")),
             KeyBinding::new("down", DiffNextFile, Some("!Terminal")),
         ]);
+        // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
+        // No context predicate — gpui-component 0.5.1's "Input" context binds
+        // no `secondary-s` (verified: no cmd-s/ctrl-s/secondary-s binding in
+        // its src/input/state.rs), so this fires even while the code editor
+        // has focus. `save_editor_file` no-ops when there is nothing to save.
+        cx.bind_keys([KeyBinding::new("secondary-s", SaveEditorFile, None)]);
         // ADR-0084: app-level Undo/Redo. Scoped `!Input && !Terminal` so a
         // focused text field (gpui-component Input, key_context "Input") keeps
         // OS-standard text undo (OsAction::Undo) and the terminal keeps its own

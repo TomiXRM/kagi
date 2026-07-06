@@ -375,6 +375,28 @@ pub struct DiscardModal {
 // Modal renderer functions (render_plan_modal, render_pull_modal, etc.)
 // have been extracted to modal_renderers.rs (ADR-0114).
 
+/// Pending action to run once the user confirms discarding a dirty Editor
+/// Workspace buffer (T-WS-EDITOR-002 §5, unsaved-changes guard).
+#[derive(Clone, Debug)]
+pub enum EditorPendingIntent {
+    /// Select a different file (tree click or ↑/↓ step) — carries the target
+    /// index into `EditorWorkspaceView::files`.
+    SelectFile(usize),
+    /// Switch the tree source (Changes ⇄ All chip).
+    SwitchSource(super::editor_workspace::TreeSource),
+    /// Close the Editor Workspace (← Graph, toolbar, Cmd-Shift-E).
+    Close,
+}
+
+/// State for the Editor Workspace "unsaved changes" confirmation
+/// (T-WS-EDITOR-002 §5). Not a Git write — no `OperationPlan` here, just a
+/// discard-the-buffer-or-cancel gate before switching file/source or closing
+/// the workspace while its buffer is dirty.
+#[derive(Clone, Debug)]
+pub struct EditorDirtyGuardModal {
+    pub intent: EditorPendingIntent,
+}
+
 pub enum ActiveModal {
     Checkout(CheckoutPlanModal),
     Pull(PullPlanModal),
@@ -399,4 +421,5 @@ pub enum ActiveModal {
     DeleteBranch(DeleteBranchModal),
     Discard(DiscardModal),
     ConflictContinue(ConflictContinuePlanModal),
+    EditorDirtyGuard(EditorDirtyGuardModal),
 }

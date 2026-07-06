@@ -9,10 +9,10 @@
 use super::super::modals::ActiveModal;
 use super::super::modals::{
     AmendPlanModal, BranchPlanModal, CheckoutPlanModal, CherryPickModal, ConflictContinuePlanModal,
-    CreateBranchModal, CreateWorktreeModal, DeleteBranchModal, DiscardModal, HistoryPlanModal,
-    MergePlanModal, PopPlanModal, PullPlanModal, PushPlanModal, RenameBranchModal, RevertModal,
-    SetUpstreamModal, StashApplyModal, StashDropModal, StashPushModal, SwitchToLatestPlanModal,
-    TrackingCheckoutPlanModal, UndoPlanModal,
+    CreateBranchModal, CreateWorktreeModal, DeleteBranchModal, DiscardModal, EditorDirtyGuardModal,
+    HistoryPlanModal, MergePlanModal, PopPlanModal, PullPlanModal, PushPlanModal,
+    RenameBranchModal, RevertModal, SetUpstreamModal, StashApplyModal, StashDropModal,
+    StashPushModal, SwitchToLatestPlanModal, TrackingCheckoutPlanModal, UndoPlanModal,
 };
 use super::super::KagiApp;
 use gpui::{AppContext as _, Context, Window};
@@ -444,6 +444,23 @@ impl KagiApp {
     #[inline]
     pub fn clear_discard_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::Discard(_))) {
+            self.active_modal = None;
+        }
+    }
+    #[inline]
+    pub fn editor_dirty_guard_modal(&self) -> Option<&EditorDirtyGuardModal> {
+        match &self.active_modal {
+            Some(ActiveModal::EditorDirtyGuard(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn set_editor_dirty_guard_modal(&mut self, m: EditorDirtyGuardModal) {
+        self.active_modal = Some(ActiveModal::EditorDirtyGuard(m));
+    }
+    #[inline]
+    pub fn clear_editor_dirty_guard_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::EditorDirtyGuard(_))) {
             self.active_modal = None;
         }
     }

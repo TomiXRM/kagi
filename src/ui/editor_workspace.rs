@@ -22,6 +22,7 @@
 //! header toolbar button.
 
 use gpui::WeakEntity;
+use gpui_component::input::InputEvent;
 use kagi_git::ChangeKind;
 
 use super::commit_panel;
@@ -158,6 +159,27 @@ pub struct EditorWorkspaceView {
     /// against clobbering the viewer every frame — same technique as
     /// `ConflictEditorInputs.content_sig`, reusing `conflict_content_sig`).
     pushed_sig: u64,
+    /// `true` once `editor`'s live text differs from `content` (the last
+    /// loaded/saved snapshot) — set by the `InputEvent::Change` subscription
+    /// in `sync_editor` (T-WS-EDITOR-002). Drives the `●` dirty indicators,
+    /// the Cmd-S save gate, and the unsaved-changes guard on file/source
+    /// switch and close.
+    ///
+    /// The subscription compares the editor's current text against
+    /// `content` rather than using a synchronous "am I mid-push" flag: a
+    /// gpui-component `set_value` push ALSO fires `InputEvent::Change`, but
+    /// `cx.emit` queues it as a deferred effect (`Context::emit` pushes onto
+    /// `pending_effects`) — it is delivered after `sync_editor` returns, by
+    /// which point a plain bool flag set/cleared synchronously around the
+    /// push would already be back to its resting value. Comparing text is
+    /// immune to that ordering.
+    pub dirty: bool,
+    /// `true` when the FS watcher observed a working-tree change while
+    /// `dirty` was set (T-WS-EDITOR-002 §4) — the buffer was NOT
+    /// auto-reloaded (that would clobber the unsaved edit), so a banner asks
+    /// the user to reload or keep editing. Cleared on save, reload, or
+    /// switching away from the file.
+    pub external_changed: bool,
 
     /// Scroll handle for the virtualized left tree list.
     pub tree_scroll: UniformListScrollHandle,
@@ -201,6 +223,8 @@ impl EditorWorkspaceView {
             file_req: 0,
             editor: None,
             pushed_sig: 0,
+            dirty: false,
+            external_changed: false,
             tree_scroll: UniformListScrollHandle::new(),
             diff_scroll: UniformListScrollHandle::new(),
             show_tree: true,
@@ -277,8 +301,29 @@ impl EditorWorkspaceView {
                         // file, or clear selection if the list is empty.
                         let restore = prev_selected_path
                             .and_then(|p| v.files.iter().position(|f| f.path == p));
+                        // T-WS-EDITOR-002 §4: a watcher-driven reload
+                        // (`on_worktree_changed`) must NOT clobber a dirty
+                        // buffer — `select` unconditionally resets
+                        // `content`/`diff`/`dirty`. The save path clears
+                        // `dirty` itself before calling `start_load`, so this
+                        // only applies to a genuinely unsaved external-change
+                        // race.
                         match restore.or(if v.files.is_empty() { None } else { Some(0) }) {
+                            Some(i) if preserve_dirty_selection(v.dirty, restore, i) => {
+                                // Same dirty file, possibly renumbered by the
+                                // reload — keep the tree highlight / dirty
+                                // dot on the right row without touching the
+                                // buffer.
+                                v.selected = Some(i);
+                            }
+                            Some(_) if v.dirty => {
+                                // The dirty file fell out of the fresh list
+                                // (e.g. its status changed) — never silently
+                                // discard the edit; leave the stale
+                                // selection/content as-is.
+                            }
                             Some(i) => v.select(i, cx),
+                            None if v.dirty => {}
                             None => v.selected = None,
                         }
                     }
@@ -290,18 +335,9 @@ impl EditorWorkspaceView {
         .detach();
     }
 
-    /// Switch the tree source and reload (T-WS-EDITOR-004: the Changes/All
-    /// chips, and the clean-worktree auto-switch in `start_load`). No-ops if
-    /// already on `source`.
-    pub fn set_source(&mut self, source: TreeSource, cx: &mut Context<Self>) {
-        if self.source == source {
-            return;
-        }
-        self.switch_source(source, cx);
-    }
-
-    /// Shared by the manual toggle and the auto-switch: set `source`, emit
-    /// the contract log line, and reload.
+    /// Shared by `request_switch_source` (T-WS-EDITOR-002 dirty-guarded chip
+    /// click) and the clean-worktree auto-switch in `start_load`: set
+    /// `source`, emit the contract log line, and reload.
     fn switch_source(&mut self, source: TreeSource, cx: &mut Context<Self>) {
         self.source = source;
         klog!(
@@ -327,9 +363,61 @@ impl EditorWorkspaceView {
         self.content_missing = false;
         self.content_undecodable = false;
         self.diff = None;
+        // T-WS-EDITOR-002: navigating away always drops the old buffer's
+        // dirty/external-changed state — callers that must NOT silently
+        // discard an edit (tree click, ↑/↓ step, source switch) go through
+        // `request_select` / `step_selection` / `request_switch_source`,
+        // which gate this call behind the unsaved-changes modal first.
+        self.dirty = false;
+        self.external_changed = false;
         klog!("editor-ws: file {}", file.path.display());
         self.load_selected(cx);
         cx.notify();
+    }
+
+    /// Tree-row click entry point (T-WS-EDITOR-002 §5): guards a dirty
+    /// buffer before switching files. Re-clicking the already-selected file
+    /// is not a navigation — it falls through to `select` even while dirty
+    /// (existing refresh behaviour, not a discard).
+    pub fn request_select(&mut self, file_index: usize, cx: &mut Context<Self>) {
+        if should_guard_navigation(self.dirty, self.selected, file_index) {
+            self.open_dirty_guard(EditorPendingIntent::SelectFile(file_index), cx);
+            return;
+        }
+        self.select(file_index, cx);
+    }
+
+    /// Chip-click entry point for switching the tree source (T-WS-EDITOR-002
+    /// §5): guards a dirty buffer the same way as `request_select`. The
+    /// clean-worktree auto-switch in `start_load` calls `switch_source`
+    /// directly — at that point nothing has loaded yet, so there is nothing
+    /// to guard.
+    pub fn request_switch_source(&mut self, source: TreeSource, cx: &mut Context<Self>) {
+        if self.source == source {
+            return;
+        }
+        if self.dirty {
+            self.open_dirty_guard(EditorPendingIntent::SwitchSource(source), cx);
+            return;
+        }
+        self.switch_source(source, cx);
+    }
+
+    /// Defer to the parent to open the unsaved-changes confirmation
+    /// (`ActiveModal` lives on `KagiApp`, ADR-0076/0093). Deferred via
+    /// `cx.spawn` rather than a synchronous `self.app.update` — the arrow-key
+    /// path (`KagiApp::step_editor_ws_selection`) calls into this entity from
+    /// within an already-leased `KagiApp` listener, so a synchronous call
+    /// back into `KagiApp` here would double-lease it and panic (same
+    /// hazard as `conflict_view`'s `marshal_error_toast`).
+    fn open_dirty_guard(&self, intent: EditorPendingIntent, cx: &mut Context<Self>) {
+        let weak_app = self.app.clone();
+        cx.spawn(async move |_view, acx| {
+            let _ = weak_app.update(acx, |app, cx| {
+                app.open_editor_dirty_guard(intent, cx);
+            });
+        })
+        .detach();
     }
 
     /// Load the selected file's raw text (off-thread, guarded by
@@ -462,6 +550,29 @@ impl EditorWorkspaceView {
                     .code_editor(self.content_lang)
                     .line_number(true)
             });
+            // T-WS-EDITOR-002: track user edits for the dirty indicator/
+            // guard/save-gate. `InputState` emits `InputEvent::Change` (see
+            // gpui-component 0.5.1 `src/input/state.rs::replace_text_in_range`)
+            // on every keystroke/paste/cut/undo AND on our own `set_value`
+            // push below — see `dirty`'s doc comment for why the handler
+            // compares text against `content` instead of a synchronous
+            // "am I mid-push" flag. Detached rather than stored: same
+            // pattern as the theme-select `Confirm` subscription in
+            // `mod.rs`'s `open_main_window` (holds a weak ref internally, so
+            // a dropped entity — workspace closed — just makes the callback
+            // a no-op).
+            cx.subscribe(&state, |this: &mut Self, state, event: &InputEvent, cx| {
+                if !matches!(event, InputEvent::Change) {
+                    return;
+                }
+                let current = state.read(cx).value();
+                let dirty = this.content.as_deref() != Some(current.as_ref());
+                if this.dirty != dirty {
+                    this.dirty = dirty;
+                    cx.notify();
+                }
+            })
+            .detach();
             self.editor = Some(state);
         }
         if self.content_sig == self.pushed_sig {
@@ -525,6 +636,14 @@ impl EditorWorkspaceView {
         if self.selected == Some(file_index) {
             return;
         }
+        // T-WS-EDITOR-002 §5: ↑/↓ stepping to a different file must not
+        // silently discard a dirty buffer — checked before the scroll so a
+        // cancelled step doesn't leave the tree scrolled to a row that isn't
+        // actually selected.
+        if should_guard_navigation(self.dirty, self.selected, file_index) {
+            self.open_dirty_guard(EditorPendingIntent::SelectFile(file_index), cx);
+            return;
+        }
         // gpui 0.2.2 has no `Nearest`; `Center` matches the commit list's
         // jump behaviour (`mod.rs` scroll_to_item call sites).
         self.tree_scroll
@@ -554,13 +673,132 @@ impl EditorWorkspaceView {
     }
 
     /// Ask the parent to close this view (drops the entity). Safe per
-    /// ADR-0117: only clears fields, never re-leases this entity.
+    /// ADR-0117: only clears fields, never re-leases this entity. Guarded by
+    /// the unsaved-changes modal when dirty (T-WS-EDITOR-002 §5) — this is a
+    /// plain header-click listener (not nested inside another `KagiApp`
+    /// lease), so the direct `self.app.update` call is safe either way, same
+    /// as the existing clean-close path below.
     fn request_close(&self, cx: &mut Context<Self>) {
+        if self.dirty {
+            self.open_dirty_guard(EditorPendingIntent::Close, cx);
+            return;
+        }
         let _ = self.app.update(cx, |app, cx| {
             app.close_editor_workspace();
             cx.notify();
         });
     }
+
+    /// Cmd-S (T-WS-EDITOR-002 §3): write `editor`'s current full text to
+    /// `repo_path.join(path)` on a background thread. No-op if there's
+    /// nothing to save (defensive — `KagiApp::save_editor_file` already
+    /// checks `dirty` before calling this).
+    ///
+    /// This is a plain file write, NOT a Git operation — ADR-0120 §4
+    /// explicitly scopes saving out of the plan→confirm→execute pipeline
+    /// (invariant 4 governs Git writes; `std::fs::write` here is not one).
+    pub fn save(&mut self, cx: &mut Context<Self>) {
+        if !self.dirty {
+            return;
+        }
+        let Some(idx) = self.selected else { return };
+        let Some(file) = self.files.get(idx) else {
+            return;
+        };
+        let Some(editor) = self.editor.clone() else {
+            return;
+        };
+        let path = file.path.clone();
+        let full_path = editor_save_path(&self.repo_path, &path);
+        let text = editor.read(cx).value().to_string();
+
+        let task = cx.background_spawn(async move {
+            std::fs::write(&full_path, text.as_bytes()).map_err(|e| e.to_string())
+        });
+        cx.spawn(async move |view, acx| {
+            let result = task.await;
+            let _ = view.update(acx, |v, cx| match result {
+                Ok(()) => {
+                    klog!("editor-ws: saved {}", path.display());
+                    v.dirty = false;
+                    v.external_changed = false;
+                    // Simplest correct refresh (ADR-0120 / ticket): re-run
+                    // the existing file-list load, which restores the
+                    // selection and — via `select`'s cascade into
+                    // `load_selected` — reloads this file's content + diff
+                    // too. Both loaders are generation-guarded already.
+                    v.start_load(cx);
+                    cx.notify();
+                }
+                Err(e) => {
+                    klog!("editor-ws: save failed: {}", e);
+                    // Non-git file error: surface via toast + footer (the
+                    // established precedent for a background op outside the
+                    // plan pipeline — e.g. `repo.fetch`'s failure path,
+                    // `commands.rs`), not a git plan modal.
+                    let msg = format!("Save failed: {}: {}", path.display(), e);
+                    let _ = v.app.update(cx, |app, cx| {
+                        app.push_toast(ToastKind::Error, msg.clone(), cx);
+                        app.status_footer = FooterStatus::Failed(SharedString::from(msg));
+                        cx.notify();
+                    });
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// FS-watcher nudge (T-WS-EDITOR-002 §4), called from
+    /// `KagiApp::refresh_working_tree_external` on every debounced
+    /// `WatchEvent::WorkTree`. Always refreshes the tree/badges (also covers
+    /// the tree-side of a just-completed save); additionally re-reads the
+    /// selected file's content when the buffer is clean, or raises the
+    /// "changed on disk" banner when it's dirty (never clobbers an edit).
+    pub fn on_worktree_changed(&mut self, cx: &mut Context<Self>) {
+        if self.dirty {
+            self.external_changed = true;
+        }
+        self.start_load(cx);
+        cx.notify();
+    }
+
+    /// The dirty-changed banner's Reload button: discard the buffer and
+    /// re-read the selected file from disk.
+    pub fn reload_from_disk(&mut self, cx: &mut Context<Self>) {
+        self.dirty = false;
+        self.external_changed = false;
+        if let Some(idx) = self.selected {
+            self.select(idx, cx);
+        }
+        cx.notify();
+    }
+}
+
+/// T-WS-EDITOR-002 §3: resolve the on-disk path `save` writes to. Pure —
+/// extracted so the join is unit-testable without a `Context` (`repo_path`
+/// is absolute, `rel` is repo-relative — same shape `load_selected` already
+/// uses for reads).
+fn editor_save_path(repo_path: &Path, rel: &Path) -> PathBuf {
+    repo_path.join(rel)
+}
+
+/// T-WS-EDITOR-002 §5: whether navigating to `target` (tree click / ↑/↓ step)
+/// must first open the unsaved-changes confirmation instead of switching
+/// immediately. Pure — extracted from `request_select`/`step_selection` so
+/// the dirty-guard decision is unit-testable without a `Context`.
+fn should_guard_navigation(dirty: bool, selected: Option<usize>, target: usize) -> bool {
+    dirty && selected != Some(target)
+}
+
+/// T-WS-EDITOR-002 §4: whether `start_load`'s restore-selection step must
+/// preserve a dirty buffer's selection index (`candidate`) WITHOUT calling
+/// `select` (which would clobber `content`/`diff`/`dirty`) — true only when
+/// the buffer is dirty AND `restore` found the SAME file (by path) at
+/// `candidate`. Pure — extracted so the "don't clobber an unsaved edit"
+/// decision is unit-testable without a `Context`.
+fn preserve_dirty_selection(dirty: bool, restore: Option<usize>, candidate: usize) -> bool {
+    dirty && restore == Some(candidate)
 }
 
 /// Every directory row's index into `tree` — the "fully collapsed" set used
@@ -732,6 +970,61 @@ impl super::KagiApp {
             ev.update(cx, |v, cx| v.step_selection(delta, cx));
         }
     }
+
+    /// Cmd-S root handler (T-WS-EDITOR-002 §3): save the Editor Workspace's
+    /// buffer if it's open and dirty; no-op otherwise (closed workspace,
+    /// clean buffer, or the "Save" keystroke firing on the wrong tab).
+    pub fn save_editor_file(&mut self, cx: &mut Context<Self>) {
+        let Some(ev) = self.editor_workspace.clone() else {
+            return;
+        };
+        if !ev.read(cx).dirty {
+            return;
+        }
+        ev.update(cx, |v, cx| v.save(cx));
+    }
+
+    /// Open the unsaved-changes confirmation before discarding the Editor
+    /// Workspace's dirty buffer (T-WS-EDITOR-002 §5). `ActiveModal` lives on
+    /// `KagiApp` per the CLAUDE.md state-update rules; `intent` is what to do
+    /// once the user confirms Discard.
+    pub fn open_editor_dirty_guard(&mut self, intent: EditorPendingIntent, cx: &mut Context<Self>) {
+        self.set_editor_dirty_guard_modal(EditorDirtyGuardModal { intent });
+        klog!("editor-ws: dirty-guard");
+        cx.notify();
+    }
+
+    /// Esc / Cancel on the unsaved-changes modal: dismiss without acting.
+    pub fn cancel_editor_dirty_guard(&mut self) {
+        self.clear_editor_dirty_guard_modal();
+    }
+
+    /// Enter / Discard on the unsaved-changes modal: drop the confirmation
+    /// and run the pending action. The entity's `select`/`switch_source`
+    /// reset `dirty` as part of navigating away, so no separate "discard"
+    /// step is needed here.
+    pub fn confirm_editor_dirty_guard(&mut self, cx: &mut Context<Self>) {
+        let Some(modal) = self.editor_dirty_guard_modal().cloned() else {
+            return;
+        };
+        self.clear_editor_dirty_guard_modal();
+        match modal.intent {
+            EditorPendingIntent::SelectFile(idx) => {
+                if let Some(ev) = self.editor_workspace.clone() {
+                    ev.update(cx, |v, cx| v.select(idx, cx));
+                }
+            }
+            EditorPendingIntent::SwitchSource(source) => {
+                if let Some(ev) = self.editor_workspace.clone() {
+                    ev.update(cx, |v, cx| v.switch_source(source, cx));
+                }
+            }
+            EditorPendingIntent::Close => {
+                self.close_editor_workspace();
+            }
+        }
+        cx.notify();
+    }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -746,10 +1039,15 @@ fn render_editor_workspace(
     view: &EditorWorkspaceView,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
-    let selected_path = view
-        .selected
-        .and_then(|i| view.files.get(i))
-        .map(|f| SharedString::from(f.path.to_string_lossy().into_owned()));
+    // T-WS-EDITOR-002 §2: "● " prefix while the open buffer has unsaved edits.
+    let selected_path = view.selected.and_then(|i| view.files.get(i)).map(|f| {
+        let path = f.path.to_string_lossy();
+        if view.dirty {
+            SharedString::from(format!("\u{25cf} {}", path))
+        } else {
+            SharedString::from(path.into_owned())
+        }
+    });
 
     let close = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
         this.request_close(cx);
@@ -864,7 +1162,7 @@ fn render_source_chip(
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        this.set_source(source, cx);
+        this.request_switch_source(source, cx);
     });
     div()
         .id(id)
@@ -1103,8 +1401,11 @@ fn render_tree_row(
             } else {
                 theme().panel
             };
+            // T-WS-EDITOR-002 §2: only the selected row can be the open
+            // (possibly dirty) buffer — v1 has a single editable buffer.
+            let show_dirty_dot = is_selected && view.dirty;
             let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-                this.select(file_index, cx);
+                this.request_select(file_index, cx);
             });
             Some(
                 div()
@@ -1137,16 +1438,26 @@ fn render_tree_row(
                             .truncate()
                             .child(name),
                     )
+                    .when(show_dirty_dot, |el| {
+                        el.child(
+                            div()
+                                .flex_shrink_0()
+                                .pl(theme::scaled_px(4.))
+                                .text_xs()
+                                .text_color(rgb(theme().color_warning))
+                                .child(SharedString::from("\u{25cf}")),
+                        )
+                    })
                     .into_any_element(),
             )
         }
     }
 }
 
-/// Center pane: the selected file's read-only code viewer, or a placeholder.
+/// Center pane: the selected file's editable code viewer, or a placeholder.
 fn render_center_pane(
     view: &EditorWorkspaceView,
-    _cx: &mut Context<EditorWorkspaceView>,
+    cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     let mut pane = div()
         .flex_1()
@@ -1155,6 +1466,48 @@ fn render_center_pane(
         .flex()
         .flex_col()
         .bg(rgb(theme().bg_base));
+
+    // T-WS-EDITOR-002 §4: external-change banner — only when the buffer is
+    // dirty (a clean buffer just silently re-reads via `on_worktree_changed`).
+    if view.external_changed {
+        let reload = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+            this.reload_from_disk(cx);
+        });
+        pane = pane.child(
+            div()
+                .id("ews-external-changed")
+                .flex()
+                .flex_row()
+                .items_center()
+                .flex_shrink_0()
+                .w_full()
+                .gap_2()
+                .px_3()
+                .py_1()
+                .bg(rgb(theme().color_warning))
+                .child(
+                    div()
+                        .flex_1()
+                        .text_xs()
+                        .text_color(rgb(theme().bg_base))
+                        .child(Msg::EditorWorkspaceExternalChanged.t()),
+                )
+                .child(
+                    div()
+                        .id("ews-reload")
+                        .px_2()
+                        .py_px()
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .text_xs()
+                        .bg(rgb(theme().bg_base))
+                        .text_color(rgb(theme().text_main))
+                        .hover(|s| s.bg(rgb(theme().selected)))
+                        .on_click(reload)
+                        .child(Msg::EditorWorkspaceReload.t()),
+                ),
+        );
+    }
 
     // T-WS-EDITOR-005 finding #6: deleted/missing and non-UTF-8 files used to
     // both fall through to the generic "select a file" placeholder even
@@ -1195,14 +1548,14 @@ fn render_center_pane(
             .min_h(px(0.))
             .w_full()
             .child(
-                // `disabled` is the only read-only gate gpui-component 0.5.1
-                // offers, but its appearance paints the muted (gray) disabled
-                // background — user report: the viewer looked like a disabled
-                // form field. `appearance(false)` drops the component's own
-                // bg/border so the pane's dark `bg_base` shows through, like a
-                // real code viewer.
+                // T-WS-EDITOR-002: editable now — `disabled(true)` gated
+                // typing/paste/cut/undo behind gpui-component 0.5.1's
+                // `!disabled` check AND kept a disabled input from taking
+                // focus at all, which is why ↑/↓ fell through to the root
+                // file-stepping handlers instead of moving the cursor
+                // (user-reported). `appearance(false)` / `bordered(false)`
+                // are kept so it still doesn't look like a form field.
                 Input::new(&editor)
-                    .disabled(true)
                     .appearance(false)
                     .bordered(false)
                     .h_full(),
@@ -1422,5 +1775,44 @@ mod tests {
         assert!(rows
             .iter()
             .any(|r| matches!(r, TreeRow::Dir { name, .. } if name.as_ref() == "a/b")));
+    }
+
+    // ── T-WS-EDITOR-002: editable-buffer pure logic ────────────────────────
+
+    #[test]
+    fn editor_save_path_joins_repo_root_and_relative_path() {
+        let repo = Path::new("/repo");
+        let rel = Path::new("src/main.rs");
+        assert_eq!(
+            editor_save_path(repo, rel),
+            PathBuf::from("/repo/src/main.rs")
+        );
+    }
+
+    #[test]
+    fn should_guard_navigation_only_when_dirty_and_actually_switching() {
+        // Clean buffer: never guard, regardless of target.
+        assert!(!should_guard_navigation(false, Some(0), 1));
+        assert!(!should_guard_navigation(false, None, 0));
+        // Dirty, but re-clicking/re-stepping to the SAME file: not a
+        // discard, so don't guard (existing refresh behaviour).
+        assert!(!should_guard_navigation(true, Some(2), 2));
+        // Dirty and actually switching to a different file: guard.
+        assert!(should_guard_navigation(true, Some(2), 3));
+        assert!(should_guard_navigation(true, None, 0));
+    }
+
+    #[test]
+    fn preserve_dirty_selection_only_when_dirty_and_restore_matches_candidate() {
+        // Clean buffer: never preserve — the normal `select` cascade runs.
+        assert!(!preserve_dirty_selection(false, Some(1), 1));
+        // Dirty, but `restore` didn't find this file (e.g. fell back to the
+        // first file in the list, a different one) — don't just leave the
+        // index dangling on a mismatch.
+        assert!(!preserve_dirty_selection(true, None, 0));
+        assert!(!preserve_dirty_selection(true, Some(1), 0));
+        // Dirty AND `restore` found the same file (by path) at `candidate` —
+        // preserve the buffer, just remap the index.
+        assert!(preserve_dirty_selection(true, Some(4), 4));
     }
 }

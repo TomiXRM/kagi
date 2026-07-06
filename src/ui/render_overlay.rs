@@ -343,6 +343,7 @@ impl KagiApp {
         revert_modal: Option<RevertModal>,
         delete_branch_modal: Option<DeleteBranchModal>,
         discard_modal: Option<DiscardModal>,
+        editor_dirty_guard_modal: Option<EditorDirtyGuardModal>,
         file_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
         modal_focus: Option<FocusHandle>,
         stash_push_focus: Option<FocusHandle>,
@@ -439,6 +440,10 @@ impl KagiApp {
         // ── Discard danger modal overlay (W17-DISCARD) ───
         .when_some(discard_modal, |el, modal| {
             el.child(render_discard_modal(modal, cx))
+        })
+        // ── Editor Workspace unsaved-changes modal (T-WS-EDITOR-002) ──
+        .when_some(editor_dirty_guard_modal, |el, modal| {
+            el.child(render_editor_dirty_guard_modal(modal, cx))
         })
         // ── Unstaged file context menu (right-click → Discard) ──
         .when_some(file_menu, |el, (fi, pos)| {

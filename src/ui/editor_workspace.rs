@@ -1,6 +1,8 @@
-//! Editor Workspace (T-WS-EDITOR-001 / ADR-0120 §4): the `WorkspaceMode::Editor`
-//! body — left = working-tree changed-file tree, center = the selected file's
-//! read-only code viewer, right = its WIP hunks.
+//! Editor Workspace (T-WS-EDITOR-001 / ADR-0120 §4): the Graph ⇄ Editor mode's
+//! Editor body — left = working-tree changed-file tree, center = the selected
+//! file's read-only code viewer, right = its WIP hunks. The mode is derived as
+//! `editor_workspace.is_some()` rather than tracked separately
+//! (T-WS-EDITOR-005 finding #11).
 //!
 //! `EditorWorkspaceView` is a "fat" `Entity<T>` per the ADR-0117 template (same
 //! shape as `FileHistoryView`): it holds `repo_path` and drives its own reads
@@ -32,6 +34,18 @@ use super::*;
 /// pathologically large — same order of magnitude as gpui-component's
 /// `code_editor` ~50K-line comfort zone). Shows the placeholder instead.
 const MAX_EDITOR_LINES: usize = 50_000;
+
+/// Files whose byte size exceeds this are skipped WITHOUT reading them at all
+/// (T-WS-EDITOR-005 finding #2 — OOM guard: the previous code read the whole
+/// file into memory before checking anything). Checked via `fs::metadata`
+/// first; `MAX_EDITOR_LINES` is still enforced afterward for files that pass
+/// this gate but are pathologically long-and-thin.
+const MAX_EDITOR_BYTES: u64 = 10 * 1024 * 1024;
+
+/// How many leading bytes of a file are probed for "looks binary" (NUL byte).
+/// Probing only this slice — not the whole file — avoids scanning a large
+/// text file just to prove it isn't binary (T-WS-EDITOR-005 finding #2).
+const BINARY_PROBE_BYTES: usize = 8 * 1024;
 
 /// Default left tree-pane width (drag-resizable via `DividerKind::EditorTree`,
 /// T-WS-EDITOR-004 — clamped to `EDITOR_TREE_MIN..EDITOR_TREE_MAX` in
@@ -110,8 +124,24 @@ pub struct EditorWorkspaceView {
     pub content_lang: &'static str,
     /// The selected file looked binary (NUL byte in the leading probe).
     pub content_binary: bool,
-    /// The selected file's line count exceeds `MAX_EDITOR_LINES`.
+    /// The selected file's line count (or byte size) exceeds the guard
+    /// consts. `content` is `None` when this is set.
     pub content_too_large: bool,
+    /// `fs::read` failed for the selected file — either it was deleted from
+    /// the working tree, or the file's `ChangeKind` says `Deleted` outright
+    /// (T-WS-EDITOR-005 finding #6). Distinct from `content_binary` /
+    /// `content_too_large` so the center pane can show an accurate
+    /// placeholder instead of the generic "select a file" message.
+    pub content_missing: bool,
+    /// The selected file's bytes aren't valid UTF-8 (and weren't flagged
+    /// binary by the NUL-byte probe — e.g. a Shift-JIS-encoded text file;
+    /// T-WS-EDITOR-005 finding #6).
+    pub content_undecodable: bool,
+    /// Hash of `(path, content)` for the currently loaded `content`, computed
+    /// once when the load completes (T-WS-EDITOR-005 finding #9) rather than
+    /// every render — `sync_editor` compares this against `pushed_sig`
+    /// without touching `content` at all unless it actually needs to push.
+    content_sig: u64,
     /// The selected file's WIP diff (unstaged, falling back to staged),
     /// reusing the existing diff-view pipeline — `None` while loading or if
     /// there is nothing to show (e.g. an untracked file with no diff).
@@ -133,6 +163,15 @@ pub struct EditorWorkspaceView {
     pub tree_scroll: UniformListScrollHandle,
     /// Scroll handle for the right hunks list.
     pub diff_scroll: UniformListScrollHandle,
+
+    /// Whether the left tree pane renders (T-WS-EDITOR-005 finding #3).
+    /// Pushed by `render_body` from `workspace::resolve_workspace`'s
+    /// `layout.left` right before this entity is embedded — the resolver's
+    /// output stays the single source of truth for View → Toggle Sidebar even
+    /// though this entity self-renders and can't be skipped slot-by-slot the
+    /// way the sidebar/right-panel arms are. Defaults to `true` so the tree
+    /// shows before the first `render_body` push.
+    pub show_tree: bool,
 }
 
 impl EditorWorkspaceView {
@@ -155,12 +194,16 @@ impl EditorWorkspaceView {
             content_lang: "text",
             content_binary: false,
             content_too_large: false,
+            content_missing: false,
+            content_undecodable: false,
+            content_sig: 0,
             diff: None,
             file_req: 0,
             editor: None,
             pushed_sig: 0,
             tree_scroll: UniformListScrollHandle::new(),
             diff_scroll: UniformListScrollHandle::new(),
+            show_tree: true,
         }
     }
 
@@ -275,6 +318,8 @@ impl EditorWorkspaceView {
         self.content = None;
         self.content_binary = false;
         self.content_too_large = false;
+        self.content_missing = false;
+        self.content_undecodable = false;
         self.diff = None;
         klog!("editor-ws: file {}", file.path.display());
         self.load_selected(cx);
@@ -282,13 +327,25 @@ impl EditorWorkspaceView {
     }
 
     /// Load the selected file's raw text (off-thread, guarded by
-    /// `MAX_EDITOR_LINES` + a binary probe) and its WIP diff (unstaged,
-    /// falling back to staged — mirrors `FileHistoryView::load_diff`).
+    /// `MAX_EDITOR_BYTES` + `MAX_EDITOR_LINES` + a binary probe) and its WIP
+    /// diff (unstaged, falling back to staged — mirrors
+    /// `FileHistoryView::load_diff`).
+    ///
+    /// T-WS-EDITOR-005 finding #2: the size guard runs BEFORE any read (an
+    /// oversized file is never loaded into memory just to be told "too
+    /// large"), the binary probe only looks at the leading
+    /// `BINARY_PROBE_BYTES` of the raw bytes, and the line count is computed
+    /// here in the background task — the marshal-back below only assigns.
     fn load_selected(&mut self, cx: &mut Context<Self>) {
         let Some(idx) = self.selected else { return };
-        let Some(path) = self.files.get(idx).map(|f| f.path.clone()) else {
+        let Some(file) = self.files.get(idx) else {
             return;
         };
+        let path = file.path.clone();
+        // T-WS-EDITOR-005 finding #6: a file git already reports as deleted
+        // always gets the "deleted" placeholder, even if a stale read somehow
+        // still succeeds (e.g. a race with the working tree).
+        let deleted = matches!(file.change, Some(ChangeKind::Deleted));
         self.file_loading = true;
         self.file_req = self.file_req.wrapping_add(1);
         let file_req = self.file_req;
@@ -297,16 +354,42 @@ impl EditorWorkspaceView {
         let bg_path = path.clone();
 
         let task = cx.background_spawn(async move {
-            let bytes = std::fs::read(repo_path.join(&bg_path)).ok();
-            let is_binary = bytes
-                .as_deref()
-                .map(kagi_domain::checklist::content_looks_binary)
+            let full_path = repo_path.join(&bg_path);
+
+            let too_big = std::fs::metadata(&full_path)
+                .map(|m| m.len() > MAX_EDITOR_BYTES)
                 .unwrap_or(false);
-            let text = if is_binary {
-                None
+
+            let (text, is_binary, missing, undecodable, too_many_lines) = if too_big {
+                (None, false, false, false, false)
             } else {
-                bytes.and_then(|b| String::from_utf8(b).ok())
+                match std::fs::read(&full_path) {
+                    Ok(bytes) => {
+                        // Binary probe on raw bytes, BEFORE any UTF-8
+                        // decoding, and only the leading slice.
+                        let probe_end = bytes.len().min(BINARY_PROBE_BYTES);
+                        let is_binary =
+                            kagi_domain::checklist::content_looks_binary(&bytes[..probe_end]);
+                        if is_binary {
+                            (None, true, false, false, false)
+                        } else {
+                            match String::from_utf8(bytes) {
+                                Ok(t) => {
+                                    let too_many_lines = t.lines().count() > MAX_EDITOR_LINES;
+                                    if too_many_lines {
+                                        (None, false, false, false, true)
+                                    } else {
+                                        (Some(t), false, false, false, false)
+                                    }
+                                }
+                                Err(_) => (None, false, false, true, false),
+                            }
+                        }
+                    }
+                    Err(_) => (None, false, true, false, false),
+                }
             };
+            let too_large = too_big || too_many_lines;
 
             let diff = kagi_git::Backend::open(&repo_path).ok().and_then(|repo| {
                 match repo.unstaged_file_diff(&bg_path) {
@@ -314,29 +397,40 @@ impl EditorWorkspaceView {
                     _ => repo.staged_file_diff(&bg_path).ok(),
                 }
             });
-            (text, is_binary, diff)
+            (text, is_binary, missing, undecodable, too_large, diff)
         });
 
         cx.spawn(async move |view, acx| {
-            let (text, is_binary, file_diff) = task.await;
+            let (text, is_binary, missing, undecodable, too_large, file_diff) = task.await;
             let _ = view.update(acx, |v, cx| {
                 if v.file_req != file_req || v.generation != generation {
                     return;
                 }
                 v.file_loading = false;
                 v.content_binary = is_binary;
-                let too_large = text
-                    .as_ref()
-                    .map(|t| t.lines().count() > MAX_EDITOR_LINES)
-                    .unwrap_or(false);
                 v.content_too_large = too_large;
-                v.content = if too_large { None } else { text };
+                v.content_missing = missing || deleted;
+                v.content_undecodable = undecodable;
                 v.content_lang = path
                     .extension()
                     .and_then(|e| e.to_str())
                     .and_then(lang_for_ext)
                     .unwrap_or("text");
-                v.diff = file_diff.map(|d| build_wip_diff_view(&d, &path));
+                // T-WS-EDITOR-005 finding #9: compute the content signature
+                // ONCE here (load time), not every render.
+                v.content_sig = text
+                    .as_ref()
+                    .map(|t| conflict_content_sig(&path, t, false))
+                    .unwrap_or(0);
+                v.content = text;
+                v.diff = file_diff.map(|d| {
+                    build_main_diff_view(
+                        &d,
+                        &path,
+                        0,
+                        MainDiffSource::Unstaged { path: path.clone() },
+                    )
+                });
                 cx.notify();
             });
         })
@@ -347,10 +441,15 @@ impl EditorWorkspaceView {
     /// available in `Render`) and push the selected file's content into it,
     /// guarded by a content-hash sig so a re-render that changed nothing
     /// doesn't clobber the viewer (scroll/selection would reset otherwise).
+    ///
+    /// T-WS-EDITOR-005 finding #9: `content_sig` is precomputed once at load
+    /// time (`load_selected`'s marshal-back) — this only compares it against
+    /// `pushed_sig` and clones `content` when it actually needs to push,
+    /// instead of cloning + rehashing the whole file on every render.
     fn sync_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(content) = self.content.clone() else {
+        if self.content.is_none() {
             return;
-        };
+        }
         if self.editor.is_none() {
             let state = cx.new(|cx| {
                 InputState::new(window, cx)
@@ -359,17 +458,13 @@ impl EditorWorkspaceView {
             });
             self.editor = Some(state);
         }
-        let path = self
-            .selected
-            .and_then(|i| self.files.get(i))
-            .map(|f| &f.path);
-        let sig = path
-            .map(|p| conflict_content_sig(p, &content, false))
-            .unwrap_or(0);
-        if sig == self.pushed_sig {
+        if self.content_sig == self.pushed_sig {
             return;
         }
-        self.pushed_sig = sig;
+        self.pushed_sig = self.content_sig;
+        let Some(content) = self.content.clone() else {
+            return;
+        };
         let lang = self.content_lang;
         if let Some(editor) = self.editor.clone() {
             editor.update(cx, |s, cx| {
@@ -402,9 +497,23 @@ impl EditorWorkspaceView {
             .and_then(|sel| file_rows.iter().position(|&(_, fi)| fi == sel));
         let next = match cur {
             Some(p) => (p as i64 + i64::from(delta)).clamp(0, file_rows.len() as i64 - 1) as usize,
-            // No (visible) selection yet: ↓ starts at the top, ↑ at the bottom.
-            None if delta >= 0 => 0,
-            None => file_rows.len() - 1,
+            None => {
+                // The selected file might be real but hidden (collapsed
+                // away) rather than nonexistent — find its base `tree` index
+                // so we can step from where it *would* be instead of
+                // teleporting to an end (T-WS-EDITOR-005 finding #7).
+                let hidden_base_index = self.selected.and_then(|sel| {
+                    self.tree.iter().position(
+                        |r| matches!(r, TreeRow::File { file_index, .. } if *file_index == sel),
+                    )
+                });
+                match hidden_base_index {
+                    Some(base) => nearest_visible_file_row(&visible, &file_rows, base, delta),
+                    // No selection at all yet: ↓ starts at the top, ↑ at the bottom.
+                    None if delta >= 0 => 0,
+                    None => file_rows.len() - 1,
+                }
+            }
         };
         let (vis_pos, file_index) = file_rows[next];
         if self.selected == Some(file_index) {
@@ -426,9 +535,8 @@ impl EditorWorkspaceView {
         cx.notify();
     }
 
-    /// Ask the parent to close this view (drops the entity + resets
-    /// `workspace_mode`). Safe per ADR-0117: only clears fields, never
-    /// re-leases this entity.
+    /// Ask the parent to close this view (drops the entity). Safe per
+    /// ADR-0117: only clears fields, never re-leases this entity.
     fn request_close(&self, cx: &mut Context<Self>) {
         let _ = self.app.update(cx, |app, cx| {
             app.close_editor_workspace();
@@ -461,6 +569,34 @@ fn visible_tree_indices(tree: &[TreeRow], collapsed: &HashSet<usize>) -> Vec<usi
         }
     }
     out
+}
+
+/// Where a *hidden* selected file (identified by its base index into `tree`)
+/// should land among the visible file rows when stepping by `delta`, instead
+/// of teleporting to an end (T-WS-EDITOR-005 finding #7).
+///
+/// `visible` maps a visible position to its base `tree` index; `file_rows` is
+/// `(visible_position, file_index)` pairs for the visible file rows only, in
+/// tree order. Finds the insertion point — the first visible file row whose
+/// base index comes after `hidden_base_index` — then steps one further for
+/// `delta < 0` (select the file just before it) or stays put for `delta >= 0`
+/// (select the file right after it), each clamped to the array bounds. Pure —
+/// unit-tested below.
+fn nearest_visible_file_row(
+    visible: &[usize],
+    file_rows: &[(usize, usize)],
+    hidden_base_index: usize,
+    delta: i32,
+) -> usize {
+    let insert_pos = file_rows
+        .iter()
+        .position(|&(vis_pos, _)| visible[vis_pos] >= hidden_base_index)
+        .unwrap_or(file_rows.len());
+    if delta >= 0 {
+        insert_pos.min(file_rows.len() - 1)
+    } else {
+        insert_pos.saturating_sub(1)
+    }
 }
 
 /// Merge working-tree `staged` + `unstaged` + `untracked` into one
@@ -520,36 +656,6 @@ fn build_workspace_tree(files: &[WorkspaceFile]) -> Vec<TreeRow> {
     file_tree::build_file_tree_opt(&pairs)
 }
 
-/// Build the right pane's `MainDiffView` from a raw `FileDiff`, reusing the
-/// existing diff-view pipeline (`FileDiffView::from_file_diff` +
-/// `highlight_diff_rows`) exactly like `FileHistoryView::load_diff` does.
-fn build_wip_diff_view(file_diff: &kagi_git::FileDiff, path: &Path) -> MainDiffView {
-    let added: usize = file_diff
-        .hunks
-        .iter()
-        .flat_map(|h| h.lines.iter())
-        .filter(|l| l.kind == DiffLineKind::Added)
-        .count();
-    let removed: usize = file_diff
-        .hunks
-        .iter()
-        .flat_map(|h| h.lines.iter())
-        .filter(|l| l.kind == DiffLineKind::Removed)
-        .count();
-    let fdv = FileDiffView::from_file_diff(file_diff, 0);
-    let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
-    let mut rows = fdv.rows;
-    let _ = highlight_diff_rows(&mut rows, path);
-    MainDiffView {
-        title: fdv.file_name,
-        stats,
-        rows,
-        source: MainDiffSource::Unstaged {
-            path: path.to_path_buf(),
-        },
-    }
-}
-
 impl Render for EditorWorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_editor(window, cx);
@@ -560,26 +666,34 @@ impl Render for EditorWorkspaceView {
 // ── KagiApp entry points (ADR-0117 / ADR-0120) ─────────────────────
 
 impl super::KagiApp {
-    /// Open the Editor workspace for the current repo and switch
-    /// `workspace_mode` to `Editor`. No-op when no repository is open.
+    /// Open the Editor workspace for the current repo. No-op when no
+    /// repository is open.
+    ///
+    /// T-WS-EDITOR-005 finding #4: close the File History / Ecosystem
+    /// takeovers first. Both beat Editor mode in `resolve_workspace`, so
+    /// leaving one open would mean Cmd-Shift-E silently does nothing visible
+    /// — the entity would open in the background but the resolver would keep
+    /// showing the takeover. The reverse direction (opening Analyze over an
+    /// open Editor) is left as-is: that's the existing, intended overlay
+    /// behavior (the editor entity keeps running, just hidden).
     pub fn open_editor_workspace(&mut self, cx: &mut Context<Self>) {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
+        self.close_file_history();
+        self.close_ecosystem_view();
         let weak = cx.weak_entity();
         let view = cx.new(|_| EditorWorkspaceView::new(weak, repo_path));
         self.editor_workspace = Some(view.clone());
-        self.workspace_mode = workspace::WorkspaceMode::Editor;
         klog!("editor-ws: open");
         view.update(cx, |v, cx| v.start_load(cx));
         cx.notify();
     }
 
-    /// Close the Editor workspace (drops the entity) and switch
-    /// `workspace_mode` back to `Graph`.
+    /// Close the Editor workspace (drops the entity; Graph mode is derived
+    /// from `editor_workspace.is_none()`).
     pub fn close_editor_workspace(&mut self) {
         self.editor_workspace = None;
-        self.workspace_mode = workspace::WorkspaceMode::Graph;
     }
 
     /// Root ↑/↓ handler branch for the Editor workspace: step the file
@@ -685,13 +799,17 @@ fn render_editor_workspace(
             |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
         );
 
+    // T-WS-EDITOR-005 finding #3: `show_tree` (pushed by `render_body` from
+    // the resolver's `layout.left`) hides the tree pane AND its divider —
+    // View → Toggle Sidebar now actually hides the file tree in Editor mode.
     let body = div()
         .flex()
         .flex_row()
         .flex_1()
         .min_h(px(0.))
-        .child(render_tree_pane(view, cx))
-        .child(tree_divider)
+        .when(view.show_tree, |el| {
+            el.child(render_tree_pane(view, cx)).child(tree_divider)
+        })
         .child(render_center_pane(view, cx))
         .child(hunks_divider)
         .child(render_hunks_pane(view, cx));
@@ -820,8 +938,11 @@ fn render_tree_pane(
             "ews-tree-list",
             row_count,
             cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                // `i` is the visible/uniform_list position — passed through
+                // for zebra striping (T-WS-EDITOR-005 finding #8), which must
+                // key on visible position, not the base `tree` index.
                 range
-                    .filter_map(|i| render_tree_row(this, *visible.get(i)?, cx))
+                    .filter_map(|i| render_tree_row(this, i, *visible.get(i)?, cx))
                     .collect::<Vec<_>>()
             }),
         )
@@ -835,8 +956,12 @@ fn render_tree_pane(
 }
 
 /// One row in the left file tree (dir label or a clickable file row).
+/// `visible_pos` is the row's position in the uniform_list's visible range
+/// (used for zebra striping — T-WS-EDITOR-005 finding #8); `index` is its base
+/// index into `view.tree`.
 fn render_tree_row(
     view: &EditorWorkspaceView,
+    visible_pos: usize,
     index: usize,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> Option<gpui::AnyElement> {
@@ -894,9 +1019,12 @@ fn render_tree_row(
             let indent = (depth as f32) * 12.0;
             let (badge, badge_color, _) = commit_panel::status_badge(change.as_ref(), false);
             let is_selected = view.selected == Some(file_index);
+            // T-WS-EDITOR-005 finding #8: stripe by visible position, not the
+            // base tree index — collapsing a directory must not leave the
+            // remaining visible rows with a broken (skip-a-beat) checkerboard.
             let row_bg = if is_selected {
                 theme().selected
-            } else if index % 2 == 1 {
+            } else if visible_pos % 2 == 1 {
                 theme().bg_row_alt
             } else {
                 theme().panel
@@ -954,16 +1082,24 @@ fn render_center_pane(
         .flex_col()
         .bg(rgb(theme().bg_base));
 
+    // T-WS-EDITOR-005 finding #6: deleted/missing and non-UTF-8 files used to
+    // both fall through to the generic "select a file" placeholder even
+    // though a row was actually selected — distinguish why `content` is
+    // `None` instead.
     let placeholder = if view.loading {
         Some(Msg::EditorWorkspaceLoading.t())
     } else if view.selected.is_none() {
         Some(Msg::EditorWorkspaceSelectFile.t())
     } else if view.file_loading {
         Some(Msg::EditorWorkspaceLoading.t())
+    } else if view.content_missing {
+        Some(Msg::EditorWorkspaceDeleted.t())
     } else if view.content_binary {
         Some(Msg::EditorWorkspaceBinary.t())
     } else if view.content_too_large {
         Some(Msg::EditorWorkspaceTooLarge.t())
+    } else if view.content_undecodable {
+        Some(Msg::EditorWorkspaceUndecodable.t())
     } else if view.content.is_none() {
         Some(Msg::EditorWorkspaceSelectFile.t())
     } else {
@@ -1104,6 +1240,49 @@ mod tests {
         // src collapsed AND the hidden ui collapsed — same as src alone.
         let collapsed: HashSet<usize> = [0, 2].into_iter().collect();
         assert_eq!(visible_tree_indices(&tree, &collapsed), vec![0, 4]);
+    }
+
+    // ── T-WS-EDITOR-005 finding #7: nearest_visible_file_row ───────────────
+
+    #[test]
+    fn nearest_visible_file_row_steps_from_hidden_selection() {
+        // sample_tree() with "ui" (base idx 2) collapsed: visible = [0,1,2,4],
+        // hiding b.rs (file_index 1, base idx 3). Visible files: a.rs
+        // (file_index 0) at visible pos 1, root.rs (file_index 2) at visible
+        // pos 3.
+        let visible = vec![0usize, 1, 2, 4];
+        let file_rows = vec![(1usize, 0usize), (3usize, 2usize)];
+        let hidden_base_index = 3; // b.rs's base tree index
+
+        // Down: the next visible file after the hidden one (root.rs, pos 1
+        // in `file_rows`).
+        assert_eq!(
+            nearest_visible_file_row(&visible, &file_rows, hidden_base_index, 1),
+            1
+        );
+        // Up: the visible file before the hidden one (a.rs, pos 0).
+        assert_eq!(
+            nearest_visible_file_row(&visible, &file_rows, hidden_base_index, -1),
+            0
+        );
+    }
+
+    #[test]
+    fn nearest_visible_file_row_clamps_at_ends() {
+        // "src" collapsed: only root.rs (file_index 2) is a visible file, at
+        // visible pos 1.
+        let visible = vec![0usize, 4];
+        let file_rows = vec![(1usize, 2usize)];
+
+        // Hidden a.rs (base idx 1, before every visible file): up clamps to
+        // the first (only) visible file rather than underflowing.
+        assert_eq!(nearest_visible_file_row(&visible, &file_rows, 1, -1), 0);
+        assert_eq!(nearest_visible_file_row(&visible, &file_rows, 1, 1), 0);
+
+        // A hidden base index after every visible file: down clamps to the
+        // last visible file instead of overflowing.
+        assert_eq!(nearest_visible_file_row(&visible, &file_rows, 100, 1), 0);
+        assert_eq!(nearest_visible_file_row(&visible, &file_rows, 100, -1), 0);
     }
 
     // ── T-WS-EDITOR-004: TreeSource::All merge logic ───────────────────────

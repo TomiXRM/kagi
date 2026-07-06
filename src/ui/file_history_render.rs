@@ -235,35 +235,18 @@ impl FileHistoryView {
                     return;
                 }
                 let built = match result {
-                    Some(Ok(file_diff)) => {
-                        let added: usize = file_diff
-                            .hunks
-                            .iter()
-                            .flat_map(|h| h.lines.iter())
-                            .filter(|l| l.kind == DiffLineKind::Added)
-                            .count();
-                        let removed: usize = file_diff
-                            .hunks
-                            .iter()
-                            .flat_map(|h| h.lines.iter())
-                            .filter(|l| l.kind == DiffLineKind::Removed)
-                            .count();
-
-                        let fdv = FileDiffView::from_file_diff(&file_diff, 0);
-                        let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
-                        let title = fdv.file_name.clone();
-                        let mut rows = fdv.rows;
-                        let _ = highlight_diff_rows(&mut rows, &path);
-
-                        Some(MainDiffView {
-                            title,
-                            stats,
-                            rows,
-                            // The source is unused by the File History renderer;
-                            // Unstaged carries the path for completeness.
-                            source: MainDiffSource::Unstaged { path: path.clone() },
-                        })
-                    }
+                    // T-WS-EDITOR-005 finding #10: shared builder (count →
+                    // from_file_diff → stats → highlight → assemble), same
+                    // pipeline as `EditorWorkspaceView`'s WIP-diff loader and
+                    // `set_commit_main_diff`'s headless path.
+                    Some(Ok(file_diff)) => Some(build_main_diff_view(
+                        &file_diff,
+                        &path,
+                        0,
+                        // The source is unused by the File History renderer;
+                        // Unstaged carries the path for completeness.
+                        MainDiffSource::Unstaged { path: path.clone() },
+                    )),
                     Some(Err(e)) => {
                         klog!("file-history diff error: {}", e);
                         None

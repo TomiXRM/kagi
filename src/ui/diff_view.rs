@@ -377,6 +377,47 @@ pub(crate) fn highlight_diff_rows_send(
     (lang.to_string(), result)
 }
 
+/// Build a [`MainDiffView`] from a raw `FileDiff`: count added/removed lines,
+/// convert via [`FileDiffView::from_file_diff`], format the `"+N −M"` stats
+/// string, syntax-highlight the rows (`highlight_diff_rows`), and assemble the
+/// final view with the given `source`.
+///
+/// This exact four-step pipeline was copy-pasted three times —
+/// `set_commit_main_diff`'s headless (test-only) path, `FileHistoryView`'s
+/// diff loader, and `EditorWorkspaceView`'s WIP-diff loader — T-WS-EDITOR-005
+/// finding #10 extracts it once here. No behavior change: each call site still
+/// builds its own `MainDiffSource` and `file_index`.
+pub(crate) fn build_main_diff_view(
+    file_diff: &FileDiff,
+    path: &std::path::Path,
+    file_index: usize,
+    source: MainDiffSource,
+) -> MainDiffView {
+    let added: usize = file_diff
+        .hunks
+        .iter()
+        .flat_map(|h| h.lines.iter())
+        .filter(|l| l.kind == DiffLineKind::Added)
+        .count();
+    let removed: usize = file_diff
+        .hunks
+        .iter()
+        .flat_map(|h| h.lines.iter())
+        .filter(|l| l.kind == DiffLineKind::Removed)
+        .count();
+    let fdv = FileDiffView::from_file_diff(file_diff, file_index);
+    let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
+    let title = fdv.file_name.clone();
+    let mut rows = fdv.rows;
+    let _ = highlight_diff_rows(&mut rows, path);
+    MainDiffView {
+        title,
+        stats,
+        rows,
+        source,
+    }
+}
+
 /// Render a range of diff rows for the `"main-diff-list"` uniform_list.
 /// Includes line numbers: old/new each 5 chars wide, theme::theme().text_muted colour.
 pub(crate) fn render_main_diff_rows(
@@ -686,23 +727,37 @@ impl KagiApp {
             }
             // Headless path (no cx): synchronous highlight (test-only, no UI).
             None => {
-                let mut rows = fdv.rows;
-                let hl_lang = diff_view::highlight_diff_rows(&mut rows, path);
-                eprintln!(
-                    "[kagi] main-diff: open {} rows={} highlight={}",
-                    path.display(),
-                    rows.len(),
-                    hl_lang
-                );
-                self.main_diff = Some(MainDiffView {
-                    title,
-                    stats,
-                    rows,
-                    source: MainDiffSource::Commit {
+                // T-WS-EDITOR-005 finding #10: shared builder (count →
+                // from_file_diff → stats → highlight → assemble) — `fdv` /
+                // `title` / `stats` computed above are for the `Some(cx)`
+                // branch only now; this rebuilds them internally, same as the
+                // other two call sites.
+                let view = diff_view::build_main_diff_view(
+                    file_diff,
+                    path,
+                    file_index,
+                    MainDiffSource::Commit {
                         row_index: selected,
                         file_index,
                     },
-                });
+                );
+                // `highlight_diff_rows`'s language is a pure function of the
+                // path's extension — recomputing it here (rather than
+                // plumbing it out of `build_main_diff_view`) keeps this log
+                // line's value identical without widening the shared fn's
+                // return type for one caller.
+                let hl_lang = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .and_then(diff_view::lang_for_ext)
+                    .unwrap_or("none");
+                eprintln!(
+                    "[kagi] main-diff: open {} rows={} highlight={}",
+                    path.display(),
+                    view.rows.len(),
+                    hl_lang
+                );
+                self.main_diff = Some(view);
             }
         }
     }

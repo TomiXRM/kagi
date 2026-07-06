@@ -12,6 +12,15 @@
 //! [`WorkspaceLayout`]. Adding a new pane content = a new enum variant here +
 //! a render arm in `render_body` (+ an open/close method on `KagiApp`).
 //!
+//! One case pushes rather than just routes: the `CenterPane::Editor` arm is a
+//! single self-rendering entity (re-entrancy — see `editor_workspace.rs`), so
+//! it can't be skipped slot-by-slot the way the sidebar/right-panel arms are.
+//! Instead `render_body` pushes `layout.left` into the entity's `show_tree`
+//! field before embedding it (same push-then-embed pattern as the Commit
+//! Panel's `active_wip`/`panel_render_width` below), so the resolved layout
+//! stays the single source of truth even though the render call itself can't
+//! branch on it (T-WS-EDITOR-005 finding #3).
+//!
 //! Scope notes:
 //! - The **Conflict Mode** body and the error/welcome screens are gated one
 //!   level above (in `render.rs`) because they replace the whole body
@@ -23,24 +32,12 @@
 //!   rather than `kagi-domain` because its vocabulary (Inspector, CommitPanel,
 //!   Navigator) is UI, not Git domain.
 
-/// Graph ⇄ Editor workspace mode (T-WS-EDITOR-001 / ADR-0120 §3), the
-/// resolver's most-upstream input. `Graph` is the default (existing) body;
-/// `Editor` swaps left/center/right to the file-tree / code-viewer / hunk
-/// triple. Reset to `Graph` on repo/tab switch (`tabs::reset_per_repo_ui`) —
-/// it is transient per-repo UI, not persisted.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum WorkspaceMode {
-    #[default]
-    Graph,
-    Editor,
-}
-
 /// What the left pane shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LeftPane {
     /// Repository Navigator (branches / remotes / tags / stashes / worktrees).
     Navigator,
-    /// Working-tree changed-file tree (`WorkspaceMode::Editor`, T-WS-EDITOR-001).
+    /// Working-tree changed-file tree (Editor mode, T-WS-EDITOR-001).
     FileTree,
     /// Sidebar toggled off (View → Toggle Sidebar).
     Hidden,
@@ -56,7 +53,7 @@ pub enum CenterPane {
     Ecosystem,
     /// `Loading <repo>…` placeholder during an uncached tab open (W6-TABSPEED).
     Loading,
-    /// Read-only code viewer (`WorkspaceMode::Editor`, T-WS-EDITOR-001).
+    /// Read-only code viewer (Editor mode, T-WS-EDITOR-001).
     /// Beats `Diff` — in Editor mode `main_diff` is ignored.
     Editor,
     /// Full-width diff view (T-UI-003).
@@ -72,7 +69,7 @@ pub enum RightPane {
     CommitPanel,
     /// Commit Inspector (W2-INSPECTOR).
     Inspector,
-    /// The selected file's WIP hunks (`WorkspaceMode::Editor`, T-WS-EDITOR-001).
+    /// The selected file's WIP hunks (Editor mode, T-WS-EDITOR-001).
     Hunks,
     /// No right panel (and no divider).
     Hidden,
@@ -108,10 +105,11 @@ pub struct WorkspaceInputs {
     pub inspector_visible: bool,
     /// A commit detail was resolved for the current selection.
     pub has_detail: bool,
-    /// `workspace_mode == WorkspaceMode::Editor` (T-WS-EDITOR-001). The
-    /// most-upstream input: still beaten by the FileHistory/Ecosystem
-    /// takeovers and by Loading, but beats `Diff` (Editor mode ignores
-    /// `main_diff`) and overrides the right pane's CommitPanel/Inspector.
+    /// `editor_workspace.is_some()` (T-WS-EDITOR-001; derived, not a separate
+    /// mode field — T-WS-EDITOR-005 finding #11). The most-upstream input:
+    /// still beaten by the FileHistory/Ecosystem takeovers and by Loading,
+    /// but beats `Diff` (Editor mode ignores `main_diff`) and overrides the
+    /// right pane's CommitPanel/Inspector.
     pub editor_mode: bool,
 }
 
@@ -281,7 +279,7 @@ mod tests {
         assert_eq!(resolve_workspace(&i).left, LeftPane::Hidden);
     }
 
-    // ── T-WS-EDITOR-001: WorkspaceMode::Editor precedence ──────────────
+    // ── T-WS-EDITOR-001: Editor mode precedence ──────────────
 
     #[test]
     fn editor_mode_shows_file_tree_editor_hunks() {

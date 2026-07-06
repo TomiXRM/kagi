@@ -1,6 +1,6 @@
 # T-WS-EDITOR-007: file tree 右クリックメニュー(標準ファイル操作 + git-aware 操作)
 
-- Status: review
+- Status: done (PM accepted 2026-07-07 — tests+headless verified; menu GUI checklist pending user)
 - Group: workspace framework / エディタモード
 - 発端: ユーザー要望「Editor Workspace の file tree に、普通のエディタが持つ標準の
   ファイル操作 + kagi 独自の git-aware 項目を、右クリックの context menu から

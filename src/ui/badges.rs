@@ -115,7 +115,22 @@ pub(crate) fn render_badges_column(
         };
         // Full label — width-driven `truncate()` below does the ellipsizing,
         // and the hover tooltip always exposes the complete name.
-        let label: SharedString = badge.label.clone();
+        //
+        // The HEAD/worktree indicators are EMBEDDED in the label string
+        // (`"name ✓"` / `"🌲 name"`, see `build_badge_map`). End-ellipsis
+        // would eat a trailing ✓ on a long name (user report), so split the
+        // decorations out and render them as non-shrinking siblings: only the
+        // NAME truncates, the indicator glyphs always stay visible.
+        let full_label: &str = badge.label.as_ref();
+        let (prefix_glyph, rest) = match full_label.strip_prefix("\u{1f332} ") {
+            Some(rest) => (Some("\u{1f332}"), rest),
+            None => (None, full_label),
+        };
+        let (name, suffix_glyph) = match rest.strip_suffix(" \u{2713}") {
+            Some(name) => (name, Some("\u{2713}")),
+            None => (rest, None),
+        };
+        let name: SharedString = SharedString::from(name.to_string());
         let tooltip_label: SharedString = badge.label.clone();
         let is_primary = i == 0;
         let (badge_bg, badge_border, badge_text) = theme::badge_style(color);
@@ -134,16 +149,27 @@ pub(crate) fn render_badges_column(
             .border_color(gpui::rgba(badge_border))
             .text_color(rgb(badge_text))
             .text_sm()
-            // Every chip ellipsizes against the available width (so widening
-            // the BRANCH/TAG column reveals more); the primary chip keeps a
-            // larger floor so it stays readable when secondaries compete.
-            .when(is_primary, |c| c.min_w(px(48.)).truncate())
-            .when(!is_primary, |c| c.min_w(px(20.)).truncate())
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            // The chip ellipsizes its NAME against the available width (so
+            // widening the BRANCH/TAG column reveals more); the primary chip
+            // keeps a larger floor so it stays readable when secondaries
+            // compete.
+            .when(is_primary, |c| c.min_w(px(48.)))
+            .when(!is_primary, |c| c.min_w(px(20.)))
             // Hover: the full ref name (user request — must-have).
             .tooltip(move |window, cx| {
                 gpui_component::tooltip::Tooltip::new(tooltip_label.clone()).build(window, cx)
             })
-            .child(label);
+            .when_some(prefix_glyph, |c, g| {
+                c.child(div().flex_shrink_0().child(SharedString::from(g)))
+            })
+            .child(div().min_w(px(0.)).truncate().child(name))
+            .when_some(suffix_glyph, |c, g| {
+                c.child(div().flex_shrink_0().child(SharedString::from(g)))
+            });
 
         // T-DNDMERGE-001 / ADR-0079: wire drag/drop onto the chip based on kind.
         //   - `BadgeKind::Branch` / `BadgeKind::Remote` → INDEPENDENTLY draggable,

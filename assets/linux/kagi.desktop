@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Kagi
+GenericName=Git Client
+Comment=Safety-first Git GUI client
+Exec=kagi %F
+Icon=kagi
+Terminal=false
+Categories=Development;
+StartupWMClass=Kagi

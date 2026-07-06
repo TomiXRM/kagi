@@ -1,6 +1,6 @@
 # T-TERM-INTERACT-001: 埋め込みターミナルの操作性修正(zellij ハング / マウス無反応 / スクロール不通)
 
-- Status: review
+- Status: done (PM accepted 2026-07-07 — unit+gates verified; zellij/mouse/scroll GUI script pending user)
 - Group: terminal / vendored gpui-terminal(ADR-0035)
 - 仕様の正: 本ファイル。実装は `vendor/gpui-terminal/src/{event.rs,terminal.rs,mouse.rs,view.rs}`。
 

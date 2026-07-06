@@ -94,6 +94,16 @@ const ASSETS: &[(&str, &[u8])] = &[
         "icons/square-pen.svg",
         include_bytes!("../../assets/icons/square-pen.svg"),
     ),
+    // Editor Workspace tree: expand-all / collapse-all buttons (lucide
+    // unfold/fold glyphs; ChevronsDownUp has no IconName variant).
+    (
+        "icons/chevrons-up-down.svg",
+        include_bytes!("../../assets/icons/chevrons-up-down.svg"),
+    ),
+    (
+        "icons/chevrons-down-up.svg",
+        include_bytes!("../../assets/icons/chevrons-down-up.svg"),
+    ),
     // T-UNDOREDO-001: toolbar Redo button (gpui_component IconName::Redo2).
     (
         "icons/redo-2.svg",

@@ -132,6 +132,11 @@ pub struct TerminalState {
 
     /// Number of rows (lines) in the terminal.
     rows: usize,
+
+    /// kagi (T-TERM-INTERACT-001): queue of pending `Event::PtyWrite` bytes
+    /// (terminal-query responses), shared with the [`GpuiEventProxy`] that
+    /// was consumed into `term`. Drained by [`process_bytes`](Self::process_bytes).
+    pty_responses: Arc<Mutex<Vec<u8>>>,
 }
 
 impl TerminalState {
@@ -166,6 +171,10 @@ impl TerminalState {
         // Create dimensions for terminal initialization
         let dimensions = TermDimensions::new(cols, rows);
 
+        // kagi (T-TERM-INTERACT-001): grab the PtyWrite response queue handle
+        // before the proxy is consumed by `Term::new` below.
+        let pty_responses = event_proxy.pty_responses_handle();
+
         // Create the terminal with the given configuration and dimensions
         let term = Term::new(config, &dimensions, event_proxy);
 
@@ -177,6 +186,7 @@ impl TerminalState {
             parser,
             cols,
             rows,
+            pty_responses,
         }
     }
 
@@ -188,6 +198,19 @@ impl TerminalState {
     /// # Arguments
     ///
     /// * `bytes` - The bytes received from the PTY
+    ///
+    /// # Returns
+    ///
+    /// Any bytes alacritty wants written back to the PTY as a result of
+    /// processing this batch (T-TERM-INTERACT-001: `Event::PtyWrite` —
+    /// terminal-query responses such as DSR cursor-position reports or DA1
+    /// device attributes). Empty in the common case where nothing queried
+    /// the terminal. The caller is responsible for writing these to the PTY
+    /// — promptly, since some programs (zellij) block at startup waiting
+    /// for the answer.
+    ///
+    /// The term lock is released *before* this queue is drained, so callers
+    /// never end up holding both the term lock and a PTY-writer lock at once.
     ///
     /// # Examples
     ///
@@ -201,11 +224,21 @@ impl TerminalState {
     /// // Process some output from the PTY
     /// terminal.process_bytes(b"Hello, world!\r\n");
     /// ```
-    pub fn process_bytes(&mut self, bytes: &[u8]) {
-        let mut term = self.term.lock();
-        // The parser.advance method calls handler methods on the Term
-        // The Term implements the Handler trait from the VTE crate
-        self.parser.advance(&mut *term, bytes);
+    pub fn process_bytes(&mut self, bytes: &[u8]) -> Vec<u8> {
+        {
+            let mut term = self.term.lock();
+            // The parser.advance method calls handler methods on the Term
+            // The Term implements the Handler trait from the VTE crate
+            self.parser.advance(&mut *term, bytes);
+            // `term` guard drops here, before we touch the responses queue.
+        }
+
+        let mut pending = self.pty_responses.lock();
+        if pending.is_empty() {
+            Vec::new()
+        } else {
+            std::mem::take(&mut *pending)
+        }
     }
 
     /// Resize the terminal to new dimensions.
@@ -520,6 +553,32 @@ mod tests {
         });
         let line = terminal.with_term(|term| term.bounds_to_string(lstart, lend));
         assert!(line.starts_with("foo bar"));
+    }
+
+    // kagi (T-TERM-INTERACT-001): root cause #1 fix — a DA1 device-attributes
+    // query (`ESC [ c`) makes alacritty emit `Event::PtyWrite`. Before this
+    // fix that response was dropped on the floor; programs that query the
+    // terminal and block waiting for the answer (zellij, at startup) hung.
+    // Verify `process_bytes` now returns the response bytes for the caller
+    // to write back to the PTY.
+    #[test]
+    fn test_process_bytes_returns_pty_write_response() {
+        let (tx, _rx) = channel();
+        let event_proxy = GpuiEventProxy::new(tx);
+        let mut terminal = TerminalState::new(80, 24, event_proxy);
+
+        let response = terminal.process_bytes(b"\x1b[c");
+        assert_eq!(response, b"\x1b[?6c");
+    }
+
+    #[test]
+    fn test_process_bytes_no_response_is_empty() {
+        let (tx, _rx) = channel();
+        let event_proxy = GpuiEventProxy::new(tx);
+        let mut terminal = TerminalState::new(80, 24, event_proxy);
+
+        let response = terminal.process_bytes(b"plain text, no query");
+        assert!(response.is_empty());
     }
 
     #[test]

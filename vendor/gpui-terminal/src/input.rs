@@ -119,8 +119,18 @@ pub fn keystroke_to_bytes(keystroke: &Keystroke, mode: TermMode) -> Option<Vec<u
     // Without this guard, Cmd+V fell through to the single-character fallback
     // below and typed a literal "v" into the PTY *before* the app-level paste
     // listener wrote the clipboard (user report: paste comes out as "v<text>").
+    //
+    // T-WS-EDITOR-005 finding #1: that blanket guard was too broad — it also
+    // killed three conventional macOS terminal chords (VS Code terminal
+    // parity) that previously worked. Carve those out before bailing;
+    // everything else platform-modified (cmd-v/c/a/enter/...) stays None.
     if keystroke.modifiers.platform {
-        return None;
+        return match keystroke.key.as_str() {
+            "backspace" => Some(vec![0x15]), // cmd-backspace: ^U, delete to line start
+            "left" => Some(b"\x1b[H".to_vec()), // cmd-left: same bytes as the `home` arm
+            "right" => Some(b"\x1b[F".to_vec()), // cmd-right: same bytes as the `end` arm
+            _ => None,
+        };
     }
 
     // Handle special keys first
@@ -455,5 +465,28 @@ mod tests {
         assert_eq!(keystroke_to_bytes(&ctrl_c, mode), Some(vec![0x03]));
         let alt_a = Keystroke::parse("alt-a").unwrap();
         assert_eq!(keystroke_to_bytes(&alt_a, mode), Some(b"\x1ba".to_vec()));
+    }
+
+    #[test]
+    fn test_platform_conventional_terminal_chords() {
+        // T-WS-EDITOR-005 finding #1: these three Cmd chords are VS Code
+        // terminal parity — real terminal input, not GUI shortcuts — and must
+        // NOT be swallowed by the platform-chord guard above.
+        let mode = TermMode::empty();
+
+        let cmd_backspace = Keystroke::parse("cmd-backspace").unwrap();
+        assert_eq!(keystroke_to_bytes(&cmd_backspace, mode), Some(vec![0x15]));
+
+        let cmd_left = Keystroke::parse("cmd-left").unwrap();
+        assert_eq!(
+            keystroke_to_bytes(&cmd_left, mode),
+            Some(b"\x1b[H".to_vec())
+        );
+
+        let cmd_right = Keystroke::parse("cmd-right").unwrap();
+        assert_eq!(
+            keystroke_to_bytes(&cmd_right, mode),
+            Some(b"\x1b[F".to_vec())
+        );
     }
 }

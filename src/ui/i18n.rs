@@ -482,6 +482,13 @@ pub enum Msg {
     EditorWorkspaceSourceChanges,
     /// Tree-source chip: every tracked + untracked file (T-WS-EDITOR-004).
     EditorWorkspaceSourceAll,
+    /// Center placeholder when the selected file's `fs::read` failed or its
+    /// `ChangeKind` is `Deleted` (T-WS-EDITOR-005 finding #6).
+    EditorWorkspaceDeleted,
+    /// Center placeholder when the selected file's bytes aren't valid UTF-8
+    /// (and weren't flagged binary by the NUL-byte probe; T-WS-EDITOR-005
+    /// finding #6).
+    EditorWorkspaceUndecodable,
 }
 
 impl Msg {
@@ -1002,6 +1009,10 @@ impl Msg {
             (Ja, EditorWorkspaceSourceChanges) => "変更",
             (En, EditorWorkspaceSourceAll) => "All",
             (Ja, EditorWorkspaceSourceAll) => "すべて",
+            (En, EditorWorkspaceDeleted) => "File does not exist in the working tree (deleted).",
+            (Ja, EditorWorkspaceDeleted) => "作業ツリーに存在しません(削除済み)。",
+            (En, EditorWorkspaceUndecodable) => "Cannot decode as UTF-8 — preview not available.",
+            (Ja, EditorWorkspaceUndecodable) => "UTF-8として読めないためプレビューできません。",
         }
     }
 }

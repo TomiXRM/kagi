@@ -169,7 +169,8 @@ impl KagiApp {
         // just left of Analyze. Routes through the exact same
         // `handle_menu_command` path as the View menu item / secondary-shift-e
         // shortcut, so behaviour (open/close + the `[kagi] menu:
-        // workspace_mode=…` log line) stays byte-identical.
+        // editor_workspace=…` log line, T-WS-EDITOR-005 #11) stays
+        // byte-identical.
         let editor_ws_on = self.repo_path.is_some();
         let editor_ws_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
             this.handle_menu_command("view.toggleEditorWorkspace", window, cx);

@@ -344,8 +344,8 @@ use kagi_git::{
         default_tracking_branch_name, validate_branch_rename, AmendMode, OperationPlan,
         StateSummary,
     },
-    CommitId, DiffLineKind, FileDiffStat, FileStatus, Head, RemoteBranch, RepoSnapshot, Stash, Tag,
-    UpstreamInfo, Worktree,
+    CommitId, FileDiffStat, FileStatus, Head, RemoteBranch, RepoSnapshot, Stash, Tag, UpstreamInfo,
+    Worktree,
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -1194,16 +1194,13 @@ pub struct KagiApp {
     /// start — so a stale same-repo mine (e.g. one started before a reload
     /// superseded it) can't cache/seed its result over a newer one.
     pub ecosystem_gen: u64,
-    /// T-WS-EDITOR-001 / ADR-0120: Graph ⇄ Editor workspace mode. `Graph` is
-    /// the default (existing) body; `Editor` routes the resolver's
-    /// left/center/right slots to the file-tree / code-viewer / hunk triple.
-    /// Kept in lockstep with `editor_workspace` by `open_editor_workspace` /
-    /// `close_editor_workspace` (never set directly elsewhere).
-    pub workspace_mode: workspace::WorkspaceMode,
-    /// T-WS-EDITOR-001: the Editor workspace view, `Some` only while
-    /// `workspace_mode == Editor`. Its own `Entity<EditorWorkspaceView>` owns
-    /// the working-tree file tree, the selected file's read-only code viewer,
-    /// and its WIP hunks (ADR-0117 fat-entity template).
+    /// T-WS-EDITOR-001 / ADR-0120: the Editor workspace view — `Some` while
+    /// Graph ⇄ Editor mode is `Editor` (T-WS-EDITOR-005 finding #11: mode is
+    /// derived as `editor_workspace.is_some()` rather than tracked in a
+    /// separate `workspace_mode` field, so the two can't diverge). Its own
+    /// `Entity<EditorWorkspaceView>` owns the working-tree file tree, the
+    /// selected file's read-only code viewer, and its WIP hunks (ADR-0117
+    /// fat-entity template).
     pub editor_workspace: Option<Entity<editor_workspace::EditorWorkspaceView>>,
 }
 
@@ -1555,7 +1552,6 @@ impl KagiApp {
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,
-            workspace_mode: workspace::WorkspaceMode::Graph,
             editor_workspace: None,
         }
     }
@@ -1662,7 +1658,6 @@ impl KagiApp {
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,
-            workspace_mode: workspace::WorkspaceMode::Graph,
             editor_workspace: None,
         }
     }

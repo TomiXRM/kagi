@@ -381,7 +381,7 @@ impl KagiApp {
             commit_panel_present: commit_panel.is_some(),
             inspector_visible: self.inspector_visible,
             has_detail: detail.is_some(),
-            editor_mode: self.workspace_mode == workspace::WorkspaceMode::Editor,
+            editor_mode: self.editor_workspace.is_some(),
         });
 
         let mut body_row = div()
@@ -441,13 +441,21 @@ impl KagiApp {
             // this is the only way a click in the tree pane can mutate the
             // same entity that owns the open file's editor/diff state without
             // re-entering `KagiApp` (ADR-0117 re-entrancy guard). The
-            // `layout.left`/`layout.right` values (FileTree/Hunks) exist for
-            // resolver-level policy + tests; here they route to the same
-            // no-op right-slot arm below (`RightPane::Hunks => {}`) and the
-            // sidebar `.when(... Navigator ...)` above naturally skips
-            // rendering for `LeftPane::FileTree`.
+            // `layout.right` value (Hunks) exists for resolver-level policy +
+            // tests; it routes to the no-op right-slot arm below
+            // (`RightPane::Hunks => {}`) and the sidebar `.when(... Navigator
+            // ...)` above naturally skips rendering for `LeftPane::FileTree`.
+            // `layout.left`, though, is pushed into the entity (T-WS-EDITOR-005
+            // finding #3): the sidebar toggle's `LeftPane::Hidden` still needs
+            // to hide the *in-entity* tree pane, which `render_body` can't
+            // reach into from the outside.
             workspace::CenterPane::Editor => match self.editor_workspace.clone() {
-                Some(ev) => body_row.child(div().flex_1().min_w(px(0.)).h_full().child(ev)),
+                Some(ev) => {
+                    ev.update(cx, |v, _| {
+                        v.show_tree = layout.left == workspace::LeftPane::FileTree;
+                    });
+                    body_row.child(div().flex_1().min_w(px(0.)).h_full().child(ev))
+                }
                 None => body_row.child(commit_list_col),
             },
             // Full-width diff (T-UI-003). The resolver guarantees the view is

@@ -522,8 +522,12 @@ impl Render for KagiApp {
                 // list + diff pane — navigate that, not the main commit list.
                 if this.file_history.is_some() {
                     this.step_file_history_selection(-1, cx);
-                } else if this.editor_workspace.is_some() {
-                    // T-WS-EDITOR-001 feedback: Editor mode steps its file tree.
+                } else if this.ecosystem.is_none() && this.editor_workspace.is_some() {
+                    // T-WS-EDITOR-001 feedback: Editor mode steps its file
+                    // tree — but only when it's actually the visible center
+                    // (T-WS-EDITOR-005 finding #5: Analyze beats Editor mode
+                    // in the resolver, so a hidden editor must not steal
+                    // these arrow keys or emit its `editor-ws: file` klog).
                     this.step_editor_ws_selection(-1, cx);
                 } else if this.main_diff.is_some() {
                     this.main_diff_step(-1, cx);
@@ -538,7 +542,7 @@ impl Render for KagiApp {
                 }
                 if this.file_history.is_some() {
                     this.step_file_history_selection(1, cx);
-                } else if this.editor_workspace.is_some() {
+                } else if this.ecosystem.is_none() && this.editor_workspace.is_some() {
                     this.step_editor_ws_selection(1, cx);
                 } else if this.main_diff.is_some() {
                     this.main_diff_step(1, cx);

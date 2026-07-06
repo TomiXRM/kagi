@@ -26,7 +26,7 @@ use gpui_component::Sizable as _;
 
 use super::i18n::{self, Msg};
 use super::theme::{self, theme};
-use super::{FooterStatus, KagiApp, ToastKind};
+use super::{workspace, FooterStatus, KagiApp, ToastKind};
 
 /// Lightweight descriptor for one open repository tab (ADR-0027).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -357,6 +357,11 @@ impl KagiApp {
         // across tab switches, so returning to a repo and pressing Analyze
         // reuses its previous scan instead of recomputing from scratch.
         self.ecosystem = None;
+        // T-WS-EDITOR-001: the EditorWorkspaceView entity captures the previous
+        // repo's `repo_path`; drop it on repo/tab switch like File History /
+        // Ecosystem, and reset the mode so a new tab always opens on Graph.
+        self.editor_workspace = None;
+        self.workspace_mode = workspace::WorkspaceMode::Graph;
         // ADR-0118 / T-ENTITY-CONFLICT-001: the ConflictView entity captures the
         // previous repo's `repo_path`; a tab switch MUST drop it (and the merge
         // gate + run-once guard) so a stale conflict screen never survives. The

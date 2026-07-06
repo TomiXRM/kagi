@@ -23,11 +23,25 @@
 //!   rather than `kagi-domain` because its vocabulary (Inspector, CommitPanel,
 //!   Navigator) is UI, not Git domain.
 
+/// Graph ⇄ Editor workspace mode (T-WS-EDITOR-001 / ADR-0120 §3), the
+/// resolver's most-upstream input. `Graph` is the default (existing) body;
+/// `Editor` swaps left/center/right to the file-tree / code-viewer / hunk
+/// triple. Reset to `Graph` on repo/tab switch (`tabs::reset_per_repo_ui`) —
+/// it is transient per-repo UI, not persisted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WorkspaceMode {
+    #[default]
+    Graph,
+    Editor,
+}
+
 /// What the left pane shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LeftPane {
     /// Repository Navigator (branches / remotes / tags / stashes / worktrees).
     Navigator,
+    /// Working-tree changed-file tree (`WorkspaceMode::Editor`, T-WS-EDITOR-001).
+    FileTree,
     /// Sidebar toggled off (View → Toggle Sidebar).
     Hidden,
 }
@@ -42,6 +56,9 @@ pub enum CenterPane {
     Ecosystem,
     /// `Loading <repo>…` placeholder during an uncached tab open (W6-TABSPEED).
     Loading,
+    /// Read-only code viewer (`WorkspaceMode::Editor`, T-WS-EDITOR-001).
+    /// Beats `Diff` — in Editor mode `main_diff` is ignored.
+    Editor,
     /// Full-width diff view (T-UI-003).
     Diff,
     /// The commit graph list (default).
@@ -55,6 +72,8 @@ pub enum RightPane {
     CommitPanel,
     /// Commit Inspector (W2-INSPECTOR).
     Inspector,
+    /// The selected file's WIP hunks (`WorkspaceMode::Editor`, T-WS-EDITOR-001).
+    Hunks,
     /// No right panel (and no divider).
     Hidden,
 }
@@ -89,40 +108,51 @@ pub struct WorkspaceInputs {
     pub inspector_visible: bool,
     /// A commit detail was resolved for the current selection.
     pub has_detail: bool,
+    /// `workspace_mode == WorkspaceMode::Editor` (T-WS-EDITOR-001). The
+    /// most-upstream input: still beaten by the FileHistory/Ecosystem
+    /// takeovers and by Loading, but beats `Diff` (Editor mode ignores
+    /// `main_diff`) and overrides the right pane's CommitPanel/Inspector.
+    pub editor_mode: bool,
 }
 
 /// Resolve the slot contents. This encodes, in one place, the precedence that
 /// used to live in `render_body`'s branch ordering:
 ///
-/// - center: FileHistory > Ecosystem > Loading > Diff > CommitList
-/// - right:  hidden under a takeover; else CommitPanel (when open AND the
-///   entity exists) > Inspector (when visible AND a detail resolved) > Hidden.
-///   `commit_panel_open` without an entity hides the panel *without* falling
-///   back to the Inspector (pre-existing behavior, kept).
-/// - left:   Navigator unless toggled off (independent of the center mode —
-///   takeovers replace center+right only).
+/// - center: FileHistory > Ecosystem > Loading > Editor > Diff > CommitList
+/// - right:  hidden under a takeover; else Hunks (Editor mode) > CommitPanel
+///   (when open AND the entity exists) > Inspector (when visible AND a detail
+///   resolved) > Hidden. `commit_panel_open` without an entity hides the panel
+///   *without* falling back to the Inspector (pre-existing behavior, kept).
+/// - left:   FileTree (Editor mode) or Navigator, unless toggled off
+///   (independent of the center mode — takeovers replace center+right only).
 pub fn resolve_workspace(i: &WorkspaceInputs) -> WorkspaceLayout {
-    let left = if i.sidebar_visible {
-        LeftPane::Navigator
-    } else {
-        LeftPane::Hidden
-    };
-
     let center = if i.file_history_open {
         CenterPane::FileHistory
     } else if i.ecosystem_open {
         CenterPane::Ecosystem
     } else if i.loading {
         CenterPane::Loading
+    } else if i.editor_mode {
+        CenterPane::Editor
     } else if i.diff_open {
         CenterPane::Diff
     } else {
         CenterPane::CommitList
     };
 
+    let left = if !i.sidebar_visible {
+        LeftPane::Hidden
+    } else if i.editor_mode {
+        LeftPane::FileTree
+    } else {
+        LeftPane::Navigator
+    };
+
     let takeover = matches!(center, CenterPane::FileHistory | CenterPane::Ecosystem);
     let right = if takeover {
         RightPane::Hidden
+    } else if i.editor_mode {
+        RightPane::Hunks
     } else if i.commit_panel_open {
         if i.commit_panel_present {
             RightPane::CommitPanel
@@ -249,6 +279,98 @@ mod tests {
             ..base()
         };
         assert_eq!(resolve_workspace(&i).left, LeftPane::Hidden);
+    }
+
+    // ── T-WS-EDITOR-001: WorkspaceMode::Editor precedence ──────────────
+
+    #[test]
+    fn editor_mode_shows_file_tree_editor_hunks() {
+        let i = WorkspaceInputs {
+            editor_mode: true,
+            ..base()
+        };
+        let l = resolve_workspace(&i);
+        assert_eq!(l.left, LeftPane::FileTree);
+        assert_eq!(l.center, CenterPane::Editor);
+        assert_eq!(l.right, RightPane::Hunks);
+    }
+
+    #[test]
+    fn editor_mode_ignores_open_diff() {
+        // Editor mode ignores `main_diff` — center stays Editor, not Diff.
+        let i = WorkspaceInputs {
+            editor_mode: true,
+            diff_open: true,
+            ..base()
+        };
+        assert_eq!(resolve_workspace(&i).center, CenterPane::Editor);
+    }
+
+    #[test]
+    fn file_history_beats_editor_mode() {
+        let i = WorkspaceInputs {
+            editor_mode: true,
+            file_history_open: true,
+            ..base()
+        };
+        let l = resolve_workspace(&i);
+        assert_eq!(l.center, CenterPane::FileHistory);
+        // Takeover still hides the right panel even in Editor mode.
+        assert_eq!(l.right, RightPane::Hidden);
+        // Left is independent of the center takeover — still FileTree.
+        assert_eq!(l.left, LeftPane::FileTree);
+    }
+
+    #[test]
+    fn ecosystem_beats_editor_mode() {
+        let i = WorkspaceInputs {
+            editor_mode: true,
+            ecosystem_open: true,
+            ..base()
+        };
+        let l = resolve_workspace(&i);
+        assert_eq!(l.center, CenterPane::Ecosystem);
+        assert_eq!(l.right, RightPane::Hidden);
+        assert_eq!(l.left, LeftPane::FileTree);
+    }
+
+    #[test]
+    fn loading_beats_editor_mode() {
+        let i = WorkspaceInputs {
+            editor_mode: true,
+            loading: true,
+            ..base()
+        };
+        assert_eq!(resolve_workspace(&i).center, CenterPane::Loading);
+    }
+
+    #[test]
+    fn editor_mode_left_hidden_when_sidebar_toggled_off() {
+        let i = WorkspaceInputs {
+            editor_mode: true,
+            sidebar_visible: false,
+            ..base()
+        };
+        assert_eq!(resolve_workspace(&i).left, LeftPane::Hidden);
+    }
+
+    #[test]
+    fn editor_mode_hunks_beats_commit_panel_and_inspector() {
+        let i = WorkspaceInputs {
+            editor_mode: true,
+            commit_panel_open: true,
+            commit_panel_present: true,
+            ..base()
+        };
+        assert_eq!(resolve_workspace(&i).right, RightPane::Hunks);
+
+        let i = WorkspaceInputs {
+            editor_mode: true,
+            inspector_visible: true,
+            has_detail: true,
+            ..base()
+        };
+        assert_eq!(resolve_workspace(&i).right, RightPane::Hunks);
     }
 
     #[test]

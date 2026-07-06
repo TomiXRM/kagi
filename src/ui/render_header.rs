@@ -53,6 +53,11 @@ impl KagiApp {
         let el = menu_act!(el, cmds::ToggleSidebar, "view.toggleSidebar");
         let el = menu_act!(el, cmds::ToggleCommitDetails, "view.toggleCommitDetails");
         let el = menu_act!(el, cmds::ToggleDiffView, "view.toggleDiffView");
+        let el = menu_act!(
+            el,
+            cmds::ToggleEditorWorkspace,
+            "view.toggleEditorWorkspace"
+        );
         let el = menu_act!(el, cmds::Fetch, "repo.fetch");
         let el = menu_act!(el, cmds::Pull, "repo.pull");
         let el = menu_act!(el, cmds::Push, "repo.push");

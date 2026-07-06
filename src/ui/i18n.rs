@@ -463,6 +463,21 @@ pub enum Msg {
     EcoResetView,
     /// Help overlay title.
     EcoHelpTitle,
+
+    // ── Editor Workspace (T-WS-EDITOR-001) ──────────────────────
+    /// Left/center/right placeholder while the working-tree file list (or a
+    /// selected file's content/diff) is loading.
+    EditorWorkspaceLoading,
+    /// Left/center placeholder when the working tree has no changed files.
+    EditorWorkspaceEmpty,
+    /// Center placeholder when no file is selected yet.
+    EditorWorkspaceSelectFile,
+    /// Center placeholder for a binary file (no text preview).
+    EditorWorkspaceBinary,
+    /// Center placeholder for a file over the line-count guard.
+    EditorWorkspaceTooLarge,
+    /// Right pane placeholder when the selected file has no WIP diff to show.
+    EditorWorkspaceNoDiff,
 }
 
 impl Msg {
@@ -965,6 +980,20 @@ impl Msg {
             (Ja, EcoResetView) => "リセット",
             (En, EcoHelpTitle) => "How to read Analyze",
             (Ja, EcoHelpTitle) => "Analyze の見方",
+
+            // ── Editor Workspace (T-WS-EDITOR-001) ──────────────────
+            (En, EditorWorkspaceLoading) => "Loading…",
+            (Ja, EditorWorkspaceLoading) => "読み込み中…",
+            (En, EditorWorkspaceEmpty) => "No changed files in the working tree.",
+            (Ja, EditorWorkspaceEmpty) => "作業ツリーに変更されたファイルはありません。",
+            (En, EditorWorkspaceSelectFile) => "Select a file to view its contents.",
+            (Ja, EditorWorkspaceSelectFile) => "内容を表示するファイルを選択してください。",
+            (En, EditorWorkspaceBinary) => "Binary file — preview not available.",
+            (Ja, EditorWorkspaceBinary) => "バイナリファイルのためプレビューできません。",
+            (En, EditorWorkspaceTooLarge) => "File too large to preview (over 50,000 lines).",
+            (Ja, EditorWorkspaceTooLarge) => "ファイルが大きすぎるためプレビューできません(5万行超)。",
+            (En, EditorWorkspaceNoDiff) => "No changes to show for this file.",
+            (Ja, EditorWorkspaceNoDiff) => "このファイルに表示する変更はありません。",
         }
     }
 }

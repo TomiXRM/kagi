@@ -24,6 +24,7 @@ mod diff_cache;
 pub mod diff_view;
 pub mod diffstat_bar;
 pub mod ecosystem;
+pub mod editor_workspace;
 pub mod file_history;
 mod file_history_render;
 mod file_menu;
@@ -1187,6 +1188,17 @@ pub struct KagiApp {
     /// start — so a stale same-repo mine (e.g. one started before a reload
     /// superseded it) can't cache/seed its result over a newer one.
     pub ecosystem_gen: u64,
+    /// T-WS-EDITOR-001 / ADR-0120: Graph ⇄ Editor workspace mode. `Graph` is
+    /// the default (existing) body; `Editor` routes the resolver's
+    /// left/center/right slots to the file-tree / code-viewer / hunk triple.
+    /// Kept in lockstep with `editor_workspace` by `open_editor_workspace` /
+    /// `close_editor_workspace` (never set directly elsewhere).
+    pub workspace_mode: workspace::WorkspaceMode,
+    /// T-WS-EDITOR-001: the Editor workspace view, `Some` only while
+    /// `workspace_mode == Editor`. Its own `Entity<EditorWorkspaceView>` owns
+    /// the working-tree file tree, the selected file's read-only code viewer,
+    /// and its WIP hunks (ADR-0117 fat-entity template).
+    pub editor_workspace: Option<Entity<editor_workspace::EditorWorkspaceView>>,
 }
 
 /// T-CONFLICT-UI-001: the Result `InputState` entity backing the Conflict
@@ -1537,6 +1549,8 @@ impl KagiApp {
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,
+            workspace_mode: workspace::WorkspaceMode::Graph,
+            editor_workspace: None,
         }
     }
 
@@ -1642,6 +1656,8 @@ impl KagiApp {
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,
+            workspace_mode: workspace::WorkspaceMode::Graph,
+            editor_workspace: None,
         }
     }
 
@@ -3970,6 +3986,17 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
             // pre-window env path in main.rs cannot create them).
             if std::env::var("KAGI_COMMIT_PANEL").as_deref() == Ok("1") {
                 kagi.update(cx, |app, cx| app.open_commit_panel(window, cx));
+            }
+
+            // T-WS-EDITOR-001: KAGI_EDITOR_WS=1 opens the Editor workspace
+            // through the real window-context path — `open_editor_workspace`
+            // needs an entity `Context<KagiApp>`, which (like `KAGI_COMMIT_PANEL`
+            // above) only exists once the window is open, not in main.rs's
+            // pre-window env-hook path. The entity auto-selects the first
+            // changed file once its working-tree load resolves, emitting the
+            // `editor-ws: …` klog lines for headless verification.
+            if std::env::var("KAGI_EDITOR_WS").as_deref() == Ok("1") {
+                kagi.update(cx, |app, cx| app.open_editor_workspace(cx));
             }
 
             // The bottom panel now opens on the Terminal tab by default

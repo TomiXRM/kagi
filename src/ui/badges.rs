@@ -71,21 +71,24 @@ pub(crate) fn render_badges_column(
     lane_pill_color: Option<u32>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
-    // Content is built to fit rather than relying on clipping:
-    //   - left-aligned, so the highest-priority chip (leftmost) is always
-    //     fully visible and overflow happens rightward — the direction
-    //     gpui's overflow_hidden actually clips,
-    //   - the "+N" chip sits right after the primary chip so it can't be
-    //     clipped,
-    //   - the secondary chip flex-shrinks with an ellipsis; only its already
-    //     ellipsized tail can ever be cut off.
+    // Content layout (reworked — user report: a label ellipsized at a fixed
+    // char count could never be revealed by widening the column, and there
+    // was no way to read the full name at all):
+    //   - labels are NEVER cut at build time; each chip ellipsizes via CSS
+    //     `truncate()` against the actual column width, so widening the
+    //     BRANCH/TAG divider reveals more of the name,
+    //   - every chip carries a hover tooltip with the FULL ref name,
+    //   - left-aligned, so the highest-priority chip (leftmost) keeps the
+    //     most visible space and overflow happens rightward,
+    //   - the "+N" chip sits right after the primary chip and never shrinks;
+    //     its tooltip lists the hidden refs.
     const MAX_BADGES: usize = 2;
-    const MAX_BADGE_CHARS: usize = 20;
 
     let mut by_prio: Vec<&commit_list::RefBadge> = badges.iter().collect();
     by_prio.sort_by_key(|b| badge_priority(&b.kind));
     let extra = by_prio.len().saturating_sub(MAX_BADGES);
     let shown = &by_prio[..by_prio.len().min(MAX_BADGES)];
+    let hidden = &by_prio[by_prio.len().min(MAX_BADGES)..];
 
     let mut inner = div()
         .flex()
@@ -93,6 +96,9 @@ pub(crate) fn render_badges_column(
         .items_center()
         .justify_start()
         .gap_1()
+        // Shrinkable below content size so the chips' `truncate()` engages at
+        // the column edge instead of the whole strip being hard-clipped.
+        .min_w(px(0.))
         .overflow_hidden();
 
     // Badges in priority order: primary (HEAD/branch) leftmost.
@@ -107,13 +113,25 @@ pub(crate) fn render_badges_column(
                 BadgeKind::Tag => theme().color_tag,
             },
         };
-        // Char-truncate long labels.
-        let label: SharedString = if badge.label.chars().count() > MAX_BADGE_CHARS {
-            let s: String = badge.label.chars().take(MAX_BADGE_CHARS - 1).collect();
-            SharedString::from(format!("{}\u{2026}", s))
-        } else {
-            badge.label.clone()
+        // Full label — width-driven `truncate()` below does the ellipsizing,
+        // and the hover tooltip always exposes the complete name.
+        //
+        // The HEAD/worktree indicators are EMBEDDED in the label string
+        // (`"name ✓"` / `"🌲 name"`, see `build_badge_map`). End-ellipsis
+        // would eat a trailing ✓ on a long name (user report), so split the
+        // decorations out and render them as non-shrinking siblings: only the
+        // NAME truncates, the indicator glyphs always stay visible.
+        let full_label: &str = badge.label.as_ref();
+        let (prefix_glyph, rest) = match full_label.strip_prefix("\u{1f332} ") {
+            Some(rest) => (Some("\u{1f332}"), rest),
+            None => (None, full_label),
         };
+        let (name, suffix_glyph) = match rest.strip_suffix(" \u{2713}") {
+            Some(name) => (name, Some("\u{2713}")),
+            None => (rest, None),
+        };
+        let name: SharedString = SharedString::from(name.to_string());
+        let tooltip_label: SharedString = badge.label.clone();
         let is_primary = i == 0;
         let (badge_bg, badge_border, badge_text) = theme::badge_style(color);
         let chip = div()
@@ -131,10 +149,27 @@ pub(crate) fn render_badges_column(
             .border_color(gpui::rgba(badge_border))
             .text_color(rgb(badge_text))
             .text_sm()
-            .when(is_primary, |c| c.flex_shrink_0())
-            // Secondary chips may shrink to fit; their text ellipsizes.
-            .when(!is_primary, |c| c.min_w(px(20.)).truncate())
-            .child(label);
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            // The chip ellipsizes its NAME against the available width (so
+            // widening the BRANCH/TAG column reveals more); the primary chip
+            // keeps a larger floor so it stays readable when secondaries
+            // compete.
+            .when(is_primary, |c| c.min_w(px(48.)))
+            .when(!is_primary, |c| c.min_w(px(20.)))
+            // Hover: the full ref name (user request — must-have).
+            .tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(tooltip_label.clone()).build(window, cx)
+            })
+            .when_some(prefix_glyph, |c, g| {
+                c.child(div().flex_shrink_0().child(SharedString::from(g)))
+            })
+            .child(div().min_w(px(0.)).truncate().child(name))
+            .when_some(suffix_glyph, |c, g| {
+                c.child(div().flex_shrink_0().child(SharedString::from(g)))
+            });
 
         // T-DNDMERGE-001 / ADR-0079: wire drag/drop onto the chip based on kind.
         //   - `BadgeKind::Branch` / `BadgeKind::Remote` → INDEPENDENTLY draggable,
@@ -245,14 +280,28 @@ pub(crate) fn render_badges_column(
         // are). Redesigning the overflow into a draggable popover is out of
         // scope for this lane.
         if is_primary && extra > 0 {
+            // Tooltip lists the hidden refs (one per line) so "+N" is
+            // inspectable without opening anything.
+            let hidden_labels: SharedString = SharedString::from(
+                hidden
+                    .iter()
+                    .map(|b| b.label.as_ref())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
             inner = inner.child(
                 div()
+                    .id(("graph-badge-extra", i))
                     .px_1()
                     .rounded_sm()
                     .bg(rgb(theme().surface))
                     .text_color(rgb(theme().text_sub))
                     .text_sm()
                     .flex_shrink_0()
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(hidden_labels.clone())
+                            .build(window, cx)
+                    })
                     .child(SharedString::from(format!("+{extra}"))),
             );
         }

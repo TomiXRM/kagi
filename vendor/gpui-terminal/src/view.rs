@@ -50,9 +50,12 @@
 use crate::colors::ColorPalette;
 use crate::event::{GpuiEventProxy, TerminalEvent};
 use crate::input::keystroke_to_bytes;
-// kagi: mouse selection support (text selection + Cmd/Ctrl+C copy).
+// kagi: mouse selection support (text selection + Cmd/Ctrl+C copy) and SGR
+// mouse reporting / smart-scroll (T-TERM-INTERACT-001).
 use crate::mouse::{
-    Selection, SelectionType, clamp_point_to_grid, pixel_to_cell, selection_type_from_clicks,
+    Selection, SelectionType, clamp_point_to_grid, encode_modifiers, mouse_button_report,
+    mouse_motion_report, mouse_reporting_active, pixel_to_cell, scroll_report,
+    selection_type_from_clicks, should_report_motion,
 };
 use crate::render::TerminalRenderer;
 use crate::terminal::TerminalState;
@@ -534,7 +537,18 @@ impl TerminalView {
                     Ok(bytes) => {
                         // Process bytes and notify the view
                         let result = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
-                            view.state.process_bytes(&bytes);
+                            // kagi (T-TERM-INTERACT-001): `process_bytes` may
+                            // return `Event::PtyWrite` response bytes (DSR
+                            // cursor-position, DA1 device attributes, ...).
+                            // Write them back to the PTY right here, on this
+                            // same reader-task tick — before `cx.notify()`,
+                            // so a program that queries the terminal and
+                            // blocks waiting for the answer (zellij, at
+                            // startup) is never gated on a render frame.
+                            let pty_responses = view.state.process_bytes(&bytes);
+                            if !pty_responses.is_empty() {
+                                view.write_bytes(&pty_responses);
+                            }
                             cx.notify();
                         });
                         if result.is_err() {
@@ -790,16 +804,29 @@ impl TerminalView {
             if self.selection.take().is_some() {
                 cx.notify();
             }
-            let mut writer = self.stdin_writer.lock();
-            let _ = writer.write_all(&bytes);
-            let _ = writer.flush();
+            self.write_bytes(&bytes);
         }
+    }
+
+    // kagi (T-TERM-INTERACT-001): single write path shared by keystrokes,
+    // SGR mouse reports, and drained PTY-query responses — one lock
+    // acquisition site, one flush policy.
+    fn write_bytes(&self, bytes: &[u8]) {
+        let mut writer = self.stdin_writer.lock();
+        let _ = writer.write_all(bytes);
+        let _ = writer.flush();
     }
 
     /// Handle mouse down events.
     ///
-    /// kagi: starts a text selection at the clicked cell. The click count
-    /// selects by character (single), word (double) or line (triple).
+    /// kagi (T-TERM-INTERACT-001): when the app has enabled mouse reporting
+    /// (zellij, vim, tmux, ...) this encodes and writes an SGR mouse report
+    /// to the PTY instead of starting a local selection — that's what makes
+    /// clicks focus panes / move the cursor inside those apps. Holding Shift
+    /// bypasses reporting (standard terminal convention) so text can still
+    /// be selected. Otherwise: starts a text selection at the clicked cell.
+    /// The click count selects by character (single), word (double) or line
+    /// (triple).
     fn on_mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -808,6 +835,24 @@ impl TerminalView {
     ) {
         // Request focus when clicking the terminal
         window.focus(&self.focus_handle);
+
+        let mode = self.state.mode();
+        if mouse_reporting_active(mode, event.modifiers.shift) {
+            if let Some(point) = self.position_to_point(event.position) {
+                let modifiers =
+                    encode_modifiers(false, event.modifiers.alt, event.modifiers.control);
+                if let Some(bytes) = mouse_button_report(event.button, true, point, modifiers, mode)
+                {
+                    self.write_bytes(&bytes);
+                }
+            }
+            return;
+        }
+
+        // Local selection only makes sense for the primary button.
+        if event.button != MouseButton::Left {
+            return;
+        }
 
         // kagi: map the click position to a grid cell using the geometry
         // captured during the last paint. If we have not painted yet there is
@@ -834,11 +879,28 @@ impl TerminalView {
 
     /// Handle mouse up events.
     ///
-    /// kagi: finalizes the in-progress selection. The selection is kept so it
-    /// can be copied with Cmd/Ctrl+C; a plain click (start == end, simple type)
-    /// is treated as a deselect.
-    fn on_mouse_up(&mut self, _event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    /// kagi (T-TERM-INTERACT-001): mirrors `on_mouse_down` — if this button
+    /// press was reported to the PTY (not a local selection drag), send the
+    /// matching SGR release report. Otherwise finalizes the in-progress
+    /// selection: kept so it can be copied with Cmd/Ctrl+C; a plain click
+    /// (start == end, simple type) is treated as a deselect.
+    fn on_mouse_up(&mut self, event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.selecting {
+            // Not a local selection drag: this press may have been reported
+            // to the PTY on the way down, in which case the release needs
+            // reporting too.
+            let mode = self.state.mode();
+            if mouse_reporting_active(mode, event.modifiers.shift)
+                && let Some(point) = self.position_to_point(event.position)
+            {
+                let modifiers =
+                    encode_modifiers(false, event.modifiers.alt, event.modifiers.control);
+                if let Some(bytes) =
+                    mouse_button_report(event.button, false, point, modifiers, mode)
+                {
+                    self.write_bytes(&bytes);
+                }
+            }
             return;
         }
         self.selecting = false;
@@ -856,34 +918,51 @@ impl TerminalView {
 
     /// Handle mouse move events.
     ///
-    /// kagi: while a drag is in progress, extends the active selection to the
-    /// cell under the cursor. Only notifies when the endpoint actually changes,
-    /// to avoid repainting every frame.
+    /// kagi (T-TERM-INTERACT-001): a local selection drag in progress always
+    /// wins (it started because reporting was off or Shift was held at
+    /// mouse-down time, and shouldn't flip mid-drag). Otherwise, if the app
+    /// wants motion reports at the current mode granularity
+    /// (`should_report_motion`), encode and write an SGR motion report.
     fn on_mouse_move(
         &mut self,
         event: &MouseMoveEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.selecting {
+        if self.selecting {
+            let Some(point) = self.position_to_point(event.position) else {
+                return;
+            };
+
+            if let Some(sel) = &self.selection {
+                // kagi: re-expand from the original anchor so word/line drags
+                // keep selecting whole words/lines. The anchor is the
+                // un-expanded start, which for Simple selections is just
+                // `sel.start`.
+                let anchor = sel.start;
+                let sel_type = sel.selection_type;
+                let (_, new_end) = self.expand_selection(point, sel_type);
+                if new_end != sel.end {
+                    self.selection = Some(Selection::new(anchor, new_end, sel_type));
+                    cx.notify();
+                }
+            }
             return;
         }
 
+        let mode = self.state.mode();
+        if !mouse_reporting_active(mode, event.modifiers.shift) {
+            return;
+        }
+        if !should_report_motion(mode, event.pressed_button.is_some()) {
+            return;
+        }
         let Some(point) = self.position_to_point(event.position) else {
             return;
         };
-
-        if let Some(sel) = &self.selection {
-            // kagi: re-expand from the original anchor so word/line drags keep
-            // selecting whole words/lines. The anchor is the un-expanded start,
-            // which for Simple selections is just `sel.start`.
-            let anchor = sel.start;
-            let sel_type = sel.selection_type;
-            let (_, new_end) = self.expand_selection(point, sel_type);
-            if new_end != sel.end {
-                self.selection = Some(Selection::new(anchor, new_end, sel_type));
-                cx.notify();
-            }
+        let modifiers = encode_modifiers(false, event.modifiers.alt, event.modifiers.control);
+        if let Some(bytes) = mouse_motion_report(event.pressed_button, point, modifiers, mode) {
+            self.write_bytes(&bytes);
         }
     }
 
@@ -938,9 +1017,20 @@ impl TerminalView {
         Some(text)
     }
 
-    /// Handle scroll events: move the scrollback display offset by the wheel
-    /// delta (converted from pixels to lines via the cell height). Scrolling up
-    /// reveals older history; scrolling back down returns to the live prompt.
+    /// Handle scroll events.
+    ///
+    /// kagi (T-TERM-INTERACT-001) "smart scroll": three behaviours depending
+    /// on terminal mode, in priority order:
+    /// 1. Mouse reporting active (SGR) -> wheel report (buttons 64/65) to the PTY.
+    /// 2. Alternate screen, no mouse reporting (vim, less, zellij panes that
+    ///    don't ask for the wheel) -> translated to arrow-key sequences, so
+    ///    the wheel scrolls content instead of being a silent no-op (alt
+    ///    screen has no scrollback of its own).
+    /// 3. Otherwise -> local scrollback (unchanged from before this ticket).
+    ///
+    /// `scroll_report` (in `mouse.rs`) implements the mode dispatch for (1)
+    /// and (2); this function only needs to compute the line delta once and
+    /// fall back to local scrollback when `scroll_report` declines.
     fn on_scroll(
         &mut self,
         event: &ScrollWheelEvent,
@@ -956,6 +1046,21 @@ impl TerminalView {
         if lines == 0 {
             return;
         }
+
+        let mode = self.state.mode();
+        if let Some(point) = self.position_to_point(event.position) {
+            let modifiers = encode_modifiers(
+                event.modifiers.shift,
+                event.modifiers.alt,
+                event.modifiers.control,
+            );
+            if let Some(bytes) = scroll_report(lines, point, modifiers, mode) {
+                self.write_bytes(&bytes);
+                return;
+            }
+        }
+
+        // Local scrollback: normal screen (or no paint geometry yet).
         // alacritty `Scroll::Delta(+n)` scrolls UP into history; gpui's wheel
         // delta is positive when scrolling up, so the signs already match.
         self.state.with_term_mut(|term| {
@@ -1103,8 +1208,17 @@ impl Render for TerminalView {
             .bg(rgb(0x1e1e1e))
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key_down))
-            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            // kagi (T-TERM-INTERACT-001): any button, not just Left — SGR
+            // mouse reporting needs Middle/Right too (`on_mouse_down`/`_up`
+            // already discriminate on `event.button` internally for the
+            // local-selection fallback). `Div` only exposes an "any button"
+            // fluent method for mouse-down; mouse-up has to be registered
+            // per button (gpui 0.2.2 asymmetry — `on_any_mouse_up` exists
+            // only as the imperative `Interactivity` method, not fluently).
+            .on_any_mouse_down(cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_mouse_up(MouseButton::Middle, cx.listener(Self::on_mouse_up))
+            .on_mouse_up(MouseButton::Right, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
             .child(

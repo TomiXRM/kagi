@@ -297,7 +297,7 @@ pub fn selection_type_from_clicks(click_count: usize) -> SelectionType {
 /// use gpui_terminal::mouse::mouse_button_report;
 ///
 /// let point = Point::new(Line(5), Column(10));
-/// let mode = TermMode::MOUSE_REPORT_CLICK;
+/// let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
 ///
 /// let bytes = mouse_button_report(MouseButton::Left, true, point, 0, mode);
 /// assert!(bytes.is_some());
@@ -309,6 +309,15 @@ pub fn mouse_button_report(
     modifiers: u8,
     mode: TermMode,
 ) -> Option<Vec<u8>> {
+    // kagi (T-TERM-INTERACT-001): only SGR (1006) encoding is implemented.
+    // X10 encoding is a single byte per field and breaks past column/row 223
+    // (32 + 191); every mouse-aware TUI we target (zellij, vim, tmux) that
+    // turns on mouse reporting also turns on SGR, so we simply decline to
+    // report rather than emit bytes in a protocol the app never asked for.
+    if !mode.contains(TermMode::SGR_MOUSE) {
+        return None;
+    }
+
     // Check if mouse reporting is enabled
     if !mode
         .intersects(TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG)
@@ -368,7 +377,7 @@ pub fn mouse_button_report(
 /// use gpui_terminal::mouse::scroll_report;
 ///
 /// let point = Point::new(Line(5), Column(10));
-/// let mode = TermMode::MOUSE_REPORT_CLICK;
+/// let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
 ///
 /// let bytes = scroll_report(3, point, 0, mode);
 /// assert!(bytes.is_some());
@@ -379,9 +388,12 @@ pub fn scroll_report(
     modifiers: u8,
     mode: TermMode,
 ) -> Option<Vec<u8>> {
-    // If mouse reporting is enabled, send mouse wheel events
-    if mode.intersects(TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG)
-    {
+    // If mouse reporting AND SGR encoding are enabled, send mouse wheel
+    // events. kagi (T-TERM-INTERACT-001): SGR-only, same rationale as
+    // `mouse_button_report` — decline rather than guess at X10 encoding.
+    let mouse_mode_active = mode
+        .intersects(TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG);
+    if mouse_mode_active && mode.contains(TermMode::SGR_MOUSE) {
         // Button codes for scroll: 64 = wheel up, 65 = wheel down
         let button_code = if delta > 0 { 64 } else { 65 };
         let button_value = button_code | modifiers;
@@ -395,7 +407,7 @@ pub fn scroll_report(
         return Some(sequence.into_bytes());
     }
 
-    // If in alternate screen mode but no mouse reporting, send arrow keys
+    // If in alternate screen mode but no (SGR) mouse reporting, send arrow keys
     if mode.contains(TermMode::ALT_SCREEN) {
         return Some(scroll_to_arrow_keys(delta, mode));
     }
@@ -484,6 +496,112 @@ pub fn encode_modifiers(shift: bool, alt: bool, control: bool) -> u8 {
         modifiers |= 16;
     }
     modifiers
+}
+
+/// Generate an SGR mouse-motion report (hover or drag movement).
+///
+/// Motion reports are always encoded as the "press" form (`M`) with the
+/// motion flag (+32) added to the button code. `button` is `None` for
+/// movement with no button held (encoded as button code 3, the conventional
+/// "no button" code used by SGR motion reports), or `Some(_)` while a button
+/// is held (drag).
+///
+/// Returns `None` when SGR encoding is not enabled, or when neither
+/// `MOUSE_MOTION` nor `MOUSE_DRAG` is set (callers should gate on
+/// [`should_report_motion`] before calling this, but this function is safe
+/// to call unconditionally).
+///
+/// # Examples
+///
+/// ```
+/// use gpui::MouseButton;
+/// use alacritty_terminal::term::TermMode;
+/// use alacritty_terminal::index::{Point, Line, Column};
+/// use gpui_terminal::mouse::mouse_motion_report;
+///
+/// let point = Point::new(Line(5), Column(10));
+/// let mode = TermMode::MOUSE_MOTION | TermMode::SGR_MOUSE;
+///
+/// // Hover motion (no button held).
+/// let bytes = mouse_motion_report(None, point, 0, mode);
+/// assert!(bytes.is_some());
+/// ```
+pub fn mouse_motion_report(
+    button: Option<MouseButton>,
+    point: AlacPoint,
+    modifiers: u8,
+    mode: TermMode,
+) -> Option<Vec<u8>> {
+    if !mode.contains(TermMode::SGR_MOUSE) {
+        return None;
+    }
+    if !mode.intersects(TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG) {
+        return None;
+    }
+
+    let button_code = match button {
+        None => 3, // conventional "no button" code for hover motion
+        Some(MouseButton::Left) => 0,
+        Some(MouseButton::Middle) => 1,
+        Some(MouseButton::Right) => 2,
+        Some(_) => return None, // Navigate buttons etc. aren't reportable
+    };
+
+    const MOTION_FLAG: u8 = 32;
+    let button_value = button_code | MOTION_FLAG | modifiers;
+
+    let col = point.column.0 + 1;
+    let row = point.line.0 + 1;
+    let sequence = format!("\x1b[<{};{};{}M", button_value, col, row);
+    Some(sequence.into_bytes())
+}
+
+/// Whether mouse clicks/drags should be reported to the PTY instead of being
+/// handled as local text selection.
+///
+/// Shift is the standard terminal escape hatch (xterm, iTerm2, Zed, ...):
+/// holding it bypasses reporting so users can still select and copy text
+/// inside full-mouse-mode apps like zellij or vim, even though the app has
+/// taken over the mouse.
+///
+/// # Examples
+///
+/// ```
+/// use alacritty_terminal::term::TermMode;
+/// use gpui_terminal::mouse::mouse_reporting_active;
+///
+/// let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
+/// assert!(mouse_reporting_active(mode, false));
+/// assert!(!mouse_reporting_active(mode, true)); // shift bypasses reporting
+/// assert!(!mouse_reporting_active(TermMode::empty(), false));
+/// ```
+pub fn mouse_reporting_active(mode: TermMode, shift_held: bool) -> bool {
+    !shift_held
+        && mode.intersects(
+            TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION,
+        )
+}
+
+/// Whether a mouse-move event should be reported as motion, given whether a
+/// button is currently held.
+///
+/// - `MOUSE_MOTION`: every move is reported, held button or not.
+/// - `MOUSE_DRAG` (without `MOUSE_MOTION`): only reported while a button is held.
+/// - Neither (only plain `MOUSE_REPORT_CLICK`): motion is never reported.
+///
+/// # Examples
+///
+/// ```
+/// use alacritty_terminal::term::TermMode;
+/// use gpui_terminal::mouse::should_report_motion;
+///
+/// assert!(should_report_motion(TermMode::MOUSE_MOTION, false));
+/// assert!(should_report_motion(TermMode::MOUSE_DRAG, true));
+/// assert!(!should_report_motion(TermMode::MOUSE_DRAG, false));
+/// assert!(!should_report_motion(TermMode::MOUSE_REPORT_CLICK, true));
+/// ```
+pub fn should_report_motion(mode: TermMode, button_held: bool) -> bool {
+    mode.contains(TermMode::MOUSE_MOTION) || (mode.contains(TermMode::MOUSE_DRAG) && button_held)
 }
 
 /// Calculate the number of lines to scroll based on pixel delta.
@@ -638,7 +756,7 @@ mod tests {
     #[test]
     fn test_mouse_button_report_left_click() {
         let point = AlacPoint::new(Line(5), Column(10));
-        let mode = TermMode::MOUSE_REPORT_CLICK;
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
 
         let bytes = mouse_button_report(MouseButton::Left, true, point, 0, mode);
         assert!(bytes.is_some());
@@ -653,7 +771,7 @@ mod tests {
     #[test]
     fn test_mouse_button_report_right_release() {
         let point = AlacPoint::new(Line(0), Column(0));
-        let mode = TermMode::MOUSE_REPORT_CLICK;
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
 
         let bytes = mouse_button_report(MouseButton::Right, false, point, 0, mode);
         assert!(bytes.is_some());
@@ -666,7 +784,7 @@ mod tests {
     #[test]
     fn test_mouse_button_report_with_modifiers() {
         let point = AlacPoint::new(Line(0), Column(0));
-        let mode = TermMode::MOUSE_REPORT_CLICK;
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
         let modifiers = encode_modifiers(true, true, true); // Shift + Alt + Ctrl = 28
 
         let bytes = mouse_button_report(MouseButton::Left, true, point, modifiers, mode);
@@ -686,10 +804,21 @@ mod tests {
         assert!(bytes.is_none());
     }
 
+    // kagi (T-TERM-INTERACT-001): mouse mode on but SGR not negotiated ->
+    // decline rather than guess at X10 encoding (see function doc).
+    #[test]
+    fn test_mouse_button_report_no_sgr_declines() {
+        let point = AlacPoint::new(Line(0), Column(0));
+        let mode = TermMode::MOUSE_REPORT_CLICK; // no SGR_MOUSE bit
+
+        let bytes = mouse_button_report(MouseButton::Left, true, point, 0, mode);
+        assert!(bytes.is_none());
+    }
+
     #[test]
     fn test_scroll_report_mouse_mode() {
         let point = AlacPoint::new(Line(5), Column(10));
-        let mode = TermMode::MOUSE_REPORT_CLICK;
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
 
         // Scroll up
         let bytes = scroll_report(3, point, 0, mode);
@@ -704,6 +833,22 @@ mod tests {
         let sequence = String::from_utf8(bytes.unwrap()).unwrap();
         // Wheel down = button 65
         assert_eq!(sequence, "\x1b[<65;11;6M");
+    }
+
+    // kagi (T-TERM-INTERACT-001): mouse mode without SGR falls through to the
+    // ALT_SCREEN check (and then to `None`) rather than emitting X10 bytes.
+    #[test]
+    fn test_scroll_report_mouse_mode_no_sgr_falls_through() {
+        let point = AlacPoint::new(Line(0), Column(0));
+
+        // No ALT_SCREEN either -> local scrollback.
+        let mode = TermMode::MOUSE_REPORT_CLICK;
+        assert!(scroll_report(3, point, 0, mode).is_none());
+
+        // ALT_SCREEN set -> falls through to arrow keys, same as no mouse mode.
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::ALT_SCREEN;
+        let bytes = scroll_report(3, point, 0, mode).unwrap();
+        assert_eq!(bytes, b"\x1b[A\x1b[A\x1b[A");
     }
 
     #[test]
@@ -780,5 +925,121 @@ mod tests {
         let bytes = scroll_to_arrow_keys(-100, mode);
         let expected = b"\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B";
         assert_eq!(bytes, expected);
+    }
+
+    // ── mouse_motion_report ──────────────────────────────────────────────
+
+    #[test]
+    fn test_mouse_motion_report_hover_no_button() {
+        let point = AlacPoint::new(Line(5), Column(10));
+        let mode = TermMode::MOUSE_MOTION | TermMode::SGR_MOUSE;
+
+        let bytes = mouse_motion_report(None, point, 0, mode).unwrap();
+        let sequence = String::from_utf8(bytes).unwrap();
+        // No-button motion = code 3, + motion flag 32 = 35.
+        assert_eq!(sequence, "\x1b[<35;11;6M");
+    }
+
+    #[test]
+    fn test_mouse_motion_report_drag_left_button() {
+        let point = AlacPoint::new(Line(0), Column(0));
+        let mode = TermMode::MOUSE_DRAG | TermMode::SGR_MOUSE;
+
+        let bytes = mouse_motion_report(Some(MouseButton::Left), point, 0, mode).unwrap();
+        let sequence = String::from_utf8(bytes).unwrap();
+        // Left = 0, + motion flag 32 = 32.
+        assert_eq!(sequence, "\x1b[<32;1;1M");
+    }
+
+    #[test]
+    fn test_mouse_motion_report_with_modifiers() {
+        let point = AlacPoint::new(Line(0), Column(0));
+        let mode = TermMode::MOUSE_MOTION | TermMode::SGR_MOUSE;
+        let modifiers = encode_modifiers(false, false, true); // Ctrl = 16
+
+        let bytes = mouse_motion_report(Some(MouseButton::Right), point, modifiers, mode).unwrap();
+        let sequence = String::from_utf8(bytes).unwrap();
+        // Right = 2, + motion flag 32, + ctrl 16 = 50.
+        assert_eq!(sequence, "\x1b[<50;1;1M");
+    }
+
+    #[test]
+    fn test_mouse_motion_report_no_sgr_declines() {
+        let point = AlacPoint::new(Line(0), Column(0));
+        let mode = TermMode::MOUSE_MOTION; // no SGR_MOUSE
+
+        assert!(mouse_motion_report(None, point, 0, mode).is_none());
+    }
+
+    #[test]
+    fn test_mouse_motion_report_no_motion_mode_declines() {
+        let point = AlacPoint::new(Line(0), Column(0));
+        // Plain click mode does not include motion reporting.
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
+
+        assert!(mouse_motion_report(None, point, 0, mode).is_none());
+    }
+
+    #[test]
+    fn test_mouse_motion_report_navigate_button_declines() {
+        use gpui::NavigationDirection;
+
+        let point = AlacPoint::new(Line(0), Column(0));
+        let mode = TermMode::MOUSE_MOTION | TermMode::SGR_MOUSE;
+
+        let bytes = mouse_motion_report(
+            Some(MouseButton::Navigate(NavigationDirection::Back)),
+            point,
+            0,
+            mode,
+        );
+        assert!(bytes.is_none());
+    }
+
+    // ── mouse_reporting_active (shift-override decision) ────────────────
+
+    #[test]
+    fn test_mouse_reporting_active_click_mode() {
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
+        assert!(mouse_reporting_active(mode, false));
+    }
+
+    #[test]
+    fn test_mouse_reporting_active_shift_bypasses() {
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
+        assert!(!mouse_reporting_active(mode, true));
+    }
+
+    #[test]
+    fn test_mouse_reporting_active_no_mouse_mode() {
+        assert!(!mouse_reporting_active(TermMode::empty(), false));
+        assert!(!mouse_reporting_active(TermMode::ALT_SCREEN, false));
+    }
+
+    #[test]
+    fn test_mouse_reporting_active_any_of_the_three_modes() {
+        assert!(mouse_reporting_active(TermMode::MOUSE_REPORT_CLICK, false));
+        assert!(mouse_reporting_active(TermMode::MOUSE_DRAG, false));
+        assert!(mouse_reporting_active(TermMode::MOUSE_MOTION, false));
+    }
+
+    // ── should_report_motion (mode granularity) ──────────────────────────
+
+    #[test]
+    fn test_should_report_motion_mouse_motion_always() {
+        assert!(should_report_motion(TermMode::MOUSE_MOTION, false));
+        assert!(should_report_motion(TermMode::MOUSE_MOTION, true));
+    }
+
+    #[test]
+    fn test_should_report_motion_mouse_drag_only_while_held() {
+        assert!(should_report_motion(TermMode::MOUSE_DRAG, true));
+        assert!(!should_report_motion(TermMode::MOUSE_DRAG, false));
+    }
+
+    #[test]
+    fn test_should_report_motion_click_only_never_reports() {
+        assert!(!should_report_motion(TermMode::MOUSE_REPORT_CLICK, true));
+        assert!(!should_report_motion(TermMode::MOUSE_REPORT_CLICK, false));
     }
 }

@@ -234,7 +234,7 @@ pub(crate) fn lang_for_path(path: &std::path::Path) -> Option<&'static str> {
 ///
 /// Returns the language name that was used (or "none").
 pub(crate) fn highlight_diff_rows(
-    rows: &mut Vec<DiffRow>,
+    rows: &mut [DiffRow],
     file_path: &std::path::Path,
 ) -> &'static str {
     use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};

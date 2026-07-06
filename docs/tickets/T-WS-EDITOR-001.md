@@ -1,6 +1,6 @@
 # T-WS-EDITOR-001: WorkspaceMode 導入 + エディタワークスペース v1(read-only)
 
-- Status: review
+- Status: done (PM accepted — GUI-verified 2026-07-07)
 - Group: workspace framework / エディタモード
 - 仕様の正: ADR-0120 §Decision 3–4。枠組みは `src/ui/workspace.rs`(実装済み)。
 

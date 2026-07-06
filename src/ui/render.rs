@@ -522,6 +522,9 @@ impl Render for KagiApp {
                 // list + diff pane — navigate that, not the main commit list.
                 if this.file_history.is_some() {
                     this.step_file_history_selection(-1, cx);
+                } else if this.editor_workspace.is_some() {
+                    // T-WS-EDITOR-001 feedback: Editor mode steps its file tree.
+                    this.step_editor_ws_selection(-1, cx);
                 } else if this.main_diff.is_some() {
                     this.main_diff_step(-1, cx);
                 } else {
@@ -535,6 +538,8 @@ impl Render for KagiApp {
                 }
                 if this.file_history.is_some() {
                     this.step_file_history_selection(1, cx);
+                } else if this.editor_workspace.is_some() {
+                    this.step_editor_ws_selection(1, cx);
                 } else if this.main_diff.is_some() {
                     this.main_diff_step(1, cx);
                 } else {

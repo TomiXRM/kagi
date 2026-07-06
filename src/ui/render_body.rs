@@ -368,14 +368,21 @@ impl KagiApp {
         };
         let main_diff_for_center = main_diff;
 
-        // W5-MENU: View → Toggle Sidebar hides the navigator + its divider.
-        let sidebar_visible = self.sidebar.visible;
-        // ADR-0089: File History takes over the center+right area (sidebar stays).
-        // ADR-0117: it is now its own Entity<FileHistoryView>; clone the handle so
-        // we can embed it below (GPUI renders the entity directly).
-        let file_history = self.file_history.clone();
-        // ADR-0119: Code Ecosystem view — same full-screen center+right takeover.
-        let ecosystem = self.ecosystem.clone();
+        // ADR-0120: resolve what each slot shows. The precedence lives in
+        // `workspace::resolve_workspace` (one pure, unit-tested function), not
+        // in branch ordering here — this method only routes on the result.
+        let layout = workspace::resolve_workspace(&workspace::WorkspaceInputs {
+            sidebar_visible: self.sidebar.visible,
+            file_history_open: self.file_history.is_some(),
+            ecosystem_open: self.ecosystem.is_some(),
+            loading: self.loading_tab.is_some(),
+            diff_open: main_diff_for_center.is_some(),
+            commit_panel_open,
+            commit_panel_present: commit_panel.is_some(),
+            inspector_visible: self.inspector_visible,
+            has_detail: detail.is_some(),
+        });
+
         let mut body_row = div()
             .flex()
             .flex_row()
@@ -384,8 +391,8 @@ impl KagiApp {
             // natural content height, otherwise it pushes the bottom panel and
             // status bar out of the window on small window sizes (user report).
             .min_h(px(0.))
-            // ── Left sidebar (W5-MENU: hidden when toggled off) ──
-            .when(sidebar_visible, |el| {
+            // ── Left slot (W5-MENU: hidden when toggled off) ──
+            .when(layout.left == workspace::LeftPane::Navigator, |el| {
                 el.child(sidebar::render_sidebar(
                     sidebar_filter,
                     sidebar_width,
@@ -397,42 +404,51 @@ impl KagiApp {
                 .child(divider1)
             });
 
-        // ADR-0089 / ADR-0117: File History view (top priority) — replaces
-        // center + right. The entity renders its own center+right body; embedding
-        // `Entity<FileHistoryView>` gives it an isolated `cx.notify()` scope.
-        if let Some(fh) = file_history {
-            body_row = body_row.child(fh);
-            return body_row;
-        }
+        // ── Center slot ──────────────────────────────────
+        // Takeovers (FileHistory / Ecosystem) span center + right; the resolver
+        // already set `layout.right = Hidden` for them, so no early return is
+        // needed. In the Loading/Diff/CommitList modes the right panel stays
+        // visible so the user can click through files continuously (user
+        // request).
+        body_row = match layout.center {
+            // ADR-0089 / ADR-0117: the entity renders its own center+right body;
+            // embedding `Entity<FileHistoryView>` gives it an isolated
+            // `cx.notify()` scope.
+            workspace::CenterPane::FileHistory => match self.file_history.clone() {
+                Some(fh) => body_row.child(fh),
+                None => body_row,
+            },
+            // ADR-0119: full-screen, read-only. Wrapped in a `flex_1` +
+            // `min_w(0)` cell so the entity gets a *definite* width to fill
+            // (the body minus the sidebar). Mounted bare, the entity is a flex
+            // item with `flex-basis: auto`, so it sizes to its content — the
+            // longest hot-spot path — and its inner `flex_1` columns never get
+            // a bounded width to shrink into, pushing the numeric columns +
+            // risk bar off the right edge (user report on deep STM32 build
+            // paths).
+            workspace::CenterPane::Ecosystem => match self.ecosystem.clone() {
+                Some(eco) => body_row.child(div().flex_1().min_w(px(0.)).child(eco)),
+                None => body_row,
+            },
+            // W6-TABSPEED loading placeholder.
+            workspace::CenterPane::Loading => body_row.child(render_loading_placeholder(
+                self.loading_tab.clone().unwrap_or_default(),
+            )),
+            // Full-width diff (T-UI-003). The resolver guarantees the view is
+            // present; fall back to the commit list rather than unwrap.
+            workspace::CenterPane::Diff => match main_diff_for_center {
+                Some(diff_view) => body_row.child(render_main_diff_view(
+                    diff_view,
+                    main_diff_scroll_handle,
+                    true,
+                    cx,
+                )),
+                None => body_row.child(commit_list_col),
+            },
+            workspace::CenterPane::CommitList => body_row.child(commit_list_col),
+        };
 
-        // ADR-0119: Code Ecosystem view (full-screen, read-only). Like File
-        // History, the entity renders its own body in an isolated notify scope.
-        // Wrap it in a `flex_1` + `min_w(0)` cell so the entity gets a *definite*
-        // width to fill (the body minus the sidebar). Mounted bare, the entity
-        // is a flex item with `flex-basis: auto`, so it sizes to its content —
-        // the longest hot-spot path — and its inner `flex_1` columns never get a
-        // bounded width to shrink into, pushing the numeric columns + risk bar
-        // off the right edge (user report on deep STM32 build paths).
-        if let Some(eco) = ecosystem {
-            body_row = body_row.child(div().flex_1().min_w(px(0.)).child(eco));
-            return body_row;
-        }
-
-        body_row = body_row
-            // ── Center column: W6-TABSPEED loading placeholder, full-width
-            //    diff (T-UI-003), or the commit list.  The right panel stays
-            //    visible in BOTH non-loading modes so the user can click
-            //    through files continuously (user request).
-            .child(if let Some(loading_label) = self.loading_tab.clone() {
-                render_loading_placeholder(loading_label).into_any_element()
-            } else if let Some(diff_view) = main_diff_for_center {
-                render_main_diff_view(diff_view, main_diff_scroll_handle, true, cx)
-                    .into_any_element()
-            } else {
-                commit_list_col.into_any_element()
-            });
-
-        // ── Right panel: commit panel OR detail panel ───────────
+        // ── Right slot: commit panel OR inspector (ADR-0120) ─────
         // Build divider 2 (shared between both panel modes).
         let divider2 = div()
             .id("divider-panel")
@@ -449,60 +465,64 @@ impl KagiApp {
                 |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
             );
 
-        if commit_panel_open {
+        match layout.right {
             // ── Commit Panel mode (T025) ──────────────
-            if let Some(entity) = commit_panel.clone() {
-                // ADR-0118: push the parent-owned render inputs into the entity,
-                // then embed it as a self-rendering child (`el.child(entity)`).
-                // `active_wip` mirrors the old `cp_active_wip(this)` (derived from
-                // the open main diff); the entity may not read the parent's
-                // `main_diff` from its own render path (re-entrancy).
-                let active_wip = match &active_src {
-                    Some(MainDiffSource::Unstaged { path }) => Some((false, path.clone())),
-                    Some(MainDiffSource::Staged { path }) => Some((true, path.clone())),
-                    _ => None,
-                };
-                let smart = self.smart_commit.clone();
-                entity.update(cx, |v, _| {
-                    v.active_wip = active_wip;
-                    v.panel_render_width = panel_width;
-                    v.smart_snapshot = smart;
-                });
-                body_row = body_row.child(divider2).child(entity);
+            workspace::RightPane::CommitPanel => {
+                if let Some(entity) = commit_panel.clone() {
+                    // ADR-0118: push the parent-owned render inputs into the entity,
+                    // then embed it as a self-rendering child (`el.child(entity)`).
+                    // `active_wip` mirrors the old `cp_active_wip(this)` (derived from
+                    // the open main diff); the entity may not read the parent's
+                    // `main_diff` from its own render path (re-entrancy).
+                    let active_wip = match &active_src {
+                        Some(MainDiffSource::Unstaged { path }) => Some((false, path.clone())),
+                        Some(MainDiffSource::Staged { path }) => Some((true, path.clone())),
+                        _ => None,
+                    };
+                    let smart = self.smart_commit.clone();
+                    entity.update(cx, |v, _| {
+                        v.active_wip = active_wip;
+                        v.panel_render_width = panel_width;
+                        v.smart_snapshot = smart;
+                    });
+                    body_row = body_row.child(divider2).child(entity);
+                }
             }
-        } else if self.inspector_visible {
             // ── Commit Inspector panel (W2-INSPECTOR; W5-MENU toggle) ──
-            body_row = body_row.when_some(detail, |el, d| {
-                // ── Commit metadata + changed files ─
-                let at = CommitId(d.full_sha.as_ref().to_string());
-                let compare_for_panel = compare_view.clone();
-                let files = compare_for_panel
-                    .as_ref()
-                    .map(|view| Some(view.files.clone()))
-                    .unwrap_or_else(|| changed_files.clone().unwrap_or(None));
-                // W16-DIFFSTAT: only the commit-vs-parent view has aggregated
-                // diffstat; compare mode is out of scope for this lane.
-                let diffstat = if compare_for_panel.is_some() {
-                    None
-                } else {
-                    changed_diffstat.clone()
-                };
-                el.child(divider2).child(inspector::render_inspector(
-                    d,
-                    at,
-                    selected_badges.clone(),
-                    files,
-                    diffstat,
-                    compare_for_panel,
-                    active_commit_file,
-                    inspector_tree_view,
-                    self.inspector_split,
-                    self.inspector_geom.clone(),
-                    panel_width,
-                    &avatar_images,
-                    cx,
-                ))
-            });
+            workspace::RightPane::Inspector => {
+                body_row = body_row.when_some(detail, |el, d| {
+                    // ── Commit metadata + changed files ─
+                    let at = CommitId(d.full_sha.as_ref().to_string());
+                    let compare_for_panel = compare_view.clone();
+                    let files = compare_for_panel
+                        .as_ref()
+                        .map(|view| Some(view.files.clone()))
+                        .unwrap_or_else(|| changed_files.clone().unwrap_or(None));
+                    // W16-DIFFSTAT: only the commit-vs-parent view has aggregated
+                    // diffstat; compare mode is out of scope for this lane.
+                    let diffstat = if compare_for_panel.is_some() {
+                        None
+                    } else {
+                        changed_diffstat.clone()
+                    };
+                    el.child(divider2).child(inspector::render_inspector(
+                        d,
+                        at,
+                        selected_badges.clone(),
+                        files,
+                        diffstat,
+                        compare_for_panel,
+                        active_commit_file,
+                        inspector_tree_view,
+                        self.inspector_split,
+                        self.inspector_geom.clone(),
+                        panel_width,
+                        &avatar_images,
+                        cx,
+                    ))
+                });
+            }
+            workspace::RightPane::Hidden => {}
         }
 
         body_row

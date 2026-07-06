@@ -65,6 +65,7 @@ pub mod toast_stack;
 pub mod types;
 pub mod view_models;
 pub mod watcher;
+pub mod workspace;
 
 pub use diff_view::*;
 use i18n::Msg;

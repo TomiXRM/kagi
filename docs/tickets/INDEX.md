@@ -221,3 +221,11 @@
 | T-HOTSPOT-UIMOD-001 | src/ui/mod.rs を 4,500 LOC 未満へ分割(S6 続き、risk 0.686) | - | done |
 | T-OPS-DEDUP-001 | operations/* の execute フロー重複を測定・共通化(S5 前準備) | - | done |
 | T-LOC-GATE-001 | ファイル LOC ラチェットを CI に追加(god-file 再成長防止) | - | done |
+
+## Workspace pane framework(ADR-0120、2026-07-06)
+
+| ID | 内容 | 依存 | Status |
+|----|------|------|--------|
+| T-WS-EDITOR-001 | WorkspaceMode 導入 + エディタワークスペース v1(file tree / read-only viewer / hunk) | ADR-0120(枠組み実装済み) | todo |
+| T-WS-EDITOR-002 | エディタ編集可能化(保存・dirty・watcher 再読込) | T-WS-EDITOR-001 | todo |
+| T-WS-EDITOR-003 | full worktree tree + 磨き(遅延展開・フィルタ・ジャンプ) | T-WS-EDITOR-002 | todo |

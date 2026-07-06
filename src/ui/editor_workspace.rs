@@ -13,6 +13,11 @@
 //! v1 is read-only (T-WS-EDITOR-001 scope): no stage/discard/save affordance
 //! lives here — Git writes stay behind the existing plan→confirm→execute
 //! pipeline (invariant 4), and file *editing* is T-WS-EDITOR-002.
+//!
+//! T-WS-EDITOR-004 (user feedback round 2) adds: a `TreeSource` toggle
+//! (Changes ⇄ All files, with an auto-switch to All on a clean worktree so
+//! the workspace isn't a dead end), drag-resizable tree/hunks panes, and a
+//! header toolbar button.
 
 use gpui::WeakEntity;
 use kagi_git::ChangeKind;
@@ -28,11 +33,34 @@ use super::*;
 /// `code_editor` ~50K-line comfort zone). Shows the placeholder instead.
 const MAX_EDITOR_LINES: usize = 50_000;
 
-/// Fixed left tree-pane width. v1 has no drag-resize divider (YAGNI — add one
-/// modeled on `file_history_geom` if users ask for it).
-const TREE_PANE_W: f32 = 240.0;
-/// Fixed right hunks-pane width.
-const HUNKS_PANE_W: f32 = 380.0;
+/// Default left tree-pane width (drag-resizable via `DividerKind::EditorTree`,
+/// T-WS-EDITOR-004 — clamped to `EDITOR_TREE_MIN..EDITOR_TREE_MAX` in
+/// `render_divider.rs`).
+const TREE_PANE_DEFAULT_W: f32 = 240.0;
+/// Default right hunks-pane width (drag-resizable via `DividerKind::EditorHunks`).
+const HUNKS_PANE_DEFAULT_W: f32 = 380.0;
+
+/// What the left tree pane lists (T-WS-EDITOR-004 user feedback: "I also want
+/// to use this as a normal tree view/editor, not just Changes").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TreeSource {
+    /// Working-tree changed files only (v1 behaviour).
+    #[default]
+    Changes,
+    /// Every tracked + untracked (non-ignored) file, with changed ones still
+    /// badged (`Backend::worktree_files` merged against `working_tree_status`).
+    All,
+}
+
+/// A file entry in the workspace tree: repo-relative path + its change kind,
+/// if any. `change` is `None` for an unmodified file in `TreeSource::All` — a
+/// `FileStatus` can't represent "no change", so this shared shape lets both
+/// tree sources use the same `files`/`tree`/selection plumbing below.
+#[derive(Clone, Debug)]
+pub struct WorkspaceFile {
+    pub path: PathBuf,
+    pub change: Option<ChangeKind>,
+}
 
 /// The Editor workspace view-model + entity (ADR-0117 fat-entity template).
 pub struct EditorWorkspaceView {
@@ -43,11 +71,19 @@ pub struct EditorWorkspaceView {
     /// by `reset_per_repo_ui`, same as `FileHistoryView` / `EcosystemView`).
     pub(crate) repo_path: PathBuf,
 
-    /// Working-tree changed files (staged + unstaged + untracked, merged and
-    /// de-duplicated — see `merge_working_tree_files`).
-    pub files: Vec<FileStatus>,
-    /// Flattened tree rows built from `files` via `file_tree::build_file_tree`.
+    /// Which files `files`/`tree` are currently listing (T-WS-EDITOR-004).
+    pub source: TreeSource,
+    /// Working-tree files for the active `source`: `Changes` is staged +
+    /// unstaged + untracked (merged and de-duplicated — see
+    /// `merge_working_tree_files`); `All` is every tracked + untracked file
+    /// with changed ones still badged (see `merge_all_files`).
+    pub files: Vec<WorkspaceFile>,
+    /// Flattened tree rows built from `files` via `file_tree::build_file_tree_opt`.
     pub tree: Vec<TreeRow>,
+    /// Left tree-pane width (drag-resizable, T-WS-EDITOR-004).
+    pub tree_w: f32,
+    /// Right hunks-pane width (drag-resizable, T-WS-EDITOR-004).
+    pub hunks_w: f32,
     /// Collapsed directory rows, keyed by their index into `tree` (stable per
     /// load — `tree` is only rebuilt by `start_load`, which clears this).
     /// Children of a collapsed dir are filtered out by `visible_tree_indices`.
@@ -104,8 +140,11 @@ impl EditorWorkspaceView {
         Self {
             app,
             repo_path,
+            source: TreeSource::default(),
             files: Vec::new(),
             tree: Vec::new(),
+            tree_w: TREE_PANE_DEFAULT_W,
+            hunks_w: HUNKS_PANE_DEFAULT_W,
             collapsed: HashSet::new(),
             loading: false,
             error: None,
@@ -125,40 +164,73 @@ impl EditorWorkspaceView {
         }
     }
 
-    /// Kick off the working-tree file-list load. Marshals the result back into
-    /// *this* entity, guarded by `generation` so a superseded reload no-ops
-    /// (and a dropped entity — `close_editor_workspace` — simply no-ops too,
-    /// since `cx.spawn`'s `view` handle is weak).
+    /// Kick off the file-list load for the current `source`. Marshals the
+    /// result back into *this* entity, guarded by `generation` so a
+    /// superseded reload no-ops (and a dropped entity —
+    /// `close_editor_workspace` — simply no-ops too, since `cx.spawn`'s `view`
+    /// handle is weak). Bumping `generation` on every call also makes a
+    /// `TreeSource` switch mid-load safe: the stale load's result is dropped.
     pub fn start_load(&mut self, cx: &mut Context<Self>) {
         self.loading = true;
         self.error = None;
         self.generation = self.generation.wrapping_add(1);
         let generation = self.generation;
         let repo_path = self.repo_path.clone();
+        let source = self.source;
 
         let task = cx.background_spawn(async move {
-            kagi_git::Backend::open(&repo_path)
-                .map_err(|e| e.to_string())
-                .and_then(|b| b.working_tree_status().map_err(|e| e.to_string()))
+            let backend = kagi_git::Backend::open(&repo_path).map_err(|e| e.to_string())?;
+            let status = backend.working_tree_status().map_err(|e| e.to_string())?;
+            let changed = merge_working_tree_files(&status);
+            match source {
+                TreeSource::Changes => Ok(changed),
+                TreeSource::All => {
+                    let all_paths = backend.worktree_files().map_err(|e| e.to_string())?;
+                    Ok(merge_all_files(all_paths, &changed))
+                }
+            }
         });
 
         cx.spawn(async move |view, acx| {
-            let result = task.await;
+            let result: Result<Vec<WorkspaceFile>, String> = task.await;
             let _ = view.update(acx, |v, cx| {
                 if v.generation != generation {
                     return;
                 }
                 v.loading = false;
                 match result {
-                    Ok(status) => {
-                        let files = merge_working_tree_files(&status);
-                        v.tree = file_tree::build_file_tree(&files);
+                    Ok(files) => {
+                        let prev_selected_path = v
+                            .selected
+                            .and_then(|i| v.files.get(i))
+                            .map(|f| f.path.clone());
+                        v.tree = build_workspace_tree(&files);
                         // Collapse indices key into the OLD tree — reset.
                         v.collapsed.clear();
                         klog!("editor-ws: files {}", files.len());
+                        let was_empty = files.is_empty();
                         v.files = files;
-                        if !v.files.is_empty() {
-                            v.select(0, cx);
+
+                        // T-WS-EDITOR-004 user feedback #1: a clean worktree
+                        // has nothing to show in Changes mode on the initial
+                        // open — auto-switch to All so the workspace isn't a
+                        // dead end. Gated to `generation == 1` (the very first
+                        // load) so manually toggling back to Changes later
+                        // doesn't bounce right back to All.
+                        if generation == 1 && v.source == TreeSource::Changes && was_empty {
+                            cx.notify();
+                            v.switch_source(TreeSource::All, cx);
+                            return;
+                        }
+
+                        // Keep the selection if the file is still listed
+                        // (source toggle / reload); else select the first
+                        // file, or clear selection if the list is empty.
+                        let restore = prev_selected_path
+                            .and_then(|p| v.files.iter().position(|f| f.path == p));
+                        match restore.or(if v.files.is_empty() { None } else { Some(0) }) {
+                            Some(i) => v.select(i, cx),
+                            None => v.selected = None,
                         }
                     }
                     Err(e) => v.error = Some(e),
@@ -167,6 +239,30 @@ impl EditorWorkspaceView {
             });
         })
         .detach();
+    }
+
+    /// Switch the tree source and reload (T-WS-EDITOR-004: the Changes/All
+    /// chips, and the clean-worktree auto-switch in `start_load`). No-ops if
+    /// already on `source`.
+    pub fn set_source(&mut self, source: TreeSource, cx: &mut Context<Self>) {
+        if self.source == source {
+            return;
+        }
+        self.switch_source(source, cx);
+    }
+
+    /// Shared by the manual toggle and the auto-switch: set `source`, emit
+    /// the contract log line, and reload.
+    fn switch_source(&mut self, source: TreeSource, cx: &mut Context<Self>) {
+        self.source = source;
+        klog!(
+            "editor-ws: source {}",
+            match source {
+                TreeSource::Changes => "changes",
+                TreeSource::All => "all",
+            }
+        );
+        self.start_load(cx);
     }
 
     /// Select a tree row's file (index into `files`) and kick off its
@@ -368,28 +464,60 @@ fn visible_tree_indices(tree: &[TreeRow], collapsed: &HashSet<usize>) -> Vec<usi
 }
 
 /// Merge working-tree `staged` + `unstaged` + `untracked` into one
-/// de-duplicated `Vec<FileStatus>` for the tree (T-WS-EDITOR-001 v1 data
-/// source — conflicted files are left to the dedicated Conflict Mode UI, out
-/// of scope here). Unstaged wins over staged for a path present in both (it's
-/// the more "current" working-tree state); untracked files are synthesized as
-/// `Added`.
-fn merge_working_tree_files(status: &kagi_git::WorkingTreeStatus) -> Vec<FileStatus> {
-    let mut files: Vec<FileStatus> = Vec::new();
-    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+/// de-duplicated `Vec<WorkspaceFile>` for the tree (`TreeSource::Changes` —
+/// conflicted files are left to the dedicated Conflict Mode UI, out of scope
+/// here). Unstaged wins over staged for a path present in both (it's the more
+/// "current" working-tree state); untracked files are synthesized as `Added`.
+fn merge_working_tree_files(status: &kagi_git::WorkingTreeStatus) -> Vec<WorkspaceFile> {
+    let mut files: Vec<WorkspaceFile> = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
     for f in status.unstaged.iter().chain(status.staged.iter()) {
         if seen.insert(f.path.clone()) {
-            files.push(f.clone());
+            files.push(WorkspaceFile {
+                path: f.path.clone(),
+                change: Some(f.change.clone()),
+            });
         }
     }
     for p in &status.untracked {
         if seen.insert(p.clone()) {
-            files.push(FileStatus {
+            files.push(WorkspaceFile {
                 path: p.clone(),
-                change: ChangeKind::Added,
+                change: Some(ChangeKind::Added),
             });
         }
     }
     files
+}
+
+/// Merge the full tracked+untracked path list (`Backend::worktree_files`)
+/// with the working-tree change kinds (by path) for `TreeSource::All` — an
+/// unmodified file simply gets `change: None` (no badge), while a changed one
+/// keeps its real `ChangeKind` so the badge still shows (T-WS-EDITOR-004
+/// scope item 3).
+fn merge_all_files(all_paths: Vec<PathBuf>, changed: &[WorkspaceFile]) -> Vec<WorkspaceFile> {
+    let changes: HashMap<&Path, ChangeKind> = changed
+        .iter()
+        .filter_map(|f| f.change.clone().map(|c| (f.path.as_path(), c)))
+        .collect();
+    all_paths
+        .into_iter()
+        .map(|path| {
+            let change = changes.get(path.as_path()).cloned();
+            WorkspaceFile { path, change }
+        })
+        .collect()
+}
+
+/// Build the tree rows for `files`, sharing `file_tree`'s compression
+/// algorithm via `build_file_tree_opt` (no duplicated tree logic between the
+/// `Changes`/`All` sources — see `file_tree.rs`).
+fn build_workspace_tree(files: &[WorkspaceFile]) -> Vec<TreeRow> {
+    let pairs: Vec<(PathBuf, Option<ChangeKind>)> = files
+        .iter()
+        .map(|f| (f.path.clone(), f.change.clone()))
+        .collect();
+    file_tree::build_file_tree_opt(&pairs)
 }
 
 /// Build the right pane's `MainDiffView` from a raw `FileDiff`, reusing the
@@ -524,13 +652,38 @@ fn render_editor_workspace(
                 .children(selected_path),
         );
 
-    let divider = || {
-        div()
-            .w(theme::scaled_px(4.))
-            .flex_shrink_0()
-            .h_full()
-            .bg(rgb(theme().surface))
-    };
+    // T-WS-EDITOR-004: drag-resizable, same shape as `divider1` in
+    // `render_body.rs` — hover highlight + col-resize cursor + a
+    // `DividerGhost` drag payload; `handle_divider_drag` (render_divider.rs)
+    // does the actual width math per `DividerKind`.
+    let tree_divider = div()
+        .id("ews-divider-tree")
+        .w(theme::scaled_px(4.))
+        .flex_shrink_0()
+        .h_full()
+        .bg(rgb(theme().surface))
+        .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+        .cursor_col_resize()
+        .on_drag(
+            DividerDrag {
+                kind: DividerKind::EditorTree,
+            },
+            |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
+        );
+    let hunks_divider = div()
+        .id("ews-divider-hunks")
+        .w(theme::scaled_px(4.))
+        .flex_shrink_0()
+        .h_full()
+        .bg(rgb(theme().surface))
+        .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+        .cursor_col_resize()
+        .on_drag(
+            DividerDrag {
+                kind: DividerKind::EditorHunks,
+            },
+            |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
+        );
 
     let body = div()
         .flex()
@@ -538,9 +691,9 @@ fn render_editor_workspace(
         .flex_1()
         .min_h(px(0.))
         .child(render_tree_pane(view, cx))
-        .child(divider())
+        .child(tree_divider)
         .child(render_center_pane(view, cx))
-        .child(divider())
+        .child(hunks_divider)
         .child(render_hunks_pane(view, cx));
 
     div()
@@ -556,18 +709,89 @@ fn render_editor_workspace(
         .into_any_element()
 }
 
-/// Left pane: the virtualized, clickable working-tree file tree.
+/// One "Changes"/"All" tab in the tree-source chip row (T-WS-EDITOR-004).
+fn render_source_chip(
+    id: &'static str,
+    label: &'static str,
+    active: bool,
+    source: TreeSource,
+    cx: &mut Context<EditorWorkspaceView>,
+) -> gpui::AnyElement {
+    let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+        this.set_source(source, cx);
+    });
+    div()
+        .id(id)
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .py_px()
+        .rounded_sm()
+        .cursor_pointer()
+        .text_xs()
+        .text_color(rgb(if active {
+            theme().text_main
+        } else {
+            theme().text_muted
+        }))
+        .bg(rgb(if active {
+            theme().selected
+        } else {
+            theme().panel
+        }))
+        .when(!active, |el| el.hover(|s| s.bg(rgb(theme().surface))))
+        .on_click(click)
+        .child(SharedString::from(label))
+        .into_any_element()
+}
+
+/// The Changes/All tree-source toggle row, pinned above the tree list
+/// (T-WS-EDITOR-004 user feedback #1).
+fn render_source_chips(
+    view: &EditorWorkspaceView,
+    cx: &mut Context<EditorWorkspaceView>,
+) -> gpui::AnyElement {
+    div()
+        .id("ews-source-chips")
+        .flex()
+        .flex_row()
+        .flex_shrink_0()
+        .gap_1()
+        .px_2()
+        .py_1()
+        .bg(rgb(theme().panel))
+        .child(render_source_chip(
+            "ews-source-changes",
+            Msg::EditorWorkspaceSourceChanges.t(),
+            view.source == TreeSource::Changes,
+            TreeSource::Changes,
+            cx,
+        ))
+        .child(render_source_chip(
+            "ews-source-all",
+            Msg::EditorWorkspaceSourceAll.t(),
+            view.source == TreeSource::All,
+            TreeSource::All,
+            cx,
+        ))
+        .into_any_element()
+}
+
+/// Left pane: the Changes/All source chips + the virtualized, clickable
+/// working-tree file tree.
 fn render_tree_pane(
     view: &EditorWorkspaceView,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     let mut pane = div()
-        .w(theme::scaled_px(TREE_PANE_W))
+        .w(theme::scaled_px(view.tree_w))
         .flex_shrink_0()
         .h_full()
         .flex()
         .flex_col()
-        .bg(rgb(theme().panel));
+        .bg(rgb(theme().panel))
+        .child(render_source_chips(view, cx));
 
     if view.loading {
         return pane
@@ -668,7 +892,7 @@ fn render_tree_row(
             change,
         } => {
             let indent = (depth as f32) * 12.0;
-            let (badge, badge_color, _) = commit_panel::status_badge(&change, false);
+            let (badge, badge_color, _) = commit_panel::status_badge(change.as_ref(), false);
             let is_selected = view.selected == Some(file_index);
             let row_bg = if is_selected {
                 theme().selected
@@ -784,7 +1008,7 @@ fn render_hunks_pane(
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     let mut pane = div()
-        .w(theme::scaled_px(HUNKS_PANE_W))
+        .w(theme::scaled_px(view.hunks_w))
         .flex_shrink_0()
         .h_full()
         .flex()
@@ -839,7 +1063,7 @@ mod tests {
             depth,
             name: SharedString::from(name.to_string()),
             file_index,
-            change: ChangeKind::Modified,
+            change: Some(ChangeKind::Modified),
         }
     }
 
@@ -880,5 +1104,60 @@ mod tests {
         // src collapsed AND the hidden ui collapsed — same as src alone.
         let collapsed: HashSet<usize> = [0, 2].into_iter().collect();
         assert_eq!(visible_tree_indices(&tree, &collapsed), vec![0, 4]);
+    }
+
+    // ── T-WS-EDITOR-004: TreeSource::All merge logic ───────────────────────
+
+    #[test]
+    fn merge_all_files_badges_changed_and_blanks_unmodified() {
+        let changed = vec![WorkspaceFile {
+            path: PathBuf::from("src/a.rs"),
+            change: Some(ChangeKind::Modified),
+        }];
+        let all = vec![PathBuf::from("src/a.rs"), PathBuf::from("src/b.rs")];
+
+        let merged = merge_all_files(all, &changed);
+
+        assert_eq!(merged.len(), 2);
+        let a = merged
+            .iter()
+            .find(|f| f.path == Path::new("src/a.rs"))
+            .unwrap();
+        assert_eq!(a.change, Some(ChangeKind::Modified));
+        let b = merged
+            .iter()
+            .find(|f| f.path == Path::new("src/b.rs"))
+            .unwrap();
+        assert_eq!(b.change, None);
+    }
+
+    #[test]
+    fn merge_all_files_empty_changed_list_blanks_everything() {
+        let all = vec![PathBuf::from("only.txt")];
+        let merged = merge_all_files(all, &[]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].change, None);
+    }
+
+    #[test]
+    fn build_workspace_tree_shares_compression_with_option_changes() {
+        // Mirrors file_tree's own single-child-compression test, but through
+        // the WorkspaceFile/Option<ChangeKind> path — confirms build_workspace_tree
+        // delegates to the same DirNode algorithm rather than a duplicate.
+        let files = vec![
+            WorkspaceFile {
+                path: PathBuf::from("a/b/c.rs"),
+                change: None,
+            },
+            WorkspaceFile {
+                path: PathBuf::from("top.txt"),
+                change: Some(ChangeKind::Added),
+            },
+        ];
+        let rows = build_workspace_tree(&files);
+        assert_eq!(rows.len(), 3); // Dir("a/b") + File(c.rs) + File(top.txt)
+        assert!(rows
+            .iter()
+            .any(|r| matches!(r, TreeRow::Dir { name, .. } if name.as_ref() == "a/b")));
     }
 }

@@ -166,7 +166,7 @@ pub fn render_inspector(
                         change,
                     } => {
                         let indent = (*depth as f32) * 12.0;
-                        let (badge_char, badge_color) = change_badge(change);
+                        let (badge_char, badge_color) = change_badge(change.as_ref());
                         let fi = *file_index;
                         let stat =
                             stat_for_index(truncated_files.as_ref(), changed_diffstat.as_ref(), fi);
@@ -227,7 +227,7 @@ pub fn render_inspector(
                 .iter()
                 .enumerate()
                 .map(|(fi, fs)| {
-                    let (badge_char, badge_color) = change_badge(&fs.change);
+                    let (badge_char, badge_color) = change_badge(Some(&fs.change));
                     let path_text = SharedString::from(fs.path.to_string_lossy().into_owned());
                     let stat = changed_diffstat
                         .as_ref()
@@ -956,14 +956,16 @@ fn stat_for_index<'a>(
     find_stat(stats?, &fs.path)
 }
 
-/// Change-kind badge char and colour.
-fn change_badge(change: &ChangeKind) -> (&'static str, u32) {
+/// Change-kind badge char and colour. `None` (T-WS-EDITOR-004: an unmodified
+/// file in the Editor Workspace's `TreeSource::All`) renders a blank badge.
+fn change_badge(change: Option<&ChangeKind>) -> (&'static str, u32) {
     match change {
-        ChangeKind::Added => ("A", theme().change_added),
-        ChangeKind::Modified => ("M", theme().change_modified),
-        ChangeKind::Deleted => ("D", theme().change_deleted),
-        ChangeKind::Renamed { .. } => ("R", theme().change_renamed),
-        ChangeKind::TypeChange => ("T", theme().change_typechange),
+        Some(ChangeKind::Added) => ("A", theme().change_added),
+        Some(ChangeKind::Modified) => ("M", theme().change_modified),
+        Some(ChangeKind::Deleted) => ("D", theme().change_deleted),
+        Some(ChangeKind::Renamed { .. }) => ("R", theme().change_renamed),
+        Some(ChangeKind::TypeChange) => ("T", theme().change_typechange),
+        None => ("", theme().text_muted),
     }
 }
 

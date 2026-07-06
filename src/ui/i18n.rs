@@ -478,6 +478,10 @@ pub enum Msg {
     EditorWorkspaceTooLarge,
     /// Right pane placeholder when the selected file has no WIP diff to show.
     EditorWorkspaceNoDiff,
+    /// Tree-source chip: changed files only (T-WS-EDITOR-004).
+    EditorWorkspaceSourceChanges,
+    /// Tree-source chip: every tracked + untracked file (T-WS-EDITOR-004).
+    EditorWorkspaceSourceAll,
 }
 
 impl Msg {
@@ -994,6 +998,10 @@ impl Msg {
             (Ja, EditorWorkspaceTooLarge) => "ファイルが大きすぎるためプレビューできません(5万行超)。",
             (En, EditorWorkspaceNoDiff) => "No changes to show for this file.",
             (Ja, EditorWorkspaceNoDiff) => "このファイルに表示する変更はありません。",
+            (En, EditorWorkspaceSourceChanges) => "Changes",
+            (Ja, EditorWorkspaceSourceChanges) => "変更",
+            (En, EditorWorkspaceSourceAll) => "All",
+            (Ja, EditorWorkspaceSourceAll) => "すべて",
         }
     }
 }

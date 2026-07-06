@@ -206,6 +206,12 @@ const PANEL_MAX: f32 = 800.0;
 // Default widths (matching the pre-T023 hard-coded values).
 const PANEL_DEFAULT: f32 = 360.0;
 
+// T-WS-EDITOR-004: Editor Workspace tree / hunks pane drag-resize limits.
+const EDITOR_TREE_MIN: f32 = 160.0;
+const EDITOR_TREE_MAX: f32 = 480.0;
+const EDITOR_HUNKS_MIN: f32 = 240.0;
+const EDITOR_HUNKS_MAX: f32 = 700.0;
+
 // T-BP-004: Operation Log initial load count from disk.
 // (Ring-buffer cap moved to oplog_panel::OP_ENTRIES_MAX, ADR-0111.)
 const OP_ENTRIES_LOAD: usize = 100;

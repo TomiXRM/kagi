@@ -46,7 +46,7 @@ pub(crate) fn render_unstaged_flat_row(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| f.path.to_string_lossy().into_owned());
     let is_conflicted_file = panel.is_conflicted(&f.path);
-    let (badge, badge_color, _) = status_badge(&f.change, is_conflicted_file);
+    let (badge, badge_color, _) = status_badge(Some(&f.change), is_conflicted_file);
     let is_sel = selected_file == Some(CommitPanelFileRef::Unstaged { index: fi });
     let stat = panel.unstaged_stat(&f.path).cloned();
     let wip_hit = active_wip
@@ -177,7 +177,7 @@ pub(crate) fn render_unstaged_tree_row(
                 .as_ref()
                 .map(|p| panel.is_conflicted(p))
                 .unwrap_or(false);
-            let (badge, badge_color, _) = status_badge(&change, is_conflicted_file);
+            let (badge, badge_color, _) = status_badge(change.as_ref(), is_conflicted_file);
             let is_sel = selected_file == Some(CommitPanelFileRef::Unstaged { index: fi });
             let stat = path.as_ref().and_then(|p| panel.unstaged_stat(p)).cloned();
             let wip_hit = active_wip
@@ -282,7 +282,7 @@ pub(crate) fn render_staged_flat_row(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| f.path.to_string_lossy().into_owned());
-    let (badge, badge_color, _conflicted) = status_badge(&f.change, false);
+    let (badge, badge_color, _conflicted) = status_badge(Some(&f.change), false);
     let is_sel = selected_file == Some(CommitPanelFileRef::Staged { index: fi });
     let stat = panel.staged_stat(&f.path).cloned();
     let wip_hit = active_wip
@@ -380,7 +380,7 @@ pub(crate) fn render_staged_tree_row(
         } => {
             let indent = (depth as f32) * 12.0;
             let fi = file_index;
-            let (badge, badge_color, _conflicted) = status_badge(&change, false);
+            let (badge, badge_color, _conflicted) = status_badge(change.as_ref(), false);
             let is_sel = selected_file == Some(CommitPanelFileRef::Staged { index: fi });
             let path = panel.staged.get(fi).map(|f| f.path.clone());
             let stat = path.as_ref().and_then(|p| panel.staged_stat(p)).cloned();

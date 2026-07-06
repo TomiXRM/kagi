@@ -112,8 +112,18 @@ pub struct EditorWorkspaceView {
     /// keeps the entity robust against a future refresh action).
     generation: u64,
 
-    /// Index into `files` of the selected row, if any.
+    /// Index into `files` of the highlighted tree row, if any. Purely a tree
+    /// highlight — the open buffer is identified by `open_path`
+    /// (T-WS-EDITOR-002 spec change: the tree source is a view filter, so
+    /// the open file may legitimately be absent from `files`, e.g. a clean
+    /// open file after switching All → Changes; then `selected` is `None`
+    /// while the buffer stays open).
     pub selected: Option<usize>,
+    /// Repo-relative path of the file the buffer holds (set by `select`).
+    /// The header path, the content/diff loader, and save all key off this —
+    /// NOT off `selected` — so a tree-source switch can rebuild the list
+    /// without touching the open buffer.
+    pub open_path: Option<PathBuf>,
     /// `true` while the selected file's content + diff load is in flight.
     pub file_loading: bool,
     /// The selected file's raw text, once loaded. `None` while loading, on a
@@ -211,6 +221,7 @@ impl EditorWorkspaceView {
             error: None,
             generation: 0,
             selected: None,
+            open_path: None,
             file_loading: false,
             content: None,
             content_lang: "text",
@@ -267,10 +278,6 @@ impl EditorWorkspaceView {
                 v.loading = false;
                 match result {
                     Ok(files) => {
-                        let prev_selected_path = v
-                            .selected
-                            .and_then(|i| v.files.get(i))
-                            .map(|f| f.path.clone());
                         v.tree = build_workspace_tree(&files);
                         // Collapse indices key into the OLD tree — reset to
                         // the source's default: Changes opens fully expanded
@@ -296,35 +303,24 @@ impl EditorWorkspaceView {
                             return;
                         }
 
-                        // Keep the selection if the file is still listed
-                        // (source toggle / reload); else select the first
-                        // file, or clear selection if the list is empty.
-                        let restore = prev_selected_path
-                            .and_then(|p| v.files.iter().position(|f| f.path == p));
-                        // T-WS-EDITOR-002 §4: a watcher-driven reload
-                        // (`on_worktree_changed`) must NOT clobber a dirty
-                        // buffer — `select` unconditionally resets
-                        // `content`/`diff`/`dirty`. The save path clears
-                        // `dirty` itself before calling `start_load`, so this
-                        // only applies to a genuinely unsaved external-change
-                        // race.
-                        match restore.or(if v.files.is_empty() { None } else { Some(0) }) {
-                            Some(i) if preserve_dirty_selection(v.dirty, restore, i) => {
-                                // Same dirty file, possibly renumbered by the
-                                // reload — keep the tree highlight / dirty
-                                // dot on the right row without touching the
-                                // buffer.
-                                v.selected = Some(i);
-                            }
-                            Some(_) if v.dirty => {
-                                // The dirty file fell out of the fresh list
-                                // (e.g. its status changed) — never silently
-                                // discard the edit; leave the stale
-                                // selection/content as-is.
-                            }
-                            Some(i) => v.select(i, cx),
-                            None if v.dirty => {}
-                            None => v.selected = None,
+                        // T-WS-EDITOR-002 spec change (user): a tree reload
+                        // (source switch / watcher / post-save) is a VIEW
+                        // update — it must never touch the open buffer.
+                        // With a buffer open, only remap the highlight to
+                        // the open file's new row (or clear it if the file
+                        // isn't listed — the buffer stays open, identified
+                        // by the header path). `select` (which reloads
+                        // content and resets `dirty`) runs only on the very
+                        // first load, when nothing is open yet.
+                        let restore = v
+                            .open_path
+                            .as_ref()
+                            .and_then(|p| v.files.iter().position(|f| &f.path == p));
+                        let (sel, load) =
+                            restore_selection(v.open_path.is_some(), restore, v.files.len());
+                        match (sel, load) {
+                            (Some(i), true) => v.select(i, cx),
+                            (sel, _) => v.selected = sel,
                         }
                     }
                     Err(e) => v.error = Some(e),
@@ -335,9 +331,9 @@ impl EditorWorkspaceView {
         .detach();
     }
 
-    /// Shared by `request_switch_source` (T-WS-EDITOR-002 dirty-guarded chip
-    /// click) and the clean-worktree auto-switch in `start_load`: set
-    /// `source`, emit the contract log line, and reload.
+    /// Shared by `set_source` (the manual chip toggle) and the
+    /// clean-worktree auto-switch in `start_load`: set `source`, emit the
+    /// contract log line, and reload.
     fn switch_source(&mut self, source: TreeSource, cx: &mut Context<Self>) {
         self.source = source;
         klog!(
@@ -350,24 +346,25 @@ impl EditorWorkspaceView {
         self.start_load(cx);
     }
 
-    /// Select a tree row's file (index into `files`) and kick off its
-    /// content + diff load.
+    /// Select a tree row's file (index into `files`): make it the open
+    /// buffer (`open_path`) and kick off its content + diff load.
     pub fn select(&mut self, file_index: usize, cx: &mut Context<Self>) {
         let Some(file) = self.files.get(file_index) else {
             return;
         };
         self.selected = Some(file_index);
+        self.open_path = Some(file.path.clone());
         self.content = None;
         self.content_binary = false;
         self.content_too_large = false;
         self.content_missing = false;
         self.content_undecodable = false;
         self.diff = None;
-        // T-WS-EDITOR-002: navigating away always drops the old buffer's
-        // dirty/external-changed state — callers that must NOT silently
-        // discard an edit (tree click, ↑/↓ step, source switch) go through
-        // `request_select` / `step_selection` / `request_switch_source`,
-        // which gate this call behind the unsaved-changes modal first.
+        // T-WS-EDITOR-002: opening a different file always drops the old
+        // buffer's dirty/external-changed state — callers that must NOT
+        // silently discard an edit (tree click, ↑/↓ step) go through
+        // `request_select` / `step_selection`, which gate this call behind
+        // the unsaved-changes modal first.
         self.dirty = false;
         self.external_changed = false;
         klog!("editor-ws: file {}", file.path.display());
@@ -387,17 +384,13 @@ impl EditorWorkspaceView {
         self.select(file_index, cx);
     }
 
-    /// Chip-click entry point for switching the tree source (T-WS-EDITOR-002
-    /// §5): guards a dirty buffer the same way as `request_select`. The
-    /// clean-worktree auto-switch in `start_load` calls `switch_source`
-    /// directly — at that point nothing has loaded yet, so there is nothing
-    /// to guard.
-    pub fn request_switch_source(&mut self, source: TreeSource, cx: &mut Context<Self>) {
+    /// Chip-click entry point for switching the tree source. T-WS-EDITOR-002
+    /// spec change (user): this is a VIEW filter, not a navigation — it never
+    /// touches the open buffer and never opens the dirty guard. `start_load`'s
+    /// marshal-back re-highlights the open file if listed, or just clears the
+    /// highlight (buffer stays open, header path still identifies it).
+    pub fn set_source(&mut self, source: TreeSource, cx: &mut Context<Self>) {
         if self.source == source {
-            return;
-        }
-        if self.dirty {
-            self.open_dirty_guard(EditorPendingIntent::SwitchSource(source), cx);
             return;
         }
         self.switch_source(source, cx);
@@ -431,19 +424,22 @@ impl EditorWorkspaceView {
     /// `BINARY_PROBE_BYTES` of the raw bytes, and the line count is computed
     /// here in the background task — the marshal-back below only assigns.
     fn load_selected(&mut self, cx: &mut Context<Self>) {
-        let Some(idx) = self.selected else { return };
-        let Some(file) = self.files.get(idx) else {
+        // Keyed off `open_path`, not the tree highlight (T-WS-EDITOR-002 spec
+        // change) — the open file may not be listed in the current source.
+        let Some(path) = self.open_path.clone() else {
             return;
         };
-        let path = file.path.clone();
         // T-WS-EDITOR-005 finding #6: a file git already reports as deleted
         // always gets the "deleted" placeholder, even if a stale read somehow
         // still succeeds (e.g. a race with the working tree).
-        let deleted = matches!(file.change, Some(ChangeKind::Deleted));
+        let deleted = self
+            .files
+            .iter()
+            .find(|f| f.path == path)
+            .is_some_and(|f| matches!(f.change, Some(ChangeKind::Deleted)));
         self.file_loading = true;
         self.file_req = self.file_req.wrapping_add(1);
         let file_req = self.file_req;
-        let generation = self.generation;
         let repo_path = self.repo_path.clone();
         let bg_path = path.clone();
 
@@ -497,7 +493,13 @@ impl EditorWorkspaceView {
         cx.spawn(async move |view, acx| {
             let (text, is_binary, missing, undecodable, too_large, file_diff) = task.await;
             let _ = view.update(acx, |v, cx| {
-                if v.file_req != file_req || v.generation != generation {
+                // `file_req` alone guards staleness — the buffer is decoupled
+                // from the tree generation (T-WS-EDITOR-002 spec change: a
+                // source switch mid-load must not discard the content read).
+                // The `dirty` check closes a race: if the user typed while a
+                // watcher-driven clean re-read was in flight, dropping the
+                // result is the only option that doesn't clobber the edit.
+                if v.file_req != file_req || v.dirty {
                     return;
                 }
                 v.file_loading = false;
@@ -701,33 +703,43 @@ impl EditorWorkspaceView {
         if !self.dirty {
             return;
         }
-        let Some(idx) = self.selected else { return };
-        let Some(file) = self.files.get(idx) else {
+        // Keyed off `open_path`, not the tree highlight — the open file may
+        // not be listed in the current source (T-WS-EDITOR-002 spec change).
+        let Some(path) = self.open_path.clone() else {
             return;
         };
         let Some(editor) = self.editor.clone() else {
             return;
         };
-        let path = file.path.clone();
         let full_path = editor_save_path(&self.repo_path, &path);
         let text = editor.read(cx).value().to_string();
 
         let task = cx.background_spawn(async move {
-            std::fs::write(&full_path, text.as_bytes()).map_err(|e| e.to_string())
+            std::fs::write(&full_path, text.as_bytes())
+                .map(|()| text)
+                .map_err(|e| e.to_string())
         });
         cx.spawn(async move |view, acx| {
             let result = task.await;
             let _ = view.update(acx, |v, cx| match result {
-                Ok(()) => {
+                Ok(text) => {
                     klog!("editor-ws: saved {}", path.display());
                     v.dirty = false;
                     v.external_changed = false;
-                    // Simplest correct refresh (ADR-0120 / ticket): re-run
-                    // the existing file-list load, which restores the
-                    // selection and — via `select`'s cascade into
-                    // `load_selected` — reloads this file's content + diff
-                    // too. Both loaders are generation-guarded already.
+                    // Adopt the saved text as the buffer's snapshot NOW —
+                    // and mark it as already pushed (the editor holds this
+                    // exact text), so the disk re-read below computes the
+                    // same sig and never `set_value`s (which would reset
+                    // the cursor/scroll on every save).
+                    let sig = conflict_content_sig(&path, &text, false);
+                    v.content = Some(text);
+                    v.content_sig = sig;
+                    v.pushed_sig = sig;
+                    // Refresh the tree badges and the right-pane diff
+                    // (T-WS-EDITOR-002 spec change: the tree reload is
+                    // highlight-only, so the diff refresh runs explicitly).
                     v.start_load(cx);
+                    v.load_selected(cx);
                     cx.notify();
                 }
                 Err(e) => {
@@ -753,24 +765,32 @@ impl EditorWorkspaceView {
     /// `KagiApp::refresh_working_tree_external` on every debounced
     /// `WatchEvent::WorkTree`. Always refreshes the tree/badges (also covers
     /// the tree-side of a just-completed save); additionally re-reads the
-    /// selected file's content when the buffer is clean, or raises the
-    /// "changed on disk" banner when it's dirty (never clobbers an edit).
+    /// open file's content when the buffer is clean (the tree reload itself
+    /// is highlight-only per the spec change), or raises the "changed on
+    /// disk" banner when it's dirty (never clobbers an edit).
     pub fn on_worktree_changed(&mut self, cx: &mut Context<Self>) {
+        self.start_load(cx);
         if self.dirty {
             self.external_changed = true;
+        } else {
+            // Clean buffer: re-read content + diff. The content-sig guard in
+            // `sync_editor` makes an unchanged re-read a no-op push, so the
+            // cursor/scroll survive routine watcher ticks.
+            self.load_selected(cx);
         }
-        self.start_load(cx);
         cx.notify();
     }
 
-    /// The dirty-changed banner's Reload button: discard the buffer and
-    /// re-read the selected file from disk.
+    /// Discard the buffer and re-read the open file from disk (the confirmed
+    /// outcome of the external-change banner's Reload button — the button
+    /// itself opens the dirty guard first, T-WS-EDITOR-002 §5 spec change).
     pub fn reload_from_disk(&mut self, cx: &mut Context<Self>) {
         self.dirty = false;
         self.external_changed = false;
-        if let Some(idx) = self.selected {
-            self.select(idx, cx);
-        }
+        // Force the editor push even when the disk text hashes back to the
+        // pre-edit snapshot (the user's edit is being discarded either way).
+        self.pushed_sig = 0;
+        self.load_selected(cx);
         cx.notify();
     }
 }
@@ -791,14 +811,28 @@ fn should_guard_navigation(dirty: bool, selected: Option<usize>, target: usize) 
     dirty && selected != Some(target)
 }
 
-/// T-WS-EDITOR-002 §4: whether `start_load`'s restore-selection step must
-/// preserve a dirty buffer's selection index (`candidate`) WITHOUT calling
-/// `select` (which would clobber `content`/`diff`/`dirty`) — true only when
-/// the buffer is dirty AND `restore` found the SAME file (by path) at
-/// `candidate`. Pure — extracted so the "don't clobber an unsaved edit"
-/// decision is unit-testable without a `Context`.
-fn preserve_dirty_selection(dirty: bool, restore: Option<usize>, candidate: usize) -> bool {
-    dirty && restore == Some(candidate)
+/// T-WS-EDITOR-002 spec change (user): the tree listing is a view filter,
+/// decoupled from the open buffer. Decide what `start_load`'s marshal-back
+/// does with the selection: returns `(new_selected, should_load)`.
+///
+/// - With an open buffer: highlight-only — remap to the open file's new row
+///   (`restore`), or clear the highlight when the file isn't listed. NEVER
+///   load (the buffer — dirty or clean — survives any tree rebuild).
+/// - With no buffer yet (initial load): select + load the first file.
+///
+/// Pure — unit-tested below ("open buffer survives source switch").
+fn restore_selection(
+    has_open_buffer: bool,
+    restore: Option<usize>,
+    file_count: usize,
+) -> (Option<usize>, bool) {
+    if has_open_buffer {
+        (restore, false)
+    } else if file_count > 0 {
+        (restore.or(Some(0)), true)
+    } else {
+        (None, false)
+    }
 }
 
 /// Every directory row's index into `tree` — the "fully collapsed" set used
@@ -1000,9 +1034,9 @@ impl super::KagiApp {
     }
 
     /// Enter / Discard on the unsaved-changes modal: drop the confirmation
-    /// and run the pending action. The entity's `select`/`switch_source`
-    /// reset `dirty` as part of navigating away, so no separate "discard"
-    /// step is needed here.
+    /// and run the pending action. The entity's `select`/`reload_from_disk`
+    /// reset `dirty` as part of navigating/reloading, so no separate
+    /// "discard" step is needed here.
     pub fn confirm_editor_dirty_guard(&mut self, cx: &mut Context<Self>) {
         let Some(modal) = self.editor_dirty_guard_modal().cloned() else {
             return;
@@ -1014,9 +1048,9 @@ impl super::KagiApp {
                     ev.update(cx, |v, cx| v.select(idx, cx));
                 }
             }
-            EditorPendingIntent::SwitchSource(source) => {
+            EditorPendingIntent::Reload => {
                 if let Some(ev) = self.editor_workspace.clone() {
-                    ev.update(cx, |v, cx| v.switch_source(source, cx));
+                    ev.update(cx, |v, cx| v.reload_from_disk(cx));
                 }
             }
             EditorPendingIntent::Close => {
@@ -1039,9 +1073,12 @@ fn render_editor_workspace(
     view: &EditorWorkspaceView,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
-    // T-WS-EDITOR-002 §2: "● " prefix while the open buffer has unsaved edits.
-    let selected_path = view.selected.and_then(|i| view.files.get(i)).map(|f| {
-        let path = f.path.to_string_lossy();
+    // T-WS-EDITOR-002 §2: "● " prefix while the open buffer has unsaved
+    // edits. Keyed off `open_path` (not the tree highlight) — after a source
+    // switch the open file may not be listed, and the header is then the
+    // only thing identifying the buffer (spec change).
+    let selected_path = view.open_path.as_ref().map(|p| {
+        let path = p.to_string_lossy();
         if view.dirty {
             SharedString::from(format!("\u{25cf} {}", path))
         } else {
@@ -1162,7 +1199,7 @@ fn render_source_chip(
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        this.request_switch_source(source, cx);
+        this.set_source(source, cx);
     });
     div()
         .id(id)
@@ -1469,9 +1506,11 @@ fn render_center_pane(
 
     // T-WS-EDITOR-002 §4: external-change banner — only when the buffer is
     // dirty (a clean buffer just silently re-reads via `on_worktree_changed`).
+    // Reload replaces an unsaved edit with the on-disk text, so it routes
+    // through the dirty guard (§5 spec change) rather than firing directly.
     if view.external_changed {
         let reload = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-            this.reload_from_disk(cx);
+            this.open_dirty_guard(EditorPendingIntent::Reload, cx);
         });
         pane = pane.child(
             div()
@@ -1513,11 +1552,18 @@ fn render_center_pane(
     // both fall through to the generic "select a file" placeholder even
     // though a row was actually selected — distinguish why `content` is
     // `None` instead.
-    let placeholder = if view.loading {
-        Some(Msg::EditorWorkspaceLoading.t())
-    } else if view.selected.is_none() {
-        Some(Msg::EditorWorkspaceSelectFile.t())
-    } else if view.file_loading {
+    //
+    // T-WS-EDITOR-002 spec change: keyed off `open_path`/`content`, not the
+    // tree state — a tree reload (`loading`, e.g. a source switch) and a
+    // sig-guarded background re-read (`file_loading` with content already
+    // present) must NOT blank an open buffer.
+    let placeholder = if view.open_path.is_none() {
+        Some(if view.loading {
+            Msg::EditorWorkspaceLoading.t()
+        } else {
+            Msg::EditorWorkspaceSelectFile.t()
+        })
+    } else if view.file_loading && view.content.is_none() {
         Some(Msg::EditorWorkspaceLoading.t())
     } else if view.content_missing {
         Some(Msg::EditorWorkspaceDeleted.t())
@@ -1803,16 +1849,25 @@ mod tests {
     }
 
     #[test]
-    fn preserve_dirty_selection_only_when_dirty_and_restore_matches_candidate() {
-        // Clean buffer: never preserve — the normal `select` cascade runs.
-        assert!(!preserve_dirty_selection(false, Some(1), 1));
-        // Dirty, but `restore` didn't find this file (e.g. fell back to the
-        // first file in the list, a different one) — don't just leave the
-        // index dangling on a mismatch.
-        assert!(!preserve_dirty_selection(true, None, 0));
-        assert!(!preserve_dirty_selection(true, Some(1), 0));
-        // Dirty AND `restore` found the same file (by path) at `candidate` —
-        // preserve the buffer, just remap the index.
-        assert!(preserve_dirty_selection(true, Some(4), 4));
+    fn open_buffer_survives_source_switch() {
+        // T-WS-EDITOR-002 spec change (user): a tree rebuild (source switch /
+        // watcher / post-save) never loads over an open buffer.
+        //
+        // Open file still listed → remap the highlight, no load.
+        assert_eq!(restore_selection(true, Some(3), 10), (Some(3), false));
+        // Open file NOT in the new list (All→Changes) → clear the highlight,
+        // keep the buffer (no load — `select` would clobber it).
+        assert_eq!(restore_selection(true, None, 10), (None, false));
+        // Even with an empty list the buffer stays.
+        assert_eq!(restore_selection(true, None, 0), (None, false));
+    }
+
+    #[test]
+    fn initial_load_selects_and_loads_first_file() {
+        // No buffer yet: select + load the restored (or first) file.
+        assert_eq!(restore_selection(false, None, 5), (Some(0), true));
+        assert_eq!(restore_selection(false, Some(2), 5), (Some(2), true));
+        // Empty worktree list: nothing to select.
+        assert_eq!(restore_selection(false, None, 0), (None, false));
     }
 }

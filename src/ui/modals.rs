@@ -377,13 +377,20 @@ pub struct DiscardModal {
 
 /// Pending action to run once the user confirms discarding a dirty Editor
 /// Workspace buffer (T-WS-EDITOR-002 §5, unsaved-changes guard).
+///
+/// Spec change (user): switching the tree source is a view filter, NOT a
+/// destructive action — no `SwitchSource` intent; the buffer survives the
+/// tree rebuild instead. The external-change banner's Reload button IS
+/// destructive (replaces the edit with the on-disk text), so it routes
+/// through the guard.
 #[derive(Clone, Debug)]
 pub enum EditorPendingIntent {
     /// Select a different file (tree click or ↑/↓ step) — carries the target
     /// index into `EditorWorkspaceView::files`.
     SelectFile(usize),
-    /// Switch the tree source (Changes ⇄ All chip).
-    SwitchSource(super::editor_workspace::TreeSource),
+    /// Discard the buffer and re-read the open file from disk (the
+    /// external-change banner's Reload button).
+    Reload,
     /// Close the Editor Workspace (← Graph, toolbar, Cmd-Shift-E).
     Close,
 }

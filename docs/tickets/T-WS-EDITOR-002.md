@@ -41,12 +41,22 @@
 
 ## 完了条件
 
-- [x] 編集 → Cmd-S 保存 → 右 hunk と WIP 行が自動更新される(`save()` が
-      `start_load` を再実行し、既存の restore-selection カスケードが
-      `load_selected` 経由で diff/tree を再読込する)
+- [x] 編集 → Cmd-S 保存 → 右 hunk と WIP 行が自動更新される(`save()` が保存テキストを
+      そのままバッファのスナップショットに採用し、`start_load`(tree バッジ)+
+      `load_selected`(右 hunk)を明示的に再実行。sig 一致により editor への再 push は
+      発生せず、保存でカーソル/スクロールが飛ばない)
 - [x] dirty 表示(ヘッダのパス欄 + 選択中 tree 行に `●`)、未保存での離脱に確認モーダル
-      (ファイル切替/ソース切替/close の3経路すべて)、外部変更はクリーン時のみ自動再読込
-      (dirty 時はバナー + Reload ボタン)
+      (**ファイル切替 / close / 外部変更バナーの Reload** — ソース切替は対象外、下記
+      仕様変更参照)、外部変更はクリーン時のみ自動再読込(dirty 時はバナー + Reload)
+- [x] **仕様変更(ユーザー指示、2026-07-07)**: Changes⇄All のソース切替は「表示
+      フィルタ」であり破棄操作ではない — dirty ガードを出さず、開いているバッファに
+      一切触れない。実装: バッファを tree から分離(`open_path` が開いているファイルの
+      正; header/loader/save はすべて `open_path` を参照)。ソース切替/watcher/保存後の
+      tree 再構築はハイライトの再マップのみ(`restore_selection` 純関数)で、`select`
+      (content 再読込 + dirty リセット)は初回ロード時のみ走る。新リストに開いている
+      ファイルが無い場合(All→Changes 等)はハイライト無しでバッファ継続(ヘッダパス +
+      ● が識別子)。`EditorPendingIntent::SwitchSource` は削除、代わりに `Reload`
+      (外部変更バナーの Reload も破棄操作なのでガード経由)を追加。
 - [x] 書き込み失敗はトースト + フッターで通知(握りつぶさない)— oplog/plan modal は
       使わない(下記スコープ逸脱の項を参照)
 - [x] `cargo test --workspace` 全パス / 既存 `[kagi]` 行の変更なし(新規行のみ追加)
@@ -75,7 +85,8 @@
 
 `cargo test --workspace`(`ui::editor_workspace::tests` に純関数の新規テスト:
 `should_guard_navigation_only_when_dirty_and_actually_switching` /
-`preserve_dirty_selection_only_when_dirty_and_restore_matches_candidate` /
+`open_buffer_survives_source_switch`(仕様変更のインバリアント)/
+`initial_load_selects_and_loads_first_file` /
 `editor_save_path_joins_repo_root_and_relative_path`)+ headless
 (`KAGI_EDITOR_WS=1 KAGI_NO_RESTORE=1 KAGI_OPEN_REPO=<dirty fixture> ./target/debug/kagi`,
 バックグラウンド起動 + sleep + kill 方式、macOS に `timeout` なし)で

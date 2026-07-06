@@ -88,6 +88,12 @@ const ASSETS: &[(&str, &[u8])] = &[
         "icons/chart-pie.svg",
         include_bytes!("../../assets/icons/chart-pie.svg"),
     ),
+    // T-WS-EDITOR-004: header Editor Workspace toggle (lucide square-pen —
+    // custom path, no matching gpui-component IconName variant).
+    (
+        "icons/square-pen.svg",
+        include_bytes!("../../assets/icons/square-pen.svg"),
+    ),
     // T-UNDOREDO-001: toolbar Redo button (gpui_component IconName::Redo2).
     (
         "icons/redo-2.svg",

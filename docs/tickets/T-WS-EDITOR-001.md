@@ -1,6 +1,6 @@
 # T-WS-EDITOR-001: WorkspaceMode 導入 + エディタワークスペース v1(read-only)
 
-- Status: todo
+- Status: review
 - Group: workspace framework / エディタモード
 - 仕様の正: ADR-0120 §Decision 3–4。枠組みは `src/ui/workspace.rs`(実装済み)。
 
@@ -47,11 +47,15 @@ ADR-0120 でスロット解決は `workspace::resolve_workspace` に集約済み
 
 ## 完了条件
 
-- [ ] Graph ⇄ Editor をメニュー/ショートカットで往復でき、タブ切替で Graph に戻る
-- [ ] Editor モード: 左に変更ファイル tree、クリックで main にハイライト付き read-only 表示、右にそのファイルの hunk
-- [ ] FileHistory / Analyze / Conflict は Editor モードより優先される(resolver テストで固定)
-- [ ] `resolve_workspace` の新規優先順位の単体テスト追加、`cargo test --workspace` 全パス
-- [ ] `grep -rE 'git2::|Repository::open' src/ui` = 0 / 既存 `[kagi]` 行の変更なし
+- [x] Graph ⇄ Editor をメニュー/ショートカットで往復でき、タブ切替で Graph に戻る
+      (`view.toggleEditorWorkspace` / `secondary-shift-e`、`reset_per_repo_ui` で Graph リセット)
+- [x] Editor モード: 左に変更ファイル tree、クリックで main にハイライト付き read-only 表示、右にそのファイルの hunk
+- [x] FileHistory / Analyze / Conflict は Editor モードより優先される(resolver テストで固定)
+      — Conflict は ADR-0120 の設計どおり resolver より上位(`render.rs`)でゲートされるため、
+      Editor モードが有効でも `render_body`/resolver 自体が呼ばれず構造的に優先される
+      (resolver 側は FileHistory/Ecosystem/Loading の3つをテストで固定)
+- [x] `resolve_workspace` の新規優先順位の単体テスト追加、`cargo test --workspace` 全パス
+- [x] `grep -rE 'git2::|Repository::open' src/ui` = 0 / 既存 `[kagi]` 行の変更なし
 - [ ] GUI 目視は PM(subagent は GUI 不可)
 
 ## テスト方法

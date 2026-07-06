@@ -381,6 +381,7 @@ impl KagiApp {
             commit_panel_present: commit_panel.is_some(),
             inspector_visible: self.inspector_visible,
             has_detail: detail.is_some(),
+            editor_mode: self.workspace_mode == workspace::WorkspaceMode::Editor,
         });
 
         let mut body_row = div()
@@ -434,6 +435,21 @@ impl KagiApp {
             workspace::CenterPane::Loading => body_row.child(render_loading_placeholder(
                 self.loading_tab.clone().unwrap_or_default(),
             )),
+            // T-WS-EDITOR-001: the Editor workspace entity self-renders the
+            // WHOLE left(file tree) + center(code viewer) + right(hunks)
+            // triple in one call — like the FileHistory/Ecosystem takeovers,
+            // this is the only way a click in the tree pane can mutate the
+            // same entity that owns the open file's editor/diff state without
+            // re-entering `KagiApp` (ADR-0117 re-entrancy guard). The
+            // `layout.left`/`layout.right` values (FileTree/Hunks) exist for
+            // resolver-level policy + tests; here they route to the same
+            // no-op right-slot arm below (`RightPane::Hunks => {}`) and the
+            // sidebar `.when(... Navigator ...)` above naturally skips
+            // rendering for `LeftPane::FileTree`.
+            workspace::CenterPane::Editor => match self.editor_workspace.clone() {
+                Some(ev) => body_row.child(div().flex_1().min_w(px(0.)).h_full().child(ev)),
+                None => body_row.child(commit_list_col),
+            },
             // Full-width diff (T-UI-003). The resolver guarantees the view is
             // present; fall back to the commit list rather than unwrap.
             workspace::CenterPane::Diff => match main_diff_for_center {
@@ -522,6 +538,10 @@ impl KagiApp {
                     ))
                 });
             }
+            // T-WS-EDITOR-001: rendered inside the Editor entity itself (see
+            // the `CenterPane::Editor` arm above) — no-op here, same as a
+            // FileHistory/Ecosystem takeover's `Hidden`.
+            workspace::RightPane::Hunks => {}
             workspace::RightPane::Hidden => {}
         }
 

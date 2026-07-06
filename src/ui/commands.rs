@@ -45,7 +45,7 @@ const AUTO_FETCH_INTERVAL_SECS: u64 = 180;
 use super::context_menu::CommitAction;
 use super::i18n::{self, Lang, Msg};
 use super::theme::{self, theme};
-use super::{BottomTab, FooterStatus, KagiApp, ToastKind, ToggleBottomPanel};
+use super::{workspace, BottomTab, FooterStatus, KagiApp, ToastKind, ToggleBottomPanel};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Actions — one gpui Action per command (1:1, ADR-0029).
@@ -77,6 +77,8 @@ actions!(
         ToggleSidebar,
         ToggleCommitDetails,
         ToggleDiffView,
+        // T-WS-EDITOR-001: Graph ⇄ Editor workspace mode.
+        ToggleEditorWorkspace,
         // Repository
         Fetch,
         Pull,
@@ -265,6 +267,7 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Command("view.toggleTerminal"),
             MenuNode::Command("view.toggleCommitDetails"),
             MenuNode::Command("view.toggleDiffView"),
+            MenuNode::Command("view.toggleEditorWorkspace"),
             MenuNode::Separator,
             // W9-THEME / W22-I18N: dynamic submenus (active item gets "✓ ").
             MenuNode::Submenu(DynSubmenu::Theme),
@@ -505,6 +508,12 @@ pub const COMMANDS: &[Command] = &[
         id: "view.toggleDiffView",
         label: "Toggle Diff View",
         keystroke: None,
+        dangerous: false,
+    },
+    Command {
+        id: "view.toggleEditorWorkspace",
+        label: "Toggle Editor Workspace",
+        keystroke: Some("secondary-shift-e"),
         dangerous: false,
     },
     Command {
@@ -812,7 +821,7 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         }
 
         // ── View toggles tied to view state ──────────────────────────────
-        "view.toggleCommitDetails" => {
+        "view.toggleCommitDetails" | "view.toggleEditorWorkspace" => {
             if has_repo {
                 Enabled
             } else {
@@ -877,6 +886,7 @@ fn action_menu_item(id: &str) -> MenuItem {
         "view.toggleTerminal" => MenuItem::action(label, ToggleBottomPanel),
         "view.toggleCommitDetails" => MenuItem::action(label, ToggleCommitDetails),
         "view.toggleDiffView" => MenuItem::action(label, ToggleDiffView),
+        "view.toggleEditorWorkspace" => MenuItem::action(label, ToggleEditorWorkspace),
         // Repository
         "repo.fetch" => MenuItem::action(label, Fetch),
         "repo.pull" => MenuItem::action(label, Pull),
@@ -1064,6 +1074,10 @@ pub fn register_keybindings(cx: &mut App) {
         KeyBinding::new("secondary-0", ZoomReset, None),
         KeyBinding::new("ctrl-cmd-f", EnterFullScreen, None),
         KeyBinding::new("secondary-m", MinimizeWindow, None),
+        // T-WS-EDITOR-001: Graph ⇄ Editor workspace mode (Cmd-Shift-E on
+        // macOS / Ctrl-Shift-E elsewhere) — verified free of collisions
+        // against every other `KeyBinding::new` in the app.
+        KeyBinding::new("secondary-shift-e", ToggleEditorWorkspace, None),
     ]);
 }
 
@@ -1299,6 +1313,14 @@ impl KagiApp {
                 if self.main_diff.is_some() {
                     self.close_main_diff();
                 }
+            }
+            "view.toggleEditorWorkspace" => {
+                if self.workspace_mode == workspace::WorkspaceMode::Editor {
+                    self.close_editor_workspace();
+                } else {
+                    self.open_editor_workspace(cx);
+                }
+                klog!("menu: workspace_mode={:?}", self.workspace_mode);
             }
 
             // ── Repository ──────────────────────────────────────────

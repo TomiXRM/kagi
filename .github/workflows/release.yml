@@ -69,7 +69,8 @@ jobs:
             libfontconfig-dev libfreetype-dev \
             libasound2-dev \
             libvulkan-dev \
-            libzstd-dev
+            libzstd-dev \
+            dpkg-dev
 
       # ── macOS: .app (ad-hoc signed) + .dmg ────────────────────────────────
       - name: Bundle macOS app + dmg
@@ -102,6 +103,13 @@ jobs:
         if: matrix.kind == 'linux'
         run: cargo run -p xtask -- bundle-appimage --bin target/release/kagi --arch ${{ matrix.arch }}
 
+      # ── Linux: .deb package (cargo-deb; config in [package.metadata.deb]) ─
+      - name: Build .deb package
+        if: matrix.kind == 'linux'
+        run: |
+          cargo install cargo-deb --locked
+          cargo deb --no-build -o target/dist/
+
       # ── Windows: release build + zip (assets are embedded in the .exe) ────
       - name: Build Windows release binary
         if: matrix.kind == 'windows'
@@ -117,7 +125,7 @@ jobs:
         working-directory: target/dist
         run: |
           shopt -s nullglob
-          files=( *.dmg *.tar.gz *.zip )
+          files=( *.dmg *.tar.gz *.zip *.deb )
           if [ ${#files[@]} -eq 0 ]; then
             echo "no artifacts produced" >&2
             exit 1
@@ -139,6 +147,7 @@ jobs:
             target/dist/*.dmg
             target/dist/*.tar.gz
             target/dist/*.zip
+            target/dist/*.deb
             target/dist/SHA256SUMS-${{ matrix.target }}.txt
           if-no-files-found: error
 

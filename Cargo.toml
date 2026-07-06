@@ -65,3 +65,18 @@ zeno        = { opt-level = 3 }
 smol        = { opt-level = 3 }
 tree-sitter = { opt-level = 3 }
 ropey       = { opt-level = 3 }
+
+# ── Debian package (cargo-deb) ─────────────────────────────────────────────
+# Built in release.yml's Linux legs with `cargo deb --no-build` after the
+# release binary exists. Produces target/dist/kagi_<ver>-1_<arch>.deb.
+[package.metadata.deb]
+maintainer = "TomiXRM <20753105+TomiXRM@users.noreply.github.com>"
+copyright = "2026, TomiXRM"
+extended-description = "Safety-first, commit-graph Git GUI client built with GPUI."
+section = "vcs"
+depends = "$auto"
+assets = [
+    ["target/release/kagi", "usr/bin/", "755"],
+    ["assets/linux/kagi.desktop", "usr/share/applications/", "644"],
+    ["assets/icon/icon_512x512.png", "usr/share/icons/hicolor/512x512/apps/kagi.png", "644"],
+]

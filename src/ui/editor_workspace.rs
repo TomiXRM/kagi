@@ -48,6 +48,10 @@ pub struct EditorWorkspaceView {
     pub files: Vec<FileStatus>,
     /// Flattened tree rows built from `files` via `file_tree::build_file_tree`.
     pub tree: Vec<TreeRow>,
+    /// Collapsed directory rows, keyed by their index into `tree` (stable per
+    /// load — `tree` is only rebuilt by `start_load`, which clears this).
+    /// Children of a collapsed dir are filtered out by `visible_tree_indices`.
+    pub collapsed: HashSet<usize>,
     /// `true` while the working-tree file-list load is in flight.
     pub loading: bool,
     /// Set if the file-list load failed.
@@ -102,6 +106,7 @@ impl EditorWorkspaceView {
             repo_path,
             files: Vec::new(),
             tree: Vec::new(),
+            collapsed: HashSet::new(),
             loading: false,
             error: None,
             generation: 0,
@@ -148,6 +153,8 @@ impl EditorWorkspaceView {
                     Ok(status) => {
                         let files = merge_working_tree_files(&status);
                         v.tree = file_tree::build_file_tree(&files);
+                        // Collapse indices key into the OLD tree — reset.
+                        v.collapsed.clear();
                         klog!("editor-ws: files {}", files.len());
                         v.files = files;
                         if !v.files.is_empty() {
@@ -276,6 +283,53 @@ impl EditorWorkspaceView {
         }
     }
 
+    /// Step the file selection up/down (root ↑/↓ handler, T-WS-EDITOR-001
+    /// user feedback). Walks the *visible* file rows (dirs and collapsed
+    /// subtrees skipped) so the selection never lands on a hidden file, and
+    /// scrolls the tree to keep the selected row on screen.
+    pub fn step_selection(&mut self, delta: i32, cx: &mut Context<Self>) {
+        let visible = visible_tree_indices(&self.tree, &self.collapsed);
+        // (position in the visible list, file_index) for every visible file row.
+        let file_rows: Vec<(usize, usize)> = visible
+            .iter()
+            .enumerate()
+            .filter_map(|(vis_pos, &ti)| match self.tree.get(ti) {
+                Some(TreeRow::File { file_index, .. }) => Some((vis_pos, *file_index)),
+                _ => None,
+            })
+            .collect();
+        if file_rows.is_empty() {
+            return;
+        }
+        let cur = self
+            .selected
+            .and_then(|sel| file_rows.iter().position(|&(_, fi)| fi == sel));
+        let next = match cur {
+            Some(p) => (p as i64 + i64::from(delta)).clamp(0, file_rows.len() as i64 - 1) as usize,
+            // No (visible) selection yet: ↓ starts at the top, ↑ at the bottom.
+            None if delta >= 0 => 0,
+            None => file_rows.len() - 1,
+        };
+        let (vis_pos, file_index) = file_rows[next];
+        if self.selected == Some(file_index) {
+            return;
+        }
+        // gpui 0.2.2 has no `Nearest`; `Center` matches the commit list's
+        // jump behaviour (`mod.rs` scroll_to_item call sites).
+        self.tree_scroll
+            .scroll_to_item(vis_pos, ScrollStrategy::Center);
+        self.select(file_index, cx);
+    }
+
+    /// Toggle a directory row's collapsed state (Zed-style chevron click).
+    /// `tree_index` keys into `self.tree` (the unfiltered base rows).
+    pub fn toggle_dir(&mut self, tree_index: usize, cx: &mut Context<Self>) {
+        if !self.collapsed.remove(&tree_index) {
+            self.collapsed.insert(tree_index);
+        }
+        cx.notify();
+    }
+
     /// Ask the parent to close this view (drops the entity + resets
     /// `workspace_mode`). Safe per ADR-0117: only clears fields, never
     /// re-leases this entity.
@@ -285,6 +339,32 @@ impl EditorWorkspaceView {
             cx.notify();
         });
     }
+}
+
+/// Indices into `tree` that are visible given the collapsed dir set: children
+/// of a collapsed dir (every following row strictly deeper than it) are
+/// skipped, Zed-style. Pure — unit-tested below.
+fn visible_tree_indices(tree: &[TreeRow], collapsed: &HashSet<usize>) -> Vec<usize> {
+    let mut out = Vec::with_capacity(tree.len());
+    // While `Some(d)`, rows deeper than `d` are hidden (inside a collapsed dir).
+    let mut hide_deeper_than: Option<usize> = None;
+    for (i, row) in tree.iter().enumerate() {
+        let (depth, is_dir) = match row {
+            TreeRow::Dir { depth, .. } => (*depth, true),
+            TreeRow::File { depth, .. } => (*depth, false),
+        };
+        if let Some(d) = hide_deeper_than {
+            if depth > d {
+                continue;
+            }
+            hide_deeper_than = None;
+        }
+        out.push(i);
+        if is_dir && collapsed.contains(&i) {
+            hide_deeper_than = Some(depth);
+        }
+    }
+    out
 }
 
 /// Merge working-tree `staged` + `unstaged` + `untracked` into one
@@ -372,6 +452,15 @@ impl super::KagiApp {
     pub fn close_editor_workspace(&mut self) {
         self.editor_workspace = None;
         self.workspace_mode = workspace::WorkspaceMode::Graph;
+    }
+
+    /// Root ↑/↓ handler branch for the Editor workspace: step the file
+    /// selection on the entity (normal parent→child `update`; the entity is
+    /// not leased here).
+    pub fn step_editor_ws_selection(&mut self, delta: i32, cx: &mut Context<Self>) {
+        if let Some(ev) = self.editor_workspace.clone() {
+            ev.update(cx, |v, cx| v.step_selection(delta, cx));
+        }
     }
 }
 
@@ -494,7 +583,10 @@ fn render_tree_pane(
             .into_any_element();
     }
 
-    let row_count = view.tree.len();
+    // Zed-style collapse: the uniform_list virtualizes the *visible* rows;
+    // the processor maps a visible position back to its base tree index.
+    let visible = visible_tree_indices(&view.tree, &view.collapsed);
+    let row_count = visible.len();
     let scroll_handle = view.tree_scroll.clone();
     let scrollbar_handle = scroll_handle.clone();
     let list = with_vertical_scrollbar(
@@ -505,7 +597,7 @@ fn render_tree_pane(
             row_count,
             cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
                 range
-                    .filter_map(|i| render_tree_row(this, i, cx))
+                    .filter_map(|i| render_tree_row(this, *visible.get(i)?, cx))
                     .collect::<Vec<_>>()
             }),
         )
@@ -527,15 +619,45 @@ fn render_tree_row(
     let row = view.tree.get(index)?.clone();
     match row {
         TreeRow::Dir { depth, name } => {
+            // Zed-style collapsible dir row: chevron + name, click toggles.
             let indent = (depth as f32) * 12.0;
+            let is_collapsed = view.collapsed.contains(&index);
+            let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+                this.toggle_dir(index, cx);
+            });
             Some(
                 div()
                     .id(("ews-dir", index))
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .items_center()
                     .pl(theme::scaled_px(8.0 + indent))
                     .py_px()
-                    .text_xs()
-                    .text_color(rgb(theme().change_dir))
-                    .child(name)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(theme().surface)))
+                    .on_click(click)
+                    .child(
+                        div()
+                            .w(theme::scaled_px(12.))
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(rgb(theme().text_muted))
+                            .child(SharedString::from(if is_collapsed {
+                                "\u{25b8}" // ▸
+                            } else {
+                                "\u{25be}" // ▾
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .text_xs()
+                            .text_color(rgb(theme().change_dir))
+                            .truncate()
+                            .child(name),
+                    )
                     .into_any_element(),
             )
         }
@@ -639,9 +761,15 @@ fn render_center_pane(
             .min_h(px(0.))
             .w_full()
             .child(
+                // `disabled` is the only read-only gate gpui-component 0.5.1
+                // offers, but its appearance paints the muted (gray) disabled
+                // background — user report: the viewer looked like a disabled
+                // form field. `appearance(false)` drops the component's own
+                // bg/border so the pane's dark `bg_base` shows through, like a
+                // real code viewer.
                 Input::new(&editor)
                     .disabled(true)
-                    .appearance(true)
+                    .appearance(false)
                     .bordered(false)
                     .h_full(),
             ),
@@ -694,4 +822,63 @@ fn placeholder_text(msg: impl Into<SharedString>) -> impl IntoElement {
         .text_sm()
         .text_color(rgb(theme().text_muted))
         .child(msg.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dir(depth: usize, name: &str) -> TreeRow {
+        TreeRow::Dir {
+            depth,
+            name: SharedString::from(name.to_string()),
+        }
+    }
+    fn file(depth: usize, name: &str, file_index: usize) -> TreeRow {
+        TreeRow::File {
+            depth,
+            name: SharedString::from(name.to_string()),
+            file_index,
+            change: ChangeKind::Modified,
+        }
+    }
+
+    /// src/(a.rs, ui/(b.rs)), root.rs — the shape `build_file_tree` emits.
+    fn sample_tree() -> Vec<TreeRow> {
+        vec![
+            dir(0, "src"),         // 0
+            file(1, "a.rs", 0),    // 1
+            dir(1, "ui"),          // 2
+            file(2, "b.rs", 1),    // 3
+            file(0, "root.rs", 2), // 4
+        ]
+    }
+
+    #[test]
+    fn no_collapse_shows_everything() {
+        let tree = sample_tree();
+        assert_eq!(
+            visible_tree_indices(&tree, &HashSet::new()),
+            vec![0, 1, 2, 3, 4]
+        );
+    }
+
+    #[test]
+    fn collapsing_a_dir_hides_its_subtree_only() {
+        let tree = sample_tree();
+        // Collapse src (idx 0): hides a.rs, ui, b.rs — root.rs stays.
+        let collapsed: HashSet<usize> = [0].into_iter().collect();
+        assert_eq!(visible_tree_indices(&tree, &collapsed), vec![0, 4]);
+        // Collapse the nested ui (idx 2) only: hides b.rs.
+        let collapsed: HashSet<usize> = [2].into_iter().collect();
+        assert_eq!(visible_tree_indices(&tree, &collapsed), vec![0, 1, 2, 4]);
+    }
+
+    #[test]
+    fn collapsed_state_of_a_hidden_dir_is_inert() {
+        let tree = sample_tree();
+        // src collapsed AND the hidden ui collapsed — same as src alone.
+        let collapsed: HashSet<usize> = [0, 2].into_iter().collect();
+        assert_eq!(visible_tree_indices(&tree, &collapsed), vec![0, 4]);
+    }
 }

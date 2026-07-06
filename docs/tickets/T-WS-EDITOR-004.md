@@ -1,6 +1,6 @@
 # T-WS-EDITOR-004: エディタワークスペース フィードバック第2弾(tree切替・resize・ヘッダーボタン)
 
-- Status: review
+- Status: done (PM accepted — GUI-verified 2026-07-07)
 - Group: workspace framework / エディタモード
 - 仕様の正: ADR-0120 §Decision 4 + 本チケット(PR #102/#103 マージ後のユーザーフィードバック)。
 

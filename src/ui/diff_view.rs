@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use gpui::{div, prelude::*, rgb, SharedString};
+use gpui::{div, prelude::*, px, rgb, SharedString};
 
 use kagi_git::{CommitId, DiffLineKind, FileDiff, FileStatus};
 
@@ -418,133 +418,148 @@ pub(crate) fn build_main_diff_view(
     }
 }
 
-/// Render a range of diff rows for the `"main-diff-list"` uniform_list.
+/// Render a single diff row for the `"main-diff-list"` [`gpui::list`] (T-DIFF-WRAP-001).
 /// Includes line numbers: old/new each 5 chars wide, theme::theme().text_muted colour.
-pub(crate) fn render_main_diff_rows(
-    rows: &[DiffRow],
-    range: std::ops::Range<usize>,
-) -> Vec<impl IntoElement> {
-    range
-        .filter_map(|i| rows.get(i).map(|row| (i, row)))
-        .map(|(i, row)| match row {
-            DiffRow::HunkHeader(header) => div()
-                .id(("main-diff-hunk", i))
-                .w_full()
-                .px_2()
-                .py_px()
-                .bg(rgb(theme::theme().surface))
-                .text_sm()
-                .text_color(rgb(theme::theme().diff_hunk))
-                .overflow_hidden()
-                .child(header.clone())
-                .into_any(),
-            DiffRow::Line {
-                kind,
-                text,
-                old_lineno,
-                new_lineno,
-                highlights,
-            } => {
-                let bg = match kind {
-                    DiffLineKind::Added => theme::theme().diff_added_bg,
-                    DiffLineKind::Removed => theme::theme().diff_removed_bg,
-                    DiffLineKind::Context => theme::theme().bg_base,
-                };
-                // Theme tokens (not hardcoded hex): light themes tune these to
-                // dark green/red so the text stays readable on the light diff
-                // backgrounds — the old fixed light-green/red washed out there.
-                let text_color = match kind {
-                    DiffLineKind::Added => theme::theme().change_added,
-                    DiffLineKind::Removed => theme::theme().change_deleted,
-                    DiffLineKind::Context => theme::theme().text_main,
-                };
-                // Format line numbers: 5 chars fixed width, muted colour.
-                let old_str = match old_lineno {
-                    Some(n) => format!("{:5}", n),
-                    None => "     ".to_string(),
-                };
-                let new_str = match new_lineno {
-                    Some(n) => format!("{:5}", n),
-                    None => "     ".to_string(),
-                };
+///
+/// Was `render_main_diff_rows(rows, range) -> Vec<impl IntoElement>` (a
+/// `uniform_list` row processor). `gpui::list`'s `render_item` callback is
+/// called one index at a time (it measures each item's natural height for its
+/// variable-height layout — T-DIFF-WRAP-001), so this now builds exactly one
+/// row and returns `AnyElement` directly. Out-of-range `i` (shouldn't happen —
+/// `list`'s item count tracks `rows.len()`, see `render_diff_list`) renders an
+/// empty div rather than panicking.
+pub(crate) fn render_main_diff_row(rows: &[DiffRow], i: usize) -> gpui::AnyElement {
+    let Some(row) = rows.get(i) else {
+        return div().into_any();
+    };
+    match row {
+        DiffRow::HunkHeader(header) => div()
+            .id(("main-diff-hunk", i))
+            .w_full()
+            .px_2()
+            .py_px()
+            .bg(rgb(theme::theme().surface))
+            .text_sm()
+            .text_color(rgb(theme::theme().diff_hunk))
+            // Hunk headers stay single-line (never wrap): overflow_hidden +
+            // nowrap + ellipsis, unlike the content rows below.
+            .truncate()
+            .child(header.clone())
+            .into_any(),
+        DiffRow::Line {
+            kind,
+            text,
+            old_lineno,
+            new_lineno,
+            highlights,
+        } => {
+            let bg = match kind {
+                DiffLineKind::Added => theme::theme().diff_added_bg,
+                DiffLineKind::Removed => theme::theme().diff_removed_bg,
+                DiffLineKind::Context => theme::theme().bg_base,
+            };
+            // Theme tokens (not hardcoded hex): light themes tune these to
+            // dark green/red so the text stays readable on the light diff
+            // backgrounds — the old fixed light-green/red washed out there.
+            let text_color = match kind {
+                DiffLineKind::Added => theme::theme().change_added,
+                DiffLineKind::Removed => theme::theme().change_deleted,
+                DiffLineKind::Context => theme::theme().text_main,
+            };
+            // Format line numbers: 5 chars fixed width, muted colour.
+            let old_str = match old_lineno {
+                Some(n) => format!("{:5}", n),
+                None => "     ".to_string(),
+            };
+            let new_str = match new_lineno {
+                Some(n) => format!("{:5}", n),
+                None => "     ".to_string(),
+            };
 
-                // T-UI-004: build highlighted content element.
-                // If we have pre-computed highlight spans, use StyledText; otherwise
-                // fall back to a plain text element (keeps the existing colour).
-                let content_el: gpui::AnyElement = if highlights.is_empty() {
-                    div()
-                        .flex_1()
-                        .text_color(rgb(text_color))
-                        .overflow_hidden()
-                        .child(text.clone())
-                        .into_any()
-                } else {
-                    // Validate that all highlight byte ranges lie within the text.
-                    // Silently drop spans that fall outside to prevent panics.
-                    let text_str: &str = text.as_ref();
-                    let text_len = text_str.len();
-                    let valid_highlights: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> =
-                        highlights
-                            .iter()
-                            .filter(|(r, _)| {
-                                r.start <= r.end
-                                    && r.end <= text_len
-                                    && text_str.is_char_boundary(r.start)
-                                    && text_str.is_char_boundary(r.end)
-                            })
-                            .cloned()
-                            .collect();
-                    div()
-                        .flex_1()
-                        .text_color(rgb(text_color))
-                        .overflow_hidden()
-                        .child(
-                            gpui::StyledText::new(text.clone()).with_highlights(valid_highlights),
-                        )
-                        .into_any()
-                };
-
+            // T-UI-004: build highlighted content element.
+            // If we have pre-computed highlight spans, use StyledText; otherwise
+            // fall back to a plain text element (keeps the existing colour).
+            //
+            // T-DIFF-WRAP-001: no `.overflow_hidden()` here — the content
+            // wraps (gpui's default `white_space: Normal`) and the row's
+            // height now comes from `gpui::list` measuring this element, so a
+            // wrapped continuation line is no longer clipped. `min_w(px(0.))`
+            // lets the flex item shrink below its unwrapped intrinsic width
+            // so it wraps at the pane edge instead of pushing it.
+            let content_el: gpui::AnyElement = if highlights.is_empty() {
                 div()
-                    .id(("main-diff-line", i))
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .py_px()
-                    .bg(rgb(bg))
-                    .text_sm()
-                    .overflow_hidden()
-                    // Old line number
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .w(theme::scaled_px(44.))
-                            .text_color(rgb(theme::theme().text_muted))
-                            .child(SharedString::from(old_str)),
-                    )
-                    // New line number
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .w(theme::scaled_px(44.))
-                            .text_color(rgb(theme::theme().text_muted))
-                            .child(SharedString::from(new_str)),
-                    )
-                    // Content (sigil + highlighted text)
-                    .child(content_el)
+                    .flex_1()
+                    .min_w(px(0.))
+                    .text_color(rgb(text_color))
+                    .child(text.clone())
                     .into_any()
-            }
-            DiffRow::Binary => div()
-                .id(("main-diff-binary", i))
+            } else {
+                // Validate that all highlight byte ranges lie within the text.
+                // Silently drop spans that fall outside to prevent panics.
+                let text_str: &str = text.as_ref();
+                let text_len = text_str.len();
+                let valid_highlights: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> =
+                    highlights
+                        .iter()
+                        .filter(|(r, _)| {
+                            r.start <= r.end
+                                && r.end <= text_len
+                                && text_str.is_char_boundary(r.start)
+                                && text_str.is_char_boundary(r.end)
+                        })
+                        .cloned()
+                        .collect();
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .text_color(rgb(text_color))
+                    .child(gpui::StyledText::new(text.clone()).with_highlights(valid_highlights))
+                    .into_any()
+            };
+
+            div()
+                .id(("main-diff-line", i))
                 .w_full()
-                .px_2()
-                .py_1()
+                .flex()
+                .flex_row()
+                // T-DIFF-WRAP-001: top-align (not center) so the line-number
+                // columns sit against the first visual line once a wrapped
+                // row grows past one line; no `.overflow_hidden()` (that's
+                // what clipped the wrapped continuation before this ticket).
+                .items_start()
+                .py_px()
+                .bg(rgb(bg))
                 .text_sm()
-                .text_color(rgb(theme::theme().text_muted))
-                .child(SharedString::from("Binary file (no diff)"))
-                .into_any(),
-        })
-        .collect()
+                // Old line number
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .w(theme::scaled_px(44.))
+                        .text_color(rgb(theme::theme().text_muted))
+                        .child(SharedString::from(old_str)),
+                )
+                // New line number
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .w(theme::scaled_px(44.))
+                        .text_color(rgb(theme::theme().text_muted))
+                        .child(SharedString::from(new_str)),
+                )
+                // Content (sigil + highlighted text)
+                .child(content_el)
+                .into_any()
+        }
+        DiffRow::Binary => div()
+            .id(("main-diff-binary", i))
+            .w_full()
+            .px_2()
+            .py_1()
+            .text_sm()
+            .text_color(rgb(theme::theme().text_muted))
+            .child(SharedString::from("Binary file (no diff)"))
+            .into_any(),
+    }
 }
 
 // Main-diff open/step methods on `KagiApp`, moved from `src/ui/mod.rs`

@@ -892,8 +892,10 @@ pub struct KagiApp {
     /// ADR-0026: read-only compare mode shown in the inspector changed-files area.
     /// Cleared on selection change or reload to avoid stale path/diff state.
     pub compare_view: Option<CompareView>,
-    /// T-UI-003: Scroll handle for the "main-diff-list" uniform_list.
-    pub main_diff_scroll_handle: UniformListScrollHandle,
+    /// T-UI-003 / T-DIFF-WRAP-001: `ListState` (variable-height) for the
+    /// "main-diff-list" — see `render_helpers::render_diff_list` for the item-
+    /// count sync/reset lifecycle.
+    pub main_diff_scroll_handle: gpui::ListState,
     /// Local branch names from the snapshot, ordered by name.
     /// Used to render the sidebar.  The first element of the tuple is the
     /// branch name; the second is whether it is the current HEAD branch.
@@ -1482,7 +1484,7 @@ impl KagiApp {
             main_diff: None,
             pending_diff_highlight: None,
             compare_view: None,
-            main_diff_scroll_handle: UniformListScrollHandle::new(),
+            main_diff_scroll_handle: render_helpers::new_diff_list_state(),
             active_modal: None,
             remote_browse_modal: None,
             remote_view: None,
@@ -1586,7 +1588,7 @@ impl KagiApp {
             main_diff: None,
             pending_diff_highlight: None,
             compare_view: None,
-            main_diff_scroll_handle: UniformListScrollHandle::new(),
+            main_diff_scroll_handle: render_helpers::new_diff_list_state(),
             active_modal: None,
             remote_browse_modal: None,
             remote_view: None,
@@ -2888,7 +2890,7 @@ impl KagiApp {
             error: None,
             selected: 0,
             diff: None,
-            diff_scroll: UniformListScrollHandle::new(),
+            diff_scroll: render_helpers::new_diff_list_state(),
             split: 0.25,
             generation: 0,
             diff_req: 0,

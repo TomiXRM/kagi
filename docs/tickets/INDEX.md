@@ -244,3 +244,9 @@
 | ID | 内容 | 依存 | Status |
 |----|------|------|--------|
 | T-FLATHUB-001 | Flathub に Kagi を登録(io.github.tomixrm.kagi) | - | todo |
+
+## diff ペインの折り返し(ユーザー報告、2026-07-07)
+
+| ID | 内容 | 依存 | Status |
+|----|------|------|--------|
+| T-DIFF-WRAP-001 | diff 行の折り返し継続行がクリップされる問題を修正(uniform_list→gpui::list) | T-UI-003, T-WS-EDITOR-001, ADR-0117 | review |

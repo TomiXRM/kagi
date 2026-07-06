@@ -26,7 +26,7 @@ impl KagiApp {
         inspector_tree_view: bool,
         main_diff: Option<MainDiffView>,
         compare_view: Option<CompareView>,
-        main_diff_scroll_handle: UniformListScrollHandle,
+        main_diff_scroll_handle: gpui::ListState,
         // PERF-SIDEBAR-VIRT: the navigator is now virtualized from
         // `self.sidebar.rows` (built in `render`); render_body only needs the
         // row count + scroll handle + filter input for `render_sidebar`.

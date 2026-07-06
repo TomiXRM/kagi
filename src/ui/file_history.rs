@@ -9,7 +9,7 @@ use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gpui::{Pixels, Point, SharedString, UniformListScrollHandle, WeakEntity};
+use gpui::{ListState, Pixels, Point, SharedString, WeakEntity};
 
 use kagi_git::{FileChangeType, FileHistory, FileHistoryEntry, FileHistoryEntryKind};
 
@@ -34,8 +34,10 @@ pub struct FileHistoryState {
     pub selected: usize,
     /// Diff of the selected entry, reusing the existing diff renderer.
     pub diff: Option<MainDiffView>,
-    /// Scroll handle for the diff viewer list.
-    pub diff_scroll: UniformListScrollHandle,
+    /// T-DIFF-WRAP-001: `ListState` (variable-height) for the diff viewer
+    /// list — see `render_helpers::render_diff_list` for the item-count
+    /// sync/reset lifecycle.
+    pub diff_scroll: ListState,
     /// List/diff vertical split — fraction of the region given to the list.
     pub split: f32,
     /// Monotonic load generation, used to discard stale async *history* results.

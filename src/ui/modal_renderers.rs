@@ -27,6 +27,7 @@ use kagi_git::{BranchRenameValidation, CommitId, OperationPlan};
 pub(crate) use super::modal_renderers_commit::*;
 pub(crate) use super::modal_renderers_create::*;
 pub(crate) use super::modal_renderers_destructive::*;
+pub(crate) use super::modal_renderers_editor_fs::*;
 pub(crate) use super::modal_renderers_misc::*;
 pub(crate) use super::modal_renderers_plan::*;
 pub(crate) use super::modal_renderers_stash::*;

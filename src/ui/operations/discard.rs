@@ -84,6 +84,53 @@ impl KagiApp {
         }
     }
 
+    /// Open the discard modal for a single repo-relative `path`, without
+    /// requiring a commit-panel unstaged index (T-WS-EDITOR-007: the Editor
+    /// Workspace tree context-menu's "Discard Changes…" — the tree doesn't
+    /// share the commit panel's row indices). Builds the exact same
+    /// `DiscardModal`/plan shape as `open_discard_modal_for_index`; the
+    /// tree-menu builder already gates this action to tracked, changed files,
+    /// so no conflicted/untracked filtering is needed here.
+    pub fn open_discard_modal_for_path(
+        &mut self,
+        path: std::path::PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        if self.repo_path.is_none() {
+            return;
+        }
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from("discard: repo session unavailable"));
+                return;
+            }
+        };
+        let paths = vec![path.to_string_lossy().replace('\\', "/")];
+        match repo.plan_discard(&paths) {
+            Ok(plan) => {
+                eprintln!(
+                    "[kagi] plan: discard 1 target blockers={}",
+                    plan.blockers.len()
+                );
+                self.set_discard_modal(DiscardModal {
+                    plan: std::sync::Arc::new(plan),
+                    paths,
+                    skipped: Vec::new(),
+                    is_all: false,
+                    error: None,
+                    confirm_armed: false,
+                });
+                cx.notify();
+            }
+            Err(e) => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("discard plan error: {}", e)));
+            }
+        }
+    }
+
     /// Open the "Discard all" modal: every eligible unstaged file in one
     /// operation; untracked / conflicted files are listed as skipped.
     pub fn open_discard_all_modal(&mut self, cx: &mut Context<Self>) {

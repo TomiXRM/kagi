@@ -9,10 +9,11 @@
 use super::super::modals::ActiveModal;
 use super::super::modals::{
     AmendPlanModal, BranchPlanModal, CheckoutPlanModal, CherryPickModal, ConflictContinuePlanModal,
-    CreateBranchModal, CreateWorktreeModal, DeleteBranchModal, DiscardModal, EditorDirtyGuardModal,
-    HistoryPlanModal, MergePlanModal, PopPlanModal, PullPlanModal, PushPlanModal,
-    RenameBranchModal, RevertModal, SetUpstreamModal, StashApplyModal, StashDropModal,
-    StashPushModal, SwitchToLatestPlanModal, TrackingCheckoutPlanModal, UndoPlanModal,
+    CreateBranchModal, CreateWorktreeModal, DeleteBranchModal, DiscardModal,
+    EditorDeleteConfirmModal, EditorDirtyGuardModal, EditorFsPromptModal, HistoryPlanModal,
+    MergePlanModal, PopPlanModal, PullPlanModal, PushPlanModal, RenameBranchModal, RevertModal,
+    SetUpstreamModal, StashApplyModal, StashDropModal, StashPushModal, SwitchToLatestPlanModal,
+    TrackingCheckoutPlanModal, UndoPlanModal,
 };
 use super::super::KagiApp;
 use gpui::{AppContext as _, Context, Window};
@@ -488,6 +489,47 @@ impl KagiApp {
             self.active_modal = None;
         }
     }
+    #[inline]
+    pub fn editor_fs_prompt_modal(&self) -> Option<&EditorFsPromptModal> {
+        match &self.active_modal {
+            Some(ActiveModal::EditorFsPrompt(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn editor_fs_prompt_modal_mut(&mut self) -> Option<&mut EditorFsPromptModal> {
+        match &mut self.active_modal {
+            Some(ActiveModal::EditorFsPrompt(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn set_editor_fs_prompt_modal(&mut self, m: EditorFsPromptModal) {
+        self.active_modal = Some(ActiveModal::EditorFsPrompt(m));
+    }
+    #[inline]
+    pub fn clear_editor_fs_prompt_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::EditorFsPrompt(_))) {
+            self.active_modal = None;
+        }
+    }
+    #[inline]
+    pub fn editor_delete_confirm_modal(&self) -> Option<&EditorDeleteConfirmModal> {
+        match &self.active_modal {
+            Some(ActiveModal::EditorDeleteConfirm(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn set_editor_delete_confirm_modal(&mut self, m: EditorDeleteConfirmModal) {
+        self.active_modal = Some(ActiveModal::EditorDeleteConfirm(m));
+    }
+    #[inline]
+    pub fn clear_editor_delete_confirm_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::EditorDeleteConfirm(_))) {
+            self.active_modal = None;
+        }
+    }
 }
 
 // Moved from `src/ui/mod.rs` (T-HOTSPOT-UIMOD-001): lazy InputState creation +
@@ -519,6 +561,31 @@ impl KagiApp {
                 m.input = v;
                 m.error = None;
                 self.schedule_modal_replan(cx);
+            }
+        }
+
+        // ── Editor Workspace fs-prompt (Rename / New File / New Folder) ──
+        // T-WS-EDITOR-007: no live plan to re-generate (plain `std::fs`, not
+        // a Git write) — just sync the input string and clear a stale error.
+        if let Some(m) = self.editor_fs_prompt_modal_mut() {
+            if m.input_state.is_none() {
+                let initial = m.input.clone();
+                let st = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .placeholder("name")
+                        .default_value(initial)
+                });
+                st.update(cx, |s, cx| s.focus(window, cx));
+                m.input_state = Some(st);
+            }
+            let v = m
+                .input_state
+                .as_ref()
+                .map(|st| st.read(cx).value().to_string())
+                .unwrap_or_default();
+            if v != m.input {
+                m.input = v;
+                m.error = None;
             }
         }
 

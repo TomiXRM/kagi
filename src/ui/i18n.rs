@@ -502,6 +502,50 @@ pub enum Msg {
     EditorWorkspaceDiscard,
     /// Unsaved-changes confirmation: cancel button (stay on the buffer).
     EditorWorkspaceCancel,
+
+    // ── Editor Workspace tree context menu (T-WS-EDITOR-007) ────
+    /// File/dir row: rename.
+    EditorTreeRename,
+    /// File/dir row: delete (moves to Trash — never permanent).
+    EditorTreeDelete,
+    /// File/dir row: copy the absolute path.
+    EditorTreeCopyPath,
+    /// File/dir row: copy the repo-relative path.
+    EditorTreeCopyRelativePath,
+    /// File/dir row: reveal (and select) in Finder.
+    EditorTreeRevealFinder,
+    /// File row: jump to File History.
+    EditorTreeHistory,
+    /// File row: stage this file (index-only, non-destructive).
+    EditorTreeStage,
+    /// File row: unstage this file.
+    EditorTreeUnstage,
+    /// File row: discard working-tree changes (tracked, changed files only).
+    EditorTreeDiscard,
+    /// File row (untracked only): append this path to `.gitignore`.
+    EditorTreeAddGitignore,
+    /// Dir row / empty area: create a new empty file.
+    EditorTreeNewFile,
+    /// Dir row / empty area: create a new empty folder.
+    EditorTreeNewFolder,
+    /// Rename prompt modal title.
+    EditorFsPromptRenameTitle,
+    /// New File prompt modal title.
+    EditorFsPromptNewFileTitle,
+    /// New Folder prompt modal title.
+    EditorFsPromptNewFolderTitle,
+    /// Fs-prompt modal: the name input's label.
+    EditorFsPromptNameLabel,
+    /// Fs-prompt modal: the New File/New Folder confirm button.
+    EditorFsPromptCreateButton,
+    /// Delete-confirm modal title for a file target.
+    EditorDeleteConfirmTitleFile,
+    /// Delete-confirm modal title for a directory target.
+    EditorDeleteConfirmTitleFolder,
+    /// Delete-confirm modal: the "recoverable from Trash" note.
+    EditorDeleteConfirmTrashNote,
+    /// Delete-confirm modal: the confirm button.
+    EditorDeleteConfirmButton,
 }
 
 impl Msg {
@@ -1038,7 +1082,68 @@ impl Msg {
             (Ja, EditorWorkspaceDiscard) => "破棄",
             (En, EditorWorkspaceCancel) => "Cancel",
             (Ja, EditorWorkspaceCancel) => "キャンセル",
+
+            // ── Editor Workspace tree context menu (T-WS-EDITOR-007) ──
+            (En, EditorTreeRename) => "Rename…",
+            (Ja, EditorTreeRename) => "名前を変更…",
+            (En, EditorTreeDelete) => "Delete…",
+            (Ja, EditorTreeDelete) => "削除…",
+            (En, EditorTreeCopyPath) => "Copy Path",
+            (Ja, EditorTreeCopyPath) => "パスをコピー",
+            (En, EditorTreeCopyRelativePath) => "Copy Relative Path",
+            (Ja, EditorTreeCopyRelativePath) => "相対パスをコピー",
+            (En, EditorTreeRevealFinder) => "Reveal in Finder",
+            (Ja, EditorTreeRevealFinder) => "Finderで表示",
+            (En, EditorTreeHistory) => "History",
+            (Ja, EditorTreeHistory) => "履歴",
+            (En, EditorTreeStage) => "Stage",
+            (Ja, EditorTreeStage) => "ステージ",
+            (En, EditorTreeUnstage) => "Unstage",
+            (Ja, EditorTreeUnstage) => "アンステージ",
+            (En, EditorTreeDiscard) => "Discard Changes…",
+            (Ja, EditorTreeDiscard) => "変更を破棄…",
+            (En, EditorTreeAddGitignore) => "Add to .gitignore",
+            (Ja, EditorTreeAddGitignore) => ".gitignoreに追加",
+            (En, EditorTreeNewFile) => "New File…",
+            (Ja, EditorTreeNewFile) => "新規ファイル…",
+            (En, EditorTreeNewFolder) => "New Folder…",
+            (Ja, EditorTreeNewFolder) => "新規フォルダ…",
+            (En, EditorFsPromptRenameTitle) => "Rename",
+            (Ja, EditorFsPromptRenameTitle) => "名前を変更",
+            (En, EditorFsPromptNewFileTitle) => "New File",
+            (Ja, EditorFsPromptNewFileTitle) => "新規ファイル",
+            (En, EditorFsPromptNewFolderTitle) => "New Folder",
+            (Ja, EditorFsPromptNewFolderTitle) => "新規フォルダ",
+            (En, EditorFsPromptNameLabel) => "Name",
+            (Ja, EditorFsPromptNameLabel) => "名前",
+            (En, EditorFsPromptCreateButton) => "Create",
+            (Ja, EditorFsPromptCreateButton) => "作成",
+            (En, EditorDeleteConfirmTitleFile) => "Delete file?",
+            (Ja, EditorDeleteConfirmTitleFile) => "ファイルを削除しますか?",
+            (En, EditorDeleteConfirmTitleFolder) => "Delete folder?",
+            (Ja, EditorDeleteConfirmTitleFolder) => "フォルダを削除しますか?",
+            (En, EditorDeleteConfirmTrashNote) => {
+                "Moved to the Trash — recoverable from ~/.Trash."
+            }
+            (Ja, EditorDeleteConfirmTrashNote) => {
+                "ゴミ箱に移動します(~/.Trash から復元できます)。"
+            }
+            (En, EditorDeleteConfirmButton) => "Move to Trash",
+            (Ja, EditorDeleteConfirmButton) => "ゴミ箱に移動",
         }
+    }
+}
+
+/// T-WS-EDITOR-007: the delete-confirm modal's "N file(s)" note for a
+/// directory target. `None` count (a file target) isn't passed here — the
+/// caller only calls this for `is_dir` targets. Parameterized strings get a
+/// plain helper `fn` here (same convention as `wip_row_note`) rather than a
+/// `format!` at the call site.
+pub fn editor_delete_file_count_note(count: usize, truncated: bool) -> String {
+    let suffix = if truncated { "+" } else { "" };
+    match lang() {
+        Lang::En => format!("{count}{suffix} file(s) inside"),
+        Lang::Ja => format!("内包ファイル数: {count}{suffix}"),
     }
 }
 

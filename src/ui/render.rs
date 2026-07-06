@@ -377,6 +377,8 @@ impl Render for KagiApp {
         let delete_branch_modal = self.delete_branch_modal().cloned();
         let discard_modal = self.discard_modal().cloned();
         let editor_dirty_guard_modal = self.editor_dirty_guard_modal().cloned();
+        let editor_fs_prompt_modal = self.editor_fs_prompt_modal().cloned();
+        let editor_delete_confirm_modal = self.editor_delete_confirm_modal().cloned();
         let file_menu = self.file_menu;
         let modal_focus = self.modal_focus.clone();
         let stash_push_modal = self.stash_push_modal().cloned();
@@ -424,6 +426,23 @@ impl Render for KagiApp {
                         entity, &m, idx, pos, window, cx,
                     )),
                     _ => None,
+                }
+            }
+            None => None,
+        };
+        // T-WS-EDITOR-007: the Editor Workspace tree's right-click context
+        // menu overlay — same top-level-on-`KagiApp` pattern as
+        // `conflict_file_menu_overlay` above (reads `tree_menu` from the
+        // entity, so its `on_select` dispatches `KagiApp` methods directly
+        // without leasing the entity).
+        let editor_tree_menu_overlay = match self.editor_workspace.as_ref() {
+            Some(entity) => {
+                let tree_menu = entity.read(cx).tree_menu;
+                match tree_menu {
+                    Some((target, pos)) => {
+                        editor_tree_menu::render_editor_tree_menu(entity, target, pos, window, cx)
+                    }
+                    None => None,
                 }
             }
             None => None,
@@ -696,6 +715,8 @@ impl Render for KagiApp {
             .children(stash_menu_overlay)
             // ── Conflict per-file "…" overflow menu overlay ────
             .children(conflict_file_menu_overlay)
+            // ── Editor Workspace tree right-click context menu overlay ──
+            .children(editor_tree_menu_overlay)
             // ── W5-MENU: menu-driven overlay (branch picker / About / shortcuts) ──
             .children(self.render_menu_overlay(window, cx));
 
@@ -727,6 +748,8 @@ impl Render for KagiApp {
             delete_branch_modal,
             discard_modal,
             editor_dirty_guard_modal,
+            editor_fs_prompt_modal,
+            editor_delete_confirm_modal,
             file_menu,
             modal_focus,
             stash_push_focus,

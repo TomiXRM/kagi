@@ -691,6 +691,76 @@ impl KagiApp {
         self.refresh_wip_diffstat();
     }
 
+    /// Stage `path` directly (T-WS-EDITOR-007: Editor Workspace tree
+    /// context-menu "Stage") — same `Backend::stage_file` call as
+    /// `do_stage_file`, but keyed by path instead of a commit-panel index
+    /// (the editor workspace's tree doesn't share the commit panel's unstaged
+    /// index). Refreshes the commit panel (if open) AND the editor workspace
+    /// tree explicitly: `git add` is index-only and never touches the
+    /// filesystem, so the FS watcher would never observe it.
+    pub fn do_stage_file_by_path(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                klog!(
+                    "editor-ws: stage {} — repo session unavailable",
+                    path.display()
+                );
+                return;
+            }
+        };
+        match repo.stage_file(&path) {
+            Ok(()) => klog!("editor-ws: stage {}", path.display()),
+            Err(e) => {
+                klog!("editor-ws: stage {} failed: {}", path.display(), e);
+                return;
+            }
+        }
+        if let Some(entity) = self.commit_panel.clone() {
+            entity.update(cx, |v, _| v.state.reload_status(&repo_path));
+        }
+        if let Some(ev) = self.editor_workspace.clone() {
+            ev.update(cx, |v, cx| v.start_load(cx));
+        }
+        self.refresh_wip_diffstat();
+    }
+
+    /// Unstage `path` directly — the `do_stage_file_by_path` counterpart.
+    pub fn do_unstage_file_by_path(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                klog!(
+                    "editor-ws: unstage {} — repo session unavailable",
+                    path.display()
+                );
+                return;
+            }
+        };
+        match repo.unstage_file(&path) {
+            Ok(()) => klog!("editor-ws: unstage {}", path.display()),
+            Err(e) => {
+                klog!("editor-ws: unstage {} failed: {}", path.display(), e);
+                return;
+            }
+        }
+        if let Some(entity) = self.commit_panel.clone() {
+            entity.update(cx, |v, _| v.state.reload_status(&repo_path));
+        }
+        if let Some(ev) = self.editor_workspace.clone() {
+            ev.update(cx, |v, cx| v.start_load(cx));
+        }
+        self.refresh_wip_diffstat();
+    }
+
     /// T-UI-003: Select a file in the commit panel and open it in the main diff pane.
     pub fn select_commit_panel_file(
         &mut self,

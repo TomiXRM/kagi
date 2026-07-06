@@ -500,22 +500,52 @@ pub(crate) fn render_loading_placeholder(label: SharedString) -> impl IntoElemen
         )
 }
 
-/// ADR-0117: the diff "list body" (header line + virtualized rows + scrollbar),
-/// parameterized over the entity context `V` so it can be rendered from either
-/// `KagiApp` (the standalone main diff) or `FileHistoryView` (its embedded diff
-/// pane). The `uniform_list` row processor ignores the entity (`_this`), so this
-/// works for any `V: 'static`. `leading` / `trailing` are the optional standalone
-/// header buttons (Back / History) — `None` when embedded in File History, which
-/// supplies its own Back. Never read an entity back via `cx` here — this runs
-/// during render (the rendering entity is already borrowed → panic).
+/// T-DIFF-WRAP-001: construct a fresh diff-list [`gpui::ListState`] (item count
+/// 0 — the caller syncs it to the real row count via `render_diff_list`'s
+/// count check, see its doc comment for the lifecycle). Shared by the three
+/// owners (`KagiApp.main_diff_scroll_handle`, `FileHistoryState.diff_scroll`,
+/// `EditorWorkspaceView.diff_scroll`) so the overdraw tuning lives in one
+/// place. `px(1000.)` matches gpui-component's own `TextView` (a similarly
+/// line-oriented variable-height list).
+pub(crate) fn new_diff_list_state() -> gpui::ListState {
+    gpui::ListState::new(0, gpui::ListAlignment::Top, px(1000.))
+}
+
+/// ADR-0117 / T-DIFF-WRAP-001: the diff "list body" (header line + virtualized
+/// rows + scrollbar), parameterized over the entity context `V` so it can be
+/// rendered from `KagiApp` (the standalone main diff), `FileHistoryView` (its
+/// embedded diff pane), or `EditorWorkspaceView` (the hunks pane). `leading` /
+/// `trailing` are the optional standalone header buttons (Back / History) —
+/// `None` when embedded, which supplies its own Back. Never read an entity
+/// back via `cx` here — this runs during render (the rendering entity is
+/// already borrowed → panic).
+///
+/// T-DIFF-WRAP-001: renders via `gpui::list` (variable row height) instead of
+/// `uniform_list` so a soft-wrapped diff line grows its row instead of being
+/// clipped to a fixed row height (user report). `scroll_handle` is a
+/// `gpui::ListState` — construct one per owner via [`new_diff_list_state`].
+///
+/// ListState lifecycle: the item count is synced here, once per render, by
+/// comparing `scroll_handle.item_count()` against `row_count` and calling
+/// `.reset(row_count)` on mismatch. This is centralized instead of resetting
+/// at every `MainDiffView`-assignment call site (there are ~10 across
+/// `diff_view.rs` / `file_history_render.rs` / `editor_workspace.rs`) because
+/// every one of them calls `cx.notify()`, so the next render through here sees
+/// the new count. `reset` also drops the scroll offset back to the top, which
+/// only fires on an actual count change — matching (and slightly improving)
+/// the pre-existing behaviour, where the scroll position was never explicitly
+/// reset on file switch either.
 pub(crate) fn render_diff_list<V: 'static>(
     view: MainDiffView,
     leading: Option<gpui::AnyElement>,
     trailing: Option<gpui::AnyElement>,
-    scroll_handle: UniformListScrollHandle,
-    cx: &mut Context<V>,
+    scroll_handle: gpui::ListState,
+    _cx: &mut Context<V>,
 ) -> impl IntoElement {
     let row_count = view.rows.len();
+    if scroll_handle.item_count() != row_count {
+        scroll_handle.reset(row_count);
+    }
     let title = view.title.clone();
     let stats = view.stats.clone();
     let rows = std::sync::Arc::new(view.rows);
@@ -574,18 +604,16 @@ pub(crate) fn render_diff_list<V: 'static>(
         // ── Diff body: full remaining space ──────────────────────────────
         .child({
             // W12-GCADOPT (§2.10): Scrollbar overlay on the diff list.
+            // gpui-component 0.5.1 implements `ScrollbarHandle` directly for
+            // `gpui::ListState` (src/scroll/scrollbar.rs) — no local newtype
+            // needed, unlike `UniformListScrollHandle`'s wrapper elsewhere.
             let scrollbar_handle = scroll_handle.clone();
             with_vertical_scrollbar(
                 "main-diff-list-scroll",
                 &scrollbar_handle,
-                uniform_list(
-                    "main-diff-list",
-                    row_count,
-                    cx.processor(move |_this: &mut V, range, _window, _cx| {
-                        render_main_diff_rows(&rows_for_list, range)
-                    }),
-                )
-                .track_scroll(scroll_handle)
+                gpui::list(scroll_handle, move |ix, _window, _cx| {
+                    render_main_diff_row(&rows_for_list, ix)
+                })
                 .flex_1()
                 .min_h(px(0.)),
                 true,
@@ -598,7 +626,7 @@ pub(crate) fn render_diff_list<V: 'static>(
 /// renders its diff pane via [`render_diff_list`] directly (no buttons).
 pub(crate) fn render_main_diff_view(
     view: MainDiffView,
-    scroll_handle: UniformListScrollHandle,
+    scroll_handle: gpui::ListState,
     // Standalone main diff (true) vs reused inside the File History view
     // (false). When embedded in File History, the header's Back and History
     // buttons are hidden — the File History view has its own Back.
@@ -643,19 +671,25 @@ pub(crate) fn render_main_diff_view(
 
 /// W12-GCADOPT (§2.10): wrap a virtualized list in a relative flex column and
 /// overlay a `gpui_component::scroll::Scrollbar` driven by the list's existing
-/// `UniformListScrollHandle`.  The Scrollbar paints itself absolutely-positioned
-/// over the container (relative(1.) size), so this is layout-non-destructive —
-/// the inner `uniform_list` keeps its own `flex_1().min_h(0)` sizing.  Colours
-/// follow the gpui-component scrollbar theme fields, which
-/// `sync_gpui_component_theme` keeps in step with kagi's palette.
+/// scroll handle. The Scrollbar paints itself absolutely-positioned over the
+/// container (relative(1.) size), so this is layout-non-destructive — the
+/// inner list keeps its own `flex_1().min_h(0)` sizing. Colours follow the
+/// gpui-component scrollbar theme fields, which `sync_gpui_component_theme`
+/// keeps in step with kagi's palette.
 /// `show_bar` controls whether the overlay scrollbar is rendered. `false` hides
 /// it entirely (the list still scrolls via wheel/trackpad) — used for the commit
 /// stage/unstage lists, which the user wants free of a visible scrollbar. When
 /// `true` the bar follows the theme default (`cx.theme().scrollbar_show`, which
 /// honours the macOS "show scroll bars" setting).
-pub(crate) fn with_vertical_scrollbar(
+///
+/// T-DIFF-WRAP-001: generic over `H: ScrollbarHandle` (not just
+/// `UniformListScrollHandle`) so the same wrapper serves the diff panes'
+/// `gpui::ListState`-backed `list()` — gpui-component 0.5.1 implements
+/// `ScrollbarHandle` for both `UniformListScrollHandle` and `ListState`
+/// (`src/scroll/scrollbar.rs`), so no local newtype was needed.
+pub(crate) fn with_vertical_scrollbar<H: gpui_component::scroll::ScrollbarHandle + Clone>(
     id: &'static str,
-    handle: &UniformListScrollHandle,
+    handle: &H,
     list: impl IntoElement,
     show_bar: bool,
 ) -> impl IntoElement {

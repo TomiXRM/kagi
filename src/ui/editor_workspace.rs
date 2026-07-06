@@ -224,8 +224,10 @@ pub struct EditorWorkspaceView {
 
     /// Scroll handle for the virtualized left tree list.
     pub tree_scroll: UniformListScrollHandle,
-    /// Scroll handle for the right hunks list.
-    pub diff_scroll: UniformListScrollHandle,
+    /// T-DIFF-WRAP-001: `ListState` (variable-height) for the right hunks
+    /// list — see `render_helpers::render_diff_list` for the item-count
+    /// sync/reset lifecycle.
+    pub diff_scroll: gpui::ListState,
 
     /// Whether the left tree pane renders (T-WS-EDITOR-005 finding #3).
     /// Pushed by `render_body` from `workspace::resolve_workspace`'s
@@ -270,7 +272,7 @@ impl EditorWorkspaceView {
             dirty: false,
             external_changed: false,
             tree_scroll: UniformListScrollHandle::new(),
-            diff_scroll: UniformListScrollHandle::new(),
+            diff_scroll: new_diff_list_state(),
             show_tree: true,
         }
     }

@@ -449,6 +449,8 @@ impl KagiApp {
                 // and writes straight to the PTY. Key events bubble along the
                 // focus path, so this fires while the terminal is focused.
                 let paste_writer = session.paste_writer.clone();
+                let tab_writer = paste_writer.clone();
+                let shift_tab_writer = paste_writer.clone();
                 let term_focus = view_entity.read(cx).focus_handle().clone();
                 return div()
                     .flex_1()
@@ -459,6 +461,24 @@ impl KagiApp {
                     // those keys while the terminal is focused — they flow to the
                     // terminal's own on_key_down → PTY (history, vim, etc.).
                     .key_context("Terminal")
+                    // Tab / Shift-Tab → PTY (shell completion; user report).
+                    // gpui_component::Root binds "tab" to focus cycling in its
+                    // "Root" context, and bindings run before key listeners —
+                    // so the terminal's on_key_down never saw Tab. These
+                    // actions are bound in this deeper "Terminal" context
+                    // (mod.rs), which outranks Root's binding.
+                    .on_action(cx.listener(move |_this, _: &TerminalSendTab, _w, _cx| {
+                        if let Some(writer) = tab_writer.as_ref() {
+                            writer.paste_text("\t");
+                        }
+                    }))
+                    .on_action(
+                        cx.listener(move |_this, _: &TerminalSendShiftTab, _w, _cx| {
+                            if let Some(writer) = shift_tab_writer.as_ref() {
+                                writer.paste_text("\x1b[Z");
+                            }
+                        }),
+                    )
                     // Clicking anywhere in the terminal area refocuses the
                     // terminal (the view's own mouse handling is a no-op in
                     // gpui-terminal 0.1.0, so a stray click could leave the

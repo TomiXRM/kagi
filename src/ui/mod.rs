@@ -105,7 +105,17 @@ actions!(
         CloseMainDiff,
         DiffPrevFile,
         DiffNextFile,
-        CheckoutSelected
+        CheckoutSelected,
+        // T-TERM-INTERACT-001 follow-up: Tab / Shift-Tab for the embedded
+        // terminal. gpui_component::Root binds "tab"/"shift-tab" to focus
+        // cycling in its "Root" context (root.rs), which is an ancestor of
+        // everything — so the raw key never reached the terminal's
+        // on_key_down and shell completion was dead (user report). These
+        // actions are bound in the deeper "Terminal" context (deeper context
+        // wins in gpui's keymap), and their handlers write the terminal
+        // bytes straight to the PTY.
+        TerminalSendTab,
+        TerminalSendShiftTab
     ]
 );
 
@@ -3830,6 +3840,14 @@ pub fn run_app(app_state: KagiApp) {
         // T-UI-003: Esc closes the main diff view (no-op when main_diff is None).
         // Scoped `!Terminal` so Escape reaches a focused terminal (vim/less/etc.).
         cx.bind_keys([KeyBinding::new("escape", CloseMainDiff, Some("!Terminal"))]);
+        // T-TERM-INTERACT-001 follow-up: Tab completion in the embedded
+        // terminal. Deeper "Terminal" context outranks gpui_component Root's
+        // "tab" → focus-cycling binding; handlers live on the terminal
+        // wrapper div in render_bottom.rs and write \t / ESC[Z to the PTY.
+        cx.bind_keys([
+            KeyBinding::new("tab", TerminalSendTab, Some("Terminal")),
+            KeyBinding::new("shift-tab", TerminalSendShiftTab, Some("Terminal")),
+        ]);
         // Arrow keys step through files while the main diff is open
         // (no-ops otherwise; see main_diff_step). Scoped `!Terminal` so up/down
         // reach a focused terminal (shell history) instead of being consumed here.

@@ -403,6 +403,63 @@ pub struct EditorDirtyGuardModal {
     pub intent: EditorPendingIntent,
 }
 
+// ──────────────────────────────────────────────────────────────
+// EditorFsPromptModal / EditorDeleteConfirmModal — Editor Workspace tree
+// context-menu fs operations (T-WS-EDITOR-007)
+// ──────────────────────────────────────────────────────────────
+
+/// Which fs-prompt the single [`EditorFsPromptModal`] is showing. Rename
+/// pre-fills `input` with the current name; New File / New Folder start
+/// empty. Not a Git write (plain `std::fs` — same ADR-0120 §4 scoping as
+/// Editor Workspace save) — no `OperationPlan` here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditorFsPromptKind {
+    Rename,
+    NewFile,
+    NewDir,
+}
+
+/// State for the Rename / New File / New Folder text-input prompt. One
+/// modal variant for all three (ticket's call): they share the same
+/// name-input + validate + `std::fs` op shape, only the target path and the
+/// title/verb differ by `kind`.
+#[derive(Clone)]
+pub struct EditorFsPromptModal {
+    pub kind: EditorFsPromptKind,
+    /// `Rename`: the full repo-relative path being renamed. `NewFile` /
+    /// `NewDir`: the repo-relative parent directory to create inside
+    /// (empty `PathBuf` = repo root).
+    pub base: std::path::PathBuf,
+    /// Current text in the name input field (synced from `input_state`).
+    pub input: String,
+    /// Real text-input entity (gpui-component). Created lazily on first
+    /// render (needs a Window); `None` in headless paths — the
+    /// `KAGI_EDITOR_WS_NEWFILE` hook drives `input` directly instead.
+    pub input_state: Option<Entity<InputState>>,
+    /// Validation / fs-op error message, shown in place of a live plan (there
+    /// is none — this isn't a Git write).
+    pub error: Option<SharedString>,
+}
+
+/// State for the Delete (Trash) confirmation. Not a two-stage arm like
+/// `DiscardModal` — a Trash move is recoverable (`~/.Trash`), unlike
+/// `git checkout --`/untracked deletion, so a single explicit confirm click
+/// is enough (ponytail: matches the risk level instead of copying the
+/// heavier discard gate everywhere).
+#[derive(Clone)]
+pub struct EditorDeleteConfirmModal {
+    /// Repo-relative path to trash.
+    pub path: std::path::PathBuf,
+    pub is_dir: bool,
+    /// Recursive entry count under a directory target (see
+    /// `editor_fs_ops::count_dir_entries_capped`); `None` for a file target.
+    pub file_count: Option<usize>,
+    /// `true` when `file_count` stopped short of the real total (capped —
+    /// the modal shows "N+ files").
+    pub truncated: bool,
+    pub error: Option<SharedString>,
+}
+
 pub enum ActiveModal {
     Checkout(CheckoutPlanModal),
     Pull(PullPlanModal),
@@ -428,4 +485,6 @@ pub enum ActiveModal {
     Discard(DiscardModal),
     ConflictContinue(ConflictContinuePlanModal),
     EditorDirtyGuard(EditorDirtyGuardModal),
+    EditorFsPrompt(EditorFsPromptModal),
+    EditorDeleteConfirm(EditorDeleteConfirmModal),
 }

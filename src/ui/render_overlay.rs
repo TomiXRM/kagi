@@ -344,6 +344,8 @@ impl KagiApp {
         delete_branch_modal: Option<DeleteBranchModal>,
         discard_modal: Option<DiscardModal>,
         editor_dirty_guard_modal: Option<EditorDirtyGuardModal>,
+        editor_fs_prompt_modal: Option<EditorFsPromptModal>,
+        editor_delete_confirm_modal: Option<EditorDeleteConfirmModal>,
         file_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
         modal_focus: Option<FocusHandle>,
         stash_push_focus: Option<FocusHandle>,
@@ -444,6 +446,18 @@ impl KagiApp {
         // ── Editor Workspace unsaved-changes modal (T-WS-EDITOR-002) ──
         .when_some(editor_dirty_guard_modal, |el, modal| {
             el.child(render_editor_dirty_guard_modal(modal, cx))
+        })
+        // ── Editor Workspace tree fs-prompt (Rename/New File/New Folder) ──
+        .when_some(editor_fs_prompt_modal, |el, modal| {
+            el.child(render_editor_fs_prompt_modal(
+                modal,
+                modal_focus.clone(),
+                cx,
+            ))
+        })
+        // ── Editor Workspace tree Delete (Trash) confirm ─────────
+        .when_some(editor_delete_confirm_modal, |el, modal| {
+            el.child(render_editor_delete_confirm_modal(modal, cx))
         })
         // ── Unstaged file context menu (right-click → Discard) ──
         .when_some(file_menu, |el, (fi, pos)| {

@@ -71,10 +71,35 @@ pub enum TreeSource {
 /// if any. `change` is `None` for an unmodified file in `TreeSource::All` — a
 /// `FileStatus` can't represent "no change", so this shared shape lets both
 /// tree sources use the same `files`/`tree`/selection plumbing below.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct WorkspaceFile {
     pub path: PathBuf,
     pub change: Option<ChangeKind>,
+    /// `true` when this path has no git history at all (T-WS-EDITOR-007) —
+    /// gates "Add to .gitignore" (untracked only) and "Discard Changes…"
+    /// (tracked only) in the tree context menu.
+    pub untracked: bool,
+    /// `true` when this path has unstaged (working-tree) changes —
+    /// gates "Stage" in the tree context menu.
+    pub unstaged: bool,
+    /// `true` when this path has staged (index) changes — gates "Unstage".
+    pub staged: bool,
+}
+
+/// Where a tree right-click landed (T-WS-EDITOR-007): a file row, a directory
+/// row, or the empty area below the tree (repo root). Indices key into the
+/// owning `EditorWorkspaceView`'s `files` (`File`) / `tree` (`Dir`) — resolved
+/// to a concrete path/flags when the menu overlay is built (render time),
+/// same latency window as every other right-click menu in this codebase
+/// (commit/branch/stash/conflict-file).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TreeMenuTarget {
+    /// Index into `files`.
+    File(usize),
+    /// Index into `tree` (a `TreeRow::Dir`).
+    Dir(usize),
+    /// The empty area below the tree, or repo root for New File/New Folder.
+    Root,
 }
 
 /// One open-but-INACTIVE editor tab's buffer (user request: editor tabs).
@@ -237,6 +262,15 @@ pub struct EditorWorkspaceView {
     /// way the sidebar/right-panel arms are. Defaults to `true` so the tree
     /// shows before the first `render_body` push.
     pub show_tree: bool,
+
+    /// The tree's right-click context menu (T-WS-EDITOR-007): which row (or
+    /// the empty area) it targets, and the click position for the overlay.
+    /// Rendered TOP-LEVEL on `KagiApp` (mirrors `ConflictView::file_menu` —
+    /// see `editor_tree_menu::render_editor_tree_menu` + `render.rs`'s
+    /// `editor_tree_menu_overlay`), never inside this entity's `Render` —
+    /// its actions dispatch on `KagiApp` directly (fs mutations, modals),
+    /// never re-entering this leased entity.
+    pub tree_menu: Option<(TreeMenuTarget, gpui::Point<gpui::Pixels>)>,
 }
 
 impl EditorWorkspaceView {
@@ -274,6 +308,7 @@ impl EditorWorkspaceView {
             tree_scroll: UniformListScrollHandle::new(),
             diff_scroll: new_diff_list_state(),
             show_tree: true,
+            tree_menu: None,
         }
     }
 
@@ -976,6 +1011,83 @@ impl EditorWorkspaceView {
         self.load_selected(cx);
         cx.notify();
     }
+
+    // ── Tree context menu + fs-mutation follow-up (T-WS-EDITOR-007) ──
+
+    /// Open the tree's right-click context menu at `pos` for `target`. Set by
+    /// `on_mouse_down(MouseButton::Right)` on file rows, dir rows, and the
+    /// pane background (`Root`); rendered top-level on `KagiApp` (see module
+    /// doc on `tree_menu`).
+    pub fn open_tree_menu(
+        &mut self,
+        target: TreeMenuTarget,
+        pos: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        self.tree_menu = Some((target, pos));
+        cx.notify();
+    }
+
+    /// Dismiss the tree context menu without acting.
+    pub fn close_tree_menu(&mut self, cx: &mut Context<Self>) {
+        self.tree_menu = None;
+        cx.notify();
+    }
+
+    /// Remap every reference to `old` (or, for a directory rename, every path
+    /// nested under it) to `new` — `open_path`, `open_tabs`, and `tab_cache`
+    /// keys. Called by `KagiApp::confirm_editor_fs_prompt` after a successful
+    /// `std::fs::rename` so the currently-open buffer (and any backgrounded
+    /// tab) keeps pointing at the right file instead of a now-stale path.
+    pub fn remap_renamed_path(&mut self, old: &Path, new: &Path, cx: &mut Context<Self>) {
+        let remap = |p: &Path| -> Option<PathBuf> {
+            if p == old {
+                Some(new.to_path_buf())
+            } else {
+                p.strip_prefix(old).ok().map(|suffix| new.join(suffix))
+            }
+        };
+        if let Some(cur) = self.open_path.clone() {
+            if let Some(mapped) = remap(&cur) {
+                self.open_path = Some(mapped);
+            }
+        }
+        for p in self.open_tabs.iter_mut() {
+            if let Some(mapped) = remap(p) {
+                *p = mapped;
+            }
+        }
+        let stale_keys: Vec<PathBuf> = self
+            .tab_cache
+            .keys()
+            .filter(|k| remap(k).is_some())
+            .cloned()
+            .collect();
+        for k in stale_keys {
+            if let (Some(mapped), Some(buf)) = (remap(&k), self.tab_cache.remove(&k)) {
+                self.tab_cache.insert(mapped, buf);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Close every open tab at or under `path` (a file delete closes exactly
+    /// that tab; a directory delete closes every tab nested under it) —
+    /// called by `KagiApp::confirm_editor_delete` after the fs-level trash
+    /// move succeeds. Reuses `close_tab_now`'s existing next-tab-activation
+    /// logic per victim, so this is safe even when the active tab is among
+    /// the victims.
+    pub fn close_paths_under(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let victims: Vec<PathBuf> = self
+            .open_tabs
+            .iter()
+            .filter(|p| p.as_path() == path || p.starts_with(path))
+            .cloned()
+            .collect();
+        for v in victims {
+            self.close_tab_now(&v, cx);
+        }
+    }
 }
 
 /// T-WS-EDITOR-002 §3: resolve the on-disk path `save` writes to. Pure —
@@ -1026,6 +1138,58 @@ fn restore_selection(
     } else {
         (None, false)
     }
+}
+
+/// Reconstruct a `TreeRow::Dir` row's full repo-relative path (T-WS-EDITOR-007
+/// — the tree context menu's New File/Folder/Rename/Delete/Copy Path/Reveal
+/// items on a directory row need it). `TreeRow::Dir` only stores a `name`
+/// relative to its immediate parent row (possibly multi-segment, from
+/// `file_tree`'s single-child-directory compression) — not the full path —
+/// so this walks backward from `index` to the nearest preceding row at each
+/// decreasing depth (its structural parent, guaranteed by the depth-first
+/// pre-order flattening `file_tree::build_file_tree_opt` produces) and joins
+/// the names with `/`. Returns `None` for an out-of-range index or a `File`
+/// row. Pure — unit-tested below.
+pub(crate) fn dir_path_for_tree_index(tree: &[TreeRow], index: usize) -> Option<PathBuf> {
+    let mut depth = match tree.get(index)? {
+        TreeRow::Dir { depth, .. } => *depth,
+        TreeRow::File { .. } => return None,
+    };
+    let mut segments: Vec<SharedString> = vec![match &tree[index] {
+        TreeRow::Dir { name, .. } => name.clone(),
+        TreeRow::File { .. } => unreachable!(),
+    }];
+    let mut i = index;
+    while depth > 0 {
+        let target_depth = depth - 1;
+        let mut found = false;
+        while i > 0 {
+            i -= 1;
+            let row_depth = match &tree[i] {
+                TreeRow::Dir { depth, .. } => *depth,
+                TreeRow::File { depth, .. } => *depth,
+            };
+            if row_depth == target_depth {
+                match &tree[i] {
+                    TreeRow::Dir { name, .. } => segments.push(name.clone()),
+                    TreeRow::File { .. } => return None, // malformed: parent must be a Dir
+                }
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return None; // malformed tree — no ancestor at the expected depth
+        }
+        depth = target_depth;
+    }
+    segments.reverse();
+    let joined: String = segments
+        .iter()
+        .map(|s| s.as_ref())
+        .collect::<Vec<_>>()
+        .join("/");
+    Some(PathBuf::from(joined))
 }
 
 /// Every directory row's index into `tree` — the "fully collapsed" set used
@@ -1100,11 +1264,16 @@ fn nearest_visible_file_row(
 fn merge_working_tree_files(status: &kagi_git::WorkingTreeStatus) -> Vec<WorkspaceFile> {
     let mut files: Vec<WorkspaceFile> = Vec::new();
     let mut seen: HashSet<PathBuf> = HashSet::new();
+    let unstaged_paths: HashSet<&Path> = status.unstaged.iter().map(|f| f.path.as_path()).collect();
+    let staged_paths: HashSet<&Path> = status.staged.iter().map(|f| f.path.as_path()).collect();
     for f in status.unstaged.iter().chain(status.staged.iter()) {
         if seen.insert(f.path.clone()) {
             files.push(WorkspaceFile {
                 path: f.path.clone(),
                 change: Some(f.change.clone()),
+                untracked: false,
+                unstaged: unstaged_paths.contains(f.path.as_path()),
+                staged: staged_paths.contains(f.path.as_path()),
             });
         }
     }
@@ -1113,6 +1282,12 @@ fn merge_working_tree_files(status: &kagi_git::WorkingTreeStatus) -> Vec<Workspa
             files.push(WorkspaceFile {
                 path: p.clone(),
                 change: Some(ChangeKind::Added),
+                untracked: true,
+                // Untracked files always show as unstaged (git status lists
+                // them separately from `unstaged`/`staged`, but "Stage" is the
+                // only action that applies until they're added).
+                unstaged: true,
+                staged: false,
             });
         }
     }
@@ -1121,19 +1296,28 @@ fn merge_working_tree_files(status: &kagi_git::WorkingTreeStatus) -> Vec<Workspa
 
 /// Merge the full tracked+untracked path list (`Backend::worktree_files`)
 /// with the working-tree change kinds (by path) for `TreeSource::All` — an
-/// unmodified file simply gets `change: None` (no badge), while a changed one
-/// keeps its real `ChangeKind` so the badge still shows (T-WS-EDITOR-004
-/// scope item 3).
+/// unmodified file simply gets `change: None` (no badge) and every
+/// `untracked`/`staged`/`unstaged` flag `false` (a clean tracked file offers
+/// none of the git-write tree-menu items), while a changed one keeps its real
+/// flags so the badge + menu items still show (T-WS-EDITOR-004 scope item 3 /
+/// T-WS-EDITOR-007).
 fn merge_all_files(all_paths: Vec<PathBuf>, changed: &[WorkspaceFile]) -> Vec<WorkspaceFile> {
-    let changes: HashMap<&Path, ChangeKind> = changed
-        .iter()
-        .filter_map(|f| f.change.clone().map(|c| (f.path.as_path(), c)))
-        .collect();
+    let by_path: HashMap<&Path, &WorkspaceFile> =
+        changed.iter().map(|f| (f.path.as_path(), f)).collect();
     all_paths
         .into_iter()
-        .map(|path| {
-            let change = changes.get(path.as_path()).cloned();
-            WorkspaceFile { path, change }
+        .map(|path| match by_path.get(path.as_path()) {
+            Some(f) => WorkspaceFile {
+                path,
+                change: f.change.clone(),
+                untracked: f.untracked,
+                unstaged: f.unstaged,
+                staged: f.staged,
+            },
+            None => WorkspaceFile {
+                path,
+                ..Default::default()
+            },
         })
         .collect()
 }
@@ -1504,6 +1688,13 @@ fn render_tree_pane(
     view: &EditorWorkspaceView,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
+    // T-WS-EDITOR-007: right-click on the empty area below the tree (or the
+    // whole pane while loading/empty) opens the menu targeting the repo root
+    // (New File… / New Folder…). File/dir rows below stop propagation on
+    // their own right-click, so this only fires for clicks that miss a row.
+    let root_menu = cx.listener(|this, e: &gpui::MouseDownEvent, _w, cx| {
+        this.open_tree_menu(TreeMenuTarget::Root, e.position, cx);
+    });
     let mut pane = div()
         .w(theme::scaled_px(view.tree_w))
         .flex_shrink_0()
@@ -1511,6 +1702,7 @@ fn render_tree_pane(
         .flex()
         .flex_col()
         .bg(rgb(theme().panel))
+        .on_mouse_down(MouseButton::Right, root_menu)
         .child(render_source_chips(view, cx));
 
     if view.loading {
@@ -1576,6 +1768,10 @@ fn render_tree_row(
             let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
                 this.toggle_dir(index, cx);
             });
+            let right_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                this.open_tree_menu(TreeMenuTarget::Dir(index), e.position, cx);
+            });
             Some(
                 div()
                     .id(("ews-dir", index))
@@ -1588,6 +1784,7 @@ fn render_tree_row(
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(theme().surface)))
                     .on_click(click)
+                    .on_mouse_down(MouseButton::Right, right_click)
                     .child(
                         div()
                             .w(theme::scaled_px(12.))
@@ -1640,6 +1837,10 @@ fn render_tree_row(
             let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
                 this.select(file_index, cx);
             });
+            let right_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                this.open_tree_menu(TreeMenuTarget::File(file_index), e.position, cx);
+            });
             Some(
                 div()
                     .id(("ews-file", file_index))
@@ -1653,6 +1854,7 @@ fn render_tree_row(
                     .bg(rgb(row_bg))
                     .when(!is_selected, |el| el.hover(|s| s.bg(rgb(theme().surface))))
                     .on_click(click)
+                    .on_mouse_down(MouseButton::Right, right_click)
                     .cursor_pointer()
                     .child(
                         div()
@@ -2005,6 +2207,41 @@ mod tests {
     }
 
     #[test]
+    fn dir_path_for_tree_index_reconstructs_nested_and_top_level() {
+        let tree = sample_tree();
+        // Top-level dir "src" (idx 0): its own name is already the full path.
+        assert_eq!(
+            dir_path_for_tree_index(&tree, 0),
+            Some(PathBuf::from("src"))
+        );
+        // Nested dir "ui" (idx 2, depth 1, parent "src" at idx 0): "src/ui".
+        assert_eq!(
+            dir_path_for_tree_index(&tree, 2),
+            Some(PathBuf::from("src/ui"))
+        );
+        // A File index is not a Dir row.
+        assert_eq!(dir_path_for_tree_index(&tree, 1), None);
+        // Out of range.
+        assert_eq!(dir_path_for_tree_index(&tree, 99), None);
+    }
+
+    #[test]
+    fn dir_path_for_tree_index_handles_compressed_top_level_name() {
+        // build_workspace_tree's own compression test shape: Dir("a/b") at
+        // depth 0 already contains the full compressed path.
+        let files = vec![WorkspaceFile {
+            path: PathBuf::from("a/b/c.rs"),
+            change: None,
+            ..Default::default()
+        }];
+        let tree = build_workspace_tree(&files);
+        assert_eq!(
+            dir_path_for_tree_index(&tree, 0),
+            Some(PathBuf::from("a/b"))
+        );
+    }
+
+    #[test]
     fn all_dir_indices_collects_every_dir() {
         let tree = sample_tree();
         // sample_tree: dirs at 0 (src) and 2 (ui).
@@ -2072,6 +2309,7 @@ mod tests {
         let changed = vec![WorkspaceFile {
             path: PathBuf::from("src/a.rs"),
             change: Some(ChangeKind::Modified),
+            ..Default::default()
         }];
         let all = vec![PathBuf::from("src/a.rs"), PathBuf::from("src/b.rs")];
 
@@ -2098,6 +2336,67 @@ mod tests {
         assert_eq!(merged[0].change, None);
     }
 
+    // ── T-WS-EDITOR-007: staged/unstaged/untracked flags ───────────────────
+
+    #[test]
+    fn merge_working_tree_files_flags_untracked_staged_unstaged() {
+        let status = kagi_git::WorkingTreeStatus {
+            staged: vec![kagi_git::FileStatus {
+                path: PathBuf::from("staged.rs"),
+                change: ChangeKind::Modified,
+            }],
+            unstaged: vec![kagi_git::FileStatus {
+                path: PathBuf::from("unstaged.rs"),
+                change: ChangeKind::Modified,
+            }],
+            untracked: vec![PathBuf::from("new.rs")],
+            conflicted: Vec::new(),
+        };
+        let files = merge_working_tree_files(&status);
+
+        let staged = files
+            .iter()
+            .find(|f| f.path == Path::new("staged.rs"))
+            .unwrap();
+        assert!(staged.staged && !staged.unstaged && !staged.untracked);
+
+        let unstaged = files
+            .iter()
+            .find(|f| f.path == Path::new("unstaged.rs"))
+            .unwrap();
+        assert!(!unstaged.staged && unstaged.unstaged && !unstaged.untracked);
+
+        let untracked = files
+            .iter()
+            .find(|f| f.path == Path::new("new.rs"))
+            .unwrap();
+        assert!(!untracked.staged && untracked.unstaged && untracked.untracked);
+    }
+
+    #[test]
+    fn merge_all_files_preserves_flags_for_changed_entries() {
+        let changed = vec![WorkspaceFile {
+            path: PathBuf::from("src/a.rs"),
+            change: Some(ChangeKind::Modified),
+            untracked: false,
+            unstaged: true,
+            staged: false,
+        }];
+        let all = vec![PathBuf::from("src/a.rs"), PathBuf::from("src/b.rs")];
+        let merged = merge_all_files(all, &changed);
+
+        let a = merged
+            .iter()
+            .find(|f| f.path == Path::new("src/a.rs"))
+            .unwrap();
+        assert!(a.unstaged && !a.staged && !a.untracked);
+        let b = merged
+            .iter()
+            .find(|f| f.path == Path::new("src/b.rs"))
+            .unwrap();
+        assert!(!b.unstaged && !b.staged && !b.untracked);
+    }
+
     #[test]
     fn build_workspace_tree_shares_compression_with_option_changes() {
         // Mirrors file_tree's own single-child-compression test, but through
@@ -2107,10 +2406,12 @@ mod tests {
             WorkspaceFile {
                 path: PathBuf::from("a/b/c.rs"),
                 change: None,
+                ..Default::default()
             },
             WorkspaceFile {
                 path: PathBuf::from("top.txt"),
                 change: Some(ChangeKind::Added),
+                ..Default::default()
             },
         ];
         let rows = build_workspace_tree(&files);

@@ -24,6 +24,8 @@ mod diff_cache;
 pub mod diff_view;
 pub mod diffstat_bar;
 pub mod ecosystem;
+pub mod editor_fs_ops;
+pub mod editor_tree_menu;
 pub mod editor_workspace;
 pub mod file_history;
 mod file_history_render;
@@ -37,6 +39,7 @@ mod modal_renderers;
 mod modal_renderers_commit;
 mod modal_renderers_create;
 mod modal_renderers_destructive;
+mod modal_renderers_editor_fs;
 mod modal_renderers_misc;
 mod modal_renderers_plan;
 mod modal_renderers_stash;
@@ -3620,7 +3623,11 @@ impl KagiApp {
     /// choice overlays (update, menu/settings) are consumed but not actioned.
     /// (User request: Enter approves a modal, Esc cancels it.)
     fn confirm_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.editor_dirty_guard_modal().is_some() {
+        if self.editor_fs_prompt_modal().is_some() {
+            self.confirm_editor_fs_prompt(cx);
+        } else if self.editor_delete_confirm_modal().is_some() {
+            self.confirm_editor_delete(cx);
+        } else if self.editor_dirty_guard_modal().is_some() {
             self.confirm_editor_dirty_guard(cx);
         } else if self.discard_modal().is_some() {
             self.start_discard(cx);
@@ -3688,7 +3695,11 @@ impl KagiApp {
     /// Esc while a modal is open: cancel/close the active modal (same priority
     /// order as `confirm_active_modal`). Returns `true` if a modal was open.
     fn cancel_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.editor_dirty_guard_modal().is_some() {
+        if self.editor_fs_prompt_modal().is_some() {
+            self.cancel_editor_fs_prompt();
+        } else if self.editor_delete_confirm_modal().is_some() {
+            self.cancel_editor_delete_confirm();
+        } else if self.editor_dirty_guard_modal().is_some() {
             self.cancel_editor_dirty_guard();
         } else if self.discard_modal().is_some() {
             self.cancel_discard_modal();
@@ -4039,6 +4050,29 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
             // `editor-ws: …` klog lines for headless verification.
             if std::env::var("KAGI_EDITOR_WS").as_deref() == Ok("1") {
                 kagi.update(cx, |app, cx| app.open_editor_workspace(cx));
+            }
+
+            // T-WS-EDITOR-007: KAGI_EDITOR_WS_NEWFILE=<name> opens the Editor
+            // workspace (if not already open) and creates `<name>` at the
+            // repo root through the REAL confirm path (`open_editor_fs_prompt`
+            // + `confirm_editor_fs_prompt`) — one headlessly-verifiable fs op
+            // for this ticket's tree context-menu operations. `confirm_
+            // editor_fs_prompt` only reads `modal.input` (not `input_state`,
+            // which needs a render cycle to exist), so this is safe to fire
+            // synchronously right here, before the first frame.
+            if let Ok(name) = std::env::var("KAGI_EDITOR_WS_NEWFILE") {
+                kagi.update(cx, |app, cx| {
+                    if app.editor_workspace.is_none() {
+                        app.open_editor_workspace(cx);
+                    }
+                    app.open_editor_fs_prompt(
+                        EditorFsPromptKind::NewFile,
+                        std::path::PathBuf::new(),
+                        name.clone(),
+                        cx,
+                    );
+                    app.confirm_editor_fs_prompt(cx);
+                });
             }
 
             // The bottom panel now opens on the Terminal tab by default

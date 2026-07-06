@@ -77,6 +77,29 @@ pub struct WorkspaceFile {
     pub change: Option<ChangeKind>,
 }
 
+/// One open-but-INACTIVE editor tab's buffer (user request: editor tabs).
+/// The same per-file fields `EditorWorkspaceView` holds flattened for the
+/// active buffer — swapped wholesale on tab switch (`stash_active` /
+/// `open_tab`), mirroring `KagiApp`'s `active_view`/`tab_cache` pattern
+/// (ADR-0075). Each tab keeps its OWN `InputState`: sharing one and
+/// `set_value`-swapping text would leak the undo history across files
+/// (gpui-component's `set_value` ignores history, so Cmd-Z in tab B would
+/// replay tab A's edits).
+struct EditorBufferState {
+    content: Option<String>,
+    content_lang: &'static str,
+    content_binary: bool,
+    content_too_large: bool,
+    content_missing: bool,
+    content_undecodable: bool,
+    content_sig: u64,
+    editor: Option<Entity<InputState>>,
+    pushed_sig: u64,
+    dirty: bool,
+    external_changed: bool,
+    diff: Option<MainDiffView>,
+}
+
 /// The Editor workspace view-model + entity (ADR-0117 fat-entity template).
 pub struct EditorWorkspaceView {
     /// Weak back-ref to the parent, used ONLY in event listeners (close) —
@@ -119,11 +142,19 @@ pub struct EditorWorkspaceView {
     /// open file after switching All → Changes; then `selected` is `None`
     /// while the buffer stays open).
     pub selected: Option<usize>,
-    /// Repo-relative path of the file the buffer holds (set by `select`).
-    /// The header path, the content/diff loader, and save all key off this —
-    /// NOT off `selected` — so a tree-source switch can rebuild the list
-    /// without touching the open buffer.
+    /// Repo-relative path of the file the ACTIVE buffer holds (set by
+    /// `open_tab`). The header path, the content/diff loader, and save all
+    /// key off this — NOT off `selected` — so a tree-source switch can
+    /// rebuild the list without touching the open buffer.
     pub open_path: Option<PathBuf>,
+    /// Editor tab order (user request: multiple open buffers). Contains the
+    /// active tab too; the ACTIVE buffer's fields stay flattened on this
+    /// struct, inactive buffers live in `tab_cache` — the same
+    /// active+cache swap pattern as `KagiApp.active_view`/`tab_cache`
+    /// (ADR-0075), so the render/loader code keeps reading the flat fields.
+    pub open_tabs: Vec<PathBuf>,
+    /// Stashed per-file state for the INACTIVE tabs, keyed by path.
+    tab_cache: HashMap<PathBuf, EditorBufferState>,
     /// `true` while the selected file's content + diff load is in flight.
     pub file_loading: bool,
     /// The selected file's raw text, once loaded. `None` while loading, on a
@@ -222,6 +253,8 @@ impl EditorWorkspaceView {
             generation: 0,
             selected: None,
             open_path: None,
+            open_tabs: Vec::new(),
+            tab_cache: HashMap::new(),
             file_loading: false,
             content: None,
             content_lang: "text",
@@ -346,42 +379,164 @@ impl EditorWorkspaceView {
         self.start_load(cx);
     }
 
-    /// Select a tree row's file (index into `files`): make it the open
-    /// buffer (`open_path`) and kick off its content + diff load.
+    /// Select a tree row's file (index into `files`): make it the active
+    /// tab. NOT a destructive action anymore (editor tabs, user request) —
+    /// a dirty buffer is stashed into its tab, never discarded, so no
+    /// dirty guard is needed on file switch.
     pub fn select(&mut self, file_index: usize, cx: &mut Context<Self>) {
         let Some(file) = self.files.get(file_index) else {
             return;
         };
         self.selected = Some(file_index);
-        self.open_path = Some(file.path.clone());
+        self.open_tab(file.path.clone(), cx);
+    }
+
+    /// Make `path` the active tab: stash (or replace) the current active
+    /// buffer, then restore `path`'s cached buffer or load it fresh.
+    ///
+    /// ponytail: a CLEAN active tab is replaced (not stashed) when opening
+    /// a file that isn't already a tab — otherwise ↑/↓ browsing through the
+    /// tree would spam one tab per step. Dirty tabs always survive. Upgrade
+    /// path if users want sticky clean tabs: a pinned/preview distinction
+    /// (VSCode-style), tracked per tab.
+    pub fn open_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.open_path.as_ref() == Some(&path) {
+            return;
+        }
+        let is_new = !self.open_tabs.contains(&path);
+        if let Some(active) = self.open_path.clone() {
+            if is_new && !self.dirty {
+                self.open_tabs.retain(|p| p != &active);
+                self.open_path = None;
+                self.reset_active_buffer();
+            } else {
+                self.stash_active();
+            }
+        }
+        if is_new {
+            self.open_tabs.push(path.clone());
+        }
+        klog!("editor-ws: file {}", path.display());
+        if let Some(buf) = self.tab_cache.remove(&path) {
+            let clean = !buf.dirty;
+            self.content = buf.content;
+            self.content_lang = buf.content_lang;
+            self.content_binary = buf.content_binary;
+            self.content_too_large = buf.content_too_large;
+            self.content_missing = buf.content_missing;
+            self.content_undecodable = buf.content_undecodable;
+            self.content_sig = buf.content_sig;
+            self.editor = buf.editor;
+            self.pushed_sig = buf.pushed_sig;
+            self.dirty = buf.dirty;
+            self.external_changed = buf.external_changed;
+            self.diff = buf.diff;
+            self.open_path = Some(path);
+            if clean {
+                // Refresh a clean buffer on activation: covers external
+                // changes while it was backgrounded AND a load that was
+                // dropped mid-flight by a tab switch. Sig-guarded push —
+                // an unchanged file is a no-op for the editor.
+                self.load_selected(cx);
+            }
+        } else {
+            self.reset_active_buffer();
+            self.open_path = Some(path);
+            self.load_selected(cx);
+        }
+        cx.notify();
+    }
+
+    /// Tab-strip click: activate an already-open tab (also remaps the tree
+    /// highlight, which may be `None` if the file isn't in the current
+    /// source's list).
+    pub fn activate_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.selected = self.files.iter().position(|f| f.path == path);
+        self.open_tab(path, cx);
+    }
+
+    /// Tab ×-button click: close the tab, with the unsaved-changes guard
+    /// when its buffer is dirty (user request: closing a dirty tab must ask).
+    pub fn request_close_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.tab_dirty(&path) {
+            self.open_dirty_guard(EditorPendingIntent::CloseTab(path), cx);
+            return;
+        }
+        self.close_tab_now(&path, cx);
+    }
+
+    /// Close a tab unconditionally (clean tab, or dirty after the guard's
+    /// Discard). Closing the active tab activates its neighbor (next,
+    /// falling back to previous — `next_active_tab`), or empties the pane.
+    pub fn close_tab_now(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let next = next_active_tab(&self.open_tabs, path, self.open_path.as_deref());
+        self.open_tabs.retain(|p| p != path);
+        self.tab_cache.remove(path);
+        if self.open_path.as_deref() == Some(path) {
+            self.open_path = None;
+            self.reset_active_buffer();
+            match next {
+                Some(next) => self.activate_tab(next, cx),
+                None => self.selected = None,
+            }
+        }
+        cx.notify();
+    }
+
+    /// Move the ACTIVE buffer's fields into `tab_cache` (tab switch).
+    fn stash_active(&mut self) {
+        let Some(path) = self.open_path.take() else {
+            return;
+        };
+        let buf = EditorBufferState {
+            content: self.content.take(),
+            content_lang: self.content_lang,
+            content_binary: self.content_binary,
+            content_too_large: self.content_too_large,
+            content_missing: self.content_missing,
+            content_undecodable: self.content_undecodable,
+            content_sig: self.content_sig,
+            editor: self.editor.take(),
+            pushed_sig: self.pushed_sig,
+            dirty: self.dirty,
+            external_changed: self.external_changed,
+            diff: self.diff.take(),
+        };
+        self.tab_cache.insert(path, buf);
+        self.reset_active_buffer();
+    }
+
+    /// Reset every ACTIVE-buffer field to its empty state (fresh open /
+    /// close of the active tab). `open_path`/`selected` are the caller's job.
+    fn reset_active_buffer(&mut self) {
         self.content = None;
+        self.content_lang = "text";
         self.content_binary = false;
         self.content_too_large = false;
         self.content_missing = false;
         self.content_undecodable = false;
-        self.diff = None;
-        // T-WS-EDITOR-002: opening a different file always drops the old
-        // buffer's dirty/external-changed state — callers that must NOT
-        // silently discard an edit (tree click, ↑/↓ step) go through
-        // `request_select` / `step_selection`, which gate this call behind
-        // the unsaved-changes modal first.
+        self.content_sig = 0;
+        self.editor = None;
+        self.pushed_sig = 0;
         self.dirty = false;
         self.external_changed = false;
-        klog!("editor-ws: file {}", file.path.display());
-        self.load_selected(cx);
-        cx.notify();
+        self.file_loading = false;
+        self.diff = None;
     }
 
-    /// Tree-row click entry point (T-WS-EDITOR-002 §5): guards a dirty
-    /// buffer before switching files. Re-clicking the already-selected file
-    /// is not a navigation — it falls through to `select` even while dirty
-    /// (existing refresh behaviour, not a discard).
-    pub fn request_select(&mut self, file_index: usize, cx: &mut Context<Self>) {
-        if should_guard_navigation(self.dirty, self.selected, file_index) {
-            self.open_dirty_guard(EditorPendingIntent::SelectFile(file_index), cx);
-            return;
+    /// Whether the tab holding `path` (active or cached) has unsaved edits.
+    pub fn tab_dirty(&self, path: &Path) -> bool {
+        if self.open_path.as_deref() == Some(path) {
+            self.dirty
+        } else {
+            self.tab_cache.get(path).is_some_and(|b| b.dirty)
         }
-        self.select(file_index, cx);
+    }
+
+    /// Whether ANY open tab has unsaved edits — the workspace-close guard
+    /// must cover backgrounded tabs too.
+    pub fn any_dirty(&self) -> bool {
+        self.dirty || self.tab_cache.values().any(|b| b.dirty)
     }
 
     /// Chip-click entry point for switching the tree source. T-WS-EDITOR-002
@@ -499,7 +654,13 @@ impl EditorWorkspaceView {
                 // The `dirty` check closes a race: if the user typed while a
                 // watcher-driven clean re-read was in flight, dropping the
                 // result is the only option that doesn't clobber the edit.
-                if v.file_req != file_req || v.dirty {
+                // The `open_path` check keeps a load started for one tab from
+                // landing in another after a tab switch (editor tabs) — the
+                // switched-to tab re-triggers its own load, so nothing stalls.
+                if v.file_req != file_req
+                    || v.dirty
+                    || v.open_path.as_deref() != Some(path.as_path())
+                {
                     return;
                 }
                 v.file_loading = false;
@@ -568,10 +729,25 @@ impl EditorWorkspaceView {
                     return;
                 }
                 let current = state.read(cx).value();
-                let dirty = this.content.as_deref() != Some(current.as_ref());
-                if this.dirty != dirty {
-                    this.dirty = dirty;
-                    cx.notify();
+                if this.editor.as_ref() == Some(&state) {
+                    let dirty = this.content.as_deref() != Some(current.as_ref());
+                    if this.dirty != dirty {
+                        this.dirty = dirty;
+                        cx.notify();
+                    }
+                } else if let Some(buf) = this
+                    .tab_cache
+                    .values_mut()
+                    .find(|b| b.editor.as_ref() == Some(&state))
+                {
+                    // A deferred Change event can land after its tab was
+                    // stashed (editor tabs) — book the dirty bit on the
+                    // right buffer instead of the active one.
+                    let dirty = buf.content.as_deref() != Some(current.as_ref());
+                    if buf.dirty != dirty {
+                        buf.dirty = dirty;
+                        cx.notify();
+                    }
                 }
             })
             .detach();
@@ -638,14 +814,9 @@ impl EditorWorkspaceView {
         if self.selected == Some(file_index) {
             return;
         }
-        // T-WS-EDITOR-002 §5: ↑/↓ stepping to a different file must not
-        // silently discard a dirty buffer — checked before the scroll so a
-        // cancelled step doesn't leave the tree scrolled to a row that isn't
-        // actually selected.
-        if should_guard_navigation(self.dirty, self.selected, file_index) {
-            self.open_dirty_guard(EditorPendingIntent::SelectFile(file_index), cx);
-            return;
-        }
+        // No dirty guard here (editor tabs, user request): stepping opens
+        // the file as the active tab; a dirty buffer is stashed into its
+        // tab, never discarded.
         // gpui 0.2.2 has no `Nearest`; `Center` matches the commit list's
         // jump behaviour (`mod.rs` scroll_to_item call sites).
         self.tree_scroll
@@ -676,12 +847,13 @@ impl EditorWorkspaceView {
 
     /// Ask the parent to close this view (drops the entity). Safe per
     /// ADR-0117: only clears fields, never re-leases this entity. Guarded by
-    /// the unsaved-changes modal when dirty (T-WS-EDITOR-002 §5) — this is a
-    /// plain header-click listener (not nested inside another `KagiApp`
+    /// the unsaved-changes modal when ANY tab is dirty (T-WS-EDITOR-002 §5;
+    /// backgrounded tabs count — dropping the entity loses them all) — this
+    /// is a plain header-click listener (not nested inside another `KagiApp`
     /// lease), so the direct `self.app.update` call is safe either way, same
     /// as the existing clean-close path below.
     fn request_close(&self, cx: &mut Context<Self>) {
-        if self.dirty {
+        if self.any_dirty() {
             self.open_dirty_guard(EditorPendingIntent::Close, cx);
             return;
         }
@@ -778,6 +950,15 @@ impl EditorWorkspaceView {
             // cursor/scroll survive routine watcher ticks.
             self.load_selected(cx);
         }
+        // Backgrounded tabs: a dirty one gets the banner when reactivated
+        // (same watcher coarseness as the active buffer — we don't know
+        // WHICH file changed); a clean one re-reads on activation anyway
+        // (`open_tab`'s clean-refresh), so nothing to do for it here.
+        for buf in self.tab_cache.values_mut() {
+            if buf.dirty {
+                buf.external_changed = true;
+            }
+        }
         cx.notify();
     }
 
@@ -803,12 +984,22 @@ fn editor_save_path(repo_path: &Path, rel: &Path) -> PathBuf {
     repo_path.join(rel)
 }
 
-/// T-WS-EDITOR-002 §5: whether navigating to `target` (tree click / ↑/↓ step)
-/// must first open the unsaved-changes confirmation instead of switching
-/// immediately. Pure — extracted from `request_select`/`step_selection` so
-/// the dirty-guard decision is unit-testable without a `Context`.
-fn should_guard_navigation(dirty: bool, selected: Option<usize>, target: usize) -> bool {
-    dirty && selected != Some(target)
+/// Editor tabs (user request): which tab becomes active after closing
+/// `closing`. `None` when the closed tab wasn't active (nothing changes) or
+/// it was the last tab. Prefers the next tab, falling back to the previous
+/// one — the usual browser/editor behaviour. Pure — unit-tested below.
+fn next_active_tab(tabs: &[PathBuf], closing: &Path, active: Option<&Path>) -> Option<PathBuf> {
+    if active != Some(closing) {
+        return None;
+    }
+    let idx = tabs.iter().position(|p| p == closing)?;
+    if idx + 1 < tabs.len() {
+        Some(tabs[idx + 1].clone())
+    } else if idx > 0 {
+        Some(tabs[idx - 1].clone())
+    } else {
+        None
+    }
 }
 
 /// T-WS-EDITOR-002 spec change (user): the tree listing is a view filter,
@@ -1043,14 +1234,14 @@ impl super::KagiApp {
         };
         self.clear_editor_dirty_guard_modal();
         match modal.intent {
-            EditorPendingIntent::SelectFile(idx) => {
-                if let Some(ev) = self.editor_workspace.clone() {
-                    ev.update(cx, |v, cx| v.select(idx, cx));
-                }
-            }
             EditorPendingIntent::Reload => {
                 if let Some(ev) = self.editor_workspace.clone() {
                     ev.update(cx, |v, cx| v.reload_from_disk(cx));
+                }
+            }
+            EditorPendingIntent::CloseTab(path) => {
+                if let Some(ev) = self.editor_workspace.clone() {
+                    ev.update(cx, |v, cx| v.close_tab_now(&path, cx));
                 }
             }
             EditorPendingIntent::Close => {
@@ -1438,11 +1629,14 @@ fn render_tree_row(
             } else {
                 theme().panel
             };
-            // T-WS-EDITOR-002 §2: only the selected row can be the open
-            // (possibly dirty) buffer — v1 has a single editable buffer.
-            let show_dirty_dot = is_selected && view.dirty;
+            // T-WS-EDITOR-002 §2 + editor tabs: any row whose file is open
+            // in a tab with unsaved edits gets the dot, active or not.
+            let show_dirty_dot = view
+                .files
+                .get(file_index)
+                .is_some_and(|f| view.tab_dirty(&f.path));
             let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-                this.request_select(file_index, cx);
+                this.select(file_index, cx);
             });
             Some(
                 div()
@@ -1492,6 +1686,102 @@ fn render_tree_row(
 }
 
 /// Center pane: the selected file's editable code viewer, or a placeholder.
+/// The editor tab strip (user request): one chip per open buffer — file
+/// name, `●` when dirty, and a × close button (dirty close routes through
+/// the unsaved-changes guard). `None` when no tabs are open.
+///
+/// ponytail: no horizontal scrolling — many tabs just shrink/truncate.
+/// Add an overflow scroll if real usage ever opens that many.
+fn render_tab_strip(
+    view: &EditorWorkspaceView,
+    cx: &mut Context<EditorWorkspaceView>,
+) -> Option<gpui::AnyElement> {
+    if view.open_tabs.is_empty() {
+        return None;
+    }
+    let mut strip = div()
+        .id("ews-tabs")
+        .flex()
+        .flex_row()
+        .items_center()
+        .flex_shrink_0()
+        .w_full()
+        .bg(rgb(theme().panel));
+    for (i, path) in view.open_tabs.iter().enumerate() {
+        let is_active = view.open_path.as_ref() == Some(path);
+        let dirty = view.tab_dirty(path);
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        let activate_path = path.clone();
+        let close_path = path.clone();
+        let activate = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+            this.activate_tab(activate_path.clone(), cx);
+        });
+        let close = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+            // Don't also fire the chip's activate handler underneath.
+            cx.stop_propagation();
+            this.request_close_tab(close_path.clone(), cx);
+        });
+        strip = strip.child(
+            div()
+                .id(("ews-tab", i))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .py_px()
+                .max_w(theme::scaled_px(180.))
+                .min_w(px(0.))
+                .cursor_pointer()
+                .text_xs()
+                .bg(rgb(if is_active {
+                    theme().bg_base
+                } else {
+                    theme().panel
+                }))
+                .when(!is_active, |el| el.hover(|s| s.bg(rgb(theme().surface))))
+                .on_click(activate)
+                .when(dirty, |el| {
+                    el.child(
+                        div()
+                            .flex_shrink_0()
+                            .text_color(rgb(theme().color_warning))
+                            .child(SharedString::from("\u{25cf}")),
+                    )
+                })
+                .child(
+                    div()
+                        .min_w(px(0.))
+                        .truncate()
+                        .text_color(rgb(if is_active {
+                            theme().text_main
+                        } else {
+                            theme().text_sub
+                        }))
+                        .child(SharedString::from(name)),
+                )
+                .child(
+                    div()
+                        .id(("ews-tab-x", i))
+                        .flex_shrink_0()
+                        .px_1()
+                        .rounded_sm()
+                        .text_color(rgb(theme().text_muted))
+                        .hover(|s| {
+                            s.bg(rgb(theme().selected))
+                                .text_color(rgb(theme().text_main))
+                        })
+                        .on_click(close)
+                        .child(SharedString::from("\u{00d7}")),
+                ),
+        );
+    }
+    Some(strip.into_any_element())
+}
+
 fn render_center_pane(
     view: &EditorWorkspaceView,
     cx: &mut Context<EditorWorkspaceView>,
@@ -1503,6 +1793,11 @@ fn render_center_pane(
         .flex()
         .flex_col()
         .bg(rgb(theme().bg_base));
+
+    // Editor tab strip (user request: multiple open buffers).
+    if let Some(strip) = render_tab_strip(view, cx) {
+        pane = pane.child(strip);
+    }
 
     // T-WS-EDITOR-002 §4: external-change banner — only when the buffer is
     // dirty (a clean buffer just silently re-reads via `on_worktree_changed`).
@@ -1836,16 +2131,18 @@ mod tests {
     }
 
     #[test]
-    fn should_guard_navigation_only_when_dirty_and_actually_switching() {
-        // Clean buffer: never guard, regardless of target.
-        assert!(!should_guard_navigation(false, Some(0), 1));
-        assert!(!should_guard_navigation(false, None, 0));
-        // Dirty, but re-clicking/re-stepping to the SAME file: not a
-        // discard, so don't guard (existing refresh behaviour).
-        assert!(!should_guard_navigation(true, Some(2), 2));
-        // Dirty and actually switching to a different file: guard.
-        assert!(should_guard_navigation(true, Some(2), 3));
-        assert!(should_guard_navigation(true, None, 0));
+    fn next_active_tab_prefers_next_then_previous() {
+        let tabs: Vec<PathBuf> = ["a", "b", "c"].iter().map(PathBuf::from).collect();
+        let (a, b, c) = (Path::new("a"), Path::new("b"), Path::new("c"));
+        // Closing an INACTIVE tab: the active tab doesn't change.
+        assert_eq!(next_active_tab(&tabs, a, Some(b)), None);
+        // Closing the active middle tab → the next one.
+        assert_eq!(next_active_tab(&tabs, b, Some(b)), Some(PathBuf::from("c")));
+        // Closing the active last tab → the previous one.
+        assert_eq!(next_active_tab(&tabs, c, Some(c)), Some(PathBuf::from("b")));
+        // Closing the only tab → nothing left.
+        let only = vec![PathBuf::from("a")];
+        assert_eq!(next_active_tab(&only, a, Some(a)), None);
     }
 
     #[test]

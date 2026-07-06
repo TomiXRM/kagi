@@ -1315,12 +1315,13 @@ impl KagiApp {
                 }
             }
             "view.toggleEditorWorkspace" => {
-                // T-WS-EDITOR-002 §5: don't silently discard a dirty buffer —
+                // T-WS-EDITOR-002 §5: don't silently discard dirty buffers —
                 // this dispatch is shared by the View menu item, Cmd-Shift-E,
                 // and the header toolbar button (all three route through
                 // `handle_menu_command`), so guarding here covers all three.
+                // `any_dirty` includes backgrounded editor tabs.
                 if let Some(ev) = self.editor_workspace.clone() {
-                    if ev.read(cx).dirty {
+                    if ev.read(cx).any_dirty() {
                         self.open_editor_dirty_guard(EditorPendingIntent::Close, cx);
                     } else {
                         self.close_editor_workspace();

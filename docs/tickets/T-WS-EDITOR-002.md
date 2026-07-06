@@ -73,6 +73,10 @@
 - **タブ切替時の dirty ガード**: ticket 指示どおり範囲外。`reset_per_repo_ui` が
   `editor_workspace` エンティティを破棄する既存動作のまま(タブ切替で未保存の編集は
   黙って失われる — 既知の制限、モーダルは作らない)。
+- **ファイル切替の dirty ガード(SelectFile)は T-WS-EDITOR-006 で廃止**: ユーザー
+  要望のエディタタブ導入により、ファイル切替は「タブを開く」操作(dirty バッファは
+  スタッシュされ生存)になり破棄が発生しなくなったため。ガードが残るのは
+  Reload / タブ×(CloseTab)/ ワークスペース Close の3破棄経路。
 - **`InputEvent::Change` の判定方式**: 当初は「push 中だけ true にする `syncing: bool`」
   で実装したが、`gpui::Context::emit` は `pending_effects` に積むだけの deferred effect
   であることが実測で判明(`sync_editor` が同期的に `syncing` を false に戻した後で

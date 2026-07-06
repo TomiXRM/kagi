@@ -229,3 +229,9 @@
 | T-WS-EDITOR-001 | WorkspaceMode 導入 + エディタワークスペース v1(file tree / read-only viewer / hunk) | ADR-0120(枠組み実装済み) | todo |
 | T-WS-EDITOR-002 | エディタ編集可能化(保存・dirty・watcher 再読込) | T-WS-EDITOR-001 | todo |
 | T-WS-EDITOR-003 | full worktree tree + 磨き(遅延展開・フィルタ・ジャンプ) | T-WS-EDITOR-002 | todo |
+
+## 配布 / パッケージング(2026-07-06)
+
+| ID | 内容 | 依存 | Status |
+|----|------|------|--------|
+| T-FLATHUB-001 | Flathub に Kagi を登録(io.github.tomixrm.kagi) | - | todo |

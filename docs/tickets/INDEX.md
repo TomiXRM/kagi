@@ -249,4 +249,4 @@
 
 | ID | 内容 | 依存 | Status |
 |----|------|------|--------|
-| T-DIFF-WRAP-001 | diff 行の折り返し継続行がクリップされる問題を修正(uniform_list→gpui::list) | T-UI-003, T-WS-EDITOR-001, ADR-0117 | review |
+| T-DIFF-WRAP-001 | diff 行の折り返し継続行がクリップされる問題を修正(uniform_list→gpui::list) | T-UI-003, T-WS-EDITOR-001, ADR-0117 | done |

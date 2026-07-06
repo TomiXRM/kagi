@@ -1,6 +1,6 @@
 # T-DIFF-WRAP-001: diff ペインの折り返し継続行がクリップされる問題を修正(ユーザー報告)
 
-- Status: review
+- Status: done (PM accepted 2026-07-07 — wrap rendering GUI-verified)
 - 依存: T-UI-003(main diff の全幅表示・`render_main_diff_view`)、T-WS-EDITOR-001(Editor
   Workspace の hunk ペイン)、ADR-0117(`render_diff_list` を File History と共有する形へ抽出)
 

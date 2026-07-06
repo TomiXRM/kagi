@@ -94,6 +94,13 @@ const ASSETS: &[(&str, &[u8])] = &[
         "icons/square-pen.svg",
         include_bytes!("../../assets/icons/square-pen.svg"),
     ),
+    // Header Editor⇄Graph toggle shows the commit-graph glyph while the
+    // Editor workspace is open (lucide waypoints — user request: the button
+    // should indicate what it switches back to).
+    (
+        "icons/waypoints.svg",
+        include_bytes!("../../assets/icons/waypoints.svg"),
+    ),
     // Editor Workspace tree: expand-all / collapse-all buttons (lucide
     // unfold/fold glyphs; ChevronsDownUp has no IconName variant).
     (

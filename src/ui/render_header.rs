@@ -691,19 +691,26 @@ impl KagiApp {
                         },
                     )
                     // Editor Workspace toggle (T-WS-EDITOR-004) — just left of
-                    // Analyze. gpui-component 0.5.1 has no pencil/edit
-                    // `IconName`, so this uses the embedded lucide square-pen
-                    // via a custom `Icon` path (see assets.rs).
-                    .child(
+                    // Analyze. Shows what it switches TO (user request): the
+                    // square-pen "Editor" glyph in Graph mode, the waypoints
+                    // "Graph" glyph while the Editor workspace is open. Both
+                    // are embedded lucide SVGs via custom `Icon` paths
+                    // (gpui-component 0.5.1 has no pencil/graph IconName).
+                    .child({
+                        let editor_open = self.editor_workspace.is_some();
                         make_btn(
                             "tb-editor-ws",
-                            "Editor",
-                            gpui_component::Icon::default().path("icons/square-pen.svg"),
+                            if editor_open { "Graph" } else { "Editor" },
+                            gpui_component::Icon::default().path(if editor_open {
+                                "icons/waypoints.svg"
+                            } else {
+                                "icons/square-pen.svg"
+                            }),
                             editor_ws_on,
                             0,
                         )
-                        .on_click(editor_ws_click),
-                    )
+                        .on_click(editor_ws_click)
+                    })
                     .child(div().w(theme::scaled_px(2.0)))
                     // Analyze / Code Ecosystem (ADR-0119) — read-only hot-spot
                     // analysis; placed just left of Settings.

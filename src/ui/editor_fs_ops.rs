@@ -68,10 +68,14 @@ const TRASH_COLLISION_CAP: usize = 1000;
 /// suffix (`name 2`, `name 3`, …) if something of the same name is already
 /// there. Same-volume only: a cross-volume `rename` failure is surfaced as an
 /// `Err` and NOTHING is deleted — never falls back to a permanent delete
-/// (CLAUDE.md invariant #3). Callers must check `TRASH_SUPPORTED` first; this
-/// function itself only compiles on macOS.
-#[cfg(target_os = "macos")]
+/// (CLAUDE.md invariant #3). Compiles on every OS so call sites need no cfg
+/// gating (a cfg'd-out version broke the Linux/Windows release builds —
+/// v0.8.0 tag); on non-macOS it always returns `Err`, and the Delete menu
+/// item is hidden anyway (`TRASH_SUPPORTED`).
 pub fn trash_path(full_path: &Path) -> Result<PathBuf, String> {
+    if !TRASH_SUPPORTED {
+        return Err("Trash is only supported on macOS".to_string());
+    }
     let trash_dir = home_trash_dir()?;
     std::fs::create_dir_all(&trash_dir).map_err(|e| format!("cannot create ~/.Trash: {e}"))?;
     let name = full_path

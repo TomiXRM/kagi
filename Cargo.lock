@@ -555,7 +555,7 @@ dependencies = [
  "bitflags 2.13.0",
  "cexpr",
  "clang-sys",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2287,7 +2287,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.5.1"
-source = "git+https://github.com/TomiXRM/gpui-component-kagi?branch=kagi-0.5.1#6b3aa8604c35c263bc1085baaecd61b847fb9e3b"
+source = "git+https://github.com/TomiXRM/gpui-component-kagi?branch=kagi-0.5.1#5ee9eaa69118e423e1249be7fbb8198c1fbbbf19"
 dependencies = [
  "aho-corasick",
  "anyhow",

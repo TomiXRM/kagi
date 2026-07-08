@@ -76,8 +76,22 @@ copyright = "2026, TomiXRM"
 extended-description = "Safety-first, commit-graph Git GUI client built with GPUI."
 section = "vcs"
 depends = "$auto"
+# Noto CJK is the family cosmic-text's per-script fallback asks for by name;
+# without it CJK glyphs fall back to whatever random font covers them.
+recommends = "fonts-noto-cjk"
 assets = [
     ["target/release/kagi", "usr/bin/", "755"],
     ["assets/linux/kagi.desktop", "usr/share/applications/", "644"],
     ["assets/icon/icon_512x512.png", "usr/share/icons/hicolor/512x512/apps/kagi.png", "644"],
 ]
+
+# ── Dependency patches ─────────────────────────────────────────────────────
+# cosmic-text (gpui's Linux text stack) matches the Han-unification locale
+# against bare language codes ("ja"), but sys_locale reports "ja-JP" — so
+# Japanese systems fell through to the Simplified Chinese fallback and kanji
+# rendered with SC glyph forms (kana are hardwired to JP, hence the mixed
+# typefaces reported on Ubuntu). Patched with the language-subtag fix that
+# was submitted upstream; drop this once it ships in a cosmic-text release
+# that gpui pulls in. Upstream PR: pop-os/cosmic-text (fix-han-unification).
+[patch.crates-io]
+cosmic-text = { git = "https://github.com/TomiXRM/cosmic-text", branch = "fix-han-unification-0.14" }

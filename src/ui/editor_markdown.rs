@@ -192,8 +192,24 @@ pub fn render_markdown_preview(
     window: &mut Window,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
+    use gpui_component::ActiveTheme as _;
+
     let content = view.content.clone().unwrap_or_default();
     let dark = theme().dark;
+    // One text size for the whole preview, tracking kagi's zoom
+    // (`rem_size_px` = 16 × zoom). Out of the box the three size sources
+    // disagree: paragraphs inherit the window rem (16px×zoom), headings
+    // scale off a fixed 14px base, and code blocks use the gpui-component
+    // theme's fixed 13px mono size (user-reported mismatch). Pin body,
+    // heading base, and code blocks to the same zoom-tracking base.
+    let base = px(super::theme::rem_size_px() * 0.875);
+    let tv_style = gpui_component::text::TextViewStyle {
+        heading_base_font_size: base,
+        code_block: gpui::StyleRefinement::default().text_size(base),
+        is_dark: dark,
+        highlight_theme: cx.theme().highlight_theme.clone(),
+        ..Default::default()
+    };
     let mut col = gpui::div()
         .id("ews-md-preview")
         .flex_1()
@@ -203,7 +219,8 @@ pub fn render_markdown_preview(
         .flex()
         .flex_col()
         .gap_3()
-        .p_4();
+        .p_4()
+        .text_size(base);
     for (ix, seg) in split_mermaid(&content).into_iter().enumerate() {
         match seg {
             MdSegment::Text(t) => {
@@ -216,6 +233,7 @@ pub fn render_markdown_preview(
                 col = col.child(
                     TextView::markdown(("ews-md-seg", ix), SharedString::from(t), window, cx)
                         .selectable(true)
+                        .style(tv_style.clone())
                         .h(gpui::Length::Auto),
                 );
             }
@@ -278,7 +296,6 @@ fn mermaid_code_block(ix: usize, code: &str, note: Option<SharedString>) -> AnyE
         .child(
             gpui::div()
                 .font_family(super::MONO_FONT)
-                .text_xs()
                 .text_color(rgb(theme().text_main))
                 .whitespace_nowrap()
                 .overflow_hidden()

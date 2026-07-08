@@ -110,10 +110,7 @@ impl KagiApp {
         let paths = vec![path.to_string_lossy().replace('\\', "/")];
         match repo.plan_discard(&paths) {
             Ok(plan) => {
-                eprintln!(
-                    "[kagi] plan: discard 1 target blockers={}",
-                    plan.blockers.len()
-                );
+                klog!("plan: discard 1 target blockers={}", plan.blockers.len());
                 self.set_discard_modal(DiscardModal {
                     plan: std::sync::Arc::new(plan),
                     paths,

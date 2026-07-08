@@ -496,12 +496,22 @@ pub enum Msg {
     EditorWorkspaceExternalChanged,
     /// Button on the external-change banner: discard the buffer and re-read.
     EditorWorkspaceReload,
+    /// Button on the external-change banner: save anyway, replacing the
+    /// externally-changed on-disk file with the buffer.
+    EditorWorkspaceOverwrite,
+    /// Toast when Cmd-S is refused because the file changed on disk since
+    /// the buffer was loaded (nothing was written).
+    EditorWorkspaceSaveBlocked,
     /// Unsaved-changes confirmation title (file/source switch, close).
     EditorWorkspaceUnsavedTitle,
     /// Unsaved-changes confirmation: destructive "discard and proceed" button.
     EditorWorkspaceDiscard,
     /// Unsaved-changes confirmation: cancel button (stay on the buffer).
     EditorWorkspaceCancel,
+    /// Editor Workspace header: the "← Graph" back button.
+    EditorWorkspaceBackToGraph,
+    /// Editor Workspace header: the "Editor Workspace" title label.
+    EditorWorkspaceTitle,
 
     // ── Editor Workspace tree context menu (T-WS-EDITOR-007) ────
     /// File/dir row: rename.
@@ -514,6 +524,9 @@ pub enum Msg {
     EditorTreeCopyRelativePath,
     /// File/dir row: reveal (and select) in Finder.
     EditorTreeRevealFinder,
+    /// File/dir row: reveal in the platform file manager (non-macOS label —
+    /// macOS uses `EditorTreeRevealFinder`).
+    EditorTreeRevealFile,
     /// File row: jump to File History.
     EditorTreeHistory,
     /// File row: stage this file (index-only, non-destructive).
@@ -544,6 +557,8 @@ pub enum Msg {
     EditorDeleteConfirmTitleFolder,
     /// Delete-confirm modal: the "recoverable from Trash" note.
     EditorDeleteConfirmTrashNote,
+    /// Delete-confirm modal: warning that affected editor buffers are dirty.
+    EditorDeleteConfirmUnsavedWarning,
     /// Delete-confirm modal: the confirm button.
     EditorDeleteConfirmButton,
 }
@@ -1076,12 +1091,24 @@ impl Msg {
             (Ja, EditorWorkspaceExternalChanged) => "ファイルがディスク上で変更されました。",
             (En, EditorWorkspaceReload) => "Reload",
             (Ja, EditorWorkspaceReload) => "再読み込み",
+            (En, EditorWorkspaceOverwrite) => "Overwrite",
+            (Ja, EditorWorkspaceOverwrite) => "上書き保存",
+            (En, EditorWorkspaceSaveBlocked) => {
+                "File changed on disk — not saved. Choose Overwrite or Reload."
+            }
+            (Ja, EditorWorkspaceSaveBlocked) => {
+                "ファイルがディスク上で変更されたため保存しませんでした。上書き保存か再読み込みを選んでください。"
+            }
             (En, EditorWorkspaceUnsavedTitle) => "Unsaved changes — discard?",
             (Ja, EditorWorkspaceUnsavedTitle) => "未保存の変更があります — 破棄しますか?",
             (En, EditorWorkspaceDiscard) => "Discard",
             (Ja, EditorWorkspaceDiscard) => "破棄",
             (En, EditorWorkspaceCancel) => "Cancel",
             (Ja, EditorWorkspaceCancel) => "キャンセル",
+            (En, EditorWorkspaceBackToGraph) => "\u{2190} Graph",
+            (Ja, EditorWorkspaceBackToGraph) => "\u{2190} グラフ",
+            (En, EditorWorkspaceTitle) => "Editor Workspace",
+            (Ja, EditorWorkspaceTitle) => "エディタワークスペース",
 
             // ── Editor Workspace tree context menu (T-WS-EDITOR-007) ──
             (En, EditorTreeRename) => "Rename…",
@@ -1094,6 +1121,8 @@ impl Msg {
             (Ja, EditorTreeCopyRelativePath) => "相対パスをコピー",
             (En, EditorTreeRevealFinder) => "Reveal in Finder",
             (Ja, EditorTreeRevealFinder) => "Finderで表示",
+            (En, EditorTreeRevealFile) => "Reveal in File Manager",
+            (Ja, EditorTreeRevealFile) => "ファイルマネージャで表示",
             (En, EditorTreeHistory) => "History",
             (Ja, EditorTreeHistory) => "履歴",
             (En, EditorTreeStage) => "Stage",
@@ -1127,6 +1156,12 @@ impl Msg {
             }
             (Ja, EditorDeleteConfirmTrashNote) => {
                 "ゴミ箱に移動します(~/.Trash から復元できます)。"
+            }
+            (En, EditorDeleteConfirmUnsavedWarning) => {
+                "Unsaved editor changes under this path will be discarded."
+            }
+            (Ja, EditorDeleteConfirmUnsavedWarning) => {
+                "このパス配下の未保存のエディタ変更は破棄されます。"
             }
             (En, EditorDeleteConfirmButton) => "Move to Trash",
             (Ja, EditorDeleteConfirmButton) => "ゴミ箱に移動",

@@ -205,6 +205,9 @@ pub fn render_markdown_preview(
     let base = px(super::theme::rem_size_px() * 0.875);
     let tv_style = gpui_component::text::TextViewStyle {
         heading_base_font_size: base,
+        // Space above headings (fork knob) — headings otherwise sit flush
+        // against the previous block (user-reported).
+        heading_top_gap: gpui::rems(0.9),
         code_block: gpui::StyleRefinement::default().text_size(base),
         is_dark: dark,
         highlight_theme: cx.theme().highlight_theme.clone(),

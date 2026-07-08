@@ -2287,8 +2287,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d021d46b4088d3d93a57ccdf443da85695a77272108caca2f6fe5369f584966a"
+source = "git+https://github.com/TomiXRM/gpui-component-kagi?branch=kagi-0.5.1#6b3aa8604c35c263bc1085baaecd61b847fb9e3b"
 dependencies = [
  "aho-corasick",
  "anyhow",

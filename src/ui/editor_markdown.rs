@@ -210,8 +210,8 @@ pub fn render_markdown_preview(
         heading_top_gap: gpui::rems(0.9),
         // A little air around body paragraphs too, split evenly above and
         // below (fork knobs; the bottom half adds onto paragraph_gap).
-        paragraph_top_gap: gpui::rems(0.175),
-        paragraph_bottom_gap: gpui::rems(0.175),
+        paragraph_top_gap: gpui::rems(0.1),
+        paragraph_bottom_gap: gpui::rems(0.25),
         code_block: gpui::StyleRefinement::default().text_size(base),
         is_dark: dark,
         highlight_theme: cx.theme().highlight_theme.clone(),

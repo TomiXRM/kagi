@@ -41,12 +41,14 @@ pub fn path_touches_git_dir(rel: &Path) -> bool {
 pub const TRASH_SUPPORTED: bool = cfg!(target_os = "macos");
 
 /// `true` if `a` and `b` refer to the same filesystem object (same device +
-/// inode on Unix, same volume + file index on Windows). Used by the Rename
-/// path to permit a case-only rename (`File.txt` → `file.txt`) on a
+/// inode on Unix, canonicalized-path equality on Windows — the stable-Rust
+/// substitute for the nightly-only volume/file-index APIs). Used by the
+/// Rename path to permit a case-only rename (`File.txt` → `file.txt`) on a
 /// case-insensitive filesystem (macOS APFS default), where the new name
-/// already "exists" as the same inode as the old — `Path::canonicalize` is
-/// not used because its returned casing is inconsistent on case-insensitive
-/// volumes. Returns `false` if either path can't be stat'd. Stat'd via
+/// already "exists" as the same inode as the old — on Unix `canonicalize`
+/// is avoided because its returned casing is inconsistent on
+/// case-insensitive volumes. Returns `false` if either path can't be
+/// stat'd. Stat'd via
 /// `symlink_metadata` (NOT `metadata`, which follows symlinks): a symlink
 /// pointing at the source is NOT treated as same-file — only a literal
 /// same-directory-entry match (the case-only rename) is, so renaming onto a
@@ -62,11 +64,22 @@ pub fn same_file(a: &Path, b: &Path) -> bool {
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
-        am.volume_serial_number() == bm.volume_serial_number() && am.file_index() == bm.file_index()
+        // Stable Windows has no dev+inode equivalent (volume_serial_number/
+        // file_index need the nightly `windows_by_handle` feature). After
+        // rejecting symlinks, canonicalize resolves both names to the on-disk
+        // entry (actual casing), so equality means "same directory entry" —
+        // exactly the case-only rename this carve-out exists for.
+        if am.file_type().is_symlink() || bm.file_type().is_symlink() {
+            return false;
+        }
+        matches!(
+            (std::fs::canonicalize(a), std::fs::canonicalize(b)),
+            (Ok(ca), Ok(cb)) if ca == cb
+        )
     }
     #[cfg(not(any(unix, windows)))]
     {
+        let _ = (am, bm);
         false
     }
 }

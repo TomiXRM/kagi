@@ -26,7 +26,7 @@ use gpui_component::Sizable as _;
 
 use super::i18n::{self, Msg};
 use super::theme::{self, theme};
-use super::{FooterStatus, KagiApp, ToastKind};
+use super::{EditorPendingIntent, FooterStatus, KagiApp, ToastKind};
 
 /// Lightweight descriptor for one open repository tab (ADR-0027).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -134,6 +134,10 @@ impl KagiApp {
             Some(t) => t.clone(),
             None => return,
         };
+        if self.editor_workspace_any_dirty(cx) {
+            self.open_editor_dirty_guard(EditorPendingIntent::SwitchRepo(tab.path.clone()), cx);
+            return;
+        }
         self.active_tab = index;
         self.error = None;
 
@@ -234,6 +238,17 @@ impl KagiApp {
         snap: kagi_git::RepoSnapshot,
         cx: &mut Context<Self>,
     ) {
+        if self.editor_workspace_any_dirty(cx) {
+            self.open_editor_dirty_guard(
+                EditorPendingIntent::EnterRemoteView {
+                    host,
+                    root,
+                    snap: std::sync::Arc::new(snap),
+                },
+                cx,
+            );
+            return;
+        }
         let name = root
             .trim_end_matches('/')
             .rsplit('/')
@@ -474,6 +489,11 @@ impl KagiApp {
         if index >= self.tabs.len() {
             return;
         }
+        let closed_path = self.tabs[index].path.clone();
+        if self.editor_workspace_any_dirty(cx) {
+            self.open_editor_dirty_guard(EditorPendingIntent::CloseRepoTab(closed_path), cx);
+            return;
+        }
         let closed = self.tabs.remove(index);
         // Drop the closed repo's terminal session (PTY closes on drop).
         self.terminal_sessions.remove(&closed.path);
@@ -505,6 +525,18 @@ impl KagiApp {
             self.active_tab.min(self.tabs.len() - 1)
         };
         self.switch_repo(new_active, cx);
+    }
+
+    pub(crate) fn switch_repo_by_path(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if let Some(index) = self.tabs.iter().position(|t| t.path == path) {
+            self.switch_repo(index, cx);
+        }
+    }
+
+    pub(crate) fn close_tab_by_path(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if let Some(index) = self.tabs.iter().position(|t| t.path == path) {
+            self.close_tab(index, cx);
+        }
     }
 
     /// Reset the app to the Welcome screen (no repo open).  Clears per-repo

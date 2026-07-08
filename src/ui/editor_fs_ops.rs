@@ -40,6 +40,50 @@ pub fn path_touches_git_dir(rel: &Path) -> bool {
 /// builder checks this to hide it).
 pub const TRASH_SUPPORTED: bool = cfg!(target_os = "macos");
 
+/// `true` if `a` and `b` refer to the same filesystem object (same device +
+/// inode on Unix, canonicalized-path equality on Windows — the stable-Rust
+/// substitute for the nightly-only volume/file-index APIs). Used by the
+/// Rename path to permit a case-only rename (`File.txt` → `file.txt`) on a
+/// case-insensitive filesystem (macOS APFS default), where the new name
+/// already "exists" as the same inode as the old — on Unix `canonicalize`
+/// is avoided because its returned casing is inconsistent on
+/// case-insensitive volumes. Returns `false` if either path can't be
+/// stat'd. Stat'd via
+/// `symlink_metadata` (NOT `metadata`, which follows symlinks): a symlink
+/// pointing at the source is NOT treated as same-file — only a literal
+/// same-directory-entry match (the case-only rename) is, so renaming onto a
+/// symlink to the source is rejected rather than replacing the symlink.
+pub fn same_file(a: &Path, b: &Path) -> bool {
+    let (Ok(am), Ok(bm)) = (std::fs::symlink_metadata(a), std::fs::symlink_metadata(b)) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        am.dev() == bm.dev() && am.ino() == bm.ino()
+    }
+    #[cfg(windows)]
+    {
+        // Stable Windows has no dev+inode equivalent (volume_serial_number/
+        // file_index need the nightly `windows_by_handle` feature). After
+        // rejecting symlinks, canonicalize resolves both names to the on-disk
+        // entry (actual casing), so equality means "same directory entry" —
+        // exactly the case-only rename this carve-out exists for.
+        if am.file_type().is_symlink() || bm.file_type().is_symlink() {
+            return false;
+        }
+        matches!(
+            (std::fs::canonicalize(a), std::fs::canonicalize(b)),
+            (Ok(ca), Ok(cb)) if ca == cb
+        )
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (am, bm);
+        false
+    }
+}
+
 /// The `name N.ext` / `name N` collision suffix used when moving `name` into
 /// `~/.Trash` and something of the same name is already there. Splits on the
 /// LAST `.` so a double extension collides as `archive.tar 2.gz` (accepted
@@ -97,21 +141,77 @@ pub fn trash_path(full_path: &Path) -> Result<PathBuf, String> {
     Ok(candidate)
 }
 
+/// Escape `rel` (repo-relative, forward-slash) into a `.gitignore` pattern
+/// that matches the literal path verbatim: anchor with a leading `/`, backslash-
+/// escape `*` `?` `[` `]` anywhere and `#` `!` at the path start (gitignore's
+/// line-start comment / negation metacharacters), and backslash-escape trailing
+/// spaces (gitignore trims them otherwise). Pure; unit-tested below.
+fn gitignore_escape(rel: &str) -> String {
+    let mut s = String::with_capacity(rel.len() + 2);
+    s.push('/');
+    for (i, ch) in rel.chars().enumerate() {
+        match ch {
+            '*' | '?' | '[' | ']' => {
+                s.push('\\');
+                s.push(ch);
+            }
+            '#' | '!' if i == 0 => {
+                s.push('\\');
+                s.push(ch);
+            }
+            _ => s.push(ch),
+        }
+    }
+    // Backslash-escape a run of trailing spaces so gitignore doesn't trim them.
+    let trailing = s.len() - s.trim_end_matches(' ').len();
+    if trailing > 0 {
+        let cut = s.len() - trailing;
+        s.truncate(cut);
+        for _ in 0..trailing {
+            s.push_str("\\ ");
+        }
+    }
+    s
+}
+
 /// Append `rel_path` (repo-relative, forward-slash) as a new line in
 /// `<repo_path>/.gitignore`, creating the file if it doesn't exist yet.
-/// Idempotent: a line already present (exact match after trimming) is left
-/// alone rather than duplicated. Pure I/O; unit-tested below.
+/// Idempotent: a line already present is left alone rather than duplicated —
+/// matched against the escaped/anchored form, the raw (pre-escaping) form, or
+/// the unanchored form, comparing without trimming (so an escaped trailing
+/// space dedups correctly). If the file exists but
+/// can't be read (unreadable / non-UTF-8), the error is returned rather than
+/// treated as empty — so existing content is never destroyed by an overwrite.
+/// Pure I/O; unit-tested below.
 pub fn add_gitignore_entry(repo_path: &Path, rel_path: &str) -> std::io::Result<()> {
     let gi_path = repo_path.join(".gitignore");
-    let existing = std::fs::read_to_string(&gi_path).unwrap_or_default();
-    if existing.lines().any(|l| l.trim() == rel_path) {
+    let existing = match std::fs::read_to_string(&gi_path) {
+        Ok(s) => s,
+        // A genuinely missing file is the "create it" path; any other read
+        // failure (unreadable, non-UTF-8) must surface, not be overwritten.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e),
+    };
+    let entry = gitignore_escape(rel_path);
+    // Also treat the raw (pre-escaping) and unanchored forms as duplicates:
+    // a .gitignore written before escaping/anchoring existed has e.g.
+    // `target/` / `*.log` unescaped, and re-adding the same path must not
+    // append the anchored escaped form (`/target/`, `/\*.log`) beside it.
+    // Compare with only `\r` trimmed — NOT `.trim()`, which would strip an
+    // escaped trailing space (`/name\ `) and re-add the line as a dupe.
+    let unanchored = entry.strip_prefix('/').unwrap_or(&entry[..]);
+    let is_dupe = |l: &str| {
+        let l = l.trim_end_matches('\r');
+        l == entry.as_str() || l == rel_path || l == unanchored
+    };
+    if existing.lines().any(is_dupe) {
         return Ok(());
     }
     let mut out = existing;
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
-    out.push_str(rel_path);
+    out.push_str(&entry);
     out.push('\n');
     std::fs::write(&gi_path, out)
 }
@@ -202,11 +302,32 @@ mod tests {
         add_gitignore_entry(&dir, "target/").unwrap();
         add_gitignore_entry(&dir, "target/").unwrap();
         let content = std::fs::read_to_string(&gi).unwrap();
-        assert_eq!(content.lines().filter(|l| *l == "target/").count(), 1);
+        // Entries are now anchored with a leading `/`.
+        assert_eq!(content.lines().filter(|l| *l == "/target/").count(), 1);
 
         add_gitignore_entry(&dir, "*.log").unwrap();
         let content = std::fs::read_to_string(&gi).unwrap();
         assert_eq!(content.lines().count(), 2);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn gitignore_entry_escapes_metachars_and_anchors() {
+        let dir = std::env::temp_dir().join(format!("kagi-gitignore-esc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let gi = dir.join(".gitignore");
+        let _ = std::fs::remove_file(&gi);
+
+        add_gitignore_entry(&dir, "src/[v1]*.go").unwrap();
+        add_gitignore_entry(&dir, "#notes.txt").unwrap();
+        add_gitignore_entry(&dir, "!keep").unwrap();
+        add_gitignore_entry(&dir, "trailing space ").unwrap();
+        let content = std::fs::read_to_string(&gi).unwrap();
+        assert!(content.lines().any(|l| l == "/src/\\[v1\\]\\*.go"));
+        assert!(content.lines().any(|l| l == "/\\#notes.txt"));
+        assert!(content.lines().any(|l| l == "/\\!keep"));
+        assert!(content.lines().any(|l| l == "/trailing space\\ "));
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -225,6 +346,78 @@ mod tests {
         let (count, truncated) = count_dir_entries_capped(&dir, 2);
         assert_eq!(count, 2);
         assert!(truncated);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn gitignore_trailing_space_readd_is_idempotent() {
+        let dir = std::env::temp_dir().join(format!("kagi-gitignore-ts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let gi = dir.join(".gitignore");
+        let _ = std::fs::remove_file(&gi);
+
+        add_gitignore_entry(&dir, "trailing space ").unwrap();
+        add_gitignore_entry(&dir, "trailing space ").unwrap();
+        let content = std::fs::read_to_string(&gi).unwrap();
+        // The escaped form keeps the trailing space as `\ `; re-adding must
+        // NOT duplicate the line (the old `l.trim()` comparison stripped it).
+        assert_eq!(
+            content
+                .lines()
+                .filter(|l| *l == "/trailing space\\ ")
+                .count(),
+            1
+        );
+        assert_eq!(content.lines().count(), 1);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn gitignore_raw_preexisting_entry_not_duplicated() {
+        let dir = std::env::temp_dir().join(format!("kagi-gitignore-raw-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let gi = dir.join(".gitignore");
+        let _ = std::fs::remove_file(&gi);
+
+        // Simulate a .gitignore written before escaping/anchoring existed:
+        // raw, unanchored lines for the same paths.
+        std::fs::write(&gi, "target/\n*.log\n").unwrap();
+
+        add_gitignore_entry(&dir, "target/").unwrap();
+        add_gitignore_entry(&dir, "*.log").unwrap();
+        let content = std::fs::read_to_string(&gi).unwrap();
+        // Neither raw line is duplicated by the anchored escaped form...
+        assert_eq!(content.lines().filter(|l| *l == "target/").count(), 1);
+        assert_eq!(content.lines().filter(|l| *l == "*.log").count(), 1);
+        // ...and no escaped siblings were appended.
+        assert_eq!(content.lines().filter(|l| *l == "/target/").count(), 0);
+        assert_eq!(content.lines().filter(|l| *l == "/\\*.log").count(), 0);
+        assert_eq!(content.lines().count(), 2);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn same_file_rejects_symlink_to_source() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("kagi-samefile-sym-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let real = dir.join("real.txt");
+        let link = dir.join("link.txt");
+        std::fs::write(&real, b"x").unwrap();
+        let _ = std::fs::remove_file(&link);
+        symlink(&real, &link).unwrap();
+
+        // `link` is a symlink pointing AT `real`; renaming real→link must NOT
+        // be treated as a same-file (case-only) rename — that would replace
+        // the symlink. They are different directory entries.
+        assert!(!same_file(&real, &link));
+        assert!(!same_file(&link, &real));
+        // Sanity: a path is still the same file as itself.
+        assert!(same_file(&real, &real));
 
         std::fs::remove_dir_all(&dir).ok();
     }

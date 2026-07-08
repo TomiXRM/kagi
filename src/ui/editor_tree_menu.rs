@@ -170,7 +170,11 @@ fn build_editor_tree_menu(
             ),
             item(
                 EditorTreeAction::Reveal(path.clone()),
-                Msg::EditorTreeRevealFinder.t(),
+                if cfg!(target_os = "macos") {
+                    Msg::EditorTreeRevealFinder.t()
+                } else {
+                    Msg::EditorTreeRevealFile.t()
+                },
                 false,
             ),
         ],

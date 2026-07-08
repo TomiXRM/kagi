@@ -91,7 +91,10 @@ impl KagiApp {
                 }
                 let old_full = repo_path.join(&old_rel);
                 let new_full = repo_path.join(&new_rel);
-                if new_full.exists() {
+                // Reject genuine collisions, but allow a case-only rename
+                // (File.txt → file.txt) on a case-insensitive filesystem,
+                // where the new name is the same inode as the old.
+                if new_full.exists() && !editor_fs_ops::same_file(&old_full, &new_full) {
                     self.fail_editor_fs_prompt(modal, "Already exists", cx);
                     return;
                 }
@@ -190,11 +193,13 @@ impl KagiApp {
         } else {
             (None, false)
         };
+        let has_dirty_buffers = self.editor_workspace_dirty_under(&path, cx);
         self.set_editor_delete_confirm_modal(EditorDeleteConfirmModal {
             path,
             is_dir,
             file_count,
             truncated,
+            has_dirty_buffers,
             error: None,
         });
         cx.notify();
@@ -299,19 +304,31 @@ impl KagiApp {
         self.status_footer = FooterStatus::Idle(SharedString::from("Relative path copied"));
     }
 
-    /// Reveal + select `path` in Finder via `open -R` (same `open` shell-out
-    /// as `menu_open_in_finder`, `-R` additionally selects the item instead
-    /// of just opening its containing folder).
+    /// Reveal + select `path` in the platform file manager (mirrors the
+    /// open→xdg-open cfg pattern in `open_release_page`): macOS `open -R`
+    /// selects the item; Windows `explorer /select,` selects it; Linux has no
+    /// universal select support, so `xdg-open` opens the parent directory.
     fn reveal_editor_path_in_finder(&mut self, path: &std::path::Path) {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
         let full = repo_path.join(path);
-        match std::process::Command::new("open")
+        #[cfg(target_os = "macos")]
+        let spawn = std::process::Command::new("open")
             .arg("-R")
             .arg(&full)
-            .spawn()
-        {
+            .spawn();
+        #[cfg(target_os = "windows")]
+        let spawn = std::process::Command::new("explorer")
+            .arg(format!("/select,{}", full.display()))
+            .spawn();
+        #[cfg(target_os = "linux")]
+        let spawn = {
+            // No universal select support; open the containing directory.
+            let dir = full.parent().unwrap_or(&full);
+            std::process::Command::new("xdg-open").arg(dir).spawn()
+        };
+        match spawn {
             Ok(_) => {
                 klog!("editor-ws: reveal {}", path.display());
                 self.status_footer =
@@ -319,7 +336,7 @@ impl KagiApp {
             }
             Err(e) => {
                 self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("open failed: {e}")));
+                    FooterStatus::Failed(SharedString::from(format!("reveal failed: {e}")));
             }
         }
     }

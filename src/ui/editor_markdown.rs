@@ -220,7 +220,12 @@ pub fn render_markdown_preview(
         .flex_col()
         .gap_3()
         .p_4()
-        .text_size(base);
+        .text_size(base)
+        // gpui's default line height is φ (1.618); the inline-code highlight
+        // paints the FULL line box, so at φ the `code` background reads as
+        // oversized vertical padding (user-reported). 1.5 keeps prose
+        // readable while trimming the box.
+        .line_height(gpui::relative(1.5));
     for (ix, seg) in split_mermaid(&content).into_iter().enumerate() {
         match seg {
             MdSegment::Text(t) => {
@@ -231,10 +236,15 @@ pub fn render_markdown_preview(
                 // refinement) lets the segment take its intrinsic height so
                 // the outer `overflow_y_scroll` works.
                 col = col.child(
-                    TextView::markdown(("ews-md-seg", ix), SharedString::from(t), window, cx)
-                        .selectable(true)
-                        .style(tv_style.clone())
-                        .h(gpui::Length::Auto),
+                    TextView::markdown(
+                        ("ews-md-seg", ix),
+                        SharedString::from(pad_inline_code(&t)),
+                        window,
+                        cx,
+                    )
+                    .selectable(true)
+                    .style(tv_style.clone())
+                    .h(gpui::Length::Auto),
                 );
             }
             MdSegment::Mermaid(code) => {
@@ -243,6 +253,66 @@ pub fn render_markdown_preview(
         }
     }
     col.into_any_element()
+}
+
+/// Pad inline code spans with thin spaces (U+2009) inside the backticks.
+///
+/// The renderer paints inline code as a bare text-run background with zero
+/// horizontal padding (the glyph range only), which looks cramped
+/// (user-reported). There is no styling hook for it, so the padding is
+/// injected into the text itself: CommonMark strips one *regular* leading
+/// and trailing space from a code span, but a thin space survives and
+/// widens the highlight. Selection/copy picks up the thin spaces — accepted
+/// trade-off. One line only; multi-line code spans are left untouched.
+fn pad_inline_code(src: &str) -> String {
+    const PAD: char = '\u{2009}';
+    let chars: Vec<char> = src.chars().collect();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] != '`' {
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && chars[i] == '`' {
+            i += 1;
+        }
+        let delim = i - start;
+        // Find a closing run of exactly `delim` backticks on the same line.
+        let mut j = i;
+        let mut close = None;
+        while j < chars.len() && chars[j] != '\n' {
+            if chars[j] == '`' {
+                let s = j;
+                while j < chars.len() && chars[j] == '`' {
+                    j += 1;
+                }
+                if j - s == delim {
+                    close = Some(s);
+                    break;
+                }
+            } else {
+                j += 1;
+            }
+        }
+        if let Some(cs) = close {
+            for _ in 0..delim {
+                out.push('`');
+            }
+            out.push(PAD);
+            out.extend(&chars[i..cs]);
+            out.push(PAD);
+            for _ in 0..delim {
+                out.push('`');
+            }
+            i = cs + delim;
+        } else {
+            out.extend(&chars[start..i]);
+        }
+    }
+    out
 }
 
 fn render_mermaid_block(
@@ -353,6 +423,18 @@ mod tests {
         assert_ne!(mermaid_key("a", true), mermaid_key("a", false));
         assert_ne!(mermaid_key("a", true), mermaid_key("b", true));
         assert_eq!(mermaid_key("a", true), mermaid_key("a", true));
+    }
+
+    #[test]
+    fn pad_inline_code_adds_thin_spaces() {
+        assert_eq!(pad_inline_code("a `b` c"), "a `\u{2009}b\u{2009}` c");
+        // double-backtick spans use the same-length closing run
+        assert_eq!(pad_inline_code("``a`b``"), "``\u{2009}a`b\u{2009}``");
+        // unterminated span left alone
+        assert_eq!(pad_inline_code("a `b c"), "a `b c");
+        // fenced blocks are not passed through this fn in practice, but a
+        // backtick run with no same-line closer stays untouched
+        assert_eq!(pad_inline_code("```\nlet x;\n```"), "```\nlet x;\n```");
     }
 
     #[test]

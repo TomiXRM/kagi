@@ -527,6 +527,12 @@ pub enum Msg {
     /// File/dir row: reveal in the platform file manager (non-macOS label —
     /// macOS uses `EditorTreeRevealFinder`).
     EditorTreeRevealFile,
+    EditorTreePreviewMarkdown,
+    EditorWorkspacePreviewShow,
+    EditorWorkspacePreviewEdit,
+    EditorWorkspaceMermaidRendering,
+    EditorWorkspaceMermaidNeedsCli,
+    EditorWorkspaceMermaidFailed,
     /// File row: jump to File History.
     EditorTreeHistory,
     /// File row: stage this file (index-only, non-destructive).
@@ -1122,6 +1128,18 @@ impl Msg {
             (En, EditorTreeRevealFinder) => "Reveal in Finder",
             (Ja, EditorTreeRevealFinder) => "Finderで表示",
             (En, EditorTreeRevealFile) => "Reveal in File Manager",
+            (Ja, EditorTreePreviewMarkdown) => "Markdownをプレビュー",
+            (En, EditorTreePreviewMarkdown) => "Preview Markdown",
+            (Ja, EditorWorkspacePreviewShow) => "プレビュー",
+            (En, EditorWorkspacePreviewShow) => "Preview",
+            (Ja, EditorWorkspacePreviewEdit) => "編集に戻る",
+            (En, EditorWorkspacePreviewEdit) => "Back to editor",
+            (Ja, EditorWorkspaceMermaidRendering) => "図を描画中…",
+            (En, EditorWorkspaceMermaidRendering) => "Rendering diagram…",
+            (Ja, EditorWorkspaceMermaidNeedsCli) => "図の描画には mermaid-cli (mmdc) が必要です",
+            (En, EditorWorkspaceMermaidNeedsCli) => "Install mermaid-cli (mmdc) to render diagrams",
+            (Ja, EditorWorkspaceMermaidFailed) => "図の描画に失敗しました",
+            (En, EditorWorkspaceMermaidFailed) => "Diagram render failed",
             (Ja, EditorTreeRevealFile) => "ファイルマネージャで表示",
             (En, EditorTreeHistory) => "History",
             (Ja, EditorTreeHistory) => "履歴",

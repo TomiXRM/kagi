@@ -25,6 +25,7 @@ pub mod diff_view;
 pub mod diffstat_bar;
 pub mod ecosystem;
 pub mod editor_fs_ops;
+pub mod editor_markdown;
 pub mod editor_tree_menu;
 pub mod editor_workspace;
 pub mod file_history;

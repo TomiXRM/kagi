@@ -280,6 +280,13 @@ pub struct EditorWorkspaceView {
     /// its actions dispatch on `KagiApp` directly (fs mutations, modals),
     /// never re-entering this leased entity.
     pub tree_menu: Option<(TreeMenuTarget, gpui::Point<gpui::Pixels>)>,
+
+    /// Markdown preview mode for the open buffer (context-menu "Preview
+    /// Markdown" / center-pane toggle). Cleared when switching files.
+    pub preview_markdown: bool,
+    /// Rendered-mermaid cache: `editor_markdown::mermaid_key` → PNG state.
+    /// Keyed by content+theme so re-previews and tab switches reuse renders.
+    pub mermaid: HashMap<u64, super::editor_markdown::MermaidState>,
 }
 
 impl EditorWorkspaceView {
@@ -318,6 +325,8 @@ impl EditorWorkspaceView {
             diff_scroll: new_diff_list_state(),
             show_tree: true,
             tree_menu: None,
+            preview_markdown: false,
+            mermaid: HashMap::new(),
         }
     }
 
@@ -449,6 +458,8 @@ impl EditorWorkspaceView {
         if self.open_path.as_ref() == Some(&path) {
             return;
         }
+        // Preview mode is per-open-action, not sticky across files.
+        self.preview_markdown = false;
         let is_new = !self.open_tabs.contains(&path);
         if let Some(active) = self.open_path.clone() {
             if is_new && !self.dirty {
@@ -1409,10 +1420,77 @@ fn build_workspace_tree(files: &[WorkspaceFile]) -> Vec<TreeRow> {
     file_tree::build_file_tree_opt(&pairs)
 }
 
+impl EditorWorkspaceView {
+    /// Toggle the markdown preview for the open buffer (context-menu
+    /// "Preview Markdown" / center-pane chip).
+    pub fn set_markdown_preview(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.preview_markdown == on {
+            return;
+        }
+        self.preview_markdown = on;
+        if on {
+            if let Some(p) = &self.open_path {
+                klog!("editor-ws: preview markdown {}", p.display());
+            }
+        }
+        cx.notify();
+    }
+
+    /// Schedule background `mmdc` renders for every mermaid block of the
+    /// previewed buffer that isn't in the cache yet. Called from `render`
+    /// while preview mode is on; each finished render notifies, so blocks
+    /// flip from source-with-note to diagram as PNGs land.
+    fn ensure_preview_mermaids(&mut self, cx: &mut Context<Self>) {
+        use super::editor_markdown::{
+            mermaid_key, render_mermaid_png, split_mermaid, MdSegment, MermaidState,
+        };
+        let Some(content) = self.content.as_deref() else {
+            return;
+        };
+        if !self
+            .open_path
+            .as_deref()
+            .is_some_and(super::editor_markdown::is_markdown_path)
+        {
+            return;
+        }
+        let dark = theme().dark;
+        for seg in split_mermaid(content) {
+            let MdSegment::Mermaid(code) = seg else {
+                continue;
+            };
+            let key = mermaid_key(&code, dark);
+            if self.mermaid.contains_key(&key) {
+                continue;
+            }
+            self.mermaid.insert(key, MermaidState::Rendering);
+            let task = cx.background_spawn(async move { render_mermaid_png(&code, dark) });
+            cx.spawn(async move |view, acx| {
+                let result = task.await;
+                let _ = view.update(acx, |v, cx| {
+                    let state = match result {
+                        Ok(path) => {
+                            klog!("editor-ws: mermaid rendered {key:016x}");
+                            MermaidState::Ready(path)
+                        }
+                        Err(state) => state,
+                    };
+                    v.mermaid.insert(key, state);
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+    }
+}
+
 impl Render for EditorWorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_editor(window, cx);
-        render_editor_workspace(self, cx)
+        if self.preview_markdown {
+            self.ensure_preview_mermaids(cx);
+        }
+        render_editor_workspace(self, window, cx)
     }
 }
 
@@ -1552,6 +1630,7 @@ impl super::KagiApp {
 /// arm in `render_body.rs`).
 fn render_editor_workspace(
     view: &EditorWorkspaceView,
+    window: &mut Window,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     // T-WS-EDITOR-002 §2: "● " prefix while the open buffer has unsaved
@@ -1654,7 +1733,7 @@ fn render_editor_workspace(
         .when(view.show_tree, |el| {
             el.child(render_tree_pane(view, cx)).child(tree_divider)
         })
-        .child(render_center_pane(view, cx))
+        .child(render_center_pane(view, window, cx))
         .child(hunks_divider)
         .child(render_hunks_pane(view, cx));
 
@@ -2092,6 +2171,7 @@ fn render_tab_strip(
 
 fn render_center_pane(
     view: &EditorWorkspaceView,
+    window: &mut Window,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     let mut pane = div()
@@ -2202,6 +2282,56 @@ fn render_center_pane(
     if let Some(msg) = placeholder {
         pane = pane.child(placeholder_text(msg));
         return pane.into_any_element();
+    }
+
+    // Markdown preview (ADR-0120 follow-up): a toggle chip for .md buffers,
+    // and — while preview mode is on — the rendered document instead of the
+    // code editor. The chip lives here (not the tab strip) so it only exists
+    // for markdown files.
+    let is_md = view
+        .open_path
+        .as_deref()
+        .is_some_and(super::editor_markdown::is_markdown_path);
+    if is_md {
+        let previewing = view.preview_markdown;
+        let toggle = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+            this.set_markdown_preview(!previewing, cx);
+        });
+        pane = pane.child(
+            div()
+                .flex()
+                .flex_row()
+                .justify_end()
+                .flex_shrink_0()
+                .w_full()
+                .px_2()
+                .py_1()
+                .child(
+                    div()
+                        .id("ews-md-toggle")
+                        .px_2()
+                        .py_px()
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .text_xs()
+                        .bg(rgb(theme().surface))
+                        .text_color(rgb(theme().text_main))
+                        .hover(|s| s.bg(rgb(theme().selected)))
+                        .on_click(toggle)
+                        .child(if previewing {
+                            Msg::EditorWorkspacePreviewEdit.t()
+                        } else {
+                            Msg::EditorWorkspacePreviewShow.t()
+                        }),
+                ),
+        );
+        if view.preview_markdown {
+            return pane
+                .child(super::editor_markdown::render_markdown_preview(
+                    view, window, cx,
+                ))
+                .into_any_element();
+        }
     }
 
     let Some(editor) = view.editor.clone() else {

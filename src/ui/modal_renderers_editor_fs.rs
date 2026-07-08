@@ -212,6 +212,17 @@ pub(crate) fn render_editor_delete_confirm_modal(
         );
     }
 
+    if modal.has_dirty_buffers {
+        card = card.child(
+            div()
+                .text_xs()
+                .text_color(rgb(current_theme().color_blocker))
+                .child(SharedString::from(
+                    Msg::EditorDeleteConfirmUnsavedWarning.t(),
+                )),
+        );
+    }
+
     card = card.child(
         div()
             .text_xs()

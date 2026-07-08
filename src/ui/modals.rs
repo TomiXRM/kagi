@@ -382,7 +382,8 @@ pub struct DiscardModal {
 /// action, NOT destructive — a dirty buffer survives as its tab, so there
 /// is no SwitchSource/SelectFile intent. The guard covers the genuinely
 /// destructive paths only: replacing an edit with disk text (Reload),
-/// closing a dirty tab (CloseTab), and dropping the whole workspace (Close).
+/// closing a dirty tab (CloseTab), and dropping the whole workspace (Close
+/// or repo-context changes).
 #[derive(Clone, Debug)]
 pub enum EditorPendingIntent {
     /// Discard the buffer and re-read the open file from disk (the
@@ -392,6 +393,16 @@ pub enum EditorPendingIntent {
     CloseTab(std::path::PathBuf),
     /// Close the Editor Workspace (← Graph, toolbar, Cmd-Shift-E).
     Close,
+    /// Switch repository tabs after discarding the whole editor workspace.
+    SwitchRepo(std::path::PathBuf),
+    /// Close a repository tab after discarding the whole editor workspace.
+    CloseRepoTab(std::path::PathBuf),
+    /// Enter a remote read-only repo after discarding the local editor workspace.
+    EnterRemoteView {
+        host: kagi_domain::remote::RemoteHost,
+        root: String,
+        snap: std::sync::Arc<kagi_git::RepoSnapshot>,
+    },
 }
 
 /// State for the Editor Workspace "unsaved changes" confirmation
@@ -457,6 +468,9 @@ pub struct EditorDeleteConfirmModal {
     /// `true` when `file_count` stopped short of the real total (capped —
     /// the modal shows "N+ files").
     pub truncated: bool,
+    /// True when an open editor tab at/under `path` has unsaved edits; the
+    /// Trash move is recoverable, but the in-memory delta is not.
+    pub has_dirty_buffers: bool,
     pub error: Option<SharedString>,
 }
 

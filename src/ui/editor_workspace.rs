@@ -125,6 +125,15 @@ struct EditorBufferState {
     diff: Option<MainDiffView>,
 }
 
+/// Result of the background save write (`save_impl`): `Conflict` means the
+/// on-disk bytes no longer match the buffer's loaded snapshot, so nothing was
+/// written — the user decides via the external-change banner.
+enum SaveOutcome {
+    Saved(String),
+    Conflict,
+    Failed(String),
+}
+
 /// The Editor workspace view-model + entity (ADR-0117 fat-entity template).
 pub struct EditorWorkspaceView {
     /// Weak back-ref to the parent, used ONLY in event listeners (close) —
@@ -576,6 +585,17 @@ impl EditorWorkspaceView {
         self.dirty || self.tab_cache.values().any(|b| b.dirty)
     }
 
+    /// Whether any dirty open tab would be closed by deleting `path`.
+    pub fn any_dirty_under(&self, path: &Path) -> bool {
+        self.open_path
+            .as_deref()
+            .is_some_and(|p| self.dirty && path_is_at_or_under(p, path))
+            || self
+                .tab_cache
+                .iter()
+                .any(|(p, b)| b.dirty && path_is_at_or_under(p, path))
+    }
+
     /// Chip-click entry point for switching the tree source. T-WS-EDITOR-002
     /// spec change (user): this is a VIEW filter, not a navigation — it never
     /// touches the open buffer and never opens the dirty guard. `start_load`'s
@@ -905,6 +925,16 @@ impl EditorWorkspaceView {
     /// explicitly scopes saving out of the plan→confirm→execute pipeline
     /// (invariant 4 governs Git writes; `std::fs::write` here is not one).
     pub fn save(&mut self, cx: &mut Context<Self>) {
+        self.save_impl(false, cx);
+    }
+
+    /// The external-change banner's Overwrite button: save even though the
+    /// file changed on disk (the user explicitly chose to clobber it).
+    pub fn save_overwrite(&mut self, cx: &mut Context<Self>) {
+        self.save_impl(true, cx);
+    }
+
+    fn save_impl(&mut self, force: bool, cx: &mut Context<Self>) {
         if !self.dirty {
             return;
         }
@@ -916,18 +946,44 @@ impl EditorWorkspaceView {
         let Some(editor) = self.editor.clone() else {
             return;
         };
+        // Banner already up (watcher flagged an external change): don't
+        // write — the banner's Overwrite/Reload buttons are the decision.
+        if !force && self.external_changed {
+            self.notify_save_blocked(&path, cx);
+            return;
+        }
         let full_path = editor_save_path(&self.repo_path, &path);
         let text = editor.read(cx).value().to_string();
+        // Snapshot the buffer was loaded from (or last saved as): compared
+        // against the on-disk bytes at write time to close the watcher's
+        // debounce race (~500ms) where an external change hasn't flagged
+        // `external_changed` yet.
+        let snapshot = if force { None } else { self.content.clone() };
 
         let task = cx.background_spawn(async move {
-            std::fs::write(&full_path, text.as_bytes())
-                .map(|()| text)
-                .map_err(|e| e.to_string())
+            // A missing file is NOT a conflict: saving simply recreates it.
+            // Any other read error means the disk-vs-snapshot comparison
+            // couldn't run, so fail the save instead of risking a clobber.
+            if let Some(snap) = &snapshot {
+                match std::fs::read(&full_path) {
+                    Ok(disk) => {
+                        if disk != snap.as_bytes() {
+                            return SaveOutcome::Conflict;
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return SaveOutcome::Failed(e.to_string()),
+                }
+            }
+            match std::fs::write(&full_path, text.as_bytes()) {
+                Ok(()) => SaveOutcome::Saved(text),
+                Err(e) => SaveOutcome::Failed(e.to_string()),
+            }
         });
         cx.spawn(async move |view, acx| {
             let result = task.await;
             let _ = view.update(acx, |v, cx| match result {
-                Ok(text) => {
+                SaveOutcome::Saved(text) => {
                     klog!("editor-ws: saved {}", path.display());
                     v.dirty = false;
                     v.external_changed = false;
@@ -947,7 +1003,13 @@ impl EditorWorkspaceView {
                     v.load_selected(cx);
                     cx.notify();
                 }
-                Err(e) => {
+                SaveOutcome::Conflict => {
+                    // Raise the banner ourselves — the watcher's debounced
+                    // event may still be in flight.
+                    v.external_changed = true;
+                    v.notify_save_blocked(&path, cx);
+                }
+                SaveOutcome::Failed(e) => {
                     klog!("editor-ws: save failed: {}", e);
                     // Non-git file error: surface via toast + footer (the
                     // established precedent for a background op outside the
@@ -964,6 +1026,20 @@ impl EditorWorkspaceView {
             });
         })
         .detach();
+    }
+
+    /// A save was refused because the file changed on disk: log, toast, and
+    /// leave the decision to the external-change banner (Overwrite / Reload).
+    fn notify_save_blocked(&mut self, path: &Path, cx: &mut Context<Self>) {
+        klog!(
+            "editor-ws: save blocked (changed on disk) {}",
+            path.display()
+        );
+        let _ = self.app.update(cx, |app, cx| {
+            app.push_toast(ToastKind::Error, Msg::EditorWorkspaceSaveBlocked.t(), cx);
+            cx.notify();
+        });
+        cx.notify();
     }
 
     /// FS-watcher nudge (T-WS-EDITOR-002 §4), called from
@@ -1077,7 +1153,7 @@ impl EditorWorkspaceView {
         let victims: Vec<PathBuf> = self
             .open_tabs
             .iter()
-            .filter(|p| p.as_path() == path || p.starts_with(path))
+            .filter(|p| path_is_at_or_under(p, path))
             .cloned()
             .collect();
         for v in victims {
@@ -1092,6 +1168,10 @@ impl EditorWorkspaceView {
 /// uses for reads).
 fn editor_save_path(repo_path: &Path, rel: &Path) -> PathBuf {
     repo_path.join(rel)
+}
+
+fn path_is_at_or_under(path: &Path, root: &Path) -> bool {
+    path == root || path.starts_with(root)
 }
 
 /// Editor tabs (user request): which tab becomes active after closing
@@ -1369,6 +1449,22 @@ impl super::KagiApp {
         self.editor_workspace = None;
     }
 
+    /// True when closing/switching repo context would drop unsaved editor tabs.
+    pub fn editor_workspace_any_dirty(&self, cx: &mut Context<Self>) -> bool {
+        match self.editor_workspace.as_ref() {
+            Some(ev) => ev.read(cx).any_dirty(),
+            None => false,
+        }
+    }
+
+    /// True when deleting `path` would close at least one dirty editor tab.
+    pub fn editor_workspace_dirty_under(&self, path: &Path, cx: &mut Context<Self>) -> bool {
+        match self.editor_workspace.as_ref() {
+            Some(ev) => ev.read(cx).any_dirty_under(path),
+            None => false,
+        }
+    }
+
     /// Root ↑/↓ handler branch for the Editor workspace: step the file
     /// selection on the entity (normal parent→child `update`; the entity is
     /// not leased here).
@@ -1429,6 +1525,18 @@ impl super::KagiApp {
             EditorPendingIntent::Close => {
                 self.close_editor_workspace();
             }
+            EditorPendingIntent::SwitchRepo(path) => {
+                self.close_editor_workspace();
+                self.switch_repo_by_path(&path, cx);
+            }
+            EditorPendingIntent::CloseRepoTab(path) => {
+                self.close_editor_workspace();
+                self.close_tab_by_path(&path, cx);
+            }
+            EditorPendingIntent::EnterRemoteView { host, root, snap } => {
+                self.close_editor_workspace();
+                self.enter_remote_view(host, root, (*snap).clone(), cx);
+            }
         }
         cx.notify();
     }
@@ -1484,13 +1592,13 @@ fn render_editor_workspace(
                 .text_color(rgb(theme().text_sub))
                 .hover(|s| s.bg(rgb(theme().selected)))
                 .on_click(close)
-                .child(SharedString::from("\u{2190} Graph")),
+                .child(SharedString::from(Msg::EditorWorkspaceBackToGraph.t())),
         )
         .child(
             div()
                 .text_sm()
                 .text_color(rgb(theme().text_main))
-                .child(SharedString::from("Editor Workspace")),
+                .child(SharedString::from(Msg::EditorWorkspaceTitle.t())),
         )
         .child(
             div()
@@ -2007,6 +2115,9 @@ fn render_center_pane(
         let reload = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
             this.open_dirty_guard(EditorPendingIntent::Reload, cx);
         });
+        let overwrite = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+            this.save_overwrite(cx);
+        });
         pane = pane.child(
             div()
                 .id("ews-external-changed")
@@ -2039,6 +2150,20 @@ fn render_center_pane(
                         .hover(|s| s.bg(rgb(theme().selected)))
                         .on_click(reload)
                         .child(Msg::EditorWorkspaceReload.t()),
+                )
+                .child(
+                    div()
+                        .id("ews-overwrite")
+                        .px_2()
+                        .py_px()
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .text_xs()
+                        .bg(rgb(theme().bg_base))
+                        .text_color(rgb(theme().text_main))
+                        .hover(|s| s.bg(rgb(theme().selected)))
+                        .on_click(overwrite)
+                        .child(Msg::EditorWorkspaceOverwrite.t()),
                 ),
         );
     }
@@ -2245,6 +2370,22 @@ mod tests {
         assert_eq!(dirs, [0, 2].into_iter().collect());
         // Fully collapsed: only top-level rows remain visible.
         assert_eq!(visible_tree_indices(&tree, &dirs), vec![0, 4]);
+    }
+
+    #[test]
+    fn path_is_at_or_under_matches_path_components() {
+        assert!(path_is_at_or_under(
+            Path::new("src/ui/main.rs"),
+            Path::new("src/ui")
+        ));
+        assert!(path_is_at_or_under(
+            Path::new("src/ui"),
+            Path::new("src/ui")
+        ));
+        assert!(!path_is_at_or_under(
+            Path::new("src/ui_extra/main.rs"),
+            Path::new("src/ui")
+        ));
     }
 
     #[test]

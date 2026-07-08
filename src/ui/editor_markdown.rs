@@ -207,9 +207,16 @@ pub fn render_markdown_preview(
     for (ix, seg) in split_mermaid(&content).into_iter().enumerate() {
         match seg {
             MdSegment::Text(t) => {
+                // TextView's inner wrapper is `size_full()`, which sizes it
+                // to the scroll container instead of its content — the
+                // overflow never registers and the pane can't scroll.
+                // Overriding the height back to `auto` (via its `Styled`
+                // refinement) lets the segment take its intrinsic height so
+                // the outer `overflow_y_scroll` works.
                 col = col.child(
                     TextView::markdown(("ews-md-seg", ix), SharedString::from(t), window, cx)
-                        .selectable(true),
+                        .selectable(true)
+                        .h(gpui::Length::Auto),
                 );
             }
             MdSegment::Mermaid(code) => {

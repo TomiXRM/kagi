@@ -555,7 +555,7 @@ dependencies = [
  "bitflags 2.13.0",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.11.0",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2192,7 +2192,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/TomiXRM/gpui-kagi?branch=kagi-0.2.2#1a19f98c1fb2dfac2d03c6533b46c95a10e2a841"
+source = "git+https://github.com/TomiXRM/gpui-kagi?branch=kagi-0.2.2#551a30ad249e9f3dc755658f65f0c1d95e043f75"
 dependencies = [
  "anyhow",
  "as-raw-xcb-connection",

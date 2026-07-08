@@ -2287,7 +2287,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.5.1"
-source = "git+https://github.com/TomiXRM/gpui-component-kagi?branch=kagi-0.5.1#ed44def3006b0942f1499a9ce5baff8cdb5bbd3c"
+source = "git+https://github.com/TomiXRM/gpui-component-kagi?branch=kagi-0.5.1#7eaa62ba471e221082dc379d58bf09475bf92de1"
 dependencies = [
  "aho-corasick",
  "anyhow",

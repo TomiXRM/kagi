@@ -3879,10 +3879,15 @@ pub fn run_app(app_state: KagiApp) {
         ]);
         // Arrow keys step through files while the main diff is open
         // (no-ops otherwise; see main_diff_step). Scoped `!Terminal` so up/down
-        // reach a focused terminal (shell history) instead of being consumed here.
+        // reach a focused terminal (shell history), and `!Input` so they reach
+        // a focused text field / code editor: these bindings register AFTER
+        // gpui_component::init, so at equal context depth they would shadow
+        // Input's own MoveUp/MoveDown — the editor cursor stopped moving
+        // vertically while left/right (unbound here) still worked
+        // (user-reported).
         cx.bind_keys([
-            KeyBinding::new("up", DiffPrevFile, Some("!Terminal")),
-            KeyBinding::new("down", DiffNextFile, Some("!Terminal")),
+            KeyBinding::new("up", DiffPrevFile, Some("!Terminal && !Input")),
+            KeyBinding::new("down", DiffNextFile, Some("!Terminal && !Input")),
         ]);
         // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
         // No context predicate — gpui-component 0.5.1's "Input" context binds

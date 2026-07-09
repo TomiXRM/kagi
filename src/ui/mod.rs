@@ -3857,11 +3857,34 @@ pub fn run_app(app_state: KagiApp) {
             klog!("fonts: loaded Inter + JetBrains Mono");
         }
 
-        // Persist the last plain-Windowed size on quit so the next launch
-        // restores it (open_main_window validates against the minimum and
-        // falls back to the default). Skipped under KAGI_WINDOW so headless
-        // test runs never clobber the user's remembered size.
+        // Persist the last plain-Windowed size so the next launch restores it
+        // (open_main_window validates against a floor and falls back to the
+        // default). A debounced background loop writes size changes every 2s
+        // — a quit-time-only hook missed any exit that skips the platform
+        // terminate path (Ctrl-C on a `cargo run`, kill, crash;
+        // user-reported) — and the on_app_quit hook still captures the very
+        // last value on a graceful quit. Skipped under KAGI_WINDOW so
+        // headless test runs never clobber the user's remembered size.
         if std::env::var("KAGI_WINDOW").is_err() {
+            let persist = |w: u32, h: u32, last: &mut (u32, u32)| {
+                if w > 0 && h > 0 && (w, h) != *last {
+                    settings::write_setting("window_size", Some(&format!("{w}x{h}")));
+                    *last = (w, h);
+                }
+            };
+            cx.background_spawn({
+                let executor = cx.background_executor().clone();
+                async move {
+                    let mut last = (0u32, 0u32);
+                    loop {
+                        executor.timer(std::time::Duration::from_secs(2)).await;
+                        let w = LAST_WIN_W.load(std::sync::atomic::Ordering::Relaxed);
+                        let h = LAST_WIN_H.load(std::sync::atomic::Ordering::Relaxed);
+                        persist(w, h, &mut last);
+                    }
+                }
+            })
+            .detach();
             cx.on_app_quit(|_cx| {
                 let w = LAST_WIN_W.load(std::sync::atomic::Ordering::Relaxed);
                 let h = LAST_WIN_H.load(std::sync::atomic::Ordering::Relaxed);

@@ -125,6 +125,16 @@ impl Render for KagiApp {
         // after the tree-sitter parse completes off-thread.
         self.apply_pending_highlights();
 
+        // Remember the live window size (persisted on quit → restored next
+        // launch). Only plain Windowed: a maximized/fullscreen size would
+        // restore as a giant floating window.
+        if let gpui::WindowBounds::Windowed(b) = window.window_bounds() {
+            let w = f32::from(b.size.width).round().max(0.0) as u32;
+            let h = f32::from(b.size.height).round().max(0.0) as u32;
+            super::LAST_WIN_W.store(w, std::sync::atomic::Ordering::Relaxed);
+            super::LAST_WIN_H.store(h, std::sync::atomic::Ordering::Relaxed);
+        }
+
         // W27-UIPOLISH: apply the global UI zoom by scaling the window's rem
         // size. gpui's `text_*` helpers and rem-based lengths resolve through
         // `rem_size()`, so this zooms virtually all of kagi's text/layout like

@@ -95,6 +95,14 @@ impl Settings {
         self.get_str("theme")
     }
 
+    /// Last window size (`"window_size"`, `"1440x920"`). `None` when unset or
+    /// unparsable; the caller validates against its minimum and falls back.
+    pub fn window_size(&self) -> Option<(f32, f32)> {
+        let raw = self.get_str("window_size")?;
+        let (w, h) = raw.trim().split_once('x')?;
+        Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
+    }
+
     /// UI zoom, stored as a permille integer string (`"ui_zoom"`). Returns the
     /// parsed permille; the caller clamps and divides by 1000.
     pub fn ui_zoom_permille(&self) -> Option<u32> {

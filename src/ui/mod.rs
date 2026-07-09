@@ -213,6 +213,12 @@ pub const UI_FONT: &str = "Inter";
 /// editor / code — replaces the macOS-only "Menlo" fallback.
 pub const MONO_FONT: &str = "JetBrains Mono";
 
+/// Live window size in whole px (w, h), updated each frame while the window
+/// is plain `Windowed` (maximized/fullscreen sizes are not remembered), and
+/// persisted as the `window_size` setting on quit. 0 = not seen yet.
+pub(crate) static LAST_WIN_W: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+pub(crate) static LAST_WIN_H: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 // Sidebar / panel width limits.
 const SIDEBAR_MIN: f32 = 120.0;
 const SIDEBAR_MAX: f32 = 400.0;
@@ -3851,6 +3857,23 @@ pub fn run_app(app_state: KagiApp) {
             klog!("fonts: loaded Inter + JetBrains Mono");
         }
 
+        // Persist the last plain-Windowed size on quit so the next launch
+        // restores it (open_main_window validates against the minimum and
+        // falls back to the default). Skipped under KAGI_WINDOW so headless
+        // test runs never clobber the user's remembered size.
+        if std::env::var("KAGI_WINDOW").is_err() {
+            cx.on_app_quit(|_cx| {
+                let w = LAST_WIN_W.load(std::sync::atomic::Ordering::Relaxed);
+                let h = LAST_WIN_H.load(std::sync::atomic::Ordering::Relaxed);
+                async move {
+                    if w > 0 && h > 0 {
+                        settings::write_setting("window_size", Some(&format!("{w}x{h}")));
+                    }
+                }
+            })
+            .detach();
+        }
+
         // T025: initialize gpui-component (registers key bindings, themes, etc.)
         gpui_component::init(cx);
 
@@ -3955,14 +3978,21 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
     }) {
         (w, h)
     } else {
-        // Preferred initial size, but clamped to the active display so the window
-        // never opens off-screen on small / scaled displays (user-reported). The
-        // ideal size is kept on big screens; only the upper bound is a fraction
-        // of the display (so 4K/ultrawide don't get a needlessly huge window).
+        // Last session's size when it's sane, else the preferred default —
+        // either way clamped to the active display so the window never opens
+        // off-screen on small / scaled displays (user-reported). The ideal
+        // size is kept on big screens; only the upper bound is a fraction of
+        // the display (so 4K/ultrawide don't get a needlessly huge window).
         const PREF_W: f32 = 1440.0;
         const PREF_H: f32 = 920.0;
         const MIN_W: f32 = 900.0;
         const MIN_H: f32 = 600.0;
+        // A remembered size below the minimum (or garbage) falls back to the
+        // default rather than restoring an unusably small window.
+        let (pref_w, pref_h) = settings::Settings::load()
+            .window_size()
+            .filter(|(w, h)| *w >= MIN_W && *h >= MIN_H)
+            .unwrap_or((PREF_W, PREF_H));
         match cx.primary_display() {
             Some(display) => {
                 let ds = display.bounds().size;
@@ -3970,11 +4000,11 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
                 let max_h = f32::from(ds.height) * 0.90;
                 // clamp(low, high) with low never above high (tiny displays fill).
                 (
-                    PREF_W.clamp(MIN_W.min(max_w), max_w),
-                    PREF_H.clamp(MIN_H.min(max_h), max_h),
+                    pref_w.clamp(MIN_W.min(max_w), max_w),
+                    pref_h.clamp(MIN_H.min(max_h), max_h),
                 )
             }
-            None => (PREF_W, PREF_H),
+            None => (pref_w, pref_h),
         }
     };
     let bounds = Bounds::centered(None, size(px(win_w), px(win_h)), cx);

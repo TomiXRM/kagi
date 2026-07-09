@@ -6,7 +6,7 @@ members = ["xtask", "crates/kagi-domain", "crates/kagi-git"]
 
 [package]
 name = "kagi"
-version = "0.8.1"
+version = "0.9.0"
 license = "MIT"
 description = "Safety-first, commit-graph Git GUI client built with GPUI"
 edition = "2021"

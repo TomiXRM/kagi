@@ -3987,12 +3987,20 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
         const PREF_H: f32 = 920.0;
         const MIN_W: f32 = 900.0;
         const MIN_H: f32 = 600.0;
-        // A remembered size below the minimum (or garbage) falls back to the
-        // default rather than restoring an unusably small window.
-        let (pref_w, pref_h) = settings::Settings::load()
+        // Restore floor: only guards against corrupt/absurd remembered values
+        // (a deliberately small window — half a laptop screen — must restore
+        // as-is; 900x600 here forced such sizes back up, user-reported).
+        const RESTORE_MIN_W: f32 = 400.0;
+        const RESTORE_MIN_H: f32 = 300.0;
+        let restored = settings::Settings::load()
             .window_size()
-            .filter(|(w, h)| *w >= MIN_W && *h >= MIN_H)
-            .unwrap_or((PREF_W, PREF_H));
+            .filter(|(w, h)| *w >= RESTORE_MIN_W && *h >= RESTORE_MIN_H);
+        // A restored size keeps its own lower bound; only a fresh default
+        // gets pushed up to the preferred minimum.
+        let ((pref_w, pref_h), (min_w, min_h)) = match restored {
+            Some(wh) => (wh, (RESTORE_MIN_W, RESTORE_MIN_H)),
+            None => ((PREF_W, PREF_H), (MIN_W, MIN_H)),
+        };
         match cx.primary_display() {
             Some(display) => {
                 let ds = display.bounds().size;
@@ -4000,8 +4008,8 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
                 let max_h = f32::from(ds.height) * 0.90;
                 // clamp(low, high) with low never above high (tiny displays fill).
                 (
-                    pref_w.clamp(MIN_W.min(max_w), max_w),
-                    pref_h.clamp(MIN_H.min(max_h), max_h),
+                    pref_w.clamp(min_w.min(max_w), max_w),
+                    pref_h.clamp(min_h.min(max_h), max_h),
                 )
             }
             None => (pref_w, pref_h),

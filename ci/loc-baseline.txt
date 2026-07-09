@@ -21,7 +21,7 @@ src/ui/editor_workspace.rs 2740
 src/ui/file_history_render.rs 1180
 src/ui/i18n.rs 1627
 src/ui/inspector.rs 980
-src/ui/mod.rs 4507
+src/ui/mod.rs 4542
 src/ui/operations/branch.rs 1552
 src/ui/operations/commit.rs 1247
 src/ui/operations/conflict.rs 824

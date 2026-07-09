@@ -354,6 +354,14 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         match action {
+            EditorTreeAction::PreviewMarkdown(path) => {
+                if let Some(ews) = self.editor_workspace.clone() {
+                    ews.update(cx, |v, cx| {
+                        v.open_tab(path, cx);
+                        v.set_markdown_preview(true, cx);
+                    });
+                }
+            }
             EditorTreeAction::Rename(path) => {
                 let name = path
                     .file_name()

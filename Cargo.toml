@@ -95,3 +95,10 @@ assets = [
 # that gpui pulls in. Upstream PR: pop-os/cosmic-text (fix-han-unification).
 [patch.crates-io]
 cosmic-text = { git = "https://github.com/TomiXRM/cosmic-text", branch = "fix-han-unification-0.14" }
+# gpui paints text-run background highlights (markdown inline code, etc.) as
+# square full-line-height quads with no styling hook; the fork rounds them
+# subtly (0.18 x line_height). Pristine 0.2.2 + one patch commit.
+gpui = { git = "https://github.com/TomiXRM/gpui-kagi", branch = "kagi-0.2.2" }
+# TextView headings had no top spacing and no styling hook; the fork adds a
+# heading_top_gap knob to TextViewStyle (default 0 = upstream behavior).
+gpui-component = { git = "https://github.com/TomiXRM/gpui-component-kagi", branch = "kagi-0.5.1" }

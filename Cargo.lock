@@ -2192,8 +2192,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "979b45cfa6ec723b6f42330915a1b3769b930d02b2d505f9697f8ca602bee707"
+source = "git+https://github.com/TomiXRM/gpui-kagi?branch=kagi-0.2.2#551a30ad249e9f3dc755658f65f0c1d95e043f75"
 dependencies = [
  "anyhow",
  "as-raw-xcb-connection",
@@ -2288,8 +2287,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d021d46b4088d3d93a57ccdf443da85695a77272108caca2f6fe5369f584966a"
+source = "git+https://github.com/TomiXRM/gpui-component-kagi?branch=kagi-0.5.1#f85993b9162795ce8859aef06225fb9dc47f8a78"
 dependencies = [
  "aho-corasick",
  "anyhow",

@@ -25,6 +25,7 @@ pub mod diff_view;
 pub mod diffstat_bar;
 pub mod ecosystem;
 pub mod editor_fs_ops;
+pub mod editor_markdown;
 pub mod editor_tree_menu;
 pub mod editor_workspace;
 pub mod file_history;
@@ -211,6 +212,12 @@ pub const UI_FONT: &str = "Inter";
 /// Bundled monospace family (OFL JetBrains Mono) for the terminal / conflict
 /// editor / code — replaces the macOS-only "Menlo" fallback.
 pub const MONO_FONT: &str = "JetBrains Mono";
+
+/// Live window size in whole px (w, h), updated each frame while the window
+/// is plain `Windowed` (maximized/fullscreen sizes are not remembered), and
+/// persisted as the `window_size` setting on quit. 0 = not seen yet.
+pub(crate) static LAST_WIN_W: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+pub(crate) static LAST_WIN_H: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 // Sidebar / panel width limits.
 const SIDEBAR_MIN: f32 = 120.0;
@@ -3850,6 +3857,46 @@ pub fn run_app(app_state: KagiApp) {
             klog!("fonts: loaded Inter + JetBrains Mono");
         }
 
+        // Persist the last plain-Windowed size so the next launch restores it
+        // (open_main_window validates against a floor and falls back to the
+        // default). A debounced background loop writes size changes every 2s
+        // — a quit-time-only hook missed any exit that skips the platform
+        // terminate path (Ctrl-C on a `cargo run`, kill, crash;
+        // user-reported) — and the on_app_quit hook still captures the very
+        // last value on a graceful quit. Skipped under KAGI_WINDOW so
+        // headless test runs never clobber the user's remembered size.
+        if std::env::var("KAGI_WINDOW").is_err() {
+            let persist = |w: u32, h: u32, last: &mut (u32, u32)| {
+                if w > 0 && h > 0 && (w, h) != *last {
+                    settings::write_setting("window_size", Some(&format!("{w}x{h}")));
+                    *last = (w, h);
+                }
+            };
+            cx.background_spawn({
+                let executor = cx.background_executor().clone();
+                async move {
+                    let mut last = (0u32, 0u32);
+                    loop {
+                        executor.timer(std::time::Duration::from_secs(2)).await;
+                        let w = LAST_WIN_W.load(std::sync::atomic::Ordering::Relaxed);
+                        let h = LAST_WIN_H.load(std::sync::atomic::Ordering::Relaxed);
+                        persist(w, h, &mut last);
+                    }
+                }
+            })
+            .detach();
+            cx.on_app_quit(|_cx| {
+                let w = LAST_WIN_W.load(std::sync::atomic::Ordering::Relaxed);
+                let h = LAST_WIN_H.load(std::sync::atomic::Ordering::Relaxed);
+                async move {
+                    if w > 0 && h > 0 {
+                        settings::write_setting("window_size", Some(&format!("{w}x{h}")));
+                    }
+                }
+            })
+            .detach();
+        }
+
         // T025: initialize gpui-component (registers key bindings, themes, etc.)
         gpui_component::init(cx);
 
@@ -3878,10 +3925,15 @@ pub fn run_app(app_state: KagiApp) {
         ]);
         // Arrow keys step through files while the main diff is open
         // (no-ops otherwise; see main_diff_step). Scoped `!Terminal` so up/down
-        // reach a focused terminal (shell history) instead of being consumed here.
+        // reach a focused terminal (shell history), and `!Input` so they reach
+        // a focused text field / code editor: these bindings register AFTER
+        // gpui_component::init, so at equal context depth they would shadow
+        // Input's own MoveUp/MoveDown — the editor cursor stopped moving
+        // vertically while left/right (unbound here) still worked
+        // (user-reported).
         cx.bind_keys([
-            KeyBinding::new("up", DiffPrevFile, Some("!Terminal")),
-            KeyBinding::new("down", DiffNextFile, Some("!Terminal")),
+            KeyBinding::new("up", DiffPrevFile, Some("!Terminal && !Input")),
+            KeyBinding::new("down", DiffNextFile, Some("!Terminal && !Input")),
         ]);
         // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
         // No context predicate — gpui-component 0.5.1's "Input" context binds
@@ -3949,14 +4001,29 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
     }) {
         (w, h)
     } else {
-        // Preferred initial size, but clamped to the active display so the window
-        // never opens off-screen on small / scaled displays (user-reported). The
-        // ideal size is kept on big screens; only the upper bound is a fraction
-        // of the display (so 4K/ultrawide don't get a needlessly huge window).
+        // Last session's size when it's sane, else the preferred default —
+        // either way clamped to the active display so the window never opens
+        // off-screen on small / scaled displays (user-reported). The ideal
+        // size is kept on big screens; only the upper bound is a fraction of
+        // the display (so 4K/ultrawide don't get a needlessly huge window).
         const PREF_W: f32 = 1440.0;
         const PREF_H: f32 = 920.0;
         const MIN_W: f32 = 900.0;
         const MIN_H: f32 = 600.0;
+        // Restore floor: only guards against corrupt/absurd remembered values
+        // (a deliberately small window — half a laptop screen — must restore
+        // as-is; 900x600 here forced such sizes back up, user-reported).
+        const RESTORE_MIN_W: f32 = 400.0;
+        const RESTORE_MIN_H: f32 = 300.0;
+        let restored = settings::Settings::load()
+            .window_size()
+            .filter(|(w, h)| *w >= RESTORE_MIN_W && *h >= RESTORE_MIN_H);
+        // A restored size keeps its own lower bound; only a fresh default
+        // gets pushed up to the preferred minimum.
+        let ((pref_w, pref_h), (min_w, min_h)) = match restored {
+            Some(wh) => (wh, (RESTORE_MIN_W, RESTORE_MIN_H)),
+            None => ((PREF_W, PREF_H), (MIN_W, MIN_H)),
+        };
         match cx.primary_display() {
             Some(display) => {
                 let ds = display.bounds().size;
@@ -3964,11 +4031,11 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
                 let max_h = f32::from(ds.height) * 0.90;
                 // clamp(low, high) with low never above high (tiny displays fill).
                 (
-                    PREF_W.clamp(MIN_W.min(max_w), max_w),
-                    PREF_H.clamp(MIN_H.min(max_h), max_h),
+                    pref_w.clamp(min_w.min(max_w), max_w),
+                    pref_h.clamp(min_h.min(max_h), max_h),
                 )
             }
-            None => (PREF_W, PREF_H),
+            None => (pref_w, pref_h),
         }
     };
     let bounds = Bounds::centered(None, size(px(win_w), px(win_h)), cx);

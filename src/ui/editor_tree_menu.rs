@@ -28,6 +28,7 @@ use super::KagiApp;
 #[derive(Clone, Debug)]
 pub enum EditorTreeAction {
     Rename(PathBuf),
+    PreviewMarkdown(PathBuf),
     Delete { path: PathBuf, is_dir: bool },
     CopyPath(PathBuf),
     CopyRelativePath(PathBuf),
@@ -147,6 +148,18 @@ fn build_editor_tree_menu(
 
     if is_root {
         return (header, groups);
+    }
+
+    // Markdown preview — .md file rows only, above the generic file items.
+    if !info.is_dir && crate::ui::editor_markdown::is_markdown_path(&path) {
+        groups.push(MenuGroup {
+            title: None,
+            items: vec![item(
+                EditorTreeAction::PreviewMarkdown(path.clone()),
+                Msg::EditorTreePreviewMarkdown.t(),
+                false,
+            )],
+        });
     }
 
     // Rename / Copy Path / Copy Relative Path / Reveal — File + Dir rows.

@@ -66,7 +66,7 @@ pub fn render_editor(
     div()
         .flex()
         .flex_col()
-        .flex_grow()
+        .flex_grow(1.)
         .h_full()
         .min_w(px(0.))
         .bg(rgb(theme().bg_base))
@@ -128,7 +128,7 @@ fn render_toolbar(
         .child(
             // file name + conflict n/m laid out horizontally (was stacked).
             div()
-                .flex_grow()
+                .flex_grow(1.)
                 .flex()
                 .flex_row()
                 .items_center()
@@ -319,7 +319,7 @@ fn render_panes(
         .flex_row()
         .w_full()
         .flex_basis(relative(chrome.result_split))
-        .flex_shrink()
+        .flex_shrink(1.)
         .min_h(theme::scaled_px(80.))
         // Measure the FULL A·B row width (not just the A pane) so the divider
         // drag maps the cursor against the whole span — measuring inside A would
@@ -344,7 +344,7 @@ fn render_panes(
         .flex_col()
         .min_h(px(0.))
         .flex_basis(relative(result_frac))
-        .flex_shrink()
+        .flex_shrink(1.)
         .child(render_result_pane(mode, chrome, path, cx));
 
     // The split region is measured for the horizontal divider drag.
@@ -526,7 +526,7 @@ fn side_row_list(
                     render_side_rows(&rows_for_list, p.clone(), side, selected_hunk, range, cx)
                 }),
             )
-            .track_scroll(scroll.clone())
+            .track_scroll(&scroll)
             .flex_1()
             .min_h(px(0.)),
         )
@@ -886,7 +886,7 @@ fn pane(
         .border_color(rgb(theme().surface))
         .child(
             div()
-                .flex_grow()
+                .flex_grow(1.)
                 .text_size(theme::scaled_px(11.))
                 .text_color(rgb(accent))
                 .child(SharedString::from(label)),
@@ -915,7 +915,7 @@ fn pane(
             div()
                 .flex()
                 .flex_col()
-                .flex_grow()
+                .flex_grow(1.)
                 .w_full()
                 .min_h(px(0.))
                 .child(editor),
@@ -996,7 +996,7 @@ fn render_result_pane(
         .child(mode_toggle(editing, toggle))
         .child(
             div()
-                .flex_grow()
+                .flex_grow(1.)
                 .text_size(theme::scaled_px(10.))
                 .text_color(rgb(status_color))
                 .child(SharedString::from(status_text)),
@@ -1024,7 +1024,7 @@ fn render_result_pane(
     // matched to the A/B rows — hence the custom Preview rendering.)
     let preview_body: gpui::AnyElement = if editing {
         div()
-            .flex_grow()
+            .flex_grow(1.)
             .w_full()
             .min_h(px(0.))
             .child(
@@ -1045,7 +1045,7 @@ fn render_result_pane(
             .id("conflict-result-preview")
             .flex()
             .flex_col()
-            .flex_grow()
+            .flex_grow(1.)
             .min_h(px(0.))
             .w_full()
             .overflow_scroll();

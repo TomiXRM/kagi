@@ -104,29 +104,12 @@ pub fn render_inspector(
     // We only need the display name (meta row) and email (avatar colour).
     let (author_name, author_email) = parse_author(d.author_line.as_ref());
 
-    // ── Message lines (split on '\n') ─────────────────────────────────────
-    let message_lines: Vec<_> = d
-        .full_message
-        .as_ref()
-        .split('\n')
-        .map(|line| {
-            let text = if line.is_empty() {
-                SharedString::from("\u{00A0}") // NBSP spacer
-            } else {
-                SharedString::from(line.to_string())
-            };
-            div()
-                .flex()
-                .flex_row()
-                .w_full()
-                .flex_shrink_0()
-                .text_color(rgb(theme().text_main))
-                .text_sm()
-                .truncate()
-                .child(text)
-                .into_any()
-        })
-        .collect();
+    // ── Message (single wrapped text element) ─────────────────────────────
+    // One text run, not per-line divs: gpui's text layout handles '\n' and
+    // soft-wrapping itself. Hard-wrapped bodies (git's 72-col convention) are
+    // reflowed first — otherwise the soft wrap stacks on the hard breaks and
+    // orphan fragments (a lone ")" line) flap in and out while resizing.
+    let message_text = SharedString::from(reflow_message(d.full_message.as_ref()));
 
     // ── Tree rows ─────────────────────────────────────────────────────────
     let tree_rows = truncated_files
@@ -509,7 +492,7 @@ pub fn render_inspector(
         .flex_basis(relative(
             (1.0 - inspector_split).clamp(INSPECTOR_SPLIT_MIN, INSPECTOR_SPLIT_MAX),
         ))
-        .flex_shrink()
+        .flex_shrink(1.)
         .px_3()
         .children(compare_banner)
         .children(counts_row)
@@ -529,7 +512,16 @@ pub fn render_inspector(
         .text_color(rgb(theme().text_main))
         .font_weight(gpui::FontWeight::MEDIUM)
         .mb_1()
-        .line_clamp(2)
+        // Wrapped, inside a FIXED 2-line box (not line_clamp(2), and no
+        // content-sized height): wrapped-text height measurement lags a frame
+        // on zed-main gpui, so any content-sized wrapping element in the
+        // header makes everything below it flap one line per frame while the
+        // pane is resized. A constant-height box keeps the wrap purely visual;
+        // >2-line subjects clip (full subject is the message body's 1st line).
+        .whitespace_normal()
+        .line_height(gpui::rems(1.3))
+        .h(gpui::rems(2.6))
+        .overflow_hidden()
         .child(title_text);
 
     // ── Meta row: avatar · author name · committed date · short-hash chip ──
@@ -618,7 +610,7 @@ pub fn render_inspector(
                 .gap_2()
                 .child(
                     div()
-                        .flex_shrink()
+                        .flex_shrink(1.)
                         .min_w(px(0.))
                         .text_sm()
                         .text_color(rgb(theme().text_main))
@@ -784,22 +776,36 @@ pub fn render_inspector(
         .child(cherry_pick_button);
 
     // ── Message box (independent scroll, top of the split) ────────────────
-    let mut message_inner = div().flex().flex_col();
-    for line_el in message_lines {
-        message_inner = message_inner.child(line_el);
-    }
-    let message_box = div()
+    let message_inner = div()
+        .w_full()
+        .min_w(px(0.))
+        .text_color(rgb(theme().text_main))
+        .text_sm()
+        .whitespace_normal()
+        .child(message_text);
+    // The scroll lives on an inner size_full child, NOT on the flex-sized box:
+    // with overflow_y_scroll directly on the flex_basis box, the wrapped-text
+    // content size feeds back into the flex solve and the layout flip-flops
+    // between two states on every pane-width change (blank-line jitter while
+    // dragging). overflow_hidden on the outer box cuts that feedback; the
+    // inner scroller gets its definite bounds from the solved box.
+    let message_scroll = div()
         .id("inspector-message-scroll")
+        .size_full()
+        .min_h(px(0.))
+        .overflow_y_scroll()
+        .child(message_inner);
+    let message_box = div()
         .flex()
         .flex_col()
         .min_h(px(0.))
         .flex_basis(relative(
             inspector_split.clamp(INSPECTOR_SPLIT_MIN, INSPECTOR_SPLIT_MAX),
         ))
-        .flex_shrink()
-        .overflow_y_scroll()
+        .flex_shrink(1.)
+        .overflow_hidden()
         .px_3()
-        .child(message_inner);
+        .child(message_scroll);
 
     // ── InspectorSplit divider (absolute-coordinate ratio; see mod.rs) ────
     let split_divider = div()
@@ -976,5 +982,57 @@ fn badge_priority(kind: &BadgeKind) -> u8 {
         BadgeKind::Branch => 1,
         BadgeKind::Tag => 2,
         BadgeKind::Remote => 3,
+    }
+}
+
+/// Join hard-wrapped lines within a paragraph so the message soft-wraps to the
+/// panel width. Blank lines stay paragraph breaks; lines that look
+/// preformatted (indented, bullets, quotes, code fences) are kept verbatim.
+fn reflow_message(msg: &str) -> String {
+    let mut out = String::with_capacity(msg.len());
+    let mut prev_joinable = false;
+    for line in msg.split('\n') {
+        let verbatim = line.is_empty()
+            || line.starts_with([' ', '\t', '-', '*', '>', '#', '`'])
+            || line.split_once(':').is_some_and(|(k, v)| {
+                // trailer line ("Co-Authored-By: …", "Signed-off-by: …");
+                // hyphenated single-word key — "fix: …" prose still joins
+                !k.contains(' ') && k.contains('-') && !v.is_empty()
+            });
+        if prev_joinable && !verbatim {
+            out.push(' ');
+        } else if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(line);
+        prev_joinable = !verbatim;
+    }
+    out
+}
+
+#[cfg(test)]
+mod reflow_tests {
+    use super::reflow_message;
+
+    #[test]
+    fn joins_hard_wrapped_paragraph() {
+        assert_eq!(
+            reflow_message("subject\n\nfirst line\nsecond line"),
+            "subject\n\nfirst line second line"
+        );
+    }
+
+    #[test]
+    fn keeps_bullets_blanks_and_trailers() {
+        let msg = "s\n\n- item one\n- item two\n\nCo-Authored-By: X <x@y>";
+        assert_eq!(reflow_message(msg), msg);
+    }
+
+    #[test]
+    fn prose_with_colon_still_joins() {
+        assert_eq!(
+            reflow_message("fix: the thing\nbroke because reasons"),
+            "fix: the thing broke because reasons"
+        );
     }
 }

@@ -457,7 +457,9 @@ impl CommitPanelView {
         let repo_path = self.repo_path.clone();
         let weak_app = self.app.clone();
         cx.spawn(async move |this, acx| {
-            gpui::Timer::after(std::time::Duration::from_millis(250)).await;
+            acx.background_executor()
+                .timer(std::time::Duration::from_millis(250))
+                .await;
             // Read the current branch off the parent (it owns status_summary).
             let branch = weak_app
                 .read_with(acx, |app, _| app.active_view.status_summary.branch.clone())
@@ -513,7 +515,9 @@ impl CommitPanelView {
                 let repo_path = self.repo_path.clone();
                 let weak_app = self.app.clone();
                 cx.spawn(async move |this, acx| {
-                    gpui::Timer::after(std::time::Duration::from_millis(250)).await;
+                    acx.background_executor()
+                        .timer(std::time::Duration::from_millis(250))
+                        .await;
                     let branch = weak_app
                         .read_with(acx, |app, _| app.active_view.status_summary.branch.clone())
                         .unwrap_or_default();

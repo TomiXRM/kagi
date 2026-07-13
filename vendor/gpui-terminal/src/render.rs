@@ -670,7 +670,14 @@ impl TerminalRenderer {
                         .shape_line(text, self.font_size, &[text_run], None);
 
                 // Paint at exact cell position (ignore errors)
-                let _ = shaped_line.paint(Point { x, y }, self.cell_height, window, _cx);
+                let _ = shaped_line.paint(
+                    Point { x, y },
+                    self.cell_height,
+                    gpui::TextAlign::Left,
+                    None,
+                    window,
+                    _cx,
+                );
             }
         }
 

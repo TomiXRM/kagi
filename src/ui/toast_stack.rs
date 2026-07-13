@@ -119,7 +119,9 @@ impl ToastStack {
         self.start_exit(id);
         cx.notify();
         cx.spawn(async move |this, acx| {
-            gpui::Timer::after(Duration::from_millis(TOAST_REMOVE_MS)).await;
+            acx.background_executor()
+                .timer(Duration::from_millis(TOAST_REMOVE_MS))
+                .await;
             let _ = this.update(acx, |stack, cx| {
                 stack.remove(id);
                 cx.notify();
@@ -136,7 +138,9 @@ impl ToastStack {
         }
         self.ticker_alive = true;
         cx.spawn(async move |this, acx| loop {
-            gpui::Timer::after(Duration::from_millis(150)).await;
+            acx.background_executor()
+                .timer(Duration::from_millis(150))
+                .await;
             let finished = this.update(acx, |stack, cx| {
                 for id in stack.expiring_ids() {
                     stack.begin_exit(id, cx);

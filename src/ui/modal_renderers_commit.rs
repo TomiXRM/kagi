@@ -42,7 +42,7 @@ pub(crate) fn render_cherry_pick_modal(
     let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.cancel_cherry_pick_modal();
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
@@ -50,7 +50,7 @@ pub(crate) fn render_cherry_pick_modal(
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.start_cherry_pick(cx);
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
@@ -309,7 +309,7 @@ pub(crate) fn render_commit_plan_modal(
     let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.cancel_commit_plan_modal(cx);
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
@@ -317,7 +317,7 @@ pub(crate) fn render_commit_plan_modal(
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.start_commit(cx);
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });

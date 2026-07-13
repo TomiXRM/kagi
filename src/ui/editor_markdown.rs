@@ -189,7 +189,7 @@ pub fn render_mermaid_png(code: &str, dark: bool) -> Result<PathBuf, MermaidStat
 /// mode is on.
 pub fn render_markdown_preview(
     view: &EditorWorkspaceView,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
     use gpui_component::ActiveTheme as _;
@@ -205,13 +205,8 @@ pub fn render_markdown_preview(
     let base = px(super::theme::rem_size_px() * 0.875);
     let tv_style = gpui_component::text::TextViewStyle {
         heading_base_font_size: base,
-        // Space above headings (fork knob) — headings otherwise sit flush
-        // against the previous block (user-reported).
-        heading_top_gap: gpui::rems(0.9),
-        // A little air around body paragraphs too, split evenly above and
-        // below (fork knobs; the bottom half adds onto paragraph_gap).
-        paragraph_top_gap: gpui::rems(0.175),
-        paragraph_bottom_gap: gpui::rems(0.175),
+        // fork knobs (heading_top_gap / paragraph_*_gap) dropped in the zed-main
+        // migration; re-add if the gpui-component fork is rebased.
         code_block: gpui::StyleRefinement::default().text_size(base),
         is_dark: dark,
         highlight_theme: cx.theme().highlight_theme.clone(),
@@ -243,15 +238,10 @@ pub fn render_markdown_preview(
                 // refinement) lets the segment take its intrinsic height so
                 // the outer `overflow_y_scroll` works.
                 col = col.child(
-                    TextView::markdown(
-                        ("ews-md-seg", ix),
-                        SharedString::from(pad_inline_code(&t)),
-                        window,
-                        cx,
-                    )
-                    .selectable(true)
-                    .style(tv_style.clone())
-                    .h(gpui::Length::Auto),
+                    TextView::markdown(("ews-md-seg", ix), SharedString::from(pad_inline_code(&t)))
+                        .selectable(true)
+                        .style(tv_style.clone())
+                        .h(gpui::Length::Auto),
                 );
             }
             MdSegment::Mermaid(code) => {

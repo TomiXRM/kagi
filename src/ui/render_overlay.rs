@@ -300,7 +300,7 @@ impl gpui::Render for oplog_panel::OpLogPanel {
                     .collect()
             }),
         )
-        .track_scroll(scroll_handle)
+        .track_scroll(&scroll_handle)
         .flex_1()
         .min_h(px(0.))
         .bg(rgb(theme().panel));

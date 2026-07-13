@@ -834,7 +834,7 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         // Request focus when clicking the terminal
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
 
         let mode = self.state.mode();
         if mouse_reporting_active(mode, event.modifiers.shift) {

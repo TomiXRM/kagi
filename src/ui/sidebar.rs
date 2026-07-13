@@ -1353,7 +1353,7 @@ pub fn render_sidebar(
                     .collect::<Vec<_>>()
             }),
         )
-        .track_scroll(scroll_handle)
+        .track_scroll(&scroll_handle)
         .flex_1()
         .min_h(px(0.))
         .py_1(),

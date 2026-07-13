@@ -280,7 +280,7 @@ pub(crate) fn highlight_diff_rows(
     // Build highlighter and parse the combined source.
     let mut highlighter = SyntaxHighlighter::new(lang);
     let rope = Rope::from_str(&combined);
-    highlighter.update(None, &rope);
+    highlighter.update(None, &rope, None);
 
     // Use a syntax-highlight theme matching the active UI theme's brightness
     // (W9-THEME): dark themes → default_dark, light themes → default_light.
@@ -370,7 +370,7 @@ pub(crate) fn highlight_diff_rows_send(
 
     let mut highlighter = SyntaxHighlighter::new(lang);
     let rope = Rope::from_str(&combined);
-    highlighter.update(None, &rope);
+    highlighter.update(None, &rope, None);
     let hl_theme = if theme::theme().dark {
         HighlightTheme::default_dark()
     } else {

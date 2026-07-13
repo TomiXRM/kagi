@@ -2442,7 +2442,9 @@ impl KagiApp {
         self.modal_replan_gen = self.modal_replan_gen.wrapping_add(1);
         let gen = self.modal_replan_gen;
         cx.spawn(async move |this, acx| {
-            gpui::Timer::after(Duration::from_millis(250)).await;
+            acx.background_executor()
+                .timer(Duration::from_millis(250))
+                .await;
             let _ = this.update(acx, |app, cx| {
                 if app.modal_replan_gen == gen {
                     app.run_modal_replans();
@@ -3816,13 +3818,11 @@ impl KagiApp {
 
 /// Open the GPUI window and start the event loop.
 pub fn run_app(app_state: KagiApp) {
-    use gpui::Application;
-
     // W4-TABS / ADR-0027: the watcher is armed from inside the window context
     // via `arm_watcher` (generation scheme), replacing the fixed spawn that
     // used to live here.  No pre-window watcher is created.
 
-    let application = Application::new().with_assets(assets::KagiAssets);
+    let application = gpui_platform::application().with_assets(assets::KagiAssets);
 
     // macOS Dock-reopen: clicking the Dock icon after the last window was
     // closed (✕) must bring a window back — the process stays alive, so
@@ -4066,7 +4066,7 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
                 app_state
             });
             if let Some(fh) = kagi.read(cx).root_focus.clone() {
-                window.focus(&fh);
+                window.focus(&fh, cx);
             }
 
             // Settings appearance theme picker: the gpui-component `Select` is an

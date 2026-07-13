@@ -33,7 +33,7 @@ pub(crate) fn render_amend_modal(
     let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.cancel_amend_modal();
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
@@ -41,7 +41,7 @@ pub(crate) fn render_amend_modal(
         // First click arms; second click executes (handled in start_amend).
         this.start_amend(cx);
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
@@ -260,14 +260,14 @@ pub(crate) fn render_discard_modal(
     let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.cancel_discard_modal();
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
     let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.start_discard(cx);
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
@@ -275,7 +275,7 @@ pub(crate) fn render_discard_modal(
         if e.keystroke.key == "escape" {
             this.cancel_discard_modal();
             if let Some(fh) = this.root_focus.clone() {
-                window.focus(&fh);
+                window.focus(&fh, cx);
             }
             cx.stop_propagation();
             cx.notify();

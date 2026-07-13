@@ -45,7 +45,7 @@ pub(crate) fn render_stash_push_modal(
     let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.cancel_stash_push_modal();
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
@@ -53,7 +53,7 @@ pub(crate) fn render_stash_push_modal(
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.confirm_stash_push(cx);
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
@@ -221,7 +221,7 @@ pub(crate) fn render_stash_push_modal(
         if e.keystroke.key == "escape" {
             this.cancel_stash_push_modal();
             if let Some(fh) = this.root_focus.clone() {
-                window.focus(&fh);
+                window.focus(&fh, cx);
             }
             cx.stop_propagation();
             cx.notify();
@@ -266,7 +266,7 @@ pub(crate) fn render_stash_apply_modal(
     let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.cancel_stash_apply_modal();
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
@@ -274,7 +274,7 @@ pub(crate) fn render_stash_apply_modal(
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.confirm_stash_apply(cx);
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });

@@ -19,8 +19,14 @@ kagi-domain = { path = "crates/kagi-domain" }
 # only place `git2::Repository` is opened. The bin's `kagi::git` shim and the
 # `src/remote` module re-export it; UI code reaches Git through `kagi_git::`.
 kagi-git = { path = "crates/kagi-git" }
-gpui = { version = "0.2.2", features = ["runtime_shaders"] }
-gpui-component = { version = "0.5.1", features = ["tree-sitter-languages"] }
+# zed main git deps (crates.io gpui is frozen at 0.2.2 / 2025-10). No `rev` on
+# the zed crates: gpui-component tracks zed's default branch rev-less, and a
+# rev-pinned dep would be a *different source* to cargo → two gpui crates and
+# type mismatches. The actual pin lives in Cargo.lock; bump deliberately with
+# `cargo update -p gpui` + a matching gpui-component rev.
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "b004e595cf5d", features = ["tree-sitter-languages"] }
 gpui-terminal = { path = "vendor/gpui-terminal" }  # vendored fork (ADR-0035): selection/copy not yet upstream
 portable-pty = "0.9"
 git2 = { version = "0.21", default-features = false }
@@ -86,19 +92,12 @@ assets = [
 ]
 
 # ── Dependency patches ─────────────────────────────────────────────────────
-# cosmic-text (gpui's Linux text stack) matches the Han-unification locale
-# against bare language codes ("ja"), but sys_locale reports "ja-JP" — so
-# Japanese systems fell through to the Simplified Chinese fallback and kanji
-# rendered with SC glyph forms (kana are hardwired to JP, hence the mixed
-# typefaces reported on Ubuntu). Patched with the language-subtag fix that
-# was submitted upstream; drop this once it ships in a cosmic-text release
-# that gpui pulls in. Upstream PR: pop-os/cosmic-text (fix-han-unification).
+# cosmic-text Han-unification locale fix (Ubuntu ja-JP kanji rendered with SC
+# glyph forms). Same one-commit patch as before, rebased 0.14 → 0.19 for the
+# zed-main migration. Drop once upstream PR pop-os/cosmic-text#522 ships in a
+# release that gpui pulls in.
 [patch.crates-io]
-cosmic-text = { git = "https://github.com/TomiXRM/cosmic-text", branch = "fix-han-unification-0.14" }
-# gpui paints text-run background highlights (markdown inline code, etc.) as
-# square full-line-height quads with no styling hook; the fork rounds them
-# subtly (0.18 x line_height). Pristine 0.2.2 + one patch commit.
-gpui = { git = "https://github.com/TomiXRM/gpui-kagi", branch = "kagi-0.2.2" }
-# TextView headings had no top spacing and no styling hook; the fork adds a
-# heading_top_gap knob to TextViewStyle (default 0 = upstream behavior).
-gpui-component = { git = "https://github.com/TomiXRM/gpui-component-kagi", branch = "kagi-0.5.1" }
+cosmic-text = { git = "https://github.com/TomiXRM/cosmic-text", branch = "fix-han-unification-0.19" }
+# Cosmetic gpui / gpui-component fork patches (rounded text-run highlight
+# backgrounds; heading_top_gap on TextViewStyle) were dropped in the zed-main
+# migration; re-add by rebasing the forks if the polish is missed.

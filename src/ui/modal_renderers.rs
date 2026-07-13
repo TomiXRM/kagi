@@ -251,14 +251,14 @@ pub(crate) fn render_plan_modal_wrapper(
     let cancel_handler = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
         cancel_action(this, cx);
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
     let confirm_handler = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
         confirm_action(this, cx);
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
@@ -464,7 +464,7 @@ pub(crate) fn render_plan_modal_card(
             this.cancel_modal();
             this.open_create_branch_modal(commit_id.clone(), cx);
             if let Some(fh) = this.root_focus.clone() {
-                window.focus(&fh);
+                window.focus(&fh, cx);
             }
             cx.notify();
         });

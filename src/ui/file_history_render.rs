@@ -616,7 +616,7 @@ pub(crate) fn render_fh_list_and_diff(
         .w_full()
         .flex()
         .flex_col()
-        .flex_grow()
+        .flex_grow(1.)
         .flex_basis(gpui::relative(diff_frac))
         .min_h(px(0.))
         // Optional view-level banner (untracked note).
@@ -693,7 +693,7 @@ pub(crate) fn render_fh_list_and_diff(
                 .w_full()
                 .flex()
                 .flex_col()
-                .flex_grow()
+                .flex_grow(1.)
                 .flex_basis(gpui::relative(list_frac))
                 .min_h(px(0.))
                 .child(list),

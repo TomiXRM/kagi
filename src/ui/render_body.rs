@@ -352,7 +352,7 @@ impl KagiApp {
                         }),
                     )
                     // T028: wire scroll handle so jump_to_branch can scroll the list.
-                    .track_scroll(commit_scroll_handle)
+                    .track_scroll(&commit_scroll_handle)
                     .flex_1()
                     .min_h(px(0.)),
                     true,

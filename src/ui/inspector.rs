@@ -104,30 +104,11 @@ pub fn render_inspector(
     // We only need the display name (meta row) and email (avatar colour).
     let (author_name, author_email) = parse_author(d.author_line.as_ref());
 
-    // ── Message lines (split on '\n') ─────────────────────────────────────
-    let message_lines: Vec<_> = d
-        .full_message
-        .as_ref()
-        .split('\n')
-        .map(|line| {
-            let text = if line.is_empty() {
-                SharedString::from("\u{00A0}") // NBSP spacer
-            } else {
-                SharedString::from(line.to_string())
-            };
-            // Plain block (not flex_row): a flex item sizes to the text's
-            // min-content width and long lines overflow instead of wrapping.
-            div()
-                .w_full()
-                .min_w(px(0.))
-                .flex_shrink_0()
-                .text_color(rgb(theme().text_main))
-                .text_sm()
-                .whitespace_normal()
-                .child(text)
-                .into_any()
-        })
-        .collect();
+    // ── Message (single wrapped text element) ─────────────────────────────
+    // One text run, not per-line divs: gpui's text layout handles '\n' and
+    // soft-wrapping itself, and per-line blocks re-measured on pane resize
+    // caused the wrap width to oscillate (blank line flicker while dragging).
+    let message_text = SharedString::from(d.full_message.to_string());
 
     // ── Tree rows ─────────────────────────────────────────────────────────
     let tree_rows = truncated_files
@@ -785,10 +766,13 @@ pub fn render_inspector(
         .child(cherry_pick_button);
 
     // ── Message box (independent scroll, top of the split) ────────────────
-    let mut message_inner = div().flex().flex_col().w_full().min_w(px(0.));
-    for line_el in message_lines {
-        message_inner = message_inner.child(line_el);
-    }
+    let message_inner = div()
+        .w_full()
+        .min_w(px(0.))
+        .text_color(rgb(theme().text_main))
+        .text_sm()
+        .whitespace_normal()
+        .child(message_text);
     let message_box = div()
         .id("inspector-message-scroll")
         .flex()

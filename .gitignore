@@ -1,2 +1,7 @@
 /target
 /.claude/worktrees/
+# web e2e harness
+crates/kagi-web/dist/
+e2e/node_modules/
+e2e/test-results/
+e2e/playwright-report/

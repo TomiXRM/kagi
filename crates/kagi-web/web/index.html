@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>kagi web harness</title>
+    <style>
+      html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #15161c; }
+      canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <script type="module">
+      import init, { run } from "./kagi_web.js";
+      await init();
+      run();
+      // Signal readiness to Playwright once the gpui canvas exists.
+      const mark = () => {
+        if (document.querySelector("canvas")) {
+          document.body.dataset.kagiReady = "1";
+        } else {
+          requestAnimationFrame(mark);
+        }
+      };
+      mark();
+    </script>
+  </body>
+</html>

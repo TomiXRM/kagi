@@ -774,8 +774,19 @@ pub fn render_inspector(
         .text_sm()
         .whitespace_normal()
         .child(message_text);
-    let message_box = div()
+    // The scroll lives on an inner size_full child, NOT on the flex-sized box:
+    // with overflow_y_scroll directly on the flex_basis box, the wrapped-text
+    // content size feeds back into the flex solve and the layout flip-flops
+    // between two states on every pane-width change (blank-line jitter while
+    // dragging). overflow_hidden on the outer box cuts that feedback; the
+    // inner scroller gets its definite bounds from the solved box.
+    let message_scroll = div()
         .id("inspector-message-scroll")
+        .size_full()
+        .min_h(px(0.))
+        .overflow_y_scroll()
+        .child(message_inner);
+    let message_box = div()
         .flex()
         .flex_col()
         .min_h(px(0.))
@@ -783,9 +794,9 @@ pub fn render_inspector(
             inspector_split.clamp(INSPECTOR_SPLIT_MIN, INSPECTOR_SPLIT_MAX),
         ))
         .flex_shrink(1.)
-        .overflow_y_scroll()
+        .overflow_hidden()
         .px_3()
-        .child(message_inner);
+        .child(message_scroll);
 
     // ── InspectorSplit divider (absolute-coordinate ratio; see mod.rs) ────
     let split_divider = div()

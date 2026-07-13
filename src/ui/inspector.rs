@@ -122,7 +122,7 @@ pub fn render_inspector(
                 .flex_shrink_0()
                 .text_color(rgb(theme().text_main))
                 .text_sm()
-                .truncate()
+                .whitespace_normal()
                 .child(text)
                 .into_any()
         })

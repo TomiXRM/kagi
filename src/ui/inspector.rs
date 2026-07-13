@@ -512,7 +512,16 @@ pub fn render_inspector(
         .text_color(rgb(theme().text_main))
         .font_weight(gpui::FontWeight::MEDIUM)
         .mb_1()
-        .line_clamp(2)
+        // Wrapped, inside a FIXED 2-line box (not line_clamp(2), and no
+        // content-sized height): wrapped-text height measurement lags a frame
+        // on zed-main gpui, so any content-sized wrapping element in the
+        // header makes everything below it flap one line per frame while the
+        // pane is resized. A constant-height box keeps the wrap purely visual;
+        // >2-line subjects clip (full subject is the message body's 1st line).
+        .whitespace_normal()
+        .line_height(gpui::rems(1.3))
+        .h(gpui::rems(2.6))
+        .overflow_hidden()
         .child(title_text);
 
     // ── Meta row: avatar · author name · committed date · short-hash chip ──

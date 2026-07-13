@@ -115,10 +115,11 @@ pub fn render_inspector(
             } else {
                 SharedString::from(line.to_string())
             };
+            // Plain block (not flex_row): a flex item sizes to the text's
+            // min-content width and long lines overflow instead of wrapping.
             div()
-                .flex()
-                .flex_row()
                 .w_full()
+                .min_w(px(0.))
                 .flex_shrink_0()
                 .text_color(rgb(theme().text_main))
                 .text_sm()
@@ -784,7 +785,7 @@ pub fn render_inspector(
         .child(cherry_pick_button);
 
     // ── Message box (independent scroll, top of the split) ────────────────
-    let mut message_inner = div().flex().flex_col();
+    let mut message_inner = div().flex().flex_col().w_full().min_w(px(0.));
     for line_el in message_lines {
         message_inner = message_inner.child(line_el);
     }

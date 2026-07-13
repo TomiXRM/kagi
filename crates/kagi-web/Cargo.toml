@@ -1,0 +1,31 @@
+# kagi-web — WASM harness for browser-based UI e2e tests (Playwright).
+#
+# Compiles a small catalog of kagi UI pieces (pure-domain data only — git2
+# cannot target WASM, so the Backend is out of scope by design) against
+# gpui_web. Built by scripts/build-web.sh; exercised by e2e/.
+[package]
+name = "kagi-web"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+kagi-domain = { path = "../kagi-domain" }
+# Same rev-less zed git deps as the root Cargo.toml (cargo unifies on the
+# workspace Cargo.lock pin).
+gpui = { git = "https://github.com/zed-industries/zed" }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+gpui_web = { git = "https://github.com/zed-industries/zed" }
+gpui_platform = { git = "https://github.com/zed-industries/zed" }
+wasm-bindgen = "0.2"
+console_error_panic_hook = "0.1"
+console_log = "1"
+log = "0.4"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }

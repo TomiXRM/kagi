@@ -485,8 +485,8 @@ impl KagiApp {
                     // keyboard focus elsewhere and break typing/cmd-v).
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(move |_this, _e: &gpui::MouseDownEvent, window, _cx| {
-                            window.focus(&term_focus);
+                        cx.listener(move |_this, _e: &gpui::MouseDownEvent, window, cx| {
+                            window.focus(&term_focus, cx);
                         }),
                     )
                     .on_key_down(

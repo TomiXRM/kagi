@@ -46,12 +46,15 @@ features = ["wayland-data-control"]
 [dependencies.flume]
 version = "0.12"
 
+# kagi: zed main git dep, same rev-less source as the root Cargo.toml so cargo
+# unifies to one gpui (pin lives in the workspace Cargo.lock). runtime_shaders
+# moved to gpui_platform in the crate split.
 [dependencies.gpui]
-version = "0.2.2"
-# kagi: match the app's gpui features so standalone `cargo test -p gpui-terminal`
-# compiles on CLT-only Macs (no `xcrun metal`); unified to this anyway when
-# building the workspace.
-features = ["runtime_shaders"]
+git = "https://github.com/zed-industries/zed"
+
+[dependencies.gpui_platform]
+git = "https://github.com/zed-industries/zed"
+features = ["font-kit", "x11", "wayland", "runtime_shaders"]
 
 [dependencies.parking_lot]
 version = "0.12"

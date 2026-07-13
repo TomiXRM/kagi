@@ -182,14 +182,14 @@ pub(crate) fn render_set_upstream_modal(
     let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.cancel_set_upstream_modal();
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
     let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.start_set_upstream(cx);
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
@@ -213,14 +213,14 @@ pub(crate) fn render_rename_branch_modal(
     let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.cancel_rename_branch_modal();
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
     let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.start_rename_branch(cx);
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });

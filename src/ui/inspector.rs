@@ -509,7 +509,7 @@ pub fn render_inspector(
         .flex_basis(relative(
             (1.0 - inspector_split).clamp(INSPECTOR_SPLIT_MIN, INSPECTOR_SPLIT_MAX),
         ))
-        .flex_shrink()
+        .flex_shrink(1.)
         .px_3()
         .children(compare_banner)
         .children(counts_row)
@@ -618,7 +618,7 @@ pub fn render_inspector(
                 .gap_2()
                 .child(
                     div()
-                        .flex_shrink()
+                        .flex_shrink(1.)
                         .min_w(px(0.))
                         .text_sm()
                         .text_color(rgb(theme().text_main))
@@ -796,7 +796,7 @@ pub fn render_inspector(
         .flex_basis(relative(
             inspector_split.clamp(INSPECTOR_SPLIT_MIN, INSPECTOR_SPLIT_MAX),
         ))
-        .flex_shrink()
+        .flex_shrink(1.)
         .overflow_y_scroll()
         .px_3()
         .child(message_inner);

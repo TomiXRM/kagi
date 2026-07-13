@@ -378,7 +378,7 @@ pub fn ensure_terminal(
         // Already running — just re-focus.
         if let Some(ref view) = session.view {
             let fh = view.read(cx).focus_handle().clone();
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         return false;
     }
@@ -390,7 +390,7 @@ pub fn ensure_terminal(
         Ok((view_entity, _master_arc, paste_writer)) => {
             // Focus the new terminal.
             let fh = view_entity.read(cx).focus_handle().clone();
-            window.focus(&fh);
+            window.focus(&fh, cx);
 
             session.view = Some(view_entity);
             session.paste_writer = Some(paste_writer);

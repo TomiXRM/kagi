@@ -47,7 +47,7 @@ pub(crate) fn render_create_branch_modal(
     let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.cancel_create_branch_modal();
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
@@ -57,7 +57,7 @@ pub(crate) fn render_create_branch_modal(
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.confirm_create_branch(cx);
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
@@ -241,7 +241,7 @@ pub(crate) fn render_create_branch_modal(
         if e.keystroke.key == "escape" {
             this.cancel_create_branch_modal();
             if let Some(fh) = this.root_focus.clone() {
-                window.focus(&fh);
+                window.focus(&fh, cx);
             }
             cx.stop_propagation();
             cx.notify();
@@ -274,14 +274,14 @@ pub(crate) fn render_create_worktree_modal(
     let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.cancel_create_worktree_modal();
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.start_create_worktree(cx);
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
@@ -455,7 +455,7 @@ pub(crate) fn render_create_worktree_modal(
         if e.keystroke.key == "escape" {
             this.cancel_create_worktree_modal();
             if let Some(fh) = this.root_focus.clone() {
-                window.focus(&fh);
+                window.focus(&fh, cx);
             }
             cx.stop_propagation();
             cx.notify();

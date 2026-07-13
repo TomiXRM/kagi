@@ -949,7 +949,7 @@ pub fn render_banner(mode: &ConflictMode) -> gpui::AnyElement {
                 .flex()
                 .flex_row()
                 .items_center()
-                .flex_grow()
+                .flex_grow(1.)
                 .gap_3()
                 .child(
                     div()
@@ -1175,7 +1175,7 @@ fn dash_counts(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::Any
         )
         .child(
             div()
-                .flex_grow()
+                .flex_grow(1.)
                 .text_size(theme::scaled_px(11.))
                 .text_color(rgb(theme().color_success))
                 .child(SharedString::from(format!(
@@ -1765,7 +1765,7 @@ fn render_center(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::A
             .flex_col()
             .items_center()
             .justify_center()
-            .flex_grow()
+            .flex_grow(1.)
             .h_full()
             .child(
                 div()
@@ -1776,7 +1776,7 @@ fn render_center(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::A
             .into_any_element();
     };
     let Some(file) = mode.session.files.get(idx) else {
-        return div().flex_grow().h_full().into_any_element();
+        return div().flex_grow(1.).h_full().into_any_element();
     };
 
     let labels = mode.labels();
@@ -1853,7 +1853,7 @@ fn render_center(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::A
     div()
         .flex()
         .flex_col()
-        .flex_grow()
+        .flex_grow(1.)
         .h_full()
         .child(choose_row)
         .child(preview)
@@ -1909,7 +1909,7 @@ fn render_preview(
         .id("conflict-preview")
         .flex()
         .flex_col()
-        .flex_grow()
+        .flex_grow(1.)
         .w_full()
         .overflow_y_scroll()
         .px(theme::scaled_px(12.))

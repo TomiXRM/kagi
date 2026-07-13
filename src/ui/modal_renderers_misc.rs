@@ -285,8 +285,6 @@ pub(crate) fn render_update_modal(
                     gpui_component::text::TextView::markdown(
                         "update-notes-md",
                         SharedString::from(plan.notes.clone()),
-                        window,
-                        cx,
                     )
                     .scrollable(true)
                     .style(tv_style),
@@ -323,7 +321,7 @@ pub(crate) fn render_update_modal(
                 .small()
                 .on_click(open_page),
         )
-        .child(div().flex_grow())
+        .child(div().flex_grow(1.))
         .child(
             Button::new("update-cancel")
                 .label("Later")
@@ -367,14 +365,14 @@ pub(crate) fn render_editor_dirty_guard_modal(
     let cancel = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.cancel_editor_dirty_guard();
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
     let discard = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.confirm_editor_dirty_guard(cx);
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });

@@ -960,6 +960,7 @@ pub fn build_menus() -> Vec<Menu> {
             Menu {
                 name: section.label.into(),
                 items,
+                disabled: false,
             }
         })
         .collect()
@@ -996,6 +997,7 @@ fn theme_submenu() -> Menu {
     Menu {
         name: "Theme".into(),
         items,
+        disabled: false,
     }
 }
 
@@ -1024,6 +1026,7 @@ fn lang_submenu() -> Menu {
     Menu {
         name: "Language".into(),
         items,
+        disabled: false,
     }
 }
 
@@ -1087,6 +1090,7 @@ pub fn register_keybindings(cx: &mut App) {
 /// a `Ctrl+Shift+O`-style label so the menu shows what the user must actually
 /// press. (The macOS native menu derives its accelerator from the keymap, so it
 /// does not go through here.)
+#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
 pub fn display_keystroke(ks: &str) -> String {
     // Peel the key (last segment) off the modifiers. The key itself may be "-"
     // (zoom out, written "secondary--"), so handle that trailing case first.
@@ -1586,7 +1590,9 @@ impl KagiApp {
             AUTO_FETCH_INTERVAL_SECS
         );
         cx.spawn(async move |this, acx| loop {
-            gpui::Timer::after(Duration::from_secs(AUTO_FETCH_INTERVAL_SECS)).await;
+            acx.background_executor()
+                .timer(Duration::from_secs(AUTO_FETCH_INTERVAL_SECS))
+                .await;
             let keep = this.update(acx, |app, cx| {
                 if !theme::auto_fetch() {
                     app.auto_fetch_ticker_alive = false;

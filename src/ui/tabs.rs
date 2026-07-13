@@ -19,7 +19,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use gpui::{div, prelude::*, px, rgb, Context, PathPromptOptions, SharedString, Timer, Window};
+use gpui::{div, prelude::*, px, rgb, Context, PathPromptOptions, SharedString, Window};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::Sizable as _;
@@ -634,7 +634,9 @@ impl KagiApp {
             let _watcher = watcher;
 
             loop {
-                Timer::after(Duration::from_millis(100)).await;
+                acx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
 
                 // Stop if this loop has been superseded (generation bumped).
                 let still_current = weak
@@ -656,7 +658,9 @@ impl KagiApp {
                 }
 
                 // Debounce, then drain + coalesce any extra signals.
-                Timer::after(super::watcher::DEBOUNCE).await;
+                acx.background_executor()
+                    .timer(super::watcher::DEBOUNCE)
+                    .await;
                 while let Ok(ev) = rx.try_recv() {
                     match ev {
                         WatchEvent::Git => saw_git = true,
@@ -723,7 +727,9 @@ impl KagiApp {
         cx.spawn(async move |weak, acx| {
             use std::sync::mpsc::TryRecvError;
             loop {
-                Timer::after(Duration::from_millis(200)).await;
+                acx.background_executor()
+                    .timer(Duration::from_millis(200))
+                    .await;
                 match rx.try_recv() {
                     Ok(Some(path)) => {
                         let result = acx.update(|cx| {
@@ -740,9 +746,7 @@ impl KagiApp {
                     }
                     Ok(None) => {
                         // Focus-only request (bare `kagi`).
-                        if acx.update(|cx| cx.activate(true)).is_err() {
-                            break;
-                        }
+                        acx.update(|cx| cx.activate(true));
                         let _ = weak.update(acx, |_app, cx| {
                             klog!("single-instance: focus");
                             cx.notify();

@@ -309,7 +309,7 @@ pub(crate) fn render_remote_browse_modal(
             app.update(cx, |this, cx| {
                 this.cancel_remote_browse_modal();
                 if let Some(fh) = this.root_focus.clone() {
-                    window.focus(&fh);
+                    window.focus(&fh, cx);
                 }
                 cx.notify();
             });
@@ -627,7 +627,7 @@ pub(crate) fn render_remote_browse_modal(
         if e.keystroke.key == "escape" {
             this.cancel_remote_browse_modal();
             if let Some(fh) = this.root_focus.clone() {
-                window.focus(&fh);
+                window.focus(&fh, cx);
             }
             cx.stop_propagation();
             cx.notify();

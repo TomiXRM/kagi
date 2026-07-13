@@ -41,14 +41,14 @@ pub(crate) fn render_editor_fs_prompt_modal(
     let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.cancel_editor_fs_prompt();
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
     let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.confirm_editor_fs_prompt(cx);
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
@@ -115,7 +115,7 @@ pub(crate) fn render_editor_fs_prompt_modal(
         if e.keystroke.key == "escape" {
             this.cancel_editor_fs_prompt();
             if let Some(fh) = this.root_focus.clone() {
-                window.focus(&fh);
+                window.focus(&fh, cx);
             }
             cx.stop_propagation();
             cx.notify();
@@ -155,14 +155,14 @@ pub(crate) fn render_editor_delete_confirm_modal(
     let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.cancel_editor_delete_confirm();
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
     let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.confirm_editor_delete(cx);
         if let Some(fh) = this.root_focus.clone() {
-            window.focus(&fh);
+            window.focus(&fh, cx);
         }
         cx.notify();
     });
@@ -170,7 +170,7 @@ pub(crate) fn render_editor_delete_confirm_modal(
         if e.keystroke.key == "escape" {
             this.cancel_editor_delete_confirm();
             if let Some(fh) = this.root_focus.clone() {
-                window.focus(&fh);
+                window.focus(&fh, cx);
             }
             cx.stop_propagation();
             cx.notify();

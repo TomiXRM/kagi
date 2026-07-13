@@ -1285,7 +1285,7 @@ impl CommitPanelView {
                                             },
                                         ),
                                     )
-                                    .track_scroll(unstaged_scroll_handle)
+                                    .track_scroll(&unstaged_scroll_handle)
                                     .flex_1()
                                     .min_h(px(0.)),
                                     false,
@@ -1333,7 +1333,7 @@ impl CommitPanelView {
                                             },
                                         ),
                                     )
-                                    .track_scroll(staged_scroll_handle)
+                                    .track_scroll(&staged_scroll_handle)
                                     .flex_1()
                                     .min_h(px(0.)),
                                     false,

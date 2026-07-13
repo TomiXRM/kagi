@@ -1923,7 +1923,7 @@ fn render_tree_pane(
                     .collect::<Vec<_>>()
             }),
         )
-        .track_scroll(scroll_handle)
+        .track_scroll(&scroll_handle)
         .flex_1()
         .min_h(px(0.)),
         false,

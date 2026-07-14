@@ -478,6 +478,19 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     let k = theme();
     let gc = gpui_component::Theme::global_mut(cx);
 
+    // ── Base preset (gpui-component 0.5.2) ──────────────────────
+    // 0.5.2 grew ~40 new `ThemeColor` fields (the `button_*` family,
+    // `input_background`, charts, …) that adopted widgets read directly.
+    // Seed every field from the mode-matching preset first so anything kagi
+    // doesn't explicitly map below is at least dark/light-appropriate —
+    // otherwise the light defaults leak into the dark UI (white dropdown,
+    // black radio, user-reported after the 0.5.1 → 0.5.2 bump).
+    gc.colors = if k.dark {
+        *gpui_component::theme::ThemeColor::dark()
+    } else {
+        *gpui_component::theme::ThemeColor::light()
+    };
+
     // ── Surfaces ────────────────────────────────────────────────
     gc.colors.background = to_hsla(k.bg_base);
     gc.colors.foreground = to_hsla(k.text_main);
@@ -510,6 +523,26 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     // ── Input border (Input, Checkbox unchecked) ────────────────
     gc.colors.input = to_hsla(k.text_muted);
     gc.colors.caret = to_hsla(k.text_main);
+
+    // ── Buttons (0.5.2 reads `button_*`, not primary/secondary) ─
+    // Default/neutral (Cherry-pick, Tree/Path, hash chip): kagi surface.
+    gc.colors.button = to_hsla(k.surface);
+    gc.colors.button_foreground = to_hsla(k.text_main);
+    gc.colors.button_hover = to_hsla(k.selected);
+    gc.colors.button_active = to_hsla(k.surface);
+    // Primary (Branch here): kagi's branch accent, as before the bump.
+    gc.colors.button_primary = to_hsla(k.color_branch);
+    gc.colors.button_primary_foreground = to_hsla(k.bg_base);
+    gc.colors.button_primary_hover = to_hsla(k.color_branch);
+    gc.colors.button_primary_active = to_hsla(k.color_branch);
+    gc.colors.button_secondary = to_hsla(k.surface);
+    gc.colors.button_secondary_foreground = to_hsla(k.text_main);
+    gc.colors.button_secondary_hover = to_hsla(k.selected);
+    gc.colors.button_secondary_active = to_hsla(k.surface);
+    gc.colors.button_danger = to_hsla(k.color_blocker);
+    gc.colors.button_danger_foreground = to_hsla(0xffffff);
+    gc.colors.button_danger_hover = to_hsla(k.color_blocker);
+    gc.colors.button_danger_active = to_hsla(k.color_blocker);
 
     // ── Status colours (Notification, Alert, etc.) ──────────────
     gc.colors.success = to_hsla(k.color_success);
@@ -574,6 +607,12 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     ht.style.editor_line_number = Some(to_hsla(k.text_muted));
     ht.style.editor_active_line_number = Some(to_hsla(k.text_sub));
     gc.highlight_theme = std::sync::Arc::new(ht);
+
+    // ── Tokens (0.5.2) ──────────────────────────────────────────
+    // Widgets increasingly read `theme().tokens.*` (Radio, Select popup, …),
+    // which is a snapshot derived from `colors` — rebuild it LAST or every
+    // mapping above is invisible to token-reading widgets.
+    gc.tokens = gpui_component::theme::ThemeTokens::from(&gc.colors);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

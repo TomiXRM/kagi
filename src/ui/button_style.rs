@@ -12,16 +12,22 @@ use super::theme::theme;
 /// wash out in light themes. Build accent buttons from Kagi's palette instead.
 pub fn tinted_action_variant(base: u32, cx: &gpui::App) -> ButtonCustomVariant {
     let c = Hsla::from(rgb(base));
-    let (rest, hover, active) = if theme().dark {
-        (0.16, 0.26, 0.34)
+    // gpui-component 0.5.2 derives the tint itself from `color`: bg =
+    // color@20% (mix_oklab with transparent), hover ~30%, label/border =
+    // full-strength color; the `foreground`/`hover` fields are no longer
+    // read. Pass the base color at FULL alpha — the 0.5.1 recipe of
+    // pre-multiplying it (0.16) made the bg ~3% and the label render at
+    // 0.16 alpha (washed-out stage/unstage/discard, user-reported).
+    let active = if theme().dark {
+        c.opacity(0.34)
     } else {
-        (0.14, 0.22, 0.30)
+        c.opacity(0.30)
     };
     ButtonCustomVariant::new(cx)
-        .color(c.opacity(rest))
-        .foreground(c)
-        .hover(c.opacity(hover))
-        .active(c.opacity(active))
+        .color(c)
+        .foreground(c) // unused by 0.5.2; kept for forward/back compat
+        .hover(c) // unused by 0.5.2 (hover derives from `color`)
+        .active(active)
 }
 
 /// Kagi-owned constructors for gpui-component buttons.

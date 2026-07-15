@@ -151,7 +151,7 @@ impl KagiApp {
                 );
                 self.status_footer =
                     FooterStatus::Success(SharedString::from(format!("pull: {}", summary)));
-                self.reload(cx);
+                self.reload_async(false, cx);
             }
             Err(err_msg) => {
                 self.record_op(
@@ -291,7 +291,7 @@ impl KagiApp {
                 );
                 self.status_footer =
                     FooterStatus::Success(SharedString::from(format!("pull: {}", summary)));
-                self.reload(cx);
+                self.reload_async(false, cx);
             }
             Err(err_msg) => {
                 klog!("async: pull failed — {}", err_msg);
@@ -407,7 +407,7 @@ impl KagiApp {
                 );
                 self.status_footer =
                     FooterStatus::Success(SharedString::from(format!("push: {}", summary)));
-                self.reload(cx);
+                self.reload_async(false, cx);
             }
             Err(err_msg) => {
                 self.record_op(
@@ -493,7 +493,7 @@ impl KagiApp {
                 );
                 self.status_footer =
                     FooterStatus::Success(SharedString::from(format!("push: {}", summary)));
-                self.reload(cx);
+                self.reload_async(false, cx);
             }
             Err(err_msg) => {
                 klog!("async: push failed — {}", err_msg);

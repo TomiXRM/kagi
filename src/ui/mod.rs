@@ -2028,6 +2028,18 @@ impl KagiApp {
     /// - Attempts to re-select the previously selected commit by CommitId;
     ///   if the commit no longer exists the selection is cleared.
     pub fn reload_external(&mut self, cx: &mut Context<Self>) {
+        self.reload_async(true, cx);
+    }
+
+    /// Background snapshot + UI-thread apply (mechanics of ADR-0104).
+    ///
+    /// `external`:
+    /// * `true`  — external git event: emits the `refreshed (external change)`
+    ///   contract line and resets the footer (the user didn't ask for anything).
+    /// * `false` — tail of a user-initiated background op (pull/push/fetch):
+    ///   the op already set its own Success footer, so keep it and stay quiet —
+    ///   same surface as the synchronous `reload()`, minus the frozen frame.
+    pub fn reload_async(&mut self, external: bool, cx: &mut Context<Self>) {
         // Capture the CommitId of the currently selected row (if any) so we
         // can attempt to re-select it after the snapshot is refreshed.
         // `details[idx].full_sha` is the canonical commit hash string.
@@ -2110,10 +2122,14 @@ impl KagiApp {
                     // If the commit is no longer present, selected stays None.
                 }
 
-                // Emit the required log line and update the footer.
-                klog!("refreshed (external change)");
-                app.status_footer =
-                    FooterStatus::Idle(SharedString::from("[kagi] refreshed (external change)"));
+                // Emit the required log line and update the footer (external
+                // events only; op tails keep their Success footer).
+                if external {
+                    klog!("refreshed (external change)");
+                    app.status_footer = FooterStatus::Idle(SharedString::from(
+                        "[kagi] refreshed (external change)",
+                    ));
+                }
                 cx.notify();
             });
         })

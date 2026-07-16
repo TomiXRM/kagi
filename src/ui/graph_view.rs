@@ -22,7 +22,7 @@
 //!
 //! # Corner-radius clamping (T020)
 //!
-//! `CORNER_R = 6.0` px.  Before drawing, R is clamped to:
+//! `CORNER_R = 9.0` px.  Before drawing, R is clamped to:
 //!   `R = min(CORNER_R, |dx| / 2, available_vertical / 2)`
 //! so the curve never exceeds the available space regardless of lane spacing
 //! or row height.
@@ -42,7 +42,7 @@ use crate::ui::theme::{self, theme};
 /// W28: this is the *unscaled* source of truth.  All live geometry and the
 /// column-width <-> lane-count conversions go through [`lane_w`] so lane spacing
 /// tracks `theme::zoom()` uniformly with the row text/height.
-pub const LANE_W: f32 = 21.0;
+pub const LANE_W: f32 = 22.0;
 /// Row height in pixels (must match what uniform_list computes for each row).
 /// T008 rows use `py(px(3.))` (6 px total padding) plus text ≈ 18 px → 24 px.
 pub const ROW_H: f32 = 29.0; // 24.0 * 1.2 (user request: +20% row spacing)
@@ -105,10 +105,13 @@ fn draw_into_node(builder: &mut PathBuilder, x_from: f32, y_top: f32, x_node: f3
     let dx = (x_node - x_from).abs();
     // Available vertical from y_top to mid_y.
     let avail_v = (mid_y - y_top).max(0.0);
-    // Clamp R so curves fit within the available space.
+    // Clamp R so curves fit within the available space: the vertical segment
+    // needs r <= avail_v and the horizontal one r <= dx (at the limit the
+    // straight run just vanishes and the arc spans the whole leg). The old
+    // /2 clamps silently capped the radius at ~7px regardless of CORNER_R.
     // W28: corner radius scales with zoom so the bend keeps its proportion to
     // the (scaled) lane spacing and row height.
-    let r = theme::scaled(CORNER_R).min(dx / 2.0).min(avail_v / 2.0);
+    let r = theme::scaled(CORNER_R).min(dx).min(avail_v);
 
     if r < 0.5 || dx < 0.5 {
         // Fallback: draw a straight diagonal line (from == node or very close).
@@ -142,8 +145,8 @@ fn draw_into_node(builder: &mut PathBuilder, x_from: f32, y_top: f32, x_node: f3
 fn draw_out_of_node(builder: &mut PathBuilder, x_node: f32, mid_y: f32, x_to: f32, y_bot: f32) {
     let dx = (x_to - x_node).abs();
     let avail_v = (y_bot - mid_y).max(0.0);
-    // W28: corner radius scales with zoom (see `draw_into_node`).
-    let r = theme::scaled(CORNER_R).min(dx / 2.0).min(avail_v / 2.0);
+    // W28: corner radius scales with zoom; clamp bounds as in `draw_into_node`.
+    let r = theme::scaled(CORNER_R).min(dx).min(avail_v);
 
     if r < 0.5 || dx < 0.5 {
         // Fallback: straight diagonal.

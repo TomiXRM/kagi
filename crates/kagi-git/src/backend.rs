@@ -152,6 +152,72 @@ impl Backend {
         diff::commit_file_diff(&self.repo, id, path)
     }
 
+    /// Raw blob bytes for `path` in the tree of commit `id`.
+    ///
+    /// `Ok(None)` when the path is absent from that tree (added later /
+    /// deleted earlier). Used by the diff view's image preview (W-IMG).
+    pub fn blob_bytes_at(&self, id: &CommitId, path: &Path) -> Result<Option<Vec<u8>>, GitError> {
+        let oid =
+            git2::Oid::from_str(&id.0).map_err(|e| GitError::Other(e.message().to_string()))?;
+        let commit = self
+            .repo
+            .find_commit(oid)
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        let tree = commit
+            .tree()
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        let entry = match tree.get_path(path) {
+            Ok(e) => e,
+            Err(e) if e.code() == git2::ErrorCode::NotFound => return Ok(None),
+            Err(e) => return Err(GitError::Other(e.message().to_string())),
+        };
+        let blob = self
+            .repo
+            .find_blob(entry.id())
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        Ok(Some(blob.content().to_vec()))
+    }
+
+    /// First parent of `id`, if any (image preview: the "before" side).
+    pub fn first_parent(&self, id: &CommitId) -> Result<Option<CommitId>, GitError> {
+        let oid =
+            git2::Oid::from_str(&id.0).map_err(|e| GitError::Other(e.message().to_string()))?;
+        let commit = self
+            .repo
+            .find_commit(oid)
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        Ok(commit.parent_id(0).ok().map(|p| CommitId(p.to_string())))
+    }
+
+    /// Raw blob bytes for the staged (index) version of `path`, if present.
+    pub fn blob_bytes_index(&self, path: &Path) -> Result<Option<Vec<u8>>, GitError> {
+        let index = self
+            .repo
+            .index()
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        let Some(entry) = index.get_path(path, 0) else {
+            return Ok(None);
+        };
+        let blob = self
+            .repo
+            .find_blob(entry.id)
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        Ok(Some(blob.content().to_vec()))
+    }
+
+    /// Raw blob bytes for `path` at HEAD, if present.
+    pub fn blob_bytes_head(&self, path: &Path) -> Result<Option<Vec<u8>>, GitError> {
+        let head = self
+            .repo
+            .head()
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        let commit = head
+            .peel_to_commit()
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        let id = CommitId(commit.id().to_string());
+        self.blob_bytes_at(&id, path)
+    }
+
     pub fn compare_commits(&self, a: &CommitId, b: &CommitId) -> Result<Vec<FileStatus>, GitError> {
         diff::compare_commits(&self.repo, a, b)
     }

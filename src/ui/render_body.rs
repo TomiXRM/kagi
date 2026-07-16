@@ -186,7 +186,46 @@ impl KagiApp {
                     .justify_start()
                     .text_xs()
                     .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from("BRANCH / TAG")),
+                    // Solo exit chip (user request): lives on the LEFT, in the
+                    // BRANCH / TAG header — the eye is already on the branch
+                    // column when soloing, so the way back sits on the same
+                    // sight line (right-aligned placement reviewed and
+                    // rejected). Replaces the header label while active.
+                    .map(|el| match self.active_view.branch_solo.as_ref() {
+                        None => el.child(SharedString::from("BRANCH / TAG")),
+                        Some(solo) => {
+                            let name = solo.name.clone();
+                            let target = solo.target.clone();
+                            el.child(
+                                div()
+                                    .id("exit-solo-chip")
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap_1()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_md()
+                                    .bg(rgb(theme().surface))
+                                    .text_color(rgb(theme().color_branch))
+                                    .hover(|st| st.bg(rgb(theme().selected)))
+                                    .cursor_pointer()
+                                    .child(SharedString::from(format!("← Solo: {name}")))
+                                    .on_mouse_down(
+                                        gpui::MouseButton::Left,
+                                        cx.listener(move |this, _e, _window, cx| {
+                                            this.toggle_branch_solo(
+                                                name.clone(),
+                                                target.clone(),
+                                                cx,
+                                            );
+                                            cx.notify();
+                                        }),
+                                    ),
+                            )
+                        }
+                    }),
             )
             // Handle between badge and graph columns
             .child(

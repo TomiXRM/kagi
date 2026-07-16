@@ -51,7 +51,7 @@ const NODE_R: f32 = 4.0;
 /// Edge stroke width in pixels.
 const EDGE_W: f32 = 1.5;
 /// Desired corner radius in pixels (T020). Will be clamped per-edge.
-const CORNER_R: f32 = 6.0;
+const CORNER_R: f32 = 9.0;
 
 /// W28: zoom-scaled lane width — `LANE_W * zoom()`.
 ///

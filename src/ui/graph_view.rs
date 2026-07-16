@@ -42,7 +42,7 @@ use crate::ui::theme::{self, theme};
 /// W28: this is the *unscaled* source of truth.  All live geometry and the
 /// column-width <-> lane-count conversions go through [`lane_w`] so lane spacing
 /// tracks `theme::zoom()` uniformly with the row text/height.
-pub const LANE_W: f32 = 14.0;
+pub const LANE_W: f32 = 21.0;
 /// Row height in pixels (must match what uniform_list computes for each row).
 /// T008 rows use `py(px(3.))` (6 px total padding) plus text ≈ 18 px → 24 px.
 pub const ROW_H: f32 = 29.0; // 24.0 * 1.2 (user request: +20% row spacing)

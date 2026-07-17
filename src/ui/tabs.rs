@@ -26,6 +26,7 @@ use gpui_component::Sizable as _;
 
 use super::i18n::{self, Msg};
 use super::theme::{self, theme};
+use super::workspace;
 use super::{EditorPendingIntent, FooterStatus, KagiApp, ToastKind};
 
 /// Lightweight descriptor for one open repository tab (ADR-0027).
@@ -362,21 +363,13 @@ impl KagiApp {
         // ADR-0118: dropping the single `commit_panel` entity also drops its
         // `commit_input` / template inputs / draft state (all entity-owned).
         self.commit_panel = None;
-        // ADR-0117: File History is per-repo; drop the entity on repo/tab switch
-        // so its captured `repo_path` can't keep reading the previous repo (and
-        // the stale view doesn't linger over the newly-activated tab).
-        self.file_history = None;
-        // ADR-0119: the EcosystemView entity captures the previous repo's
-        // `repo_path`; drop the view on repo/tab switch like File History. The
-        // mine CACHE (`ecosystem_cache`) is keyed by repo and deliberately kept
-        // across tab switches, so returning to a repo and pressing Analyze
-        // reuses its previous scan instead of recomputing from scratch.
-        self.ecosystem = None;
-        // T-WS-EDITOR-001: the EditorWorkspaceView entity captures the previous
-        // repo's `repo_path`; drop it on repo/tab switch like File History /
-        // Ecosystem — a new tab always opens on Graph since the mode is
-        // derived from `editor_workspace.is_some()` (T-WS-EDITOR-005 #11).
-        self.editor_workspace = None;
+        // ADR-0121 B1: registered workspace items (FileHistory / Ecosystem /
+        // EditorWorkspace) drop their own per-repo entities via the dispose
+        // hook — the per-pane rationale lives on each adapter's `dispose` in
+        // `workspace.rs`. A pane registered later can't be forgotten here.
+        for item in workspace::CENTER_ITEMS {
+            item.dispose(self);
+        }
         // ADR-0118 / T-ENTITY-CONFLICT-001: the ConflictView entity captures the
         // previous repo's `repo_path`; a tab switch MUST drop it (and the merge
         // gate + run-once guard) so a stale conflict screen never survives. The

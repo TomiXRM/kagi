@@ -7,6 +7,8 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::render_helpers::*;
+// ADR-0121 B1: bring the pane-item trait into scope for `is_open` / `render`.
+use super::workspace::WorkspaceItem;
 use super::*;
 
 impl KagiApp {
@@ -410,17 +412,19 @@ impl KagiApp {
         // ADR-0120: resolve what each slot shows. The precedence lives in
         // `workspace::resolve_workspace` (one pure, unit-tested function), not
         // in branch ordering here — this method only routes on the result.
+        // ADR-0121 B1: the entity-backed panes' gates come from their
+        // registered items' `is_open` (same field reads, one source of truth).
         let layout = workspace::resolve_workspace(&workspace::WorkspaceInputs {
             sidebar_visible: self.sidebar.visible,
-            file_history_open: self.file_history.is_some(),
-            ecosystem_open: self.ecosystem.is_some(),
+            file_history_open: workspace::FileHistoryItem.is_open(self),
+            ecosystem_open: workspace::EcosystemItem.is_open(self),
             loading: self.loading_tab.is_some(),
             diff_open: main_diff_for_center.is_some(),
             commit_panel_open,
             commit_panel_present: commit_panel.is_some(),
             inspector_visible: self.inspector_visible,
             has_detail: detail.is_some(),
-            editor_mode: self.editor_workspace.is_some(),
+            editor_mode: workspace::EditorWorkspaceItem.is_open(self),
         });
 
         let mut body_row = div()
@@ -450,65 +454,42 @@ impl KagiApp {
         // needed. In the Loading/Diff/CommitList modes the right panel stays
         // visible so the user can click through files continuously (user
         // request).
-        body_row = match layout.center {
-            // ADR-0089 / ADR-0117: the entity renders its own center+right body;
-            // embedding `Entity<FileHistoryView>` gives it an isolated
-            // `cx.notify()` scope.
-            workspace::CenterPane::FileHistory => match self.file_history.clone() {
-                Some(fh) => body_row.child(fh),
-                None => body_row,
-            },
-            // ADR-0119: full-screen, read-only. Wrapped in a `flex_1` +
-            // `min_w(0)` cell so the entity gets a *definite* width to fill
-            // (the body minus the sidebar). Mounted bare, the entity is a flex
-            // item with `flex-basis: auto`, so it sizes to its content — the
-            // longest hot-spot path — and its inner `flex_1` columns never get
-            // a bounded width to shrink into, pushing the numeric columns +
-            // risk bar off the right edge (user report on deep STM32 build
-            // paths).
-            workspace::CenterPane::Ecosystem => match self.ecosystem.clone() {
-                Some(eco) => body_row.child(div().flex_1().min_w(px(0.)).child(eco)),
-                None => body_row,
-            },
-            // W6-TABSPEED loading placeholder.
-            workspace::CenterPane::Loading => body_row.child(render_loading_placeholder(
-                self.loading_tab.clone().unwrap_or_default(),
-            )),
-            // T-WS-EDITOR-001: the Editor workspace entity self-renders the
-            // WHOLE left(file tree) + center(code viewer) + right(hunks)
-            // triple in one call — like the FileHistory/Ecosystem takeovers,
-            // this is the only way a click in the tree pane can mutate the
-            // same entity that owns the open file's editor/diff state without
-            // re-entering `KagiApp` (ADR-0117 re-entrancy guard). The
-            // `layout.right` value (Hunks) exists for resolver-level policy +
-            // tests; it routes to the no-op right-slot arm below
-            // (`RightPane::Hunks => {}`) and the sidebar `.when(... Navigator
-            // ...)` above naturally skips rendering for `LeftPane::FileTree`.
-            // `layout.left`, though, is pushed into the entity (T-WS-EDITOR-005
-            // finding #3): the sidebar toggle's `LeftPane::Hidden` still needs
-            // to hide the *in-entity* tree pane, which `render_body` can't
-            // reach into from the outside.
-            workspace::CenterPane::Editor => match self.editor_workspace.clone() {
-                Some(ev) => {
-                    ev.update(cx, |v, _| {
-                        v.show_tree = layout.left == workspace::LeftPane::FileTree;
-                    });
-                    body_row.child(div().flex_1().min_w(px(0.)).h_full().child(ev))
+        //
+        // ADR-0121 B1: entity-backed panes route via "slot → registered item"
+        // (`workspace::center_item`); each adapter carries what its old arm
+        // did (how it wraps its entity, and its per-pane rationale). The
+        // precedence is unchanged — it stays in `resolve_workspace`. The
+        // non-entity contents (Loading placeholder / Diff / CommitList) keep
+        // plain arms until B2 migrates them.
+        body_row = match workspace::center_item(layout.center) {
+            Some(item) => match item.render(self, &layout, cx) {
+                Some(el) => body_row.child(el),
+                // Gate raced closed between resolve and render: the Editor
+                // arm's pre-existing fallback is the commit list, the
+                // takeovers' is an empty center.
+                None if layout.center == workspace::CenterPane::Editor => {
+                    body_row.child(commit_list_col)
                 }
-                None => body_row.child(commit_list_col),
+                None => body_row,
             },
-            // Full-width diff (T-UI-003). The resolver guarantees the view is
-            // present; fall back to the commit list rather than unwrap.
-            workspace::CenterPane::Diff => match main_diff_for_center {
-                Some(diff_view) => body_row.child(render_main_diff_view(
-                    diff_view,
-                    main_diff_scroll_handle,
-                    true,
-                    cx,
+            None => match layout.center {
+                // W6-TABSPEED loading placeholder.
+                workspace::CenterPane::Loading => body_row.child(render_loading_placeholder(
+                    self.loading_tab.clone().unwrap_or_default(),
                 )),
-                None => body_row.child(commit_list_col),
+                // Full-width diff (T-UI-003). The resolver guarantees the view
+                // is present; fall back to the commit list rather than unwrap.
+                workspace::CenterPane::Diff => match main_diff_for_center {
+                    Some(diff_view) => body_row.child(render_main_diff_view(
+                        diff_view,
+                        main_diff_scroll_handle,
+                        true,
+                        cx,
+                    )),
+                    None => body_row.child(commit_list_col),
+                },
+                _ => body_row.child(commit_list_col),
             },
-            workspace::CenterPane::CommitList => body_row.child(commit_list_col),
         };
 
         // ── Right slot: commit panel OR inspector (ADR-0120) ─────

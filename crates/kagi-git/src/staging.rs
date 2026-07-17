@@ -734,12 +734,21 @@ fn patch_to_file_diff(diff: &git2::Diff<'_>, path: &Path) -> Result<FileDiff, Gi
         });
     }
 
+    // Same lazy-BINARY-flag workaround as diff.rs's diff_to_file_diff (the
+    // two builders are near-duplicates — consolidate when one grows again):
+    // workdir/index deltas only get their BINARY flag after content
+    // callbacks, so an image lands here as "0 hunks, not binary" and painted
+    // an EMPTY pane. A content change with no text hunks is binary.
+    let is_binary = hunks.is_empty()
+        && (delta.old_file().size() > 0 || delta.new_file().size() > 0)
+        && delta.old_file().id() != delta.new_file().id();
+
     Ok(FileDiff {
         old_path,
         new_path,
         change,
         hunks,
-        is_binary: false,
+        is_binary,
     })
 }
 

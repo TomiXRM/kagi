@@ -578,11 +578,21 @@ fn diff_to_file_diff(diff: &mut Diff<'_>, path: &Path) -> Result<FileDiff, GitEr
         });
     }
 
+    // Workdir/index deltas don't have their BINARY flag populated until the
+    // content callbacks run (libgit2 lazily inspects the file), so an image
+    // reaches this point as "0 hunks, not binary" and renders as an EMPTY
+    // diff pane (user report: clicking an unstaged png did nothing visible).
+    // A real content change that produced no text hunks IS a binary change —
+    // reclassify it. Mode-only/no-op deltas are excluded by the id/size check.
+    let is_binary = hunks.is_empty()
+        && (delta.old_file().size() > 0 || delta.new_file().size() > 0)
+        && delta.old_file().id() != delta.new_file().id();
+
     Ok(FileDiff {
         old_path,
         new_path,
         change,
         hunks,
-        is_binary: false,
+        is_binary,
     })
 }

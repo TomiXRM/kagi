@@ -548,8 +548,33 @@ pub(crate) fn render_diff_list<V: 'static>(
     }
     let title = view.title.clone();
     let stats = view.stats.clone();
+    let images = view.images.clone();
     let rows = std::sync::Arc::new(view.rows);
     let rows_for_list = rows.clone();
+
+    // W-IMG: one labelled image column ("Before"/"After"); either side of the
+    // pair may be missing for added/deleted files.
+    let image_col = |label: &'static str, img: std::sync::Arc<gpui::Image>| {
+        div()
+            .flex_1()
+            .min_w(px(0.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(label)),
+            )
+            .child(
+                gpui::img(gpui::ImageSource::Image(img))
+                    .max_w_full()
+                    .max_h_full()
+                    .object_fit(gpui::ObjectFit::Contain),
+            )
+    };
 
     div()
         .flex_1()
@@ -602,7 +627,24 @@ pub(crate) fn render_diff_list<V: 'static>(
                 ),
         )
         // ── Diff body: full remaining space ──────────────────────────────
-        .child({
+        .child(if let Some(pair) = images {
+            // W-IMG: binary image file — render before/after panels instead of
+            // the (empty) text-diff list.
+            div()
+                .id("main-diff-image-panel")
+                .flex_1()
+                .min_h(px(0.))
+                .overflow_hidden()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_center()
+                .gap_4()
+                .p_4()
+                .children(pair.old.map(|img| image_col("Before", img)))
+                .children(pair.new.map(|img| image_col("After", img)))
+                .into_any_element()
+        } else {
             // W12-GCADOPT (§2.10): Scrollbar overlay on the diff list.
             // gpui-component 0.5.1 implements `ScrollbarHandle` directly for
             // `gpui::ListState` (src/scroll/scrollbar.rs) — no local newtype
@@ -618,6 +660,7 @@ pub(crate) fn render_diff_list<V: 'static>(
                 .min_h(px(0.)),
                 true,
             )
+            .into_any_element()
         })
 }
 

@@ -151,6 +151,23 @@ pub struct MainDiffView {
     /// Where this diff was opened from (for re-load / back navigation).
     #[allow(dead_code)]
     pub source: MainDiffSource,
+    /// W-IMG: decoded before/after images for binary image files
+    /// (png/jpeg/webp/gif, sniffed from the blob bytes). When set, the diff
+    /// pane renders the image panel instead of the "Binary file" placeholder.
+    pub images: Option<DiffImagePair>,
+}
+
+/// Before/after images for a binary image diff (either side may be missing —
+/// added or deleted files have only one).
+#[derive(Clone)]
+pub struct DiffImagePair {
+    pub old: Option<std::sync::Arc<gpui::Image>>,
+    pub new: Option<std::sync::Arc<gpui::Image>>,
+}
+
+/// Decode blob bytes into a gpui image if they sniff as a supported format.
+fn image_side(bytes: Option<Vec<u8>>) -> Option<std::sync::Arc<gpui::Image>> {
+    bytes.and_then(super::avatar_fetch::image_from_bytes)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -446,6 +463,7 @@ pub(crate) fn build_main_diff_view(
         stats,
         rows,
         source,
+        images: None,
     }
 }
 
@@ -590,6 +608,81 @@ pub(crate) fn render_main_diff_row(rows: &[DiffRow], i: usize) -> gpui::AnyEleme
             .text_color(rgb(theme::theme().text_muted))
             .child(SharedString::from("Binary file (no diff)"))
             .into_any(),
+    }
+}
+
+impl KagiApp {
+    /// W-IMG: decode before/after images for a binary image file diff.
+    ///
+    /// Returns `None` for non-binary diffs, unsupported formats, or when
+    /// neither side decodes (keeps the "Binary file" placeholder). Blob reads
+    /// go through the Backend; the working-tree side reads the file directly.
+    pub(crate) fn diff_images_for(
+        &self,
+        file_diff: &FileDiff,
+        source: &MainDiffSource,
+        path: &std::path::Path,
+    ) -> Option<DiffImagePair> {
+        if !file_diff.is_binary {
+            return None;
+        }
+        let repo = self.repo_session.as_ref()?.backend();
+        let workdir_bytes = || {
+            self.repo_path
+                .as_ref()
+                .and_then(|rp| std::fs::read(rp.join(path)).ok())
+        };
+        let (old_bytes, new_bytes) = match source {
+            MainDiffSource::Commit { row_index, .. } => {
+                let id = CommitId(
+                    self.active_view
+                        .details
+                        .get(*row_index)?
+                        .full_sha
+                        .to_string(),
+                );
+                let parent = repo.first_parent(&id).ok().flatten();
+                let old = parent.and_then(|p| repo.blob_bytes_at(&p, path).ok().flatten());
+                let new = repo.blob_bytes_at(&id, path).ok().flatten();
+                (old, new)
+            }
+            MainDiffSource::Compare { base, target, .. } => {
+                let old = repo.blob_bytes_at(base, path).ok().flatten();
+                let new = match target {
+                    CompareTarget::Head => repo.blob_bytes_head(path).ok().flatten(),
+                    CompareTarget::WorkingTree => workdir_bytes(),
+                };
+                (old, new)
+            }
+            MainDiffSource::Unstaged { .. } => {
+                // Working tree vs index (fallback HEAD for files never staged).
+                let old = repo
+                    .blob_bytes_index(path)
+                    .ok()
+                    .flatten()
+                    .or_else(|| repo.blob_bytes_head(path).ok().flatten());
+                (old, workdir_bytes())
+            }
+            MainDiffSource::Staged { .. } => {
+                let old = repo.blob_bytes_head(path).ok().flatten();
+                let new = repo.blob_bytes_index(path).ok().flatten();
+                (old, new)
+            }
+        };
+        let pair = DiffImagePair {
+            old: image_side(old_bytes),
+            new: image_side(new_bytes),
+        };
+        if pair.old.is_none() && pair.new.is_none() {
+            return None;
+        }
+        klog!(
+            "diff-image: {} old={} new={}",
+            path.display(),
+            pair.old.is_some(),
+            pair.new.is_some()
+        );
+        Some(pair)
     }
 }
 
@@ -743,14 +836,17 @@ impl KagiApp {
                 let selected_for_hl = selected;
                 let file_index_for_hl = file_index;
 
+                let source = MainDiffSource::Commit {
+                    row_index: selected,
+                    file_index,
+                };
+                let images = self.diff_images_for(file_diff, &source, path);
                 self.main_diff = Some(MainDiffView {
                     title,
                     stats,
                     rows,
-                    source: MainDiffSource::Commit {
-                        row_index: selected,
-                        file_index,
-                    },
+                    source,
+                    images,
                 });
 
                 // Spawn the highlight off-thread; store the result for swap-in.
@@ -876,15 +972,18 @@ impl KagiApp {
                     hl_lang
                 );
 
+                let source = MainDiffSource::Compare {
+                    base: view.base,
+                    target: view.target,
+                    file_index,
+                };
+                let images = self.diff_images_for(&file_diff, &source, &path);
                 self.main_diff = Some(MainDiffView {
                     title,
                     stats,
                     rows,
-                    source: MainDiffSource::Compare {
-                        base: view.base,
-                        target: view.target,
-                        file_index,
-                    },
+                    source,
+                    images,
                 });
             }
             Err(e) => {
@@ -977,15 +1076,17 @@ impl KagiApp {
                 );
 
                 let source = if is_staged {
-                    MainDiffSource::Staged { path }
+                    MainDiffSource::Staged { path: path.clone() }
                 } else {
-                    MainDiffSource::Unstaged { path }
+                    MainDiffSource::Unstaged { path: path.clone() }
                 };
+                let images = self.diff_images_for(&fd, &source, &path);
                 self.main_diff = Some(MainDiffView {
                     title,
                     stats,
                     rows,
                     source,
+                    images,
                 });
             }
             Err(e) => {

@@ -114,6 +114,7 @@ struct EditorBufferState {
     content: Option<String>,
     content_lang: &'static str,
     content_binary: bool,
+    content_image: Option<std::sync::Arc<gpui::Image>>,
     content_too_large: bool,
     content_missing: bool,
     content_undecodable: bool,
@@ -200,6 +201,9 @@ pub struct EditorWorkspaceView {
     pub content_lang: &'static str,
     /// The selected file looked binary (NUL byte in the leading probe).
     pub content_binary: bool,
+    /// W-IMG: binary bytes sniffed as a supported image (png/jpeg/webp/gif) —
+    /// the center pane renders the image instead of the binary placeholder.
+    pub content_image: Option<std::sync::Arc<gpui::Image>>,
     /// The selected file's line count (or byte size) exceeds the guard
     /// consts. `content` is `None` when this is set.
     pub content_too_large: bool,
@@ -311,6 +315,7 @@ impl EditorWorkspaceView {
             content: None,
             content_lang: "text",
             content_binary: false,
+            content_image: None,
             content_too_large: false,
             content_missing: false,
             content_undecodable: false,
@@ -479,6 +484,7 @@ impl EditorWorkspaceView {
             self.content = buf.content;
             self.content_lang = buf.content_lang;
             self.content_binary = buf.content_binary;
+            self.content_image = buf.content_image;
             self.content_too_large = buf.content_too_large;
             self.content_missing = buf.content_missing;
             self.content_undecodable = buf.content_undecodable;
@@ -549,6 +555,7 @@ impl EditorWorkspaceView {
             content: self.content.take(),
             content_lang: self.content_lang,
             content_binary: self.content_binary,
+            content_image: self.content_image.take(),
             content_too_large: self.content_too_large,
             content_missing: self.content_missing,
             content_undecodable: self.content_undecodable,
@@ -569,6 +576,7 @@ impl EditorWorkspaceView {
         self.content = None;
         self.content_lang = "text";
         self.content_binary = false;
+        self.content_image = None;
         self.content_too_large = false;
         self.content_missing = false;
         self.content_undecodable = false;
@@ -673,8 +681,8 @@ impl EditorWorkspaceView {
                 .map(|m| m.len() > MAX_EDITOR_BYTES)
                 .unwrap_or(false);
 
-            let (text, is_binary, missing, undecodable, too_many_lines) = if too_big {
-                (None, false, false, false, false)
+            let (text, is_binary, image, missing, undecodable, too_many_lines) = if too_big {
+                (None, false, None, false, false, false)
             } else {
                 match std::fs::read(&full_path) {
                     Ok(bytes) => {
@@ -684,22 +692,25 @@ impl EditorWorkspaceView {
                         let is_binary =
                             kagi_domain::checklist::content_looks_binary(&bytes[..probe_end]);
                         if is_binary {
-                            (None, true, false, false, false)
+                            // W-IMG: sniff supported image formats and decode
+                            // for the center-pane preview.
+                            let image = super::avatar_fetch::image_from_bytes(bytes);
+                            (None, true, image, false, false, false)
                         } else {
                             match String::from_utf8(bytes) {
                                 Ok(t) => {
                                     let too_many_lines = t.lines().count() > MAX_EDITOR_LINES;
                                     if too_many_lines {
-                                        (None, false, false, false, true)
+                                        (None, false, None, false, false, true)
                                     } else {
-                                        (Some(t), false, false, false, false)
+                                        (Some(t), false, None, false, false, false)
                                     }
                                 }
-                                Err(_) => (None, false, false, true, false),
+                                Err(_) => (None, false, None, false, true, false),
                             }
                         }
                     }
-                    Err(_) => (None, false, true, false, false),
+                    Err(_) => (None, false, None, true, false, false),
                 }
             };
             let too_large = too_big || too_many_lines;
@@ -710,11 +721,19 @@ impl EditorWorkspaceView {
                     _ => repo.staged_file_diff(&bg_path).ok(),
                 }
             });
-            (text, is_binary, missing, undecodable, too_large, diff)
+            (
+                text,
+                is_binary,
+                image,
+                missing,
+                undecodable,
+                too_large,
+                diff,
+            )
         });
 
         cx.spawn(async move |view, acx| {
-            let (text, is_binary, missing, undecodable, too_large, file_diff) = task.await;
+            let (text, is_binary, image, missing, undecodable, too_large, file_diff) = task.await;
             let _ = view.update(acx, |v, cx| {
                 // `file_req` alone guards staleness — the buffer is decoupled
                 // from the tree generation (T-WS-EDITOR-002 spec change: a
@@ -733,6 +752,7 @@ impl EditorWorkspaceView {
                 }
                 v.file_loading = false;
                 v.content_binary = is_binary;
+                v.content_image = image;
                 v.content_too_large = too_large;
                 v.content_missing = missing || deleted;
                 v.content_undecodable = undecodable;
@@ -2267,6 +2287,8 @@ fn render_center_pane(
         Some(Msg::EditorWorkspaceLoading.t())
     } else if view.content_missing {
         Some(Msg::EditorWorkspaceDeleted.t())
+    } else if view.content_image.is_some() {
+        None // W-IMG: image preview renders below
     } else if view.content_binary {
         Some(Msg::EditorWorkspaceBinary.t())
     } else if view.content_too_large {
@@ -2281,6 +2303,28 @@ fn render_center_pane(
 
     if let Some(msg) = placeholder {
         pane = pane.child(placeholder_text(msg));
+        return pane.into_any_element();
+    }
+
+    // W-IMG: image preview — binary bytes that sniffed as png/jpeg/webp/gif
+    // render centred in the pane instead of the "binary file" placeholder.
+    if let Some(image) = view.content_image.clone() {
+        pane = pane.child(
+            div()
+                .flex_1()
+                .min_h(px(0.))
+                .overflow_hidden()
+                .flex()
+                .items_center()
+                .justify_center()
+                .p_4()
+                .child(
+                    gpui::img(gpui::ImageSource::Image(image))
+                        .max_w_full()
+                        .max_h_full()
+                        .object_fit(gpui::ObjectFit::Contain),
+                ),
+        );
         return pane.into_any_element();
     }
 

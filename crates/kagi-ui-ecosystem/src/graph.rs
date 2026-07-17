@@ -19,7 +19,7 @@ use kagi_domain::coupling_graph::GraphNode;
 /// bounds `(origin_x, origin_y, w, h)` — written during paint, read by
 /// cursor-anchored zoom. Grouping these (and their math) keeps `EcosystemData`
 /// focused on data rather than carrying four loose viewport fields.
-pub(crate) struct GraphViewport {
+pub struct GraphViewport {
     pub zoom: f32,
     pub pan: (f32, f32),
     pub drag: Option<(f32, f32)>,

@@ -8,6 +8,9 @@
 #[macro_use]
 pub mod klog;
 
+pub mod divider;
+
 pub mod i18n;
 pub mod settings;
 pub mod theme;
+pub mod time;

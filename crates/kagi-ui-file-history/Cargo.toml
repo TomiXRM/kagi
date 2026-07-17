@@ -1,0 +1,17 @@
+# kagi-ui-file-history (ADR-0121 Phase C3): the File History pane.
+# Depends on kagi-ui-core (theme/klog/divider/time) and kagi-domain (the
+# FileHistory models + CommitId) only — NEVER on the Git backend crate (CI grep
+# gate enforces this). History/diff loads are host-owned in the bin: the pane
+# emits FileHistoryEvent requests and is seeded back via `seed_history`; the
+# diff viewer is a host-provided `AnyView` slot.
+[package]
+name = "kagi-ui-file-history"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+kagi-domain = { path = "../kagi-domain" }
+kagi-ui-core = { path = "../kagi-ui-core" }
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "b004e595cf5d", features = ["tree-sitter-languages"] }

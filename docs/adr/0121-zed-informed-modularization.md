@@ -121,3 +121,35 @@ grep ゲートを追加(ADR-0078 と同形式)。
   baseline(39)から増えないこと。
 - Phase B 各段: 対象ペインの headless テスト(`tests/`)と `[kagi]` klog 行が
   変更前後で一致すること。GUI の目視は人間が行う。
+
+## 実施結果(2026-07-18 追記)
+
+Phase A〜C を完走した。最終形:
+
+| Phase | PR | 内容 |
+|---|---|---|
+| A | #137/#138/#139 | graph_solo / tab_view / reload の sibling 分散(mod.rs 4684→3814) |
+| B1 | #140 | `WorkspaceItem` trait + center スロット登録制 |
+| B2 | #145 | Right スロット(CommitPanel/Inspector)+ MainDiff Entity 化 |
+| B2 | #146 | Compare Entity 化(function-rendered thin adapter) |
+| C1 | #148 | `kagi-ui-core`(klog/settings/i18n/theme)+ レイヤリング CI ゲート |
+| C2 | #149 | `kagi-ui-ecosystem`(event 2 個で結合を縮約) |
+| C3+C4 | #152 | `kagi-ui-file-history` / `kagi-ui-editor`(#150/#151 統合) |
+
+確立したペイン切り出しレシピ(C2 起点):
+- データは constructor / `seed_*` で内向きに注入(Backend 呼び出しは bin glue)
+- back-call は `EventEmitter<XEvent>` の event enum で外向きに(5 個超えたら
+  kagi-ui-core への host-handle trait 導入を検討する — 現時点で必要になった
+  crate は無し。editor の 6 個は `*Requested` 2 個が seed 対のため据え置き)
+- glue(Backend 連携・oplog・toast・modal)と `WorkspaceItem` アダプタは bin 残置
+- 旧パスは `pub use` shim で呼び出し側 diff ゼロ
+
+意図的に bin に残したもの:
+- **MainDiff / Compare の描画パイプライン**(`render_diff_list` ほか)—
+  FileHistory / Editor の埋め込み diff と共有のため。切り出す場合は
+  `kagi-ui-diff` として3者同時に動かす必要があり、費用対効果が出るまで保留。
+- `WorkspaceItem` trait 本体(`&KagiApp` 結合)と各アダプタ。
+- Conflict 系(Phase 5.2 の Entity flip と合流させるべきで、本 ADR の範囲外)。
+
+CI ゲート(blocking): kagi-ui-* から git2/kagi-git 禁止、kagi-ui-* 間の
+横 import 禁止(`invariant-ui-core-layering`)。

@@ -28,9 +28,201 @@
 //!   ADR-0120 but deliberately not routed through this resolver.
 //! - The **bottom panel** keeps its own `BottomTab` enum (`types.rs`) — it is
 //!   already an explicit slot switch and doesn't interact with these slots.
-//! - This is pure slot *policy* (unit-tested below). It stays in `src/ui/`
-//!   rather than `kagi-domain` because its vocabulary (Inspector, CommitPanel,
-//!   Navigator) is UI, not Git domain.
+//! - The resolver (`resolve_workspace`) is pure slot *policy* (unit-tested
+//!   below). It stays in `src/ui/` rather than `kagi-domain` because its
+//!   vocabulary (Inspector, CommitPanel, Navigator) is UI, not Git domain.
+//!
+//! ADR-0121 Phase B (B1): this module also defines [`WorkspaceItem`], the
+//! kagi-minimal equivalent of zed's `Item` trait, plus the adapters that
+//! bridge the existing entity-backed panes (FileHistory / Ecosystem /
+//! EditorWorkspace) onto it. `render_body` routes entity panes through
+//! [`center_item`] instead of hand-written per-field arms, and
+//! `reset_per_repo_ui` disposes them through the same registry. B1 keeps the
+//! `KagiApp` fields — the adapters read them; B2 migrates panes one by one.
+
+use gpui::{div, px, AnyElement, Context, IntoElement, ParentElement, Styled};
+
+use super::KagiApp;
+
+/// Which layout slot a [`WorkspaceItem`] occupies when active (ADR-0121 B1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slot {
+    /// Spans center + right; the resolver hides the right panel while active.
+    CenterTakeover,
+    /// The center pane only.
+    Center,
+    /// The right panel.
+    // ADR-0121 B1: the variant lands with the trait so the slot vocabulary is
+    // complete; the first Right-slot item (CommitPanel/Inspector) arrives in B2.
+    #[allow(dead_code)]
+    Right,
+}
+
+/// ADR-0121 B1: zed-`Item`-equivalent minimal pane trait. Deliberately the
+/// smallest face kagi's slot resolution needs — render + liveness + disposal.
+/// No focus/event/serialization surface until a pane actually needs it.
+pub trait WorkspaceItem {
+    /// Which slot this item occupies when active.
+    fn slot(&self) -> Slot;
+    /// The resolved center variant this item is registered for.
+    fn center(&self) -> CenterPane;
+    /// Liveness gate: is this pane active right now? Feeds
+    /// [`WorkspaceInputs`]; the precedence between live items stays in
+    /// [`resolve_workspace`].
+    fn is_open(&self, app: &KagiApp) -> bool;
+    /// Render into the resolved slot. `None` means the gate raced closed
+    /// between resolution and render; `render_body` falls back exactly as the
+    /// old per-field arms did.
+    fn render(
+        &self,
+        app: &mut KagiApp,
+        layout: &WorkspaceLayout,
+        cx: &mut Context<KagiApp>,
+    ) -> Option<AnyElement>;
+    /// Drop the pane's per-repo state (called from `reset_per_repo_ui`).
+    fn dispose(&self, app: &mut KagiApp);
+}
+
+/// File History takeover (ADR-0089/0117) — bridges `KagiApp.file_history`.
+pub struct FileHistoryItem;
+
+impl WorkspaceItem for FileHistoryItem {
+    fn slot(&self) -> Slot {
+        Slot::CenterTakeover
+    }
+    fn center(&self) -> CenterPane {
+        CenterPane::FileHistory
+    }
+    fn is_open(&self, app: &KagiApp) -> bool {
+        app.file_history.is_some()
+    }
+    // ADR-0089 / ADR-0117: the entity renders its own center+right body;
+    // embedding `Entity<FileHistoryView>` gives it an isolated `cx.notify()`
+    // scope.
+    fn render(
+        &self,
+        app: &mut KagiApp,
+        _layout: &WorkspaceLayout,
+        _cx: &mut Context<KagiApp>,
+    ) -> Option<AnyElement> {
+        Some(app.file_history.clone()?.into_any_element())
+    }
+    // ADR-0117: File History is per-repo; drop the entity on repo/tab switch
+    // so its captured `repo_path` can't keep reading the previous repo (and
+    // the stale view doesn't linger over the newly-activated tab).
+    fn dispose(&self, app: &mut KagiApp) {
+        app.file_history = None;
+    }
+}
+
+/// Code Ecosystem / Analyze takeover (ADR-0119) — bridges `KagiApp.ecosystem`.
+pub struct EcosystemItem;
+
+impl WorkspaceItem for EcosystemItem {
+    fn slot(&self) -> Slot {
+        Slot::CenterTakeover
+    }
+    fn center(&self) -> CenterPane {
+        CenterPane::Ecosystem
+    }
+    fn is_open(&self, app: &KagiApp) -> bool {
+        app.ecosystem.is_some()
+    }
+    // ADR-0119: full-screen, read-only. Wrapped in a `flex_1` + `min_w(0)`
+    // cell so the entity gets a *definite* width to fill (the body minus the
+    // sidebar). Mounted bare, the entity is a flex item with
+    // `flex-basis: auto`, so it sizes to its content — the longest hot-spot
+    // path — and its inner `flex_1` columns never get a bounded width to
+    // shrink into, pushing the numeric columns + risk bar off the right edge
+    // (user report on deep STM32 build paths).
+    fn render(
+        &self,
+        app: &mut KagiApp,
+        _layout: &WorkspaceLayout,
+        _cx: &mut Context<KagiApp>,
+    ) -> Option<AnyElement> {
+        let eco = app.ecosystem.clone()?;
+        Some(div().flex_1().min_w(px(0.)).child(eco).into_any_element())
+    }
+    // ADR-0119: the EcosystemView entity captures the previous repo's
+    // `repo_path`; drop the view on repo/tab switch like File History. The
+    // mine CACHE (`ecosystem_cache`) is keyed by repo and deliberately kept
+    // across tab switches, so returning to a repo and pressing Analyze reuses
+    // its previous scan instead of recomputing from scratch.
+    fn dispose(&self, app: &mut KagiApp) {
+        app.ecosystem = None;
+    }
+}
+
+/// Editor workspace (T-WS-EDITOR-001) — bridges `KagiApp.editor_workspace`.
+pub struct EditorWorkspaceItem;
+
+impl WorkspaceItem for EditorWorkspaceItem {
+    fn slot(&self) -> Slot {
+        Slot::Center
+    }
+    fn center(&self) -> CenterPane {
+        CenterPane::Editor
+    }
+    fn is_open(&self, app: &KagiApp) -> bool {
+        app.editor_workspace.is_some()
+    }
+    // T-WS-EDITOR-001: the Editor workspace entity self-renders the WHOLE
+    // left(file tree) + center(code viewer) + right(hunks) triple in one call
+    // — like the FileHistory/Ecosystem takeovers, this is the only way a
+    // click in the tree pane can mutate the same entity that owns the open
+    // file's editor/diff state without re-entering `KagiApp` (ADR-0117
+    // re-entrancy guard). The `layout.right` value (Hunks) exists for
+    // resolver-level policy + tests; it routes to the no-op right-slot arm in
+    // `render_body` (`RightPane::Hunks => {}`) and the sidebar
+    // `.when(... Navigator ...)` naturally skips rendering for
+    // `LeftPane::FileTree`. `layout.left`, though, is pushed into the entity
+    // (T-WS-EDITOR-005 finding #3): the sidebar toggle's `LeftPane::Hidden`
+    // still needs to hide the *in-entity* tree pane, which the outside can't
+    // reach into.
+    fn render(
+        &self,
+        app: &mut KagiApp,
+        layout: &WorkspaceLayout,
+        cx: &mut Context<KagiApp>,
+    ) -> Option<AnyElement> {
+        let ev = app.editor_workspace.clone()?;
+        let show_tree = layout.left == LeftPane::FileTree;
+        ev.update(cx, |v, _| {
+            v.show_tree = show_tree;
+        });
+        Some(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .h_full()
+                .child(ev)
+                .into_any_element(),
+        )
+    }
+    // T-WS-EDITOR-001: the EditorWorkspaceView entity captures the previous
+    // repo's `repo_path`; drop it on repo/tab switch like File History /
+    // Ecosystem — a new tab always opens on Graph since the mode is derived
+    // from `editor_workspace.is_some()` (T-WS-EDITOR-005 #11).
+    fn dispose(&self, app: &mut KagiApp) {
+        app.editor_workspace = None;
+    }
+}
+
+/// The registered entity-backed panes (ADR-0121 B1). Loading / Diff /
+/// CommitList / CommitPanel / Inspector are not items yet — B2 migrates panes
+/// one by one; until then `render_body` keeps plain arms for them.
+pub const CENTER_ITEMS: [&dyn WorkspaceItem; 3] =
+    [&FileHistoryItem, &EcosystemItem, &EditorWorkspaceItem];
+
+/// Slot → registered item resolution: the item registered for a resolved
+/// center variant, if any.
+pub fn center_item(center: CenterPane) -> Option<&'static dyn WorkspaceItem> {
+    CENTER_ITEMS
+        .iter()
+        .copied()
+        .find(|it| it.center() == center)
+}
 
 /// What the left pane shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,7 +338,10 @@ pub fn resolve_workspace(i: &WorkspaceInputs) -> WorkspaceLayout {
         LeftPane::Navigator
     };
 
-    let takeover = matches!(center, CenterPane::FileHistory | CenterPane::Ecosystem);
+    // ADR-0121 B1: "spans center + right" is now the registered item's `slot()`
+    // metadata instead of a hard-coded variant list (same set: FileHistory,
+    // Ecosystem).
+    let takeover = center_item(center).is_some_and(|it| it.slot() == Slot::CenterTakeover);
     let right = if takeover {
         RightPane::Hidden
     } else if i.editor_mode {

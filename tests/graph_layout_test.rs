@@ -318,14 +318,23 @@ fn test_branch_and_merge() {
         "M: expected OutOfNode 0→1 for second parent D"
     );
 
-    // D: parents[0]=A is already waited by lane 0 → OutOfNode 1→0.
+    // D: its line stays on lane 1 down to A's row (no mid-air join)…
     let row_d = &gl.rows[2];
     assert!(
         row_d
             .edges
             .iter()
-            .any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 1 && e.to_lane == 0),
-        "D: expected OutOfNode 1→0 (A already waited by lane 0)"
+            .any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 1 && e.to_lane == 1),
+        "D: expected OutOfNode 1→1 (line runs straight to A's row)"
+    );
+    // …and converges into A at A's own row (fork fans out of the parent node).
+    let row_a = &gl.rows[3];
+    assert!(
+        row_a
+            .edges
+            .iter()
+            .any(|e| e.kind == EdgeKind::IntoNode && e.from_lane == 1 && e.to_lane == 0),
+        "A: expected IntoNode 1→0 (feature line bends into the fork node)"
     );
 }
 
@@ -866,8 +875,9 @@ fn test_two_roots_lane_concurrent_then_reuse() {
 //   P4 (root)              lane 0
 //
 // Each merge line must run straight down its own column from the merge
-// commit to the merged segment ("staircase" shape); a long line must never
-// bend sideways at its target commit's row.
+// commit into the merged segment ("staircase" shape), and every fork must
+// fan out of the parent node itself: converging lines bend at the parent
+// commit's own row, never with a mid-air sideways join at a child row.
 // ────────────────────────────────────────────────────────────
 
 #[test]
@@ -886,29 +896,48 @@ fn test_stable_stacked_branches_staircase() {
     let gl = layout_with(&commits, GraphLayoutMode::Stable);
     check_invariants(&commits, &gl);
 
-    // Staircase: each branch segment keeps the column its merge line opened.
-    let lane_of = |id: &str| gl.rows.iter().find(|r| r.commit == cid(id)).unwrap().lane;
-    assert_eq!(lane_of("T1"), 1);
-    assert_eq!(lane_of("T2"), 1);
-    assert_eq!(lane_of("T3"), 1);
-    assert_eq!(lane_of("T4"), 2, "T4 stays on P2's merge-line column");
-    assert_eq!(lane_of("T5"), 3, "T5 stays on P3's merge-line column");
+    // Staircase: each branch segment keeps the column its merge line opened
+    // (the merge-born lane wins the node over the chain's continuation lane).
+    let row_of = |id: &str| gl.rows.iter().find(|r| r.commit == cid(id)).unwrap();
+    assert_eq!(row_of("T1").lane, 1);
+    assert_eq!(row_of("T2").lane, 1);
+    assert_eq!(row_of("T3").lane, 1);
+    assert_eq!(row_of("T4").lane, 2, "T4 sits on P2's merge-line column");
+    assert_eq!(row_of("T5").lane, 3, "T5 sits on P3's merge-line column");
 
-    // No row is approached by two lanes (joins happen at the child's row,
-    // never as a sideways bend at the target commit's row).
-    for row in &gl.rows {
-        let into = row
+    // The merge lines run straight through their branch heads, and the chain
+    // continuation converges INTO the head at the head's own row (the fork
+    // fans out of the node, never a mid-air sideways join above it).
+    let has_edge = |id: &str, kind: EdgeKind, from: usize, to: usize| {
+        row_of(id)
             .edges
             .iter()
-            .filter(|e| e.kind == EdgeKind::IntoNode)
-            .count();
-        assert!(
-            into <= 1,
-            "row {}: {} IntoNode edges (duplicate lanes)",
-            row.commit,
-            into
-        );
-    }
+            .any(|e| e.kind == kind && e.from_lane == from && e.to_lane == to)
+    };
+    assert!(
+        has_edge("T4", EdgeKind::IntoNode, 2, 2),
+        "P2's merge line must arrive at T4 vertically"
+    );
+    assert!(
+        has_edge("T4", EdgeKind::IntoNode, 1, 2),
+        "the T1..T3 chain must bend into T4 at T4's own row"
+    );
+    assert!(
+        has_edge("T5", EdgeKind::IntoNode, 3, 3),
+        "P3's merge line must arrive at T5 vertically"
+    );
+    assert!(
+        has_edge("T5", EdgeKind::IntoNode, 2, 3),
+        "T4's continuation must bend into T5 at T5's own row"
+    );
+    assert!(
+        has_edge("P4", EdgeKind::IntoNode, 0, 0),
+        "the mainline must run straight through the fork commit P4"
+    );
+    assert!(
+        has_edge("P4", EdgeKind::IntoNode, 3, 0),
+        "the branch line must bend into P4 at P4's own row"
+    );
 }
 
 // ════════════════════════════════════════════════════════════

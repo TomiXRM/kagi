@@ -14,7 +14,10 @@
 //! 2. **Assign node lane** —
 //!    - If no lane is waiting (branch tip / new root): take the leftmost
 //!      `None` slot, or append a new lane if all slots are occupied.
-//!    - If one or more lanes are waiting: `lane = min(waiting)`.
+//!    - If one or more lanes are waiting: prefer the leftmost *merge-born*
+//!      waiter (a lane a merge's non-first parent opened for exactly this
+//!      commit — the merged branch's own line, which the node sits on);
+//!      otherwise `lane = min(waiting)`.
 //!
 //! 3. **Generate edges for the top half of this row** —
 //!    - For each `j` in `waiting`: emit `(j → lane, IntoNode)`.
@@ -24,16 +27,16 @@
 //!
 //! 4. **Place parents into `active` (bottom half)** —
 //!    - No parents (root commit): `active[lane] = None`.
-//!    - `parents[0]` (first parent):
-//!      - *Exception*: if `parents[0]` is already waited on by lane `j`,
-//!        emit `(lane → j, OutOfNode)` and `active[lane] = None` (prevents
-//!        duplicate lane occupation).
-//!      - Otherwise: `active[lane] = Some(parents[0])`, emit
-//!        `(lane → lane, OutOfNode)`.
+//!    - `parents[0]` (first parent): `active[lane] = Some(parents[0])`, emit
+//!      `(lane → lane, OutOfNode)` — **even when another lane already waits
+//!      for the same commit**. The two lines then run straight side by side
+//!      and converge at the parent's own row (step 2/3), so a fork always
+//!      fans out of the parent node instead of joining mid-air at a child row.
 //!    - `parents[1..]` (merge parents):
 //!      - If already waited on by lane `j`: emit `(lane → j, OutOfNode)`.
 //!      - Otherwise: find leftmost `None` slot (or append), set
-//!        `active[slot] = Some(p)`, emit `(lane → slot, OutOfNode)`.
+//!        `active[slot] = Some(p)` (marked *merge-born*), emit
+//!        `(lane → slot, OutOfNode)`.
 //!
 //! 5. **Trim trailing `None` lanes** — `lane_count` is the maximum number of
 //!    occupied lanes seen across all rows (1-based).
@@ -45,12 +48,17 @@
 //! **stable colour** on each lane ([`GraphRow::color`] / [`GraphEdge::color`]),
 //! so a branch keeps its colour across rows and column shifts.
 //!
-//! Both modes also apply the step-4 *first-parent exception*: if `parents[0]`
-//! is already awaited by another open lane, the node's line joins that lane at
-//! the node's own row instead of opening a duplicate lane. Consequently open
-//! lane targets are unique — any commit is approached by **at most one lane**,
-//! and long branch lines never converge with a sideways bend at their target
-//! commit's row.
+//! The two modes handle a first parent that is *already awaited by another
+//! lane* differently:
+//!
+//! - `Stable` (the shipped layout) keeps both lines open: they run straight
+//!   down their own columns and converge at the parent commit's own row, so
+//!   forks fan out of the parent node (Fork/GitKraken look). Which line the
+//!   node sits on is decided in step 2 (merge-born waiter first).
+//! - `Compact` applies a *first-parent join* instead: the node's line merges
+//!   into the existing lane at the node's own row and its lane closes. Open
+//!   lane targets stay unique there (any commit is approached by at most one
+//!   lane), keeping the packed layout narrow.
 //!
 //! Public entry points: [`layout`] (Stable) and [`layout_with`].
 
@@ -104,6 +112,13 @@ struct Lane {
     target: CommitId,
     /// Stable colour index assigned when the lane was born (see [`NUM_COLORS`]).
     color: usize,
+    /// True while the lane still waits for the exact commit it was opened for
+    /// by a merge's *non-first* parent — i.e. `target` is a merged branch
+    /// head and this lane is that branch's own line. Cleared on every
+    /// first-parent retarget. `Stable` uses it to decide which line a commit
+    /// sits on when several lanes converge (the merged branch head belongs on
+    /// its merge line, not on whichever waiting lane is leftmost).
+    merge_born: bool,
 }
 
 /// The computed layout of an entire commit graph.
@@ -247,8 +262,16 @@ fn layout_stable(commits: &[Commit]) -> GraphLayout {
             // Branch tip or new root — take the leftmost free slot.
             find_or_push_free_lane(&mut active)
         } else {
-            // At least one lane is waiting; use the leftmost.
-            *waiting.iter().min().unwrap()
+            // A merged branch head sits on its own merge line (the lane a
+            // merge's non-first parent opened for exactly this commit), so
+            // that line runs straight through the node; any other waiting
+            // lane bends into it here. Otherwise the leftmost waiter wins
+            // (keeps the mainline straight at plain fork points).
+            waiting
+                .iter()
+                .copied()
+                .find(|&j| active[j].as_ref().unwrap().merge_born)
+                .unwrap_or_else(|| *waiting.iter().min().unwrap())
         };
         // The node's colour: an existing waiting lane keeps its colour (branch
         // continuity); a fresh tip mints a new colour that the first parent (or
@@ -297,32 +320,23 @@ fn layout_stable(commits: &[Commit]) -> GraphLayout {
             active[node_lane] = None;
         } else {
             // --- first parent ---
+            // The node's own lane always continues toward the first parent —
+            // even when another lane already waits for the same commit. The
+            // two lines then run straight, side by side, and converge at the
+            // parent's own row (the fork fans out of the parent node), never
+            // with a mid-air sideways join at this row.
             let p0 = &commit.parents[0];
-            if let Some(existing_j) = find_lane_for(&active, p0) {
-                // Exception: parents[0] is already waited on by another lane.
-                // Merge this node's lane into that existing lane (keep its colour).
-                let color = active[existing_j].as_ref().unwrap().color;
-                edges.push(GraphEdge {
-                    from_lane: node_lane,
-                    to_lane: existing_j,
-                    kind: EdgeKind::OutOfNode,
-                    color,
-                });
-                active[node_lane] = None;
-            } else {
-                // Normal case: claim the node's lane for the first parent,
-                // carrying the node's colour onward.
-                active[node_lane] = Some(Lane {
-                    target: p0.clone(),
-                    color: node_color,
-                });
-                edges.push(GraphEdge {
-                    from_lane: node_lane,
-                    to_lane: node_lane,
-                    kind: EdgeKind::OutOfNode,
-                    color: node_color,
-                });
-            }
+            active[node_lane] = Some(Lane {
+                target: p0.clone(),
+                color: node_color,
+                merge_born: false,
+            });
+            edges.push(GraphEdge {
+                from_lane: node_lane,
+                to_lane: node_lane,
+                kind: EdgeKind::OutOfNode,
+                color: node_color,
+            });
 
             // --- merge parents (parents[1..]) ---
             for p in &commit.parents[1..] {
@@ -337,11 +351,14 @@ fn layout_stable(commits: &[Commit]) -> GraphLayout {
                     });
                 } else {
                     // Allocate a new (leftmost free) lane + a new colour.
+                    // This lane is the merged branch's own line, so it wins
+                    // the node when the branch head's row is reached.
                     let new_j = find_or_push_free_lane(&mut active);
                     let color = alloc_color(&mut color_counter);
                     active[new_j] = Some(Lane {
                         target: p.clone(),
                         color,
+                        merge_born: true,
                     });
                     edges.push(GraphEdge {
                         from_lane: node_lane,
@@ -450,6 +467,7 @@ fn layout_compact(commits: &[Commit]) -> GraphLayout {
                     new_lanes.push(Lane {
                         target: commit.parents[0].clone(),
                         color: node_color,
+                        merge_born: false,
                     });
                 }
                 // Root (no parents) or first-parent join: the lane closes —
@@ -471,6 +489,7 @@ fn layout_compact(commits: &[Commit]) -> GraphLayout {
                 new_lanes.push(Lane {
                     target: commit.parents[0].clone(),
                     color: node_color,
+                    merge_born: false,
                 });
             }
             // Isolated commit (tip + root) or first-parent join: node occupies
@@ -488,6 +507,7 @@ fn layout_compact(commits: &[Commit]) -> GraphLayout {
                 new_lanes.push(Lane {
                     target: p.clone(),
                     color,
+                    merge_born: true,
                 });
                 merge_targets.push((idx, color));
             }
@@ -771,24 +791,32 @@ mod tests {
         // Lane count should be 2 (lanes 0 and 1 were simultaneously active).
         assert_eq!(gl.lane_count, 2);
 
-        // Row A: only lane 0 was waiting, so IntoNode(0→0).
-        assert!(
-            row_a
-                .edges
-                .iter()
-                .any(|e| e.kind == EdgeKind::IntoNode && e.from_lane == 0 && e.to_lane == 0),
-            "A must have IntoNode 0→0 (lane 0 was the sole waiter)"
-        );
-
-        // Row D: parents[0]=A is already waited by lane 0 → step-4 exception.
-        // D must emit OutOfNode(1→0) and must NOT keep lane 1 for A.
+        // Row D: even though A is already waited by lane 0, D keeps its own
+        // lane open toward A (no mid-air join at D's row).
         let row_d_ref = &gl.rows[2];
         assert!(
             row_d_ref
                 .edges
                 .iter()
-                .any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 1 && e.to_lane == 0),
-            "D must OutOfNode 1→0 (first-parent exception: A already waited by lane 0)"
+                .any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 1 && e.to_lane == 1),
+            "D must OutOfNode 1→1 (its line runs straight down to A's row)"
+        );
+
+        // Row A: both lines converge at A's own row — the fork fans out of
+        // the parent node.
+        assert!(
+            row_a
+                .edges
+                .iter()
+                .any(|e| e.kind == EdgeKind::IntoNode && e.from_lane == 0 && e.to_lane == 0),
+            "A must have IntoNode 0→0 (mainline runs straight through)"
+        );
+        assert!(
+            row_a
+                .edges
+                .iter()
+                .any(|e| e.kind == EdgeKind::IntoNode && e.from_lane == 1 && e.to_lane == 0),
+            "A must have IntoNode 1→0 (feature line bends into the fork node)"
         );
     }
 
@@ -840,10 +868,9 @@ mod tests {
         }
     }
 
-    // ── test 5: first-parent already-waiting exception (step 4 exception) ─
+    // ── test 5: shared first parent — lines converge at the parent's row ─
     //
-    // This tests the critical edge case: two branches both converge on the
-    // same parent A.
+    // Two branches both converge on the same parent A.
     //
     //   X  (tip of main, parent=A)   lane 0
     //   Y  (tip of feat, parent=A)   lane 1
@@ -853,13 +880,13 @@ mod tests {
     //
     // After X: active = [Some(A), None]   (lane 0 waiting for A)
     // Processing Y (tip, no waiting): lane 1 (first free).
-    //   parents[0] = A, which is already waited on by lane 0.
-    //   → exception fires: emit OutOfNode(1→0), active[1] = None.
-    // After Y: active = [Some(A), None]  (unchanged)
-    // Processing A: waiting = [0] → lane 0.
+    //   parents[0] = A → lane 1 also waits for A (no mid-air join).
+    // After Y: active = [Some(A), Some(A)]
+    // Processing A: waiting = [0, 1], no merge-born waiter → lane 0; the
+    // feature line bends into the fork node at A's own row.
 
     #[test]
-    fn test_first_parent_already_waiting_exception() {
+    fn test_first_parent_converges_at_parent_row() {
         let commits = vec![c("X", &["A"]), c("Y", &["A"]), c("A", &[])];
         let gl = layout(&commits);
 
@@ -874,24 +901,25 @@ mod tests {
         let row_a = &gl.rows[2];
         assert_eq!(row_a.lane, 0);
 
-        // Y must emit OutOfNode from lane 1 to lane 0 (the exception).
+        // Y's line continues straight down its own lane…
         assert!(
             row_y
                 .edges
                 .iter()
-                .any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 1 && e.to_lane == 0),
-            "Y must OutOfNode 1→0 due to exception (parents[0]=A already waited by lane 0)"
+                .any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 1 && e.to_lane == 1),
+            "Y must OutOfNode 1→1 (no mid-air join at Y's row)"
+        );
+        // …and bends into A at A's own row.
+        assert!(
+            row_a
+                .edges
+                .iter()
+                .any(|e| e.kind == EdgeKind::IntoNode && e.from_lane == 1 && e.to_lane == 0),
+            "A must have IntoNode 1→0 (fork fans out of the parent node)"
         );
 
         // lane_count should be 2 (X and Y were simultaneously active).
         assert_eq!(gl.lane_count, 2);
-
-        // Crucially, no lane_count explosion (lane_count must stay ≤ 2).
-        assert!(
-            gl.lane_count <= 2,
-            "lane must not explode: got lane_count={}",
-            gl.lane_count
-        );
     }
 
     // ── test 6: stable colour is carried along a branch ──────────────────

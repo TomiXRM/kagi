@@ -1,4 +1,4 @@
-crates/kagi-domain/src/graph.rs 1015
+crates/kagi-domain/src/graph.rs 1043
 crates/kagi-domain/src/message_gen.rs 892
 crates/kagi-domain/src/resolution.rs 905
 crates/kagi-git/src/backend.rs 1025

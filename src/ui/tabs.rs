@@ -348,7 +348,8 @@ impl KagiApp {
         self.selected = None;
         self.diff_caches.clear();
         self.wip_diffstat = None;
-        self.main_diff = None;
+        // ADR-0121 B2: `main_diff` is dropped via the CENTER_ITEMS dispose
+        // loop below (MainDiffItem), like the other registered panes.
         self.clear_plan_modal();
         self.clear_pull_modal();
         self.clear_undo_modal();

@@ -214,11 +214,49 @@ impl WorkspaceItem for EditorWorkspaceItem {
     }
 }
 
-/// The registered entity-backed panes (ADR-0121 B1). Loading / Diff /
-/// CommitList / CommitPanel / Inspector are not items yet — B2 migrates panes
-/// one by one; until then `render_body` keeps plain arms for them.
-pub const CENTER_ITEMS: [&dyn WorkspaceItem; 3] =
-    [&FileHistoryItem, &EcosystemItem, &EditorWorkspaceItem];
+/// Full-width main diff (T-UI-003 / ADR-0121 B2) — bridges `KagiApp.main_diff`
+/// (now `Option<Entity<MainDiffPane>>`, see `main_diff_pane.rs`).
+pub struct MainDiffItem;
+
+impl WorkspaceItem for MainDiffItem {
+    fn slot(&self) -> Slot {
+        Slot::Center
+    }
+    fn center(&self) -> Option<CenterPane> {
+        Some(CenterPane::Diff)
+    }
+    fn is_open(&self, app: &KagiApp) -> bool {
+        app.main_diff.is_some()
+    }
+    // ADR-0121 B2: embedded bare like File History — the pane's root element
+    // (see `render_helpers::render_diff_list`) already carries the
+    // `flex_1().min_w(0)` sizing the old plain arm's element had, so no
+    // wrapper cell is needed.
+    fn render(
+        &self,
+        app: &mut KagiApp,
+        _layout: &WorkspaceLayout,
+        _cx: &mut Context<KagiApp>,
+    ) -> Option<AnyElement> {
+        Some(app.main_diff.clone()?.into_any_element())
+    }
+    // Per-repo: the shown diff belongs to the previous repo; drop the pane
+    // (and its scroll state) on repo/tab switch, as the old
+    // `main_diff = None` reset did.
+    fn dispose(&self, app: &mut KagiApp) {
+        app.main_diff = None;
+    }
+}
+
+/// The registered entity-backed panes (ADR-0121 B1/B2). Loading / CommitList /
+/// CommitPanel / Inspector are not items yet — B2 migrates panes one by one;
+/// until then `render_body` keeps plain arms for them.
+pub const CENTER_ITEMS: [&dyn WorkspaceItem; 4] = [
+    &FileHistoryItem,
+    &EcosystemItem,
+    &EditorWorkspaceItem,
+    &MainDiffItem,
+];
 
 /// Slot → registered item resolution: the item registered for a resolved
 /// center variant, if any.
@@ -254,9 +292,13 @@ impl WorkspaceItem for CommitPanelItem {
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         let entity = app.commit_panel.clone()?;
-        let active_wip = match app.main_diff.as_ref().map(|d| &d.source) {
-            Some(MainDiffSource::Unstaged { path }) => Some((false, path.clone())),
-            Some(MainDiffSource::Staged { path }) => Some((true, path.clone())),
+        let active_wip = match app
+            .main_diff
+            .as_ref()
+            .map(|d| d.read(cx).view.source.clone())
+        {
+            Some(MainDiffSource::Unstaged { path }) => Some((false, path)),
+            Some(MainDiffSource::Staged { path }) => Some((true, path)),
             _ => None,
         };
         let smart = app.smart_commit.clone();
@@ -329,9 +371,13 @@ impl WorkspaceItem for InspectorItem {
             selected.and_then(|i| app.diff_caches.diffstat.get(&i).cloned())
         };
         // Active file (for list highlight) derived from the open main diff.
-        let active_commit_file: Option<usize> = match app.main_diff.as_ref().map(|d| &d.source) {
-            Some(MainDiffSource::Commit { file_index, .. }) => Some(*file_index),
-            Some(MainDiffSource::Compare { file_index, .. }) => Some(*file_index),
+        let active_commit_file: Option<usize> = match app
+            .main_diff
+            .as_ref()
+            .map(|d| d.read(cx).view.source.clone())
+        {
+            Some(MainDiffSource::Commit { file_index, .. }) => Some(file_index),
+            Some(MainDiffSource::Compare { file_index, .. }) => Some(file_index),
             _ => None,
         };
         Some(

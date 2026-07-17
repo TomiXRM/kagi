@@ -25,8 +25,9 @@ impl KagiApp {
         // adapter (`workspace::InspectorItem`) re-derives the full detail +
         // changed-files/badges inputs from `self` in its render.
         detail: Option<detail_panel::CommitDetail>,
-        main_diff: Option<MainDiffView>,
-        main_diff_scroll_handle: gpui::ListState,
+        // ADR-0121 B2 (merge): inspector inputs re-derived by InspectorItem;
+        // the main diff is a self-rendering pane entity with its own ListState.
+        main_diff: Option<Entity<MainDiffPane>>,
         // PERF-SIDEBAR-VIRT: the navigator is now virtualized from
         // `self.sidebar.rows` (built in `render`); render_body only needs the
         // row count + scroll handle + filter input for `render_sidebar`.
@@ -406,7 +407,7 @@ impl KagiApp {
             file_history_open: workspace::FileHistoryItem.is_open(self),
             ecosystem_open: workspace::EcosystemItem.is_open(self),
             loading: self.loading_tab.is_some(),
-            diff_open: main_diff_for_center.is_some(),
+            diff_open: workspace::MainDiffItem.is_open(self),
             commit_panel_open,
             commit_panel_present: commit_panel.is_some(),
             inspector_visible: self.inspector_visible,
@@ -446,15 +447,19 @@ impl KagiApp {
         // (`workspace::center_item`); each adapter carries what its old arm
         // did (how it wraps its entity, and its per-pane rationale). The
         // precedence is unchanged — it stays in `resolve_workspace`. The
-        // non-entity contents (Loading placeholder / Diff / CommitList) keep
-        // plain arms until B2 migrates them.
+        // non-entity contents (Loading placeholder / CommitList) keep plain
+        // arms until B2 migrates them.
         body_row = match workspace::center_item(layout.center) {
             Some(item) => match item.render(self, &layout, cx) {
                 Some(el) => body_row.child(el),
-                // Gate raced closed between resolve and render: the Editor
-                // arm's pre-existing fallback is the commit list, the
+                // Gate raced closed between resolve and render: the Editor and
+                // Diff arms' pre-existing fallback is the commit list, the
                 // takeovers' is an empty center.
-                None if layout.center == workspace::CenterPane::Editor => {
+                None if matches!(
+                    layout.center,
+                    workspace::CenterPane::Editor | workspace::CenterPane::Diff
+                ) =>
+                {
                     body_row.child(commit_list_col)
                 }
                 None => body_row,
@@ -464,17 +469,6 @@ impl KagiApp {
                 workspace::CenterPane::Loading => body_row.child(render_loading_placeholder(
                     self.loading_tab.clone().unwrap_or_default(),
                 )),
-                // Full-width diff (T-UI-003). The resolver guarantees the view
-                // is present; fall back to the commit list rather than unwrap.
-                workspace::CenterPane::Diff => match main_diff_for_center {
-                    Some(diff_view) => body_row.child(render_main_diff_view(
-                        diff_view,
-                        main_diff_scroll_handle,
-                        true,
-                        cx,
-                    )),
-                    None => body_row.child(commit_list_col),
-                },
                 _ => body_row.child(commit_list_col),
             },
         };

@@ -120,10 +120,13 @@ impl KagiApp {
 
 impl Render for KagiApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // ADR-0109: swap in any pending background highlight result before
-        // painting, so the text-first diff gets its colors on the next frame
-        // after the tree-sitter parse completes off-thread.
-        self.apply_pending_highlights();
+        // ADR-0121 B2: promote a headless-staged diff (KAGI_OPEN_FIRST_FILE
+        // runs before any gpui context exists) into the pane entity on the
+        // first frame. Always `None` in the GUI paths.
+        if let Some(view) = self.pending_headless_diff.take() {
+            let weak = cx.weak_entity();
+            self.main_diff = Some(cx.new(|_| MainDiffPane::new(view, weak)));
+        }
 
         // Remember the live window size (persisted on quit → restored next
         // launch). Only plain Windowed: a maximized/fullscreen size would
@@ -299,9 +302,10 @@ impl Render for KagiApp {
         // its render — render_body no longer takes them.
         let wip_diffstat = self.wip_diffstat;
 
-        // T-UI-003: Clone main diff state if present.
+        // T-UI-003: Clone main diff pane entity if present (ADR-0121 B2).
         let main_diff = self.main_diff.clone();
-        let main_diff_scroll_handle = self.main_diff_scroll_handle.clone();
+        // ADR-0121 B2 (merge): both clones gone — the scroll handle lives in
+        // MainDiffPane, and the Inspector re-derives compare inputs itself.
 
         // Clone modal state for render.
         let is_dirty = self.active_view.is_dirty;
@@ -667,7 +671,6 @@ impl Render for KagiApp {
                     selected,
                     detail,
                     main_diff,
-                    main_diff_scroll_handle,
                     sidebar_row_count,
                     sidebar_scroll_handle,
                     sidebar_filter,

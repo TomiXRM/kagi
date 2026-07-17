@@ -3358,6 +3358,7 @@ dependencies = [
  "gpui_platform",
  "kagi-domain",
  "kagi-git",
+ "kagi-ui-core",
  "notify",
  "portable-pty",
  "serde",
@@ -3380,6 +3381,17 @@ dependencies = [
  "kagi-domain",
  "tempfile",
  "ureq",
+]
+
+[[package]]
+name = "kagi-ui-core"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "gpui-component",
+ "kagi-domain",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

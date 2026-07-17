@@ -1,0 +1,17 @@
+# kagi-ui-core (ADR-0121 Phase C1): shared UI foundation — klog contract macro,
+# settings persistence, i18n, theme tokens. Depends only on gpui/gpui-component
+# and std; NEVER on the Git backend crate (CI grep gate enforces this).
+[package]
+name = "kagi-ui-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+kagi-domain = { path = "../kagi-domain" }
+# Same rev-less git specs as the bin crate — the pin lives in the workspace
+# Cargo.lock (see the root Cargo.toml comment).
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "b004e595cf5d", features = ["tree-sitter-languages"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

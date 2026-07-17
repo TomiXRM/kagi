@@ -195,12 +195,9 @@ fn validate_merge_from_drag(
     Err(format!("Branch '{}' is not a branch.", source))
 }
 
-/// Bundled UI sans family (OFL Inter), loaded at startup via `add_fonts`, so the
-/// UI looks identical on every OS instead of relying on the platform default.
-pub const UI_FONT: &str = "Inter";
-/// Bundled monospace family (OFL JetBrains Mono) for the terminal / conflict
-/// editor / code — replaces the macOS-only "Menlo" fallback.
-pub const MONO_FONT: &str = "JetBrains Mono";
+// UI_FONT / MONO_FONT moved to kagi-ui-core::theme (ADR-0121 C1); re-exported
+// here so `super::UI_FONT` call sites keep working.
+pub use kagi_ui_core::theme::{MONO_FONT, UI_FONT};
 
 /// Live window size in whole px (w, h), updated each frame while the window
 /// is plain `Windowed` (maximized/fullscreen sizes are not remembered), and

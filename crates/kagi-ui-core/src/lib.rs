@@ -8,6 +8,8 @@
 #[macro_use]
 pub mod klog;
 
+pub mod divider;
+pub mod file_tree;
 pub mod i18n;
 pub mod settings;
 pub mod theme;

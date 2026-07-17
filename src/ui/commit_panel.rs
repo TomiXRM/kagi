@@ -544,22 +544,6 @@ impl CommitPanelView {
 // Status badge helpers for staging panel
 // ──────────────────────────────────────────────────────────────
 
-/// Map a `ChangeKind` to a 1-char status badge and its colour.
-/// Returns `(char, color_u32, is_conflicted)`.
-///
-/// `change: None` (T-WS-EDITOR-004 — an unmodified file in the Editor
-/// Workspace's `TreeSource::All`) renders a blank, muted badge.
-pub fn status_badge(change: Option<&ChangeKind>, is_conflicted: bool) -> (&'static str, u32, bool) {
-    let t = crate::ui::theme::theme();
-    if is_conflicted {
-        return ("C", t.color_blocker, true); // red background for conflicted
-    }
-    match change {
-        Some(ChangeKind::Added) => ("A", t.change_added, false),
-        Some(ChangeKind::Modified) => ("M", t.change_modified, false),
-        Some(ChangeKind::Deleted) => ("D", t.change_deleted, false),
-        Some(ChangeKind::Renamed { .. }) => ("R", t.change_renamed, false),
-        Some(ChangeKind::TypeChange) => ("T", t.change_typechange, false),
-        None => ("", t.text_muted, false),
-    }
-}
+// Moved to kagi-ui-core::file_tree (ADR-0121 C4) so the Editor Workspace
+// crate can share it; re-exported here so call sites are unchanged.
+pub use kagi_ui_core::file_tree::status_badge;

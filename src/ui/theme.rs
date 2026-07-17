@@ -334,23 +334,24 @@ pub fn init_compact_graph() {
     klog!("graph_compact: {}", compact_graph());
 }
 
-/// Log the persisted **lane-compaction** flag at startup (settings.json
+/// Log the persisted **swimlane-visuals** flag at startup (settings.json
 /// `"graph_lane_compact"`, `"true"`/`"false"`; missing → off).
 ///
-/// This is the gitk-stable vs Gitru swimlane-compaction layout switch read by
-/// [`crate::ui::commit_list::build_commit_rows`] (`GraphLayoutMode`). Backed by
-/// an atomic (like `graph_compact`) so the Settings-screen toggle can flip it
-/// live; the loaded value is logged here so the startup state is debuggable
-/// alongside the other settings lines.
+/// This flag drives the swimlane *visuals* only — avatar commit nodes, the
+/// lane tint band, and the graph lane padding (`render_helpers.rs`). The lane
+/// *layout* is always `GraphLayoutMode::Stable` (ADR-0122) and does not read
+/// this flag. Backed by an atomic (like `graph_compact`) so the
+/// Settings-screen toggle can flip it live; the loaded value is logged here so
+/// the startup state is debuggable alongside the other settings lines.
 static GRAPH_LANE_COMPACT: AtomicBool = AtomicBool::new(false);
 
-/// The currently-active lane-compaction flag (read by `build_commit_rows`).
+/// The currently-active swimlane-visuals flag (read at render time).
 #[inline]
 pub fn graph_lane_compact() -> bool {
     GRAPH_LANE_COMPACT.load(Ordering::Relaxed)
 }
 
-/// Set + persist the lane-compaction flag to `settings.json`
+/// Set + persist the swimlane-visuals flag to `settings.json`
 /// (key `graph_lane_compact`).
 pub fn set_graph_lane_compact(on: bool) {
     GRAPH_LANE_COMPACT.store(on, Ordering::Relaxed);
@@ -360,7 +361,7 @@ pub fn set_graph_lane_compact(on: bool) {
     );
 }
 
-/// Initialise the lane-compaction flag at startup from `settings.json`.
+/// Initialise the swimlane-visuals flag at startup from `settings.json`.
 pub fn init_graph_lane_compact() {
     if let Some(on) = Settings::load().graph_lane_compact() {
         GRAPH_LANE_COMPACT.store(on, Ordering::Relaxed);

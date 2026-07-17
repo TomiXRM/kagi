@@ -850,6 +850,67 @@ fn test_two_roots_lane_concurrent_then_reuse() {
     );
 }
 
+// ────────────────────────────────────────────────────────────
+// Case 13: stacked branches — Stable keeps every branch in its own column
+//
+// The shipped layout (`build_commit_rows` uses `GraphLayoutMode::Stable`,
+// ADR-0122). Three merges into a mainline, each merging a segment of one
+// branch chain:
+//
+//   P1 (merge: [P2, T1])   lane 0
+//   P2 (merge: [P3, T4])   lane 0
+//   P3 (merge: [P4, T5])   lane 0
+//   T1 → T2 → T3           lane 1  (segment merged by P1)
+//   T4                     lane 2  (segment merged by P2)
+//   T5                     lane 3  (segment merged by P3)
+//   P4 (root)              lane 0
+//
+// Each merge line must run straight down its own column from the merge
+// commit to the merged segment ("staircase" shape); a long line must never
+// bend sideways at its target commit's row.
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn test_stable_stacked_branches_staircase() {
+    let commits = vec![
+        c("P1", &["P2", "T1"]),
+        c("P2", &["P3", "T4"]),
+        c("P3", &["P4", "T5"]),
+        c("T1", &["T2"]),
+        c("T2", &["T3"]),
+        c("T3", &["T4"]),
+        c("T4", &["T5"]),
+        c("T5", &["P4"]),
+        c("P4", &[]),
+    ];
+    let gl = layout_with(&commits, GraphLayoutMode::Stable);
+    check_invariants(&commits, &gl);
+
+    // Staircase: each branch segment keeps the column its merge line opened.
+    let lane_of = |id: &str| gl.rows.iter().find(|r| r.commit == cid(id)).unwrap().lane;
+    assert_eq!(lane_of("T1"), 1);
+    assert_eq!(lane_of("T2"), 1);
+    assert_eq!(lane_of("T3"), 1);
+    assert_eq!(lane_of("T4"), 2, "T4 stays on P2's merge-line column");
+    assert_eq!(lane_of("T5"), 3, "T5 stays on P3's merge-line column");
+
+    // No row is approached by two lanes (joins happen at the child's row,
+    // never as a sideways bend at the target commit's row).
+    for row in &gl.rows {
+        let into = row
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::IntoNode)
+            .count();
+        assert!(
+            into <= 1,
+            "row {}: {} IntoNode edges (duplicate lanes)",
+            row.commit,
+            into
+        );
+    }
+}
+
 // ════════════════════════════════════════════════════════════
 // Compact (Gitru swimlane) mode — ADR-0104
 // ════════════════════════════════════════════════════════════

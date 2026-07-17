@@ -45,6 +45,13 @@
 //! **stable colour** on each lane ([`GraphRow::color`] / [`GraphEdge::color`]),
 //! so a branch keeps its colour across rows and column shifts.
 //!
+//! Both modes also apply the step-4 *first-parent exception*: if `parents[0]`
+//! is already awaited by another open lane, the node's line joins that lane at
+//! the node's own row instead of opening a duplicate lane. Consequently open
+//! lane targets are unique — any commit is approached by **at most one lane**,
+//! and long branch lines never converge with a sideways bend at their target
+//! commit's row.
+//!
 //! Public entry points: [`layout`] (Stable) and [`layout_with`].
 
 use crate::commit::{Commit, CommitId};
@@ -414,6 +421,19 @@ fn layout_compact(commits: &[Commit]) -> GraphLayout {
             None => alloc_color(&mut color_counter),
         };
 
+        // First-parent join (Stable's step-4 exception): if another surviving
+        // lane already waits for `parents[0]`, the node's line merges into that
+        // lane at THIS row instead of opening a duplicate lane. Without this,
+        // two lanes run in parallel toward the same commit and only converge —
+        // with a sideways bend — at the target commit's own row.
+        let p0_join: Option<usize> = commit.parents.first().and_then(|p0| {
+            input
+                .iter()
+                .enumerate()
+                .find(|(i, l)| !incoming.contains(i) && &l.target == p0)
+                .map(|(i, _)| i)
+        });
+
         // ── Build the output (next-row) lane vector, packed ─────────────
         // `old_to_new[i]` = output column of input lane i (None if consumed).
         let mut new_lanes: Vec<Lane> = Vec::new();
@@ -426,13 +446,14 @@ fn layout_compact(commits: &[Commit]) -> GraphLayout {
                 // The node's own lane — continues as the first parent.
                 node_lane = new_lanes.len();
                 old_to_new[i] = Some(new_lanes.len());
-                if !commit.parents.is_empty() {
+                if !commit.parents.is_empty() && p0_join.is_none() {
                     new_lanes.push(Lane {
                         target: commit.parents[0].clone(),
                         color: node_color,
                     });
                 }
-                // Root (no parents): the lane closes — push nothing.
+                // Root (no parents) or first-parent join: the lane closes —
+                // push nothing.
             } else if incoming.contains(&i) {
                 // Secondary incoming lane — merged into the node, reclaimed.
             } else {
@@ -442,17 +463,18 @@ fn layout_compact(commits: &[Commit]) -> GraphLayout {
             }
         }
 
-        // A tip opens a brand-new lane at the right for its first parent.
+        // A tip opens a brand-new lane at the right for its first parent —
+        // unless that parent is already awaited by an existing lane (join).
         if is_tip {
             node_lane = new_lanes.len();
-            if !commit.parents.is_empty() {
+            if !commit.parents.is_empty() && p0_join.is_none() {
                 new_lanes.push(Lane {
                     target: commit.parents[0].clone(),
                     color: node_color,
                 });
             }
-            // Isolated commit (tip + root): node occupies a column but no lane
-            // persists — nothing pushed.
+            // Isolated commit (tip + root) or first-parent join: node occupies
+            // a column but no lane persists — nothing pushed.
         }
 
         // Merge parents (parents[1..]): reuse an open lane or append a new one.
@@ -499,13 +521,22 @@ fn layout_compact(commits: &[Commit]) -> GraphLayout {
             });
         }
 
-        // Outgoing first-parent + merge edges.
+        // Outgoing first-parent + merge edges. On a join, the first-parent
+        // edge bends into the existing lane's (possibly shifted) column and
+        // takes that lane's colour, exactly like Stable's exception.
         if !commit.parents.is_empty() {
+            let (p0_col, p0_color) = match p0_join {
+                Some(k) => (
+                    old_to_new[k].expect("join target lane survives this row"),
+                    input[k].color,
+                ),
+                None => (node_lane, node_color),
+            };
             edges.push(GraphEdge {
                 from_lane: node_lane,
-                to_lane: node_lane,
+                to_lane: p0_col,
                 kind: EdgeKind::OutOfNode,
-                color: node_color,
+                color: p0_color,
             });
             for (idx, color) in &merge_targets {
                 edges.push(GraphEdge {
@@ -909,6 +940,115 @@ mod tests {
             assert_eq!(row.lane, 0, "compact linear: all nodes on lane 0");
             assert_eq!(row.color, 0, "compact linear: one stable colour");
         }
+    }
+
+    // ── test 8b: compact — a commit is approached by at most one lane ────
+    //
+    // Repro of the "long line bends at the very end" artifact (stacked
+    // branches merged into a mainline). Pre-fix, T3's first-parent
+    // continuation opened a SECOND lane targeting T4 — duplicating the lane
+    // already opened by P2's merge edge — so both lines ran in parallel and
+    // only converged (with a sideways bend) at T4's own row. With the
+    // first-parent join (Stable's step-4 exception ported to Compact), T3's
+    // line joins the existing lane at T3's row instead.
+    //
+    //   P1 ─┬────────────── T1   (merge)
+    //   P2 ─┼┬───────────── T4   (merge)
+    //   P3 ─┼┼┬──────────── T5   (merge)
+    //   T1..T2..T3 → T4 → T5 → P4 (branch chain)
+    #[test]
+    fn test_compact_first_parent_joins_existing_lane() {
+        let commits = vec![
+            c("P1", &["P2", "T1"]),
+            c("P2", &["P3", "T4"]),
+            c("P3", &["P4", "T5"]),
+            c("T1", &["T2"]),
+            c("T2", &["T3"]),
+            c("T3", &["T4"]),
+            c("T4", &["T5"]),
+            c("T5", &["P4"]),
+            c("P4", &[]),
+        ];
+        let gl = layout_with(&commits, GraphLayoutMode::Compact);
+
+        // No duplicate lanes: every commit is reached by at most one lane,
+        // so no row carries two IntoNode edges.
+        for row in &gl.rows {
+            let into = row
+                .edges
+                .iter()
+                .filter(|e| e.kind == EdgeKind::IntoNode)
+                .count();
+            assert!(
+                into <= 1,
+                "row {} has {} IntoNode edges (duplicate lanes waiting for it)",
+                row.commit,
+                into
+            );
+        }
+
+        // T4 continues P2's merge line: same colour as the merge-out edge,
+        // and the line arrives vertically (no bend at the target row).
+        let row_p2 = gl.rows.iter().find(|r| r.commit == cid("P2")).unwrap();
+        let merge_color = row_p2
+            .edges
+            .iter()
+            .find(|e| e.kind == EdgeKind::OutOfNode && e.from_lane != e.to_lane)
+            .expect("P2 must have a merge-parent edge")
+            .color;
+        let row_t4 = gl.rows.iter().find(|r| r.commit == cid("T4")).unwrap();
+        assert_eq!(row_t4.color, merge_color, "T4 sits on P2's merge line");
+        let into_t4 = row_t4
+            .edges
+            .iter()
+            .find(|e| e.kind == EdgeKind::IntoNode)
+            .expect("T4 has an incoming lane");
+        assert_eq!(
+            into_t4.from_lane, into_t4.to_lane,
+            "the merge line must arrive at T4 vertically, not bend into it"
+        );
+
+        // T3 closes its lane by joining the merge line (join edge in the
+        // existing lane's colour).
+        let row_t3 = gl.rows.iter().find(|r| r.commit == cid("T3")).unwrap();
+        assert!(
+            row_t3
+                .edges
+                .iter()
+                .any(|e| e.kind == EdgeKind::OutOfNode && e.color == merge_color),
+            "T3 must join P2's merge lane at its own row"
+        );
+    }
+
+    // ── test 8c: compact — a new tip joins an existing lane (no duplicate) ─
+    #[test]
+    fn test_compact_tip_joins_existing_lane() {
+        // Y and X both point at A. X (the later tip) must not open a second
+        // lane targeting A; it bends into Y's lane at its own row.
+        let commits = vec![c("Y", &["A"]), c("X", &["A"]), c("A", &[])];
+        let gl = layout_with(&commits, GraphLayoutMode::Compact);
+
+        let row_x = &gl.rows[1];
+        assert_eq!(row_x.lane, 1, "X sits on its own column");
+        assert!(
+            row_x
+                .edges
+                .iter()
+                .any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 1 && e.to_lane == 0),
+            "X must join Y's lane (OutOfNode 1→0)"
+        );
+
+        let row_a = &gl.rows[2];
+        assert_eq!(
+            row_a
+                .edges
+                .iter()
+                .filter(|e| e.kind == EdgeKind::IntoNode)
+                .count(),
+            1,
+            "A must be reached by exactly one lane"
+        );
+        assert_eq!(gl.lane_count, 2);
     }
 
     // ── test 9: compact emits a shift edge + reclaims the column ──────────

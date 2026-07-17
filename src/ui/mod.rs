@@ -30,7 +30,6 @@ pub mod editor_markdown;
 pub mod editor_tree_menu;
 pub mod editor_workspace;
 pub mod file_history;
-mod file_history_render;
 mod file_menu;
 pub mod file_tree;
 mod graph_solo;
@@ -2172,53 +2171,8 @@ impl KagiApp {
     // ADR-0089: File History view
     // ──────────────────────────────────────────────────────────────
 
-    /// Open the File History view for `rel_path` (repo-relative). ADR-0117: this
-    /// builds the `Entity<FileHistoryView>` (in Loading state) and kicks off its
-    /// own async history load (read-only — no `busy_op` gate). The entity owns
-    /// the load + diff logic (it holds `repo_path`); `KagiApp` only constructs it
-    /// and stores the handle. Callers: the inspector / main-diff "History" entry
-    /// points.
-    pub fn open_file_history(
-        &mut self,
-        rel_path: PathBuf,
-        origin: Option<CommitId>,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(repo_path) = self.repo_path.clone() else {
-            return;
-        };
-        klog!("file-history: open {}", rel_path.display());
-
-        let branch = SharedString::from(self.active_view.status_summary.branch.clone());
-        let state = file_history::FileHistoryState {
-            rel_path,
-            branch,
-            follow_renames: true,
-            history: None,
-            error: None,
-            selected: 0,
-            diff: None,
-            diff_scroll: render_helpers::new_diff_list_state(),
-            split: 0.25,
-            generation: 0,
-            diff_req: 0,
-        };
-
-        // The entity holds a weak back-ref (for close / jump-to-commit), a shared
-        // clone of the geom cell (the divider-drag reads it), and `panel_width`.
-        let weak = cx.weak_entity();
-        let geom = self.file_history_geom.clone();
-        let panel_width = self.panel_width;
-        let view = cx
-            .new(|_| file_history::FileHistoryView::new(state, weak, geom, panel_width, repo_path));
-        // Kick off the initial load on the (now fully-constructed) entity.
-        view.update(cx, |v, cx| v.start_load(origin, true, cx));
-        self.file_history = Some(view);
-        // Record the HEAD this history reflects so a later reload only reloads it
-        // in place when HEAD actually moves (see `refresh_overlays_after_reload`).
-        self.file_history_head = self.active_view.head_oid.clone();
-    }
-
+    // `open_file_history` lives in `file_history.rs` (bin glue) since ADR-0121
+    // C3: the pane crate is Git-free, so the app owns the loads there.
     /// Move the file-history entry selection up/down by `delta` (arrow keys),
     /// clamped to the entry list. Drives the `FileHistoryView` entity directly
     /// (ADR-0117) so the row highlight AND the diff pane both update. The entity

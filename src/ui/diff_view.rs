@@ -699,7 +699,7 @@ impl KagiApp {
     /// No-op when no diff is open or already at the list edge.
     pub fn main_diff_step(&mut self, delta: i64, cx: &mut Context<Self>) {
         let source = match self.main_diff.as_ref() {
-            Some(d) => d.source.clone(),
+            Some(pane) => pane.read(cx).view.source.clone(),
             None => return,
         };
         match source {
@@ -736,7 +736,7 @@ impl KagiApp {
                 }
                 let next = (file_index as i64 + delta).clamp(0, len as i64 - 1) as usize;
                 if next != file_index {
-                    self.open_main_diff_compare(next);
+                    self.open_main_diff_compare(next, cx);
                 }
             }
             MainDiffSource::Unstaged { path } => {
@@ -841,31 +841,39 @@ impl KagiApp {
                     file_index,
                 };
                 let images = self.diff_images_for(file_diff, &source, path);
-                self.main_diff = Some(MainDiffView {
-                    title,
-                    stats,
-                    rows,
-                    source,
-                    images,
-                });
+                let pane = self.show_main_diff(
+                    MainDiffView {
+                        title,
+                        stats,
+                        rows,
+                        source,
+                        images,
+                    },
+                    cx,
+                );
 
-                // Spawn the highlight off-thread; store the result for swap-in.
-                cx.spawn(async move |this, acx| {
-                    let (hl_lang, highlights) =
-                        diff_view::highlight_diff_rows_send(&rows_snapshot, &path_for_hl);
-                    let _ = this.update(acx, |app, cx| {
-                        app.pending_diff_highlight =
-                            Some((selected_for_hl, file_index_for_hl, highlights));
-                        eprintln!(
-                            "[kagi] main-diff: highlight ready {} rows={} lang={}",
-                            path_for_hl.display(),
-                            row_count,
-                            hl_lang
-                        );
-                        cx.notify();
-                    });
-                })
-                .detach();
+                // Spawn the highlight for swap-in. ADR-0121 B2: the spawn is
+                // scoped to the pane entity, so a result arriving after the
+                // diff was closed hits a dead weak handle and is dropped
+                // (liveness guard); a result for a stale file is discarded by
+                // `apply_highlights`' source check, as before.
+                pane.update(cx, |_, cx| {
+                    cx.spawn(async move |this, acx| {
+                        let (hl_lang, highlights) =
+                            diff_view::highlight_diff_rows_send(&rows_snapshot, &path_for_hl);
+                        let _ = this.update(acx, |pane, cx| {
+                            pane.apply_highlights(selected_for_hl, file_index_for_hl, highlights);
+                            eprintln!(
+                                "[kagi] main-diff: highlight ready {} rows={} lang={}",
+                                path_for_hl.display(),
+                                row_count,
+                                hl_lang
+                            );
+                            cx.notify();
+                        });
+                    })
+                    .detach();
+                });
             }
             // Headless path (no cx): synchronous highlight (test-only, no UI).
             None => {
@@ -895,12 +903,15 @@ impl KagiApp {
                     view.rows.len(),
                     hl_lang
                 );
-                self.main_diff = Some(view);
+                // No gpui context yet (pre-window headless hook): stage the
+                // view; `render` promotes it into the pane entity on the
+                // first frame (ADR-0121 B2).
+                self.pending_headless_diff = Some(view);
             }
         }
     }
 
-    pub fn open_main_diff_compare(&mut self, file_index: usize) {
+    pub fn open_main_diff_compare(&mut self, file_index: usize, cx: &mut Context<Self>) {
         let _repo_path = match self.repo_path.as_ref() {
             Some(p) => p.clone(),
             None => return,
@@ -978,13 +989,16 @@ impl KagiApp {
                     file_index,
                 };
                 let images = self.diff_images_for(&file_diff, &source, &path);
-                self.main_diff = Some(MainDiffView {
-                    title,
-                    stats,
-                    rows,
-                    source,
-                    images,
-                });
+                self.show_main_diff(
+                    MainDiffView {
+                        title,
+                        stats,
+                        rows,
+                        source,
+                        images,
+                    },
+                    cx,
+                );
             }
             Err(e) => {
                 klog!("compare diff error: {}", e);
@@ -1081,13 +1095,16 @@ impl KagiApp {
                     MainDiffSource::Unstaged { path: path.clone() }
                 };
                 let images = self.diff_images_for(&fd, &source, &path);
-                self.main_diff = Some(MainDiffView {
-                    title,
-                    stats,
-                    rows,
-                    source,
-                    images,
-                });
+                self.show_main_diff(
+                    MainDiffView {
+                        title,
+                        stats,
+                        rows,
+                        source,
+                        images,
+                    },
+                    cx,
+                );
             }
             Err(e) => {
                 klog!("commit-panel diff error: {}", e);
@@ -1105,7 +1122,7 @@ impl KagiApp {
             // round-trip, loaded off-thread.
             self.open_remote_main_diff(file_index, cx);
         } else if self.compare_view.is_some() {
-            self.open_main_diff_compare(file_index);
+            self.open_main_diff_compare(file_index, cx);
         } else {
             self.open_main_diff_commit(file_index, cx);
         }
@@ -1194,32 +1211,6 @@ impl KagiApp {
         }
     }
 
-    /// Apply a pending background highlight result to `main_diff` if it still
-    /// matches the current view (same row/file index). Called from render so
-    /// the swap happens on the next frame after the background task completes.
-    /// Stale results (view changed) are discarded.
-    pub(crate) fn apply_pending_highlights(&mut self) {
-        let Some((row, file, highlights)) = self.pending_diff_highlight.take() else {
-            return;
-        };
-        let Some(view) = self.main_diff.as_mut() else {
-            return;
-        };
-        // Only apply if the view hasn't changed since the highlight was requested.
-        match view.source {
-            MainDiffSource::Commit {
-                row_index,
-                file_index,
-            } if row_index == row && file_index == file => {}
-            _ => return,
-        }
-        for (row_i, row_highlights) in highlights {
-            if let Some(DiffRow::Line { highlights: hl, .. }) = view.rows.get_mut(row_i) {
-                *hl = row_highlights;
-            }
-        }
-    }
-
     /// Open the full-width diff for a clicked file of the selected remote commit,
     /// loading the unified diff over SSH off the UI thread (ADR-0089 Phase 2c).
     fn open_remote_main_diff(&mut self, file_index: usize, cx: &mut Context<Self>) {
@@ -1270,6 +1261,8 @@ impl KagiApp {
     /// No-op when main_diff is None.
     pub fn close_main_diff(&mut self) {
         self.main_diff = None;
+        // ADR-0121 B2: also drop a not-yet-promoted headless staging view.
+        self.pending_headless_diff = None;
     }
 }
 

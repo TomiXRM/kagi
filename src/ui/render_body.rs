@@ -21,14 +21,10 @@ impl KagiApp {
         &mut self,
         row_count: usize,
         selected: Option<usize>,
+        // ADR-0121 B2: only the `has_detail` gate remains here — the Inspector
+        // adapter (`workspace::InspectorItem`) re-derives the full detail +
+        // changed-files/badges inputs from `self` in its render.
         detail: Option<detail_panel::CommitDetail>,
-        changed_files: Option<Option<Vec<FileStatus>>>,
-        changed_diffstat: Option<Vec<FileDiffStat>>,
-        selected_badges: Vec<commit_list::RefBadge>,
-        inspector_tree_view: bool,
-        main_diff: Option<MainDiffView>,
-        compare_view: Option<CompareView>,
-        main_diff_scroll_handle: gpui::ListState,
         // PERF-SIDEBAR-VIRT: the navigator is now virtualized from
         // `self.sidebar.rows` (built in `render`); render_body only needs the
         // row count + scroll handle + filter input for `render_sidebar`.
@@ -37,7 +33,6 @@ impl KagiApp {
         sidebar_filter: Option<Entity<InputState>>,
         is_dirty: bool,
         sidebar_width: f32,
-        panel_width: f32,
         badge_col_w: f32,
         graph_col_w: f32,
         commit_scroll_handle: UniformListScrollHandle,
@@ -50,9 +45,6 @@ impl KagiApp {
         wip_diffstat: Option<WipDiffStat>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        // W11-AVATAR: snapshot the resolved avatar images so the inspector can
-        // swap the initial circle for a real image without re-borrowing self.
-        let avatar_images = self.avatars.images.clone();
         // Build divider 1: sidebar | main.
         let divider1 = div()
             .id("divider-sidebar")
@@ -400,15 +392,6 @@ impl KagiApp {
                 )
             });
 
-        // Active file (for list highlight) derived from the open main diff.
-        let active_src = main_diff.as_ref().map(|d| d.source.clone());
-        let active_commit_file: Option<usize> = match &active_src {
-            Some(MainDiffSource::Commit { file_index, .. }) => Some(*file_index),
-            Some(MainDiffSource::Compare { file_index, .. }) => Some(*file_index),
-            _ => None,
-        };
-        let main_diff_for_center = main_diff;
-
         // ADR-0120: resolve what each slot shows. The precedence lives in
         // `workspace::resolve_workspace` (one pure, unit-tested function), not
         // in branch ordering here — this method only routes on the result.
@@ -419,7 +402,7 @@ impl KagiApp {
             file_history_open: workspace::FileHistoryItem.is_open(self),
             ecosystem_open: workspace::EcosystemItem.is_open(self),
             loading: self.loading_tab.is_some(),
-            diff_open: main_diff_for_center.is_some(),
+            diff_open: workspace::MainDiffItem.is_open(self),
             commit_panel_open,
             commit_panel_present: commit_panel.is_some(),
             inspector_visible: self.inspector_visible,
@@ -459,15 +442,19 @@ impl KagiApp {
         // (`workspace::center_item`); each adapter carries what its old arm
         // did (how it wraps its entity, and its per-pane rationale). The
         // precedence is unchanged — it stays in `resolve_workspace`. The
-        // non-entity contents (Loading placeholder / Diff / CommitList) keep
-        // plain arms until B2 migrates them.
+        // non-entity contents (Loading placeholder / CommitList) keep plain
+        // arms until B2 migrates them.
         body_row = match workspace::center_item(layout.center) {
             Some(item) => match item.render(self, &layout, cx) {
                 Some(el) => body_row.child(el),
-                // Gate raced closed between resolve and render: the Editor
-                // arm's pre-existing fallback is the commit list, the
+                // Gate raced closed between resolve and render: the Editor and
+                // Diff arms' pre-existing fallback is the commit list, the
                 // takeovers' is an empty center.
-                None if layout.center == workspace::CenterPane::Editor => {
+                None if matches!(
+                    layout.center,
+                    workspace::CenterPane::Editor | workspace::CenterPane::Diff
+                ) =>
+                {
                     body_row.child(commit_list_col)
                 }
                 None => body_row,
@@ -477,17 +464,6 @@ impl KagiApp {
                 workspace::CenterPane::Loading => body_row.child(render_loading_placeholder(
                     self.loading_tab.clone().unwrap_or_default(),
                 )),
-                // Full-width diff (T-UI-003). The resolver guarantees the view
-                // is present; fall back to the commit list rather than unwrap.
-                workspace::CenterPane::Diff => match main_diff_for_center {
-                    Some(diff_view) => body_row.child(render_main_diff_view(
-                        diff_view,
-                        main_diff_scroll_handle,
-                        true,
-                        cx,
-                    )),
-                    None => body_row.child(commit_list_col),
-                },
                 _ => body_row.child(commit_list_col),
             },
         };
@@ -509,68 +485,20 @@ impl KagiApp {
                 |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
             );
 
-        match layout.right {
-            // ── Commit Panel mode (T025) ──────────────
-            workspace::RightPane::CommitPanel => {
-                if let Some(entity) = commit_panel.clone() {
-                    // ADR-0118: push the parent-owned render inputs into the entity,
-                    // then embed it as a self-rendering child (`el.child(entity)`).
-                    // `active_wip` mirrors the old `cp_active_wip(this)` (derived from
-                    // the open main diff); the entity may not read the parent's
-                    // `main_diff` from its own render path (re-entrancy).
-                    let active_wip = match &active_src {
-                        Some(MainDiffSource::Unstaged { path }) => Some((false, path.clone())),
-                        Some(MainDiffSource::Staged { path }) => Some((true, path.clone())),
-                        _ => None,
-                    };
-                    let smart = self.smart_commit.clone();
-                    entity.update(cx, |v, _| {
-                        v.active_wip = active_wip;
-                        v.panel_render_width = panel_width;
-                        v.smart_snapshot = smart;
-                    });
-                    body_row = body_row.child(divider2).child(entity);
-                }
-            }
-            // ── Commit Inspector panel (W2-INSPECTOR; W5-MENU toggle) ──
-            workspace::RightPane::Inspector => {
-                body_row = body_row.when_some(detail, |el, d| {
-                    // ── Commit metadata + changed files ─
-                    let at = CommitId(d.full_sha.as_ref().to_string());
-                    let compare_for_panel = compare_view.clone();
-                    let files = compare_for_panel
-                        .as_ref()
-                        .map(|view| Some(view.files.clone()))
-                        .unwrap_or_else(|| changed_files.clone().unwrap_or(None));
-                    // W16-DIFFSTAT: only the commit-vs-parent view has aggregated
-                    // diffstat; compare mode is out of scope for this lane.
-                    let diffstat = if compare_for_panel.is_some() {
-                        None
-                    } else {
-                        changed_diffstat.clone()
-                    };
-                    el.child(divider2).child(inspector::render_inspector(
-                        d,
-                        at,
-                        selected_badges.clone(),
-                        files,
-                        diffstat,
-                        compare_for_panel,
-                        active_commit_file,
-                        inspector_tree_view,
-                        self.inspector_split,
-                        self.inspector_geom.clone(),
-                        panel_width,
-                        &avatar_images,
-                        cx,
-                    ))
-                });
-            }
-            // T-WS-EDITOR-001: rendered inside the Editor entity itself (see
-            // the `CenterPane::Editor` arm above) — no-op here, same as a
-            // FileHistory/Ecosystem takeover's `Hidden`.
-            workspace::RightPane::Hunks => {}
-            workspace::RightPane::Hidden => {}
+        // ADR-0121 B2: the right-slot panes route via "slot → registered item"
+        // (`workspace::right_item`), like the center slot above; each adapter
+        // carries what its old arm did (CommitPanel: push-then-embed the
+        // entity; Inspector: the function-rendered panel). The precedence
+        // (CommitPanel > Inspector) is unchanged — it stays in
+        // `resolve_workspace`. `Hunks` (rendered inside the Editor entity —
+        // see the `CenterPane::Editor` arm above) and `Hidden` have no item,
+        // so no divider and no panel — same as the old no-op arms. A `None`
+        // render (gate raced closed between resolve and render) also renders
+        // nothing, exactly as the old per-field arms did.
+        if let Some(el) =
+            workspace::right_item(layout.right).and_then(|item| item.render(self, &layout, cx))
+        {
+            body_row = body_row.child(divider2).child(el);
         }
 
         body_row

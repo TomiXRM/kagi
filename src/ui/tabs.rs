@@ -348,7 +348,8 @@ impl KagiApp {
         self.selected = None;
         self.diff_caches.clear();
         self.wip_diffstat = None;
-        self.main_diff = None;
+        // ADR-0121 B2: `main_diff` is dropped via the CENTER_ITEMS dispose
+        // loop below (MainDiffItem), like the other registered panes.
         self.clear_plan_modal();
         self.clear_pull_modal();
         self.clear_undo_modal();
@@ -359,15 +360,15 @@ impl KagiApp {
         self.clear_stash_apply_modal();
         self.clear_cherry_pick_modal();
         self.clear_delete_branch_modal();
-        self.commit_panel_open = false;
-        // ADR-0118: dropping the single `commit_panel` entity also drops its
-        // `commit_input` / template inputs / draft state (all entity-owned).
-        self.commit_panel = None;
-        // ADR-0121 B1: registered workspace items (FileHistory / Ecosystem /
-        // EditorWorkspace) drop their own per-repo entities via the dispose
-        // hook — the per-pane rationale lives on each adapter's `dispose` in
-        // `workspace.rs`. A pane registered later can't be forgotten here.
-        for item in workspace::CENTER_ITEMS {
+        // ADR-0121 B1/B2: registered workspace items (FileHistory / Ecosystem /
+        // EditorWorkspace / CommitPanel / Inspector) drop their own per-repo
+        // state via the dispose hook — the per-pane rationale lives on each
+        // adapter's `dispose` in `workspace.rs`. A pane registered later can't
+        // be forgotten here.
+        for item in workspace::CENTER_ITEMS
+            .into_iter()
+            .chain(workspace::RIGHT_ITEMS)
+        {
             item.dispose(self);
         }
         // ADR-0118 / T-ENTITY-CONFLICT-001: the ConflictView entity captures the

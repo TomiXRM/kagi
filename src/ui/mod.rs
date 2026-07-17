@@ -36,6 +36,7 @@ mod graph_solo;
 pub mod graph_view;
 pub mod i18n;
 pub mod inspector;
+pub mod main_diff_pane;
 pub mod menu_overlay;
 mod modal_renderers;
 mod modal_renderers_commit;
@@ -77,6 +78,7 @@ pub mod workspace;
 
 pub use diff_view::*;
 use i18n::Msg;
+pub use main_diff_pane::MainDiffPane;
 pub use modals::*;
 pub use remote_browse::*;
 pub(crate) use render_helpers::with_vertical_scrollbar;
@@ -873,23 +875,17 @@ pub struct KagiApp {
     pub wip_diffstat: Option<WipDiffStat>,
     /// T-UI-003: When `Some`, the main pane shows this diff (full-width) instead
     /// of the commit graph list.  Cleared when `selected` changes or on reload.
-    pub main_diff: Option<MainDiffView>,
-    /// Pending tree-sitter highlight result from a background task (ADR-0109).
-    /// When the off-thread `highlight_diff_rows_send` completes, the result is
-    /// stored here and applied to `main_diff` on the next `apply_pending_highlights`
-    /// call (from render or a notify). `None` = no pending highlight.
-    pub pending_diff_highlight: Option<(
-        usize,
-        usize,
-        Vec<(usize, Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>)>,
-    )>,
+    /// ADR-0121 B2: now a fat entity (`main_diff_pane.rs`) that owns the
+    /// `MainDiffView`, the diff-list `ListState`, and the highlight swap-in.
+    pub main_diff: Option<Entity<MainDiffPane>>,
+    /// Headless-only staging for `KAGI_OPEN_FIRST_FILE` (ADR-0121 B2): the
+    /// hook runs before any gpui context exists, so it can't create the
+    /// `MainDiffPane` entity. `render` promotes this into `main_diff` on the
+    /// first frame. Always `None` in the GUI paths.
+    pub pending_headless_diff: Option<MainDiffView>,
     /// ADR-0026: read-only compare mode shown in the inspector changed-files area.
     /// Cleared on selection change or reload to avoid stale path/diff state.
     pub compare_view: Option<CompareView>,
-    /// T-UI-003 / T-DIFF-WRAP-001: `ListState` (variable-height) for the
-    /// "main-diff-list" — see `render_helpers::render_diff_list` for the item-
-    /// count sync/reset lifecycle.
-    pub main_diff_scroll_handle: gpui::ListState,
     /// Local branch names from the snapshot, ordered by name.
     /// Used to render the sidebar.  The first element of the tuple is the
     /// branch name; the second is whether it is the current HEAD branch.
@@ -1288,9 +1284,8 @@ impl KagiApp {
             diff_caches: diff_cache::DiffCaches::default(),
             wip_diffstat: None,
             main_diff: None,
-            pending_diff_highlight: None,
+            pending_headless_diff: None,
             compare_view: None,
-            main_diff_scroll_handle: render_helpers::new_diff_list_state(),
             active_modal: None,
             remote_browse_modal: None,
             remote_view: None,
@@ -1392,9 +1387,8 @@ impl KagiApp {
             diff_caches: diff_cache::DiffCaches::default(),
             wip_diffstat: None,
             main_diff: None,
-            pending_diff_highlight: None,
+            pending_headless_diff: None,
             compare_view: None,
-            main_diff_scroll_handle: render_helpers::new_diff_list_state(),
             active_modal: None,
             remote_browse_modal: None,
             remote_view: None,
@@ -2259,10 +2253,15 @@ impl KagiApp {
     /// (diff-header "History" button, 导线 #3).  Resolves the repo-relative
     /// path from the open `MainDiffView`'s source.
     pub fn open_file_history_from_main_diff(&mut self, cx: &mut Context<Self>) {
-        let Some(view) = self.main_diff.as_ref() else {
+        // ADR-0121 B2: the view lives inside the pane entity now.
+        let Some(source) = self
+            .main_diff
+            .as_ref()
+            .map(|p| p.read(cx).view.source.clone())
+        else {
             return;
         };
-        let (path, origin) = match &view.source {
+        let (path, origin) = match &source {
             MainDiffSource::Unstaged { path } | MainDiffSource::Staged { path } => {
                 (path.clone(), None)
             }

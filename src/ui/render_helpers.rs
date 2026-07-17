@@ -10,7 +10,6 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::*;
-use gpui_component::button::{Button, ButtonVariants};
 
 // T-SPLIT-HELPERS-001 / ADR-0116 Wave 3: the commit-panel, badge, and file-menu
 // renderers moved to focused sibling modules. Re-export them here so the existing
@@ -503,7 +502,7 @@ pub(crate) fn render_loading_placeholder(label: SharedString) -> impl IntoElemen
 /// T-DIFF-WRAP-001: construct a fresh diff-list [`gpui::ListState`] (item count
 /// 0 — the caller syncs it to the real row count via `render_diff_list`'s
 /// count check, see its doc comment for the lifecycle). Shared by the three
-/// owners (`KagiApp.main_diff_scroll_handle`, `FileHistoryState.diff_scroll`,
+/// owners (`MainDiffPane.scroll`, `FileHistoryState.diff_scroll`,
 /// `EditorWorkspaceView.diff_scroll`) so the overdraw tuning lives in one
 /// place. `px(1000.)` matches gpui-component's own `TextView` (a similarly
 /// line-oriented variable-height list).
@@ -513,7 +512,7 @@ pub(crate) fn new_diff_list_state() -> gpui::ListState {
 
 /// ADR-0117 / T-DIFF-WRAP-001: the diff "list body" (header line + virtualized
 /// rows + scrollbar), parameterized over the entity context `V` so it can be
-/// rendered from `KagiApp` (the standalone main diff), `FileHistoryView` (its
+/// rendered from `MainDiffPane` (the standalone main diff), `FileHistoryView` (its
 /// embedded diff pane), or `EditorWorkspaceView` (the hunks pane). `leading` /
 /// `trailing` are the optional standalone header buttons (Back / History) —
 /// `None` when embedded, which supplies its own Back. Never read an entity
@@ -664,53 +663,10 @@ pub(crate) fn render_diff_list<V: 'static>(
         })
 }
 
-/// Standalone main diff view (KagiApp): the embedded diff list plus the
-/// KagiApp-bound header buttons (← Back / History). The File History view
-/// renders its diff pane via [`render_diff_list`] directly (no buttons).
-pub(crate) fn render_main_diff_view(
-    view: MainDiffView,
-    scroll_handle: gpui::ListState,
-    // Standalone main diff (true) vs reused inside the File History view
-    // (false). When embedded in File History, the header's Back and History
-    // buttons are hidden — the File History view has its own Back.
-    standalone: bool,
-    cx: &mut Context<KagiApp>,
-) -> impl IntoElement {
-    let (leading, trailing): (Option<gpui::AnyElement>, Option<gpui::AnyElement>) = if standalone {
-        // "← Back" click handler: close the main diff view.
-        let back_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
-            this.close_main_diff();
-            cx.notify();
-        });
-        let history_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
-            this.open_file_history_from_main_diff(cx);
-            cx.notify();
-        });
-        (
-            Some(
-                Button::new("main-diff-back")
-                    .label("\u{2190} Back")
-                    .ghost()
-                    .small()
-                    .on_click(back_click)
-                    .into_any_element(),
-            ),
-            Some(
-                Button::new("main-diff-history")
-                    .label("History")
-                    .ghost()
-                    .small()
-                    .flex_shrink_0()
-                    .on_click(history_click)
-                    .into_any_element(),
-            ),
-        )
-    } else {
-        (None, None)
-    };
-
-    render_diff_list::<KagiApp>(view, leading, trailing, scroll_handle, cx)
-}
+// ADR-0121 B2: `render_main_diff_view` (the standalone KagiApp diff wrapper)
+// moved into `main_diff_pane.rs` as `MainDiffPane`'s `Render` impl. The
+// embedded users (File History / Editor Workspace) keep calling
+// [`render_diff_list`] directly, as before.
 
 /// W12-GCADOPT (§2.10): wrap a virtualized list in a relative flex column and
 /// overlay a `gpui_component::scroll::Scrollbar` driven by the list's existing

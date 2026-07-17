@@ -1,4 +1,4 @@
-crates/kagi-domain/src/graph.rs 979
+crates/kagi-domain/src/graph.rs 1015
 crates/kagi-domain/src/message_gen.rs 892
 crates/kagi-domain/src/resolution.rs 905
 crates/kagi-git/src/backend.rs 1025
@@ -28,4 +28,4 @@ src/ui/operations/conflict.rs 824
 src/ui/operations/history.rs 812
 src/ui/sidebar.rs 1610
 src/ui/tabs.rs 1148
-src/ui/theme.rs 1601
+src/ui/theme.rs 1602

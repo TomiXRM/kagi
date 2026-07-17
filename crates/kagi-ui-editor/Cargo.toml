@@ -1,0 +1,16 @@
+# kagi-ui-editor (ADR-0121 Phase C4): the Editor Workspace pane.
+# Depends on kagi-ui-core (theme/i18n/klog/file_tree/divider) and kagi-domain
+# (status/diff types) only — NEVER on the Git backend crate (CI grep gate
+# enforces this). All Git backend reads (file listing, WIP diffs) are
+# app-owned in the bin glue; this crate is seeded with the results.
+[package]
+name = "kagi-ui-editor"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+kagi-domain = { path = "../kagi-domain" }
+kagi-ui-core = { path = "../kagi-ui-core" }
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "b004e595cf5d", features = ["tree-sitter-languages"] }

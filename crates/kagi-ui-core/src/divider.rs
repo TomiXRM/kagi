@@ -1,9 +1,9 @@
-//! Pane-resize divider drag types (T023), moved here from the bin's
-//! `src/ui/types.rs` (ADR-0121 C3) so extracted pane crates can start divider
-//! drags. The drag-move *handling* (mapping cursor → widths) stays on
-//! `KagiApp` in the bin; these are just the shared payload/ghost types.
+//! Pane-divider drag types (T023), moved here from the bin's `ui/types.rs`
+//! (ADR-0121 C4) so feature-pane crates (Editor Workspace) can build divider
+//! elements. The drag-move handler stays in the bin (`render_divider.rs`) —
+//! only the payload/ghost types live here.
 
-use gpui::div;
+use gpui::{div, Context, Window};
 
 /// Which divider is being dragged.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -50,11 +50,7 @@ pub struct DividerDrag {
 /// `Render`-able entity as the drag ghost, so we use this zero-size placeholder.
 pub struct DividerGhost;
 impl gpui::Render for DividerGhost {
-    fn render(
-        &mut self,
-        _: &mut gpui::Window,
-        _: &mut gpui::Context<Self>,
-    ) -> impl gpui::IntoElement {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
         div()
     }
 }

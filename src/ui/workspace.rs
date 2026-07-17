@@ -42,7 +42,7 @@
 
 use gpui::{div, px, AnyElement, Context, IntoElement, ParentElement, Styled};
 
-use super::{commit_list, inspector, CommitId, KagiApp, MainDiffSource};
+use super::{commit_list, inspector, CommitId, CompareView, KagiApp, MainDiffSource};
 
 /// Which layout slot a [`WorkspaceItem`] occupies when active (ADR-0121 B1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -318,6 +318,60 @@ impl WorkspaceItem for CommitPanelItem {
     }
 }
 
+/// Shared body of the Inspector / Compare right-slot items: derive the
+/// selected commit's detail + badges + active-file highlight and render
+/// `inspector::render_inspector` with the given files / diffstat / compare
+/// inputs. Exactly the old single Inspector arm, parameterized on the three
+/// inputs that differed between its normal and compare modes.
+fn render_inspector_body(
+    app: &mut KagiApp,
+    files: Option<Vec<super::FileStatus>>,
+    diffstat: Option<Vec<kagi_git::FileDiffStat>>,
+    compare: Option<CompareView>,
+    cx: &mut Context<KagiApp>,
+) -> Option<AnyElement> {
+    // ── Commit metadata ─
+    let selected = app.selected;
+    let d = selected
+        .and_then(|i| app.active_view.details.get(i))
+        .cloned()?;
+    let at = CommitId(d.full_sha.as_ref().to_string());
+    let selected_badges: Vec<commit_list::RefBadge> = selected
+        .and_then(|i| app.active_view.rows.get(i))
+        .map(|r| r.badges.clone())
+        .unwrap_or_default();
+    // Active file (for list highlight) derived from the open main diff.
+    let active_commit_file: Option<usize> = match app
+        .main_diff
+        .as_ref()
+        .map(|d| d.read(cx).view.source.clone())
+    {
+        Some(MainDiffSource::Commit { file_index, .. }) => Some(file_index),
+        Some(MainDiffSource::Compare { file_index, .. }) => Some(file_index),
+        _ => None,
+    };
+    Some(
+        inspector::render_inspector(
+            d,
+            at,
+            selected_badges,
+            files,
+            diffstat,
+            compare,
+            active_commit_file,
+            app.inspector_tree_view,
+            app.inspector_split,
+            app.inspector_geom.clone(),
+            app.panel_width,
+            // W11-AVATAR: resolved avatar images so the inspector can swap
+            // the initial circle for a real image.
+            &app.avatars.images,
+            cx,
+        )
+        .into_any_element(),
+    )
+}
+
 /// Commit Inspector panel (W2-INSPECTOR) — bridges the `inspector_visible`
 /// toggle + the selection-derived detail. Still function-rendered
 /// (`inspector::render_inspector`); this adapter is the thin bridge —
@@ -340,66 +394,15 @@ impl WorkspaceItem for InspectorItem {
         _layout: &WorkspaceLayout,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        // ── Commit metadata + changed files ─
+        // Changed files + diffstat for the selected commit (vs parent). A cache
+        // miss or an unavailable diff both collapse to `None` ("(diff
+        // unavailable)"), as the old `Option<Option<..>>` plumbing did.
         let selected = app.selected;
-        let d = selected
-            .and_then(|i| app.active_view.details.get(i))
-            .cloned()?;
-        let at = CommitId(d.full_sha.as_ref().to_string());
-        let selected_badges: Vec<commit_list::RefBadge> = selected
-            .and_then(|i| app.active_view.rows.get(i))
-            .map(|r| r.badges.clone())
-            .unwrap_or_default();
-        // `None` outer = no selection; `Some(None)` = diff unavailable.
-        let changed_files: Option<Option<Vec<super::FileStatus>>> = selected.map(|i| {
-            app.diff_caches
-                .changed_files
-                .get(&i)
-                .cloned()
-                .unwrap_or(None)
-        });
-        let compare_for_panel = app.compare_view.clone();
-        let files = compare_for_panel
-            .as_ref()
-            .map(|view| Some(view.files.clone()))
-            .unwrap_or_else(|| changed_files.unwrap_or(None));
-        // W16-DIFFSTAT: only the commit-vs-parent view has aggregated
-        // diffstat; compare mode is out of scope for this lane.
-        let diffstat = if compare_for_panel.is_some() {
-            None
-        } else {
-            selected.and_then(|i| app.diff_caches.diffstat.get(&i).cloned())
-        };
-        // Active file (for list highlight) derived from the open main diff.
-        let active_commit_file: Option<usize> = match app
-            .main_diff
-            .as_ref()
-            .map(|d| d.read(cx).view.source.clone())
-        {
-            Some(MainDiffSource::Commit { file_index, .. }) => Some(file_index),
-            Some(MainDiffSource::Compare { file_index, .. }) => Some(file_index),
-            _ => None,
-        };
-        Some(
-            inspector::render_inspector(
-                d,
-                at,
-                selected_badges,
-                files,
-                diffstat,
-                compare_for_panel,
-                active_commit_file,
-                app.inspector_tree_view,
-                app.inspector_split,
-                app.inspector_geom.clone(),
-                app.panel_width,
-                // W11-AVATAR: resolved avatar images so the inspector can swap
-                // the initial circle for a real image.
-                &app.avatars.images,
-                cx,
-            )
-            .into_any_element(),
-        )
+        let files: Option<Vec<super::FileStatus>> = selected
+            .and_then(|i| app.diff_caches.changed_files.get(&i).cloned())
+            .flatten();
+        let diffstat = selected.and_then(|i| app.diff_caches.diffstat.get(&i).cloned());
+        render_inspector_body(app, files, diffstat, None, cx)
     }
     // The inspector has no per-repo entity: `inspector_visible` is a global
     // View-menu toggle and the detail derives from `selected` (cleared in
@@ -407,10 +410,44 @@ impl WorkspaceItem for InspectorItem {
     fn dispose(&self, _app: &mut KagiApp) {}
 }
 
+/// Compare mode (ADR-0026 / ADR-0121 B2) — bridges `KagiApp.compare_view`
+/// (now `Option<Entity<ComparePane>>`, see `compare_pane.rs`). Draws the same
+/// Inspector body with the compare inputs (banner + compare file list, no
+/// per-file diffstat — W16-DIFFSTAT keeps compare out of scope), so it stays
+/// function-rendered like `InspectorItem`; the entity owns the state.
+pub struct CompareItem;
+
+impl WorkspaceItem for CompareItem {
+    fn slot(&self) -> Slot {
+        Slot::Right
+    }
+    fn right(&self) -> Option<RightPane> {
+        Some(RightPane::Compare)
+    }
+    fn is_open(&self, app: &KagiApp) -> bool {
+        app.compare_view.is_some()
+    }
+    fn render(
+        &self,
+        app: &mut KagiApp,
+        _layout: &WorkspaceLayout,
+        cx: &mut Context<KagiApp>,
+    ) -> Option<AnyElement> {
+        let view = app.compare_view.as_ref()?.read(cx).view.clone();
+        render_inspector_body(app, Some(view.files.clone()), None, Some(view), cx)
+    }
+    // Per-repo: the compared base/files belong to the previous repo; drop the
+    // entity on repo/tab switch like the other registered panes.
+    fn dispose(&self, app: &mut KagiApp) {
+        app.compare_view = None;
+        app.pending_headless_compare = None;
+    }
+}
+
 /// The registered right-slot panes (ADR-0121 B2). Order documents the
-/// precedence (CommitPanel > Inspector), but the precedence itself stays in
-/// `resolve_workspace`.
-pub const RIGHT_ITEMS: [&dyn WorkspaceItem; 2] = [&CommitPanelItem, &InspectorItem];
+/// precedence (CommitPanel > Compare > Inspector), but the precedence itself
+/// stays in `resolve_workspace`.
+pub const RIGHT_ITEMS: [&dyn WorkspaceItem; 3] = [&CommitPanelItem, &CompareItem, &InspectorItem];
 
 /// Slot → registered item resolution: the item registered for a resolved
 /// right variant, if any (Hunks / Hidden have none).
@@ -456,6 +493,9 @@ pub enum CenterPane {
 pub enum RightPane {
     /// Staging + commit message panel (T025 / ADR-0118).
     CommitPanel,
+    /// Compare mode: Inspector body with the compare banner + compare file
+    /// list (ADR-0026 / ADR-0121 B2). Shares the Inspector's visibility gates.
+    Compare,
     /// Commit Inspector (W2-INSPECTOR).
     Inspector,
     /// The selected file's WIP hunks (Editor mode, T-WS-EDITOR-001).
@@ -490,6 +530,8 @@ pub struct WorkspaceInputs {
     pub commit_panel_open: bool,
     /// `commit_panel.is_some()` (the entity exists).
     pub commit_panel_present: bool,
+    /// `compare_view.is_some()` (ADR-0026 compare mode; ADR-0121 B2).
+    pub compare_open: bool,
     /// `inspector_visible` (View → Toggle Commit Details).
     pub inspector_visible: bool,
     /// A commit detail was resolved for the current selection.
@@ -507,9 +549,11 @@ pub struct WorkspaceInputs {
 ///
 /// - center: FileHistory > Ecosystem > Loading > Editor > Diff > CommitList
 /// - right:  hidden under a takeover; else Hunks (Editor mode) > CommitPanel
-///   (when open AND the entity exists) > Inspector (when visible AND a detail
-///   resolved) > Hidden. `commit_panel_open` without an entity hides the panel
-///   *without* falling back to the Inspector (pre-existing behavior, kept).
+///   (when open AND the entity exists) > Compare/Inspector (when visible AND a
+///   detail resolved; Compare replaces the Inspector body while a compare is
+///   open — same gates, ADR-0121 B2) > Hidden. `commit_panel_open` without an
+///   entity hides the panel *without* falling back to the Inspector
+///   (pre-existing behavior, kept).
 /// - left:   FileTree (Editor mode) or Navigator, unless toggled off
 ///   (independent of the center mode — takeovers replace center+right only).
 pub fn resolve_workspace(i: &WorkspaceInputs) -> WorkspaceLayout {
@@ -550,7 +594,14 @@ pub fn resolve_workspace(i: &WorkspaceInputs) -> WorkspaceLayout {
             RightPane::Hidden
         }
     } else if i.inspector_visible && i.has_detail {
-        RightPane::Inspector
+        // ADR-0121 B2: an open compare replaces the Inspector body. Same
+        // visibility gates — before the split the single Inspector arm
+        // rendered the compare inputs itself.
+        if i.compare_open {
+            RightPane::Compare
+        } else {
+            RightPane::Inspector
+        }
     } else {
         RightPane::Hidden
     };
@@ -761,6 +812,53 @@ mod tests {
             ..base()
         };
         assert_eq!(resolve_workspace(&i).right, RightPane::Hunks);
+    }
+
+    // ── ADR-0121 B2: Compare precedence ──────────────────────
+
+    #[test]
+    fn compare_replaces_inspector_with_same_gates() {
+        // Compare wins over the plain Inspector...
+        let i = WorkspaceInputs {
+            compare_open: true,
+            ..base()
+        };
+        assert_eq!(resolve_workspace(&i).right, RightPane::Compare);
+        // ...but only under the Inspector's own gates: hidden when the
+        // inspector is toggled off or no detail resolved (pre-split behavior —
+        // the compare rendered inside the Inspector arm).
+        let i = WorkspaceInputs {
+            inspector_visible: false,
+            ..i
+        };
+        assert_eq!(resolve_workspace(&i).right, RightPane::Hidden);
+        let i = WorkspaceInputs {
+            inspector_visible: true,
+            has_detail: false,
+            ..i
+        };
+        assert_eq!(resolve_workspace(&i).right, RightPane::Hidden);
+    }
+
+    #[test]
+    fn commit_panel_beats_compare() {
+        let i = WorkspaceInputs {
+            compare_open: true,
+            commit_panel_open: true,
+            commit_panel_present: true,
+            ..base()
+        };
+        assert_eq!(resolve_workspace(&i).right, RightPane::CommitPanel);
+    }
+
+    #[test]
+    fn takeover_hides_compare() {
+        let i = WorkspaceInputs {
+            compare_open: true,
+            ecosystem_open: true,
+            ..base()
+        };
+        assert_eq!(resolve_workspace(&i).right, RightPane::Hidden);
     }
 
     #[test]

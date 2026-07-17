@@ -727,7 +727,8 @@ impl KagiApp {
                 target,
                 file_index,
             } => {
-                let len = match self.compare_view.as_ref() {
+                // ADR-0121 B2: the view lives inside the ComparePane entity now.
+                let len = match self.compare_view.as_ref().map(|p| &p.read(cx).view) {
                     Some(view) if view.base == base && view.target == target => view.files.len(),
                     _ => 0,
                 };
@@ -916,8 +917,9 @@ impl KagiApp {
             Some(p) => p.clone(),
             None => return,
         };
+        // ADR-0121 B2: the view lives inside the ComparePane entity now.
         let view = match self.compare_view.as_ref() {
-            Some(v) => v.clone(),
+            Some(p) => p.read(cx).view.clone(),
             None => return,
         };
         let file_status = match view.files.get(file_index) {

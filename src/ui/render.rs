@@ -127,6 +127,11 @@ impl Render for KagiApp {
             let weak = cx.weak_entity();
             self.main_diff = Some(cx.new(|_| MainDiffPane::new(view, weak)));
         }
+        // Same promotion for a headless-staged compare (KAGI_COMPARE_HEAD /
+        // KAGI_COMPARE_WT run before any gpui context exists).
+        if let Some(view) = self.pending_headless_compare.take() {
+            self.show_compare(view, cx);
+        }
 
         // Remember the live window size (persisted on quit → restored next
         // launch). Only plain Windowed: a maximized/fullscreen size would

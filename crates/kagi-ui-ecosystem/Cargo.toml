@@ -1,0 +1,15 @@
+# kagi-ui-ecosystem (ADR-0121 Phase C2): the Code Ecosystem / Analyze pane.
+# Depends on kagi-ui-core (theme/i18n/klog) and kagi-domain (hotspot analysis)
+# only — NEVER on the Git backend crate (CI grep gate enforces this). The mine
+# itself is app-owned in the bin; this crate is seeded with `RawEcosystem` data.
+[package]
+name = "kagi-ui-ecosystem"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+kagi-domain = { path = "../kagi-domain" }
+kagi-ui-core = { path = "../kagi-ui-core" }
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "b004e595cf5d", features = ["tree-sitter-languages"] }

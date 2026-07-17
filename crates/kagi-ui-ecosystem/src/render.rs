@@ -391,7 +391,7 @@ pub(super) fn stat(text: &str) -> gpui::Div {
 /// help overlay and the loading screen.
 fn help_section_list() -> gpui::Div {
     let mut col = div().flex().flex_col().gap_3();
-    for (heading, body) in crate::ui::i18n::eco_help_sections() {
+    for (heading, body) in kagi_ui_core::i18n::eco_help_sections() {
         col = col.child(
             div()
                 .flex()

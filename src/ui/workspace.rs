@@ -42,7 +42,7 @@
 
 use gpui::{div, px, AnyElement, Context, IntoElement, ParentElement, Styled};
 
-use super::KagiApp;
+use super::{commit_list, inspector, CommitId, KagiApp, MainDiffSource};
 
 /// Which layout slot a [`WorkspaceItem`] occupies when active (ADR-0121 B1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,9 +52,6 @@ pub enum Slot {
     /// The center pane only.
     Center,
     /// The right panel.
-    // ADR-0121 B1: the variant lands with the trait so the slot vocabulary is
-    // complete; the first Right-slot item (CommitPanel/Inspector) arrives in B2.
-    #[allow(dead_code)]
     Right,
 }
 
@@ -64,8 +61,16 @@ pub enum Slot {
 pub trait WorkspaceItem {
     /// Which slot this item occupies when active.
     fn slot(&self) -> Slot;
-    /// The resolved center variant this item is registered for.
-    fn center(&self) -> CenterPane;
+    /// The resolved center variant this item is registered for (center-slot
+    /// items only).
+    fn center(&self) -> Option<CenterPane> {
+        None
+    }
+    /// The resolved right variant this item is registered for (right-slot
+    /// items only; ADR-0121 B2).
+    fn right(&self) -> Option<RightPane> {
+        None
+    }
     /// Liveness gate: is this pane active right now? Feeds
     /// [`WorkspaceInputs`]; the precedence between live items stays in
     /// [`resolve_workspace`].
@@ -90,8 +95,8 @@ impl WorkspaceItem for FileHistoryItem {
     fn slot(&self) -> Slot {
         Slot::CenterTakeover
     }
-    fn center(&self) -> CenterPane {
-        CenterPane::FileHistory
+    fn center(&self) -> Option<CenterPane> {
+        Some(CenterPane::FileHistory)
     }
     fn is_open(&self, app: &KagiApp) -> bool {
         app.file_history.is_some()
@@ -122,8 +127,8 @@ impl WorkspaceItem for EcosystemItem {
     fn slot(&self) -> Slot {
         Slot::CenterTakeover
     }
-    fn center(&self) -> CenterPane {
-        CenterPane::Ecosystem
+    fn center(&self) -> Option<CenterPane> {
+        Some(CenterPane::Ecosystem)
     }
     fn is_open(&self, app: &KagiApp) -> bool {
         app.ecosystem.is_some()
@@ -161,8 +166,8 @@ impl WorkspaceItem for EditorWorkspaceItem {
     fn slot(&self) -> Slot {
         Slot::Center
     }
-    fn center(&self) -> CenterPane {
-        CenterPane::Editor
+    fn center(&self) -> Option<CenterPane> {
+        Some(CenterPane::Editor)
     }
     fn is_open(&self, app: &KagiApp) -> bool {
         app.editor_workspace.is_some()
@@ -221,7 +226,153 @@ pub fn center_item(center: CenterPane) -> Option<&'static dyn WorkspaceItem> {
     CENTER_ITEMS
         .iter()
         .copied()
-        .find(|it| it.center() == center)
+        .find(|it| it.center() == Some(center))
+}
+
+/// Staging + commit message panel (T025 / ADR-0118) — bridges
+/// `KagiApp.commit_panel` (+ its `commit_panel_open` visibility gate).
+pub struct CommitPanelItem;
+
+impl WorkspaceItem for CommitPanelItem {
+    fn slot(&self) -> Slot {
+        Slot::Right
+    }
+    fn right(&self) -> Option<RightPane> {
+        Some(RightPane::CommitPanel)
+    }
+    fn is_open(&self, app: &KagiApp) -> bool {
+        app.commit_panel_open && app.commit_panel.is_some()
+    }
+    // ADR-0118: push the parent-owned render inputs into the entity, then
+    // embed it as a self-rendering child. `active_wip` mirrors the old
+    // `cp_active_wip(this)` (derived from the open main diff); the entity may
+    // not read the parent's `main_diff` from its own render path (re-entrancy).
+    fn render(
+        &self,
+        app: &mut KagiApp,
+        _layout: &WorkspaceLayout,
+        cx: &mut Context<KagiApp>,
+    ) -> Option<AnyElement> {
+        let entity = app.commit_panel.clone()?;
+        let active_wip = match app.main_diff.as_ref().map(|d| &d.source) {
+            Some(MainDiffSource::Unstaged { path }) => Some((false, path.clone())),
+            Some(MainDiffSource::Staged { path }) => Some((true, path.clone())),
+            _ => None,
+        };
+        let smart = app.smart_commit.clone();
+        let panel_width = app.panel_width;
+        entity.update(cx, |v, _| {
+            v.active_wip = active_wip;
+            v.panel_render_width = panel_width;
+            v.smart_snapshot = smart;
+        });
+        Some(entity.into_any_element())
+    }
+    fn dispose(&self, app: &mut KagiApp) {
+        app.commit_panel_open = false;
+        // ADR-0118: dropping the single `commit_panel` entity also drops its
+        // `commit_input` / template inputs / draft state (all entity-owned).
+        app.commit_panel = None;
+    }
+}
+
+/// Commit Inspector panel (W2-INSPECTOR) — bridges the `inspector_visible`
+/// toggle + the selection-derived detail. Still function-rendered
+/// (`inspector::render_inspector`); this adapter is the thin bridge —
+/// Entity-conversion is out of ADR-0121 B2's scope.
+pub struct InspectorItem;
+
+impl WorkspaceItem for InspectorItem {
+    fn slot(&self) -> Slot {
+        Slot::Right
+    }
+    fn right(&self) -> Option<RightPane> {
+        Some(RightPane::Inspector)
+    }
+    fn is_open(&self, app: &KagiApp) -> bool {
+        app.inspector_visible
+    }
+    fn render(
+        &self,
+        app: &mut KagiApp,
+        _layout: &WorkspaceLayout,
+        cx: &mut Context<KagiApp>,
+    ) -> Option<AnyElement> {
+        // ── Commit metadata + changed files ─
+        let selected = app.selected;
+        let d = selected
+            .and_then(|i| app.active_view.details.get(i))
+            .cloned()?;
+        let at = CommitId(d.full_sha.as_ref().to_string());
+        let selected_badges: Vec<commit_list::RefBadge> = selected
+            .and_then(|i| app.active_view.rows.get(i))
+            .map(|r| r.badges.clone())
+            .unwrap_or_default();
+        // `None` outer = no selection; `Some(None)` = diff unavailable.
+        let changed_files: Option<Option<Vec<super::FileStatus>>> = selected.map(|i| {
+            app.diff_caches
+                .changed_files
+                .get(&i)
+                .cloned()
+                .unwrap_or(None)
+        });
+        let compare_for_panel = app.compare_view.clone();
+        let files = compare_for_panel
+            .as_ref()
+            .map(|view| Some(view.files.clone()))
+            .unwrap_or_else(|| changed_files.unwrap_or(None));
+        // W16-DIFFSTAT: only the commit-vs-parent view has aggregated
+        // diffstat; compare mode is out of scope for this lane.
+        let diffstat = if compare_for_panel.is_some() {
+            None
+        } else {
+            selected.and_then(|i| app.diff_caches.diffstat.get(&i).cloned())
+        };
+        // Active file (for list highlight) derived from the open main diff.
+        let active_commit_file: Option<usize> = match app.main_diff.as_ref().map(|d| &d.source) {
+            Some(MainDiffSource::Commit { file_index, .. }) => Some(*file_index),
+            Some(MainDiffSource::Compare { file_index, .. }) => Some(*file_index),
+            _ => None,
+        };
+        Some(
+            inspector::render_inspector(
+                d,
+                at,
+                selected_badges,
+                files,
+                diffstat,
+                compare_for_panel,
+                active_commit_file,
+                app.inspector_tree_view,
+                app.inspector_split,
+                app.inspector_geom.clone(),
+                app.panel_width,
+                // W11-AVATAR: resolved avatar images so the inspector can swap
+                // the initial circle for a real image.
+                &app.avatars.images,
+                cx,
+            )
+            .into_any_element(),
+        )
+    }
+    // The inspector has no per-repo entity: `inspector_visible` is a global
+    // View-menu toggle and the detail derives from `selected` (cleared in
+    // `reset_per_repo_ui` itself).
+    fn dispose(&self, _app: &mut KagiApp) {}
+}
+
+/// The registered right-slot panes (ADR-0121 B2). Order documents the
+/// precedence (CommitPanel > Inspector), but the precedence itself stays in
+/// `resolve_workspace`.
+pub const RIGHT_ITEMS: [&dyn WorkspaceItem; 2] = [&CommitPanelItem, &InspectorItem];
+
+/// Slot → registered item resolution: the item registered for a resolved
+/// right variant, if any (Hunks / Hidden have none).
+pub fn right_item(right: RightPane) -> Option<&'static dyn WorkspaceItem> {
+    RIGHT_ITEMS
+        .iter()
+        .copied()
+        .find(|it| it.right() == Some(right))
 }
 
 /// What the left pane shows.

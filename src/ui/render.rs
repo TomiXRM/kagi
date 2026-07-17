@@ -294,29 +294,13 @@ impl Render for KagiApp {
         let detail = selected
             .and_then(|i| self.active_view.details.get(i))
             .cloned();
-        // Clone cached changed-files list for the render closure.
-        // `None` outer = no selection; `Some(None)` = diff unavailable; `Some(Some(v))` = files.
-        let changed_files: Option<Option<Vec<FileStatus>>> = selected.map(|i| {
-            self.diff_caches
-                .changed_files
-                .get(&i)
-                .cloned()
-                .unwrap_or(None)
-        });
-        // W16-DIFFSTAT: per-file additions/deletions for the selected commit.
-        let changed_diffstat: Option<Vec<FileDiffStat>> =
-            selected.and_then(|i| self.diff_caches.diffstat.get(&i).cloned());
+        // ADR-0121 B2: the changed-files / diffstat / badges / compare inputs
+        // for the Inspector are re-derived by `workspace::InspectorItem` in
+        // its render — render_body no longer takes them.
         let wip_diffstat = self.wip_diffstat;
-        // W2-INSPECTOR: badges for the selected commit row and tree-view toggle state.
-        let selected_badges: Vec<commit_list::RefBadge> = selected
-            .and_then(|i| self.active_view.rows.get(i))
-            .map(|r| r.badges.clone())
-            .unwrap_or_default();
-        let inspector_tree_view = self.inspector_tree_view;
 
         // T-UI-003: Clone main diff state if present.
         let main_diff = self.main_diff.clone();
-        let compare_view = self.compare_view.clone();
         let main_diff_scroll_handle = self.main_diff_scroll_handle.clone();
 
         // Clone modal state for render.
@@ -472,7 +456,6 @@ impl Render for KagiApp {
 
         // T023: pane widths for divider rendering.
         let sidebar_width = self.sidebar.width;
-        let panel_width = self.panel_width;
         // T030: inner column widths for the commit list.
         let badge_col_w = self.badge_col_w;
         let graph_col_w = self.graph_col_w;
@@ -683,19 +666,13 @@ impl Render for KagiApp {
                     row_count,
                     selected,
                     detail,
-                    changed_files,
-                    changed_diffstat,
-                    selected_badges,
-                    inspector_tree_view,
                     main_diff,
-                    compare_view,
                     main_diff_scroll_handle,
                     sidebar_row_count,
                     sidebar_scroll_handle,
                     sidebar_filter,
                     is_dirty,
                     sidebar_width,
-                    panel_width,
                     badge_col_w,
                     graph_col_w,
                     commit_scroll_handle,

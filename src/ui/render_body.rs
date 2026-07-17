@@ -405,6 +405,7 @@ impl KagiApp {
             diff_open: workspace::MainDiffItem.is_open(self),
             commit_panel_open,
             commit_panel_present: commit_panel.is_some(),
+            compare_open: workspace::CompareItem.is_open(self),
             inspector_visible: self.inspector_visible,
             has_detail: detail.is_some(),
             editor_mode: workspace::EditorWorkspaceItem.is_open(self),

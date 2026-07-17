@@ -302,8 +302,6 @@ impl Render for KagiApp {
         // its render — render_body no longer takes them.
         let wip_diffstat = self.wip_diffstat;
 
-        // T-UI-003: Clone main diff pane entity if present (ADR-0121 B2).
-        let main_diff = self.main_diff.clone();
         // ADR-0121 B2 (merge): both clones gone — the scroll handle lives in
         // MainDiffPane, and the Inspector re-derives compare inputs itself.
 
@@ -670,7 +668,6 @@ impl Render for KagiApp {
                     row_count,
                     selected,
                     detail,
-                    main_diff,
                     sidebar_row_count,
                     sidebar_scroll_handle,
                     sidebar_filter,

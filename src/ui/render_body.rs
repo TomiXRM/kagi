@@ -25,9 +25,6 @@ impl KagiApp {
         // adapter (`workspace::InspectorItem`) re-derives the full detail +
         // changed-files/badges inputs from `self` in its render.
         detail: Option<detail_panel::CommitDetail>,
-        // ADR-0121 B2 (merge): inspector inputs re-derived by InspectorItem;
-        // the main diff is a self-rendering pane entity with its own ListState.
-        main_diff: Option<Entity<MainDiffPane>>,
         // PERF-SIDEBAR-VIRT: the navigator is now virtualized from
         // `self.sidebar.rows` (built in `render`); render_body only needs the
         // row count + scroll handle + filter input for `render_sidebar`.
@@ -394,8 +391,6 @@ impl KagiApp {
                     true,
                 )
             });
-
-        let main_diff_for_center = main_diff;
 
         // ADR-0120: resolve what each slot shows. The precedence lives in
         // `workspace::resolve_workspace` (one pure, unit-tested function), not

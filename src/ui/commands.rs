@@ -723,8 +723,8 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
     let busy = app.busy_op.is_some();
     // A commit row is currently selected.
     let has_selection = app.selected.is_some();
-    // The main (full-width) diff is currently open.
-    let diff_open = app.main_diff.is_some();
+    // The main diff is open (ADR-0121 B2: a staged headless diff counts too).
+    let diff_open = app.main_diff.is_some() || app.pending_headless_diff.is_some();
 
     match id {
         // ── Always available ────────────────────────────────────────────

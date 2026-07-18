@@ -1,5 +1,7 @@
+// klog! (the `[kagi]` contract macro) moved to kagi-ui-core in ADR-0121 C1;
+// #[macro_use] keeps it available unqualified crate-wide, as before.
 #[macro_use]
-mod klog;
+extern crate kagi_ui_core;
 mod headless;
 mod single_instance;
 mod ui;

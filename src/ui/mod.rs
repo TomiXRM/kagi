@@ -16,6 +16,7 @@ pub mod commands;
 pub mod commit_list;
 pub mod commit_panel;
 mod commit_panel_render;
+pub mod compare_pane;
 pub mod conflict_editor;
 pub mod conflict_view;
 pub mod context_menu;
@@ -29,13 +30,13 @@ pub mod editor_markdown;
 pub mod editor_tree_menu;
 pub mod editor_workspace;
 pub mod file_history;
-mod file_history_render;
 mod file_menu;
 pub mod file_tree;
 mod graph_solo;
 pub mod graph_view;
 pub mod i18n;
 pub mod inspector;
+pub mod main_diff_pane;
 pub mod menu_overlay;
 mod modal_renderers;
 mod modal_renderers_commit;
@@ -75,8 +76,10 @@ pub mod view_models;
 pub mod watcher;
 pub mod workspace;
 
+pub use compare_pane::ComparePane;
 pub use diff_view::*;
 use i18n::Msg;
+pub use main_diff_pane::MainDiffPane;
 pub use modals::*;
 pub use remote_browse::*;
 pub(crate) use render_helpers::with_vertical_scrollbar;
@@ -191,12 +194,9 @@ fn validate_merge_from_drag(
     Err(format!("Branch '{}' is not a branch.", source))
 }
 
-/// Bundled UI sans family (OFL Inter), loaded at startup via `add_fonts`, so the
-/// UI looks identical on every OS instead of relying on the platform default.
-pub const UI_FONT: &str = "Inter";
-/// Bundled monospace family (OFL JetBrains Mono) for the terminal / conflict
-/// editor / code — replaces the macOS-only "Menlo" fallback.
-pub const MONO_FONT: &str = "JetBrains Mono";
+// UI_FONT / MONO_FONT moved to kagi-ui-core::theme (ADR-0121 C1); re-exported
+// here so `super::UI_FONT` call sites keep working.
+pub use kagi_ui_core::theme::{MONO_FONT, UI_FONT};
 
 /// Live window size in whole px (w, h), updated each frame while the window
 /// is plain `Windowed` (maximized/fullscreen sizes are not remembered), and
@@ -873,23 +873,24 @@ pub struct KagiApp {
     pub wip_diffstat: Option<WipDiffStat>,
     /// T-UI-003: When `Some`, the main pane shows this diff (full-width) instead
     /// of the commit graph list.  Cleared when `selected` changes or on reload.
-    pub main_diff: Option<MainDiffView>,
-    /// Pending tree-sitter highlight result from a background task (ADR-0109).
-    /// When the off-thread `highlight_diff_rows_send` completes, the result is
-    /// stored here and applied to `main_diff` on the next `apply_pending_highlights`
-    /// call (from render or a notify). `None` = no pending highlight.
-    pub pending_diff_highlight: Option<(
-        usize,
-        usize,
-        Vec<(usize, Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>)>,
-    )>,
+    /// ADR-0121 B2: now a fat entity (`main_diff_pane.rs`) that owns the
+    /// `MainDiffView`, the diff-list `ListState`, and the highlight swap-in.
+    pub main_diff: Option<Entity<MainDiffPane>>,
+    /// Headless-only staging for `KAGI_OPEN_FIRST_FILE` (ADR-0121 B2): the
+    /// hook runs before any gpui context exists, so it can't create the
+    /// `MainDiffPane` entity. `render` promotes this into `main_diff` on the
+    /// first frame. Always `None` in the GUI paths.
+    pub pending_headless_diff: Option<MainDiffView>,
     /// ADR-0026: read-only compare mode shown in the inspector changed-files area.
     /// Cleared on selection change or reload to avoid stale path/diff state.
-    pub compare_view: Option<CompareView>,
-    /// T-UI-003 / T-DIFF-WRAP-001: `ListState` (variable-height) for the
-    /// "main-diff-list" — see `render_helpers::render_diff_list` for the item-
-    /// count sync/reset lifecycle.
-    pub main_diff_scroll_handle: gpui::ListState,
+    /// ADR-0121 B2: now an entity (`compare_pane.rs`) that owns the
+    /// `CompareView`, registered as `workspace::CompareItem`.
+    pub compare_view: Option<Entity<ComparePane>>,
+    /// Headless-only staging for `KAGI_COMPARE_HEAD` / `KAGI_COMPARE_WT`
+    /// (ADR-0121 B2): the hook runs before any gpui context exists, so it
+    /// can't create the `ComparePane` entity. `render` promotes this into
+    /// `compare_view` on the first frame. Always `None` in the GUI paths.
+    pub pending_headless_compare: Option<CompareView>,
     /// Local branch names from the snapshot, ordered by name.
     /// Used to render the sidebar.  The first element of the tuple is the
     /// branch name; the second is whether it is the current HEAD branch.
@@ -1288,9 +1289,9 @@ impl KagiApp {
             diff_caches: diff_cache::DiffCaches::default(),
             wip_diffstat: None,
             main_diff: None,
-            pending_diff_highlight: None,
+            pending_headless_diff: None,
             compare_view: None,
-            main_diff_scroll_handle: render_helpers::new_diff_list_state(),
+            pending_headless_compare: None,
             active_modal: None,
             remote_browse_modal: None,
             remote_view: None,
@@ -1392,9 +1393,9 @@ impl KagiApp {
             diff_caches: diff_cache::DiffCaches::default(),
             wip_diffstat: None,
             main_diff: None,
-            pending_diff_highlight: None,
+            pending_headless_diff: None,
             compare_view: None,
-            main_diff_scroll_handle: render_helpers::new_diff_list_state(),
+            pending_headless_compare: None,
             active_modal: None,
             remote_browse_modal: None,
             remote_view: None,
@@ -2170,53 +2171,8 @@ impl KagiApp {
     // ADR-0089: File History view
     // ──────────────────────────────────────────────────────────────
 
-    /// Open the File History view for `rel_path` (repo-relative). ADR-0117: this
-    /// builds the `Entity<FileHistoryView>` (in Loading state) and kicks off its
-    /// own async history load (read-only — no `busy_op` gate). The entity owns
-    /// the load + diff logic (it holds `repo_path`); `KagiApp` only constructs it
-    /// and stores the handle. Callers: the inspector / main-diff "History" entry
-    /// points.
-    pub fn open_file_history(
-        &mut self,
-        rel_path: PathBuf,
-        origin: Option<CommitId>,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(repo_path) = self.repo_path.clone() else {
-            return;
-        };
-        klog!("file-history: open {}", rel_path.display());
-
-        let branch = SharedString::from(self.active_view.status_summary.branch.clone());
-        let state = file_history::FileHistoryState {
-            rel_path,
-            branch,
-            follow_renames: true,
-            history: None,
-            error: None,
-            selected: 0,
-            diff: None,
-            diff_scroll: render_helpers::new_diff_list_state(),
-            split: 0.25,
-            generation: 0,
-            diff_req: 0,
-        };
-
-        // The entity holds a weak back-ref (for close / jump-to-commit), a shared
-        // clone of the geom cell (the divider-drag reads it), and `panel_width`.
-        let weak = cx.weak_entity();
-        let geom = self.file_history_geom.clone();
-        let panel_width = self.panel_width;
-        let view = cx
-            .new(|_| file_history::FileHistoryView::new(state, weak, geom, panel_width, repo_path));
-        // Kick off the initial load on the (now fully-constructed) entity.
-        view.update(cx, |v, cx| v.start_load(origin, true, cx));
-        self.file_history = Some(view);
-        // Record the HEAD this history reflects so a later reload only reloads it
-        // in place when HEAD actually moves (see `refresh_overlays_after_reload`).
-        self.file_history_head = self.active_view.head_oid.clone();
-    }
-
+    // `open_file_history` lives in `file_history.rs` (bin glue) since ADR-0121
+    // C3: the pane crate is Git-free, so the app owns the loads there.
     /// Move the file-history entry selection up/down by `delta` (arrow keys),
     /// clamped to the entry list. Drives the `FileHistoryView` entity directly
     /// (ADR-0117) so the row highlight AND the diff pane both update. The entity
@@ -2232,9 +2188,15 @@ impl KagiApp {
     /// (导线 #2).  Resolves the path the same way `open_main_diff_commit` /
     /// `open_main_diff_compare` does (commit diff cache or compare view).
     pub fn open_file_history_inspector_file(&mut self, file_index: usize, cx: &mut Context<Self>) {
-        if let Some(view) = self.compare_view.as_ref() {
-            if let Some(f) = view.files.get(file_index) {
-                let path = f.path.clone();
+        if let Some(pane) = self.compare_view.as_ref() {
+            // ADR-0121 B2: the view lives inside the ComparePane entity now.
+            let path = pane
+                .read(cx)
+                .view
+                .files
+                .get(file_index)
+                .map(|f| f.path.clone());
+            if let Some(path) = path {
                 self.open_file_history(path, None, cx);
             }
             return;
@@ -2259,10 +2221,15 @@ impl KagiApp {
     /// (diff-header "History" button, 导线 #3).  Resolves the repo-relative
     /// path from the open `MainDiffView`'s source.
     pub fn open_file_history_from_main_diff(&mut self, cx: &mut Context<Self>) {
-        let Some(view) = self.main_diff.as_ref() else {
+        // ADR-0121 B2: the view lives inside the pane entity now.
+        let Some(source) = self
+            .main_diff
+            .as_ref()
+            .map(|p| p.read(cx).view.source.clone())
+        else {
             return;
         };
-        let (path, origin) = match &view.source {
+        let (path, origin) = match &source {
             MainDiffSource::Unstaged { path } | MainDiffSource::Staged { path } => {
                 (path.clone(), None)
             }
@@ -2284,11 +2251,12 @@ impl KagiApp {
                 }
             }
             MainDiffSource::Compare { file_index, .. } => {
+                // ADR-0121 B2: the view lives inside the ComparePane entity now.
                 let path = self
                     .compare_view
                     .as_ref()
-                    .and_then(|v| v.files.get(*file_index))
-                    .map(|f| f.path.clone());
+                    .and_then(|p| p.read(cx).view.files.get(*file_index).cloned())
+                    .map(|f| f.path);
                 match path {
                     Some(p) => (p, None),
                     None => return,
@@ -2465,6 +2433,8 @@ impl KagiApp {
 
     pub fn close_compare_view(&mut self) {
         self.compare_view = None;
+        // ADR-0121 B2: also drop a not-yet-promoted headless staging view.
+        self.pending_headless_compare = None;
         self.main_diff = None;
     }
 
@@ -2487,7 +2457,11 @@ impl KagiApp {
         }
     }
 
-    pub fn open_compare_with_head(&mut self, target: CommitId) {
+    /// ADR-0121 B2: `cx` is `None` only on the headless path (pre-window, no
+    /// gpui context) — the built view is then staged in
+    /// `pending_headless_compare` and promoted by `render` on the first frame,
+    /// mirroring `set_commit_main_diff`.
+    pub fn open_compare_with_head(&mut self, target: CommitId, cx: Option<&mut Context<Self>>) {
         let row_index = match self.row_for_commit_id(&target) {
             Some(ix) => ix,
             None => return,
@@ -2518,12 +2492,16 @@ impl KagiApp {
                     files.len()
                 );
                 self.main_diff = None;
-                self.compare_view = Some(CompareView {
+                let view = CompareView {
                     base: target,
                     target: CompareTarget::Head,
                     files,
                     title,
-                });
+                };
+                match cx {
+                    Some(cx) => self.show_compare(view, cx),
+                    None => self.pending_headless_compare = Some(view),
+                }
             }
             Err(e) => {
                 klog!("compare: error: {}", e);
@@ -2533,7 +2511,12 @@ impl KagiApp {
         }
     }
 
-    pub fn open_compare_with_working_tree(&mut self, target: CommitId) {
+    /// ADR-0121 B2: `cx` — see [`Self::open_compare_with_head`].
+    pub fn open_compare_with_working_tree(
+        &mut self,
+        target: CommitId,
+        cx: Option<&mut Context<Self>>,
+    ) {
         let row_index = match self.row_for_commit_id(&target) {
             Some(ix) => ix,
             None => return,
@@ -2576,12 +2559,16 @@ impl KagiApp {
                     files.len()
                 );
                 self.main_diff = None;
-                self.compare_view = Some(CompareView {
+                let view = CompareView {
                     base: target,
                     target: CompareTarget::WorkingTree,
                     files,
                     title,
-                });
+                };
+                match cx {
+                    Some(cx) => self.show_compare(view, cx),
+                    None => self.pending_headless_compare = Some(view),
+                }
             }
             Err(e) => {
                 klog!("compare: error: {}", e);
@@ -2593,14 +2580,16 @@ impl KagiApp {
 
     pub fn open_compare_with_head_row(&mut self, row_index: usize) {
         match self.commit_id_for_row(row_index) {
-            Some(target) => self.open_compare_with_head(target),
+            // Headless-only entry point (KAGI_COMPARE_HEAD) — no cx yet.
+            Some(target) => self.open_compare_with_head(target, None),
             None => klog!("compare: row={} out of range", row_index),
         }
     }
 
     pub fn open_compare_with_working_tree_row(&mut self, row_index: usize) {
         match self.commit_id_for_row(row_index) {
-            Some(target) => self.open_compare_with_working_tree(target),
+            // Headless-only entry point (KAGI_COMPARE_WT) — no cx yet.
+            Some(target) => self.open_compare_with_working_tree(target, None),
             None => klog!("compare: row={} out of range", row_index),
         }
     }

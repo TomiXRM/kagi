@@ -47,11 +47,45 @@ jobs:
           # requires them to be emitted only through the klog! macro. Forbid raw
           # `eprintln!("[kagi]` / `println!("[kagi]` anywhere but the macro itself.
           if grep -rnE '(eprintln|println)!\("\[kagi\]' --include='*.rs' . \
-               | grep -v 'src/klog.rs'; then
+               | grep -v 'crates/kagi-ui-core/src/klog.rs'; then
             echo "::error::[kagi] contract lines must go through klog! (ADR-0096), not raw eprintln!/println!."
             exit 1
           fi
           echo "OK: every [kagi] line routes through klog!."
+
+  # ── BLOCKING: kagi-ui-core layering (ADR-0121 Phase C, same shape as ADR-0078) ──
+  invariant-ui-core-layering:
+    name: invariant — kagi-ui-core is git-free; no lateral ui-crate imports
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert kagi-ui-* crates never touch git2 / kagi-git
+        shell: bash
+        run: |
+          # Dependency direction (ADR-0121): kagi(bin) → kagi-ui-* → kagi-ui-core
+          # → kagi-domain. No kagi-ui-* crate may reach git2 or kagi-git.
+          if grep -rnE 'git2|kagi_git|kagi-git' crates/kagi-ui-*/; then
+            echo "::error::kagi-ui-* crates must not depend on git2 or kagi-git (ADR-0121)."
+            exit 1
+          fi
+          echo "OK: kagi-ui-* crates have zero git2/kagi-git usage."
+      - name: Assert no lateral imports between kagi-ui-* feature crates
+        shell: bash
+        run: |
+          # Feature crates may depend on kagi-ui-core and kagi-domain only —
+          # never on a sibling kagi-ui-<feature> crate (ADR-0121). kagi-ui-core
+          # is the shared base, so it is the one allowed kagi_ui_* import.
+          fail=0
+          for d in crates/kagi-ui-*/; do
+            hyphen=$(basename "$d")
+            name=$(echo "$hyphen" | tr '-' '_')
+            if grep -rnE 'kagi_ui_[a-z_]+|kagi-ui-[a-z-]+' "$d" \
+                 | grep -vE "kagi_ui_core|kagi-ui-core|${name}|${hyphen}"; then
+              echo "::error::${d} imports a sibling kagi-ui-* crate — feature crates may only depend on kagi-ui-core (ADR-0121)."
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] && echo "OK: no lateral kagi-ui-* imports."
 
   # ── BLOCKING: full test suite on macOS (the validated dev platform) ──────────
   test-macos:

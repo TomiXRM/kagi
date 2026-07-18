@@ -113,9 +113,10 @@ impl KagiApp {
                 message: String::new(),
             })
             .collect();
+        // Same layout mode as the main graph (`build_commit_rows`, ADR-0122).
         let graph = kagi_domain::graph::layout_with(
             &sub_commits,
-            kagi_domain::graph::GraphLayoutMode::Compact,
+            kagi_domain::graph::GraphLayoutMode::Stable,
         );
 
         let mut rows = Vec::with_capacity(keep.len());

@@ -354,10 +354,11 @@ fn appearance_section(
         .on_click(toggle)
         .into_any_element();
 
-    // ── Lane-compaction (swimlane) toggle ──
-    // Flips the gitk-stable vs Gitru swimlane-compaction layout mode. The lane
-    // assignment is computed in `build_commit_rows`, so the change only takes
-    // effect after a rebuild — `reload()` re-snapshots and rebuilds the rows.
+    // ── Swimlane-visuals toggle ──
+    // Flips the swimlane visuals (avatar commit nodes, lane tint band, lane
+    // padding). The lane *layout* is always `Stable` (ADR-0122) and does not
+    // depend on this flag; `reload()` re-snapshots so rebuilt rows pick the
+    // visual change up immediately.
     let lane_compact = theme::graph_lane_compact();
     let app_lc = app.clone();
     let toggle_lane = move |checked: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {

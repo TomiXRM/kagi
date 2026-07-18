@@ -116,10 +116,11 @@ impl Settings {
         self.get_str("graph_compact").map(|s| s.trim() == "true")
     }
 
-    /// Lane-compaction flag (`"graph_lane_compact"`, `"true"`/`"false"`). When
-    /// `true` the commit graph uses Gitru-style swimlane compaction
-    /// (`GraphLayoutMode::Compact`); otherwise the gitk-stable layout. `None`
-    /// when unset so the caller defaults to Stable.
+    /// Swimlane-visuals flag (`"graph_lane_compact"`, `"true"`/`"false"`).
+    /// When `true` the commit graph draws swimlane visuals (avatar nodes,
+    /// lane tint band, lane padding). The lane *layout* itself is always
+    /// `GraphLayoutMode::Stable` (ADR-0122) and is not affected by this key.
+    /// `None` when unset so the caller defaults to off.
     pub fn graph_lane_compact(&self) -> Option<bool> {
         self.get_str("graph_lane_compact")
             .map(|s| s.trim() == "true")

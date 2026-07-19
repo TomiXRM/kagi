@@ -161,3 +161,101 @@ fn validate_worktree_path_rejects_repo_inside_and_accepts_japanese_path() {
             .join("作業ツリー")
     );
 }
+
+// ────────────────────────────────────────────────────────────
+// unlock-worktree triple
+// ────────────────────────────────────────────────────────────
+
+/// Add a linked worktree named `name` on a fresh branch and return its path.
+fn add_worktree(repo_dir: &Path, name: &str) -> std::path::PathBuf {
+    let wt_path = repo_dir.join(name);
+    git(
+        repo_dir,
+        &["worktree", "add", "-b", name, wt_path.to_str().unwrap()],
+    );
+    wt_path
+}
+
+#[test]
+fn unlock_plan_surfaces_lock_reason_and_execute_unlocks() {
+    let tmp = TempDir::new().expect("tempdir");
+    let repo = build_repo(&tmp);
+    let d = tmp.path();
+    let wt_path = add_worktree(d, "wt-locked");
+    git(
+        d,
+        &[
+            "worktree",
+            "lock",
+            "--reason",
+            "agent still running",
+            wt_path.to_str().unwrap(),
+        ],
+    );
+
+    let plan = kagi_git::ops::plan_unlock_worktree(&repo, "wt-locked").expect("plan");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+    assert!(!plan.destructive);
+    assert!(
+        plan.warnings
+            .iter()
+            .any(|w| w.contains("Locked with reason") && w.contains("agent still running")),
+        "warning must show the recorded reason: {:?}",
+        plan.warnings
+    );
+
+    kagi_git::ops::execute_unlock_worktree(&repo, &plan, "wt-locked").expect("execute");
+    let wt = repo.find_worktree("wt-locked").expect("worktree");
+    assert!(matches!(
+        wt.is_locked(),
+        Ok(git2::WorktreeLockStatus::Unlocked)
+    ));
+}
+
+#[test]
+fn unlock_plan_without_reason_notes_none_recorded() {
+    let tmp = TempDir::new().expect("tempdir");
+    let repo = build_repo(&tmp);
+    let d = tmp.path();
+    let wt_path = add_worktree(d, "wt-locked-bare");
+    git(d, &["worktree", "lock", wt_path.to_str().unwrap()]);
+
+    let plan = kagi_git::ops::plan_unlock_worktree(&repo, "wt-locked-bare").expect("plan");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+    assert!(
+        plan.warnings
+            .iter()
+            .any(|w| w.contains("(no reason recorded)")),
+        "warning must note the missing reason: {:?}",
+        plan.warnings
+    );
+}
+
+#[test]
+fn unlock_unlocked_worktree_is_blocked() {
+    let tmp = TempDir::new().expect("tempdir");
+    let repo = build_repo(&tmp);
+    add_worktree(tmp.path(), "wt-free");
+
+    let plan = kagi_git::ops::plan_unlock_worktree(&repo, "wt-free").expect("plan");
+    assert!(
+        plan.blockers.iter().any(|b| b.contains("already unlocked")),
+        "unlocked worktree must be a blocker: {:?}",
+        plan.blockers
+    );
+    // Execute (simulating a stale confirm) must refuse too.
+    assert!(kagi_git::ops::execute_unlock_worktree(&repo, &plan, "wt-free").is_err());
+}
+
+#[test]
+fn unlock_missing_worktree_is_blocked() {
+    let tmp = TempDir::new().expect("tempdir");
+    let repo = build_repo(&tmp);
+
+    let plan = kagi_git::ops::plan_unlock_worktree(&repo, "no-such").expect("plan");
+    assert!(
+        plan.blockers.iter().any(|b| b.contains("does not exist")),
+        "missing worktree must be a blocker: {:?}",
+        plan.blockers
+    );
+}

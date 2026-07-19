@@ -1357,6 +1357,11 @@ impl KagiApp {
         self.finish_op_on_main(cx, task, move |app, result, cx| match result {
             Ok(after) => {
                 klog!("async: delete-branch finished");
+                // Worktree-removal plans (clean worktree pinned the branch)
+                // log the cleanup so the headless harness can assert it.
+                if plan.warnings.iter().any(|w| w.contains("worktree")) {
+                    klog!("executed: delete-branch removed pinning worktree");
+                }
                 let recovery_line = plan
                     .recovery
                     .lines()

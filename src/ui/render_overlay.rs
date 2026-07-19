@@ -336,6 +336,7 @@ impl KagiApp {
         switch_to_latest_modal: Option<SwitchToLatestPlanModal>,
         create_branch_modal: Option<CreateBranchModal>,
         create_worktree_modal: Option<CreateWorktreeModal>,
+        unlock_worktree_modal: Option<UnlockWorktreeModal>,
         remote_browse_modal: Option<RemoteBrowseModal>,
         stash_push_modal: Option<StashPushModal>,
         stash_apply_modal: Option<StashApplyModal>,
@@ -385,6 +386,10 @@ impl KagiApp {
         // ── Stash drop modal overlay (ADR-0087) ─────────
         .when_some(stash_drop_modal, |el, modal| {
             el.child(render_stash_drop_modal(modal, cx))
+        })
+        // ── Unlock-worktree confirmation ─────────────────
+        .when_some(unlock_worktree_modal, |el, modal| {
+            el.child(render_unlock_worktree_modal(modal, cx))
         })
         // ── Push plan modal overlay (T-HT-004) ──────────
         .when_some(push_modal, |el, modal| {

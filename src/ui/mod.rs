@@ -79,6 +79,7 @@ pub mod types;
 pub mod view_models;
 pub mod watcher;
 pub mod workspace;
+pub mod worktree_menu;
 
 pub use compare_pane::ComparePane;
 pub use diff_view::*;
@@ -1106,6 +1107,7 @@ pub struct KagiApp {
     /// Branch sidebar context menu state (right-click anchor + target branch).
     pub branch_menu: Option<BranchMenuState>,
     pub stash_menu: Option<stash_menu::StashMenuState>,
+    pub worktree_menu: Option<worktree_menu::WorktreeMenuState>,
     /// Unstaged file-row context menu (right-click): (unstaged index, anchor).
     /// Offers Discard for eligible (tracked, non-conflicted) rows.
     pub file_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
@@ -1364,6 +1366,7 @@ impl KagiApp {
             commit_menu: None,
             branch_menu: None,
             stash_menu: None,
+            worktree_menu: None,
             file_menu: None,
             // W5-MENU
             inspector_visible: true,
@@ -1473,6 +1476,7 @@ impl KagiApp {
             commit_menu: None,
             branch_menu: None,
             stash_menu: None,
+            worktree_menu: None,
             file_menu: None,
             // W5-MENU
             inspector_visible: true,
@@ -2866,6 +2870,8 @@ impl KagiApp {
             self.confirm_stash_apply(cx);
         } else if self.stash_push_modal().is_some() {
             self.confirm_stash_push(cx);
+        } else if self.unlock_worktree_modal().is_some() {
+            self.confirm_unlock_worktree(cx);
         } else if self.create_worktree_modal().is_some() {
             self.start_create_worktree(cx);
         } else if self.create_branch_modal().is_some() {
@@ -2940,6 +2946,8 @@ impl KagiApp {
             self.cancel_stash_apply_modal();
         } else if self.stash_push_modal().is_some() {
             self.cancel_stash_push_modal();
+        } else if self.unlock_worktree_modal().is_some() {
+            self.cancel_unlock_worktree_modal();
         } else if self.create_worktree_modal().is_some() {
             self.cancel_create_worktree_modal();
         } else if self.create_branch_modal().is_some() {

@@ -733,6 +733,18 @@ impl Backend {
         ops::execute_open_worktree_for_branch(&self.repo, branch, path)
     }
 
+    pub fn plan_unlock_worktree(&self, name: &str) -> Result<OperationPlan, GitError> {
+        ops::plan_unlock_worktree(&self.repo, name)
+    }
+
+    pub fn execute_unlock_worktree(
+        &self,
+        plan: &OperationPlan,
+        name: &str,
+    ) -> Result<(), GitError> {
+        ops::execute_unlock_worktree(&self.repo, plan, name)
+    }
+
     pub fn plan_stash_push(
         &mut self,
         message: Option<&str>,

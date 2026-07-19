@@ -439,3 +439,88 @@ fn test_delete_branch_with_duplicated_gh_config_keys() {
         "branch.merged.* config entries must be removed"
     );
 }
+
+// ────────────────────────────────────────────────────────────
+// Worktree-checkout handling (user report: agent worktrees pin
+// their branch and git's raw refusal was opaque)
+// ────────────────────────────────────────────────────────────
+
+/// A CLEAN linked worktree pinning the branch: the plan carries a warning
+/// (remove-then-delete), and execute removes the worktree and the branch.
+#[test]
+fn clean_worktree_is_removed_then_branch_deleted() {
+    let repo = setup_repo();
+    let wt_path = repo.path.join("wt-merged");
+    git(
+        &repo.path,
+        &["worktree", "add", wt_path.to_str().unwrap(), "merged"],
+    );
+
+    let r = git2::Repository::open(&repo.path).unwrap();
+    let plan = plan_delete_branch(&r, "merged").unwrap();
+    assert!(
+        plan.blockers.is_empty(),
+        "clean worktree must not block: {:?}",
+        plan.blockers
+    );
+    assert!(
+        plan.warnings.iter().any(|w| w.contains("worktree")),
+        "plan must warn about the worktree removal: {:?}",
+        plan.warnings
+    );
+
+    execute_delete_branch(&r, &plan, "merged").unwrap();
+    assert!(!wt_path.exists(), "worktree dir must be removed");
+    assert!(
+        r.find_branch("merged", git2::BranchType::Local).is_err(),
+        "branch must be deleted"
+    );
+}
+
+/// A DIRTY linked worktree blocks the plan with a readable message and
+/// execute refuses (no data loss).
+#[test]
+fn dirty_worktree_blocks_delete() {
+    let repo = setup_repo();
+    let wt_path = repo.path.join("wt-merged");
+    git(
+        &repo.path,
+        &["worktree", "add", wt_path.to_str().unwrap(), "merged"],
+    );
+    write_file(&wt_path, "wip.txt", "uncommitted");
+
+    let r = git2::Repository::open(&repo.path).unwrap();
+    let plan = plan_delete_branch(&r, "merged").unwrap();
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|b| b.contains("uncommitted") && b.contains("worktree")),
+        "dirty worktree must block with a readable message: {:?}",
+        plan.blockers
+    );
+    // Execute (simulating a stale confirm) must refuse, not destroy work.
+    assert!(execute_delete_branch(&r, &plan, "merged").is_err());
+    assert!(wt_path.join("wip.txt").exists(), "work must be untouched");
+}
+
+/// A LOCKED worktree blocks with an unlock hint.
+#[test]
+fn locked_worktree_blocks_delete() {
+    let repo = setup_repo();
+    let wt_path = repo.path.join("wt-merged");
+    git(
+        &repo.path,
+        &["worktree", "add", wt_path.to_str().unwrap(), "merged"],
+    );
+    git(&repo.path, &["worktree", "lock", wt_path.to_str().unwrap()]);
+
+    let r = git2::Repository::open(&repo.path).unwrap();
+    let plan = plan_delete_branch(&r, "merged").unwrap();
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|b| b.contains("LOCKED") && b.contains("Unlock worktree")),
+        "locked worktree must block and point at the sidebar unlock flow: {:?}",
+        plan.blockers
+    );
+}

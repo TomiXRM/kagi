@@ -452,6 +452,8 @@ pub enum SidebarRow {
         name: String,
         path_label: String,
         is_current: bool,
+        is_main: bool,
+        locked: bool,
     },
     /// A stash leaf.
     Stash { index: usize, message: String },
@@ -736,6 +738,8 @@ pub fn build_sidebar_rows(
                     name: wt.name.clone(),
                     path_label: wt.path.display().to_string(),
                     is_current: wt.is_current,
+                    is_main: wt.is_main,
+                    locked: wt.locked,
                 });
             }
         }
@@ -817,7 +821,9 @@ fn build_sidebar_row(
             name,
             path_label,
             is_current,
-        } => build_worktree_row(name, path_label, *is_current),
+            is_main,
+            locked,
+        } => build_worktree_row(name, path_label, *is_current, *is_main, *locked, cx),
         SidebarRow::Stash { index, message } => build_stash_row(*index, message, cx),
     }
 }
@@ -1199,7 +1205,14 @@ fn build_tag_row(
 }
 
 /// A worktree leaf (read-only; ✓ marks the current worktree).
-fn build_worktree_row(name: &str, path_label: &str, is_current: bool) -> gpui::AnyElement {
+fn build_worktree_row(
+    name: &str,
+    path_label: &str,
+    is_current: bool,
+    is_main: bool,
+    locked: bool,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let label = if is_current {
         SharedString::from(format!("\u{2713} {}  {}", name, path_label))
     } else {
@@ -1211,7 +1224,7 @@ fn build_worktree_row(name: &str, path_label: &str, is_current: bool) -> gpui::A
     } else {
         theme().text_sub
     };
-    div()
+    let mut row = div()
         .id(SharedString::from(format!("sidebar-worktree-{}", name)))
         .h(theme::scaled_px(SIDEBAR_ROW_H))
         .flex()
@@ -1222,8 +1235,32 @@ fn build_worktree_row(name: &str, path_label: &str, is_current: bool) -> gpui::A
         .text_color(rgb(text_color))
         .overflow_hidden()
         .tooltip(name_tooltip(full_name))
-        .child(div().flex_1().truncate().child(label))
-        .into_any()
+        .child(div().flex_1().truncate().child(label));
+    if locked {
+        row = row.child(
+            div()
+                .flex_shrink_0()
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .child("locked"),
+        );
+    }
+    // Right-click menu (Unlock worktree…) — linked worktrees only; the main
+    // worktree is never lockable/unlockable from kagi.
+    if !is_main {
+        let name_for_menu = name.to_string();
+        let menu_handler = cx.listener(
+            move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
+                this.open_worktree_menu(name_for_menu.clone(), locked, event.position);
+                cx.stop_propagation();
+                cx.notify();
+            },
+        );
+        row = row
+            .on_mouse_down(gpui::MouseButton::Right, menu_handler)
+            .hover(|style| style.bg(rgb(theme().surface)));
+    }
+    row.into_any()
 }
 
 /// A stash leaf — left-click **pops** (apply + remove); right-click opens a

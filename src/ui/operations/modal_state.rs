@@ -14,6 +14,7 @@ use super::super::modals::{
     HistoryPlanModal, MergePlanModal, PopPlanModal, PullPlanModal, PushPlanModal,
     RenameBranchModal, RevertModal, SetUpstreamModal, StashApplyModal, StashDropModal,
     StashPushModal, SwitchToLatestPlanModal, TrackingCheckoutPlanModal, UndoPlanModal,
+    UnlockWorktreeModal,
 };
 use super::super::KagiApp;
 use gpui::{AppContext as _, Context, Window};
@@ -132,6 +133,30 @@ impl KagiApp {
     pub fn clear_stash_drop_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::StashDrop(_))) {
             self.active_modal = None;
+        }
+    }
+    #[inline]
+    pub fn unlock_worktree_modal(&self) -> Option<&UnlockWorktreeModal> {
+        match &self.active_modal {
+            Some(ActiveModal::UnlockWorktree(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn set_unlock_worktree_modal(&mut self, m: UnlockWorktreeModal) {
+        self.active_modal = Some(ActiveModal::UnlockWorktree(m));
+    }
+    #[inline]
+    pub fn clear_unlock_worktree_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::UnlockWorktree(_))) {
+            self.active_modal = None;
+        }
+    }
+    #[inline]
+    pub fn unlock_worktree_modal_mut(&mut self) -> Option<&mut UnlockWorktreeModal> {
+        match &mut self.active_modal {
+            Some(ActiveModal::UnlockWorktree(m)) => Some(m),
+            _ => None,
         }
     }
     #[inline]

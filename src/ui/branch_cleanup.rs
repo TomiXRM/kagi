@@ -562,7 +562,7 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
             )
             .child(div().truncate().child(full_name));
 
-        // Where: plain muted text, no chips (user request: no badge noise).
+        // Where: plain text, no chips (user request: no badge noise).
         let where_text = match (row.local_tip.is_some(), row.remote_tip.is_some()) {
             (true, true) => "local, origin",
             (true, false) => "local",
@@ -574,7 +574,7 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
             .flex_shrink_0()
             .overflow_hidden()
             .text_xs()
-            .text_color(rgb(theme().text_muted))
+            .text_color(rgb(theme().text_main))
             .child(SharedString::from(where_text));
 
         // Merged-at cell.
@@ -583,13 +583,13 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
             .flex_shrink_0()
             .overflow_hidden()
             .text_xs()
-            .text_color(rgb(theme().text_muted))
+            .text_color(rgb(theme().text_main))
             .child(SharedString::from(
                 row.merged_at.map(format_date).unwrap_or_else(|| "—".into()),
             ));
 
         // Status: one plain colored label, no chips (user request). Stale is
-        // appended muted; the grown detail lives in the tooltip.
+        // appended in the warning color; the grown detail lives in the tooltip.
         let (status_text, status_color) = match &row.status {
             MergedBranchStatus::FullyMerged => (
                 Msg::CleanupBadgeMerged.t().to_string(),
@@ -633,7 +633,7 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
         if row.stale {
             status_cell = status_cell.child(
                 div()
-                    .text_color(rgb(theme().text_muted))
+                    .text_color(rgb(theme().color_warning))
                     .child(SharedString::from(Msg::CleanupBadgeStale.t())),
             );
         }

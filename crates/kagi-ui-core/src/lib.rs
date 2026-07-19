@@ -13,4 +13,5 @@ pub mod file_tree;
 pub mod i18n;
 pub mod settings;
 pub mod theme;
+pub mod theme_apple;
 pub mod time;

@@ -857,8 +857,12 @@ impl KagiApp {
                 .ml(theme::scaled_px(4.))
                 .on_click(close);
 
+            // Accent bar colour: worktree lane colour (every worktree tab), else
+            // the blue accent on the active main-repo tab; `None` → no bar.
+            let accent = wt_color.or_else(|| is_active.then(|| rgb(theme().color_branch).into()));
             let tab_el = div()
                 .id(("repo-tab", i))
+                .relative()
                 .flex()
                 .flex_row()
                 .items_center()
@@ -877,12 +881,12 @@ impl KagiApp {
                 .text_color(rgb(fg))
                 .border_r_1()
                 .border_color(rgb(theme().panel))
-                // Top accent: the worktree's lane colour (always), or the normal
-                // blue accent for an active main-repo tab.
-                .when(is_active && !is_wt, |el| {
-                    el.border_t_2().border_color(rgb(theme().color_branch))
+                // Top accent as an ABSOLUTE overlay bar (not `border_t_2`): no
+                // layout shift on selection, and an even full-width line with no
+                // corner miter against `border_r_1` (cf. `render_helpers.rs`).
+                .when_some(accent, |el, c| {
+                    el.child(div().absolute().top_0().left_0().right_0().h(px(2.)).bg(c))
                 })
-                .when_some(wt_color, |el, c| el.border_t_2().border_color(c))
                 .cursor(gpui::CursorStyle::PointingHand)
                 .tooltip({
                     let full = full_path.clone();

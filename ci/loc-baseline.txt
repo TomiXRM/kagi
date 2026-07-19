@@ -27,5 +27,5 @@ src/ui/operations/commit.rs 1247
 src/ui/operations/conflict.rs 824
 src/ui/operations/history.rs 812
 src/ui/sidebar.rs 1610
-src/ui/tabs.rs 1142
+src/ui/tabs.rs 1146
 src/ui/workspace.rs 876

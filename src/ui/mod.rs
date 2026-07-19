@@ -147,7 +147,13 @@ actions!(
 /// drop *target*, not a source) and `Tag` chips are NOT draggable → `None`.
 fn draggable_branch_name(badge: &commit_list::RefBadge) -> Option<String> {
     match badge.kind {
-        BadgeKind::Branch | BadgeKind::Remote => Some(badge.label.to_string()),
+        // The label may carry the worktree marker ("🌲 name"); the drag
+        // payload must be the plain ref name or the merge validator rejects
+        // it as "not a branch" (user report: badges of worktree-checked-out
+        // branches could not be drag-merged, with no visible feedback).
+        BadgeKind::Branch | BadgeKind::Remote => {
+            Some(badge.label.trim_start_matches("🌲 ").to_string())
+        }
         BadgeKind::HeadBranch | BadgeKind::Tag => None,
     }
 }
@@ -156,7 +162,10 @@ fn draggable_branch_name(badge: &commit_list::RefBadge) -> Option<String> {
 fn context_branch_name(badge: &commit_list::RefBadge) -> Option<String> {
     match badge.kind {
         BadgeKind::HeadBranch => Some(badge.label.trim_end_matches(" ✓").trim_end().to_string()),
-        BadgeKind::Branch | BadgeKind::Remote => Some(badge.label.to_string()),
+        // Strip the worktree marker (see draggable_branch_name).
+        BadgeKind::Branch | BadgeKind::Remote => {
+            Some(badge.label.trim_start_matches("🌲 ").to_string())
+        }
         BadgeKind::Tag => None,
     }
 }
@@ -3739,6 +3748,15 @@ mod draggable_branch_name_tests {
     fn head_and_tag_badges_are_not_draggable() {
         // HeadBranch is the drop *target* (and its label carries the "✓"
         // indicator), never a drag source. Tags are not merge sources here.
+        assert_eq!(
+            draggable_branch_name(&badge(BadgeKind::Branch, "🌲 feat-wt")),
+            Some("feat-wt".to_string()),
+            "worktree marker must not leak into the drag payload"
+        );
+        assert_eq!(
+            context_branch_name(&badge(BadgeKind::Branch, "🌲 feat-wt")),
+            Some("feat-wt".to_string())
+        );
         assert_eq!(
             draggable_branch_name(&badge(BadgeKind::HeadBranch, "main ✓")),
             None

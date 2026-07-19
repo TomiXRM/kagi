@@ -390,6 +390,58 @@ pub fn execute_rename_branch(
 // plan_undo_commit  (T-HT-009)
 // ────────────────────────────────────────────────────────────
 
+/// A worktree (other than the main one) that has `branch` checked out.
+pub struct WorktreeCheckout {
+    /// Worktree admin name (`git worktree list` identifier, used for prune).
+    pub name: String,
+    /// Working-directory path shown to the user.
+    pub path: std::path::PathBuf,
+    /// Uncommitted changes present (staged/unstaged/untracked/conflicted).
+    pub dirty: bool,
+    /// Worktree is locked (`git worktree lock`) — never auto-removed.
+    pub locked: bool,
+}
+
+/// Find the linked worktree that has local branch `name` checked out, if any.
+///
+/// Git refuses to delete a branch while any worktree has it checked out; the
+/// raw libgit2 error is user-hostile (user report: agent-created worktrees
+/// linger and pin their branch). Detect it at PLAN time instead.
+pub fn worktree_checkout_of(repo: &Repository, name: &str) -> Option<WorktreeCheckout> {
+    let full_ref = format!("refs/heads/{name}");
+    let wt_names = repo.worktrees().ok()?;
+    for i in 0..wt_names.len() {
+        let Ok(Some(wt_name)) = wt_names.get(i) else {
+            continue;
+        };
+        let Ok(wt) = repo.find_worktree(wt_name) else {
+            continue;
+        };
+        let Ok(wt_repo) = Repository::open_from_worktree(&wt) else {
+            continue;
+        };
+        let head_matches = wt_repo
+            .head()
+            .ok()
+            .and_then(|h| h.name().ok().map(|n| n == full_ref))
+            .unwrap_or(false);
+        if !head_matches {
+            continue;
+        }
+        let dirty = working_tree_status(&wt_repo)
+            .map(|st| st.is_dirty())
+            .unwrap_or(true); // unreadable status: err on the safe side
+        let locked = matches!(wt.is_locked(), Ok(git2::WorktreeLockStatus::Locked(_)));
+        return Some(WorktreeCheckout {
+            name: wt_name.to_string(),
+            path: wt.path().to_path_buf(),
+            dirty,
+            locked,
+        });
+    }
+    None
+}
+
 /// Analyse whether deleting local branch `name` is safe and return an
 /// [`OperationPlan`].
 ///
@@ -411,11 +463,14 @@ pub fn execute_rename_branch(
 ///   ref pointing at the current commit).
 /// - The branch tip commit is **not** reachable from HEAD — the branch is
 ///   unmerged; force delete is not provided.
+/// - A linked worktree has the branch checked out and is dirty or locked.
 ///
 /// # Warning conditions
 ///
 /// - The branch has an upstream configured: the remote branch is NOT deleted
 ///   by this operation.
+/// - A CLEAN linked worktree has the branch checked out: the plan removes the
+///   worktree first, then deletes the branch (re-validated at execute time).
 ///
 /// # Errors
 ///
@@ -509,6 +564,35 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
                 "Branch '{}' is the currently checked-out branch. \
                  Checkout a different branch before deleting this one.",
                 name
+            ));
+        }
+    }
+
+    // Worktree-checkout check (user report: AI-agent worktrees linger and pin
+    // their branch; git's raw refusal was opaque). Dirty or locked worktrees
+    // BLOCK — a clean one becomes part of the plan: remove it, then delete.
+    if let Some(wt) = worktree_checkout_of(repo, name) {
+        if wt.locked {
+            blockers.push(format!(
+                "Branch '{}' is checked out in LOCKED worktree '{}'. \
+                 Unlock it (`git worktree unlock`) before deleting the branch.",
+                name,
+                wt.path.display()
+            ));
+        } else if wt.dirty {
+            blockers.push(format!(
+                "Branch '{}' is checked out in worktree '{}' which has \
+                 uncommitted changes. Commit or discard them there first — \
+                 the worktree is not removed while it holds work.",
+                name,
+                wt.path.display()
+            ));
+        } else {
+            warnings.push(format!(
+                "Branch '{}' is checked out in clean worktree '{}'. \
+                 The worktree will be removed, then the branch deleted.",
+                name,
+                wt.path.display()
             ));
         }
     }
@@ -633,6 +717,42 @@ pub fn execute_delete_branch(
     let mut branch = repo
         .find_branch(name, BranchType::Local)
         .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", name, e.message())))?;
+
+    // ── 2.2 Remove the pinning worktree, if the plan promised to ─────────
+    // Re-detect at execute time (the preflight spirit: the world may have
+    // changed since planning). A worktree that turned dirty or locked in the
+    // meantime REFUSES instead of destroying work.
+    if let Some(wt) = worktree_checkout_of(repo, name) {
+        if wt.locked {
+            return Err(GitError::Other(format!(
+                "worktree '{}' is locked — not removing it",
+                wt.path.display()
+            )));
+        }
+        if wt.dirty {
+            return Err(GitError::Other(format!(
+                "worktree '{}' has uncommitted changes — not removing it",
+                wt.path.display()
+            )));
+        }
+        // Clean: delete the working directory, then prune the admin entry.
+        std::fs::remove_dir_all(&wt.path).map_err(|e| {
+            GitError::Other(format!(
+                "failed to remove worktree dir '{}': {e}",
+                wt.path.display()
+            ))
+        })?;
+        let wt_handle = repo
+            .find_worktree(&wt.name)
+            .map_err(|e| GitError::Other(format!("worktree lookup failed: {}", e.message())))?;
+        let mut opts = git2::WorktreePruneOptions::new();
+        opts.valid(true);
+        // NOTE: no [kagi] line here — kagi-git emits none (contract lines are
+        // the UI layer's job via klog!); the delete-branch UI logs the removal.
+        wt_handle
+            .prune(Some(&mut opts))
+            .map_err(|e| GitError::Other(format!("worktree prune failed: {}", e.message())))?;
+    }
 
     // ── 2.5 Pre-clean the branch's config section ─────────────
     pre_clean_branch_config(repo, name);

@@ -19,14 +19,22 @@ use gpui::{hsla, Hsla};
 #[derive(Default)]
 pub struct AvatarStore {
     /// Resolved avatar images keyed by author email.  Populated by a background
-    /// resolution pass for GitHub repos; rows/inspector swap the initial circle
-    /// for `img(...)` when an entry exists.  Memory cache (the disk cache lives
-    /// under `~/.kagi/avatars/`).
+    /// resolution pass; rows/inspector swap the initial circle for `img(...)`
+    /// when an entry exists.  Memory cache (the disk cache lives under
+    /// `~/.kagi/avatars/`).
     pub images: std::collections::HashMap<String, std::sync::Arc<gpui::Image>>,
-    /// Guard so avatar resolution runs at most once per repository path (avoids
-    /// re-hitting the network on every reload / render).  Holds the repo path
-    /// whose avatars have been (or are being) resolved.
+    /// Repo path the `attempted` set belongs to. Switching repos resets the
+    /// set so an email unresolved in one repo can retry with the next repo's
+    /// Commits API map (ADR-0122).
     pub fetch_for: Option<std::path::PathBuf>,
+    /// Emails a resolution pass has already been spawned for in the current
+    /// repo (ADR-0122 incremental resolution). Emails deferred by the
+    /// search-budget cap are removed again on completion so they retry.
+    pub attempted: std::collections::HashSet<String>,
+    /// `KagiApp::view_epoch` value the rows were last scanned at — the scan
+    /// re-runs only when the view data changed (reload / load more / tab
+    /// switch), keeping the per-frame `ensure_avatars` call one comparison.
+    pub scan_epoch: Option<u64>,
 }
 
 // ──────────────────────────────────────────────────────────────

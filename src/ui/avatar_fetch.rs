@@ -6,22 +6,28 @@
 //! `KagiApp`, background spawns, render swaps) lives in `mod.rs`/`inspector.rs`;
 //! everything here is pure data + blocking IO that runs on a background thread.
 //!
-//! Resolution order (ADR-0037):
+//! Resolution order (ADR-0037, extended by ADR-0122):
 //!   1. **noreply parse** — `<id>+<user>@users.noreply.github.com` or
 //!      `<user>@users.noreply.github.com` → `https://avatars.githubusercontent.com/<user>?s=64`
 //!      (no API call, immediate).
 //!   2. **Commits API batch** — `GET /repos/{owner}/{repo}/commits?per_page=100`
 //!      (unauthenticated, a few pages) builds an `email → avatar_url` map.
-//!   3. unresolved → caller falls back to the initial circle.
+//!      GitHub-remote repos only.
+//!   3. **Gravatar** — `sha256(email)`-derived URL with `d=404` (ADR-0122).
+//!   4. **GitHub user search** — public profile email → login, capped at
+//!      [`MAX_SEARCH_LOOKUPS`] per pass (unauthenticated rate limit; ADR-0122).
+//!   5. unresolved → caller falls back to the initial circle.
 //!
-//! Privacy: the user's email is **never** sent as a search query.  We only send
-//! the repo coordinates (owner/repo) and fetch avatar URLs.  `KAGI_OFFLINE=1`
-//! disables all network access.
+//! ADR-0122 dropped ADR-0037's "never send an author email to an external
+//! lookup" restriction (user decision: commit emails are public metadata).
+//! `KAGI_OFFLINE=1` still disables all network access.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{Image, ImageFormat};
+
+use super::avatar_lookup::{github_search_avatar_url, gravatar_url_for_email};
 
 /// Network timeout for a single HTTP request.
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -31,6 +37,13 @@ const MAX_COMMIT_PAGES: u32 = 3;
 
 /// User-Agent sent with every request (GitHub requires a UA header).
 const USER_AGENT: &str = "kagi-git-client";
+
+/// Maximum GitHub user-search lookups per resolution pass (ADR-0122).
+///
+/// The unauthenticated search API allows 10 requests/min; emails skipped by an
+/// exhausted budget are reported back as `deferred` so the next incremental
+/// pass retries them instead of dropping them for the session.
+const MAX_SEARCH_LOOKUPS: usize = 8;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Offline switch
@@ -251,7 +264,7 @@ pub fn image_from_bytes(bytes: Vec<u8>) -> Option<std::sync::Arc<Image>> {
 
 /// Blocking GET returning the response body bytes (≤ a few MB; avatars are
 /// tiny).  Returns `None` on any error or non-2xx status.
-fn http_get_bytes(url: &str) -> Option<Vec<u8>> {
+pub(super) fn http_get_bytes(url: &str) -> Option<Vec<u8>> {
     let mut resp = ureq::get(url)
         .header("User-Agent", USER_AGENT)
         .config()
@@ -318,102 +331,47 @@ pub fn fetch_commit_author_avatars(owner: &str, repo: &str) -> Vec<(String, Stri
     out
 }
 
-/// Extract `(commit.author.email, author.avatar_url)` pairs from a Commits API
-/// JSON response.
+/// Extract `(email, avatar_url)` pairs from a Commits API JSON response.
 ///
-/// A dependency-free scanner: it walks each top-level commit object and pulls
-/// the author email (under `"commit":{"author":{"email":...}}`) and the GitHub
-/// account avatar URL (the top-level `"author":{"avatar_url":...}`).  This is
-/// resilient to field order and ignores entries missing either field.
+/// For each commit record this pairs `commit.author.email` with the top-level
+/// `author.avatar_url` **and** `commit.committer.email` with
+/// `committer.avatar_url` (the account objects GitHub resolved for each role).
+/// Records where the account is `null` (email not linked to any GitHub
+/// account) contribute no pair for that role.
+///
+/// ADR-0122: rewritten on serde_json — the previous dependency-free scanner
+/// paired each email with the first `avatar_url` before the *next* email,
+/// which never fires for `commit.author.email` (the committer email sits in
+/// between) and mis-paired the committer email with the author's avatar. It
+/// only looked correct when author == committer; squash-merge / web-UI
+/// commits (committer `noreply@github.com`) left the real author unmapped.
 pub fn parse_commits_api(json: &str) -> Vec<(String, String)> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    let Some(items) = value.as_array() else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
-    // GitHub returns a JSON array of commit objects. We scan for each
-    // `"avatar_url"` (only present on the account author/committer objects) and
-    // pair it with the nearest preceding `"email"`. To bind them to the *commit
-    // author* specifically we anchor on the literal `"avatar_url"` that follows
-    // an `"author"` object and back-reference the email captured from the
-    // commit metadata. A full JSON parser is avoided (no serde dependency).
-    //
-    // Strategy: split into commit records on the `"sha"` top-level key is
-    // fragile, so instead we pair each email with the first avatar_url that
-    // appears after it within the same record window.
-    for (email_pos, email) in find_quoted_values(json, "\"email\":") {
-        // Find the next avatar_url after this email; bounded by the next email
-        // so we don't bleed into the following record.
-        let next_email = json[email_pos + 1..]
-            .find("\"email\":")
-            .map(|p| email_pos + 1 + p)
-            .unwrap_or(json.len());
-        if let Some(avatar) =
-            find_first_quoted_value(&json[email_pos..next_email], "\"avatar_url\":")
-        {
-            if !email.is_empty() && !avatar.is_empty() {
-                out.push((email, avatar));
+    for item in items {
+        for role in ["author", "committer"] {
+            let email = item
+                .get("commit")
+                .and_then(|c| c.get(role))
+                .and_then(|a| a.get("email"))
+                .and_then(|v| v.as_str());
+            let avatar = item
+                .get(role)
+                .and_then(|a| a.get("avatar_url"))
+                .and_then(|v| v.as_str());
+            if let (Some(email), Some(avatar)) = (email, avatar) {
+                if !email.is_empty() && !avatar.is_empty() {
+                    out.push((email.to_string(), avatar.to_string()));
+                }
             }
         }
     }
     out
-}
-
-/// Find all `(byte_pos, value)` pairs for a `"key":` whose value is a quoted
-/// string.  `byte_pos` is the offset of the key in `json`.
-fn find_quoted_values(json: &str, key: &str) -> Vec<(usize, String)> {
-    let mut out = Vec::new();
-    let mut from = 0usize;
-    while let Some(rel) = json[from..].find(key) {
-        let key_pos = from + rel;
-        let after = key_pos + key.len();
-        if let Some(val) = read_json_string_after(&json[after..]) {
-            out.push((key_pos, val));
-        }
-        from = after;
-    }
-    out
-}
-
-/// Find the first quoted value for `key` within `slice`.
-fn find_first_quoted_value(slice: &str, key: &str) -> Option<String> {
-    let rel = slice.find(key)?;
-    read_json_string_after(&slice[rel + key.len()..])
-}
-
-/// Read a JSON string value that begins (after optional whitespace) at the
-/// start of `s` — i.e. the `"..."` following a `"key":`.  Handles `\"` escapes
-/// and `null` (returns `None`).  Operates on `char_indices` to stay UTF-8 safe.
-fn read_json_string_after(s: &str) -> Option<String> {
-    let mut chars = s.char_indices().peekable();
-    // Skip whitespace.
-    while let Some(&(_, c)) = chars.peek() {
-        if c.is_whitespace() {
-            chars.next();
-        } else {
-            break;
-        }
-    }
-    // Must be an opening quote (otherwise value is null/number/object — skip).
-    match chars.peek() {
-        Some(&(_, '"')) => {
-            chars.next();
-        }
-        _ => return None,
-    }
-    let mut value = String::new();
-    let mut escaped = false;
-    for (_, c) in chars {
-        if escaped {
-            // Minimal unescape: pass through the escaped char (avatar URLs and
-            // emails contain no unicode escapes in practice).
-            value.push(c);
-            escaped = false;
-        } else if c == '\\' {
-            escaped = true;
-        } else if c == '"' {
-            return Some(value);
-        } else {
-            value.push(c);
-        }
-    }
-    None
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -428,19 +386,29 @@ pub struct ResolveOutcome {
     pub resolved: usize,
     /// Number of distinct emails left unresolved (fallback to initial circle).
     pub pending: usize,
+    /// Emails whose user-search lookup was skipped by an exhausted
+    /// [`MAX_SEARCH_LOOKUPS`] budget (ADR-0122). The caller un-marks these so
+    /// the next incremental pass retries them.
+    pub deferred: Vec<String>,
 }
 
-/// Resolve avatar images for a set of author emails in a GitHub repo.
+/// Resolve avatar images for a set of author emails.
 ///
 /// This is the whole background job: it runs entirely off the UI thread (no
-/// gpui context, only `Send` data in and out).  It follows ADR-0037's order:
+/// gpui context, only `Send` data in and out).  ADR-0037 order, extended by
+/// ADR-0122:
 ///   1. noreply email → CDN URL (no network for the URL itself).
-///   2. Commits API batch for the remaining emails (skipped offline / private).
-///   3. fetch + decode each distinct URL (disk-cache first).
+///   2. Commits API batch for the remaining emails (GitHub-remote repos only;
+///      skipped offline / private).
+///   3. Gravatar by email hash, then GitHub user search by public profile
+///      email (capped at [`MAX_SEARCH_LOOKUPS`] per pass).
+///   4. fetch + decode each URL (disk-cache first).
 ///
+/// `coords` is the repo's GitHub `(owner, repo)` when its remote points at
+/// github.com — `None` skips step 2 only; the public lookups still run.
 /// `emails` should already be de-duplicated by the caller; duplicates are
 /// tolerated but wasteful.
-pub fn resolve_avatars(owner: &str, repo: &str, emails: &[String]) -> ResolveOutcome {
+pub fn resolve_avatars(coords: Option<(String, String)>, emails: &[String]) -> ResolveOutcome {
     // email → avatar URL
     let mut url_for_email: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
@@ -457,22 +425,27 @@ pub fn resolve_avatars(owner: &str, repo: &str, emails: &[String]) -> ResolveOut
 
     // Step 2: Commits API batch for the remainder (only if any remain and a
     // network attempt is worthwhile).
-    if !unresolved.is_empty() && !offline() {
-        let api_map = fetch_commit_author_avatars(owner, repo);
-        if !api_map.is_empty() {
-            let lookup: std::collections::HashMap<&str, &str> = api_map
-                .iter()
-                .map(|(e, u)| (e.as_str(), u.as_str()))
-                .collect();
-            for email in &unresolved {
-                if let Some(url) = lookup.get(email.as_str()) {
-                    url_for_email.insert(email.clone(), (*url).to_string());
-                }
+    if let Some((owner, repo)) = &coords {
+        if !unresolved.is_empty() && !offline() {
+            let api_map = fetch_commit_author_avatars(owner, repo);
+            if !api_map.is_empty() {
+                let lookup: std::collections::HashMap<&str, &str> = api_map
+                    .iter()
+                    .map(|(e, u)| (e.as_str(), u.as_str()))
+                    .collect();
+                unresolved.retain(|email| {
+                    if let Some(url) = lookup.get(email.as_str()) {
+                        url_for_email.insert(email.clone(), (*url).to_string());
+                        false
+                    } else {
+                        true
+                    }
+                });
             }
         }
     }
 
-    // Step 3: fetch + decode each distinct URL once, then map back to emails.
+    // Fetch + decode each distinct URL once, then map back to emails.
     let mut image_for_url: std::collections::HashMap<String, std::sync::Arc<Image>> =
         std::collections::HashMap::new();
     let mut images: Vec<(String, std::sync::Arc<Image>)> = Vec::new();
@@ -493,12 +466,37 @@ pub fn resolve_avatars(owner: &str, repo: &str, emails: &[String]) -> ResolveOut
         }
     }
 
+    // Step 3 (ADR-0122): public lookups for the still-unresolved remainder.
+    // Gravatar first — exact (email hash), unmetered, and its URL is derived
+    // locally so the disk cache still serves it offline. Then the user-search
+    // API, capped per pass; emails skipped by the cap are reported back as
+    // `deferred` for the next incremental pass.
+    let mut deferred: Vec<String> = Vec::new();
+    let mut search_budget = MAX_SEARCH_LOOKUPS;
+    for email in &unresolved {
+        let mut img = fetch_avatar_bytes(&gravatar_url_for_email(email)).and_then(image_from_bytes);
+        if img.is_none() && !offline() {
+            if search_budget == 0 {
+                deferred.push(email.clone());
+                continue;
+            }
+            search_budget -= 1;
+            if let Some(url) = github_search_avatar_url(email) {
+                img = fetch_avatar_bytes(&url).and_then(image_from_bytes);
+            }
+        }
+        if let Some(img) = img {
+            images.push((email.clone(), img));
+        }
+    }
+
     let resolved = images.len();
     let total = emails.len();
     ResolveOutcome {
         images,
         resolved,
         pending: total.saturating_sub(resolved),
+        deferred,
     }
 }
 
@@ -691,6 +689,33 @@ mod tests {
         assert!(map.contains(&(
             "bob@example.com".to_string(),
             "https://avatars.githubusercontent.com/u/2?v=4".to_string()
+        )));
+    }
+
+    #[test]
+    fn parse_commits_api_distinct_author_and_committer() {
+        // Squash-merge / web-UI shape: the committer is GitHub's web-flow
+        // account. BOTH roles must be paired with their own avatar_url —
+        // the author (the email kagi displays) must not be dropped.
+        let json = r#"[
+          {
+            "sha": "abc",
+            "commit": {
+              "author": { "name": "Alice", "email": "alice@example.com" },
+              "committer": { "name": "GitHub", "email": "noreply@github.com" }
+            },
+            "author": { "login": "alice", "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4" },
+            "committer": { "login": "web-flow", "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4" }
+          }
+        ]"#;
+        let map = parse_commits_api(json);
+        assert!(map.contains(&(
+            "alice@example.com".to_string(),
+            "https://avatars.githubusercontent.com/u/1?v=4".to_string()
+        )));
+        assert!(map.contains(&(
+            "noreply@github.com".to_string(),
+            "https://avatars.githubusercontent.com/u/19864447?v=4".to_string()
         )));
     }
 

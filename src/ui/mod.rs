@@ -8,6 +8,8 @@ pub mod activity_view;
 pub mod assets;
 pub mod avatar;
 pub mod avatar_fetch;
+mod avatar_lookup;
+mod avatar_resolve;
 pub mod badges;
 pub mod blocking_ops;
 pub mod branch_menu;
@@ -1628,70 +1630,6 @@ impl KagiApp {
     // ────────────────────────────────────────────────────────────
     // W32-CONFLICT-EDITOR: hunk-level editor open/close + hunk dispatch
     // ────────────────────────────────────────────────────────────
-
-    /// W11-AVATAR (ADR-0037): start GitHub avatar resolution for the current
-    /// repo, at most once per repository path.
-    ///
-    /// Resolution runs entirely on a background thread (`cx.background_spawn`):
-    /// it determines the GitHub `(owner, repo)` from the repo's remotes, then
-    /// resolves each distinct author email to an avatar image (noreply parse →
-    /// Commits API batch → disk/network fetch).  When it completes the resolved
-    /// images are merged into `self.avatars.images` on the main thread and a
-    /// `cx.notify()` repaints rows/inspector with real avatars.
-    ///
-    /// No-op for non-GitHub repos, `KAGI_OFFLINE=1`, or a repo already started.
-    /// The required startup log line is emitted exactly once per repo.
-    fn ensure_avatars(&mut self, cx: &mut Context<Self>) {
-        let Some(repo_path) = self.repo_path.clone() else {
-            return;
-        };
-
-        // Run at most once per repository path.
-        if self.avatars.fetch_for.as_deref() == Some(repo_path.as_path()) {
-            return;
-        }
-        self.avatars.fetch_for = Some(repo_path.clone());
-
-        // Distinct author emails across the loaded commit rows.
-        let mut seen: HashSet<String> = HashSet::new();
-        let mut emails: Vec<String> = Vec::new();
-        for row in &self.active_view.rows {
-            if !row.author_email.is_empty() && seen.insert(row.author_email.clone()) {
-                emails.push(row.author_email.clone());
-            }
-        }
-
-        let offline = avatar_fetch::offline();
-
-        // Determine GitHub coordinates (read-only git2). Non-GitHub repos get
-        // the initial circle and emit a pending-only log line.
-        let coords = avatar_fetch::repo_github_coords(&repo_path);
-        let Some((owner, repo)) = coords else {
-            eprintln!(
-                "[kagi] avatar: resolved=0 pending={} offline={}",
-                emails.len(),
-                offline
-            );
-            return;
-        };
-
-        let task = cx
-            .background_spawn(async move { avatar_fetch::resolve_avatars(&owner, &repo, &emails) });
-        cx.spawn(async move |this, acx| {
-            let outcome = task.await;
-            let _ = this.update(acx, |app, cx| {
-                for (email, img) in outcome.images {
-                    app.avatars.images.insert(email, img);
-                }
-                eprintln!(
-                    "[kagi] avatar: resolved={} pending={} offline={}",
-                    outcome.resolved, outcome.pending, offline
-                );
-                cx.notify();
-            });
-        })
-        .detach();
-    }
 
     /// Cancel and close the checkout plan modal without making any changes.
     pub fn cancel_modal(&mut self) {

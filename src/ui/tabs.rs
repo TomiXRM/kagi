@@ -857,8 +857,20 @@ impl KagiApp {
                 .ml(theme::scaled_px(4.))
                 .on_click(close);
 
+            // Top accent colour: the worktree's lane colour (shown on every
+            // worktree tab), or the normal blue accent on an active main-repo
+            // tab. `None` → no accent bar.
+            let accent: Option<gpui::Hsla> = if is_wt {
+                wt_color
+            } else if is_active {
+                Some(rgb(theme().color_branch).into())
+            } else {
+                None
+            };
+
             let tab_el = div()
                 .id(("repo-tab", i))
+                .relative()
                 .flex()
                 .flex_row()
                 .items_center()
@@ -877,12 +889,15 @@ impl KagiApp {
                 .text_color(rgb(fg))
                 .border_r_1()
                 .border_color(rgb(theme().panel))
-                // Top accent: the worktree's lane colour (always), or the normal
-                // blue accent for an active main-repo tab.
-                .when(is_active && !is_wt, |el| {
-                    el.border_t_2().border_color(rgb(theme().color_branch))
+                // Top accent bar. Drawn as an ABSOLUTE overlay (not `border_t_2`)
+                // so it does NOT shrink/shift the tab's content box on selection,
+                // and so the coloured line spans the full width evenly instead of
+                // being mitred away at the top-right corner by `border_r_1` — the
+                // same technique the selected commit-row accent uses
+                // (`render_helpers.rs`). This keeps the highlight uniform.
+                .when_some(accent, |el, c| {
+                    el.child(div().absolute().top_0().left_0().right_0().h(px(2.)).bg(c))
                 })
-                .when_some(wt_color, |el, c| el.border_t_2().border_color(c))
                 .cursor(gpui::CursorStyle::PointingHand)
                 .tooltip({
                     let full = full_path.clone();

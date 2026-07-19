@@ -179,6 +179,10 @@ pub enum Msg {
     BusyDiscard,
     BusyCommit,
     BusyCreateWorktree,
+    /// Worktree context menu: unlock action label.
+    MenuUnlockWorktree,
+    /// Worktree context menu: disabled reason when the worktree has no lock.
+    MenuWorktreeNotLocked,
     BusyMerge,
 
     // ── Operation no-op toasts ──────────────────────────────────────
@@ -670,6 +674,10 @@ impl Msg {
             (Ja, BusyCommit) => "commit 実行中…",
             (En, BusyCreateWorktree) => "create worktree in progress…",
             (Ja, BusyCreateWorktree) => "create worktree 実行中…",
+            (En, MenuUnlockWorktree) => "Unlock worktree…",
+            (Ja, MenuUnlockWorktree) => "worktree のロックを解除…",
+            (En, MenuWorktreeNotLocked) => "This worktree is not locked",
+            (Ja, MenuWorktreeNotLocked) => "この worktree はロックされていません",
             (En, BusyMerge) => "merge in progress…",
             (Ja, BusyMerge) => "merge 実行中…",
 

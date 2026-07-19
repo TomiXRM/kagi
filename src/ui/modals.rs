@@ -114,6 +114,16 @@ pub struct StashDropModal {
     pub stash_index: usize,
 }
 
+/// State for an unlock-worktree confirmation. The plan's warning carries the
+/// recorded lock reason so the user sees why the lock was placed.
+#[derive(Clone)]
+pub struct UnlockWorktreeModal {
+    pub plan: std::sync::Arc<OperationPlan>,
+    pub error: Option<SharedString>,
+    /// Worktree registry name the plan was built for.
+    pub name: String,
+}
+
 /// State for an in-progress push confirmation (T-HT-004).  Same shape as
 /// [`PullPlanModal`] but kept separate so the confirm path can't be mixed up.
 #[derive(Clone)]
@@ -506,6 +516,7 @@ pub enum ActiveModal {
     SwitchToLatest(SwitchToLatestPlanModal),
     CreateBranch(CreateBranchModal),
     CreateWorktree(CreateWorktreeModal),
+    UnlockWorktree(UnlockWorktreeModal),
     StashPush(StashPushModal),
     StashApply(StashApplyModal),
     CherryPick(CherryPickModal),

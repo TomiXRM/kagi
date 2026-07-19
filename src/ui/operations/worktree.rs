@@ -227,4 +227,149 @@ impl KagiApp {
             }
         });
     }
+
+    // ── Unlock worktree (sidebar right-click → Unlock worktree…) ─────────
+
+    /// Open the worktree right-click context menu. The main worktree never
+    /// gets here (the sidebar row installs no handler for it).
+    pub fn open_worktree_menu(
+        &mut self,
+        name: String,
+        locked: bool,
+        position: gpui::Point<gpui::Pixels>,
+    ) {
+        self.commit_menu = None;
+        self.branch_menu = None;
+        self.stash_menu = None;
+        self.worktree_menu = Some(worktree_menu::WorktreeMenuState {
+            name: name.clone(),
+            locked,
+            position,
+        });
+        klog!("worktree-menu: open '{}'", name);
+    }
+
+    /// Dispatch a worktree context-menu action.
+    pub fn dispatch_worktree_action(
+        &mut self,
+        action: worktree_menu::WorktreeAction,
+        state: worktree_menu::WorktreeMenuState,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        match action {
+            worktree_menu::WorktreeAction::Unlock => self.open_unlock_worktree_modal(state.name),
+        }
+    }
+
+    /// Plan the unlock and open the confirmation modal. The plan's warning
+    /// surfaces the recorded lock reason (a lock is deliberate protection).
+    pub fn open_unlock_worktree_modal(&mut self, name: String) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo = match kagi_git::Backend::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "unlock-worktree: repo open error: {}",
+                    e
+                )));
+                return;
+            }
+        };
+        match repo.plan_unlock_worktree(&name) {
+            Ok(plan) => {
+                klog!("plan: unlock-worktree {}", name);
+                self.set_unlock_worktree_modal(UnlockWorktreeModal {
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                    name,
+                });
+            }
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "unlock-worktree plan error: {}",
+                    e
+                )));
+            }
+        }
+    }
+
+    pub fn cancel_unlock_worktree_modal(&mut self) {
+        self.clear_unlock_worktree_modal();
+    }
+
+    /// Confirm the unlock: preflight → unlock → verify → oplog → reload.
+    /// Unlock is an instant admin-file removal, so it runs synchronously.
+    pub fn confirm_unlock_worktree(&mut self, cx: &mut Context<Self>) {
+        let modal = match self.unlock_worktree_modal().cloned() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        if !modal.plan.blockers.is_empty() {
+            klog!("refused: unlock-worktree plan has blockers, not executing");
+            self.record_op(
+                "unlock-worktree",
+                modal.plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.clone(),
+                },
+                &repo_path,
+                cx,
+            );
+            self.clear_unlock_worktree_modal();
+            cx.notify();
+            return;
+        }
+        let repo = match kagi_git::Backend::open(&repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                if let Some(m) = self.unlock_worktree_modal_mut() {
+                    m.error = Some(SharedString::from(format!("Repo open error: {}", e)));
+                }
+                return;
+            }
+        };
+        match repo.execute_unlock_worktree(&modal.plan, &modal.name) {
+            Ok(()) => {
+                klog!("executed: unlock-worktree {}", modal.name);
+                self.record_op(
+                    "unlock-worktree",
+                    modal.plan.current.clone(),
+                    OpOutcome::Success {
+                        after: modal.plan.predicted.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                self.clear_unlock_worktree_modal();
+                self.status_footer = FooterStatus::Success(SharedString::from(format!(
+                    "unlocked worktree '{}'",
+                    modal.name
+                )));
+                self.reload(cx);
+            }
+            Err(e) => {
+                let err_msg = format!("Unlock worktree failed: {}", e);
+                self.record_op(
+                    "unlock-worktree",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                if let Some(m) = self.unlock_worktree_modal_mut() {
+                    m.error = Some(SharedString::from(err_msg));
+                }
+            }
+        }
+    }
 }

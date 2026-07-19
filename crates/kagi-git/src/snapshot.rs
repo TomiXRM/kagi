@@ -358,6 +358,8 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<Worktree>, GitError> {
         is_current: canon(&main_path) == current_canon,
         is_main: true,
         wip: worktree_wip(&main_path),
+        locked: false,
+        lock_reason: None,
     });
 
     let names = repo
@@ -374,6 +376,12 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<Worktree>, GitError> {
         let path = wt.path().to_path_buf();
         let branch = worktree_branch_name(&path);
         let wip = worktree_wip(&path);
+        let (locked, lock_reason) = match wt.is_locked() {
+            Ok(git2::WorktreeLockStatus::Locked(reason)) => {
+                (true, reason.filter(|r| !r.trim().is_empty()))
+            }
+            _ => (false, None),
+        };
         worktrees.push(Worktree {
             name: name.to_string(),
             is_current: canon(&path) == current_canon,
@@ -381,6 +389,8 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<Worktree>, GitError> {
             branch,
             is_main: false,
             wip,
+            locked,
+            lock_reason,
         });
     }
 

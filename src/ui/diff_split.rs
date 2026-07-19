@@ -138,12 +138,17 @@ fn split_cell(rows: &[DiffRow], idx: Option<usize>, side: SplitSide) -> gpui::An
             .into_any()
     };
 
+    // `py_px` lives INSIDE the coloured cell (not on the row container) so the
+    // line spacing is painted in the cell's own background — padding on the
+    // uncoloured row let the pane background bleed through as a 2px "border"
+    // between rows (user report).
     div()
         .flex_1()
         .min_w(px(0.))
         .flex()
         .flex_row()
         .items_start()
+        .py_px()
         .bg(rgb(bg))
         .child(
             div()
@@ -167,20 +172,21 @@ pub(crate) fn render_main_diff_split_row(
     match srows.get(i) {
         None => div().into_any(),
         Some(SplitDiffRow::Full(idx)) => render_main_diff_row(rows, *idx),
+        // No padding and no `items_start` on the row itself: cells stretch to
+        // the full row height (flex default), so a wrapped line on one side
+        // never leaves an unpainted strip under the shorter cell, and rows sit
+        // flush against each other like the unified view.
         Some(SplitDiffRow::Pair { left, right }) => div()
             .id(("main-diff-split", i))
             .w_full()
             .flex()
             .flex_row()
-            .items_start()
-            .py_px()
             .text_sm()
             .child(split_cell(rows, *left, SplitSide::Old))
             .child(
                 div()
                     .flex_shrink_0()
                     .w(px(1.))
-                    .h_full()
                     .bg(rgb(theme::theme().surface)),
             )
             .child(split_cell(rows, *right, SplitSide::New))

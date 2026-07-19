@@ -1199,6 +1199,8 @@ pub struct KagiApp {
     /// ADR-0128: Branch Cleanup takeover open flag. The table data itself
     /// is per-tab (`active_view.cleanup_rows`), so a bool is the whole gate.
     pub branch_cleanup_open: bool,
+    /// ADR-0128: Branch Cleanup table column widths (persisted).
+    pub cleanup_cols: branch_cleanup::CleanupCols,
     /// ADR-0119: cached completed mine so reopening the Ecosystem view reuses
     /// the slow `git log` scan. Invalidated on reload / repo switch.
     pub ecosystem_cache: ecosystem::EcosystemCache,
@@ -1378,6 +1380,7 @@ impl KagiApp {
             file_history_head: None,
             ecosystem: None,
             branch_cleanup_open: false,
+            cleanup_cols: branch_cleanup::CleanupCols::load(),
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,
@@ -1485,6 +1488,7 @@ impl KagiApp {
             file_history_head: None,
             ecosystem: None,
             branch_cleanup_open: false,
+            cleanup_cols: branch_cleanup::CleanupCols::load(),
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,

@@ -253,6 +253,78 @@ fn now_secs() -> i64 {
 }
 
 // ────────────────────────────────────────────────────────────
+// Resizable columns (ADR-0128)
+// ────────────────────────────────────────────────────────────
+
+/// Left/right table padding (logical px, rendered via `scaled_px`).
+pub(super) const CLEANUP_PAD: f32 = 16.0;
+/// Width of the inter-column divider strip (doubles as the cell gap).
+pub(super) const CLEANUP_GAP: f32 = 4.0;
+/// Fixed width of the trailing actions (trash) cell.
+const CLEANUP_ACTIONS_W: f32 = 40.0;
+
+/// `(settings key, default, min, max)` per resizable column, indexed by
+/// [`DividerKind::CleanupCol`]'s payload (0 = name, 1 = where, 2 = merged-at,
+/// 3 = status).
+const CLEANUP_COL_SPECS: [(&str, f32, f32, f32); 4] = [
+    ("cleanup_name_w", 260.0, 80.0, 600.0),
+    ("cleanup_where_w", 110.0, 56.0, 240.0),
+    ("cleanup_merged_w", 90.0, 60.0, 240.0),
+    ("cleanup_status_w", 170.0, 80.0, 420.0),
+];
+
+/// Branch Cleanup column widths (logical px), persisted to `settings.json`
+/// via `theme::set_col_width` like the commit-list columns (T030).
+#[derive(Clone, Copy, Debug)]
+pub struct CleanupCols(pub [f32; 4]);
+
+impl Default for CleanupCols {
+    fn default() -> Self {
+        Self::load()
+    }
+}
+
+impl CleanupCols {
+    /// Read the persisted widths (clamped), falling back to the defaults.
+    pub fn load() -> Self {
+        let mut w = [0.0f32; 4];
+        for (i, (key, default, min, max)) in CLEANUP_COL_SPECS.iter().enumerate() {
+            w[i] = theme::read_col_width(key)
+                .map(|v| v.clamp(*min, *max))
+                .unwrap_or(*default);
+        }
+        Self(w)
+    }
+
+    /// The column's left edge relative to the table's left padding edge.
+    fn left_of(&self, idx: usize) -> f32 {
+        self.0[..idx].iter().map(|w| w + CLEANUP_GAP).sum()
+    }
+}
+
+impl KagiApp {
+    /// Drag-move handler for a [`DividerKind::CleanupCol`] divider.
+    /// `cursor_rel_x` is the cursor in logical px relative to the pane's left
+    /// edge (the caller subtracts the sidebar and divides out the zoom).
+    pub(super) fn handle_cleanup_col_drag(
+        &mut self,
+        idx: u8,
+        cursor_rel_x: f32,
+        cx: &mut Context<Self>,
+    ) {
+        let idx = (idx as usize).min(3);
+        let (key, _, min, max) = CLEANUP_COL_SPECS[idx];
+        let left = CLEANUP_PAD + self.cleanup_cols.left_of(idx);
+        let new_w = (cursor_rel_x - left - CLEANUP_GAP / 2.0).clamp(min, max);
+        if (new_w - self.cleanup_cols.0[idx]).abs() > 0.5 {
+            self.cleanup_cols.0[idx] = new_w;
+            theme::set_col_width(key, new_w);
+            cx.notify();
+        }
+    }
+}
+
+// ────────────────────────────────────────────────────────────
 // Render
 // ────────────────────────────────────────────────────────────
 
@@ -312,12 +384,8 @@ fn action_button(
 /// The Branch Cleanup takeover pane (ADR-0128).
 pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let rows = app.active_view.cleanup_rows.clone();
-    let bulk_targets: Vec<CleanupDeleteTarget> = rows
-        .iter()
-        .filter(|r| r.bulk_deletable)
-        .filter_map(|r| r.delete_target())
-        .collect();
-    let bulk_count = bulk_targets.len();
+    let cols = app.cleanup_cols;
+    let bulk_count = rows.iter().filter(|r| r.bulk_deletable).count();
 
     // ── Header: title + bulk delete + copy-all + close ──────────
     let bulk_button: Option<gpui::AnyElement> = (bulk_count > 0).then(|| {
@@ -375,7 +443,7 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
         .flex_row()
         .items_center()
         .gap_2()
-        .px_4()
+        .px(theme::scaled_px(CLEANUP_PAD))
         .py_3()
         .child(
             div()
@@ -394,39 +462,54 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
         .child(copy_all_button)
         .child(close_button);
 
-    // ── Column header ───────────────────────────────────────────
+    // ── Column header (with drag dividers between the cells) ────
+    // Cell widths come from `app.cleanup_cols` (persisted); each divider
+    // strip doubles as the cell gap so the header and the rows line up on
+    // exactly the same x offsets — which is also what the drag-move math in
+    // `handle_cleanup_col_drag` assumes.
+    let col_divider = |idx: u8| {
+        div()
+            .id(("cleanup-col-div", idx as usize))
+            .w(theme::scaled_px(CLEANUP_GAP))
+            .h_full()
+            .flex_shrink_0()
+            .cursor_col_resize()
+            .hover(|s| s.bg(rgb(theme().color_branch)))
+            .on_drag(
+                DividerDrag {
+                    kind: DividerKind::CleanupCol(idx),
+                },
+                |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
+            )
+            .into_any_element()
+    };
+    let col_label = |w: f32, msg: Msg| {
+        div()
+            .w(theme::scaled_px(w))
+            .flex_shrink_0()
+            .overflow_hidden()
+            .child(SharedString::from(msg.t()))
+            .into_any_element()
+    };
     let col_header = div()
         .flex()
         .flex_row()
         .items_center()
-        .gap_2()
-        .px_4()
-        .py_1()
+        .h(theme::scaled_px(24.))
+        .px(theme::scaled_px(CLEANUP_PAD))
         .text_xs()
         .text_color(rgb(theme().text_muted))
         .border_b_1()
         .border_color(rgb(theme().surface))
-        .child(
-            div()
-                .flex_1()
-                .child(SharedString::from(Msg::CleanupColBranch.t())),
-        )
-        .child(
-            div()
-                .w(theme::scaled_px(110.))
-                .child(SharedString::from(Msg::CleanupColWhere.t())),
-        )
-        .child(
-            div()
-                .w(theme::scaled_px(90.))
-                .child(SharedString::from(Msg::CleanupColMergedAt.t())),
-        )
-        .child(
-            div()
-                .w(theme::scaled_px(170.))
-                .child(SharedString::from(Msg::CleanupColStatus.t())),
-        )
-        .child(div().w(theme::scaled_px(70.)));
+        .child(col_label(cols.0[0], Msg::CleanupColBranch))
+        .child(col_divider(0))
+        .child(col_label(cols.0[1], Msg::CleanupColWhere))
+        .child(col_divider(1))
+        .child(col_label(cols.0[2], Msg::CleanupColMergedAt))
+        .child(col_divider(2))
+        .child(col_label(cols.0[3], Msg::CleanupColStatus))
+        .child(col_divider(3))
+        .child(div().w(theme::scaled_px(CLEANUP_ACTIONS_W)).flex_shrink_0());
 
     // ── Rows ────────────────────────────────────────────────────
     let mut list = div()
@@ -451,9 +534,49 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
         );
     }
 
+    // Plain (non-draggable) spacer matching the header divider width, so row
+    // cells line up with the header cells.
+    let gap = || {
+        div()
+            .w(theme::scaled_px(CLEANUP_GAP))
+            .flex_shrink_0()
+            .into_any_element()
+    };
+
     for (i, row) in rows.iter().enumerate() {
+        // Branch name: click = copy (no separate copy button — user request);
+        // truncated with the full name in a tooltip.
+        let full_name = SharedString::from(row.name.clone());
+        let name_for_copy = row.name.clone();
+        let name_cell = div()
+            .id(("cleanup-name", i))
+            .w(theme::scaled_px(cols.0[0]))
+            .flex_shrink_0()
+            .min_w(px(0.))
+            .overflow_hidden()
+            .text_sm()
+            .text_color(rgb(theme().text_main))
+            .cursor_pointer()
+            .hover(|s| s.text_color(rgb(theme().color_branch)))
+            .tooltip({
+                let full = full_name.clone();
+                move |window, cx| Tooltip::new(full.clone()).build(window, cx)
+            })
+            .on_click(
+                cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                    super::branch_menu::copy_branch_name(this, name_for_copy.clone(), cx);
+                }),
+            )
+            .child(div().truncate().child(full_name));
+
         // Where chips.
-        let mut where_cell = div().w(theme::scaled_px(110.)).flex().flex_row().gap_1();
+        let mut where_cell = div()
+            .w(theme::scaled_px(cols.0[1]))
+            .flex_shrink_0()
+            .overflow_hidden()
+            .flex()
+            .flex_row()
+            .gap_1();
         if row.local_tip.is_some() {
             where_cell = where_cell.child(badge("local", theme().text_muted));
         }
@@ -463,16 +586,21 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
 
         // Merged-at cell.
         let merged_cell = div()
-            .w(theme::scaled_px(90.))
+            .w(theme::scaled_px(cols.0[2]))
+            .flex_shrink_0()
+            .overflow_hidden()
             .text_xs()
             .text_color(rgb(theme().text_muted))
             .child(SharedString::from(
                 row.merged_at.map(format_date).unwrap_or_else(|| "—".into()),
             ));
 
-        // Status badges.
+        // Status badges (clipped to the column — the WARN hint truncates and
+        // must never paint over the actions cell).
         let mut status_cell = div()
-            .w(theme::scaled_px(170.))
+            .w(theme::scaled_px(cols.0[3]))
+            .flex_shrink_0()
+            .overflow_hidden()
             .flex()
             .flex_row()
             .items_center()
@@ -488,8 +616,11 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
                 .child(badge(Msg::CleanupBadgeGrown.t(), theme().color_blocker))
                 .child(
                     div()
+                        .flex_1()
+                        .min_w(px(0.))
                         .text_xs()
                         .text_color(rgb(theme().color_blocker))
+                        .truncate()
                         .child(SharedString::from(format!(
                             "{} +{}",
                             Msg::CleanupGrownHint.t(),
@@ -502,27 +633,7 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
             status_cell = status_cell.child(badge(Msg::CleanupBadgeStale.t(), theme().text_muted));
         }
 
-        // Actions: copy always; trash only when the row can build a target.
-        let name_for_copy = row.name.clone();
-        let copy_btn = {
-            let handler = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-                super::branch_menu::copy_branch_name(this, name_for_copy.clone(), cx);
-            });
-            div()
-                .id(("cleanup-copy", i))
-                .px_1()
-                .rounded(theme::scaled_px(4.))
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .cursor_pointer()
-                .hover(|s| {
-                    s.bg(rgb(theme().surface))
-                        .text_color(rgb(theme().text_main))
-                })
-                .on_click(handler)
-                .child(SharedString::from("⧉"))
-                .into_any_element()
-        };
+        // Actions: trash only, and only when the row can build a target.
         let trash_btn: Option<gpui::AnyElement> = row.delete_target().map(|target| {
             let handler = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
                 this.open_branch_cleanup_plan(vec![target.clone()], cx);
@@ -539,14 +650,12 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
                 .child(SharedString::from("🗑"))
                 .into_any_element()
         });
-
         let actions_cell = div()
-            .w(theme::scaled_px(70.))
+            .w(theme::scaled_px(CLEANUP_ACTIONS_W))
+            .flex_shrink_0()
             .flex()
             .flex_row()
             .items_center()
-            .gap_1()
-            .child(copy_btn)
             .children(trash_btn);
 
         list = list.child(
@@ -554,22 +663,18 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap_2()
-                .px_4()
+                .px(theme::scaled_px(CLEANUP_PAD))
                 .py(theme::scaled_px(4.))
+                .overflow_hidden()
                 .hover(|s| s.bg(rgb(theme().surface)))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .text_sm()
-                        .text_color(rgb(theme().text_main))
-                        .truncate()
-                        .child(SharedString::from(row.name.clone())),
-                )
+                .child(name_cell)
+                .child(gap())
                 .child(where_cell)
+                .child(gap())
                 .child(merged_cell)
+                .child(gap())
                 .child(status_cell)
+                .child(gap())
                 .child(actions_cell),
         );
     }

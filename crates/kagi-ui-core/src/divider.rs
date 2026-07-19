@@ -36,6 +36,10 @@ pub enum DividerKind {
     /// T-WS-EDITOR-004: vertical divider between the Editor Workspace's center
     /// code viewer and its right hunks pane. Adjusts `EditorWorkspaceView::hunks_w`.
     EditorHunks,
+    /// ADR-0128: vertical divider after Branch Cleanup table column `idx`
+    /// (0 = branch name, 1 = where, 2 = merged-at, 3 = status). Adjusts the
+    /// corresponding `KagiApp::cleanup_cols` width.
+    CleanupCol(u8),
 }
 
 /// Drag payload for a divider drag.  Only the divider kind is needed: widths

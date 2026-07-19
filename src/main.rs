@@ -1,3 +1,9 @@
+// Windows release builds: no console window on launch (double-click / Explorer).
+// Debug builds keep the console subsystem so `cargo run`/headless tests on
+// Windows CI still see stdout/stderr live; piped stderr (tests, xtask) is
+// unaffected by the subsystem either way since the handle is inherited.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 // klog! (the `[kagi]` contract macro) moved to kagi-ui-core in ADR-0121 C1;
 // #[macro_use] keeps it available unqualified crate-wide, as before.
 #[macro_use]

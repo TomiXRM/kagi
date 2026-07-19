@@ -25,10 +25,10 @@ pub struct AvatarStore {
     pub images: std::collections::HashMap<String, std::sync::Arc<gpui::Image>>,
     /// Repo path the `attempted` set belongs to. Switching repos resets the
     /// set so an email unresolved in one repo can retry with the next repo's
-    /// Commits API map (ADR-0122).
+    /// Commits API map (ADR-0123).
     pub fetch_for: Option<std::path::PathBuf>,
     /// Emails a resolution pass has already been spawned for in the current
-    /// repo (ADR-0122 incremental resolution). Emails deferred by the
+    /// repo (ADR-0123 incremental resolution). Emails deferred by the
     /// search-budget cap are removed again on completion so they retry.
     pub attempted: std::collections::HashSet<String>,
     /// `KagiApp::view_epoch` value the rows were last scanned at — the scan

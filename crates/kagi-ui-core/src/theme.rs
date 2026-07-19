@@ -663,6 +663,8 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
 // themes are added.
 pub static THEMES: &[Theme] = &[
     CATPPUCCIN_MOCHA,
+    crate::theme_apple::APPLE_DARK,
+    crate::theme_apple::APPLE_LIGHT,
     CATPPUCCIN_LATTE,
     DRACULA,
     IBM_PC,
@@ -1561,11 +1563,11 @@ mod tests {
 
     #[test]
     fn six_themes_with_unique_slugs() {
-        assert_eq!(THEMES.len(), 11);
+        assert_eq!(THEMES.len(), 13);
         let mut slugs: Vec<&str> = THEMES.iter().map(|t| t.slug).collect();
         slugs.sort_unstable();
         slugs.dedup();
-        assert_eq!(slugs.len(), 11, "theme slugs must be unique");
+        assert_eq!(slugs.len(), 13, "theme slugs must be unique");
     }
 
     #[test]
@@ -1632,7 +1634,7 @@ mod tests {
         let dark = THEMES.iter().filter(|t| t.dark).count();
         let light = THEMES.iter().filter(|t| !t.dark).count();
         // catppuccin, xcode-dark, one-dark, monokai, tokyo-night, ibm-pc
-        assert_eq!(dark, 7); // + dracula
-        assert_eq!(light, 4); // xcode-light, one-light, pinky-boo, catppuccin-latte
+        assert_eq!(dark, 8); // + dracula, apple-dark
+        assert_eq!(light, 5); // xcode-light, one-light, pinky-boo, catppuccin-latte, apple-light
     }
 }

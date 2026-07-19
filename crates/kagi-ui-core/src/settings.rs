@@ -116,6 +116,12 @@ impl Settings {
         self.get_str("graph_compact").map(|s| s.trim() == "true")
     }
 
+    /// Split-diff flag (`"diff_split"`, `"true"`/`"false"`; ADR-0124). `None`
+    /// when unset so the caller keeps its default (unified).
+    pub fn diff_split(&self) -> Option<bool> {
+        self.get_str("diff_split").map(|s| s.trim() == "true")
+    }
+
     /// Swimlane-visuals flag (`"graph_lane_compact"`, `"true"`/`"false"`).
     /// When `true` the commit graph draws swimlane visuals (avatar nodes,
     /// lane tint band, lane padding). The lane *layout* itself is always

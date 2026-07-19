@@ -342,6 +342,34 @@ pub fn init_compact_graph() {
     klog!("graph_compact: {}", compact_graph());
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// ADR-0124: diff display mode (unified / side-by-side), persisted + global.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Active split-diff flag (`false` = unified single-column). Defaults to off.
+static DIFF_SPLIT: AtomicBool = AtomicBool::new(false);
+
+/// The currently-active split-diff flag (read at render time).
+#[inline]
+pub fn diff_split() -> bool {
+    DIFF_SPLIT.load(Ordering::Relaxed)
+}
+
+/// Set + persist the split-diff flag to `settings.json` (key `diff_split`).
+pub fn set_diff_split(on: bool) {
+    DIFF_SPLIT.store(on, Ordering::Relaxed);
+    write_setting("diff_split", Some(if on { "true" } else { "false" }));
+}
+
+/// Initialise the split-diff flag at startup from `settings.json`
+/// (`"diff_split"`, `"true"`/`"false"`). Missing/invalid → off (unified).
+pub fn init_diff_split() {
+    if let Some(on) = Settings::load().diff_split() {
+        DIFF_SPLIT.store(on, Ordering::Relaxed);
+    }
+    klog!("diff_split: {}", diff_split());
+}
+
 /// Log the persisted **swimlane-visuals** flag at startup (settings.json
 /// `"graph_lane_compact"`, `"true"`/`"false"`; missing → off).
 ///

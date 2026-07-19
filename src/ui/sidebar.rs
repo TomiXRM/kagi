@@ -1227,6 +1227,10 @@ fn build_worktree_row(
     let mut row = div()
         .id(SharedString::from(format!("sidebar-worktree-{}", name)))
         .h(theme::scaled_px(SIDEBAR_ROW_H))
+        // w_full: without it the row sizes to its content and runs past the
+        // sidebar clip — the trailing lock chip was never visible and the
+        // label never ellipsized (other sidebar rows are width-bounded).
+        .w_full()
         .flex()
         .flex_row()
         .items_center()
@@ -1235,7 +1239,10 @@ fn build_worktree_row(
         .text_color(rgb(text_color))
         .overflow_hidden()
         .tooltip(name_tooltip(full_name))
-        .child(div().flex_1().truncate().child(label));
+        // min_w(0): without it the flex item sizes to the (long) path label's
+        // min-content width and pushes the lock chip past the clipped row edge
+        // — the indicator never showed at all (user report).
+        .child(div().flex_1().min_w(px(0.)).truncate().child(label));
     if locked {
         // 🔐 reads at a glance where the muted "locked" text was easy to miss
         // next to the path label (user feedback).

@@ -575,7 +575,8 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
         if wt.locked {
             blockers.push(format!(
                 "Branch '{}' is checked out in LOCKED worktree '{}'. \
-                 Unlock it (`git worktree unlock`) before deleting the branch.",
+                 Unlock it first (right-click the worktree in the sidebar \
+                 \u{2192} Unlock worktree) before deleting the branch.",
                 name,
                 wt.path.display()
             ));

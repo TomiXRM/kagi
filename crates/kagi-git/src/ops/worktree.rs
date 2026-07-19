@@ -377,3 +377,115 @@ pub fn branch_checked_out_worktree_path(
     }
     Ok(None)
 }
+
+// ────────────────────────────────────────────────────────────
+// plan_unlock_worktree / execute_unlock_worktree
+// ────────────────────────────────────────────────────────────
+
+/// Analyse whether unlocking the linked worktree `name` is safe.
+///
+/// Unlock is ref/admin-only: it never touches any working tree, so the plan is
+/// never destructive. A lock is deliberate protection, so the plan surfaces the
+/// recorded reason as a warning for the user to weigh before confirming.
+pub fn plan_unlock_worktree(repo: &Repository, name: &str) -> Result<OperationPlan, GitError> {
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+    let dirty = status_summary_display(&status);
+
+    let mut blockers = Vec::new();
+    let mut warnings = Vec::new();
+    match repo.find_worktree(name) {
+        Ok(wt) => match wt.is_locked() {
+            Ok(git2::WorktreeLockStatus::Locked(reason)) => {
+                let reason_display = reason
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|r| !r.is_empty())
+                    .map(|r| format!("\"{}\"", r))
+                    .unwrap_or_else(|| "(no reason recorded)".to_string());
+                warnings.push(format!(
+                    "Locked with reason: {} — a lock is deliberate protection someone \
+                     placed on this worktree. Make sure it is no longer needed.",
+                    reason_display
+                ));
+            }
+            Ok(git2::WorktreeLockStatus::Unlocked) => {
+                blockers.push(format!("Worktree '{}' is already unlocked.", name));
+            }
+            Err(e) => {
+                blockers.push(format!(
+                    "Could not read the lock state of worktree '{}': {}",
+                    name,
+                    e.message()
+                ));
+            }
+        },
+        Err(_) => {
+            blockers.push(format!("Worktree '{}' does not exist.", name));
+        }
+    }
+
+    Ok(OperationPlan {
+        title: format!("Unlock worktree '{}'", name),
+        current: StateSummary {
+            head: head.display(),
+            dirty: dirty.clone(),
+        },
+        predicted: StateSummary {
+            head: head.display(),
+            dirty,
+        },
+        warnings,
+        blockers,
+        recovery: format!(
+            "Re-lock the worktree if needed:\n  git worktree lock --reason \"<why>\" <path-of-{}>",
+            name
+        ),
+        head_at_plan: head,
+        stash_count_at_plan: 0,
+        preview_files: Vec::new(),
+        preview_commits: Vec::new(),
+        destructive: false,
+    })
+}
+
+/// Unlock the linked worktree `name`: preflight (HEAD unchanged) → unlock →
+/// verify the lock is gone.
+pub fn execute_unlock_worktree(
+    repo: &Repository,
+    plan: &OperationPlan,
+    name: &str,
+) -> Result<(), GitError> {
+    preflight_check(repo, plan)?;
+
+    let wt = repo
+        .find_worktree(name)
+        .map_err(|e| GitError::Other(format!("worktree '{}' not found: {}", name, e.message())))?;
+    match wt.is_locked() {
+        Ok(git2::WorktreeLockStatus::Locked(_)) => {}
+        Ok(git2::WorktreeLockStatus::Unlocked) => {
+            return Err(GitError::Other(format!(
+                "worktree '{}' is already unlocked",
+                name
+            )));
+        }
+        Err(e) => {
+            return Err(GitError::Other(format!(
+                "could not read lock state of worktree '{}': {}",
+                name,
+                e.message()
+            )));
+        }
+    }
+    wt.unlock()
+        .map_err(|e| GitError::Other(format!("worktree unlock failed: {}", e.message())))?;
+
+    // Verify: the lock must be gone.
+    match wt.is_locked() {
+        Ok(git2::WorktreeLockStatus::Unlocked) => Ok(()),
+        _ => Err(GitError::Other(format!(
+            "worktree '{}' still reports locked after unlock — unexpected state",
+            name
+        ))),
+    }
+}

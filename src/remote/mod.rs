@@ -335,6 +335,8 @@ pub fn remote_snapshot(
         is_current: true,
         is_main: true,
         wip: None,
+        locked: false,
+        lock_reason: None,
     }];
 
     Ok(RepoSnapshot {

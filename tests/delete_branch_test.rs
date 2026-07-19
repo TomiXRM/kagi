@@ -517,8 +517,10 @@ fn locked_worktree_blocks_delete() {
     let r = git2::Repository::open(&repo.path).unwrap();
     let plan = plan_delete_branch(&r, "merged").unwrap();
     assert!(
-        plan.blockers.iter().any(|b| b.contains("LOCKED")),
-        "locked worktree must block: {:?}",
+        plan.blockers
+            .iter()
+            .any(|b| b.contains("LOCKED") && b.contains("Unlock worktree")),
+        "locked worktree must block and point at the sidebar unlock flow: {:?}",
         plan.blockers
     );
 }

@@ -408,6 +408,11 @@ pub struct StatusBarSummary {
     pub upstream_name: String,
     /// Number of conflicted files (W2-STATUS: shown as `!N` in red when > 0).
     pub conflict_count: usize,
+    /// Wall-clock time (Unix seconds) of the last successful `git fetch`
+    /// (FETCH_HEAD mtime at snapshot time; updated in place after an in-app
+    /// fetch). Drives the status-bar fetch-age indicator (ADR-0127). `None`
+    /// when the repo has never fetched.
+    pub last_fetch_secs: Option<i64>,
 }
 
 impl StatusBarSummary {
@@ -497,6 +502,7 @@ impl StatusBarSummary {
             has_remote,
             upstream_name,
             conflict_count: snap.status.conflicted.len(),
+            last_fetch_secs: snap.last_fetch_secs,
         }
     }
 
@@ -631,6 +637,7 @@ mod toolbar_tests {
             has_remote: true,
             upstream_name: "origin/main".to_string(),
             conflict_count: 0,
+            last_fetch_secs: None,
         }
     }
 
@@ -692,6 +699,7 @@ mod toolbar_tests {
             has_remote: true,
             upstream_name: String::new(),
             conflict_count: 0,
+            last_fetch_secs: None,
         };
         let t = s.toolbar_state();
         assert!(!t.pull_on, "pull must be off on detached HEAD");

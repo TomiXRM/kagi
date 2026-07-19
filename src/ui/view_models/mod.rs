@@ -12,4 +12,4 @@
 
 pub mod status_bar;
 
-pub use status_bar::{StatusBarVM, StatusChipRole};
+pub use status_bar::{fetch_age_chip, StatusBarVM, StatusChipRole};

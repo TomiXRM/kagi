@@ -38,7 +38,16 @@ impl KagiApp {
         // The pure StatusBarVM owns the presentation decisions (which chips,
         // their labels, and order); the view below maps each role to a theme
         // colour + margin. Unit-tested without a window in view_models.
-        let status_vm = view_models::StatusBarVM::from_summary(&summary);
+        let mut status_vm = view_models::StatusBarVM::from_summary(&summary);
+        // ADR-0127: fetch-age indicator (`⇣ 3m`, warning-coloured when stale).
+        // Repaints ride the auto-fetch cycle: `fetch_async` notifies on every
+        // completion — including silent failures — so the age stays honest
+        // even when the network is down.
+        if let Some(chip) =
+            view_models::fetch_age_chip(&summary, super::commit_list::now_unix_secs())
+        {
+            status_vm.chips.push(chip);
+        }
         let branch_text = SharedString::from(status_vm.branch.clone());
 
         // ── Last refresh time ──────────────────────────────────
@@ -158,6 +167,8 @@ impl KagiApp {
                 AheadBehind => (theme().text_sub, 6.),
                 NoUpstream => (theme().text_muted, 6.),
                 UpstreamName => (theme().text_muted, 6.),
+                FetchAge => (theme().text_muted, 6.),
+                FetchStale => (theme().color_warning, 6.),
             };
             bar = bar.child(
                 div()

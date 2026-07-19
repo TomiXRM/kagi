@@ -349,6 +349,9 @@ pub fn remote_snapshot(
         // ADR-0128: no cleanup classification over SSH — the walk would need a
         // local object store. The remote view just shows an empty table.
         cleanup_rows: Vec::new(),
+        // Remote read-only views have no local FETCH_HEAD to date; the
+        // fetch-age indicator (ADR-0127) stays hidden for them.
+        last_fetch_secs: None,
     })
 }
 

@@ -1097,7 +1097,7 @@ impl Msg {
             (En, CleanupBadgeGrown) => "grown",
             (Ja, CleanupBadgeGrown) => "マージ後に追加",
             (En, CleanupBadgeStale) => "stale",
-            (Ja, CleanupBadgeStale) => "休眠",
+            (Ja, CleanupBadgeStale) => "ストール",
             (En, CleanupGrownHint) => "new commits since merge:",
             (Ja, CleanupGrownHint) => "マージ後の新規コミット:",
             (En, CleanupEmpty) => "No merged or stale branches — all clean.",

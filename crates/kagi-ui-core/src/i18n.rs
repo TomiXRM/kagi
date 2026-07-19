@@ -153,6 +153,10 @@ pub enum Msg {
     NoTabsOpen,
     NoCommitSelected,
     DiffNotOpen,
+    /// ADR-0124: diff-header toggle tooltip → switch to side-by-side.
+    DiffViewSplit,
+    /// ADR-0124: diff-header toggle tooltip → switch back to unified.
+    DiffViewUnified,
 
     // ── Placeholder / unimplemented menu reasons ────────────────────
     CloneUnimplemented,
@@ -590,6 +594,10 @@ impl Msg {
             (Ja, NoCommitSelected) => "commit が選択されていません",
             (En, DiffNotOpen) => "no diff is open",
             (Ja, DiffNotOpen) => "diff が開かれていません",
+            (En, DiffViewSplit) => "Side-by-side view",
+            (Ja, DiffViewSplit) => "横並びで表示",
+            (En, DiffViewUnified) => "Unified view",
+            (Ja, DiffViewUnified) => "1カラムで表示",
 
             // ── Placeholders ────────────────────────────────────────
             (En, CloneUnimplemented) => "clone is not implemented yet",

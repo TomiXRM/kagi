@@ -539,9 +539,17 @@ pub(crate) fn render_diff_list<V: 'static>(
     leading: Option<gpui::AnyElement>,
     trailing: Option<gpui::AnyElement>,
     scroll_handle: gpui::ListState,
-    _cx: &mut Context<V>,
+    cx: &mut Context<V>,
 ) -> impl IntoElement {
-    let row_count = view.rows.len();
+    // ADR-0124: side-by-side mode pairs the unified rows into split rows; the
+    // list then virtualizes over the split-row count. Pairing is O(rows) per
+    // render of an open diff pane (index pairs only — content is shared).
+    let split = super::theme::diff_split();
+    let srows = split.then(|| std::sync::Arc::new(super::diff_split::split_rows(&view.rows)));
+    let row_count = srows
+        .as_ref()
+        .map(|s| s.len())
+        .unwrap_or_else(|| view.rows.len());
     if scroll_handle.item_count() != row_count {
         scroll_handle.reset(row_count);
     }
@@ -550,6 +558,28 @@ pub(crate) fn render_diff_list<V: 'static>(
     let images = view.images.clone();
     let rows = std::sync::Arc::new(view.rows);
     let rows_for_list = rows.clone();
+
+    // ADR-0124: unified ⇄ side-by-side toggle. The label names the mode the
+    // click switches TO; the flag is global (kagi-ui-core atomic) and
+    // persisted, so every diff embedding (main / File History / Editor)
+    // follows the same mode.
+    let mode_label = if split {
+        super::i18n::Msg::DiffViewUnified.t()
+    } else {
+        super::i18n::Msg::DiffViewSplit.t()
+    };
+    use gpui_component::button::ButtonVariants as _;
+    use gpui_component::Sizable as _;
+    let mode_toggle = gpui_component::button::Button::new("diff-mode-toggle")
+        .label(mode_label)
+        .ghost()
+        .xsmall()
+        .on_click(cx.listener(|_this, _ev, _window, cx| {
+            let on = !super::theme::diff_split();
+            super::theme::set_diff_split(on);
+            klog!("diff-mode: {}", if on { "split" } else { "unified" });
+            cx.notify();
+        }));
 
     // W-IMG: one labelled image column ("Before"/"After"); either side of the
     // pair may be missing for added/deleted files.
@@ -616,6 +646,8 @@ pub(crate) fn render_diff_list<V: 'static>(
                 )
                 // History button (导线 #3)
                 .when_some(trailing, |el, btn| el.child(btn))
+                // ADR-0124: unified ⇄ side-by-side toggle
+                .child(mode_toggle)
                 // Stats: +N −M
                 .child(
                     div()
@@ -653,7 +685,14 @@ pub(crate) fn render_diff_list<V: 'static>(
                 "main-diff-list-scroll",
                 &scrollbar_handle,
                 gpui::list(scroll_handle, move |ix, _window, _cx| {
-                    render_main_diff_row(&rows_for_list, ix)
+                    // ADR-0124: split mode renders paired cells; unified keeps
+                    // the original single-column rows.
+                    match &srows {
+                        Some(s) => {
+                            super::diff_split::render_main_diff_split_row(&rows_for_list, s, ix)
+                        }
+                        None => render_main_diff_row(&rows_for_list, ix),
+                    }
                 })
                 .flex_1()
                 .min_h(px(0.)),

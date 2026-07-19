@@ -56,6 +56,10 @@ fn main() {
     // mode chosen at load time is visible/debuggable in the [kagi] log.
     crate::ui::theme::init_graph_lane_compact();
 
+    // ADR-0124: resolve the persisted diff display mode (settings.json
+    // "diff_split") so diff panes open in the user's chosen layout.
+    crate::ui::theme::init_diff_split();
+
     // Resolve the persisted auto-fetch flag (settings.json "auto_fetch") so the
     // background fetch ticker starts in the user's chosen state.
     crate::ui::theme::init_auto_fetch();

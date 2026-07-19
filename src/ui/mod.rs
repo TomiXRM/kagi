@@ -24,6 +24,7 @@ pub mod conflict_view;
 pub mod context_menu;
 pub mod detail_panel;
 mod diff_cache;
+mod diff_split;
 pub mod diff_view;
 pub mod diffstat_bar;
 pub mod ecosystem;

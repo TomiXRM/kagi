@@ -1537,6 +1537,11 @@ impl KagiApp {
                 app.fetch_in_flight = false;
                 match result {
                     Ok(outcome) => {
+                        // ADR-0127: a no-op fetch skips the reload below, so the
+                        // snapshot-derived fetch timestamp would go stale and the
+                        // age indicator would falsely warn — stamp it in place.
+                        app.active_view.status_summary.last_fetch_secs =
+                            Some(super::commit_list::now_unix_secs());
                         // Only reload when the fetch actually moved a ref. A no-op
                         // fetch (the common auto-fetch case) used to re-snapshot the
                         // whole graph AND close + discard the HEAD-versioned overlays

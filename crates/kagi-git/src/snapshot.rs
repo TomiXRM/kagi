@@ -47,6 +47,11 @@ pub struct RepoSnapshot {
     pub stashes: Vec<Stash>,
     /// Main + linked worktrees registered for this repository.
     pub worktrees: Vec<Worktree>,
+    /// Wall-clock time (Unix seconds) of the last `git fetch`, from the
+    /// `FETCH_HEAD` mtime — written on every fetch (including no-op ones, and
+    /// by CLI fetches outside kagi). `None` when the repo has never fetched
+    /// (no FETCH_HEAD). Drives the status-bar fetch-age indicator (ADR-0127).
+    pub last_fetch_secs: Option<i64>,
 }
 
 // ────────────────────────────────────────────────────────────
@@ -90,12 +95,35 @@ pub fn snapshot(repo: &mut Repository, commit_limit: usize) -> Result<RepoSnapsh
         tags,
         stashes,
         worktrees,
+        last_fetch_secs: last_fetch_secs(repo),
     })
 }
 
 // ────────────────────────────────────────────────────────────
 // Internal helpers
 // ────────────────────────────────────────────────────────────
+
+/// `FETCH_HEAD` mtime as Unix seconds (ADR-0127) — git rewrites the file on
+/// every fetch, no-op or not, so its mtime is "when this repo last talked to
+/// a remote". Checked in both the worktree's private gitdir and the common
+/// dir (a fetch run from another worktree writes the latter); the newest
+/// wins. `None` when the repo has never fetched.
+fn last_fetch_secs(repo: &Repository) -> Option<i64> {
+    let mut best: Option<i64> = None;
+    for dir in [repo.path(), repo.commondir()] {
+        let secs = std::fs::metadata(dir.join("FETCH_HEAD"))
+            .ok()
+            .and_then(|md| md.modified().ok())
+            .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64);
+        if let Some(s) = secs {
+            if best.is_none_or(|b| s > b) {
+                best = Some(s);
+            }
+        }
+    }
+    best
+}
 
 /// Collect all local branches with upstream ahead/behind information.
 fn collect_branches(repo: &Repository, _head: &Head) -> Result<Vec<Branch>, GitError> {

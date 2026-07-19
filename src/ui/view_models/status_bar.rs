@@ -28,6 +28,12 @@ pub enum StatusChipRole {
     NoUpstream,
     /// Upstream tracking-ref name (`→ origin/main`).
     UpstreamName,
+    /// Age of the last fetch (`⇣ 3m`), fresh (ADR-0127).
+    FetchAge,
+    /// Age of the last fetch once past [`FETCH_STALE_WARN_SECS`] — the view
+    /// paints this in the warning colour so a silently-failing auto-fetch
+    /// (network down) is noticeable (ADR-0127).
+    FetchStale,
 }
 
 /// One chip: its role (drives colour/margin in the view) and rendered text.
@@ -103,6 +109,45 @@ impl StatusBarVM {
             branch: s.branch.clone(),
             chips,
         }
+    }
+}
+
+/// Fetch-age threshold past which the indicator turns into the warning
+/// colour (ADR-0127). 5× the 180 s auto-fetch interval — a couple of missed
+/// cycles is noise, a quarter hour of silence is worth a highlight.
+pub const FETCH_STALE_WARN_SECS: i64 = 15 * 60;
+
+/// Build the fetch-age chip (`⇣ <age>`) for the status bar (ADR-0127).
+///
+/// `None` when the repo has no remote (nothing to fetch) or has never
+/// fetched (no `FETCH_HEAD` yet — the first auto-fetch creates it within one
+/// interval). Fresh ages use [`StatusChipRole::FetchAge`]; ages past
+/// [`FETCH_STALE_WARN_SECS`] use [`StatusChipRole::FetchStale`] so the view
+/// paints them in the warning colour.
+pub fn fetch_age_chip(s: &StatusBarSummary, now_secs: i64) -> Option<StatusChip> {
+    if !s.has_remote {
+        return None;
+    }
+    let last = s.last_fetch_secs?;
+    let age = (now_secs - last).max(0);
+    let role = if age >= FETCH_STALE_WARN_SECS {
+        StatusChipRole::FetchStale
+    } else {
+        StatusChipRole::FetchAge
+    };
+    Some(StatusChip {
+        role,
+        text: format!("\u{21e3} {}", age_label(age)), // ⇣ 3m
+    })
+}
+
+/// Compact age label: `42s` / `3m` / `2h` / `5d`.
+fn age_label(age_secs: i64) -> String {
+    match age_secs {
+        s if s < 60 => format!("{}s", s),
+        s if s < 3600 => format!("{}m", s / 60),
+        s if s < 86400 => format!("{}h", s / 3600),
+        s => format!("{}d", s / 86400),
     }
 }
 
@@ -194,5 +239,55 @@ mod tests {
         };
         let vm = StatusBarVM::from_summary(&s);
         assert!(roles(&vm).is_empty());
+    }
+
+    // ── ADR-0127: fetch-age chip ───────────────────────────────
+
+    fn remote_summary(last_fetch_secs: Option<i64>) -> StatusBarSummary {
+        StatusBarSummary {
+            has_remote: true,
+            last_fetch_secs,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn fetch_age_fresh_and_stale_roles() {
+        let now = 1_000_000;
+        // 3 minutes ago → fresh, minute label.
+        let chip = fetch_age_chip(&remote_summary(Some(now - 180)), now).unwrap();
+        assert_eq!(chip.role, FetchAge);
+        assert_eq!(chip.text, "\u{21e3} 3m");
+        // Exactly at the threshold → stale.
+        let chip = fetch_age_chip(&remote_summary(Some(now - FETCH_STALE_WARN_SECS)), now).unwrap();
+        assert_eq!(chip.role, FetchStale);
+        assert_eq!(chip.text, "\u{21e3} 15m");
+        // Two days of silence → stale, day label.
+        let chip = fetch_age_chip(&remote_summary(Some(now - 2 * 86_400)), now).unwrap();
+        assert_eq!(chip.role, FetchStale);
+        assert_eq!(chip.text, "\u{21e3} 2d");
+    }
+
+    #[test]
+    fn fetch_age_hidden_without_remote_or_fetch() {
+        let now = 1_000_000;
+        // Never fetched → hidden (first auto-fetch creates FETCH_HEAD).
+        assert!(fetch_age_chip(&remote_summary(None), now).is_none());
+        // No remote → hidden even with a FETCH_HEAD timestamp.
+        let s = StatusBarSummary {
+            has_remote: false,
+            last_fetch_secs: Some(now - 30),
+            ..Default::default()
+        };
+        assert!(fetch_age_chip(&s, now).is_none());
+    }
+
+    #[test]
+    fn fetch_age_clock_skew_clamps_to_zero() {
+        // FETCH_HEAD mtime in the future (clock skew) must not underflow.
+        let now = 1_000_000;
+        let chip = fetch_age_chip(&remote_summary(Some(now + 500)), now).unwrap();
+        assert_eq!(chip.role, FetchAge);
+        assert_eq!(chip.text, "\u{21e3} 0s");
     }
 }

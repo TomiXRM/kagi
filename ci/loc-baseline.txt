@@ -15,13 +15,13 @@ crates/kagi-ui-core/src/theme.rs 1640
 crates/kagi-ui-editor/src/lib.rs 2752
 src/ui/blocking_ops.rs 886
 src/ui/branch_menu.rs 879
-src/ui/commands.rs 1860
+src/ui/commands.rs 1865
 src/ui/commit_panel_render.rs 1424
 src/ui/conflict_editor.rs 1237
 src/ui/conflict_view.rs 2080
 src/ui/diff_view.rs 1329
 src/ui/inspector.rs 988
-src/ui/mod.rs 3742
+src/ui/mod.rs 3748
 src/ui/operations/branch.rs 1552
 src/ui/operations/commit.rs 1247
 src/ui/operations/conflict.rs 824

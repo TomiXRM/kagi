@@ -346,6 +346,9 @@ pub fn remote_snapshot(
         status,
         stashes,
         worktrees,
+        // Remote read-only views have no local FETCH_HEAD to date; the
+        // fetch-age indicator (ADR-0127) stays hidden for them.
+        last_fetch_secs: None,
     })
 }
 

@@ -27,6 +27,12 @@
   `plan: branch-cleanup targets=<n> blockers=<n>`、
   `executed: branch-cleanup deleted=<n> failed=<n>`。
 - リモート(SSH)リポジトリビューでは cleanup_rows は常に空(非目標)。
+- **fetch は `--prune` 付き**(fetch / auto-fetch / pull の全経路)。prune が
+  ないと hoster 側で削除済みのブランチが幽霊 `origin/*` ref として永遠に
+  残り、テーブルが実在しないリモートブランチを報告する(実使用で発覚)。
+  prune は tracking-ref キャッシュの削除のみでローカルブランチ・object
+  store には触れず、upstream 消失を `[gone]` として正しく伝播させるので
+  squash ヒューリスティックの入力にもなる。
 
 ## Context
 

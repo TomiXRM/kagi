@@ -59,7 +59,11 @@ KAGI_COMPARE_WT / KAGI_BOTTOM_PANEL / KAGI_TERMINAL / KAGI_MENU_DUMP / KAGI_PULL
 - **クリックは Terminal.app プロキシ経由**(Terminal に Accessibility 付与済み、SSH 直は不可)。
   常駐プロキシ: `.command` ファイルに `tail -f /tmp/kagi-proxy-queue | while read s; do zsh $s > $s.out 2>&1; touch $s.done; done`
   を書いて `open -a Terminal` で起動 → SSH 側からスクリプトパスをキューに echo して結果ファイルを待つ。
-- **癖: 1 プロキシスクリプト内の cliclick は最初の 1 発しか効かない** — 1 スクリプト = 1 クリックに分割する。
+- **癖: 1 プロキシスクリプト内で cliclick を複数回起動すると最初の 1 発しか効かない** — 1 スクリプト = 1 cliclick 起動に分割する。
+  ただし **1 回の cliclick 起動内のチェーンは OK**: `cliclick m:X,Y w:300 c:.`(移動→待ち→現在位置クリック)。
+- **gpui のボタンは「teleport+クリック同時」では反応しない**(タブ行は反応する)。ホバーが先に必要:
+  `cliclick m:X,Y` で載せてから(hover 状態をスクショで確認可)、`cliclick c:.` で踏む。上のチェーン形が確実。
+- diff を起動時に自動で開く: `KAGI_SELECT_FIRST=1 KAGI_OPEN_FIRST_FILE=1`(headless モードになり single-instance は無効)。
 - 座標系: cliclick = ポイント(1920×1080)、スクショ = 物理 px(3840×2160、スケール 2)。
   較正は `cliclick m:X,Y` → `screencapture -C` でカーソル位置を目視。
 - ウィンドウ前面化は TCC 不要の裏技: **引数なし `kagi` を起動すると single-instance の focus 転送**で

@@ -783,6 +783,9 @@ impl KagiApp {
             }
             Err(reason) => {
                 klog!("drag-merge: rejected — {}", reason);
+                // Footer alone was invisible (user report: "nothing happened");
+                // a toast makes the refusal explicit without a modal round-trip.
+                self.push_toast(ToastKind::Error, reason.clone(), cx);
                 self.status_footer = FooterStatus::Idle(SharedString::from(reason));
             }
         }

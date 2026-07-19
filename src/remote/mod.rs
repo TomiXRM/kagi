@@ -346,6 +346,9 @@ pub fn remote_snapshot(
         status,
         stashes,
         worktrees,
+        // ADR-0128: no cleanup classification over SSH — the walk would need a
+        // local object store. The remote view just shows an empty table.
+        cleanup_rows: Vec::new(),
     })
 }
 

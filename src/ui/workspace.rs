@@ -159,6 +159,41 @@ impl WorkspaceItem for EcosystemItem {
     }
 }
 
+/// Branch Cleanup takeover (ADR-0128) — bridges `KagiApp.branch_cleanup_open`.
+/// Unlike the entity-backed takeovers, the table data lives in
+/// `active_view.cleanup_rows` (snapshot-derived, per-tab), so the gate is a
+/// plain bool and the pane re-renders from fresh rows after every reload.
+pub struct BranchCleanupItem;
+
+impl WorkspaceItem for BranchCleanupItem {
+    fn slot(&self) -> Slot {
+        Slot::CenterTakeover
+    }
+    fn center(&self) -> Option<CenterPane> {
+        Some(CenterPane::BranchCleanup)
+    }
+    fn is_open(&self, app: &KagiApp) -> bool {
+        app.branch_cleanup_open
+    }
+    fn render(
+        &self,
+        app: &mut KagiApp,
+        _layout: &WorkspaceLayout,
+        cx: &mut Context<KagiApp>,
+    ) -> Option<AnyElement> {
+        Some(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .child(super::branch_cleanup::render_branch_cleanup(app, cx))
+                .into_any_element(),
+        )
+    }
+    fn dispose(&self, app: &mut KagiApp) {
+        app.branch_cleanup_open = false;
+    }
+}
+
 /// Editor workspace (T-WS-EDITOR-001) — bridges `KagiApp.editor_workspace`.
 pub struct EditorWorkspaceItem;
 
@@ -251,9 +286,10 @@ impl WorkspaceItem for MainDiffItem {
 /// The registered entity-backed panes (ADR-0121 B1/B2). Loading / CommitList /
 /// CommitPanel / Inspector are not items yet — B2 migrates panes one by one;
 /// until then `render_body` keeps plain arms for them.
-pub const CENTER_ITEMS: [&dyn WorkspaceItem; 4] = [
+pub const CENTER_ITEMS: [&dyn WorkspaceItem; 5] = [
     &FileHistoryItem,
     &EcosystemItem,
+    &BranchCleanupItem,
     &EditorWorkspaceItem,
     &MainDiffItem,
 ];
@@ -477,6 +513,8 @@ pub enum CenterPane {
     FileHistory,
     /// Code Ecosystem / Analyze takeover (ADR-0119) — spans center + right.
     Ecosystem,
+    /// Branch Cleanup table takeover (ADR-0128) — spans center + right.
+    BranchCleanup,
     /// `Loading <repo>…` placeholder during an uncached tab open (W6-TABSPEED).
     Loading,
     /// Read-only code viewer (Editor mode, T-WS-EDITOR-001).
@@ -522,6 +560,8 @@ pub struct WorkspaceInputs {
     pub file_history_open: bool,
     /// `ecosystem.is_some()`.
     pub ecosystem_open: bool,
+    /// `branch_cleanup_open` (ADR-0128).
+    pub branch_cleanup_open: bool,
     /// `loading_tab.is_some()`.
     pub loading: bool,
     /// `main_diff.is_some()`.
@@ -547,7 +587,7 @@ pub struct WorkspaceInputs {
 /// Resolve the slot contents. This encodes, in one place, the precedence that
 /// used to live in `render_body`'s branch ordering:
 ///
-/// - center: FileHistory > Ecosystem > Loading > Editor > Diff > CommitList
+/// - center: FileHistory > Ecosystem > BranchCleanup > Loading > Editor > Diff > CommitList
 /// - right:  hidden under a takeover; else Hunks (Editor mode) > CommitPanel
 ///   (when open AND the entity exists) > Compare/Inspector (when visible AND a
 ///   detail resolved; Compare replaces the Inspector body while a compare is
@@ -561,6 +601,8 @@ pub fn resolve_workspace(i: &WorkspaceInputs) -> WorkspaceLayout {
         CenterPane::FileHistory
     } else if i.ecosystem_open {
         CenterPane::Ecosystem
+    } else if i.branch_cleanup_open {
+        CenterPane::BranchCleanup
     } else if i.loading {
         CenterPane::Loading
     } else if i.editor_mode {

@@ -474,6 +474,22 @@ pub struct EditorDeleteConfirmModal {
     pub error: Option<SharedString>,
 }
 
+// ──────────────────────────────────────────────────────────────
+// BranchCleanupModal — state for the merged-branch cleanup confirmation
+// overlay (ADR-0128). Carries the plan-time delete targets so execute can
+// re-verify every tip OID against them.
+// ──────────────────────────────────────────────────────────────
+
+#[derive(Clone)]
+pub struct BranchCleanupModal {
+    /// The branches to delete, with their plan-time tip OIDs.
+    pub targets: Vec<kagi_git::ops::CleanupDeleteTarget>,
+    /// The computed plan (blockers/warnings/preview list).
+    pub plan: std::sync::Arc<OperationPlan>,
+    /// Error message to show if execute failed.
+    pub error: Option<SharedString>,
+}
+
 pub enum ActiveModal {
     Checkout(CheckoutPlanModal),
     Pull(PullPlanModal),
@@ -496,6 +512,7 @@ pub enum ActiveModal {
     Revert(RevertModal),
     History(HistoryPlanModal),
     DeleteBranch(DeleteBranchModal),
+    BranchCleanup(BranchCleanupModal),
     Discard(DiscardModal),
     ConflictContinue(ConflictContinuePlanModal),
     EditorDirtyGuard(EditorDirtyGuardModal),

@@ -8,12 +8,12 @@
 
 use super::super::modals::ActiveModal;
 use super::super::modals::{
-    AmendPlanModal, BranchPlanModal, CheckoutPlanModal, CherryPickModal, ConflictContinuePlanModal,
-    CreateBranchModal, CreateWorktreeModal, DeleteBranchModal, DiscardModal,
-    EditorDeleteConfirmModal, EditorDirtyGuardModal, EditorFsPromptModal, HistoryPlanModal,
-    MergePlanModal, PopPlanModal, PullPlanModal, PushPlanModal, RenameBranchModal, RevertModal,
-    SetUpstreamModal, StashApplyModal, StashDropModal, StashPushModal, SwitchToLatestPlanModal,
-    TrackingCheckoutPlanModal, UndoPlanModal,
+    AmendPlanModal, BranchCleanupModal, BranchPlanModal, CheckoutPlanModal, CherryPickModal,
+    ConflictContinuePlanModal, CreateBranchModal, CreateWorktreeModal, DeleteBranchModal,
+    DiscardModal, EditorDeleteConfirmModal, EditorDirtyGuardModal, EditorFsPromptModal,
+    HistoryPlanModal, MergePlanModal, PopPlanModal, PullPlanModal, PushPlanModal,
+    RenameBranchModal, RevertModal, SetUpstreamModal, StashApplyModal, StashDropModal,
+    StashPushModal, SwitchToLatestPlanModal, TrackingCheckoutPlanModal, UndoPlanModal,
 };
 use super::super::KagiApp;
 use gpui::{AppContext as _, Context, Window};
@@ -428,6 +428,23 @@ impl KagiApp {
     #[inline]
     pub fn clear_delete_branch_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::DeleteBranch(_))) {
+            self.active_modal = None;
+        }
+    }
+    #[inline]
+    pub fn branch_cleanup_modal(&self) -> Option<&BranchCleanupModal> {
+        match &self.active_modal {
+            Some(ActiveModal::BranchCleanup(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn set_branch_cleanup_modal(&mut self, m: BranchCleanupModal) {
+        self.active_modal = Some(ActiveModal::BranchCleanup(m));
+    }
+    #[inline]
+    pub fn clear_branch_cleanup_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::BranchCleanup(_))) {
             self.active_modal = None;
         }
     }

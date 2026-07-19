@@ -1,7 +1,27 @@
 # ADR-0128: マージ済みブランチの一覧と安全な削除(Branch Cleanup)
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-19
+
+## 実装ノート(実装時の確定事項)
+
+- 関数名は `plan_delete_merged_branches` / `execute_delete_merged_branches`
+  (preflight は execute 内: 全体の `preflight_check` + ブランチ毎の OID /
+  祖先性再検証)。列挙は `collect_branch_cleanup`。
+- **テーブル行は `RepoSnapshot.cleanup_rows` として snapshot に載せる** —
+  リロードのたびに再分類され、サイドバーの件数バッジ
+  (「マージ済みブランチ (N)」、N = merged クラスの行数)が常時出せる。
+  ペインは `branch_cleanup_open: bool` の CenterTakeover
+  (FileHistory / Ecosystem と同型、ADR-0121 B1 registry)。
+- grown 判定の追加条件: merge commit の parent² が tip の祖先、**かつ
+  merge commit 自体は tip の祖先でない**こと。後者がないと「マージ後の
+  main から分岐しただけのブランチ」(mainの履歴ごと merge commit を含む)
+  が誤って WARN になる。
+- klog 契約行: `merged-branches: <n> full, <n> squash?, <n> warn, <n> stale`
+  (snapshot 毎)、`branch-cleanup: opened`、
+  `plan: branch-cleanup targets=<n> blockers=<n>`、
+  `executed: branch-cleanup deleted=<n> failed=<n>`。
+- リモート(SSH)リポジトリビューでは cleanup_rows は常に空(非目標)。
 
 ## Context
 

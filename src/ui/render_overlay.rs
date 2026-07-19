@@ -342,6 +342,7 @@ impl KagiApp {
         cherry_pick_modal: Option<CherryPickModal>,
         revert_modal: Option<RevertModal>,
         delete_branch_modal: Option<DeleteBranchModal>,
+        branch_cleanup_modal: Option<BranchCleanupModal>,
         discard_modal: Option<DiscardModal>,
         editor_dirty_guard_modal: Option<EditorDirtyGuardModal>,
         editor_fs_prompt_modal: Option<EditorFsPromptModal>,
@@ -438,6 +439,10 @@ impl KagiApp {
         // ── Delete-branch modal overlay (W2-DELETE) ──────
         .when_some(delete_branch_modal, |el, modal| {
             el.child(render_delete_branch_modal(modal, cx))
+        })
+        // ── Branch-cleanup modal overlay (ADR-0128) ──────
+        .when_some(branch_cleanup_modal, |el, modal| {
+            el.child(render_branch_cleanup_modal(modal, cx))
         })
         // ── Discard danger modal overlay (W17-DISCARD) ───
         .when_some(discard_modal, |el, modal| {

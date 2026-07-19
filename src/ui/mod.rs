@@ -12,6 +12,7 @@ mod avatar_lookup;
 mod avatar_resolve;
 pub mod badges;
 pub mod blocking_ops;
+pub mod branch_cleanup;
 pub mod branch_menu;
 pub mod button_style;
 pub mod commands;
@@ -1195,6 +1196,9 @@ pub struct KagiApp {
     /// read-only analysis view occupies the center+right area; `None` shows the
     /// normal body. Its own `Entity<EcosystemView>` owns the mining + ranking.
     pub ecosystem: Option<Entity<ecosystem::EcosystemView>>,
+    /// ADR-0128: Branch Cleanup takeover open flag. The table data itself
+    /// is per-tab (`active_view.cleanup_rows`), so a bool is the whole gate.
+    pub branch_cleanup_open: bool,
     /// ADR-0119: cached completed mine so reopening the Ecosystem view reuses
     /// the slow `git log` scan. Invalidated on reload / repo switch.
     pub ecosystem_cache: ecosystem::EcosystemCache,
@@ -1373,6 +1377,7 @@ impl KagiApp {
             file_history: None,
             file_history_head: None,
             ecosystem: None,
+            branch_cleanup_open: false,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,
@@ -1479,6 +1484,7 @@ impl KagiApp {
             file_history: None,
             file_history_head: None,
             ecosystem: None,
+            branch_cleanup_open: false,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,
@@ -2860,6 +2866,8 @@ impl KagiApp {
             self.start_merge(cx);
         } else if self.branch_plan_modal().is_some() {
             self.start_branch_plan(cx);
+        } else if self.branch_cleanup_modal().is_some() {
+            self.confirm_branch_cleanup(cx);
         } else if self.delete_branch_modal().is_some() {
             self.confirm_delete_branch(cx);
         } else if self.pop_modal().is_some() {
@@ -2932,6 +2940,8 @@ impl KagiApp {
             self.cancel_merge_modal();
         } else if self.branch_plan_modal().is_some() {
             self.cancel_branch_plan_modal();
+        } else if self.branch_cleanup_modal().is_some() {
+            self.cancel_branch_cleanup_modal();
         } else if self.delete_branch_modal().is_some() {
             self.cancel_delete_branch_modal();
         } else if self.pop_modal().is_some() {

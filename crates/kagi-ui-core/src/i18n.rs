@@ -434,6 +434,38 @@ pub enum Msg {
     /// Smart Commit → model picker note when no local models are detected.
     SettingsSmartNoModels,
 
+    // ── Branch Cleanup (ADR-0128) ───────────────────────────────────
+    /// Pane title / sidebar entry ("Merged branches").
+    CleanupTitle,
+    /// Bulk-delete button label prefix; count is appended at render.
+    CleanupDeleteMerged,
+    /// "Copy all branch names" header button.
+    CleanupCopyAll,
+    /// Toast confirming branch name(s) were copied.
+    CleanupNamesCopied,
+    /// Table column: branch name.
+    CleanupColBranch,
+    /// Table column: where the branch exists (local / origin chips).
+    CleanupColWhere,
+    /// Table column: merge date.
+    CleanupColMergedAt,
+    /// Table column: classification status.
+    CleanupColStatus,
+    /// Badge: fully merged (tip is an ancestor of the default branch).
+    CleanupBadgeMerged,
+    /// Badge: probably squash-merged (upstream gone) — no local proof.
+    CleanupBadgeSquash,
+    /// Badge: merged but the branch grew new commits since (WARN).
+    CleanupBadgeGrown,
+    /// Badge: stale (no commits for 90 days).
+    CleanupBadgeStale,
+    /// Tooltip/hint for WARN rows (prefix; ahead count appended).
+    CleanupGrownHint,
+    /// Empty-table body message.
+    CleanupEmpty,
+    /// Body message when no repository is open.
+    CleanupNoRepo,
+
     // ── Code Ecosystem / hot-spots (ADR-0119) ───────────────────────
     /// Ecosystem view title / toolbar button label.
     Ecosystem,
@@ -1040,6 +1072,38 @@ impl Msg {
             (Ja, SettingsSmartNoModels) => {
                 "ローカルモデルが検出されませんでした — Ollama を起動してください"
             }
+
+            // ── Branch Cleanup (ADR-0128) ───────────────────────────
+            (En, CleanupTitle) => "Merged branches",
+            (Ja, CleanupTitle) => "マージ済みブランチ",
+            (En, CleanupDeleteMerged) => "Delete merged",
+            (Ja, CleanupDeleteMerged) => "マージ済みを削除",
+            (En, CleanupCopyAll) => "Copy all names",
+            (Ja, CleanupCopyAll) => "全ブランチ名をコピー",
+            (En, CleanupNamesCopied) => "Branch names copied to clipboard",
+            (Ja, CleanupNamesCopied) => "ブランチ名をクリップボードにコピーしました",
+            (En, CleanupColBranch) => "Branch",
+            (Ja, CleanupColBranch) => "ブランチ",
+            (En, CleanupColWhere) => "Where",
+            (Ja, CleanupColWhere) => "場所",
+            (En, CleanupColMergedAt) => "Merged",
+            (Ja, CleanupColMergedAt) => "マージ日",
+            (En, CleanupColStatus) => "Status",
+            (Ja, CleanupColStatus) => "状態",
+            (En, CleanupBadgeMerged) => "merged",
+            (Ja, CleanupBadgeMerged) => "マージ済み",
+            (En, CleanupBadgeSquash) => "squash?",
+            (Ja, CleanupBadgeSquash) => "squash済み?",
+            (En, CleanupBadgeGrown) => "grown",
+            (Ja, CleanupBadgeGrown) => "マージ後に成長",
+            (En, CleanupBadgeStale) => "stale",
+            (Ja, CleanupBadgeStale) => "休眠",
+            (En, CleanupGrownHint) => "new commits since merge:",
+            (Ja, CleanupGrownHint) => "マージ後の新規コミット:",
+            (En, CleanupEmpty) => "No merged or stale branches — all clean.",
+            (Ja, CleanupEmpty) => "マージ済み・休眠ブランチはありません — クリーンです。",
+            (En, CleanupNoRepo) => "Open a repository to see merged branches.",
+            (Ja, CleanupNoRepo) => "リポジトリを開くとマージ済みブランチが表示されます。",
 
             // ── Code Ecosystem / hot-spots (ADR-0119) ───────────────
             (En, Ecosystem) => "Analyze",

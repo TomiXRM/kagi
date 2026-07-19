@@ -45,6 +45,15 @@ impl KagiApp {
         wip_diffstat: Option<WipDiffStat>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        // ADR-0128: sidebar badge count — merged-class rows only (stale-only
+        // rows are listed in the table but don't count as "merged").
+        let cleanup_count = self
+            .active_view
+            .cleanup_rows
+            .iter()
+            .filter(|r| r.status != kagi_git::ops::MergedBranchStatus::NotMerged)
+            .count();
+
         // Build divider 1: sidebar | main.
         let divider1 = div()
             .id("divider-sidebar")
@@ -401,6 +410,7 @@ impl KagiApp {
             sidebar_visible: self.sidebar.visible,
             file_history_open: workspace::FileHistoryItem.is_open(self),
             ecosystem_open: workspace::EcosystemItem.is_open(self),
+            branch_cleanup_open: workspace::BranchCleanupItem.is_open(self),
             loading: self.loading_tab.is_some(),
             diff_open: workspace::MainDiffItem.is_open(self),
             commit_panel_open,
@@ -426,6 +436,7 @@ impl KagiApp {
                     sidebar_width,
                     sidebar_row_count,
                     sidebar_scroll_handle,
+                    cleanup_count,
                     cx,
                 ))
                 // ── Sidebar divider ───────────────────────

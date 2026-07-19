@@ -44,6 +44,10 @@ pub struct TabViewState {
     pub branch_solo: Option<BranchSolo>,
     /// Commit-activity aggregation for the bottom-panel "Activity" chart.
     pub activity: kagi_domain::activity::ActivityData,
+    /// Branch Cleanup table rows (ADR-0128) — classified merged/stale branch
+    /// candidates, straight from the snapshot; drives the sidebar badge and
+    /// the cleanup pane.
+    pub cleanup_rows: Vec<kagi_domain::branch_cleanup::BranchCleanupRow>,
     /// HEAD commit OID (hex) for this snapshot, or `None` for an unborn HEAD.
     /// Used to decide whether HEAD-versioned overlays (Analyze, File History)
     /// are stale on a reload — an auto-fetch that only moves remote-tracking
@@ -165,6 +169,36 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
         snap.worktrees.len()
     );
 
+    // ADR-0128: Branch Cleanup contract line — class counts for the headless
+    // harness (full = safely deletable, squash? = [gone] heuristic, warn =
+    // merged-then-grown, stale = old-tip rows regardless of class).
+    {
+        use kagi_domain::branch_cleanup::MergedBranchStatus as S;
+        let full = snap
+            .cleanup_rows
+            .iter()
+            .filter(|r| r.status == S::FullyMerged)
+            .count();
+        let squash = snap
+            .cleanup_rows
+            .iter()
+            .filter(|r| r.status == S::SquashMergedLikely)
+            .count();
+        let warn = snap
+            .cleanup_rows
+            .iter()
+            .filter(|r| matches!(r.status, S::MergedThenGrown { .. }))
+            .count();
+        let stale = snap.cleanup_rows.iter().filter(|r| r.stale).count();
+        klog!(
+            "merged-branches: {} full, {} squash?, {} warn, {} stale",
+            full,
+            squash,
+            warn,
+            stale
+        );
+    }
+
     // T-BP-003: build StatusBarSummary and emit the headless log.
     let mut status_summary = StatusBarSummary::from_snapshot(snap);
     // T-HT-001: fill repo_name for toolbar display.
@@ -194,6 +228,7 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
         worktrees: snap.worktrees.clone(),
         branch_solo: None,
         activity: kagi_domain::activity::aggregate(&snap.commits, now_unix_secs()),
+        cleanup_rows: snap.cleanup_rows.clone(),
         head_oid: match &snap.head {
             Head::Attached { target, .. } | Head::Detached { target } => Some(target.clone()),
             Head::Unborn { .. } => None,

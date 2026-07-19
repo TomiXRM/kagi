@@ -104,6 +104,19 @@ impl KagiApp {
         ))
     }
 
+    fn render_worktree_menu_overlay(
+        &self,
+        state: worktree_menu::WorktreeMenuState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        let groups = worktree_menu::build_worktree_menu(state.locked);
+        let header = SharedString::from(state.name.clone());
+        Some(worktree_menu::render_worktree_menu_overlay(
+            state, header, groups, window, cx,
+        ))
+    }
+
     fn render_stash_menu_overlay(
         &self,
         state: stash_menu::StashMenuState,
@@ -365,6 +378,7 @@ impl Render for KagiApp {
         let amend_modal = self.amend_modal().cloned();
         let pop_modal = self.pop_modal().cloned();
         let stash_drop_modal = self.stash_drop_modal().cloned();
+        let unlock_worktree_modal = self.unlock_worktree_modal().cloned();
         let push_modal = self.push_modal().cloned();
         let branch_plan_modal = self.branch_plan_modal().cloned();
         let set_upstream_modal = self.set_upstream_modal().cloned();
@@ -413,6 +427,10 @@ impl Render for KagiApp {
             .stash_menu
             .clone()
             .and_then(|state| self.render_stash_menu_overlay(state, window, cx));
+        let worktree_menu_overlay = self
+            .worktree_menu
+            .clone()
+            .and_then(|state| self.render_worktree_menu_overlay(state, window, cx));
         // T-CONFLICT-DASH-022: per-file "…" overflow menu overlay (anchored at the
         // click position; rendered TOP-LEVEL on the `KagiApp` context — never
         // inside the entity render — so its actions defer/dispatch on the parent
@@ -706,6 +724,7 @@ impl Render for KagiApp {
             .children(branch_menu_overlay)
             // ── Stash context menu overlay (below modals) ──────
             .children(stash_menu_overlay)
+            .children(worktree_menu_overlay)
             // ── Conflict per-file "…" overflow menu overlay ────
             .children(conflict_file_menu_overlay)
             // ── Editor Workspace tree right-click context menu overlay ──
@@ -733,6 +752,7 @@ impl Render for KagiApp {
             switch_to_latest_modal,
             create_branch_modal,
             create_worktree_modal,
+            unlock_worktree_modal,
             remote_browse_modal,
             stash_push_modal,
             stash_apply_modal,

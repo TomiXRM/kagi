@@ -138,6 +138,24 @@ pub(crate) fn render_stash_drop_modal(
     )
 }
 
+/// Unlock-worktree confirmation overlay — the plan warning carries the
+/// recorded lock reason; confirming removes the lock (admin-only, never
+/// touches any working tree).
+pub(crate) fn render_unlock_worktree_modal(
+    modal: UnlockWorktreeModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    render_plan_modal_wrapper(
+        modal.plan,
+        modal.error,
+        "Unlock",
+        None,
+        |this, _cx| this.cancel_unlock_worktree_modal(),
+        |this, cx| this.confirm_unlock_worktree(cx),
+        cx,
+    )
+}
+
 /// Push plan confirmation overlay (T-HT-004) — same card as the pull
 /// plan modal, wired to `confirm_push`.
 pub(crate) fn render_push_modal(

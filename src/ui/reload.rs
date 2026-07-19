@@ -149,6 +149,7 @@ impl KagiApp {
         self.commit_menu = None;
         self.file_menu = None;
         self.stash_menu = None;
+        self.worktree_menu = None;
         if !was_merge_commit_pending {
             // ADR-0068: a reload after commit / abort ends any continued-merge flow.
             self.conflict_merge_pending = false;

@@ -1237,13 +1237,9 @@ fn build_worktree_row(
         .tooltip(name_tooltip(full_name))
         .child(div().flex_1().truncate().child(label));
     if locked {
-        row = row.child(
-            div()
-                .flex_shrink_0()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .child("locked"),
-        );
+        // 🔐 reads at a glance where the muted "locked" text was easy to miss
+        // next to the path label (user feedback).
+        row = row.child(div().flex_shrink_0().text_xs().child("🔐"));
     }
     // Right-click menu (Unlock worktree…) — linked worktrees only; the main
     // worktree is never lockable/unlockable from kagi.

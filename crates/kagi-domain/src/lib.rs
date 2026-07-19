@@ -10,6 +10,7 @@
 //! during the migration.
 
 pub mod activity;
+pub mod branch_cleanup;
 pub mod checklist;
 pub mod commit;
 pub mod coupling_graph;

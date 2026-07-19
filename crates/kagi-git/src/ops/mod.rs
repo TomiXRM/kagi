@@ -93,6 +93,7 @@ pub use kagi_domain::plan::{
 // ────────────────────────────────────────────────────────────
 
 mod branch;
+mod branch_cleanup;
 mod checkout;
 mod cherry_revert;
 mod discard;
@@ -107,6 +108,7 @@ mod switch;
 mod worktree;
 
 pub use branch::*;
+pub use branch_cleanup::*;
 pub use checkout::*;
 pub use cherry_revert::*;
 pub use discard::*;

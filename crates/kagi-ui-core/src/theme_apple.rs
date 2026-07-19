@@ -115,7 +115,7 @@ pub const APPLE_DARK: Theme = Theme {
     bg_base: 0x1c1c1e,
     bg_row_alt: 0x18181a,
     surface: 0x2c2c2e,  // systemGray5 (dark)
-    selected: 0x153956, // systemBlue 25% on #1c1c1e
+    selected: 0x3a3a3c, // systemGray4 (dark) — neutral selection, Notes-style
     panel: 0x161618,
     sidebar: 0x101012,
     modal: 0x2c2c2e,
@@ -126,14 +126,17 @@ pub const APPLE_DARK: Theme = Theme {
     text_muted: 0x636366, // systemGray2 (dark)
     text_label: 0x7c7c80, // systemGray2 (dark, increased contrast)
 
-    // Default (dark) set — tuned for dark backgrounds as-is.
+    // Default (dark) set — tuned for dark backgrounds as-is. `color_branch`
+    // doubles as kagi's UI accent (primary buttons, active tab, links);
+    // Apple's dark-mode apps (Camera, Notes) accent with systemYellow, so
+    // the dark theme adopts it (ADR-0126) — the light theme keeps blue.
     color_head: 0xff375f,   // pink
-    color_branch: 0x0091ff, // blue
+    color_branch: 0xffd600, // yellow (accent)
     color_remote: 0x30d158, // green
     color_tag: 0xff9230,    // orange
 
     color_success: 0x30d158,
-    color_warning: 0xffd600, // yellow
+    color_warning: 0xff9230, // orange (HIG warning semantics; yellow = accent)
     color_blocker: 0xff4245, // red
     color_blocker_muted: 0x822d30,
 
@@ -169,7 +172,7 @@ pub const APPLE_DARK: Theme = Theme {
     // Increased-contrast (dark) set as the bright variants.
     term_bg: (0x1c, 0x1c, 0x1e),
     term_fg: (0xff, 0xff, 0xff),
-    term_cursor: (0x00, 0x91, 0xff),
+    term_cursor: (0xff, 0xd6, 0x00),
     term_black: (0x2c, 0x2c, 0x2e),
     term_red: (0xff, 0x42, 0x45),
     term_green: (0x30, 0xd1, 0x58),

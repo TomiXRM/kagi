@@ -27,9 +27,16 @@ pub fn fetch_remote(repo: &Repository, repo_path: &Path) -> Result<FetchOutcome,
     // fetching every remote when no single upstream can be determined.
     let remote = resolve_fetch_remote(repo);
 
+    // `--prune` (ADR-0128): remote-tracking refs whose upstream branch is gone
+    // are dropped. Without it, branches deleted on the hoster (e.g. after a PR
+    // merge) linger locally forever as ghost `origin/*` refs — which the
+    // Branch Cleanup table then reports as remote branches that don't exist.
+    // Prune only removes tracking-ref cache entries: local branches and the
+    // object store are untouched, and a pruned upstream is exactly what turns
+    // a local branch `[gone]` (the squash-merge heuristic input).
     let args: Vec<&str> = match remote.as_deref() {
-        Some(name) => vec!["fetch", name],
-        None => vec!["fetch", "--all"],
+        Some(name) => vec!["fetch", "--prune", name],
+        None => vec!["fetch", "--all", "--prune"],
     };
 
     // Snapshot remote-tracking refs before the fetch so we can tell whether it

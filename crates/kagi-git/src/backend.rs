@@ -1011,6 +1011,27 @@ impl Backend {
         ops::execute_delete_branch(&self.repo, plan, name)
     }
 
+    /// Branch Cleanup (ADR-0128): validate a selection of delete targets and
+    /// build the confirmation plan. `now` is Unix seconds (staleness input).
+    pub fn plan_delete_merged_branches(
+        &self,
+        now: i64,
+        targets: &[ops::CleanupDeleteTarget],
+    ) -> Result<OperationPlan, GitError> {
+        ops::plan_delete_merged_branches(&self.repo, now, targets)
+    }
+
+    /// Branch Cleanup (ADR-0128): delete the targeted branches (remote halves
+    /// first), re-verifying every tip OID. Per-branch failures are collected
+    /// in the outcome, not returned as `Err`.
+    pub fn execute_delete_merged_branches(
+        &self,
+        plan: &OperationPlan,
+        targets: &[ops::CleanupDeleteTarget],
+    ) -> Result<ops::CleanupOutcome, GitError> {
+        ops::execute_delete_merged_branches(&self.repo, &self.path, plan, targets)
+    }
+
     pub fn plan_discard(&self, paths: &[String]) -> Result<OperationPlan, GitError> {
         ops::plan_discard(&self.repo, paths)
     }

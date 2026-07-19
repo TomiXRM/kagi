@@ -47,6 +47,10 @@ pub struct RepoSnapshot {
     pub stashes: Vec<Stash>,
     /// Main + linked worktrees registered for this repository.
     pub worktrees: Vec<Worktree>,
+    /// Branch Cleanup table rows (ADR-0128): merged/stale branch candidates,
+    /// classified and sorted. Best-effort — an empty Vec on collection failure
+    /// never fails the snapshot.
+    pub cleanup_rows: Vec<kagi_domain::branch_cleanup::BranchCleanupRow>,
     /// Wall-clock time (Unix seconds) of the last `git fetch`, from the
     /// `FETCH_HEAD` mtime — written on every fetch (including no-op ones, and
     /// by CLI fetches outside kagi). `None` when the repo has never fetched
@@ -85,6 +89,14 @@ pub fn snapshot(repo: &mut Repository, commit_limit: usize) -> Result<RepoSnapsh
     let tags = collect_tags(repo)?;
     let stashes = collect_stashes(repo)?;
     let worktrees = collect_worktrees(repo)?;
+    // ADR-0128: cleanup classification rides along with the snapshot so the UI
+    // always has a fresh table (and the sidebar badge count) after any reload.
+    // Best-effort: a failure here must not take the whole snapshot down.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let cleanup_rows = super::ops::collect_branch_cleanup(repo, now).unwrap_or_default();
 
     Ok(RepoSnapshot {
         head,
@@ -95,6 +107,7 @@ pub fn snapshot(repo: &mut Repository, commit_limit: usize) -> Result<RepoSnapsh
         tags,
         stashes,
         worktrees,
+        cleanup_rows,
         last_fetch_secs: last_fetch_secs(repo),
     })
 }

@@ -254,6 +254,18 @@ impl KagiApp {
                     }
                 });
             }
+            DividerKind::CleanupCol(idx) => {
+                // ADR-0128: Branch Cleanup table columns start after the
+                // sidebar (when visible) + its divider; convert the raw
+                // cursor to pane-relative logical px and let the pane's own
+                // handler do the per-column offset math.
+                let pane_left = if self.sidebar.visible {
+                    self.sidebar.width + INNER_DIV_W
+                } else {
+                    0.0
+                };
+                self.handle_cleanup_col_drag(idx, cursor_x / z - pane_left, cx);
+            }
         }
     }
 }

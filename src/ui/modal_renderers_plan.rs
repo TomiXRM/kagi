@@ -317,6 +317,24 @@ pub(crate) fn render_delete_branch_modal(
     )
 }
 
+/// Branch-cleanup confirmation overlay (ADR-0128). Reuses the shared plan
+/// card: the plan's `preview_commits` already lists the branches (with their
+/// local/origin tips), and blockers hide the confirm button.
+pub(crate) fn render_branch_cleanup_modal(
+    modal: BranchCleanupModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    render_plan_modal_wrapper(
+        modal.plan.clone(),
+        modal.error.clone(),
+        "Delete",
+        None,
+        |this, _cx| this.cancel_branch_cleanup_modal(),
+        |this, cx| this.confirm_branch_cleanup(cx),
+        cx,
+    )
+}
+
 /// Revert confirmation overlay (T-CM-034).
 pub(crate) fn render_revert_modal(
     modal: RevertModal,

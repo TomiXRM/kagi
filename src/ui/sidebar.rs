@@ -18,7 +18,7 @@ use gpui_component::Sizable as _;
 use kagi_git::{CommitId, RemoteBranch, Stash, Tag, Worktree};
 
 use super::theme::{self, theme};
-use super::{BranchDrag, BranchDragGhost, KagiApp};
+use super::{BranchDrag, BranchDragGhost, KagiApp, Msg};
 
 /// Uniform row height (unscaled) used for **every** virtualized sidebar row.
 ///
@@ -1295,6 +1295,7 @@ pub fn render_sidebar(
     width: f32,
     row_count: usize,
     scroll_handle: gpui::UniformListScrollHandle,
+    cleanup_count: usize,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     // ── Filter input row (pinned above the virtualized list) ──────
@@ -1329,6 +1330,48 @@ pub fn render_sidebar(
                     .bg(rgb(theme().bg_base))
                     .rounded(theme::scaled_px(4.))
                     .child(SharedString::from("filter…")),
+            )
+            .into_any_element()
+    };
+
+    // ── Branch Cleanup entry (ADR-0128, pinned above the list) ────
+    // "Merged branches (N)" — N counts the merged-class rows (full / squash?
+    // / grown); stale-only rows are in the table but not in the badge.
+    let cleanup_entry: gpui::AnyElement = {
+        let open_handler = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
+            this.toggle_branch_cleanup_view(cx);
+        });
+        let count_color = if cleanup_count > 0 {
+            theme().color_branch
+        } else {
+            theme().text_muted
+        };
+        div()
+            .id("sidebar-cleanup-entry")
+            .mx_2()
+            .my_1()
+            .px_2()
+            .py_1()
+            .flex_shrink_0()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .rounded(theme::scaled_px(4.))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(theme().surface)))
+            .on_click(open_handler)
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(Msg::CleanupTitle.t())),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(count_color))
+                    .child(SharedString::from(format!("({})", cleanup_count))),
             )
             .into_any_element()
     };
@@ -1374,6 +1417,7 @@ pub fn render_sidebar(
         .flex_col()
         .bg(rgb(theme().sidebar))
         .child(filter_area)
+        .child(cleanup_entry)
         .child(list)
 }
 

@@ -219,6 +219,39 @@ fn branch_config_entries(repo: &Repository, branch_name: &str) -> Vec<(String, S
     entries_out
 }
 
+/// Tolerantly wipe the `branch.<name>.*` config section before a ref delete.
+///
+/// gh CLI is known to write duplicated `branch.<name>.*` keys (e.g.
+/// github-pr-owner-number, one copy per `gh pr` invocation). libgit2's
+/// `Branch::delete()` wipes the section key-by-key and aborts on the
+/// duplicates ("could not find key … to delete") BEFORE deleting the ref —
+/// so the first attempt fails and a retry succeeds. Removing the entries
+/// tolerantly first means the ref deletion cannot be blocked by config
+/// garbage. Best-effort: a key that is already gone (or lives in a read-only
+/// level) is not an error.
+pub(crate) fn pre_clean_branch_config(repo: &Repository, name: &str) {
+    let prefix = format!("branch.{}.", name);
+    if let Ok(mut config) = repo.config() {
+        let mut keys: Vec<String> = Vec::new();
+        if let Ok(snap) = config.snapshot() {
+            if let Ok(mut entries) = snap.entries(None) {
+                while let Some(Ok(entry)) = entries.next() {
+                    if let Ok(k) = entry.name() {
+                        if k.starts_with(&prefix) && !keys.iter().any(|e| e == k) {
+                            keys.push(k.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        for key in keys {
+            if config.remove_multivar(&key, ".*").is_err() {
+                let _ = config.remove(&key);
+            }
+        }
+    }
+}
+
 fn remove_branch_config_section(repo: &Repository, branch_name: &str) {
     let prefix = format!("branch.{}.", branch_name);
     if let Ok(mut config) = repo.config() {
@@ -602,36 +635,7 @@ pub fn execute_delete_branch(
         .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", name, e.message())))?;
 
     // ── 2.5 Pre-clean the branch's config section ─────────────
-    // gh CLI is known to write duplicated `branch.<name>.*` keys (e.g.
-    // github-pr-owner-number, one copy per `gh pr` invocation). libgit2's
-    // Branch::delete() wipes the section key-by-key and aborts on the
-    // duplicates ("could not find key … to delete") BEFORE deleting the
-    // ref — so the first attempt fails and a retry succeeds. Remove the
-    // section's entries tolerantly here so the ref deletion below cannot
-    // be blocked by config garbage. Best-effort: a key that is already
-    // gone (or lives in a read-only level) is not an error.
-    {
-        let prefix = format!("branch.{}.", name);
-        if let Ok(mut config) = repo.config() {
-            let mut keys: Vec<String> = Vec::new();
-            if let Ok(snap) = config.snapshot() {
-                if let Ok(mut entries) = snap.entries(None) {
-                    while let Some(Ok(entry)) = entries.next() {
-                        if let Ok(k) = entry.name() {
-                            if k.starts_with(&prefix) && !keys.iter().any(|e| e == k) {
-                                keys.push(k.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-            for key in keys {
-                if config.remove_multivar(&key, ".*").is_err() {
-                    let _ = config.remove(&key);
-                }
-            }
-        }
-    }
+    pre_clean_branch_config(repo, name);
 
     // ── 3. Delete the branch ref (ref-only, no WT change) ─────
     // Branch::delete() removes refs/heads/<name>. force=false would be the

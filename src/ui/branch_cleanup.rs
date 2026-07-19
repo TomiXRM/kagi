@@ -344,20 +344,6 @@ fn format_date(secs: i64) -> String {
     format!("{:04}-{:02}-{:02}", y, m, d)
 }
 
-/// One status badge chip: label + accent color.
-fn badge(label: &'static str, color: u32) -> gpui::AnyElement {
-    div()
-        .px(theme::scaled_px(6.))
-        .py(theme::scaled_px(1.))
-        .rounded(theme::scaled_px(4.))
-        .text_xs()
-        .text_color(rgb(color))
-        .border_1()
-        .border_color(rgb(color))
-        .child(SharedString::from(label))
-        .into_any_element()
-}
-
 /// Small clickable header/action button.
 fn action_button(
     id: impl Into<gpui::ElementId>,
@@ -467,14 +453,21 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
     // strip doubles as the cell gap so the header and the rows line up on
     // exactly the same x offsets — which is also what the drag-move math in
     // `handle_cleanup_col_drag` assumes.
+    // Same look/feel as the commit list's BRANCH|GRAPH column handles
+    // (render_body): panel bg + subtle 1px centre line so the resize boundary
+    // is visible without hovering, accent + col-resize cursor on hover.
     let col_divider = |idx: u8| {
         div()
             .id(("cleanup-col-div", idx as usize))
             .w(theme::scaled_px(CLEANUP_GAP))
-            .h_full()
             .flex_shrink_0()
+            .h_full()
+            .bg(rgb(theme().panel))
+            .flex()
+            .justify_center()
+            .child(div().w(px(1.)).h_full().bg(rgb(theme().selected)))
+            .hover(|s| s.bg(rgb(theme().color_branch)).cursor_col_resize())
             .cursor_col_resize()
-            .hover(|s| s.bg(rgb(theme().color_branch)))
             .on_drag(
                 DividerDrag {
                     kind: DividerKind::CleanupCol(idx),
@@ -569,20 +562,20 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
             )
             .child(div().truncate().child(full_name));
 
-        // Where chips.
-        let mut where_cell = div()
+        // Where: plain muted text, no chips (user request: no badge noise).
+        let where_text = match (row.local_tip.is_some(), row.remote_tip.is_some()) {
+            (true, true) => "local, origin",
+            (true, false) => "local",
+            (false, true) => "origin",
+            (false, false) => "",
+        };
+        let where_cell = div()
             .w(theme::scaled_px(cols.0[1]))
             .flex_shrink_0()
             .overflow_hidden()
-            .flex()
-            .flex_row()
-            .gap_1();
-        if row.local_tip.is_some() {
-            where_cell = where_cell.child(badge("local", theme().text_muted));
-        }
-        if row.remote_tip.is_some() {
-            where_cell = where_cell.child(badge("origin", theme().text_muted));
-        }
+            .text_xs()
+            .text_color(rgb(theme().text_muted))
+            .child(SharedString::from(where_text));
 
         // Merged-at cell.
         let merged_cell = div()
@@ -595,42 +588,58 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
                 row.merged_at.map(format_date).unwrap_or_else(|| "—".into()),
             ));
 
-        // Status badges (clipped to the column — the WARN hint truncates and
-        // must never paint over the actions cell).
+        // Status: one plain colored label, no chips (user request). Stale is
+        // appended muted; the grown detail lives in the tooltip.
+        let (status_text, status_color) = match &row.status {
+            MergedBranchStatus::FullyMerged => (
+                Msg::CleanupBadgeMerged.t().to_string(),
+                theme().color_success,
+            ),
+            MergedBranchStatus::SquashMergedLikely => (
+                Msg::CleanupBadgeSquash.t().to_string(),
+                theme().color_branch,
+            ),
+            MergedBranchStatus::MergedThenGrown { ahead } => (
+                format!("{} +{}", Msg::CleanupBadgeGrown.t(), ahead),
+                theme().color_blocker,
+            ),
+            MergedBranchStatus::NotMerged => (String::new(), theme().text_muted),
+        };
+        let grown_tooltip = match &row.status {
+            MergedBranchStatus::MergedThenGrown { ahead } => Some(SharedString::from(format!(
+                "{} +{}",
+                Msg::CleanupGrownHint.t(),
+                ahead
+            ))),
+            _ => None,
+        };
         let mut status_cell = div()
+            .id(("cleanup-status", i))
             .w(theme::scaled_px(cols.0[3]))
             .flex_shrink_0()
             .overflow_hidden()
             .flex()
             .flex_row()
             .items_center()
-            .gap_1();
-        status_cell = match &row.status {
-            MergedBranchStatus::FullyMerged => {
-                status_cell.child(badge(Msg::CleanupBadgeMerged.t(), theme().color_success))
-            }
-            MergedBranchStatus::SquashMergedLikely => {
-                status_cell.child(badge(Msg::CleanupBadgeSquash.t(), theme().color_branch))
-            }
-            MergedBranchStatus::MergedThenGrown { ahead } => status_cell
-                .child(badge(Msg::CleanupBadgeGrown.t(), theme().color_blocker))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .text_xs()
-                        .text_color(rgb(theme().color_blocker))
-                        .truncate()
-                        .child(SharedString::from(format!(
-                            "{} +{}",
-                            Msg::CleanupGrownHint.t(),
-                            ahead
-                        ))),
-                ),
-            MergedBranchStatus::NotMerged => status_cell,
-        };
+            .gap_1()
+            .text_xs();
+        if !status_text.is_empty() {
+            status_cell = status_cell.child(
+                div()
+                    .text_color(rgb(status_color))
+                    .child(SharedString::from(status_text)),
+            );
+        }
         if row.stale {
-            status_cell = status_cell.child(badge(Msg::CleanupBadgeStale.t(), theme().text_muted));
+            status_cell = status_cell.child(
+                div()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(Msg::CleanupBadgeStale.t())),
+            );
+        }
+        if let Some(tip) = grown_tooltip {
+            status_cell =
+                status_cell.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx));
         }
 
         // Actions: trash only, and only when the row can build a target.

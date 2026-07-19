@@ -1,4 +1,4 @@
-//! Avatar resolution wiring on `KagiApp` (ADR-0122) — the UI half that feeds
+//! Avatar resolution wiring on `KagiApp` (ADR-0123) — the UI half that feeds
 //! [`super::avatar_fetch`]: incremental email collection from the loaded rows,
 //! the background spawn, and the merge of resolved images into the
 //! [`super::avatar::AvatarStore`]. Sibling module per ADR-0121 (keep new
@@ -14,12 +14,12 @@ impl KagiApp {
     /// Resolution runs entirely on a background thread (`cx.background_spawn`):
     /// it determines the GitHub `(owner, repo)` from the repo's remotes, then
     /// resolves each distinct author email to an avatar image (noreply parse →
-    /// Commits API batch → Gravatar / user search (ADR-0122) → disk/network
+    /// Commits API batch → Gravatar / user search (ADR-0123) → disk/network
     /// fetch).  When it completes the resolved images are merged into
     /// `self.avatars.images` on the main thread and a `cx.notify()` repaints
     /// rows/inspector with real avatars.
     ///
-    /// ADR-0122: incremental — new emails appearing on a reload / load more /
+    /// ADR-0123: incremental — new emails appearing on a reload / load more /
     /// tab switch are resolved by a follow-up pass; the per-frame call is one
     /// `view_epoch` comparison once a view has been scanned.
     pub(crate) fn ensure_avatars(&mut self, cx: &mut Context<Self>) {
@@ -27,7 +27,7 @@ impl KagiApp {
             return;
         };
 
-        // ADR-0122: incremental resolution. Reset the attempted set when the
+        // ADR-0123: incremental resolution. Reset the attempted set when the
         // active repo changes (an email unresolved in one repo can resolve via
         // the next repo's Commits API map); within a repo, re-scan the rows
         // only when the view data changed — reload / load more / tab-load all
@@ -59,7 +59,7 @@ impl KagiApp {
 
         let offline = avatar_fetch::offline();
 
-        // Determine GitHub coordinates (read-only via Backend). ADR-0122: a
+        // Determine GitHub coordinates (read-only via Backend). ADR-0123: a
         // non-GitHub repo only skips the Commits API step — the public lookups
         // (Gravatar / user search) still run when online. Offline + no coords
         // has nothing to do, so keep the synchronous pending-only line the
@@ -83,7 +83,7 @@ impl KagiApp {
                     app.avatars.images.insert(email, img);
                 }
                 // Emails skipped by the search-budget cap retry on the next
-                // incremental pass (ADR-0122).
+                // incremental pass (ADR-0123).
                 for email in &outcome.deferred {
                     app.avatars.attempted.remove(email);
                 }

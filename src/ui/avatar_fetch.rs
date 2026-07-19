@@ -6,19 +6,19 @@
 //! `KagiApp`, background spawns, render swaps) lives in `mod.rs`/`inspector.rs`;
 //! everything here is pure data + blocking IO that runs on a background thread.
 //!
-//! Resolution order (ADR-0037, extended by ADR-0122):
+//! Resolution order (ADR-0037, extended by ADR-0123):
 //!   1. **noreply parse** — `<id>+<user>@users.noreply.github.com` or
 //!      `<user>@users.noreply.github.com` → `https://avatars.githubusercontent.com/<user>?s=64`
 //!      (no API call, immediate).
 //!   2. **Commits API batch** — `GET /repos/{owner}/{repo}/commits?per_page=100`
 //!      (unauthenticated, a few pages) builds an `email → avatar_url` map.
 //!      GitHub-remote repos only.
-//!   3. **Gravatar** — `sha256(email)`-derived URL with `d=404` (ADR-0122).
+//!   3. **Gravatar** — `sha256(email)`-derived URL with `d=404` (ADR-0123).
 //!   4. **GitHub user search** — public profile email → login, capped at
-//!      [`MAX_SEARCH_LOOKUPS`] per pass (unauthenticated rate limit; ADR-0122).
+//!      [`MAX_SEARCH_LOOKUPS`] per pass (unauthenticated rate limit; ADR-0123).
 //!   5. unresolved → caller falls back to the initial circle.
 //!
-//! ADR-0122 dropped ADR-0037's "never send an author email to an external
+//! ADR-0123 dropped ADR-0037's "never send an author email to an external
 //! lookup" restriction (user decision: commit emails are public metadata).
 //! `KAGI_OFFLINE=1` still disables all network access.
 
@@ -38,7 +38,7 @@ const MAX_COMMIT_PAGES: u32 = 3;
 /// User-Agent sent with every request (GitHub requires a UA header).
 const USER_AGENT: &str = "kagi-git-client";
 
-/// Maximum GitHub user-search lookups per resolution pass (ADR-0122).
+/// Maximum GitHub user-search lookups per resolution pass (ADR-0123).
 ///
 /// The unauthenticated search API allows 10 requests/min; emails skipped by an
 /// exhausted budget are reported back as `deferred` so the next incremental
@@ -339,7 +339,7 @@ pub fn fetch_commit_author_avatars(owner: &str, repo: &str) -> Vec<(String, Stri
 /// Records where the account is `null` (email not linked to any GitHub
 /// account) contribute no pair for that role.
 ///
-/// ADR-0122: rewritten on serde_json — the previous dependency-free scanner
+/// ADR-0123: rewritten on serde_json — the previous dependency-free scanner
 /// paired each email with the first `avatar_url` before the *next* email,
 /// which never fires for `commit.author.email` (the committer email sits in
 /// between) and mis-paired the committer email with the author's avatar. It
@@ -387,7 +387,7 @@ pub struct ResolveOutcome {
     /// Number of distinct emails left unresolved (fallback to initial circle).
     pub pending: usize,
     /// Emails whose user-search lookup was skipped by an exhausted
-    /// [`MAX_SEARCH_LOOKUPS`] budget (ADR-0122). The caller un-marks these so
+    /// [`MAX_SEARCH_LOOKUPS`] budget (ADR-0123). The caller un-marks these so
     /// the next incremental pass retries them.
     pub deferred: Vec<String>,
 }
@@ -396,7 +396,7 @@ pub struct ResolveOutcome {
 ///
 /// This is the whole background job: it runs entirely off the UI thread (no
 /// gpui context, only `Send` data in and out).  ADR-0037 order, extended by
-/// ADR-0122:
+/// ADR-0123:
 ///   1. noreply email → CDN URL (no network for the URL itself).
 ///   2. Commits API batch for the remaining emails (GitHub-remote repos only;
 ///      skipped offline / private).
@@ -466,7 +466,7 @@ pub fn resolve_avatars(coords: Option<(String, String)>, emails: &[String]) -> R
         }
     }
 
-    // Step 3 (ADR-0122): public lookups for the still-unresolved remainder.
+    // Step 3 (ADR-0123): public lookups for the still-unresolved remainder.
     // Gravatar first — exact (email hash), unmetered, and its URL is derived
     // locally so the disk cache still serves it offline. Then the user-search
     // API, capped per pass; emails skipped by the cap are reported back as

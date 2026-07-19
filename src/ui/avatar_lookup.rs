@@ -1,6 +1,6 @@
-//! Public avatar lookups (ADR-0122): Gravatar + GitHub user search.
+//! Public avatar lookups (ADR-0123): Gravatar + GitHub user search.
 //!
-//! The two email-derived lookup sources added by ADR-0122, split out of
+//! The two email-derived lookup sources added by ADR-0123, split out of
 //! [`super::avatar_fetch`] (which keeps the noreply/Commits-API resolution,
 //! caching and HTTP plumbing). Pure URL builders + one blocking API call;
 //! callers gate network access via [`super::avatar_fetch::offline`].
@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 
 use super::avatar_fetch::{avatar_url_for_username, http_get_bytes};
 
-/// Gravatar URL for `email` (ADR-0122): SHA-256 of the trimmed, lowercased
+/// Gravatar URL for `email` (ADR-0123): SHA-256 of the trimmed, lowercased
 /// address. `d=404` makes unregistered emails return 404 instead of a
 /// generated placeholder — the initial circle is kagi's own placeholder.
 pub fn gravatar_url_for_email(email: &str) -> String {
@@ -31,7 +31,7 @@ fn github_search_query_url(email: &str) -> String {
 }
 
 /// Look up a GitHub account whose **public profile email** matches `email`
-/// (ADR-0122) and return its avatars CDN URL. `None` on no match / rate limit
+/// (ADR-0123) and return its avatars CDN URL. `None` on no match / rate limit
 /// / network error.
 pub fn github_search_avatar_url(email: &str) -> Option<String> {
     let bytes = http_get_bytes(&github_search_query_url(email))?;

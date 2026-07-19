@@ -1,4 +1,4 @@
-# ADR-0122: Avatar resolution via public lookups (Gravatar + GitHub user search)
+# ADR-0123: Avatar resolution via public lookups (Gravatar + GitHub user search)
 
 - Status: Accepted
 - Date: 2026-07-19

@@ -637,6 +637,7 @@ mod toolbar_tests {
             has_remote: true,
             upstream_name: "origin/main".to_string(),
             conflict_count: 0,
+            last_fetch_secs: None,
         }
     }
 
@@ -698,6 +699,7 @@ mod toolbar_tests {
             has_remote: true,
             upstream_name: String::new(),
             conflict_count: 0,
+            last_fetch_secs: None,
         };
         let t = s.toolbar_state();
         assert!(!t.pull_on, "pull must be off on detached HEAD");

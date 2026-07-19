@@ -13,10 +13,15 @@
   (「マージ済みブランチ (N)」、N = merged クラスの行数)が常時出せる。
   ペインは `branch_cleanup_open: bool` の CenterTakeover
   (FileHistory / Ecosystem と同型、ADR-0121 B1 registry)。
-- grown 判定の追加条件: merge commit の parent² が tip の祖先、**かつ
-  merge commit 自体は tip の祖先でない**こと。後者がないと「マージ後の
-  main から分岐しただけのブランチ」(mainの履歴ごと merge commit を含む)
-  が誤って WARN になる。
+- 到達性判定は**ブランチあたり merge_base 1 回**に集約:
+  `merge_base(main, tip) == tip` → FullyMerged、
+  `merge_base(main, tip) ∈ {mainのmerge commitのparent²}` → MergedThenGrown
+  (develop は自分の旧 tip = parent² から分岐を続けるので base がそこに当たる。
+  マージ後の main から分岐しただけのブランチは base が main の first-parent
+  線上に落ちるので WARN にならない)。初版の「merge ごとに
+  graph_descendant_of」は O(ブランチ×マージ) の merge-base 走査になり、
+  起動時 snapshot(メインスレッド)で数分固まって GUI が描画されない
+  実害が出たため書き換えた。
 - klog 契約行: `merged-branches: <n> full, <n> squash?, <n> warn, <n> stale`
   (snapshot 毎)、`branch-cleanup: opened`、
   `plan: branch-cleanup targets=<n> blockers=<n>`、

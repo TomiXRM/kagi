@@ -77,18 +77,10 @@ fn resolve_main_tip(repo: &Repository, default: &str) -> Option<git2::Oid> {
         .and_then(|r| r.target())
 }
 
-/// One merge commit found on main's first-parent line: the merged-in parent
-/// (`parent^2`…), the merge commit itself, and its commit time.
-struct MainMerge {
-    merged_tip: git2::Oid,
-    merge_commit: git2::Oid,
-    time: i64,
-}
-
 /// Walk main's first-parent history and record every merge commit's non-first
-/// parents, newest first. This is what dates a merged branch and what detects
-/// the merged-then-grown (WARN) pattern.
-fn collect_main_merges(repo: &Repository, main_tip: git2::Oid) -> Vec<MainMerge> {
+/// parents (`parent^2`…) with the merge time, newest first. This is what dates
+/// a merged branch and what detects the merged-then-grown (WARN) pattern.
+fn collect_main_merges(repo: &Repository, main_tip: git2::Oid) -> Vec<(git2::Oid, i64)> {
     let mut merges = Vec::new();
     let mut cursor = repo.find_commit(main_tip).ok();
     let mut steps = 0;
@@ -101,11 +93,7 @@ fn collect_main_merges(repo: &Repository, main_tip: git2::Oid) -> Vec<MainMerge>
             let t = c.time().seconds();
             for p in 1..c.parent_count() {
                 if let Ok(pid) = c.parent_id(p) {
-                    merges.push(MainMerge {
-                        merged_tip: pid,
-                        merge_commit: c.id(),
-                        time: t,
-                    });
+                    merges.push((pid, t));
                 }
             }
         }
@@ -136,9 +124,10 @@ pub fn collect_branch_cleanup(
     let merges = collect_main_merges(repo, main_tip);
     // Newest occurrence wins when the same tip shows up twice.
     let mut merge_time_by_tip: HashMap<git2::Oid, i64> = HashMap::new();
-    for m in &merges {
-        merge_time_by_tip.entry(m.merged_tip).or_insert(m.time);
+    for (p2, t) in &merges {
+        merge_time_by_tip.entry(*p2).or_insert(*t);
     }
+    drop(merges);
 
     // name → (local tip, remote tip, upstream gone)
     let mut by_name: HashMap<String, (Option<git2::Oid>, Option<git2::Oid>, bool)> = HashMap::new();
@@ -196,36 +185,29 @@ pub fn collect_branch_cleanup(
         let Some(tip) = local_tip.or(remote_tip) else {
             continue;
         };
-        let is_ancestor =
-            tip == main_tip || repo.graph_descendant_of(main_tip, tip).unwrap_or(false);
+        // One `merge_base` per branch is the whole reachability budget.
+        // (The first version ran a `graph_descendant_of` per merge commit ×
+        // branch; each one is a full merge-base paint over the pack, and the
+        // snapshot runs on the startup path — on a real-world repo that
+        // pinned the main thread for minutes and the window never rendered.)
+        let base = repo.merge_base(main_tip, tip).ok();
+
+        // Merged ⟺ the merge base IS the tip (tip is reachable from main).
+        let is_ancestor = base == Some(tip);
 
         let mut merged_at = merge_time_by_tip.get(&tip).copied();
         let mut grown_ahead = None;
         if !is_ancestor {
-            // Merged-then-grown: some merge commit in main merged an ancestor
-            // of this tip — and the merge commit itself is NOT an ancestor of
-            // the tip. The second condition is what separates a genuinely
-            // merged-then-grown branch (develop) from a branch that merely
-            // forked off main after the merge: the fork inherits main's whole
-            // history, merge commits included, so for it the merge commit IS
-            // an ancestor. Take the newest qualifying merge for the timestamp.
-            for m in &merges {
-                let merged_tip_in_history =
-                    repo.graph_descendant_of(tip, m.merged_tip).unwrap_or(false);
-                if !merged_tip_in_history {
-                    continue;
-                }
-                let merge_in_history = tip == m.merge_commit
-                    || repo
-                        .graph_descendant_of(tip, m.merge_commit)
-                        .unwrap_or(false);
-                if merge_in_history {
-                    continue;
-                }
+            // Merged-then-grown: the branch diverges from main exactly at a
+            // commit that some merge in main brought in as its `parent^2` —
+            // i.e. the branch's own old tip was merged and the branch kept
+            // going (develop pattern). A branch merely forked off main
+            // diverges at a first-parent commit of main instead, which is not
+            // in the parent^2 map, so it stays NotMerged.
+            if let Some(t) = base.and_then(|b| merge_time_by_tip.get(&b)) {
                 let (ahead, _) = repo.graph_ahead_behind(tip, main_tip).unwrap_or((0, 0));
-                merged_at = Some(m.time);
+                merged_at = Some(*t);
                 grown_ahead = Some(ahead);
-                break; // merges are newest-first
             }
         }
 

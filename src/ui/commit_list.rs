@@ -4,7 +4,6 @@
 //! only clones SharedString values, never calling format! per frame.
 
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui::SharedString;
 
@@ -187,11 +186,16 @@ pub fn build_commit_rows(snap: &RepoSnapshot) -> Vec<CommitRow> {
     // Resolve HEAD commit id (W2-GRAPH).
     let head_sha: Option<&str> = head_target(&snap.head);
 
-    // Compute commit graph layout once up-front (T009). The graph is always
-    // drawn swimlane-style (compacted lanes); the "Avatar commit nodes" setting
-    // only changes how the node is drawn, not the lane layout. (Switch to
-    // `GraphLayoutMode::Stable` here if the gitk no-reuse layout is ever wanted.)
-    let graph = layout_with(&snap.commits, GraphLayoutMode::Compact);
+    // Compute commit graph layout once up-front (T009). Lanes use the gitk
+    // `Stable` layout (ADR-0122): a branch keeps its column until it ends and
+    // freed columns are reused by *new* lanes (never by shifting existing
+    // ones), so long branch lines run straight and bend only where they fork
+    // or join — the Fork/GitKraken look. `Compact` reclaims columns by
+    // shifting live lanes sideways mid-history, which made branch lines
+    // wobble far from any fork point. The "Avatar commit nodes" setting
+    // (`graph_lane_compact`) only changes how nodes/rows are drawn, not the
+    // lane layout.
+    let graph = layout_with(&snap.commits, GraphLayoutMode::Stable);
     let lane_count = graph.lane_count;
 
     snap.commits
@@ -388,39 +392,7 @@ fn commit_to_row(
 // Relative time helper (no external crates)
 // ──────────────────────────────────────────────────────────────
 
-/// Return the current time as seconds since Unix epoch.
-/// Falls back to 0 if SystemTime is unavailable (should never happen).
-pub fn now_unix_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
-/// Format a Unix-epoch timestamp as a human-readable relative string.
-///
-/// | Range          | Output example |
-/// |----------------|----------------|
-/// | < 60 s         | `"just now"`   |
-/// | < 60 min       | `"42m ago"`    |
-/// | < 24 h         | `"5h ago"`     |
-/// | < 30 days      | `"3d ago"`     |
-/// | < 12 months    | `"4mo ago"`    |
-/// | ≥ 12 months    | `"2y ago"`     |
-pub fn relative_time(epoch_secs: i64, now_secs: i64) -> String {
-    let diff = now_secs.saturating_sub(epoch_secs).max(0);
-
-    if diff < 60 {
-        "just now".to_string()
-    } else if diff < 3_600 {
-        format!("{}m ago", diff / 60)
-    } else if diff < 86_400 {
-        format!("{}h ago", diff / 3_600)
-    } else if diff < 86_400 * 30 {
-        format!("{}d ago", diff / 86_400)
-    } else if diff < 86_400 * 365 {
-        format!("{}mo ago", diff / (86_400 * 30))
-    } else {
-        format!("{}y ago", diff / (86_400 * 365))
-    }
-}
+// ADR-0121 C3: `now_unix_secs` / `relative_time` moved to `kagi_ui_core::time`
+// so pane crates can reuse them; re-exported here to keep existing
+// `commit_list::…` call sites working.
+pub use kagi_ui_core::time::{now_unix_secs, relative_time};

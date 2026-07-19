@@ -1234,10 +1234,10 @@ impl KagiApp {
                 klog!("context-menu: stub Reset {}", target.short());
             }
             CommitAction::CompareWithHead => {
-                self.open_compare_with_head(target);
+                self.open_compare_with_head(target, Some(cx));
             }
             CommitAction::CompareWithWorkingTree => {
-                self.open_compare_with_working_tree(target);
+                self.open_compare_with_working_tree(target, Some(cx));
             }
             CommitAction::ShowChangedFiles => {
                 self.show_changed_files_for_commit(target);

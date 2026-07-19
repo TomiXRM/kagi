@@ -2,11 +2,11 @@
 # ADR-0047 authorizes adding the xtask build/bundle helper as a workspace member.
 # ADR-0072 (v1.0 re-architecture): crates/* host the layered workspace; the pure
 # `kagi-domain` crate is the first extracted layer (strangler migration).
-members = ["xtask", "crates/kagi-domain", "crates/kagi-git", "crates/kagi-web"]
+members = ["xtask", "crates/kagi-domain", "crates/kagi-git", "crates/kagi-ui-core", "crates/kagi-ui-ecosystem", "crates/kagi-ui-editor", "crates/kagi-ui-file-history", "crates/kagi-web"]
 
 [package]
 name = "kagi"
-version = "0.10.0"
+version = "0.11.1"
 license = "MIT"
 description = "Safety-first, commit-graph Git GUI client built with GPUI"
 edition = "2021"
@@ -19,6 +19,12 @@ kagi-domain = { path = "crates/kagi-domain" }
 # only place `git2::Repository` is opened. The bin's `kagi::git` shim and the
 # `src/remote` module re-export it; UI code reaches Git through `kagi_git::`.
 kagi-git = { path = "crates/kagi-git" }
+# Shared UI foundation (ADR-0121 C1): klog macro, settings, i18n, theme.
+kagi-ui-core = { path = "crates/kagi-ui-core" }
+# Feature pane crates (ADR-0121 C2+): Git-free; the bin owns the data feed.
+kagi-ui-ecosystem = { path = "crates/kagi-ui-ecosystem" }
+kagi-ui-editor = { path = "crates/kagi-ui-editor" }
+kagi-ui-file-history = { path = "crates/kagi-ui-file-history" }
 # zed main git deps (crates.io gpui is frozen at 0.2.2 / 2025-10). No `rev` on
 # the zed crates: gpui-component tracks zed's default branch rev-less, and a
 # rev-pinned dep would be a *different source* to cargo → two gpui crates and

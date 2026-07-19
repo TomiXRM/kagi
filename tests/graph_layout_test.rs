@@ -318,14 +318,23 @@ fn test_branch_and_merge() {
         "M: expected OutOfNode 0→1 for second parent D"
     );
 
-    // D: parents[0]=A is already waited by lane 0 → OutOfNode 1→0.
+    // D: its line stays on lane 1 down to A's row (no mid-air join)…
     let row_d = &gl.rows[2];
     assert!(
         row_d
             .edges
             .iter()
-            .any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 1 && e.to_lane == 0),
-        "D: expected OutOfNode 1→0 (A already waited by lane 0)"
+            .any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 1 && e.to_lane == 1),
+        "D: expected OutOfNode 1→1 (line runs straight to A's row)"
+    );
+    // …and converges into A at A's own row (fork fans out of the parent node).
+    let row_a = &gl.rows[3];
+    assert!(
+        row_a
+            .edges
+            .iter()
+            .any(|e| e.kind == EdgeKind::IntoNode && e.from_lane == 1 && e.to_lane == 0),
+        "A: expected IntoNode 1→0 (feature line bends into the fork node)"
     );
 }
 
@@ -850,6 +859,87 @@ fn test_two_roots_lane_concurrent_then_reuse() {
     );
 }
 
+// ────────────────────────────────────────────────────────────
+// Case 13: stacked branches — Stable keeps every branch in its own column
+//
+// The shipped layout (`build_commit_rows` uses `GraphLayoutMode::Stable`,
+// ADR-0122). Three merges into a mainline, each merging a segment of one
+// branch chain:
+//
+//   P1 (merge: [P2, T1])   lane 0
+//   P2 (merge: [P3, T4])   lane 0
+//   P3 (merge: [P4, T5])   lane 0
+//   T1 → T2 → T3           lane 1  (segment merged by P1)
+//   T4                     lane 2  (segment merged by P2)
+//   T5                     lane 3  (segment merged by P3)
+//   P4 (root)              lane 0
+//
+// Each merge line must run straight down its own column from the merge
+// commit into the merged segment ("staircase" shape), and every fork must
+// fan out of the parent node itself: converging lines bend at the parent
+// commit's own row, never with a mid-air sideways join at a child row.
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn test_stable_stacked_branches_staircase() {
+    let commits = vec![
+        c("P1", &["P2", "T1"]),
+        c("P2", &["P3", "T4"]),
+        c("P3", &["P4", "T5"]),
+        c("T1", &["T2"]),
+        c("T2", &["T3"]),
+        c("T3", &["T4"]),
+        c("T4", &["T5"]),
+        c("T5", &["P4"]),
+        c("P4", &[]),
+    ];
+    let gl = layout_with(&commits, GraphLayoutMode::Stable);
+    check_invariants(&commits, &gl);
+
+    // Staircase: each branch segment keeps the column its merge line opened
+    // (the merge-born lane wins the node over the chain's continuation lane).
+    let row_of = |id: &str| gl.rows.iter().find(|r| r.commit == cid(id)).unwrap();
+    assert_eq!(row_of("T1").lane, 1);
+    assert_eq!(row_of("T2").lane, 1);
+    assert_eq!(row_of("T3").lane, 1);
+    assert_eq!(row_of("T4").lane, 2, "T4 sits on P2's merge-line column");
+    assert_eq!(row_of("T5").lane, 3, "T5 sits on P3's merge-line column");
+
+    // The merge lines run straight through their branch heads, and the chain
+    // continuation converges INTO the head at the head's own row (the fork
+    // fans out of the node, never a mid-air sideways join above it).
+    let has_edge = |id: &str, kind: EdgeKind, from: usize, to: usize| {
+        row_of(id)
+            .edges
+            .iter()
+            .any(|e| e.kind == kind && e.from_lane == from && e.to_lane == to)
+    };
+    assert!(
+        has_edge("T4", EdgeKind::IntoNode, 2, 2),
+        "P2's merge line must arrive at T4 vertically"
+    );
+    assert!(
+        has_edge("T4", EdgeKind::IntoNode, 1, 2),
+        "the T1..T3 chain must bend into T4 at T4's own row"
+    );
+    assert!(
+        has_edge("T5", EdgeKind::IntoNode, 3, 3),
+        "P3's merge line must arrive at T5 vertically"
+    );
+    assert!(
+        has_edge("T5", EdgeKind::IntoNode, 2, 3),
+        "T4's continuation must bend into T5 at T5's own row"
+    );
+    assert!(
+        has_edge("P4", EdgeKind::IntoNode, 0, 0),
+        "the mainline must run straight through the fork commit P4"
+    );
+    assert!(
+        has_edge("P4", EdgeKind::IntoNode, 3, 0),
+        "the branch line must bend into P4 at P4's own row"
+    );
+}
+
 // ════════════════════════════════════════════════════════════
 // Compact (Gitru swimlane) mode — ADR-0104
 // ════════════════════════════════════════════════════════════
@@ -964,6 +1054,114 @@ fn test_compact_invariants_on_branch_merge_chain() {
         has_shift,
         "compact mode must emit a shift edge for this DAG"
     );
+}
+
+// ────────────────────────────────────────────────────────────
+// Compact: first-parent join — a commit is approached by at most one lane
+//
+// Repro of the "long line bends at the very end" artifact (stacked branches
+// merged into a mainline). Pre-fix, T3's first-parent continuation opened a
+// SECOND lane targeting T4 — duplicating the lane already opened by P2's
+// merge edge — so both lines ran in parallel and only converged (with a
+// sideways bend) at T4's own row. With the first-parent join (Stable's
+// step-4 exception ported to Compact), T3's line joins the existing lane at
+// T3's row instead.
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn test_compact_first_parent_joins_existing_lane() {
+    let commits = vec![
+        c("P1", &["P2", "T1"]),
+        c("P2", &["P3", "T4"]),
+        c("P3", &["P4", "T5"]),
+        c("T1", &["T2"]),
+        c("T2", &["T3"]),
+        c("T3", &["T4"]),
+        c("T4", &["T5"]),
+        c("T5", &["P4"]),
+        c("P4", &[]),
+    ];
+    let gl = layout_with(&commits, GraphLayoutMode::Compact);
+    check_invariants_compact(&commits, &gl);
+
+    // No duplicate lanes: every commit is reached by at most one lane, so no
+    // row carries two IntoNode edges.
+    for row in &gl.rows {
+        let into = row
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::IntoNode)
+            .count();
+        assert!(
+            into <= 1,
+            "row {} has {} IntoNode edges (duplicate lanes waiting for it)",
+            row.commit,
+            into
+        );
+    }
+
+    // T4 continues P2's merge line: same colour as the merge-out edge, and
+    // the line arrives vertically (no bend at the target row).
+    let row_p2 = gl.rows.iter().find(|r| r.commit == cid("P2")).unwrap();
+    let merge_color = row_p2
+        .edges
+        .iter()
+        .find(|e| e.kind == EdgeKind::OutOfNode && e.from_lane != e.to_lane)
+        .expect("P2 must have a merge-parent edge")
+        .color;
+    let row_t4 = gl.rows.iter().find(|r| r.commit == cid("T4")).unwrap();
+    assert_eq!(row_t4.color, merge_color, "T4 sits on P2's merge line");
+    let into_t4 = row_t4
+        .edges
+        .iter()
+        .find(|e| e.kind == EdgeKind::IntoNode)
+        .expect("T4 has an incoming lane");
+    assert_eq!(
+        into_t4.from_lane, into_t4.to_lane,
+        "the merge line must arrive at T4 vertically, not bend into it"
+    );
+
+    // T3 closes its lane by joining the merge line (join edge in the
+    // existing lane's colour).
+    let row_t3 = gl.rows.iter().find(|r| r.commit == cid("T3")).unwrap();
+    assert!(
+        row_t3
+            .edges
+            .iter()
+            .any(|e| e.kind == EdgeKind::OutOfNode && e.color == merge_color),
+        "T3 must join P2's merge lane at its own row"
+    );
+}
+
+#[test]
+fn test_compact_tip_joins_existing_lane() {
+    // Y and X both point at A. X (the later tip) must not open a second lane
+    // targeting A; it bends into Y's lane at its own row.
+    let commits = vec![c("Y", &["A"]), c("X", &["A"]), c("A", &[])];
+    let gl = layout_with(&commits, GraphLayoutMode::Compact);
+    check_invariants_compact(&commits, &gl);
+
+    let row_x = &gl.rows[1];
+    assert_eq!(row_x.lane, 1, "X sits on its own column");
+    assert!(
+        row_x
+            .edges
+            .iter()
+            .any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 1 && e.to_lane == 0),
+        "X must join Y's lane (OutOfNode 1→0)"
+    );
+
+    let row_a = &gl.rows[2];
+    assert_eq!(
+        row_a
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::IntoNode)
+            .count(),
+        1,
+        "A must be reached by exactly one lane"
+    );
+    assert_eq!(gl.lane_count, 2);
 }
 
 #[test]

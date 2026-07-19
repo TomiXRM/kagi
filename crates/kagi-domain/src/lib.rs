@@ -15,6 +15,7 @@ pub mod commit;
 pub mod coupling_graph;
 pub mod diff;
 pub mod diffstat;
+pub mod file_history;
 pub mod graph;
 pub mod head;
 pub mod history;

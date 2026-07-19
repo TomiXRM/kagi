@@ -57,75 +57,13 @@ pub struct FileHistoryRequest {
     pub limit: usize,
 }
 
-/// The collected history of a single file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileHistory {
-    /// The file's current (most recent) path, repo-relative.
-    pub current_path: PathBuf,
-    /// Entries, WIP first (if any), then commits newest-first.
-    pub entries: Vec<FileHistoryEntry>,
-}
-
-/// A single row in the history list.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileHistoryEntry {
-    /// Whether this is the synthetic WIP row or a real commit.
-    pub kind: FileHistoryEntryKind,
-    /// Commit metadata; `None` for the WIP entry.
-    pub commit: Option<CommitSummary>,
-    /// The change this entry made to the file.
-    pub change: FileChangeSummary,
-}
-
-/// Discriminates a real commit row from the synthetic working-tree row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FileHistoryEntryKind {
-    /// Uncommitted working-tree / index / untracked change.
-    Wip,
-    /// A committed change.
-    Commit,
-}
-
-/// Commit metadata for a history row.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommitSummary {
-    pub full_hash: String,
-    pub short_hash: String,
-    pub subject: String,
-    pub body: Option<String>,
-    pub author_name: String,
-    pub author_email: String,
-    pub author_date: String,
-    pub committer_name: String,
-    pub committer_date: String,
-}
-
-/// How the file changed in a given entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileChangeSummary {
-    pub change_type: FileChangeType,
-    /// Previous path for renames/copies; `None` otherwise.
-    pub path_before: Option<PathBuf>,
-    /// The file's path at this entry.
-    pub path_after: PathBuf,
-    /// Added lines; `None` when unknown (binary).
-    pub insertions: Option<u32>,
-    /// Removed lines; `None` when unknown (binary).
-    pub deletions: Option<u32>,
-    /// Whether git reported this as a binary change.
-    pub is_binary: bool,
-}
-
-/// The kind of change recorded for an entry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FileChangeType {
-    Added,
-    Modified,
-    Deleted,
-    Renamed,
-    Copied,
-    Unknown,
-}
+// The pure models (history list, entries, change summaries) are defined in
+// `kagi_domain::file_history` (ADR-0121 C3) and re-exported here as a shim so
+// existing `kagi_git::FileHistory` paths keep working.
+pub use kagi_domain::file_history::{
+    CommitSummary, FileChangeSummary, FileChangeType, FileHistory, FileHistoryEntry,
+    FileHistoryEntryKind,
+};
 
 // ────────────────────────────────────────────────────────────
 // Record / field separators (must match the --format string).

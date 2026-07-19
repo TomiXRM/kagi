@@ -3349,7 +3349,7 @@ dependencies = [
 
 [[package]]
 name = "kagi"
-version = "0.10.0"
+version = "0.11.1"
 dependencies = [
  "git2",
  "gpui",
@@ -3358,6 +3358,10 @@ dependencies = [
  "gpui_platform",
  "kagi-domain",
  "kagi-git",
+ "kagi-ui-core",
+ "kagi-ui-ecosystem",
+ "kagi-ui-editor",
+ "kagi-ui-file-history",
  "notify",
  "percent-encoding",
  "portable-pty",
@@ -3381,6 +3385,47 @@ dependencies = [
  "kagi-domain",
  "tempfile",
  "ureq",
+]
+
+[[package]]
+name = "kagi-ui-core"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "gpui-component",
+ "kagi-domain",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "kagi-ui-ecosystem"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "gpui-component",
+ "kagi-domain",
+ "kagi-ui-core",
+]
+
+[[package]]
+name = "kagi-ui-editor"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "gpui-component",
+ "kagi-domain",
+ "kagi-ui-core",
+]
+
+[[package]]
+name = "kagi-ui-file-history"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "gpui-component",
+ "kagi-domain",
+ "kagi-ui-core",
 ]
 
 [[package]]

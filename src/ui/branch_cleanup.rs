@@ -15,7 +15,7 @@
 use gpui::prelude::*;
 use gpui::ClipboardItem;
 
-use kagi_git::ops::{copy_all_text, CleanupDeleteTarget, MergedBranchStatus};
+use kagi_git::ops::{copy_all_text, BranchCleanupRow, CleanupDeleteTarget, MergedBranchStatus};
 
 use super::modals::BranchCleanupModal;
 use super::*;
@@ -262,6 +262,8 @@ pub(super) const CLEANUP_PAD: f32 = 16.0;
 pub(super) const CLEANUP_GAP: f32 = 4.0;
 /// Fixed width of the trailing actions (trash) cell.
 const CLEANUP_ACTIONS_W: f32 = 40.0;
+/// Locked table row height (uniform_list item height).
+const CLEANUP_ROW_H: f32 = 26.0;
 
 /// `(settings key, default, min, max)` per resizable column, indexed by
 /// [`DividerKind::CleanupCol`]'s payload (0 = name, 1 = where, 2 = merged-at,
@@ -504,189 +506,49 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
         .child(col_divider(3))
         .child(div().w(theme::scaled_px(CLEANUP_ACTIONS_W)).flex_shrink_0());
 
-    // ── Rows ────────────────────────────────────────────────────
-    let mut list = div()
-        .id("branch-cleanup-scroll")
-        .flex_1()
-        .min_h(px(0.))
-        .overflow_y_scroll()
-        .flex()
-        .flex_col();
-
-    if rows.is_empty() {
-        list = list.child(
-            div()
-                .p_4()
-                .text_sm()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(if app.repo_path.is_some() {
-                    Msg::CleanupEmpty.t()
-                } else {
-                    Msg::CleanupNoRepo.t()
-                })),
-        );
-    }
-
-    // Plain (non-draggable) spacer matching the header divider width, so row
-    // cells line up with the header cells.
-    let gap = || {
+    // ── Rows: uniform_list — fixed row height + real vertical scroll ────
+    // (user request: rows were content-sized; lock the height and scroll.)
+    let row_count = rows.len();
+    let list: gpui::AnyElement = if row_count == 0 {
         div()
-            .w(theme::scaled_px(CLEANUP_GAP))
-            .flex_shrink_0()
-            .into_any_element()
-    };
-
-    for (i, row) in rows.iter().enumerate() {
-        // Branch name: click = copy (no separate copy button — user request);
-        // truncated with the full name in a tooltip.
-        let full_name = SharedString::from(row.name.clone());
-        let name_for_copy = row.name.clone();
-        let name_cell = div()
-            .id(("cleanup-name", i))
-            .w(theme::scaled_px(cols.0[0]))
-            .flex_shrink_0()
-            .min_w(px(0.))
-            .overflow_hidden()
+            .p_4()
             .text_sm()
-            .text_color(rgb(theme().text_main))
-            .cursor_pointer()
-            .hover(|s| s.text_color(rgb(theme().color_branch)))
-            .tooltip({
-                let full = full_name.clone();
-                move |window, cx| Tooltip::new(full.clone()).build(window, cx)
-            })
-            .on_click(
-                cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-                    super::branch_menu::copy_branch_name(this, name_for_copy.clone(), cx);
+            .text_color(rgb(theme().text_muted))
+            .child(SharedString::from(if app.repo_path.is_some() {
+                Msg::CleanupEmpty.t()
+            } else {
+                Msg::CleanupNoRepo.t()
+            }))
+            .into_any_element()
+    } else {
+        let scroll_handle = app.cleanup_scroll.clone();
+        let scrollbar_handle = scroll_handle.clone();
+        super::with_vertical_scrollbar(
+            "branch-cleanup-scroll",
+            &scrollbar_handle,
+            gpui::uniform_list(
+                "branch-cleanup-list",
+                row_count,
+                cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                    let cols = this.cleanup_cols;
+                    range
+                        .filter_map(|i| {
+                            this.active_view
+                                .cleanup_rows
+                                .get(i)
+                                .cloned()
+                                .map(|row| build_cleanup_row(&row, i, cols, cx))
+                        })
+                        .collect::<Vec<_>>()
                 }),
             )
-            .child(div().truncate().child(full_name));
-
-        // Where: plain text, no chips (user request: no badge noise).
-        let where_text = match (row.local_tip.is_some(), row.remote_tip.is_some()) {
-            (true, true) => "local, origin",
-            (true, false) => "local",
-            (false, true) => "origin",
-            (false, false) => "",
-        };
-        let where_cell = div()
-            .w(theme::scaled_px(cols.0[1]))
-            .flex_shrink_0()
-            .overflow_hidden()
-            .text_xs()
-            .text_color(rgb(theme().text_main))
-            .child(SharedString::from(where_text));
-
-        // Merged-at cell.
-        let merged_cell = div()
-            .w(theme::scaled_px(cols.0[2]))
-            .flex_shrink_0()
-            .overflow_hidden()
-            .text_xs()
-            .text_color(rgb(theme().text_main))
-            .child(SharedString::from(
-                row.merged_at.map(format_date).unwrap_or_else(|| "—".into()),
-            ));
-
-        // Status: one plain colored label, no chips (user request). Stale is
-        // appended in the warning color; the grown detail lives in the tooltip.
-        let (status_text, status_color) = match &row.status {
-            MergedBranchStatus::FullyMerged => (
-                Msg::CleanupBadgeMerged.t().to_string(),
-                theme().color_success,
-            ),
-            MergedBranchStatus::SquashMergedLikely => (
-                Msg::CleanupBadgeSquash.t().to_string(),
-                theme().color_branch,
-            ),
-            MergedBranchStatus::MergedThenGrown { ahead } => (
-                format!("{} +{}", Msg::CleanupBadgeGrown.t(), ahead),
-                theme().color_blocker,
-            ),
-            MergedBranchStatus::NotMerged => (String::new(), theme().text_muted),
-        };
-        let grown_tooltip = match &row.status {
-            MergedBranchStatus::MergedThenGrown { ahead } => Some(SharedString::from(format!(
-                "{} +{}",
-                Msg::CleanupGrownHint.t(),
-                ahead
-            ))),
-            _ => None,
-        };
-        let mut status_cell = div()
-            .id(("cleanup-status", i))
-            .w(theme::scaled_px(cols.0[3]))
-            .flex_shrink_0()
-            .overflow_hidden()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_1()
-            .text_xs();
-        if !status_text.is_empty() {
-            status_cell = status_cell.child(
-                div()
-                    .text_color(rgb(status_color))
-                    .child(SharedString::from(status_text)),
-            );
-        }
-        if row.stale {
-            status_cell = status_cell.child(
-                div()
-                    .text_color(rgb(theme().color_warning))
-                    .child(SharedString::from(Msg::CleanupBadgeStale.t())),
-            );
-        }
-        if let Some(tip) = grown_tooltip {
-            status_cell =
-                status_cell.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx));
-        }
-
-        // Actions: trash only, and only when the row can build a target.
-        let trash_btn: Option<gpui::AnyElement> = row.delete_target().map(|target| {
-            let handler = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-                this.open_branch_cleanup_plan(vec![target.clone()], cx);
-            });
-            div()
-                .id(("cleanup-delete", i))
-                .px_1()
-                .rounded(theme::scaled_px(4.))
-                .text_xs()
-                .text_color(rgb(theme().color_blocker))
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .on_click(handler)
-                .child(SharedString::from("🗑"))
-                .into_any_element()
-        });
-        let actions_cell = div()
-            .w(theme::scaled_px(CLEANUP_ACTIONS_W))
-            .flex_shrink_0()
-            .flex()
-            .flex_row()
-            .items_center()
-            .children(trash_btn);
-
-        list = list.child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .px(theme::scaled_px(CLEANUP_PAD))
-                .py(theme::scaled_px(4.))
-                .overflow_hidden()
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .child(name_cell)
-                .child(gap())
-                .child(where_cell)
-                .child(gap())
-                .child(merged_cell)
-                .child(gap())
-                .child(status_cell)
-                .child(gap())
-                .child(actions_cell),
-        );
-    }
+            .track_scroll(&scroll_handle)
+            .flex_1()
+            .min_h(px(0.)),
+            true,
+        )
+        .into_any_element()
+    };
 
     div()
         .flex_1()
@@ -698,5 +560,171 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
         .child(header)
         .child(col_header)
         .child(list)
+        .into_any_element()
+}
+
+/// One fixed-height table row (uniform_list item).
+fn build_cleanup_row(
+    row: &BranchCleanupRow,
+    i: usize,
+    cols: CleanupCols,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    // Plain (non-draggable) spacer matching the header divider width, so row
+    // cells line up with the header cells.
+    let gap = || {
+        div()
+            .w(theme::scaled_px(CLEANUP_GAP))
+            .flex_shrink_0()
+            .into_any_element()
+    };
+
+    // Branch name: click = copy (no separate copy button — user request);
+    // truncated with the full name in a tooltip.
+    let full_name = SharedString::from(row.name.clone());
+    let name_for_copy = row.name.clone();
+    let name_cell = div()
+        .id(("cleanup-name", i))
+        .w(theme::scaled_px(cols.0[0]))
+        .flex_shrink_0()
+        .min_w(px(0.))
+        .overflow_hidden()
+        .text_sm()
+        .text_color(rgb(theme().text_main))
+        .cursor_pointer()
+        .hover(|s| s.text_color(rgb(theme().color_branch)))
+        .tooltip({
+            let full = full_name.clone();
+            move |window, cx| Tooltip::new(full.clone()).build(window, cx)
+        })
+        .on_click(
+            cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                super::branch_menu::copy_branch_name(this, name_for_copy.clone(), cx);
+            }),
+        )
+        .child(div().truncate().child(full_name));
+
+    // Where: plain text, no chips (user request: no badge noise).
+    let where_text = match (row.local_tip.is_some(), row.remote_tip.is_some()) {
+        (true, true) => "local, origin",
+        (true, false) => "local",
+        (false, true) => "origin",
+        (false, false) => "",
+    };
+    let where_cell = div()
+        .w(theme::scaled_px(cols.0[1]))
+        .flex_shrink_0()
+        .overflow_hidden()
+        .text_xs()
+        .text_color(rgb(theme().text_main))
+        .child(SharedString::from(where_text));
+
+    // Merged-at cell.
+    let merged_cell = div()
+        .w(theme::scaled_px(cols.0[2]))
+        .flex_shrink_0()
+        .overflow_hidden()
+        .text_xs()
+        .text_color(rgb(theme().text_main))
+        .child(SharedString::from(
+            row.merged_at.map(format_date).unwrap_or_else(|| "—".into()),
+        ));
+
+    // Status: one plain colored label, no chips (user request). Stale is
+    // appended in the warning color; the grown detail lives in the tooltip.
+    let (status_text, status_color) = match &row.status {
+        MergedBranchStatus::FullyMerged => (
+            Msg::CleanupBadgeMerged.t().to_string(),
+            theme().color_success,
+        ),
+        MergedBranchStatus::SquashMergedLikely => (
+            Msg::CleanupBadgeSquash.t().to_string(),
+            theme().color_branch,
+        ),
+        MergedBranchStatus::MergedThenGrown { ahead } => (
+            format!("{} +{}", Msg::CleanupBadgeGrown.t(), ahead),
+            theme().color_blocker,
+        ),
+        MergedBranchStatus::NotMerged => (String::new(), theme().text_muted),
+    };
+    let grown_tooltip = match &row.status {
+        MergedBranchStatus::MergedThenGrown { ahead } => Some(SharedString::from(format!(
+            "{} +{}",
+            Msg::CleanupGrownHint.t(),
+            ahead
+        ))),
+        _ => None,
+    };
+    let mut status_cell = div()
+        .id(("cleanup-status", i))
+        .w(theme::scaled_px(cols.0[3]))
+        .flex_shrink_0()
+        .overflow_hidden()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .text_xs();
+    if !status_text.is_empty() {
+        status_cell = status_cell.child(
+            div()
+                .text_color(rgb(status_color))
+                .child(SharedString::from(status_text)),
+        );
+    }
+    if row.stale {
+        status_cell = status_cell.child(
+            div()
+                .text_color(rgb(theme().color_warning))
+                .child(SharedString::from(Msg::CleanupBadgeStale.t())),
+        );
+    }
+    if let Some(tip) = grown_tooltip {
+        status_cell =
+            status_cell.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx));
+    }
+
+    // Actions: trash only, and only when the row can build a target.
+    let trash_btn: Option<gpui::AnyElement> = row.delete_target().map(|target| {
+        let handler = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+            this.open_branch_cleanup_plan(vec![target.clone()], cx);
+        });
+        div()
+            .id(("cleanup-delete", i))
+            .px_1()
+            .rounded(theme::scaled_px(4.))
+            .text_xs()
+            .text_color(rgb(theme().color_blocker))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(theme().surface)))
+            .on_click(handler)
+            .child(SharedString::from("🗑"))
+            .into_any_element()
+    });
+    let actions_cell = div()
+        .w(theme::scaled_px(CLEANUP_ACTIONS_W))
+        .flex_shrink_0()
+        .flex()
+        .flex_row()
+        .items_center()
+        .children(trash_btn);
+
+    div()
+        .h(theme::scaled_px(CLEANUP_ROW_H))
+        .flex()
+        .flex_row()
+        .items_center()
+        .px(theme::scaled_px(CLEANUP_PAD))
+        .overflow_hidden()
+        .hover(|s| s.bg(rgb(theme().surface)))
+        .child(name_cell)
+        .child(gap())
+        .child(where_cell)
+        .child(gap())
+        .child(merged_cell)
+        .child(gap())
+        .child(status_cell)
+        .child(gap())
+        .child(actions_cell)
         .into_any_element()
 }

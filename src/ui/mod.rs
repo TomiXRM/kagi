@@ -1201,6 +1201,8 @@ pub struct KagiApp {
     pub branch_cleanup_open: bool,
     /// ADR-0128: Branch Cleanup table column widths (persisted).
     pub cleanup_cols: branch_cleanup::CleanupCols,
+    /// ADR-0128: scroll position of the Branch Cleanup uniform list.
+    pub cleanup_scroll: UniformListScrollHandle,
     /// ADR-0119: cached completed mine so reopening the Ecosystem view reuses
     /// the slow `git log` scan. Invalidated on reload / repo switch.
     pub ecosystem_cache: ecosystem::EcosystemCache,
@@ -1381,6 +1383,7 @@ impl KagiApp {
             ecosystem: None,
             branch_cleanup_open: false,
             cleanup_cols: branch_cleanup::CleanupCols::load(),
+            cleanup_scroll: UniformListScrollHandle::new(),
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,
@@ -1489,6 +1492,7 @@ impl KagiApp {
             ecosystem: None,
             branch_cleanup_open: false,
             cleanup_cols: branch_cleanup::CleanupCols::load(),
+            cleanup_scroll: UniformListScrollHandle::new(),
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,

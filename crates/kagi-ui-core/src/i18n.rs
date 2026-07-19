@@ -1095,7 +1095,7 @@ impl Msg {
             (En, CleanupBadgeSquash) => "squash?",
             (Ja, CleanupBadgeSquash) => "squash済み?",
             (En, CleanupBadgeGrown) => "grown",
-            (Ja, CleanupBadgeGrown) => "マージ後に成長",
+            (Ja, CleanupBadgeGrown) => "マージ後に追加",
             (En, CleanupBadgeStale) => "stale",
             (Ja, CleanupBadgeStale) => "休眠",
             (En, CleanupGrownHint) => "new commits since merge:",

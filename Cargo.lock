@@ -3359,6 +3359,7 @@ dependencies = [
  "kagi-domain",
  "kagi-git",
  "notify",
+ "percent-encoding",
  "portable-pty",
  "serde",
  "serde_json",

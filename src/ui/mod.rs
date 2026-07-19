@@ -1645,42 +1645,65 @@ impl KagiApp {
             return;
         };
 
-        // Run at most once per repository path.
-        if self.avatars.fetch_for.as_deref() == Some(repo_path.as_path()) {
+        // ADR-0122: incremental resolution. Reset the attempted set when the
+        // active repo changes (an email unresolved in one repo can resolve via
+        // the next repo's Commits API map); within a repo, re-scan the rows
+        // only when the view data changed — reload / load more / tab-load all
+        // bump `view_epoch` — so the per-frame call is one comparison.
+        if self.avatars.fetch_for.as_deref() != Some(repo_path.as_path()) {
+            self.avatars.fetch_for = Some(repo_path.clone());
+            self.avatars.attempted.clear();
+            self.avatars.scan_epoch = None;
+        }
+        if self.avatars.scan_epoch == Some(self.view_epoch) {
             return;
         }
-        self.avatars.fetch_for = Some(repo_path.clone());
+        self.avatars.scan_epoch = Some(self.view_epoch);
 
-        // Distinct author emails across the loaded commit rows.
-        let mut seen: HashSet<String> = HashSet::new();
+        // Distinct author emails not yet attempted (nor already resolved).
         let mut emails: Vec<String> = Vec::new();
         for row in &self.active_view.rows {
-            if !row.author_email.is_empty() && seen.insert(row.author_email.clone()) {
-                emails.push(row.author_email.clone());
+            let email = &row.author_email;
+            if email.is_empty() || self.avatars.images.contains_key(email) {
+                continue;
             }
+            if self.avatars.attempted.insert(email.clone()) {
+                emails.push(email.clone());
+            }
+        }
+        if emails.is_empty() {
+            return;
         }
 
         let offline = avatar_fetch::offline();
 
-        // Determine GitHub coordinates (read-only git2). Non-GitHub repos get
-        // the initial circle and emit a pending-only log line.
+        // Determine GitHub coordinates (read-only via Backend). ADR-0122: a
+        // non-GitHub repo only skips the Commits API step — the public lookups
+        // (Gravatar / user search) still run when online. Offline + no coords
+        // has nothing to do, so keep the synchronous pending-only line the
+        // headless harness sees today.
         let coords = avatar_fetch::repo_github_coords(&repo_path);
-        let Some((owner, repo)) = coords else {
+        if coords.is_none() && offline {
             eprintln!(
                 "[kagi] avatar: resolved=0 pending={} offline={}",
                 emails.len(),
                 offline
             );
             return;
-        };
+        }
 
-        let task = cx
-            .background_spawn(async move { avatar_fetch::resolve_avatars(&owner, &repo, &emails) });
+        let task =
+            cx.background_spawn(async move { avatar_fetch::resolve_avatars(coords, &emails) });
         cx.spawn(async move |this, acx| {
             let outcome = task.await;
             let _ = this.update(acx, |app, cx| {
                 for (email, img) in outcome.images {
                     app.avatars.images.insert(email, img);
+                }
+                // Emails skipped by the search-budget cap retry on the next
+                // incremental pass (ADR-0122).
+                for email in &outcome.deferred {
+                    app.avatars.attempted.remove(email);
                 }
                 eprintln!(
                     "[kagi] avatar: resolved={} pending={} offline={}",

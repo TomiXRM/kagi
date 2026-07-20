@@ -36,7 +36,10 @@
 //! content); no force ops / `reset --hard` / `clean`; in-memory first (the repo
 //! is untouched until `execute_*`).
 
-use kagi_domain::plan_note::{PlanDisposition, PlanNote, PlanRecovery, PlanTitle};
+use kagi_domain::plan_note::{
+    ConflictsNote, ConflictsRecovery, ConflictsTitle, PlanDisposition, PlanNote, PlanRecovery,
+    PlanTitle, RecoveryKind,
+};
 use std::path::{Path, PathBuf};
 
 use git2::{Repository, RepositoryState};
@@ -733,38 +736,53 @@ fn merge_message_is_empty(repo: &Repository) -> bool {
     !meaningful
 }
 
-/// Render a [`ContinueBlocker`] as an English sentence for the plan modal.
+/// Render a [`ContinueBlocker`] as a structured [`PlanNote`] for the plan
+/// modal (ADR-0129 Phase 2 — was English-prose `format!`, now typed).
 ///
-/// The UI lane localizes the *category* via `Msg`; this prose is the backend's
-/// plan-modal default (matching the original `plan_conflict_continue` strings).
-fn blocker_sentence(b: &ContinueBlocker) -> String {
+/// The UI lane localizes the *category* via `Msg` (`conflict_view::blocker_msg`,
+/// keyed off `ContinueBlocker` directly, untouched by this migration); this is
+/// the backend's plan-modal note, byte-identical to the original
+/// `plan_conflict_continue` strings via `message_en()`.
+fn blocker_note(b: &ContinueBlocker) -> PlanNote {
     match b {
-        ContinueBlocker::UnresolvedFiles(files) => format!(
-            "{} file(s) still unresolved: {}. Resolve every file before continuing.",
-            files.len(),
-            files.join(", ")
-        ),
-        ContinueBlocker::MarkerResidue(files) => format!(
-            "Conflict marker(s) remain in: {}. Remove all <<<<<<< ======= >>>>>>> markers before continuing.",
-            files.join(", ")
-        ),
-        ContinueBlocker::IndexUnmerged(files) => format!(
-            "The index still has unmerged entries not tracked by this session: {}. Re-scan the repository.",
-            files.join(", ")
-        ),
-        ContinueBlocker::BinaryUnresolved(files) => format!(
-            "Binary conflict(s) still need a side chosen: {}.",
-            files.join(", ")
-        ),
-        ContinueBlocker::DeletionUndecided(files) => format!(
-            "Keep-or-delete decision still pending for: {}.",
-            files.join(", ")
-        ),
-        ContinueBlocker::EmptyMergeMessage => {
-            "The merge commit message is empty. Provide a commit message before continuing.".to_string()
+        ContinueBlocker::UnresolvedFiles(files) => {
+            PlanNote::Conflicts(ConflictsNote::UnresolvedFiles {
+                files: files.clone(),
+            })
         }
-        ContinueBlocker::ChecklistBlocker(msg) => msg.clone(),
+        ContinueBlocker::MarkerResidue(files) => {
+            PlanNote::Conflicts(ConflictsNote::MarkerResidue {
+                files: files.clone(),
+            })
+        }
+        ContinueBlocker::IndexUnmerged(files) => {
+            PlanNote::Conflicts(ConflictsNote::IndexUnmerged {
+                files: files.clone(),
+            })
+        }
+        ContinueBlocker::BinaryUnresolved(files) => {
+            PlanNote::Conflicts(ConflictsNote::BinaryUnresolved {
+                files: files.clone(),
+            })
+        }
+        ContinueBlocker::DeletionUndecided(files) => {
+            PlanNote::Conflicts(ConflictsNote::DeletionUndecided {
+                files: files.clone(),
+            })
+        }
+        ContinueBlocker::EmptyMergeMessage => PlanNote::Conflicts(ConflictsNote::EmptyMergeMessage),
+        ContinueBlocker::ChecklistBlocker(msg) => {
+            PlanNote::Conflicts(ConflictsNote::ChecklistBlocker {
+                message: msg.clone(),
+            })
+        }
     }
+}
+
+/// Render a [`ContinueBlocker`] as an English sentence (used where only a
+/// `String` is needed, e.g. wrapping into a [`GitError`]).
+fn blocker_sentence(b: &ContinueBlocker) -> String {
+    blocker_note(b).message_en()
 }
 
 // ────────────────────────────────────────────────────────────
@@ -840,18 +858,18 @@ pub fn plan_conflict_continue(
     let head = resolve_head(repo)?;
     let current = current_state_summary(repo)?;
 
-    let mut warnings: Vec<String> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     // The full ADR-0067 checklist (T-043/044): unresolved + marker residue +
     // index unmerged + binary unresolved + undecided deletion + empty merge
-    // message.  Each structured blocker is rendered to plan-modal prose here.
+    // message.  Each structured blocker is rendered to a typed plan note here.
     let structured = continue_blockers(repo, session, buffer);
-    let blockers: Vec<String> = structured.iter().map(blocker_sentence).collect();
+    let blockers: Vec<PlanNote> = structured.iter().map(blocker_note).collect();
 
     if session.files.is_empty() && structured.is_empty() {
-        warnings.push(
-            "No conflicting files detected; continue will finish the operation as-is.".to_string(),
-        );
+        warnings.push(PlanNote::Conflicts(
+            ConflictsNote::NoConflictingFilesDetected,
+        ));
     }
 
     let predicted = StateSummary {
@@ -859,19 +877,20 @@ pub fn plan_conflict_continue(
         dirty: "resolved → staged".to_string(),
     };
 
-    let recovery = format!(
-        "If the continuation goes wrong you can abort back to the pre-operation state:\n  git {} --abort\nThe pre-operation HEAD is recorded in ORIG_HEAD and the reflog.",
-        session.op.slug()
-    );
+    let op = session.op.slug().to_string();
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::Conflicts(ConflictsRecovery::Continue { op: op.clone() }),
+        commands: vec![format!("git {} --abort", op)],
+    };
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!("Continue {}", session.op.slug())),
+        title: PlanTitle::Conflicts(ConflictsTitle::Continue { op }),
         current,
         predicted,
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        warnings,
+        blockers,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -1282,26 +1301,27 @@ pub fn plan_conflict_abort(
         None => current.head.clone(),
     };
 
-    let warnings = vec![
-        "Your partial resolutions are preserved in the autosave directory and referenced in the operation log; they are not discarded.".to_string(),
-    ];
+    let warnings = vec![PlanNote::Conflicts(
+        ConflictsNote::PartialResolutionsPreserved,
+    )];
 
-    let recovery = format!(
-        "Abort restores the pre-{} state from ORIG_HEAD. If you change your mind, the reflog still records every HEAD movement.",
-        session.op.slug()
-    );
+    let op = session.op.slug().to_string();
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::Conflicts(ConflictsRecovery::Abort { op: op.clone() }),
+        commands: Vec::new(),
+    };
 
     Ok(OperationPlan {
         disposition: PlanDisposition::Ready,
-        title: PlanTitle::verbatim(format!("Abort {}", session.op.slug())),
+        title: PlanTitle::Conflicts(ConflictsTitle::Abort { op }),
         current,
         predicted: StateSummary {
             head: predicted_head,
             dirty: "clean".to_string(),
         },
-        warnings: PlanNote::wrap_all(warnings),
+        warnings,
         blockers: Vec::new(),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -1454,25 +1474,24 @@ pub fn plan_conflict_skip(
     let head = resolve_head(repo)?;
     let current = current_state_summary(repo)?;
 
-    let warnings = vec![
-        "Skip discards the current step's changes (the conflicting pick is dropped, not committed). Your partial resolution is preserved in the autosave directory.".to_string(),
-    ];
-    let recovery = format!(
-        "Skip drops the current {} step. The reflog still records every HEAD movement, and the pre-operation HEAD is in ORIG_HEAD if you need to abort entirely.",
-        session.op.slug()
-    );
+    let warnings = vec![PlanNote::Conflicts(ConflictsNote::SkipDiscardsStep)];
+    let op = session.op.slug().to_string();
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::Conflicts(ConflictsRecovery::Skip { op: op.clone() }),
+        commands: Vec::new(),
+    };
 
     Ok(OperationPlan {
         disposition: PlanDisposition::Ready,
-        title: PlanTitle::verbatim(format!("Skip {} step", session.op.slug())),
+        title: PlanTitle::Conflicts(ConflictsTitle::Skip { op }),
         current,
         predicted: StateSummary {
             head: head_display(&head),
             dirty: "current step dropped".to_string(),
         },
-        warnings: PlanNote::wrap_all(warnings),
+        warnings,
         blockers: Vec::new(),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),

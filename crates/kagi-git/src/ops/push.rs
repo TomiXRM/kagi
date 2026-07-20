@@ -10,6 +10,13 @@ use super::remote_common::{
     local_branch_oid, resolve_upstream_info, resolve_upstream_oid, short_oid_string,
 };
 use super::*;
+// ADR-0129 appendix §B-5: this op's own typed notes, plus the cross-op
+// `CommonNote`/`PlanOp` this file's HEAD-state blockers and GitError
+// passthroughs reuse. `PushPunct` is reached through its owning submodule
+// (not the `plan_note` flat re-export) so this fan-out PR never has to touch
+// the shared `plan_note/mod.rs`.
+use kagi_domain::plan_note::push::PushPunct;
+use kagi_domain::plan_note::{CommonNote, PlanOp, PushNote, PushRecovery, PushTitle, RecoveryKind};
 
 // ────────────────────────────────────────────────────────────
 // plan_push  (T-HT-004)
@@ -73,20 +80,26 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
     };
 
     // ── 3. Early blockers (before touching git objects) ──────
-    let mut blockers: Vec<String> = Vec::new();
-    let warnings: Vec<String> =
-        vec!["Non-fast-forward pushes will fail — force is not used.".to_string()];
+    // ADR-0129 appendix §B-5: typed notes, not English prose. `message_en()`
+    // reproduces the exact legacy strings for oplog/klog/EN (golden-tested
+    // in kagi-domain's `plan_note::push`).
+    let mut blockers: Vec<PlanNote> = Vec::new();
+    let warnings: Vec<PlanNote> = vec![PlanNote::Push(PushNote::NoForceUsed {
+        punct: PushPunct::EmDash,
+    })];
 
     // Detached HEAD.
     if let Head::Detached { .. } = &head {
-        blockers
-            .push("HEAD is detached. Push is only supported when HEAD is on a branch.".to_string());
+        blockers.push(PlanNote::Common(CommonNote::HeadDetached {
+            op: PlanOp::Push,
+        }));
     }
 
     // Unborn HEAD.
     if let Head::Unborn { .. } = &head {
-        blockers
-            .push("HEAD is unborn (no commits exist). Cannot push an empty branch.".to_string());
+        blockers.push(PlanNote::Common(CommonNote::HeadUnborn {
+            op: PlanOp::Push,
+        }));
     }
 
     // ── 4. Only proceed with upstream/remote analysis for Attached HEAD ──
@@ -98,16 +111,17 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
                 head: head_display.clone(),
                 dirty: current.dirty.clone(),
             };
-            let recovery =
-                "Push requires a branch. Use `git checkout <branch>` to attach HEAD.".to_string();
             return Ok(OperationPlan {
                 disposition: PlanDisposition::for_blockers(&blockers),
-                title: PlanTitle::verbatim("Push (blocked)".to_string()),
+                title: PlanTitle::Push(PushTitle::PushBlocked),
                 current,
                 predicted,
-                warnings: PlanNote::wrap_all(warnings),
-                blockers: PlanNote::wrap_all(blockers),
-                recovery: Some(PlanRecovery::verbatim(recovery)),
+                warnings,
+                blockers,
+                recovery: Some(PlanRecovery {
+                    kind: RecoveryKind::Push(PushRecovery::PushBlocked),
+                    commands: vec!["git checkout <branch>".to_string()],
+                }),
                 head_at_plan: head,
                 stash_count_at_plan: 0,
                 preview_files: Vec::new(),
@@ -162,11 +176,9 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
                 .collect();
 
             if remote_names.is_empty() {
-                blockers.push(format!(
-                    "No upstream configured for branch '{}' and no remotes exist. \
-                     Add a remote with `git remote add origin <url>`.",
-                    branch_name
-                ));
+                blockers.push(PlanNote::Push(PushNote::NoUpstreamNoRemotes {
+                    branch: branch_name.clone(),
+                }));
                 (false, String::new(), 0usize)
             } else {
                 // Prefer "origin"; fall back to the only remote.
@@ -187,20 +199,28 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
     // plan is genuinely blocked, matching the old `.all(contains(…))` check.
     let nothing_to_push = has_upstream && ahead_count == 0 && blockers.is_empty();
     if has_upstream && ahead_count == 0 {
-        blockers.push(format!(
-            "Branch '{}' is already up to date with its upstream — nothing to push.",
-            branch_name
-        ));
+        blockers.push(PlanNote::Push(PushNote::AlreadyUpToDate {
+            branch: branch_name.clone(),
+            punct: PushPunct::EmDash,
+        }));
     }
 
     // ── 7. Determine title ────────────────────────────────────
     let is_set_upstream_flow = !has_upstream && blockers.is_empty();
     let title = if is_set_upstream_flow {
-        format!("Push '{}' to '{}' (set upstream)", branch_name, remote_name)
+        PlanTitle::Push(PushTitle::Push {
+            branch: branch_name.clone(),
+            remote: remote_name.clone(),
+            set_upstream: true,
+        })
     } else if has_upstream {
-        format!("Push '{}' to '{}'", branch_name, remote_name)
+        PlanTitle::Push(PushTitle::Push {
+            branch: branch_name.clone(),
+            remote: remote_name.clone(),
+            set_upstream: false,
+        })
     } else {
-        "Push (blocked)".to_string()
+        PlanTitle::Push(PushTitle::PushBlocked)
     };
 
     // ── 8. Build preview_commits (revwalk) ───────────────────
@@ -228,12 +248,14 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
     };
 
     // ── 10. Recovery guidance ─────────────────────────────────
-    let recovery =
-        "Push only sends commits to the remote — the local repository is never modified.\n\
-         If the push is rejected (non-fast-forward), pull first and re-plan:\n  \
-         git pull\n  git push\n\
-         The reflog records every HEAD movement:\n  git reflog"
-            .to_string();
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::Push(PushRecovery::Push),
+        commands: vec![
+            "git pull".to_string(),
+            "git push".to_string(),
+            "git reflog".to_string(),
+        ],
+    };
 
     Ok(OperationPlan {
         disposition: if nothing_to_push {
@@ -241,12 +263,12 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
         } else {
             PlanDisposition::for_blockers(&blockers)
         },
-        title: PlanTitle::verbatim(title),
+        title,
         current,
         predicted,
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        warnings,
+        blockers,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -516,13 +538,22 @@ pub fn plan_push_branch(
         head: head.display(),
         dirty: status_summary_display(&status),
     };
-    let mut blockers = Vec::new();
-    let warnings = vec!["Non-fast-forward pushes will fail; force is not used.".to_string()];
+    // ADR-0129 appendix §B-5: typed notes for plan_push_branch. The two bare
+    // `{}` error-message sites stay a `CommonNote::GitErrorPassthrough` (§G-4
+    // — GitError keying is out of scope for this migration); the "no upstream"
+    // site gets its own `PushNote` variant (this text is shared in English
+    // with pull-ff's blocker, but that category is a separate fan-out PR).
+    let mut blockers: Vec<PlanNote> = Vec::new();
+    let warnings: Vec<PlanNote> = vec![PlanNote::Push(PushNote::NoForceUsed {
+        punct: PushPunct::Semicolon,
+    })];
 
     let local_oid = match local_branch_oid(repo, branch_name) {
         Ok(oid) => oid,
         Err(e) => {
-            blockers.push(format!("{}", e));
+            blockers.push(PlanNote::Common(CommonNote::GitErrorPassthrough {
+                message: e.to_string(),
+            }));
             git2::Oid::ZERO_SHA1
         }
     };
@@ -531,7 +562,9 @@ pub fn plan_push_branch(
         match choose_push_remote(repo) {
             Ok(remote) => (remote, None, false),
             Err(e) => {
-                blockers.push(format!("{}", e));
+                blockers.push(PlanNote::Common(CommonNote::GitErrorPassthrough {
+                    message: e.to_string(),
+                }));
                 (String::new(), None, false)
             }
         }
@@ -542,10 +575,10 @@ pub fn plan_push_branch(
                 (remote, oid, true)
             }
             Err(e) => {
-                blockers.push(format!(
-                    "No upstream configured for branch '{}': {}.",
-                    branch_name, e
-                ));
+                blockers.push(PlanNote::Push(PushNote::NoUpstreamWithErr {
+                    branch: branch_name.to_string(),
+                    err: e.to_string(),
+                }));
                 (String::new(), None, false)
             }
         }
@@ -568,10 +601,10 @@ pub fn plan_push_branch(
     // ADR-0129 F-2: same no-op semantics as plan_push (sole up-to-date blocker).
     let nothing_to_push = blockers.is_empty() && has_upstream && ahead_count == 0;
     if nothing_to_push {
-        blockers.push(format!(
-            "Branch '{}' is already up to date with its upstream; nothing to push.",
-            branch_name
-        ));
+        blockers.push(PlanNote::Push(PushNote::AlreadyUpToDate {
+            branch: branch_name.to_string(),
+            punct: PushPunct::Semicolon,
+        }));
     }
 
     let preview_commits = if blockers.is_empty() {
@@ -580,14 +613,11 @@ pub fn plan_push_branch(
         Vec::new()
     };
 
-    let title = if set_upstream {
-        format!(
-            "Push '{}' to '{}/{}' (set upstream)",
-            branch_name, remote_name, branch_name
-        )
-    } else {
-        format!("Push '{}' to '{}'", branch_name, remote_name)
-    };
+    let title = PlanTitle::Push(PushTitle::PushBranch {
+        branch: branch_name.to_string(),
+        remote: remote_name.clone(),
+        set_upstream,
+    });
 
     Ok(OperationPlan {
         disposition: if nothing_to_push {
@@ -595,15 +625,18 @@ pub fn plan_push_branch(
         } else {
             PlanDisposition::for_blockers(&blockers)
         },
-        title: PlanTitle::verbatim(title),
+        title,
         current,
         predicted: StateSummary {
             head: format!("branch: {} (pushed {} commit(s))", branch_name, ahead_count),
             dirty: "working tree unchanged".to_string(),
         },
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim("Push sends commits to the remote and does not modify the working tree. If the push is rejected, fetch or pull first and re-plan.".to_string())),
+        warnings,
+        blockers,
+        recovery: Some(PlanRecovery {
+            kind: RecoveryKind::Push(PushRecovery::PushBranch),
+            commands: Vec::new(),
+        }),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -672,35 +705,45 @@ pub fn plan_set_upstream(
         head: head.display(),
         dirty: status_summary_display(&status),
     };
-    let mut blockers = Vec::new();
-    let mut warnings = Vec::new();
+    // ADR-0129 appendix §B-5 / §A15: `Branch '{}' does not exist.` is the
+    // cross-op `CommonNote::BranchMissing { in_repo: false }` tail (shared in
+    // English with rename); the rest are this op's own `PushNote` variants.
+    let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     if repo.find_branch(branch_name, BranchType::Local).is_err() {
-        blockers.push(format!("Branch '{}' does not exist.", branch_name));
+        blockers.push(PlanNote::Common(CommonNote::BranchMissing {
+            name: branch_name.to_string(),
+            in_repo: false,
+        }));
     }
     if upstream.trim().is_empty() || upstream.trim() != upstream {
-        blockers.push("Upstream must be a remote branch name like origin/main.".to_string());
+        blockers.push(PlanNote::Push(PushNote::UpstreamFormatInvalid));
     } else if repo.find_branch(upstream, BranchType::Remote).is_err() {
-        warnings.push(format!(
-            "Remote-tracking branch '{}' is not present locally; config can still be set.",
-            upstream
-        ));
+        warnings.push(PlanNote::Push(PushNote::UpstreamNotPresentLocally {
+            upstream: upstream.to_string(),
+        }));
     }
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!("Set upstream of '{}' to '{}'", branch_name, upstream)),
+        title: PlanTitle::Push(PushTitle::SetUpstream {
+            branch: branch_name.to_string(),
+            upstream: upstream.to_string(),
+        }),
         current,
         predicted: StateSummary {
             head: format!("branch: {} -> {}", branch_name, upstream),
             dirty: "working tree unchanged".to_string(),
         },
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(format!(
-            "This changes only branch.{}.remote and branch.{}.merge in git config. To undo, set the previous upstream again.",
-            branch_name, branch_name
-        ))),
+        warnings,
+        blockers,
+        recovery: Some(PlanRecovery {
+            kind: RecoveryKind::Push(PushRecovery::SetUpstream {
+                branch: branch_name.to_string(),
+            }),
+            commands: Vec::new(),
+        }),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),

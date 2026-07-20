@@ -32,7 +32,7 @@ pub struct CommitDetail {
     pub author_line: SharedString,
     /// Committer line (only set when committer differs from author) — raw.
     pub committer_line: Option<SharedString>,
-    /// Committed date — always set: `"YYYY-MM-DD HH:MM"` (UTC).
+    /// Committed date — always set: `"YYYY-MM-DD HH:MM"` (local time).
     /// Used by the inspector to show the committed timestamp separately
     /// from the committer identity line.
     pub committed_date: SharedString,
@@ -60,7 +60,7 @@ fn commit_to_detail(c: &Commit) -> CommitDetail {
         "{}  <{}>  {}",
         c.author.name,
         c.author.email,
-        format_utc(c.author.time),
+        format_local(c.author.time),
     );
     let author_line = SharedString::from(author_raw);
 
@@ -73,7 +73,7 @@ fn commit_to_detail(c: &Commit) -> CommitDetail {
             "{}  <{}>  {}",
             c.committer.name,
             c.committer.email,
-            format_utc(c.committer.time),
+            format_local(c.committer.time),
         );
         Some(SharedString::from(raw))
     } else {
@@ -99,7 +99,7 @@ fn commit_to_detail(c: &Commit) -> CommitDetail {
     let full_message = SharedString::from(capped);
 
     // committed_date is always set so the inspector can show it unconditionally.
-    let committed_date = SharedString::from(format_utc(c.committer.time));
+    let committed_date = SharedString::from(format_local(c.committer.time));
 
     CommitDetail {
         full_sha,
@@ -112,16 +112,27 @@ fn commit_to_detail(c: &Commit) -> CommitDetail {
 }
 
 // ──────────────────────────────────────────────────────────────
-// Absolute UTC date formatting (no external crates)
+// Absolute local-time date formatting (civil arithmetic; tz via chrono)
 // ──────────────────────────────────────────────────────────────
 
-/// Format a Unix-epoch timestamp as `"YYYY-MM-DD HH:MM"` (UTC).
+/// Format a Unix-epoch timestamp as `"YYYY-MM-DD HH:MM"` in the machine's
+/// **local** time zone — matching how GitHub renders commit dates (its
+/// `<relative-time>` element localizes to the viewer's zone), rather than the
+/// old raw-UTC display that read 9 h off in JST. The per-instant local offset
+/// (DST-correct, via chrono) is applied, then the pure civil arithmetic in
+/// [`format_civil`] renders the shifted seconds.
+pub fn format_local(epoch_secs: i64) -> String {
+    format_civil(epoch_secs + super::local_utc_offset_secs(epoch_secs))
+}
+
+/// Pure `"YYYY-MM-DD HH:MM"` from an epoch second count (naive / UTC-style).
+/// Machine-independent — unit-tested; the tz shift lives in [`format_local`].
 ///
 /// Uses the civil_from_days algorithm (Howard Hinnant, 2013,
 /// <http://howardhinnant.github.io/date_algorithms.html#civil_from_days>)
 /// which is free of the Zeller-formula pitfalls and handles leap years
 /// correctly for all representable i64 values.
-pub fn format_utc(epoch_secs: i64) -> String {
+fn format_civil(epoch_secs: i64) -> String {
     // Split seconds into day-number and time-of-day.
     // Rust integer division truncates toward zero; for negative epoch values
     // we must use floor-division so that day_number is always the *floor* of
@@ -192,19 +203,19 @@ mod tests {
 
     #[test]
     fn unix_epoch_is_1970_01_01() {
-        assert_eq!(format_utc(0), "1970-01-01 00:00");
+        assert_eq!(format_civil(0), "1970-01-01 00:00");
     }
 
     #[test]
     fn known_timestamp() {
         // 2024-01-15 09:30:00 UTC  →  epoch 1705311000
-        assert_eq!(format_utc(1_705_311_000), "2024-01-15 09:30");
+        assert_eq!(format_civil(1_705_311_000), "2024-01-15 09:30");
     }
 
     #[test]
     fn leap_day_2000() {
         // 2000-02-29 00:00:00 UTC  →  epoch 951782400
-        assert_eq!(format_utc(951_782_400), "2000-02-29 00:00");
+        assert_eq!(format_civil(951_782_400), "2000-02-29 00:00");
     }
 
     #[test]
@@ -222,7 +233,7 @@ mod tests {
     #[test]
     fn negative_epoch_before_1970() {
         // 1969-12-31 23:59:00 UTC  →  epoch -60
-        assert_eq!(format_utc(-60), "1969-12-31 23:59");
+        assert_eq!(format_civil(-60), "1969-12-31 23:59");
     }
 
     // ── T022: no ZWSP in any field ────────────────────────────

@@ -805,7 +805,7 @@ pub fn format_hms(epoch_secs: i64) -> String {
 }
 
 /// Local UTC offset (seconds) at `epoch_secs`; `0` if it can't be resolved.
-fn local_utc_offset_secs(epoch_secs: i64) -> i64 {
+pub(crate) fn local_utc_offset_secs(epoch_secs: i64) -> i64 {
     use chrono::{Offset, TimeZone};
     chrono::Local
         .timestamp_opt(epoch_secs, 0)

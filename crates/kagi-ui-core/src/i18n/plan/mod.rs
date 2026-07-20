@@ -7,7 +7,21 @@
 //! each producer. `Verbatim` notes render their payload untranslated in every
 //! language — they disappear in Phase 3.
 
+pub mod branch;
+pub mod checkout;
+pub mod cherry_revert;
+pub mod cleanup;
+pub mod commit;
+pub mod common;
+pub mod conflicts;
 pub mod discard;
+pub mod history;
+pub mod merge;
+pub mod pull;
+pub mod push;
+pub mod stash;
+pub mod switch;
+pub mod worktree;
 
 use kagi_domain::plan_note::{PlanNote, PlanRecovery, PlanTitle, RecoveryKind};
 
@@ -18,8 +32,22 @@ pub fn plan_note_text(note: &PlanNote) -> String {
     match lang() {
         Lang::En => note.message_en(),
         Lang::Ja => match note {
-            PlanNote::Verbatim(s) => s.clone(),
+            PlanNote::Common(n) => common::note_ja(n),
             PlanNote::Discard(n) => discard::note_ja(n),
+            PlanNote::Branch(n) => branch::note_ja(n),
+            PlanNote::Stash(n) => stash::note_ja(n),
+            PlanNote::History(n) => history::note_ja(n),
+            PlanNote::Pull(n) => pull::note_ja(n),
+            PlanNote::Push(n) => push::note_ja(n),
+            PlanNote::Switch(n) => switch::note_ja(n),
+            PlanNote::Checkout(n) => checkout::note_ja(n),
+            PlanNote::Merge(n) => merge::note_ja(n),
+            PlanNote::Worktree(n) => worktree::note_ja(n),
+            PlanNote::CherryRevert(n) => cherry_revert::note_ja(n),
+            PlanNote::Cleanup(n) => cleanup::note_ja(n),
+            PlanNote::Conflicts(n) => conflicts::note_ja(n),
+            PlanNote::Commit(n) => commit::note_ja(n),
+            PlanNote::Verbatim(s) => s.clone(),
         },
     }
 }

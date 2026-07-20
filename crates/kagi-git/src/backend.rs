@@ -547,7 +547,9 @@ impl Backend {
         // Reuse plan_commit's HEAD snapshot + status capture; the merge-commit
         // message is informational (not validated against the staged tree).
         let mut plan = self.plan_commit(message)?;
-        plan.title = kagi_domain::plan_note::PlanTitle::verbatim("Finalize merge commit");
+        plan.title = kagi_domain::plan_note::PlanTitle::Commit(
+            kagi_domain::plan_note::commit::CommitTitle::FinalizeMergeCommit,
+        );
         Ok(plan)
     }
 

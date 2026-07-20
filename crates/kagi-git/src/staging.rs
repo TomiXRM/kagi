@@ -34,7 +34,10 @@
 //! * **Conflicts** — `plan_commit` blocks on conflicted files; staging a
 //!   conflicted file is not supported in MVP.
 
-use kagi_domain::plan_note::{PlanDisposition, PlanNote, PlanRecovery, PlanTitle};
+use kagi_domain::plan_note::commit::{
+    CommitLeftoverParts, CommitNote, CommitRecovery, CommitTitle,
+};
+use kagi_domain::plan_note::{PlanDisposition, PlanNote, PlanRecovery, PlanTitle, RecoveryKind};
 use std::path::{Path, PathBuf};
 
 use git2::{DiffOptions, Repository};
@@ -429,56 +432,49 @@ pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, Gi
     };
 
     // ── 3. Check blockers ────────────────────────────────────
-    let mut blockers: Vec<String> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
+    // ADR-0129: plan_commit is a structured producer — notes are typed
+    // (`CommitNote`), not English prose. `message_en()` renders the exact
+    // legacy strings for oplog/klog/EN display (golden-tested in kagi-domain).
+    let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     // Empty message.
     if message.trim().is_empty() {
-        blockers.push("Commit message must not be empty.".to_string());
+        blockers.push(PlanNote::Commit(CommitNote::EmptyMessage));
     }
 
     // Nothing staged.
     if status.staged.is_empty() {
-        blockers.push(
-            "Nothing to commit: no files are staged. \
-             Use stage_file() to stage changes before committing."
-                .to_string(),
-        );
+        blockers.push(PlanNote::Commit(CommitNote::NothingStaged));
     }
 
     // Conflict state.
     if !status.conflicted.is_empty() {
-        blockers.push(format!(
-            "Repository has {} conflicted file(s). \
-             Resolve all conflicts before committing.",
-            status.conflicted.len()
-        ));
+        blockers.push(PlanNote::Commit(CommitNote::ConflictedFiles {
+            count: status.conflicted.len(),
+        }));
     }
 
     // Unstaged / untracked changes remain (warning, not blocker).
     let leftover_count = status.unstaged.len() + status.untracked.len();
     if leftover_count > 0 {
-        let mut parts = Vec::new();
-        if !status.unstaged.is_empty() {
-            parts.push(format!("{} modified", status.unstaged.len()));
-        }
-        if !status.untracked.is_empty() {
-            parts.push(format!("{} untracked", status.untracked.len()));
-        }
-        warnings.push(format!(
-            "{} file(s) ({}) will NOT be included in this commit.",
-            leftover_count,
-            parts.join(", ")
-        ));
+        warnings.push(PlanNote::Commit(CommitNote::LeftoverNotIncluded {
+            count: leftover_count,
+            parts: CommitLeftoverParts {
+                modified: status.unstaged.len(),
+                untracked: status.untracked.len(),
+            },
+        }));
     }
 
     // Staged-content checklist (ADR-0043 rules 4/5/6): conflict markers (block),
     // secret/.env (warn), large binary (warn).  Inspects index BLOBs, not WT.
     // Rules 1–3 (staged empty / message empty / repo conflicted) are handled
-    // above; the checklist adds the content-level rules.
-    let (mut check_blockers, mut check_warnings) = checklist(repo, &status)?;
-    blockers.append(&mut check_blockers);
-    warnings.append(&mut check_warnings);
+    // above; the checklist adds the content-level rules. checklist.rs itself
+    // is out of scope for ADR-0129 Phase 2 — its strings stay Verbatim.
+    let (check_blockers, check_warnings) = checklist(repo, &status)?;
+    blockers.extend(PlanNote::wrap_all(check_blockers));
+    warnings.extend(PlanNote::wrap_all(check_warnings));
 
     // ── 4. Predicted StateSummary ─────────────────────────────
     // After commit: staged becomes empty; unstaged/untracked remain.
@@ -510,29 +506,32 @@ pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, Gi
     };
 
     // ── 5. Recovery guidance ──────────────────────────────────
-    let recovery = format!(
-        "To amend the commit message immediately after:\n  git commit --amend\n\
-         To undo the commit while keeping changes staged:\n  git revert HEAD\n\
-         (Staged files: {})",
-        status
-            .staged
-            .iter()
-            .map(|f| f.path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
+    let staged_files: Vec<String> = status
+        .staged
+        .iter()
+        .map(|f| f.path.display().to_string())
+        .collect();
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::Commit(CommitRecovery::AfterCommit { staged_files }),
+        commands: vec![
+            "git commit --amend".to_string(),
+            "git revert HEAD".to_string(),
+        ],
+    };
 
     // Use staged file list as preview_files.
     let preview_files: Vec<FileStatus> = status.staged.clone();
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!("Commit: \"{}\"", msg_summary)),
+        title: PlanTitle::Commit(CommitTitle::Commit {
+            summary: msg_summary,
+        }),
         current,
         predicted,
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        warnings,
+        blockers,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files,

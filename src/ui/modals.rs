@@ -195,11 +195,6 @@ pub struct CreateBranchModal {
     pub plan: Option<std::sync::Arc<OperationPlan>>,
     /// Error message to show if execute or preflight failed.
     pub error: Option<SharedString>,
-    /// Localized blocker texts for display (W29-I18N-WAVE2). The keyed
-    /// branch-name reasons are localized; non-keyed plan blockers pass through
-    /// in English. Recomputed each replan. The execute-guard still uses
-    /// `plan.blockers` (English) so behaviour is unchanged.
-    pub localized_blockers: Vec<SharedString>,
 }
 
 /// State for an in-progress create-worktree confirmation.
@@ -226,10 +221,6 @@ pub struct CreateWorktreeModal {
     pub plan: Option<std::sync::Arc<OperationPlan>>,
     /// Error message to show if execute or preflight failed.
     pub error: Option<SharedString>,
-    /// Localized blocker texts for display (W29-I18N-WAVE2). The keyed
-    /// branch-name and worktree-path reasons are localized; non-keyed plan
-    /// blockers pass through in English. Recomputed each replan.
-    pub localized_blockers: Vec<SharedString>,
 }
 
 // ──────────────────────────────────────────────────────────────

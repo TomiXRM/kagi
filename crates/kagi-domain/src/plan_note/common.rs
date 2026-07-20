@@ -7,6 +7,8 @@
 //! keeps a per-op sentence table so every string stays byte-identical to the
 //! legacy producers (golden-tested in `plan_note::tests`).
 
+use crate::plan::{BranchNameError, WorktreePathError};
+
 /// The `…before {phrase}.` / `…before {phrase} if…` op phrase (§A1/A2/A11).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpPhrase {
@@ -135,9 +137,26 @@ pub enum CommonNote {
     HeadUnborn { op: PlanOp },
     /// §A14/A15 — blocker: branch does not exist (two legacy tails).
     BranchMissing { name: String, in_repo: bool },
-    /// §G-4 — blocker: a GitError/git2 message passed through verbatim.
-    /// (Error-message keying is out of scope for ADR-0129.)
+    /// §G-4 — blocker: a GitError/git2 message (or any other English-only
+    /// text whose keying is out of scope for ADR-0129, e.g.
+    /// `WorktreeValidationError::Other`) passed through verbatim.
     GitErrorPassthrough { message: String },
+    /// §E — blocker: a keyed branch-name validation reason (create-branch /
+    /// rename-branch). Localizes via the existing
+    /// `kagi_ui_core::i18n::branch_name_error` mapping.
+    BranchNameErrorKeyed(BranchNameError),
+    /// §E — blocker: a keyed worktree-path validation reason
+    /// (create-worktree). Localizes via the existing
+    /// `kagi_ui_core::i18n::worktree_path_error` mapping.
+    WorktreePathErrorKeyed(WorktreePathError),
+    /// §F-6 — warning: the UI inserts this into `plan.warnings` when
+    /// confirming a dirty checkout will stash first (was
+    /// `Msg::DirtyStashFirst`, formerly a UI-language string mixed directly
+    /// into the plan — now typed and localized like every other note).
+    DirtyStashFirst,
+    /// warning: the UI inserts this into `plan.warnings` for a
+    /// conflict-producing merge (was `Msg::MergeConflictWarning`).
+    MergeConflictWarning,
 }
 
 impl CommonNote {
@@ -242,6 +261,15 @@ impl CommonNote {
                 }
             }
             CommonNote::GitErrorPassthrough { message } => message.clone(),
+            CommonNote::BranchNameErrorKeyed(e) => e.to_string(),
+            CommonNote::WorktreePathErrorKeyed(e) => e.to_string(),
+            CommonNote::DirtyStashFirst => "Working tree is dirty: confirming will stash your \
+                 changes first (saved to stash@{0}, restore with `git stash pop`)"
+                .to_string(),
+            CommonNote::MergeConflictWarning => "This merge will produce conflicts. It will \
+                 leave conflict markers and enter Conflict Mode, where you resolve each file (or \
+                 abort to restore the pre-merge state)."
+                .to_string(),
         }
     }
 }
@@ -491,6 +519,75 @@ mod tests {
             }
             .message_en(),
             "revspec 'x' not found"
+        );
+    }
+
+    #[test]
+    fn branch_name_error_keyed_every_variant() {
+        let cases = [
+            (
+                BranchNameError::EmptyCreate,
+                "Branch name must not be empty.",
+            ),
+            (BranchNameError::Required, "Branch name is required."),
+            (
+                BranchNameError::Whitespace,
+                "Branch name must not start or end with whitespace.",
+            ),
+            (BranchNameError::SameName, "Branch already has that name."),
+            (
+                BranchNameError::RenameExists("feat/x".into()),
+                "Branch 'feat/x' already exists.",
+            ),
+            (
+                BranchNameError::RenameInvalid("bad name".into()),
+                "'bad name' is not a valid branch name.",
+            ),
+            (
+                BranchNameError::CreateInvalidRef("bad..name".into()),
+                "Branch name 'bad..name' is not a valid git ref name \
+                 (no spaces, '..', or other invalid characters).",
+            ),
+            (
+                BranchNameError::CreateLeadingDash("-feat".into()),
+                "Branch name '-feat' must not start with '-'.",
+            ),
+            (
+                BranchNameError::CreateExists("feat/x".into()),
+                "A branch named 'feat/x' already exists in this repository.",
+            ),
+        ];
+        for (e, want) in cases {
+            assert_eq!(CommonNote::BranchNameErrorKeyed(e).message_en(), want);
+        }
+    }
+
+    #[test]
+    fn worktree_path_error_keyed_every_variant() {
+        assert_eq!(
+            CommonNote::WorktreePathErrorKeyed(WorktreePathError::Empty).message_en(),
+            "Worktree path must not be empty."
+        );
+        assert_eq!(
+            CommonNote::WorktreePathErrorKeyed(WorktreePathError::Exists("/repo/../wt".into()))
+                .message_en(),
+            "Worktree path '/repo/../wt' already exists."
+        );
+    }
+
+    #[test]
+    fn dirty_stash_first() {
+        assert_eq!(
+            CommonNote::DirtyStashFirst.message_en(),
+            "Working tree is dirty: confirming will stash your changes first (saved to stash@{0}, restore with `git stash pop`)"
+        );
+    }
+
+    #[test]
+    fn merge_conflict_warning() {
+        assert_eq!(
+            CommonNote::MergeConflictWarning.message_en(),
+            "This merge will produce conflicts. It will leave conflict markers and enter Conflict Mode, where you resolve each file (or abort to restore the pre-merge state)."
         );
     }
 }

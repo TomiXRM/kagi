@@ -91,12 +91,11 @@ pub fn plan_create_branch(
 
     // ── 3. Check blockers ────────────────────────────────────
     // The branch-name reasons are computed as keyed errors (W29-I18N-WAVE2) so
-    // the UI can localize them (ADR-0129 appendix §E — kept as `Verbatim`,
-    // localized via the separate `localize_plan_blockers` shim, not a
-    // `BranchNote`); their `Display` is pushed verbatim into `blockers`.
+    // the UI can localize them (ADR-0129 appendix §E) as
+    // `CommonNote::BranchNameErrorKeyed`, not a `BranchNote`.
     let mut blockers: Vec<PlanNote> = create_branch_name_errors(repo, name)
-        .iter()
-        .map(|e| PlanNote::verbatim(e.to_string()))
+        .into_iter()
+        .map(|e| PlanNote::Common(CommonNote::BranchNameErrorKeyed(e)))
         .collect();
 
     // Commit existence check.
@@ -306,10 +305,9 @@ pub fn plan_rename_branch(
     if let BranchRenameValidation::Invalid(reason) =
         validate_branch_rename(old_name, new_name, &existing)
     {
-        // ADR-0129 appendix §E: also a keyed `BranchNameError` — localized via
-        // the same `localize_plan_blockers` shim as create-branch, not a
+        // ADR-0129 appendix §E: also a keyed `BranchNameError`, not a
         // `BranchNote`.
-        blockers.push(PlanNote::verbatim(reason.to_string()));
+        blockers.push(PlanNote::Common(CommonNote::BranchNameErrorKeyed(reason)));
     }
     if status.is_dirty() {
         warnings.push(PlanNote::Branch(BranchNote::RenameRefOnlyDirty));

@@ -96,16 +96,14 @@ fn write(dir: &Path, name: &str, content: &[u8]) {
 }
 
 /// Stage a file and return `(blockers, warnings)` from the checklist.
-fn run_checklist(repo: &Repository) -> (Vec<String>, Vec<String>) {
+fn run_checklist(
+    repo: &Repository,
+) -> (Vec<kagi_git::ops::PlanNote>, Vec<kagi_git::ops::PlanNote>) {
     let status = working_tree_status(repo).expect("status");
     checklist(repo, &status).expect("checklist")
 }
 
-fn any_contains(v: &[String], needle: &str) -> bool {
-    v.iter().any(|s| s.contains(needle))
-}
-
-fn any_note_contains(v: &[kagi_git::ops::PlanNote], needle: &str) -> bool {
+fn any_contains(v: &[kagi_git::ops::PlanNote], needle: &str) -> bool {
     v.iter().any(|s| s.message_en().contains(needle))
 }
 
@@ -424,7 +422,7 @@ fn plan_commit_surfaces_marker_blocker() {
 
     let plan = plan_commit(&repo, "fix: resolve").expect("plan_commit");
     assert!(
-        any_note_contains(&plan.blockers, "Conflict marker"),
+        any_contains(&plan.blockers, "Conflict marker"),
         "plan_commit must surface the marker blocker, got {:?}",
         plan.blockers
     );

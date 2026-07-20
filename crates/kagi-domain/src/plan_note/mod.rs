@@ -1,25 +1,23 @@
 //! Structured plan text (ADR-0129) — `PlanTitle` / `PlanNote` / `PlanRecovery`
 //! / `PlanDisposition`.
 //!
-//! The ops layer stops producing English prose and returns these structured
-//! values instead; the display layer localizes them. During the migration
-//! (Phase 1/2) most producers wrap their existing strings in the
-//! [`PlanNote::Verbatim`] variant — Phase 3 deletes `Verbatim` and every
-//! String-conversion shim, proving the migration complete by compilation
-//! (ADR-0129 §4).
+//! The ops layer produces these structured values instead of English prose;
+//! the display layer localizes them. The migration ran in three phases
+//! (ADR-0129 §4): Phase 1 introduced the types behind a `Verbatim` escape
+//! hatch, Phase 2 fanned each op category out to a typed producer, and
+//! Phase 3 deleted `Verbatim` and every String-conversion shim — the
+//! compiling workspace is the completeness proof, not a grep.
 //!
 //! [`PlanNote::message_en`] is the **single English renderer** and the
-//! oplog/klog boundary format. While the migration is in flight its output is
-//! byte-identical to the legacy strings (a *migration contract*, not an
-//! eternal freeze — EN copy improvements unlock after Phase 3). Golden tests
-//! live in this module.
-
+//! oplog/klog boundary format, byte-identical to the pre-migration strings
+//! (golden-tested in this module and in each category's own file).
 //!
-//! One file per category (ADR-0129 Phase 2 foundation): the per-op fan-out
-//! PRs each fill their own `plan_note/<category>.rs` enum and never touch
-//! this dispatch file, so they can land in parallel without conflicts.
+//! One file per category (ADR-0129 Phase 2 foundation): each op's producer
+//! fills its own `plan_note/<category>.rs` enum and never touches this
+//! dispatch file.
 
 pub mod branch;
+pub mod checklist;
 pub mod checkout;
 pub mod cherry_revert;
 pub mod cleanup;
@@ -36,6 +34,7 @@ pub mod switch;
 pub mod worktree;
 
 pub use branch::{BranchNote, BranchRecovery, BranchTitle};
+pub use checklist::ChecklistNote;
 pub use checkout::{CheckoutNote, CheckoutRecovery, CheckoutTitle};
 pub use cherry_revert::{CherryRevertNote, CherryRevertRecovery, CherryRevertTitle};
 pub use cleanup::{CleanupNote, CleanupRecovery, CleanupTitle};
@@ -53,7 +52,7 @@ pub use worktree::{WorktreeNote, WorktreeRecovery, WorktreeTitle};
 
 /// Category-nested note shown in the plan modal's blockers/warnings lists
 /// (ADR-0129 §1). Flat 100+-variant enums are forbidden — one variant space
-/// per op category, plus the migration-only `Verbatim`.
+/// per op category.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanNote {
     /// Cross-op notes (dirty WT / conflicted / untracked / HEAD state — §A).
@@ -73,25 +72,14 @@ pub enum PlanNote {
     Cleanup(CleanupNote),
     Conflicts(ConflictsNote),
     Commit(CommitNote),
-    /// Migration-only escape hatch: the legacy English prose, byte-for-byte.
-    /// Deleted in Phase 3 — do not add new uses outside mechanical wrapping.
-    Verbatim(String),
+    /// Commit-checklist findings (ADR-0043 rules 4/5/6 — no title/recovery).
+    Checklist(ChecklistNote),
 }
 
 impl PlanNote {
-    /// Wrap a legacy English string (migration helper, Phase 3 deletes).
-    pub fn verbatim(s: impl Into<String>) -> Self {
-        PlanNote::Verbatim(s.into())
-    }
-
-    /// Wrap a whole legacy `Vec<String>` (migration helper, Phase 3 deletes).
-    pub fn wrap_all(strings: Vec<String>) -> Vec<PlanNote> {
-        strings.into_iter().map(PlanNote::Verbatim).collect()
-    }
-
     /// The **sole** English renderer (ADR-0129 §3): used for EN display, the
-    /// oplog boundary, and klog. Byte-identical to the legacy strings while
-    /// the migration is in flight (golden-tested below).
+    /// oplog boundary, and klog. Byte-identical to the pre-migration strings
+    /// (golden-tested below and in each category's own file).
     pub fn message_en(&self) -> String {
         match self {
             PlanNote::Common(n) => n.message_en(),
@@ -109,7 +97,7 @@ impl PlanNote {
             PlanNote::Cleanup(n) => n.message_en(),
             PlanNote::Conflicts(n) => n.message_en(),
             PlanNote::Commit(n) => n.message_en(),
-            PlanNote::Verbatim(s) => s.clone(),
+            PlanNote::Checklist(n) => n.message_en(),
         }
     }
 }
@@ -117,24 +105,6 @@ impl PlanNote {
 impl std::fmt::Display for PlanNote {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.message_en())
-    }
-}
-
-/// Migration shims so string-pinning tests keep compiling unchanged.
-/// Deleted in Phase 3 together with `Verbatim`.
-impl PartialEq<str> for PlanNote {
-    fn eq(&self, other: &str) -> bool {
-        self.message_en() == other
-    }
-}
-impl PartialEq<&str> for PlanNote {
-    fn eq(&self, other: &&str) -> bool {
-        self.message_en() == *other
-    }
-}
-impl PartialEq<String> for PlanNote {
-    fn eq(&self, other: &String) -> bool {
-        self.message_en() == *other
     }
 }
 
@@ -161,16 +131,9 @@ pub enum PlanTitle {
     Cleanup(CleanupTitle),
     Conflicts(ConflictsTitle),
     Commit(CommitTitle),
-    /// Migration-only legacy title (Phase 3 deletes).
-    Verbatim(String),
 }
 
 impl PlanTitle {
-    /// Wrap a legacy English title (migration helper, Phase 3 deletes).
-    pub fn verbatim(s: impl Into<String>) -> Self {
-        PlanTitle::Verbatim(s.into())
-    }
-
     /// Sole English renderer — see [`PlanNote::message_en`].
     pub fn message_en(&self) -> String {
         match self {
@@ -187,7 +150,6 @@ impl PlanTitle {
             PlanTitle::Cleanup(t) => t.message_en(),
             PlanTitle::Conflicts(t) => t.message_en(),
             PlanTitle::Commit(t) => t.message_en(),
-            PlanTitle::Verbatim(s) => s.clone(),
             PlanTitle::Discard {
                 single: Some(path), ..
             } => format!("Discard changes to '{}'", path),
@@ -207,17 +169,6 @@ impl std::fmt::Display for PlanTitle {
     }
 }
 
-impl PartialEq<str> for PlanTitle {
-    fn eq(&self, other: &str) -> bool {
-        self.message_en() == other
-    }
-}
-impl PartialEq<&str> for PlanTitle {
-    fn eq(&self, other: &&str) -> bool {
-        self.message_en() == *other
-    }
-}
-
 /// Recovery guidance: display text + the machine-usable command list
 /// (ADR-0129 appendix §D). `commands` is what consumers use instead of
 /// parsing the display text (kills the delete-branch `lines().nth(1)`).
@@ -231,23 +182,6 @@ pub struct PlanRecovery {
 }
 
 impl PlanRecovery {
-    /// Wrap a legacy recovery string with no structured commands
-    /// (migration helper, Phase 3 deletes).
-    pub fn verbatim(s: impl Into<String>) -> Self {
-        PlanRecovery {
-            kind: RecoveryKind::Verbatim(s.into()),
-            commands: Vec::new(),
-        }
-    }
-
-    /// Wrap a legacy recovery string, recording its structured commands.
-    pub fn verbatim_with_commands(s: impl Into<String>, commands: Vec<String>) -> Self {
-        PlanRecovery {
-            kind: RecoveryKind::Verbatim(s.into()),
-            commands,
-        }
-    }
-
     /// Sole English renderer — see [`PlanNote::message_en`].
     pub fn message_en(&self) -> String {
         match &self.kind {
@@ -264,7 +198,6 @@ impl PlanRecovery {
             RecoveryKind::Cleanup(r) => r.message_en(),
             RecoveryKind::Conflicts(r) => r.message_en(),
             RecoveryKind::Commit(r) => r.message_en(),
-            RecoveryKind::Verbatim(s) => s.clone(),
             RecoveryKind::Discard => {
                 "This discards your unstaged changes to the selected file(s): \
                  tracked files are restored from the index, untracked files are deleted from \
@@ -294,8 +227,6 @@ pub enum RecoveryKind {
     Cleanup(CleanupRecovery),
     Conflicts(ConflictsRecovery),
     Commit(CommitRecovery),
-    /// Migration-only legacy text (Phase 3 deletes).
-    Verbatim(String),
 }
 
 /// Semantic plan state (ADR-0129 §2). Replaces every place the UI used to
@@ -334,18 +265,11 @@ pub enum NoOpKind {
 
 #[cfg(test)]
 mod tests {
-    use super::common::{DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
     use super::*;
 
     // ── message_en golden tests (ADR-0129 §3): dynamic values, newlines,
     //    quotes, and paths must render byte-identically to the legacy
     //    producer strings. ──
-
-    #[test]
-    fn verbatim_note_roundtrips_bytes() {
-        let s = "Working tree has 2 staged, 1 modified — stash or commit changes before merging.\n  git stash push -u\n\"quoted\" and path/to/file.rs";
-        assert_eq!(PlanNote::verbatim(s).message_en(), s);
-    }
 
     #[test]
     fn discard_notes_match_legacy_strings() {
@@ -411,20 +335,13 @@ mod tests {
     }
 
     #[test]
-    fn note_eq_str_shim_compares_rendered_text() {
-        let n = PlanNote::verbatim("Branch 'x' does not exist.");
-        assert_eq!(n, "Branch 'x' does not exist.");
-        assert_eq!(n, "Branch 'x' does not exist.".to_string());
-    }
-
-    #[test]
     fn disposition_for_blockers() {
         assert_eq!(
             PlanDisposition::for_blockers::<PlanNote>(&[]),
             PlanDisposition::Ready
         );
         assert_eq!(
-            PlanDisposition::for_blockers(&[PlanNote::verbatim("x")]),
+            PlanDisposition::for_blockers(&[PlanNote::Discard(DiscardNote::NothingSelected)]),
             PlanDisposition::Blocked
         );
     }

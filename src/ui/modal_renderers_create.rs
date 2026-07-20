@@ -167,16 +167,13 @@ pub(crate) fn render_create_branch_modal(
                 ),
         );
 
-        // ── Blockers (localized — W29-I18N-WAVE2) ─────────
+        // ── Blockers (localized) ──────────────────────────
         if !p.blockers.is_empty() {
-            let lines: Vec<SharedString> = if modal.localized_blockers.is_empty() {
-                p.blockers
-                    .iter()
-                    .map(|b| SharedString::from(plan_note_text(b)))
-                    .collect()
-            } else {
-                modal.localized_blockers.clone()
-            };
+            let lines: Vec<SharedString> = p
+                .blockers
+                .iter()
+                .map(|b| SharedString::from(plan_note_text(b)))
+                .collect();
             let mut block_col = div().flex().flex_col().gap_1();
             for b in lines {
                 block_col = block_col.child(
@@ -389,16 +386,13 @@ pub(crate) fn render_create_worktree_modal(
             card = card.child(warn_col);
         }
 
-        // ── Blockers (localized — W29-I18N-WAVE2) ─────────
+        // ── Blockers (localized) ──────────────────────────
         if !p.blockers.is_empty() {
-            let lines: Vec<SharedString> = if modal.localized_blockers.is_empty() {
-                p.blockers
-                    .iter()
-                    .map(|b| SharedString::from(plan_note_text(b)))
-                    .collect()
-            } else {
-                modal.localized_blockers.clone()
-            };
+            let lines: Vec<SharedString> = p
+                .blockers
+                .iter()
+                .map(|b| SharedString::from(plan_note_text(b)))
+                .collect();
             let mut block_col = div().flex().flex_col().gap_1();
             for b in lines {
                 block_col = block_col.child(

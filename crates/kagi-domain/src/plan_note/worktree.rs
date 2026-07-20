@@ -1,13 +1,13 @@
 //! WorktreeNote — ADR-0129 appendix §B-8 (create-branch+checkout /
 //! create-worktree / unlock-worktree).
 //!
-//! `plan_create_worktree_impl`'s `validate_worktree_path` blocker is kept as
-//! `PlanNote::Verbatim(msg)` — it is ALREADY keyed/localizable via
-//! `kagi-domain::plan::{WorktreePathError, WorktreeValidationError}::Display`
-//! (§E) and the `localize_plan_blockers` shim in `src/ui/mod.rs` (deleted only
-//! in Phase 3), so it is not redefined here. Likewise the branch-missing
-//! blocker in `plan_create_worktree_impl`'s existing-branch path is the
-//! cross-op `PlanNote::Common(CommonNote::BranchMissing { in_repo: true, .. })`
+//! `plan_create_worktree_impl`'s `validate_worktree_path_keyed` blocker is
+//! `PlanNote::Common(CommonNote::WorktreePathErrorKeyed(..))` for the two keyed
+//! reasons (empty / already exists), or `CommonNote::GitErrorPassthrough` for
+//! any other (`WorktreeValidationError::Other`) — not redefined here since
+//! `CommonNote` already covers it (§E). Likewise the branch-missing blocker in
+//! `plan_create_worktree_impl`'s existing-branch path is the cross-op
+//! `PlanNote::Common(CommonNote::BranchMissing { in_repo: true, .. })`
 //! (§A14) — not redefined here.
 //!
 //! `plan_create_branch_with_checkout`'s conflicted/dirty-working-tree

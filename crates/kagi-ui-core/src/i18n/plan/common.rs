@@ -2,6 +2,8 @@
 
 use kagi_domain::plan_note::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
 
+use crate::i18n::{branch_name_error, worktree_path_error};
+
 /// JA rendering of the op phrase embedded in the common sentences.
 fn phrase_ja(p: OpPhrase) -> &'static str {
     match p {
@@ -116,5 +118,21 @@ pub fn note_ja(note: &CommonNote) -> String {
         }
         // Error messages stay untranslated (error keying is out of scope).
         CommonNote::GitErrorPassthrough { message } => message.clone(),
+        // §E — delegate to the existing keyed-error localizers so there is
+        // exactly one source of truth for their JA text.
+        CommonNote::BranchNameErrorKeyed(e) => branch_name_error(e),
+        CommonNote::WorktreePathErrorKeyed(e) => worktree_path_error(e),
+        // §F-6 — copied verbatim from the former `Msg::DirtyStashFirst` /
+        // `Msg::MergeConflictWarning` JA arms (ADR-0129 Phase 3: same text,
+        // now typed).
+        CommonNote::DirtyStashFirst => {
+            "Working tree が dirty です: 確定すると先に変更を stash します\
+             (stash@{0} に保存、`git stash pop` で復元)"
+                .to_string()
+        }
+        CommonNote::MergeConflictWarning => {
+            "この merge は conflict を発生させます。conflict marker を残して Conflict Mode に入り、各ファイルを解決します(中止すれば merge 前の状態に戻せます)。"
+                .to_string()
+        }
     }
 }

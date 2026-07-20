@@ -87,6 +87,25 @@ jobs:
           done
           [ "$fail" -eq 0 ] && echo "OK: no lateral kagi-ui-* imports."
 
+  # ── BLOCKING: the ADR-0129 plan-text migration stays complete (Phase 3) ───────
+  invariant-plan-note-no-verbatim:
+    name: invariant — PlanNote/PlanTitle/RecoveryKind have no Verbatim escape hatch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert the Verbatim migration scaffolding is gone
+        shell: bash
+        run: |
+          # ADR-0129 §4 Phase 3: the migration is proven complete by the
+          # workspace compiling with these variants deleted, not by this grep
+          # — this is a belt-and-suspenders check against regression.
+          if grep -rnE 'PlanNote::Verbatim|PlanTitle::Verbatim|RecoveryKind::Verbatim' \
+               crates/ src/; then
+            echo "::error::PlanNote::Verbatim / PlanTitle::Verbatim / RecoveryKind::Verbatim must not exist (ADR-0129 Phase 3 removed the migration escape hatch)."
+            exit 1
+          fi
+          echo "OK: no Verbatim plan-text escape hatch remains."
+
   # ── BLOCKING: full test suite on macOS (the validated dev platform) ──────────
   test-macos:
     name: test (macOS)

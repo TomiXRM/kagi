@@ -259,10 +259,18 @@ fn plan_create_worktree_impl(
     } else {
         plan_create_branch(repo, branch, start)?
     };
-    let target_path = match validate_worktree_path(repo_root, path.as_ref()) {
+    let target_path = match validate_worktree_path_keyed(repo_root, path.as_ref()) {
         Ok(path) => path,
-        Err(msg) => {
-            plan.blockers.push(PlanNote::verbatim(msg));
+        Err(err) => {
+            let note = match err {
+                WorktreeValidationError::Keyed(e) => CommonNote::WorktreePathErrorKeyed(e),
+                // Not one of the two keyed reasons (empty / already exists);
+                // English-only passthrough (ADR-0129 appendix §E).
+                WorktreeValidationError::Other(message) => {
+                    CommonNote::GitErrorPassthrough { message }
+                }
+            };
+            plan.blockers.push(PlanNote::Common(note));
             if path.as_ref().is_absolute() {
                 normalize_path(path.as_ref())
             } else {

@@ -470,11 +470,11 @@ pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, Gi
     // Staged-content checklist (ADR-0043 rules 4/5/6): conflict markers (block),
     // secret/.env (warn), large binary (warn).  Inspects index BLOBs, not WT.
     // Rules 1–3 (staged empty / message empty / repo conflicted) are handled
-    // above; the checklist adds the content-level rules. checklist.rs itself
-    // is out of scope for ADR-0129 Phase 2 — its strings stay Verbatim.
+    // above; the checklist adds the content-level rules, already typed as
+    // `PlanNote::Checklist(ChecklistNote)` (ADR-0129 Phase 3).
     let (check_blockers, check_warnings) = checklist(repo, &status)?;
-    blockers.extend(PlanNote::wrap_all(check_blockers));
-    warnings.extend(PlanNote::wrap_all(check_warnings));
+    blockers.extend(check_blockers);
+    warnings.extend(check_warnings);
 
     // ── 4. Predicted StateSummary ─────────────────────────────
     // After commit: staged becomes empty; unstaged/untracked remain.

@@ -43,7 +43,6 @@ impl KagiApp {
             allow_existing_branch,
             plan: None,
             error: None,
-            localized_blockers: Vec::new(),
         });
         self.replan_create_worktree();
     }
@@ -115,24 +114,13 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
-                // W29-I18N-WAVE2: localize the keyed branch-name reasons (only
-                // when creating a new branch) and the keyed worktree-path reasons
-                // (empty / already exists). Other blockers stay English.
-                let mut keyed: Vec<(String, String)> = Vec::new();
-                if !allow_existing_branch {
-                    for e in repo.create_branch_name_errors(&branch) {
-                        keyed.push((e.to_string(), crate::ui::i18n::branch_name_error(&e)));
-                    }
-                }
-                if let Err(kagi_git::ops::WorktreeValidationError::Keyed(e)) =
-                    repo.validate_worktree_path_keyed(&path)
-                {
-                    keyed.push((e.to_string(), crate::ui::i18n::worktree_path_error(&e)));
-                }
-                let localized = localize_plan_blockers(&plan.blockers, keyed.into_iter());
+                // ADR-0129 Phase 3: the keyed branch-name and worktree-path
+                // reasons are now typed (`CommonNote::BranchNameErrorKeyed` /
+                // `WorktreePathErrorKeyed`) and localize automatically via
+                // `plan_note_text()` — no separate localized-blocker
+                // computation needed.
                 if let Some(modal) = self.create_worktree_modal_mut() {
                     modal.plan = Some(std::sync::Arc::new(plan));
-                    modal.localized_blockers = localized;
                 }
             }
             Err(e) => {

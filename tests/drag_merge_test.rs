@@ -147,7 +147,7 @@ fn drag_merge_fast_forward_produces_ff_plan() {
         plan.blockers
     );
     assert_eq!(kind, MergeKind::FastForward);
-    assert_eq!(plan.title, "Merge feature into main");
+    assert_eq!(plan.title.message_en(), "Merge feature into main");
 }
 
 #[test]
@@ -175,7 +175,7 @@ fn drag_merge_diverged_produces_merge_commit_plan() {
         plan.blockers
     );
     assert_eq!(kind, MergeKind::MergeCommit);
-    assert_eq!(plan.title, "Merge feature into main");
+    assert_eq!(plan.title.message_en(), "Merge feature into main");
 }
 
 #[test]
@@ -259,5 +259,5 @@ fn drag_merge_remote_only_branch_produces_plan() {
     );
     // main is an ancestor of origin/feature → fast-forward.
     assert_eq!(kind, MergeKind::FastForward);
-    assert_eq!(plan.title, "Merge origin/feature into main");
+    assert_eq!(plan.title.message_en(), "Merge origin/feature into main");
 }

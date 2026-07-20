@@ -1,4 +1,7 @@
 use super::*;
+use kagi_domain::plan_note::{
+    CommonNote, DirtyParts, OpPhrase, UntrackedCtx, WorktreeNote, WorktreeRecovery, WorktreeTitle,
+};
 
 // ────────────────────────────────────────────────────────────
 // create-worktree helpers
@@ -122,43 +125,50 @@ pub fn plan_create_branch_with_checkout(
 
     let status = working_tree_status(repo)?;
     if !status.conflicted.is_empty() {
-        plan.blockers.push(PlanNote::verbatim(format!(
-            "Repository has {} conflicted file(s). Resolve conflicts before checking out the new branch.",
-            status.conflicted.len()
-        )));
+        plan.blockers
+            .push(PlanNote::Common(CommonNote::ConflictedFiles {
+                count: status.conflicted.len(),
+                before: OpPhrase::CheckingOutTheNewBranch,
+            }));
     }
     if !status.staged.is_empty() || !status.unstaged.is_empty() {
-        let mut parts = Vec::new();
-        if !status.staged.is_empty() {
-            parts.push(format!("{} staged", status.staged.len()));
-        }
-        if !status.unstaged.is_empty() {
-            parts.push(format!("{} modified", status.unstaged.len()));
-        }
-        plan.blockers.push(PlanNote::verbatim(format!(
-            "Working tree has {} — checkout after branch creation could lose work. Stash changes before continuing.",
-            parts.join(", ")
-        )));
+        let parts = DirtyParts {
+            staged: status.staged.len(),
+            modified: status.unstaged.len(),
+        };
+        plan.blockers.push(PlanNote::Worktree(
+            WorktreeNote::DirtyBlocksCheckoutAfterCreate { parts },
+        ));
     }
     if !status.untracked.is_empty() {
-        plan.warnings.push(PlanNote::verbatim(format!(
-            "{} untracked file(s) will remain after switching branches.",
-            status.untracked.len()
-        )));
+        plan.warnings
+            .push(PlanNote::Common(CommonNote::UntrackedRemain {
+                count: status.untracked.len(),
+                ctx: UntrackedCtx::AfterSwitchingBranches,
+            }));
     }
 
-    plan.title = PlanTitle::verbatim(format!(
-        "Create branch '{}' @ {} and checkout",
-        name,
-        at.short()
-    ));
+    let prev = plan
+        .current
+        .head
+        .strip_prefix("branch: ")
+        .unwrap_or("<previous-branch>")
+        .to_string();
+    plan.title = PlanTitle::Worktree(WorktreeTitle::CreateBranchCheckout {
+        name: name.to_string(),
+        at: at.short().to_string(),
+    });
     plan.predicted.head = format!("branch: {}", name);
-    plan.recovery = Some(PlanRecovery::verbatim(format!(
-        "This creates branch '{}' and then checks it out. If checkout fails, the branch may still exist and can be removed with:\n  git branch -d {}\nTo return after checkout:\n  git checkout {}",
-        name,
-        name,
-        plan.current.head.strip_prefix("branch: ").unwrap_or("<previous-branch>")
-    )));
+    plan.recovery = Some(PlanRecovery {
+        kind: RecoveryKind::Worktree(WorktreeRecovery::CreateBranchCheckout {
+            name: name.to_string(),
+            prev: prev.clone(),
+        }),
+        commands: vec![
+            format!("git branch -d {}", name),
+            format!("git checkout {}", prev),
+        ],
+    });
     Ok(plan)
 }
 
@@ -207,21 +217,28 @@ fn plan_create_worktree_impl(
         let status = working_tree_status(repo)?;
         let mut blockers = Vec::new();
         if repo.find_branch(branch, BranchType::Local).is_err() {
-            blockers.push(format!(
-                "Branch '{}' does not exist in this repository.",
-                branch
-            ));
+            blockers.push(PlanNote::Common(CommonNote::BranchMissing {
+                name: branch.to_string(),
+                in_repo: true,
+            }));
         }
         if let Some(path) = branch_checked_out_worktree_path(repo, branch)? {
-            blockers.push(format!(
-                "Branch '{}' is already checked out in another worktree: {}",
-                branch,
-                path.display()
-            ));
+            blockers.push(PlanNote::Worktree(WorktreeNote::BranchInOtherWorktree {
+                branch: branch.to_string(),
+                path: path.display().to_string(),
+            }));
         }
         OperationPlan {
             disposition: PlanDisposition::for_blockers(&blockers),
-            title: PlanTitle::verbatim(format!("Open worktree for '{}'", branch)),
+            // `title`/`recovery` are always overwritten below (both branches
+            // of this `if`/`else` converge on the same final assignment) —
+            // these placeholders are never observed. (ADR-0129 appendix
+            // §G-5: the legacy `"Open worktree for '{}'"` title here was dead
+            // code for the same reason; removed rather than kept unreachable.)
+            title: PlanTitle::Worktree(WorktreeTitle::CreateWorktree {
+                branch: branch.to_string(),
+                start: start.short().to_string(),
+            }),
             current: StateSummary {
                 head: head.display(),
                 dirty: status_summary_display(&status),
@@ -231,8 +248,8 @@ fn plan_create_worktree_impl(
                 dirty: status_summary_display(&status),
             },
             warnings: Vec::new(),
-            blockers: PlanNote::wrap_all(blockers),
-            recovery: Some(PlanRecovery::verbatim(String::new())),
+            blockers,
+            recovery: None,
             head_at_plan: head,
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
@@ -253,22 +270,30 @@ fn plan_create_worktree_impl(
             }
         }
     };
-    plan.title = PlanTitle::verbatim(format!("Create worktree '{}' @ {}", branch, start.short()));
+    plan.title = PlanTitle::Worktree(WorktreeTitle::CreateWorktree {
+        branch: branch.to_string(),
+        start: start.short().to_string(),
+    });
     plan.predicted = StateSummary {
         head: plan.current.head.clone(),
         dirty: plan.current.dirty.clone(),
     };
-    plan.recovery = Some(PlanRecovery::verbatim(format!(
-        "Remove the linked worktree if needed:\n  git worktree remove {}\nThe branch can then be removed with:\n  git branch -d {}",
-        target_path.display(),
-        branch
-    )));
-    plan.warnings.push(PlanNote::verbatim(format!(
-        "Creates a linked worktree at '{}' with branch '{}' (start point {}).",
-        target_path.display(),
-        branch,
-        start.short()
-    )));
+    plan.recovery = Some(PlanRecovery {
+        kind: RecoveryKind::Worktree(WorktreeRecovery::CreateWorktree {
+            path: target_path.display().to_string(),
+            branch: branch.to_string(),
+        }),
+        commands: vec![
+            format!("git worktree remove {}", target_path.display()),
+            format!("git branch -d {}", branch),
+        ],
+    });
+    plan.warnings
+        .push(PlanNote::Worktree(WorktreeNote::CreatesLinkedWorktree {
+            path: target_path.display().to_string(),
+            branch: branch.to_string(),
+            start: start.short().to_string(),
+        }));
 
     Ok(plan)
 }
@@ -402,37 +427,39 @@ pub fn plan_unlock_worktree(repo: &Repository, name: &str) -> Result<OperationPl
     match repo.find_worktree(name) {
         Ok(wt) => match wt.is_locked() {
             Ok(git2::WorktreeLockStatus::Locked(reason)) => {
-                let reason_display = reason
+                let reason = reason
                     .as_deref()
                     .map(str::trim)
                     .filter(|r| !r.is_empty())
-                    .map(|r| format!("\"{}\"", r))
-                    .unwrap_or_else(|| "(no reason recorded)".to_string());
-                warnings.push(format!(
-                    "Locked with reason: {} — a lock is deliberate protection someone \
-                     placed on this worktree. Make sure it is no longer needed.",
-                    reason_display
-                ));
+                    .map(str::to_string);
+                warnings.push(PlanNote::Worktree(WorktreeNote::LockedWithReason {
+                    reason,
+                }));
             }
             Ok(git2::WorktreeLockStatus::Unlocked) => {
-                blockers.push(format!("Worktree '{}' is already unlocked.", name));
+                blockers.push(PlanNote::Worktree(WorktreeNote::AlreadyUnlocked {
+                    name: name.to_string(),
+                }));
             }
             Err(e) => {
-                blockers.push(format!(
-                    "Could not read the lock state of worktree '{}': {}",
-                    name,
-                    e.message()
-                ));
+                blockers.push(PlanNote::Worktree(WorktreeNote::LockStateUnreadable {
+                    name: name.to_string(),
+                    err: e.message().to_string(),
+                }));
             }
         },
         Err(_) => {
-            blockers.push(format!("Worktree '{}' does not exist.", name));
+            blockers.push(PlanNote::Worktree(WorktreeNote::WorktreeMissing {
+                name: name.to_string(),
+            }));
         }
     }
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!("Unlock worktree '{}'", name)),
+        title: PlanTitle::Worktree(WorktreeTitle::UnlockWorktree {
+            name: name.to_string(),
+        }),
         current: StateSummary {
             head: head.display(),
             dirty: dirty.clone(),
@@ -441,12 +468,17 @@ pub fn plan_unlock_worktree(repo: &Repository, name: &str) -> Result<OperationPl
             head: head.display(),
             dirty,
         },
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(format!(
-            "Re-lock the worktree if needed:\n  git worktree lock --reason \"<why>\" <path-of-{}>",
-            name
-        ))),
+        warnings,
+        blockers,
+        recovery: Some(PlanRecovery {
+            kind: RecoveryKind::Worktree(WorktreeRecovery::Unlock {
+                name: name.to_string(),
+            }),
+            commands: vec![format!(
+                "git worktree lock --reason \"<why>\" <path-of-{}>",
+                name
+            )],
+        }),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),

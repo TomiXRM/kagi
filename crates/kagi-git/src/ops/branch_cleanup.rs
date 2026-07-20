@@ -27,6 +27,7 @@ use std::collections::HashMap;
 
 use super::branch::pre_clean_branch_config;
 use super::*;
+use kagi_domain::plan_note::{CleanupNote, CleanupRecovery, CleanupTitle};
 
 pub use kagi_domain::branch_cleanup::{
     build_rows, copy_all_text, BranchCleanupInput, BranchCleanupRow, CleanupDeleteTarget,
@@ -269,30 +270,27 @@ pub fn plan_delete_merged_branches(
     let mut preview_commits = Vec::new();
 
     if targets.is_empty() {
-        blockers.push("No branches selected for deletion.".to_string());
+        blockers.push(PlanNote::Cleanup(CleanupNote::NoSelection));
     }
 
     let fresh = collect_branch_cleanup(repo, now)?;
     for t in targets {
         let Some(row) = fresh.iter().find(|r| r.name == t.name) else {
-            blockers.push(format!(
-                "Branch '{}' is no longer a cleanup candidate. Refresh the list.",
-                t.name
-            ));
+            blockers.push(PlanNote::Cleanup(CleanupNote::NoLongerCandidate {
+                name: t.name.clone(),
+            }));
             continue;
         };
         if !row.deletable {
-            blockers.push(format!(
-                "Branch '{}' is not safely deletable (it may have grown new commits since merge). Refresh the list.",
-                t.name
-            ));
+            blockers.push(PlanNote::Cleanup(CleanupNote::NotSafelyDeletable {
+                name: t.name.clone(),
+            }));
             continue;
         }
         if row.local_tip != t.local_tip || row.remote_tip != t.remote_tip {
-            blockers.push(format!(
-                "Branch '{}' moved since the list was built. Refresh the list.",
-                t.name
-            ));
+            blockers.push(PlanNote::Cleanup(CleanupNote::TipMoved {
+                name: t.name.clone(),
+            }));
             continue;
         }
         let mut places = Vec::new();
@@ -309,32 +307,33 @@ pub fn plan_delete_merged_branches(
         .iter()
         .any(|t| t.status == MergedBranchStatus::SquashMergedLikely)
     {
-        warnings.push(
-            "Some branches are only *likely* squash-merged (upstream gone); \
-             there is no local proof of the merge."
-                .to_string(),
-        );
+        warnings.push(PlanNote::Cleanup(CleanupNote::SquashHeuristicOnly));
     }
     if targets.iter().any(|t| t.remote_tip.is_some()) {
-        warnings.push("Remote branches on 'origin' will be deleted (network write).".to_string());
+        warnings.push(PlanNote::Cleanup(CleanupNote::RemoteDeleteNetwork));
     }
 
-    let recovery = "Every deleted tip OID is recorded in the oplog. To restore:\n  \
-                    git branch <name> <oid>          (local)\n  \
-                    git push origin <oid>:refs/heads/<name>   (remote)"
-        .to_string();
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::Cleanup(CleanupRecovery::CleanupDelete),
+        commands: vec![
+            "git branch <name> <oid>          (local)".to_string(),
+            "git push origin <oid>:refs/heads/<name>   (remote)".to_string(),
+        ],
+    };
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!("Delete {} merged branch(es)", targets.len())),
+        title: PlanTitle::Cleanup(CleanupTitle::CleanupDelete {
+            count: targets.len(),
+        }),
         predicted: StateSummary {
             head: current.head.clone(),
             dirty: current.dirty.clone(),
         },
         current,
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        warnings,
+        blockers,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),

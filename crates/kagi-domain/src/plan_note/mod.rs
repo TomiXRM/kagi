@@ -14,13 +14,65 @@
 //! eternal freeze — EN copy improvements unlock after Phase 3). Golden tests
 //! live in this module.
 
+//!
+//! One file per category (ADR-0129 Phase 2 foundation): the per-op fan-out
+//! PRs each fill their own `plan_note/<category>.rs` enum and never touch
+//! this dispatch file, so they can land in parallel without conflicts.
+
+pub mod branch;
+pub mod checkout;
+pub mod cherry_revert;
+pub mod cleanup;
+pub mod commit;
+pub mod common;
+pub mod conflicts;
+pub mod discard;
+pub mod history;
+pub mod merge;
+pub mod pull;
+pub mod push;
+pub mod stash;
+pub mod switch;
+pub mod worktree;
+
+pub use branch::BranchNote;
+pub use checkout::CheckoutNote;
+pub use cherry_revert::CherryRevertNote;
+pub use cleanup::CleanupNote;
+pub use commit::CommitNote;
+pub use common::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
+pub use conflicts::ConflictsNote;
+pub use discard::DiscardNote;
+pub use history::HistoryNote;
+pub use merge::MergeNote;
+pub use pull::PullNote;
+pub use push::PushNote;
+pub use stash::StashNote;
+pub use switch::SwitchNote;
+pub use worktree::WorktreeNote;
+
 /// Category-nested note shown in the plan modal's blockers/warnings lists
 /// (ADR-0129 §1). Flat 100+-variant enums are forbidden — one variant space
 /// per op category, plus the migration-only `Verbatim`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanNote {
+    /// Cross-op notes (dirty WT / conflicted / untracked / HEAD state — §A).
+    Common(CommonNote),
     /// Discard-file notes (first structured producer, ADR-0129 Phase 1).
     Discard(DiscardNote),
+    Branch(BranchNote),
+    Stash(StashNote),
+    History(HistoryNote),
+    Pull(PullNote),
+    Push(PushNote),
+    Switch(SwitchNote),
+    Checkout(CheckoutNote),
+    Merge(MergeNote),
+    Worktree(WorktreeNote),
+    CherryRevert(CherryRevertNote),
+    Cleanup(CleanupNote),
+    Conflicts(ConflictsNote),
+    Commit(CommitNote),
     /// Migration-only escape hatch: the legacy English prose, byte-for-byte.
     /// Deleted in Phase 3 — do not add new uses outside mechanical wrapping.
     Verbatim(String),
@@ -42,8 +94,22 @@ impl PlanNote {
     /// the migration is in flight (golden-tested below).
     pub fn message_en(&self) -> String {
         match self {
-            PlanNote::Verbatim(s) => s.clone(),
+            PlanNote::Common(n) => n.message_en(),
             PlanNote::Discard(n) => n.message_en(),
+            PlanNote::Branch(n) => n.message_en(),
+            PlanNote::Stash(n) => n.message_en(),
+            PlanNote::History(n) => n.message_en(),
+            PlanNote::Pull(n) => n.message_en(),
+            PlanNote::Push(n) => n.message_en(),
+            PlanNote::Switch(n) => n.message_en(),
+            PlanNote::Checkout(n) => n.message_en(),
+            PlanNote::Merge(n) => n.message_en(),
+            PlanNote::Worktree(n) => n.message_en(),
+            PlanNote::CherryRevert(n) => n.message_en(),
+            PlanNote::Cleanup(n) => n.message_en(),
+            PlanNote::Conflicts(n) => n.message_en(),
+            PlanNote::Commit(n) => n.message_en(),
+            PlanNote::Verbatim(s) => s.clone(),
         }
     }
 }
@@ -69,41 +135,6 @@ impl PartialEq<&str> for PlanNote {
 impl PartialEq<String> for PlanNote {
     fn eq(&self, other: &String) -> bool {
         self.message_en() == *other
-    }
-}
-
-/// Discard-file plan notes (ADR-0129 appendix §B-11).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DiscardNote {
-    /// blocker — no files were selected (no-op family).
-    NothingSelected,
-    /// blocker — the target file is conflicted.
-    TargetConflicted { path: String },
-    /// blocker — the target file has no unstaged changes.
-    NoUnstagedChanges { path: String },
-    /// warning — N untracked targets are deleted from disk (with ODB backup).
-    UntrackedWillBeDeleted { count: usize },
-}
-
-impl DiscardNote {
-    /// Byte-identical to the legacy discard.rs strings (golden-tested).
-    pub fn message_en(&self) -> String {
-        match self {
-            DiscardNote::NothingSelected => "Nothing to discard: no files selected.".to_string(),
-            DiscardNote::TargetConflicted { path } => format!(
-                "'{}' is conflicted. Resolve the conflict instead of discarding it.",
-                path
-            ),
-            DiscardNote::NoUnstagedChanges { path } => {
-                format!("'{}' has no unstaged changes to discard.", path)
-            }
-            DiscardNote::UntrackedWillBeDeleted { count } => format!(
-                "⚠️ {} untracked file(s) will be PERMANENTLY DELETED from disk (and any \
-                 now-empty folders removed). A backup blob is saved to the oplog first — \
-                 recover with `git cat-file -p <blob-sha>`.",
-                count
-            ),
-        }
     }
 }
 
@@ -251,6 +282,7 @@ pub enum NoOpKind {
 
 #[cfg(test)]
 mod tests {
+    use super::common::{DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
     use super::*;
 
     // ── message_en golden tests (ADR-0129 §3): dynamic values, newlines,

@@ -290,6 +290,36 @@ pub(crate) fn resolve_branch_commit<'repo>(
         .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", name, e.message())))
 }
 
+/// Typed twin of [`merge_dirty_warnings`] (ADR-0129 Phase 2): same firing
+/// conditions, but returns structured [`PlanNote`]s. Per-op fan-out PRs switch
+/// their callers here; the string version is deleted with `Verbatim` in
+/// Phase 3.
+#[allow(dead_code)] // consumed by the Phase 2 fan-out PRs (ADR-0129)
+pub(crate) fn merge_dirty_warnings_notes(
+    status: &super::status::WorkingTreeStatus,
+    op: kagi_domain::plan_note::OpPhrase,
+) -> Vec<PlanNote> {
+    use kagi_domain::plan_note::{CommonNote, DirtyParts, UntrackedCtx};
+    let mut warnings = Vec::new();
+    if !status.staged.is_empty() || !status.unstaged.is_empty() {
+        warnings.push(PlanNote::Common(CommonNote::DirtyRollbackHint {
+            parts: DirtyParts {
+                staged: status.staged.len(),
+                modified: status.unstaged.len(),
+            },
+            op,
+        }));
+        warnings.push(PlanNote::Common(CommonNote::SuggestStashPush));
+    }
+    if !status.untracked.is_empty() {
+        warnings.push(PlanNote::Common(CommonNote::UntrackedRemain {
+            count: status.untracked.len(),
+            ctx: UntrackedCtx::Untouched,
+        }));
+    }
+    warnings
+}
+
 pub(crate) fn merge_dirty_warnings(
     status: &super::status::WorkingTreeStatus,
     op: &str,

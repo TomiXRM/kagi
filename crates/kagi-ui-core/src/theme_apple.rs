@@ -77,7 +77,6 @@ pub const APPLE_LIGHT: Theme = Theme {
         (0.110, 1.0, 0.316),   // yellow #a16a00
         (0.394, 1.0, 0.269),   // green  #008932
         (0.546, 1.0, 0.341),   // cyan   #007eae
-
     ],
 
     avatar_sat: 0.55,
@@ -103,7 +102,7 @@ pub const APPLE_LIGHT: Theme = Theme {
     term_bright_blue: (0x00, 0x88, 0xff),     // #0088ff
     term_bright_magenta: (0xcb, 0x30, 0xe0),  // #cb30e0
     term_bright_cyan: (0x00, 0xc0, 0xe8),     // #00c0e8
-    term_bright_white: (0x00, 0x00, 0x00),    // #000000 
+    term_bright_white: (0x00, 0x00, 0x00),    // #000000
     term_selection: (0x00, 0x88, 0xff, 0x40), // #0088ff 25% on white
 };
 
@@ -185,7 +184,7 @@ pub const APPLE_DARK: Theme = Theme {
     term_bright_black: (0x63, 0x63, 0x66),    // #636366
     term_bright_red: (0xff, 0x61, 0x65),      // #ff6165
     term_bright_green: (0x4a, 0xd9, 0x68),    // #4ad968
-    term_bright_yellow: (0xfe, 0xdf, 0x43),   // #fddf43  
+    term_bright_yellow: (0xfe, 0xdf, 0x43),   // #fddf43
     term_bright_blue: (0x5c, 0xb8, 0xff),     // #5cb8ff
     term_bright_magenta: (0xea, 0x8d, 0xff),  // #ea8dff
     term_bright_cyan: (0x6d, 0xd9, 0xff),     // #6dd9ff

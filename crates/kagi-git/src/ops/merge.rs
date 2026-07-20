@@ -1,5 +1,13 @@
 use super::*;
 
+// ADR-0129 Phase 2: this file's plan text is now structured (`MergeNote` /
+// `MergeTitle` / `MergeRecovery`), not English prose. `message_en()` in
+// kagi-domain renders the exact legacy strings for oplog/klog/EN display
+// (golden-tested there); JA lives in `kagi-ui-core::i18n::plan::merge`.
+use kagi_domain::plan_note::{
+    CommonNote, DirtyParts, MergeNote, MergeRecovery, MergeTitle, OpPhrase, PlanOp,
+};
+
 // ────────────────────────────────────────────────────────────
 // plan_merge_branch / execute_merge_branch  (T-BCM-030 / W31-MERGE-INTO-CONFLICT)
 // ────────────────────────────────────────────────────────────
@@ -23,8 +31,8 @@ pub fn plan_merge_branch(
         head: head.display(),
         dirty: status_summary_display(&status),
     };
-    let mut warnings = merge_dirty_warnings(&status, "merging");
-    let mut blockers = Vec::new();
+    let mut warnings = merge_dirty_warnings_notes(&status, OpPhrase::Merging);
+    let mut blockers: Vec<PlanNote> = Vec::new();
 
     let (current_branch, head_oid) = match &head {
         Head::Attached { branch, target } => {
@@ -33,20 +41,24 @@ pub fn plan_merge_branch(
             (branch.clone(), oid)
         }
         Head::Detached { .. } => {
-            blockers.push("HEAD is detached. Merge is only supported on a branch.".to_string());
+            blockers.push(PlanNote::Common(CommonNote::HeadDetached {
+                op: PlanOp::Merge,
+            }));
             (String::new(), git2::Oid::ZERO_SHA1)
         }
         Head::Unborn { .. } => {
-            blockers.push("HEAD is unborn. Cannot merge into an empty branch.".to_string());
+            blockers.push(PlanNote::Common(CommonNote::HeadUnborn {
+                op: PlanOp::Merge,
+            }));
             (String::new(), git2::Oid::ZERO_SHA1)
         }
     };
 
     if !status.conflicted.is_empty() {
-        blockers.push(format!(
-            "Repository has {} conflicted file(s). Resolve conflicts before merging.",
-            status.conflicted.len()
-        ));
+        blockers.push(PlanNote::Common(CommonNote::ConflictedFiles {
+            count: status.conflicted.len(),
+            before: OpPhrase::Merging,
+        }));
     }
 
     // ADR-0105: dirty tracked working tree BLOCKS merge (mirrors cherry-pick /
@@ -55,66 +67,72 @@ pub fn plan_merge_branch(
     // uncommitted edits — `git merge --abort` would then discard both. Untracked
     // files stay a warning (they don't participate in the merge).
     if !status.staged.is_empty() || !status.unstaged.is_empty() {
-        let mut parts = Vec::new();
-        if !status.staged.is_empty() {
-            parts.push(format!("{} staged", status.staged.len()));
-        }
-        if !status.unstaged.is_empty() {
-            parts.push(format!("{} modified", status.unstaged.len()));
-        }
-        blockers.push(format!(
-            "Working tree has {} — stash or commit changes before merging.",
-            parts.join(", ")
-        ));
+        blockers.push(PlanNote::Common(CommonNote::DirtyBlocksOp {
+            parts: DirtyParts {
+                staged: status.staged.len(),
+                modified: status.unstaged.len(),
+            },
+            before: OpPhrase::Merging,
+        }));
         // The dirty-WT warning is now redundant with the blocker; drop it so the
         // plan modal shows one clear message. Untracked-only warning survives.
+        // ADR-0129 F-8: was a substring match on the rendered text; now a
+        // variant match on the typed note (same firing behavior).
         warnings.retain(|w| {
-            !w.to_lowercase().contains("working tree has")
-                && !w.to_lowercase().contains("suggested command: git stash")
+            !matches!(
+                w,
+                PlanNote::Common(CommonNote::DirtyRollbackHint { .. })
+                    | PlanNote::Common(CommonNote::SuggestStashPush)
+            )
         });
     }
 
     let target_commit = resolve_branch_commit(repo, target)?;
     let target_oid = target_commit.id();
     if !current_branch.is_empty() && target == current_branch {
-        blockers.push(format!(
-            "Branch '{}' is already the current branch.",
-            target
-        ));
+        blockers.push(PlanNote::Merge(MergeNote::TargetIsCurrent {
+            target: target.to_string(),
+        }));
     }
     if head_oid == target_oid {
-        blockers.push(format!("{} is already HEAD. Nothing to merge.", target));
+        blockers.push(PlanNote::Merge(MergeNote::TargetIsHead {
+            target: target.to_string(),
+        }));
     } else if head_oid != git2::Oid::ZERO_SHA1
         && repo
             .graph_descendant_of(head_oid, target_oid)
             .unwrap_or(false)
     {
-        blockers.push(format!(
-            "Current branch '{}' already contains '{}'. Nothing to merge.",
-            current_branch, target
-        ));
+        blockers.push(PlanNote::Merge(MergeNote::AlreadyContains {
+            current: current_branch.clone(),
+            target: target.to_string(),
+        }));
     }
 
-    let title = if current_branch.is_empty() {
-        format!("Merge {} into current branch", target)
-    } else {
-        format!("Merge {} into {}", target, current_branch)
+    let title = PlanTitle::Merge(MergeTitle::Into {
+        target: target.to_string(),
+        current: (!current_branch.is_empty()).then(|| current_branch.clone()),
+    });
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::Merge(MergeRecovery::AfterMerge),
+        commands: vec![
+            "git reflog".to_string(),
+            "git revert -m 1 <merge-commit>".to_string(),
+        ],
     };
-    let recovery = "If this merge is not wanted after execution, use git reflog to find the previous HEAD.\n\
-         Fast-forward merges can be undone by moving the branch back; merge commits can be reverted with git revert -m 1 <merge-commit>.".to_string();
 
     let blocked_plan =
-        |blockers: Vec<String>, warnings: Vec<String>, current: StateSummary| OperationPlan {
+        |blockers: Vec<PlanNote>, warnings: Vec<PlanNote>, current: StateSummary| OperationPlan {
             disposition: PlanDisposition::for_blockers(&blockers),
-            title: PlanTitle::verbatim(title.clone()),
+            title: title.clone(),
             current: current.clone(),
             predicted: StateSummary {
                 head: current.head.clone(),
                 dirty: current.dirty.clone(),
             },
-            warnings: PlanNote::wrap_all(warnings),
-            blockers: PlanNote::wrap_all(blockers),
-            recovery: Some(PlanRecovery::verbatim(recovery.clone())),
+            warnings,
+            blockers,
+            recovery: Some(recovery.clone()),
             head_at_plan: head.clone(),
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
@@ -170,16 +188,10 @@ pub fn plan_merge_branch(
             // (it carries the merged-with-markers tree for the resolvable paths)
             // so the user sees the scope before confirming.
             let conflict_files = conflict_paths_from_index(&mut index)?;
-            let files_label = if conflict_files.is_empty() {
-                "(unknown files)".to_string()
-            } else {
-                conflict_files.join(", ")
-            };
-            warnings.push(format!(
-                "Merge will produce {} conflict(s): {}. You will resolve them in Conflict Mode.",
-                conflict_files.len(),
-                files_label
-            ));
+            warnings.push(PlanNote::Merge(MergeNote::WillConflict {
+                count: conflict_files.len(),
+                files: conflict_files.clone(),
+            }));
             predicted_dirty = format!(
                 "{} conflicted file(s) (resolve in Conflict Mode)",
                 conflict_files.len()
@@ -217,7 +229,9 @@ pub fn plan_merge_branch(
     };
 
     if preview_files.is_empty() && !matches!(kind, MergeKind::Conflicts(_)) {
-        blockers.push(format!("Merging '{}' would produce no changes.", target));
+        blockers.push(PlanNote::Merge(MergeNote::NoChanges {
+            target: target.to_string(),
+        }));
         return Ok((
             blocked_plan(blockers, warnings, current),
             MergeKind::MergeCommit,
@@ -227,15 +241,15 @@ pub fn plan_merge_branch(
     Ok((
         OperationPlan {
             disposition: PlanDisposition::for_blockers(&blockers),
-            title: PlanTitle::verbatim(title),
+            title,
             current,
             predicted: StateSummary {
                 head: predicted_head,
                 dirty: predicted_dirty,
             },
-            warnings: PlanNote::wrap_all(warnings),
-            blockers: PlanNote::wrap_all(blockers),
-            recovery: Some(PlanRecovery::verbatim(recovery)),
+            warnings,
+            blockers,
+            recovery: Some(recovery),
             head_at_plan: head,
             stash_count_at_plan: 0,
             preview_files,

@@ -320,6 +320,11 @@ pub(crate) fn merge_dirty_warnings_notes(
     warnings
 }
 
+/// Legacy string-returning form, superseded by [`merge_dirty_warnings_notes`]
+/// (ADR-0129 Phase 2). `ops/merge.rs` was its only caller and has switched;
+/// kept (not deleted) until Phase 3 removes `Verbatim`/string-plan-text
+/// wholesale, in case another Phase 2 fan-out PR still needs it meanwhile.
+#[allow(dead_code)]
 pub(crate) fn merge_dirty_warnings(
     status: &super::status::WorkingTreeStatus,
     op: &str,

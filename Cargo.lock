@@ -3351,6 +3351,7 @@ dependencies = [
 name = "kagi"
 version = "0.12.0"
 dependencies = [
+ "chrono",
  "git2",
  "gpui",
  "gpui-component",

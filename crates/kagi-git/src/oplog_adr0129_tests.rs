@@ -38,7 +38,7 @@ fn mixed_old_and_new_lines_parse_together() {
         PlanNote::Discard(DiscardNote::TargetConflicted {
             path: "src/a.rs".to_string(),
         }),
-        PlanNote::verbatim("Nothing to discard: no files selected."),
+        PlanNote::Discard(DiscardNote::NothingSelected),
     ];
     let new_entry = OpLogEntry {
         timestamp: 1_752_000_000,

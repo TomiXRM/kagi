@@ -28,7 +28,6 @@ impl KagiApp {
             checkout_after: false,
             plan: None,
             error: None,
-            localized_blockers: Vec::new(),
         });
         // Re-plan immediately (empty name → blocker).
         self.replan_create_branch();
@@ -81,19 +80,12 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
-                // W29-I18N-WAVE2: localize the keyed branch-name reasons; any
-                // non-keyed plan blocker (commit-existence, checkout-after) is
-                // passed through in English.
-                let keyed = repo.create_branch_name_errors(&name);
-                let localized = localize_plan_blockers(
-                    &plan.blockers,
-                    keyed
-                        .iter()
-                        .map(|e| (e.to_string(), crate::ui::i18n::branch_name_error(e))),
-                );
+                // ADR-0129 Phase 3: the keyed branch-name reasons are now
+                // typed (`CommonNote::BranchNameErrorKeyed`) and localize
+                // automatically via `plan_note_text()` — no separate
+                // localized-blocker computation needed.
                 if let Some(modal) = self.create_branch_modal_mut() {
                     modal.plan = Some(std::sync::Arc::new(plan));
-                    modal.localized_blockers = localized;
                 }
             }
             Err(e) => {

@@ -21,8 +21,8 @@ src/ui/conflict_editor.rs 1237
 src/ui/conflict_view.rs 2080
 src/ui/diff_view.rs 1329
 src/ui/inspector.rs 988
-src/ui/mod.rs 3837
-src/ui/operations/branch.rs 1582
+src/ui/mod.rs 3810
+src/ui/operations/branch.rs 1574
 src/ui/operations/commit.rs 1247
 src/ui/operations/conflict.rs 824
 src/ui/operations/history.rs 812

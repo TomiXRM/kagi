@@ -3,11 +3,11 @@
 //! `plan_note_text` / `plan_title_text` / `plan_recovery_text` are the ONLY
 //! way the UI renders plan text. EN always delegates to the kagi-domain
 //! `message_en()` renderer (no double-maintenance); JA strings live in the
-//! per-category submodules (`plan/discard.rs`, …) added as Phase 2 structures
-//! each producer. `Verbatim` notes render their payload untranslated in every
-//! language — they disappear in Phase 3.
+//! per-category submodules (`plan/discard.rs`, …), one per producer
+//! (ADR-0129 Phase 2/3 — every category is now fully typed).
 
 pub mod branch;
+pub mod checklist;
 pub mod checkout;
 pub mod cherry_revert;
 pub mod cleanup;
@@ -47,7 +47,7 @@ pub fn plan_note_text(note: &PlanNote) -> String {
             PlanNote::Cleanup(n) => cleanup::note_ja(n),
             PlanNote::Conflicts(n) => conflicts::note_ja(n),
             PlanNote::Commit(n) => commit::note_ja(n),
-            PlanNote::Verbatim(s) => s.clone(),
+            PlanNote::Checklist(n) => checklist::note_ja(n),
         },
     }
 }
@@ -70,7 +70,6 @@ pub fn plan_title_text(title: &PlanTitle) -> String {
             PlanTitle::Cleanup(t) => cleanup::title_ja(t),
             PlanTitle::Conflicts(t) => conflicts::title_ja(t),
             PlanTitle::Commit(t) => commit::title_ja(t),
-            PlanTitle::Verbatim(s) => s.clone(),
             PlanTitle::Discard { .. } => discard::title_ja(title),
         },
     }
@@ -98,7 +97,6 @@ pub fn plan_recovery_text(recovery: Option<&PlanRecovery>) -> String {
             RecoveryKind::Cleanup(r) => cleanup::recovery_ja(r),
             RecoveryKind::Conflicts(r) => conflicts::recovery_ja(r),
             RecoveryKind::Commit(r) => commit::recovery_ja(r),
-            RecoveryKind::Verbatim(s) => s.clone(),
             RecoveryKind::Discard => discard::recovery_ja(),
         },
     }

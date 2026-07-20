@@ -9,6 +9,7 @@
 use git2::Repository;
 
 use super::{status::WorkingTreeStatus, GitError};
+use crate::ops::PlanNote;
 
 pub use kagi_domain::checklist::*;
 
@@ -40,9 +41,9 @@ const LARGE_BLOB_ENV: &str = "KAGI_LARGE_BLOB_BYTES";
 pub fn checklist(
     repo: &Repository,
     status: &WorkingTreeStatus,
-) -> Result<(Vec<String>, Vec<String>), GitError> {
-    let mut blockers: Vec<String> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
+) -> Result<(Vec<PlanNote>, Vec<PlanNote>), GitError> {
+    let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     let large_threshold = large_blob_threshold();
 
@@ -52,7 +53,11 @@ pub fn checklist(
 
     for file in &status.staged {
         let path = file.path.as_path();
-        warnings.extend(evaluate_staged_path(path));
+        warnings.extend(
+            evaluate_staged_path(path)
+                .into_iter()
+                .map(PlanNote::Checklist),
+        );
 
         // Look up the staged index entry → BLOB. A deletion or a gitlink has
         // no readable BLOB; skip content rules for those.
@@ -72,8 +77,8 @@ pub fn checklist(
         let (file_blockers, file_warnings) =
             evaluate_staged_blob_content(path, content, is_binary, large_threshold);
 
-        blockers.extend(file_blockers);
-        warnings.extend(file_warnings);
+        blockers.extend(file_blockers.into_iter().map(PlanNote::Checklist));
+        warnings.extend(file_warnings.into_iter().map(PlanNote::Checklist));
     }
 
     Ok((blockers, warnings))

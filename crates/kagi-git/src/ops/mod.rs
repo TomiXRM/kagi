@@ -91,7 +91,8 @@ pub use kagi_domain::plan::{
 // (shim re-export above); these are the note/title/recovery/disposition types
 // producers and consumers share.
 pub use kagi_domain::plan_note::{
-    DiscardNote, NoOpKind, PlanDisposition, PlanNote, PlanRecovery, PlanTitle, RecoveryKind,
+    ChecklistNote, CommonNote, DiscardNote, NoOpKind, PlanDisposition, PlanNote, PlanRecovery,
+    PlanTitle, RecoveryKind,
 };
 
 // ────────────────────────────────────────────────────────────

@@ -5,6 +5,8 @@
 
 use std::path::Path;
 
+use crate::plan_note::ChecklistNote;
+
 // ────────────────────────────────────────────────────────────
 // Constants / thresholds
 // ────────────────────────────────────────────────────────────
@@ -38,7 +40,7 @@ pub fn evaluate_staged_blob(
     content: &[u8],
     is_binary: bool,
     large_threshold: u64,
-) -> (Vec<String>, Vec<String>) {
+) -> (Vec<ChecklistNote>, Vec<ChecklistNote>) {
     let mut blockers = Vec::new();
     let mut warnings = evaluate_staged_path(path);
 
@@ -54,13 +56,12 @@ pub fn evaluate_staged_blob(
 ///
 /// These rules do not require a readable BLOB, so the git backend runs them
 /// even for deletions and gitlinks.
-pub fn evaluate_staged_path(path: &Path) -> Vec<String> {
+pub fn evaluate_staged_path(path: &Path) -> Vec<ChecklistNote> {
     let mut warnings = Vec::new();
     if path_is_secret_name(path) {
-        warnings.push(format!(
-            "Possible secret file staged: {} — confirm before committing.",
-            path.to_string_lossy()
-        ));
+        warnings.push(ChecklistNote::PossibleSecretFileStaged {
+            path: path.to_string_lossy().into_owned(),
+        });
     }
     warnings
 }
@@ -72,19 +73,18 @@ pub fn evaluate_staged_blob_content(
     content: &[u8],
     is_binary: bool,
     large_threshold: u64,
-) -> (Vec<String>, Vec<String>) {
+) -> (Vec<ChecklistNote>, Vec<ChecklistNote>) {
     let mut blockers = Vec::new();
     let mut warnings = Vec::new();
-    let path_str = path.to_string_lossy();
+    let path_str = path.to_string_lossy().into_owned();
     let total_len = content.len() as u64;
 
     // Rule 6 — large binary (warn).  Binary only; text large files skip.
     if is_binary && total_len > large_threshold {
-        warnings.push(format!(
-            "Large binary file staged: {} ({}). Confirm before committing.",
-            path_str,
-            human_bytes(total_len)
-        ));
+        warnings.push(ChecklistNote::LargeBinaryStaged {
+            path: path_str.clone(),
+            size: human_bytes(total_len),
+        });
     }
 
     // Content rules only apply to text BLOBs.
@@ -95,20 +95,15 @@ pub fn evaluate_staged_blob_content(
     // Rule 4 — conflict marker (block).
     let marker_scan = &content[..content.len().min(MARKER_SCAN_BYTES)];
     if has_conflict_marker(marker_scan) {
-        blockers.push(format!(
-            "Conflict marker found in staged file: {}. \
-             Resolve the merge conflict before committing.",
-            path_str
-        ));
+        blockers.push(ChecklistNote::ConflictMarkerFound {
+            path: path_str.clone(),
+        });
     }
 
     // Rule 5b — secret by content (warn).
     let secret_scan = &content[..content.len().min(SECRET_SCAN_BYTES)];
     if content_has_secret(secret_scan) {
-        warnings.push(format!(
-            "Possible secret content in staged file: {} — confirm before committing.",
-            path_str
-        ));
+        warnings.push(ChecklistNote::PossibleSecretContentStaged { path: path_str });
     }
 
     (blockers, warnings)

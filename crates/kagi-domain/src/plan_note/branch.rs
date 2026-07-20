@@ -1,12 +1,12 @@
 //! BranchNote — ADR-0129 appendix §B-9 (create / rename / delete branch).
 //!
 //! `create-branch`'s branch-name-validity blockers (`BranchNameError`, §E) and
-//! `rename-branch`'s name-validity blockers (also `BranchNameError`) are kept
-//! as `PlanNote::Verbatim(e.to_string())` — they are ALREADY keyed/localizable
-//! via `kagi-domain::plan::BranchNameError::Display` + the
-//! `localize_plan_blockers` shim in `src/ui/mod.rs` (§F-7, deleted only in
-//! Phase 3). `BranchNote` covers every OTHER branch-op template: the
-//! commit-missing blocker (create), and the full delete/rename set.
+//! `rename-branch`'s name-validity blockers (also `BranchNameError`) are
+//! `PlanNote::Common(CommonNote::BranchNameErrorKeyed(..))` — not redefined
+//! here, since `CommonNote` already covers every keyed `BranchNameError`
+//! variant and localizes via `kagi_ui_core::i18n::branch_name_error`.
+//! `BranchNote` covers every OTHER branch-op template: the commit-missing
+//! blocker (create), and the full delete/rename set.
 //!
 //! `Branch '{}' does not exist(.| in this repository.)` (create's commit-exists
 //! check has no such template; delete/rename's missing-branch blockers) is a

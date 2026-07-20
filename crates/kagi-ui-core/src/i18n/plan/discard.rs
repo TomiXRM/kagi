@@ -36,7 +36,6 @@ pub fn title_ja(title: &PlanTitle) -> String {
         } => {
             format!("{} ファイルの変更を破棄", count)
         }
-        PlanTitle::Verbatim(s) => s.clone(),
         // Other categories never reach here — plan_title_text dispatches them
         // to their own module; this arm exists for match exhaustiveness only.
         other => other.message_en(),

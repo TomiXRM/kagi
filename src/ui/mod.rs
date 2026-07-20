@@ -862,33 +862,6 @@ const TOAST_EXIT_MS: u64 = 220;
 const TOAST_SLIDE_PX: f32 = 500.0;
 
 // ──────────────────────────────────────────────────────────────
-
-/// W29-I18N-WAVE2: build the localized blocker list for an [`OperationPlan`].
-///
-/// `blockers` is the English-only list from the plan (preserved for the
-/// execute-guard and tests). `keyed` yields `(english, localized)` pairs for the
-/// in-scope validation reasons. Each blocker whose text matches a keyed
-/// `english` is shown in its `localized` form; every other blocker passes
-/// through verbatim. Order follows `blockers`.
-fn localize_plan_blockers(
-    blockers: &[kagi_git::ops::PlanNote],
-    keyed: impl Iterator<Item = (String, String)>,
-) -> Vec<SharedString> {
-    // ADR-0129 Phase 1: notes are matched via their English rendering — the
-    // same strings this shim always keyed on. The whole shim is deleted in
-    // Phase 3 once every renderer calls plan_note_text() directly.
-    let map: std::collections::HashMap<String, String> = keyed.collect();
-    blockers
-        .iter()
-        .map(|b| b.message_en())
-        .map(|b| match map.get(&b) {
-            Some(localized) => SharedString::from(localized.clone()),
-            None => SharedString::from(b),
-        })
-        .collect()
-}
-
-// ──────────────────────────────────────────────────────────────
 // KagiApp — root view
 // ──────────────────────────────────────────────────────────────
 

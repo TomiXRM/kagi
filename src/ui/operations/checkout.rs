@@ -566,7 +566,7 @@ impl KagiApp {
                 let mut plan = (*m.plan).clone();
                 plan.warnings.insert(
                     0,
-                    kagi_git::ops::PlanNote::verbatim(Msg::DirtyStashFirst.t()),
+                    kagi_git::ops::PlanNote::Common(kagi_git::ops::CommonNote::DirtyStashFirst),
                 );
                 m.plan = std::sync::Arc::new(plan);
             }

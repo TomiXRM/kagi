@@ -491,12 +491,12 @@ pub fn plan_amend(
     // ── 5. Checklist (ADR-0039 / 0043) — same rules as plan_commit ────
     // Only meaningful when staged content is being folded in; message-only
     // amends keep the old tree, so there is nothing new to scan. checklist's
-    // own strings are out of scope for ADR-0129 (separate module) — wrapped
-    // as Verbatim, unchanged behavior.
+    // findings are already typed as `PlanNote::Checklist(ChecklistNote)`
+    // (ADR-0129 Phase 3).
     if mode.includes_staged() {
         let (cl_blockers, cl_warnings) = crate::checklist::checklist(repo, &status)?;
-        blockers.extend(PlanNote::wrap_all(cl_blockers));
-        warnings.extend(PlanNote::wrap_all(cl_warnings));
+        blockers.extend(cl_blockers);
+        warnings.extend(cl_warnings);
     }
 
     // ── 6. Predicted state (SHA change is the headline) ──────

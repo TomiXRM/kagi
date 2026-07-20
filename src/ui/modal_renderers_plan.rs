@@ -270,7 +270,7 @@ pub(crate) fn render_merge_modal(
             let mut plan = (*modal.plan).clone();
             plan.warnings.insert(
                 0,
-                kagi_git::ops::PlanNote::verbatim(Msg::MergeConflictWarning.t()),
+                kagi_git::ops::PlanNote::Common(kagi_git::ops::CommonNote::MergeConflictWarning),
             );
             (
                 SharedString::from(Msg::MergeAndResolveConflicts.t()),

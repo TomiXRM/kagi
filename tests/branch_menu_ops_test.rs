@@ -84,7 +84,7 @@ fn merge_plan_reports_fast_forward_direction() {
         plan.blockers
     );
     assert_eq!(kind, MergeKind::FastForward);
-    assert_eq!(plan.title, "Merge feature into main");
+    assert_eq!(plan.title.message_en(), "Merge feature into main");
     assert!(
         plan.predicted.head.contains("fast-forward"),
         "expected ff plan, got {}",
@@ -118,7 +118,7 @@ fn merge_plan_reports_merge_commit_for_diverged_branch() {
         plan.blockers
     );
     assert_eq!(kind, MergeKind::MergeCommit);
-    assert_eq!(plan.title, "Merge feature into main");
+    assert_eq!(plan.title.message_en(), "Merge feature into main");
     assert!(
         plan.predicted.head.contains("merge commit"),
         "expected merge-commit plan, got {}",

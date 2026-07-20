@@ -30,6 +30,7 @@
 | worktree.rs | 8 | 3 | 3 | 3 | 7 | 概算はコア 2 fn のみ。`plan_create_branch_with_checkout` と keyed 経由を含む実測が正 |
 | branch_cleanup.rs | 4 | 2 | 1 | 1 | 6 | 一致 |
 | mod.rs (`merge_dirty_warnings`) | 0 | 3 | 0 | 0 | 3 | 一致 |
+| discard.rs | 3 | 1 | 2 | 1 | —(issue 表に無し) | Phase 1 の最初の構造化対象。§B-11 |
 
 **Phase 2 の PR 分割はこの実測を正とする**(issue の概算は grep 粒度の違い)。
 
@@ -210,6 +211,20 @@ PR で checklist も構造化するか判断。)
 | `Branch '{}' moved since the list was built. Refresh the list.` | name | blocker | `TipMoved { name }` |
 | `Some branches are only *likely* squash-merged (upstream gone); there is no local proof of the merge.` | — | warning | `SquashHeuristicOnly` |
 | `Remote branches on 'origin' will be deleted (network write).` | — | warning | `RemoteDeleteNetwork` |
+
+### B-11. Discard(`DiscardNote`)— Phase 1 の最初の構造化 producer
+
+| template (EN verbatim) | 引数 | 種別 | バリアント案 |
+|---|---|---|---|
+| `Nothing to discard: no files selected.` | — | blocker | `NothingSelected`(no-op 系) |
+| `'{}' is conflicted. Resolve the conflict instead of discarding it.` | rel | blocker | `TargetConflicted { path }` |
+| `'{}' has no unstaged changes to discard.` | rel | blocker | `NoUnstagedChanges { path }` |
+| `⚠️ {} untracked file(s) will be PERMANENTLY DELETED from disk (and any now-empty folders removed). A backup blob is saved to the oplog first — recover with `git cat-file -p <blob-sha>`.` | count | warning | `UntrackedWillBeDeleted { count }` |
+
+title: `Discard changes to '{}'`(単一)/ `Discard changes to {} file(s)`(複数)
+→ `PlanTitle::Discard { first: Option<String>, count }`。
+recovery: `This discards your unstaged changes to the selected file(s): tracked files are restored from the index, untracked files are deleted from disk. Either way a backup blob of each file's current content is recorded in the oplog (op="discard") first; recover with `git cat-file -p <blob-sha>`.`
+→ `RecoveryKind::Discard`、commands = `git cat-file -p <blob-sha>`。
 
 ## C. Title テンプレート → `PlanTitle`
 

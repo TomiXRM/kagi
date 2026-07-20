@@ -13,6 +13,8 @@ use super::remote_common::{
     local_branch_oid, resolve_upstream_info, resolve_upstream_oid, short_oid_string,
 };
 use super::*;
+use kagi_domain::plan_note::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
+use kagi_domain::plan_note::{PullNote, PullRecovery, PullTitle};
 
 /// Build the confirm plan for pulling a **remote** branch over SSH (ADR-0089
 /// Phase 3 / ADR-0097). There is no local `Repository`, so this synthesises the
@@ -27,30 +29,27 @@ pub fn plan_pull_remote(
     remote_dirty: bool,
     head_summary: String,
 ) -> OperationPlan {
-    let title = if behind == 0 {
-        format!("Pull {branch} — up to date (local knowledge)")
-    } else {
-        format!("Pull {branch} from {upstream} — {behind} commit(s) behind")
-    };
+    let title = PlanTitle::Pull(PullTitle::PullRemote {
+        branch: branch.to_string(),
+        upstream: upstream.to_string(),
+        behind,
+    });
 
-    let mut warnings: Vec<String> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
     if ahead > 0 && behind > 0 {
-        warnings.push(format!(
-            "{branch} has diverged ({ahead} ahead, {behind} behind); \
-             the pull will create a merge commit on the remote."
-        ));
+        warnings.push(PlanNote::Pull(PullNote::RemoteDiverged {
+            branch: branch.to_string(),
+            ahead,
+            behind,
+        }));
     }
     if remote_dirty {
-        warnings.push(
-            "The remote working tree has uncommitted changes; the pull may fail \
-             or produce conflicts that must be resolved on the host."
-                .to_string(),
-        );
+        warnings.push(PlanNote::Pull(PullNote::RemoteDirty));
     }
 
     OperationPlan {
         disposition: PlanDisposition::Ready,
-        title: PlanTitle::verbatim(title),
+        title,
         current: StateSummary {
             head: head_summary.clone(),
             dirty: if remote_dirty {
@@ -69,13 +68,12 @@ pub fn plan_pull_remote(
                 "fast-forwarded on remote".to_string()
             },
         },
-        warnings: PlanNote::wrap_all(warnings),
+        warnings,
         blockers: Vec::new(),
-        recovery: Some(PlanRecovery::verbatim(
-            "Runs `git pull` on the host using its own credentials. \
-                   Conflicts are left for resolution on the host."
-                .to_string(),
-        )),
+        recovery: Some(PlanRecovery {
+            kind: RecoveryKind::Pull(PullRecovery::PullRemote),
+            commands: Vec::new(),
+        }),
         head_at_plan: Head::Unborn {
             branch: String::new(),
         },
@@ -144,54 +142,50 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
     };
 
     // ── 3. Early blockers (before touching git objects) ──────
-    let mut blockers: Vec<String> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
+    let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     // Detached HEAD: no branch to advance.
     if let Head::Detached { .. } = &head {
-        blockers
-            .push("HEAD is detached. Pull is only supported when HEAD is on a branch.".to_string());
+        blockers.push(PlanNote::Common(CommonNote::HeadDetached {
+            op: PlanOp::Pull,
+        }));
     }
 
     // Unborn HEAD: no commits exist yet.
     if let Head::Unborn { .. } = &head {
-        blockers.push(
-            "HEAD is unborn (no commits exist). Cannot pull onto an empty branch.".to_string(),
-        );
+        blockers.push(PlanNote::Common(CommonNote::HeadUnborn {
+            op: PlanOp::Pull,
+        }));
     }
 
     // Conflict state.
     if !status.conflicted.is_empty() {
-        blockers.push(format!(
-            "Repository has {} conflicted file(s). Resolve conflicts before pulling.",
-            status.conflicted.len()
-        ));
+        blockers.push(PlanNote::Common(CommonNote::ConflictedFiles {
+            count: status.conflicted.len(),
+            before: OpPhrase::Pulling,
+        }));
     }
 
     // Dirty working tree (staged / unstaged) — warning only. The exact pull
     // target is known only after fetch, so execute re-checks dirty paths against
     // the fetched tree and refuses only if they overlap.
     if !status.staged.is_empty() || !status.unstaged.is_empty() {
-        let mut parts = Vec::new();
-        if !status.staged.is_empty() {
-            parts.push(format!("{} staged", status.staged.len()));
-        }
-        if !status.unstaged.is_empty() {
-            parts.push(format!("{} modified", status.unstaged.len()));
-        }
-        warnings.push(format!(
-            "Working tree has {}. Pull will proceed only if fetched changes do not touch those paths.",
-            parts.join(", ")
-        ));
+        warnings.push(PlanNote::Pull(PullNote::DirtyPullGuard {
+            parts: DirtyParts {
+                staged: status.staged.len(),
+                modified: status.unstaged.len(),
+            },
+        }));
     }
 
     // Untracked files — warning only, but execute refuses if pull would create
     // or modify the same path.
     if !status.untracked.is_empty() {
-        warnings.push(format!(
-            "{} untracked file(s) will remain untouched unless fetched changes need the same path.",
-            status.untracked.len()
-        ));
+        warnings.push(PlanNote::Common(CommonNote::UntrackedRemain {
+            count: status.untracked.len(),
+            ctx: UntrackedCtx::PullFetchMayTouch,
+        }));
     }
 
     // ── 4. Resolve upstream (only when HEAD is attached) ─────
@@ -199,11 +193,10 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         match resolve_upstream_info(repo, branch) {
             Ok(info) => info,
             Err(e) => {
-                blockers.push(format!(
-                    "No upstream configured for branch '{}': {}. \
-                     Set one with `git branch --set-upstream-to=<remote>/<branch>`.",
-                    branch, e
-                ));
+                blockers.push(PlanNote::Pull(PullNote::NoUpstreamWithHint {
+                    branch: branch.clone(),
+                    err: e.to_string(),
+                }));
                 (branch.clone(), String::new(), 0usize)
             }
         }
@@ -215,35 +208,27 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
     // ── 5. Plan-time in-memory conflict prediction ───────────
     // Only if we have no blockers yet and upstream is resolvable.
     if blockers.is_empty() && !branch_name.is_empty() {
-        if let Ok(conflict_warning) = predict_merge_conflict(repo, &branch_name, &remote_name) {
-            if let Some(w) = conflict_warning {
-                warnings.push(w);
+        if let Ok(has_conflict) = predict_merge_conflict(repo, &branch_name, &remote_name) {
+            if has_conflict {
+                warnings.push(PlanNote::Pull(PullNote::MergePrediction));
             }
         }
     }
 
     // ── 6. Predicted StateSummary ─────────────────────────────
-    let behind_label = if behind_count == 0 {
-        "up to date (local knowledge; fetch may reveal more)".to_string()
-    } else {
-        format!(
-            "{} behind upstream (local knowledge; fetch may reveal more)",
-            behind_count
-        )
-    };
-
     let predicted = StateSummary {
         head: format!("branch: {}", branch_name),
         dirty: current.dirty.clone(),
     };
 
     // ── 7. Recovery guidance ──────────────────────────────────
-    let recovery = "Pull is non-destructive: fast-forward and clean merges do not lose work.\n\
-         Dirty working-tree paths are checked against the fetched update before checkout.\n\
-         If the merge would conflict or overwrite dirty paths, execute is blocked and the repo remains untouched.\n\
-         To undo a merge commit after execution:\n  git reset --hard HEAD~1\n\
-         The reflog records every HEAD movement:\n  git reflog"
-        .to_string();
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::Pull(PullRecovery::Pull),
+        commands: vec![
+            "git reset --hard HEAD~1".to_string(),
+            "git reflog".to_string(),
+        ],
+    };
 
     Ok(OperationPlan {
         // ADR-0129 F-1: the UI's pull no-op detection keyed on the title text
@@ -256,15 +241,16 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         } else {
             PlanDisposition::Ready
         },
-        title: PlanTitle::verbatim(format!(
-            "Pull '{}' from '{}'  ({})",
-            branch_name, remote_name, behind_label
-        )),
+        title: PlanTitle::Pull(PullTitle::Pull {
+            branch: branch_name,
+            remote: remote_name,
+            behind: behind_count,
+        }),
         current,
         predicted,
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        warnings,
+        blockers,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -573,25 +559,25 @@ fn pull_changed_paths_between_trees(
 
 /// Attempt an in-memory merge with the current upstream tip to predict conflicts.
 ///
-/// Returns `Ok(Some(warning_string))` if a conflict is predicted,
-/// `Ok(None)` if the merge would be clean (or fast-forward), or
-/// `Err(...)` if the prediction itself failed (non-fatal — caller ignores).
+/// Returns `Ok(true)` if a conflict is predicted, `Ok(false)` if the merge
+/// would be clean (or fast-forward), or `Err(...)` if the prediction itself
+/// failed (non-fatal — caller ignores and treats as no warning).
 fn predict_merge_conflict(
     repo: &Repository,
     branch_name: &str,
     remote_name: &str,
-) -> Result<Option<String>, GitError> {
+) -> Result<bool, GitError> {
     let head_oid = repo.head().ok().and_then(|r| r.target());
     let upstream_oid = resolve_upstream_oid(repo, branch_name, remote_name).ok();
 
     let (head_oid, upstream_oid) = match (head_oid, upstream_oid) {
         (Some(h), Some(u)) => (h, u),
-        _ => return Ok(None),
+        _ => return Ok(false),
     };
 
     // If already fast-forward or up-to-date, no conflict possible.
     if head_oid == upstream_oid {
-        return Ok(None);
+        return Ok(false);
     }
     if repo
         .graph_descendant_of(head_oid, upstream_oid)
@@ -600,7 +586,7 @@ fn predict_merge_conflict(
             .graph_descendant_of(upstream_oid, head_oid)
             .unwrap_or(false)
     {
-        return Ok(None);
+        return Ok(false);
     }
 
     let head_commit = repo
@@ -614,16 +600,7 @@ fn predict_merge_conflict(
         .merge_commits(&head_commit, &upstream_commit, None)
         .map_err(|e| GitError::Other(e.message().to_string()))?;
 
-    if index.has_conflicts() {
-        Ok(Some(
-            "Plan-time merge prediction: the current upstream tip would conflict with HEAD. \
-             Execute is NOT blocked (fetch may change things), but be aware that if the \
-             upstream has not changed, execute will fail safely leaving the repo untouched."
-                .to_string(),
-        ))
-    } else {
-        Ok(None)
-    }
+    Ok(index.has_conflicts())
 }
 
 // ────────────────────────────────────────────────────────────
@@ -645,25 +622,23 @@ pub fn plan_pull_branch_ff(
         head: head.display(),
         dirty: status_summary_display(&status),
     };
-    let mut warnings = Vec::new();
-    let mut blockers = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
+    let mut blockers: Vec<PlanNote> = Vec::new();
 
     if !status.conflicted.is_empty() {
-        warnings.push(format!(
-            "Repository has {} conflicted file(s); this ref-only pull will not touch the working tree.",
-            status.conflicted.len()
-        ));
+        warnings.push(PlanNote::Pull(PullNote::ConflictedRefOnly {
+            count: status.conflicted.len(),
+        }));
     } else if status.is_dirty() {
-        warnings.push(
-            "Working tree is dirty; this ref-only pull will not touch the working tree."
-                .to_string(),
-        );
+        warnings.push(PlanNote::Pull(PullNote::DirtyRefOnly));
     }
 
     let local_oid = match local_branch_oid(repo, branch_name) {
         Ok(oid) => oid,
         Err(e) => {
-            blockers.push(format!("{}", e));
+            blockers.push(PlanNote::Common(CommonNote::GitErrorPassthrough {
+                message: e.to_string(),
+            }));
             git2::Oid::ZERO_SHA1
         }
     };
@@ -674,10 +649,10 @@ pub fn plan_pull_branch_ff(
             (remote, oid, behind)
         }
         Err(e) => {
-            blockers.push(format!(
-                "No upstream configured for branch '{}': {}.",
-                branch_name, e
-            ));
+            blockers.push(PlanNote::Pull(PullNote::NoUpstream {
+                branch: branch_name.to_string(),
+                err: e.to_string(),
+            }));
             (String::new(), None, 0)
         }
     };
@@ -689,18 +664,16 @@ pub fn plan_pull_branch_ff(
                     .graph_descendant_of(local_oid, upstream_oid)
                     .unwrap_or(false)
             {
-                blockers.push(format!(
-                    "Branch '{}' is already up to date with its upstream.",
-                    branch_name
-                ));
+                blockers.push(PlanNote::Pull(PullNote::AlreadyUpToDate {
+                    branch: branch_name.to_string(),
+                }));
             } else if !repo
                 .graph_descendant_of(upstream_oid, local_oid)
                 .unwrap_or(false)
             {
-                blockers.push(format!(
-                    "Branch '{}' cannot be fast-forwarded to its upstream; pull it while checked out to merge.",
-                    branch_name
-                ));
+                blockers.push(PlanNote::Pull(PullNote::CannotFastForward {
+                    branch: branch_name.to_string(),
+                }));
             }
         }
     }
@@ -719,22 +692,24 @@ pub fn plan_pull_branch_ff(
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!(
-            "Pull '{}' from '{}' (ff-only, ref-only, {} behind)",
-            branch_name, remote_name, behind_count
-        )),
+        title: PlanTitle::Pull(PullTitle::PullBranchFf {
+            branch: branch_name.to_string(),
+            remote: remote_name,
+            behind: behind_count,
+        }),
         current,
         predicted: StateSummary {
             head: predicted_head,
             dirty: "working tree unchanged".to_string(),
         },
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(format!(
-            "This updates only refs/heads/{} after verifying a fast-forward. \
-             The working tree is not changed. If needed, restore the old tip with git branch -f {} <old-sha>.",
-            branch_name, branch_name
-        ))),
+        warnings,
+        blockers,
+        recovery: Some(PlanRecovery {
+            kind: RecoveryKind::Pull(PullRecovery::PullBranchFf {
+                branch: branch_name.to_string(),
+            }),
+            commands: vec![format!("git branch -f {} <old-sha>", branch_name)],
+        }),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),

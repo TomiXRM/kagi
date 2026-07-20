@@ -1,4 +1,7 @@
 use super::*;
+use kagi_domain::plan_note::{
+    CheckoutNote, CheckoutRecovery, CheckoutTitle, CommonNote, DirtyParts, OpPhrase, UntrackedCtx,
+};
 
 // ────────────────────────────────────────────────────────────
 // plan_checkout
@@ -56,17 +59,20 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
     };
 
     // ── 3. Check blockers ────────────────────────────────────
-    let mut blockers: Vec<String> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
+    // ADR-0129: typed notes (`CheckoutNote` / `CommonNote`), not English
+    // prose. `message_en()` renders the exact legacy strings for
+    // oplog/klog/EN display (golden-tested in kagi-domain).
+    let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     // Branch existence check.
     let branch_exists = repo.find_branch(branch, BranchType::Local).is_ok();
 
     if !branch_exists {
-        blockers.push(format!(
-            "Branch '{}' does not exist in this repository.",
-            branch
-        ));
+        blockers.push(PlanNote::Common(CommonNote::BranchMissing {
+            name: branch.to_string(),
+            in_repo: true,
+        }));
     }
 
     // Already-HEAD check (only meaningful when HEAD is attached).
@@ -76,19 +82,18 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
     } = head
     {
         if current_branch == branch {
-            blockers.push(format!(
-                "Branch '{}' is already the current HEAD branch.",
-                branch
-            ));
+            blockers.push(PlanNote::Checkout(CheckoutNote::AlreadyCurrent {
+                branch: branch.to_string(),
+            }));
         }
     }
 
     // Conflict state check.
     if !status.conflicted.is_empty() {
-        blockers.push(format!(
-            "Repository has {} conflicted file(s). Resolve conflicts before switching branches.",
-            status.conflicted.len()
-        ));
+        blockers.push(PlanNote::Common(CommonNote::ConflictedFiles {
+            count: status.conflicted.len(),
+            before: OpPhrase::SwitchingBranches,
+        }));
     }
 
     // Staged / unstaged changes — Guarded policy, but only a *real* collision
@@ -107,28 +112,24 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
         match target_oid.and_then(|oid| predict_checkout_conflict(repo, &head, oid, &status)) {
             Some(blocker) => blockers.push(blocker),
             None => {
-                let mut parts = Vec::new();
-                if !status.staged.is_empty() {
-                    parts.push(format!("{} staged", status.staged.len()));
-                }
-                if !status.unstaged.is_empty() {
-                    parts.push(format!("{} modified", status.unstaged.len()));
-                }
-                warnings.push(format!(
-                    "{} will be carried over to '{}'.",
-                    parts.join(", "),
-                    branch
-                ));
+                let parts = DirtyParts {
+                    staged: status.staged.len(),
+                    modified: status.unstaged.len(),
+                };
+                warnings.push(PlanNote::Checkout(CheckoutNote::DirtyCarriedOver {
+                    parts,
+                    branch: branch.to_string(),
+                }));
             }
         }
     }
 
     // Untracked files — warning only (safe checkout leaves them alone).
     if !status.untracked.is_empty() {
-        warnings.push(format!(
-            "{} untracked file(s) will remain after switching branches.",
-            status.untracked.len()
-        ));
+        warnings.push(PlanNote::Common(CommonNote::UntrackedRemain {
+            count: status.untracked.len(),
+            ctx: UntrackedCtx::AfterSwitchingBranches,
+        }));
     }
 
     // ── 4. Predicted StateSummary ─────────────────────────────
@@ -145,20 +146,26 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
         Head::Detached { target } => target.get(..8).unwrap_or(target).to_string(),
         Head::Unborn { branch: b } => b.clone(),
     };
-    let recovery = format!(
-        "If anything goes wrong you can return to '{}' with:\n  git checkout {}\n\
-         The reflog records every HEAD movement:\n  git reflog",
-        current_branch_name, current_branch_name
-    );
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::Checkout(CheckoutRecovery::Checkout {
+            previous: current_branch_name.clone(),
+        }),
+        commands: vec![
+            format!("git checkout {}", current_branch_name),
+            "git reflog".to_string(),
+        ],
+    };
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!("Checkout branch '{}'", branch)),
+        title: PlanTitle::Checkout(CheckoutTitle::Checkout {
+            branch: branch.to_string(),
+        }),
         current,
         predicted,
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        warnings,
+        blockers,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -265,11 +272,16 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
         dirty: dirty_display.clone(),
     };
 
+    // ADR-0129 appendix §G-1 sanctioned exception: this vec-init used to push
+    // two Japanese strings unconditionally. `CheckoutNote::WillDetachHead` /
+    // `RecommendCreateBranchHereFirst` give them NEW English `message_en()`
+    // text while kagi-ui-core's JA rendering keeps the current Japanese
+    // wording byte-for-byte (see plan_note/checkout.rs module docs).
     let mut warnings = vec![
-        "detached HEAD になります。新しい作業を残す場合は branch を作成してください。".to_string(),
-        "Create branch here を先に使うことを推奨します。".to_string(),
+        PlanNote::Checkout(CheckoutNote::WillDetachHead),
+        PlanNote::Checkout(CheckoutNote::RecommendCreateBranchHereFirst),
     ];
-    let mut blockers = Vec::new();
+    let mut blockers: Vec<PlanNote> = Vec::new();
 
     let target_oid = git2::Oid::from_str(&id.0)
         .or_else(|_| repo.revparse_single(&id.0).map(|obj| obj.id()))
@@ -284,7 +296,7 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
 
     if matches!(&head, Head::Attached { target, .. } | Head::Detached { target } if target == &target_oid.to_string())
     {
-        blockers.push("Commit is already HEAD.".to_string());
+        blockers.push(PlanNote::Checkout(CheckoutNote::CommitAlreadyHead));
     }
 
     if status.is_dirty() {
@@ -296,10 +308,9 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
         match predict_checkout_conflict(repo, &head, target_oid, &status) {
             Some(blocker) => blockers.push(blocker),
             None => {
-                warnings.push(format!(
-                    "Working tree is dirty ({}). Safe checkout may fail; stash or commit first.",
-                    dirty_display
-                ));
+                warnings.push(PlanNote::Checkout(CheckoutNote::DirtyMayFail {
+                    display: dirty_display.clone(),
+                }));
             }
         }
     }
@@ -323,24 +334,28 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
         .chars()
         .take(72)
         .collect::<String>();
-    let recovery = format!(
-        "If this was accidental, return with:\n  git checkout {}\n\
-         To keep new work from the detached state, create a branch:\n  git switch -c <name>\n\
-         The reflog records every HEAD movement:\n  git reflog",
-        current_ref
-    );
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::Checkout(CheckoutRecovery::CheckoutCommit {
+            previous: current_ref.clone(),
+        }),
+        commands: vec![
+            format!("git checkout {}", current_ref),
+            "git switch -c <name>".to_string(),
+            "git reflog".to_string(),
+        ],
+    };
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!(
-            "Checkout commit {} '{}' (detached HEAD)",
-            target_short, summary_line
-        )),
+        title: PlanTitle::Checkout(CheckoutTitle::CheckoutCommit {
+            sha: target_short,
+            summary: summary_line,
+        }),
         current,
         predicted,
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        warnings,
+        blockers,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -366,7 +381,7 @@ fn predict_checkout_conflict(
     head: &Head,
     target_oid: git2::Oid,
     status: &crate::status::WorkingTreeStatus,
-) -> Option<String> {
+) -> Option<PlanNote> {
     // Resolve the current HEAD tree (the baseline the checkout diffs against).
     let head_oid = match head {
         Head::Attached { target, .. } | Head::Detached { target } => {
@@ -407,13 +422,10 @@ fn predict_checkout_conflict(
     }
     overlap.sort();
 
-    Some(format!(
-        "Working tree has local changes to {} file(s) that the target also \
-         modifies: {}. Safe checkout would be refused (the conflict prevents checkout). \
-         Stash or commit these changes first.",
-        overlap.len(),
-        overlap.join(", ")
-    ))
+    Some(PlanNote::Checkout(CheckoutNote::CheckoutOverlap {
+        count: overlap.len(),
+        files: overlap.join(", "),
+    }))
 }
 
 /// Execute a detached commit checkout using **safe mode only**.

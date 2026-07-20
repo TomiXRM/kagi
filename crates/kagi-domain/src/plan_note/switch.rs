@@ -14,3 +14,25 @@ impl SwitchNote {
         match *self {}
     }
 }
+
+/// Plan titles for the switch op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SwitchTitle {}
+
+impl SwitchTitle {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}
+
+/// Recovery kinds for the switch op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SwitchRecovery {}
+
+impl SwitchRecovery {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}

@@ -14,3 +14,25 @@ impl PushNote {
         match *self {}
     }
 }
+
+/// Plan titles for the push op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PushTitle {}
+
+impl PushTitle {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}
+
+/// Recovery kinds for the push op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PushRecovery {}
+
+impl PushRecovery {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}

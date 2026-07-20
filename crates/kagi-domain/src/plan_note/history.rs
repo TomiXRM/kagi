@@ -14,3 +14,25 @@ impl HistoryNote {
         match *self {}
     }
 }
+
+/// Plan titles for the history op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HistoryTitle {}
+
+impl HistoryTitle {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}
+
+/// Recovery kinds for the history op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HistoryRecovery {}
+
+impl HistoryRecovery {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}

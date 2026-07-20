@@ -14,3 +14,25 @@ impl PullNote {
         match *self {}
     }
 }
+
+/// Plan titles for the pull op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PullTitle {}
+
+impl PullTitle {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}
+
+/// Recovery kinds for the pull op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PullRecovery {}
+
+impl PullRecovery {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}

@@ -14,3 +14,25 @@ impl CommitNote {
         match *self {}
     }
 }
+
+/// Plan titles for the commit op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommitTitle {}
+
+impl CommitTitle {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}
+
+/// Recovery kinds for the commit op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommitRecovery {}
+
+impl CommitRecovery {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}

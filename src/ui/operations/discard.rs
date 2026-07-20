@@ -213,7 +213,7 @@ impl KagiApp {
                 "discard",
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
-                    blockers: modal.plan.blockers.clone(),
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,

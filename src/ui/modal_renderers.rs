@@ -20,6 +20,7 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::Sizable as _;
 use kagi_git::{BranchRenameValidation, CommitId, OperationPlan};
+use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 
 // T-SPLIT-MODALS-001 / ADR-0116 Wave 3: re-export the per-series renderers moved
 // to focused sibling modules so the existing `modal_renderers::*` call sites keep
@@ -128,7 +129,10 @@ pub(crate) fn render_input_plan_modal(
                         .text_sm()
                         .text_color(rgb(current_theme().color_warning))
                         .overflow_hidden()
-                        .child(SharedString::from(format!("\u{26a0} {}", warning))),
+                        .child(SharedString::from(format!(
+                            "\u{26a0} {}",
+                            plan_note_text(warning)
+                        ))),
                 );
             }
             card = card.child(warn_col);
@@ -141,7 +145,10 @@ pub(crate) fn render_input_plan_modal(
                         .text_sm()
                         .text_color(rgb(current_theme().color_blocker))
                         .overflow_hidden()
-                        .child(SharedString::from(format!("\u{2717} {}", blocker))),
+                        .child(SharedString::from(format!(
+                            "\u{2717} {}",
+                            plan_note_text(blocker)
+                        ))),
                 );
             }
             card = card.child(block_col);
@@ -302,7 +309,7 @@ pub(crate) fn render_plan_modal_card(
             div()
                 .text_color(rgb(current_theme().text_main))
                 .text_xl()
-                .child(SharedString::from(plan.title.clone())),
+                .child(SharedString::from(plan_title_text(&plan.title))),
         )
         // ── Current → Predicted ───────────────────────────
         .child(
@@ -367,7 +374,10 @@ pub(crate) fn render_plan_modal_card(
                     .text_sm()
                     .text_color(rgb(current_theme().color_warning))
                     .overflow_hidden()
-                    .child(SharedString::from(format!("\u{26a0} {}", w))),
+                    .child(SharedString::from(format!(
+                        "\u{26a0} {}",
+                        plan_note_text(w)
+                    ))),
             );
         }
         card = card.child(warn_col);
@@ -418,7 +428,10 @@ pub(crate) fn render_plan_modal_card(
                     .text_sm()
                     .text_color(rgb(current_theme().color_blocker))
                     .overflow_hidden()
-                    .child(SharedString::from(format!("\u{2717} {}", b))),
+                    .child(SharedString::from(format!(
+                        "\u{2717} {}",
+                        plan_note_text(b)
+                    ))),
             );
         }
         card = card.child(block_col);
@@ -430,7 +443,9 @@ pub(crate) fn render_plan_modal_card(
             .text_xs()
             .text_color(rgb(current_theme().text_muted))
             .overflow_hidden()
-            .child(SharedString::from(plan.recovery.clone())),
+            .child(SharedString::from(plan_recovery_text(
+                plan.recovery.as_ref(),
+            ))),
     );
 
     // ── Error message (preflight / execute failure) ───────

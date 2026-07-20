@@ -88,7 +88,7 @@ fn test_stash_pop_normal_restores_and_removes_entry() {
         plan.blockers
     );
     assert!(
-        plan.title.contains("pop") || plan.title.contains("Pop"),
+        plan.title.message_en().contains("pop") || plan.title.message_en().contains("Pop"),
         "plan title should mention pop, got: {:?}",
         plan.title
     );
@@ -212,7 +212,7 @@ fn test_stash_pop_conflict_prediction_blocker_stash_preserved() {
     let has_conflict_blocker = plan
         .blockers
         .iter()
-        .any(|b| b.contains("conflict") || b.contains("Conflict"));
+        .any(|b| b.message_en().contains("conflict") || b.message_en().contains("Conflict"));
     assert!(
         has_conflict_blocker,
         "blocker should mention conflict, got: {:?}",
@@ -222,7 +222,7 @@ fn test_stash_pop_conflict_prediction_blocker_stash_preserved() {
     let has_apply_suggestion = plan
         .blockers
         .iter()
-        .any(|b| b.contains("Apply") || b.contains("apply"));
+        .any(|b| b.message_en().contains("Apply") || b.message_en().contains("apply"));
     assert!(
         has_apply_suggestion,
         "blocker should recommend 'apply' as alternative, got: {:?}",
@@ -267,10 +267,11 @@ fn test_stash_pop_blocker_dirty_working_tree() {
         !plan.blockers.is_empty(),
         "dirty working tree should produce a blocker for stash pop"
     );
-    let has_dirty_blocker = plan
-        .blockers
-        .iter()
-        .any(|b| b.contains("dirty") || b.contains("modified") || b.contains("staged"));
+    let has_dirty_blocker = plan.blockers.iter().any(|b| {
+        b.message_en().contains("dirty")
+            || b.message_en().contains("modified")
+            || b.message_en().contains("staged")
+    });
     assert!(
         has_dirty_blocker,
         "blocker should mention dirty tree, got: {:?}",
@@ -297,7 +298,7 @@ fn test_stash_pop_blocker_index_out_of_range() {
     let has_range_blocker = plan
         .blockers
         .iter()
-        .any(|b| b.contains("out of range") || b.contains("range"));
+        .any(|b| b.message_en().contains("out of range") || b.message_en().contains("range"));
     assert!(
         has_range_blocker,
         "blocker should mention index out of range, got: {:?}",
@@ -428,16 +429,36 @@ fn test_stash_pop_plan_title_and_recovery_mention_destructive() {
 
     // Title should mention pop.
     assert!(
-        plan.title.contains("pop") || plan.title.contains("Pop"),
+        plan.title.message_en().contains("pop") || plan.title.message_en().contains("Pop"),
         "plan title should mention pop, got: {:?}",
         plan.title
     );
 
     // Recovery text must warn that stash will be consumed.
-    let recovery_warns_destructive = plan.recovery.contains("pop")
-        || plan.recovery.contains("drop")
-        || plan.recovery.contains("removed")
-        || plan.recovery.contains("consumed");
+    let recovery_warns_destructive = plan
+        .recovery
+        .as_ref()
+        .map(|r| r.message_en())
+        .unwrap_or_default()
+        .contains("pop")
+        || plan
+            .recovery
+            .as_ref()
+            .map(|r| r.message_en())
+            .unwrap_or_default()
+            .contains("drop")
+        || plan
+            .recovery
+            .as_ref()
+            .map(|r| r.message_en())
+            .unwrap_or_default()
+            .contains("removed")
+        || plan
+            .recovery
+            .as_ref()
+            .map(|r| r.message_en())
+            .unwrap_or_default()
+            .contains("consumed");
     assert!(
         recovery_warns_destructive,
         "recovery text should warn about stash being consumed, got: {:?}",

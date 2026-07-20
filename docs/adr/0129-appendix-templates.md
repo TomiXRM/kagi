@@ -31,6 +31,8 @@
 | branch_cleanup.rs | 4 | 2 | 1 | 1 | 6 | 一致 |
 | mod.rs (`merge_dirty_warnings`) | 0 | 3 | 0 | 0 | 3 | 一致 |
 | discard.rs | 3 | 1 | 2 | 1 | —(issue 表に無し) | Phase 1 の最初の構造化対象。§B-11 |
+| conflicts.rs(ops 外) | 若干 | 若干 | 2 | 2 | —(issue 表に無し) | **Phase 1 実装中に発見**: `plan_conflict_continue` / `plan_conflict_abort` が plan を生成。Phase 2 の対象リストに追加のこと |
+| staging.rs(ops 外) | 若干 | 若干 | 1(+backend.rs の title 上書き `Finalize merge commit`) | 1 | —(issue 表に無し) | **Phase 1 実装中に発見**: `plan_commit`(CommitPanel)。同上 |
 
 **Phase 2 の PR 分割はこの実測を正とする**(issue の概算は grep 粒度の違い)。
 

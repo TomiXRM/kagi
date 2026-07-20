@@ -270,7 +270,8 @@ fn test_plan_pull_dirty_warning_no_blocker() {
     assert!(
         plan.warnings
             .iter()
-            .any(|w| w.contains("Working tree has") && w.contains("fetched changes")),
+            .any(|w| w.message_en().contains("Working tree has")
+                && w.message_en().contains("fetched changes")),
         "dirty WT should produce path-overlap warning, got: {:?}",
         plan.warnings
     );

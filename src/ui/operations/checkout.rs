@@ -156,7 +156,7 @@ impl KagiApp {
                 "stash-push",
                 plan.current.clone(),
                 OpOutcome::Refused {
-                    blockers: plan.blockers.clone(),
+                    blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,
@@ -164,7 +164,11 @@ impl KagiApp {
             if let Some(m) = self.plan_modal_mut() {
                 m.error = Some(SharedString::from(format!(
                     "stash refused: {}",
-                    plan.blockers.join(" / ")
+                    plan.blockers
+                        .iter()
+                        .map(kagi_ui_core::i18n::plan_note_text)
+                        .collect::<Vec<_>>()
+                        .join(" / ")
                 )));
             }
             return false;
@@ -232,7 +236,7 @@ impl KagiApp {
                     "checkout",
                     modal.plan.current.clone(),
                     OpOutcome::Refused {
-                        blockers: modal.plan.blockers.clone(),
+                        blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                     },
                     rp,
                     cx,
@@ -422,7 +426,7 @@ impl KagiApp {
                     "checkout",
                     modal.plan.current.clone(),
                     OpOutcome::Refused {
-                        blockers: modal.plan.blockers.clone(),
+                        blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                     },
                     rp,
                     cx,
@@ -560,8 +564,10 @@ impl KagiApp {
                 m.stash_first = true;
                 // Surface it in the plan card's warnings.
                 let mut plan = (*m.plan).clone();
-                plan.warnings
-                    .insert(0, Msg::DirtyStashFirst.t().to_string());
+                plan.warnings.insert(
+                    0,
+                    kagi_git::ops::PlanNote::verbatim(Msg::DirtyStashFirst.t()),
+                );
                 m.plan = std::sync::Arc::new(plan);
             }
         }

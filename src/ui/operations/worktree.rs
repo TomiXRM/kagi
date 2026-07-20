@@ -169,7 +169,7 @@ impl KagiApp {
                     "create-worktree",
                     plan.current.clone(),
                     OpOutcome::Refused {
-                        blockers: plan.blockers.clone(),
+                        blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
                     },
                     rp,
                     cx,
@@ -318,7 +318,7 @@ impl KagiApp {
                 "unlock-worktree",
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
-                    blockers: modal.plan.blockers.clone(),
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,

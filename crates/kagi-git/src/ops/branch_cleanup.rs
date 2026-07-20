@@ -325,15 +325,16 @@ pub fn plan_delete_merged_branches(
         .to_string();
 
     Ok(OperationPlan {
-        title: format!("Delete {} merged branch(es)", targets.len()),
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!("Delete {} merged branch(es)", targets.len())),
         predicted: StateSummary {
             head: current.head.clone(),
             dirty: current.dirty.clone(),
         },
         current,
-        warnings,
-        blockers,
-        recovery,
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),

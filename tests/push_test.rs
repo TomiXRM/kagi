@@ -219,7 +219,7 @@ fn test_push_set_upstream() {
         plan.blockers
     );
     assert!(
-        plan.title.contains("set upstream"),
+        plan.title.message_en().contains("set upstream"),
         "title should mention set upstream: {}",
         plan.title
     );
@@ -306,7 +306,9 @@ fn test_push_detached_blocker() {
         "detached HEAD must produce a blocker"
     );
     assert!(
-        plan.blockers.iter().any(|b| b.contains("detached")),
+        plan.blockers
+            .iter()
+            .any(|b| b.message_en().contains("detached")),
         "blocker should mention detached: {:?}",
         plan.blockers
     );

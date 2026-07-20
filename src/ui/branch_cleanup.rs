@@ -125,7 +125,7 @@ impl KagiApp {
                 "branch-cleanup",
                 modal.plan.current.clone(),
                 kagi_git::oplog::OpOutcome::Refused {
-                    blockers: modal.plan.blockers.clone(),
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,

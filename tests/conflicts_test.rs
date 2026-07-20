@@ -435,7 +435,9 @@ fn continue_blocked_until_resolved_and_marker_free() {
     let empty = ResolutionBuffer::new(tmp.path());
     let plan = plan_conflict_continue(&repo, &session, &empty).unwrap();
     assert!(
-        plan.blockers.iter().any(|b| b.contains("unresolved")),
+        plan.blockers
+            .iter()
+            .any(|b| b.message_en().contains("unresolved")),
         "expected unresolved blocker, got {:?}",
         plan.blockers
     );
@@ -450,7 +452,9 @@ fn continue_blocked_until_resolved_and_marker_free() {
         .unwrap();
     let plan = plan_conflict_continue(&repo, &session, &markered).unwrap();
     assert!(
-        plan.blockers.iter().any(|b| b.contains("marker")),
+        plan.blockers
+            .iter()
+            .any(|b| b.message_en().contains("marker")),
         "expected marker residue blocker, got {:?}",
         plan.blockers
     );
@@ -1071,7 +1075,7 @@ fn sequencer_continue_produces_a_plan() {
         ContinueRoute::SequencerPlan(plan) => {
             assert!(plan.blockers.is_empty(), "resolved → no blockers");
             assert!(
-                plan.title.contains("cherry-pick"),
+                plan.title.message_en().contains("cherry-pick"),
                 "plan titled for the op: {}",
                 plan.title
             );

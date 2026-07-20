@@ -289,7 +289,12 @@ fn test_plan_undo_commit_pushed_blocker() {
         plan.blockers
     );
 
-    let msg = plan.blockers.join(" ");
+    let msg = plan
+        .blockers
+        .iter()
+        .map(|n| n.message_en())
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
         msg.contains("pushed") || msg.contains("upstream"),
         "blocker must mention push/upstream: {}",
@@ -338,7 +343,12 @@ fn test_plan_undo_commit_merge_commit_blocker() {
         "merge commit must be a blocker, got: {:?}",
         plan.blockers
     );
-    let msg = plan.blockers.join(" ");
+    let msg = plan
+        .blockers
+        .iter()
+        .map(|n| n.message_en())
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
         msg.contains("merge"),
         "blocker must mention merge commit: {}",
@@ -363,7 +373,12 @@ fn test_plan_undo_commit_root_commit_blocker() {
         "root commit must be a blocker, got: {:?}",
         plan.blockers
     );
-    let msg = plan.blockers.join(" ");
+    let msg = plan
+        .blockers
+        .iter()
+        .map(|n| n.message_en())
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
         msg.contains("root") || msg.contains("no parent") || msg.contains("parent"),
         "blocker must mention root/no-parent: {}",
@@ -396,7 +411,12 @@ fn test_plan_undo_commit_detached_blocker() {
         "detached HEAD must be a blocker, got: {:?}",
         plan.blockers
     );
-    let msg = plan.blockers.join(" ");
+    let msg = plan
+        .blockers
+        .iter()
+        .map(|n| n.message_en())
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
         msg.contains("detach") || msg.contains("branch"),
         "blocker must mention detached/branch: {}",

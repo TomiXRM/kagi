@@ -564,7 +564,7 @@ fn test_plan_commit_blocker_empty_message() {
     let has_empty_msg_blocker = plan
         .blockers
         .iter()
-        .any(|b| b.contains("empty") || b.contains("message"));
+        .any(|b| b.message_en().contains("empty") || b.message_en().contains("message"));
     assert!(
         has_empty_msg_blocker,
         "blocker should mention empty message, got: {:?}",
@@ -598,7 +598,7 @@ fn test_plan_commit_blocker_nothing_staged() {
     let has_staged_blocker = plan
         .blockers
         .iter()
-        .any(|b| b.contains("staged") || b.contains("Nothing"));
+        .any(|b| b.message_en().contains("staged") || b.message_en().contains("Nothing"));
     assert!(
         has_staged_blocker,
         "blocker should mention nothing staged, got: {:?}",
@@ -636,10 +636,11 @@ fn test_plan_commit_warning_unstaged_remains() {
         !plan.warnings.is_empty(),
         "should have a warning about the unstaged/untracked files that won't be committed"
     );
-    let has_not_included_warning = plan
-        .warnings
-        .iter()
-        .any(|w| w.contains("NOT") || w.contains("not") || w.contains("remain"));
+    let has_not_included_warning = plan.warnings.iter().any(|w| {
+        w.message_en().contains("NOT")
+            || w.message_en().contains("not")
+            || w.message_en().contains("remain")
+    });
     assert!(
         has_not_included_warning,
         "warning should mention files not included in commit, got: {:?}",

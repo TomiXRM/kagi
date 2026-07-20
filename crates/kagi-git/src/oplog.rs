@@ -766,3 +766,9 @@ mod tests {
         }
     }
 }
+
+// ADR-0129 Phase 1 — oplog on-disk compatibility tests live in a child file
+// (`oplog_adr0129_tests.rs`) to keep this file under the LOC ratchet.
+#[cfg(test)]
+#[path = "oplog_adr0129_tests.rs"]
+mod adr0129_compat_tests;

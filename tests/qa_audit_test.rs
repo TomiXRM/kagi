@@ -164,7 +164,9 @@ fn stash_push_many_untracked_warns_not_blocks() {
         "untracked-only → stashable with -u"
     );
     assert!(
-        plan.warnings.iter().any(|w| w.contains("untracked")),
+        plan.warnings
+            .iter()
+            .any(|w| w.message_en().contains("untracked")),
         "untracked inclusion should be a warning"
     );
 }
@@ -189,7 +191,9 @@ fn stash_push_conflict_state_is_blocked() {
 
     let plan = plan_stash_push(&mut repo, None, true).unwrap();
     assert!(
-        plan.blockers.iter().any(|b| b.contains("conflict")),
+        plan.blockers
+            .iter()
+            .any(|b| b.message_en().contains("conflict")),
         "conflicted tree must block stash push"
     );
 }
@@ -285,7 +289,7 @@ fn checkout_commit_dirty_plan_warns_but_does_not_block() {
     assert!(
         plan.warnings
             .iter()
-            .any(|w| w.to_lowercase().contains("dirty")),
+            .any(|w| w.message_en().to_lowercase().contains("dirty")),
         "must at least warn about the dirty tree"
     );
 }
@@ -319,7 +323,9 @@ fn checkout_commit_overlapping_dirty_plan_blocks() {
         "overlapping dirty file must be a blocker (plan/execute agreement)"
     );
     assert!(
-        plan.blockers.iter().any(|b| b.contains("f2.txt")),
+        plan.blockers
+            .iter()
+            .any(|b| b.message_en().contains("f2.txt")),
         "blocker should name the conflicting file"
     );
 }

@@ -170,12 +170,13 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
              The previous HEAD sha is recorded in the reflog:\n  git reflog"
                 .to_string();
         return Ok(OperationPlan {
-            title: format!("Cherry-pick {} onto {}", id.short(), branch_name),
+            disposition: PlanDisposition::for_blockers(&blockers),
+            title: PlanTitle::verbatim(format!("Cherry-pick {} onto {}", id.short(), branch_name)),
             current,
             predicted,
-            warnings,
-            blockers,
-            recovery,
+            warnings: PlanNote::wrap_all(warnings),
+            blockers: PlanNote::wrap_all(blockers),
+            recovery: Some(PlanRecovery::verbatim(recovery)),
             head_at_plan: head,
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
@@ -238,12 +239,13 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
              The previous HEAD sha is recorded in the reflog:\n  git reflog"
                 .to_string();
         return Ok(OperationPlan {
-            title: format!("Cherry-pick {} onto {}", id.short(), branch_name),
+            disposition: PlanDisposition::for_blockers(&blockers),
+            title: PlanTitle::verbatim(format!("Cherry-pick {} onto {}", id.short(), branch_name)),
             current,
             predicted,
-            warnings,
-            blockers,
-            recovery,
+            warnings: PlanNote::wrap_all(warnings),
+            blockers: PlanNote::wrap_all(blockers),
+            recovery: Some(PlanRecovery::verbatim(recovery)),
             head_at_plan: head,
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
@@ -328,12 +330,13 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
              The previous HEAD sha is recorded in the reflog:\n  git reflog"
                 .to_string();
         return Ok(OperationPlan {
-            title: format!("Cherry-pick {} onto {}", id.short(), branch_name),
+            disposition: PlanDisposition::for_blockers(&blockers),
+            title: PlanTitle::verbatim(format!("Cherry-pick {} onto {}", id.short(), branch_name)),
             current,
             predicted,
-            warnings,
-            blockers,
-            recovery,
+            warnings: PlanNote::wrap_all(warnings),
+            blockers: PlanNote::wrap_all(blockers),
+            recovery: Some(PlanRecovery::verbatim(recovery)),
             head_at_plan: head,
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
@@ -371,17 +374,18 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
         .to_string();
 
     Ok(OperationPlan {
-        title: format!(
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!(
             "Cherry-pick {} '{}' onto {}",
             id.short(),
             summary_line,
             branch_name
-        ),
+        )),
         current,
         predicted,
-        warnings,
-        blockers,
-        recovery,
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files,
@@ -658,20 +662,21 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
 
     let blocked_plan =
         |blockers: Vec<String>, warnings: Vec<String>, current: StateSummary| OperationPlan {
-            title: format!(
+            disposition: PlanDisposition::for_blockers(&blockers),
+            title: PlanTitle::verbatim(format!(
                 "Revert {} '{}' on {}",
                 id.short(),
                 summary_line,
                 branch_name
-            ),
+            )),
             current: current.clone(),
             predicted: StateSummary {
                 head: head_display.clone(),
                 dirty: current.dirty.clone(),
             },
-            warnings,
-            blockers,
-            recovery: recovery.clone(),
+            warnings: PlanNote::wrap_all(warnings),
+            blockers: PlanNote::wrap_all(blockers),
+            recovery: Some(PlanRecovery::verbatim(recovery.clone())),
             head_at_plan: head.clone(),
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
@@ -790,17 +795,18 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
     };
 
     Ok(OperationPlan {
-        title: format!(
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!(
             "Revert {} '{}' on {}",
             id.short(),
             summary_line,
             branch_name
-        ),
+        )),
         current,
         predicted,
-        warnings,
-        blockers,
-        recovery,
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files,

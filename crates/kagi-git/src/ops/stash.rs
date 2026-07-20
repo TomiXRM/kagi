@@ -129,15 +129,16 @@ pub fn plan_stash_push(
     );
 
     Ok(OperationPlan {
-        title: format!(
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!(
             "Stash push — save local modifications ({})",
             stash_count + 1
-        ),
+        )),
         current,
         predicted,
-        warnings,
-        blockers,
-        recovery,
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         preview_files: Vec::new(),
@@ -306,12 +307,13 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
     );
 
     Ok(OperationPlan {
-        title: format!("Stash apply — restore stash@{{{}}}", index),
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!("Stash apply — restore stash@{{{}}}", index)),
         current,
         predicted,
         warnings: Vec::new(),
-        blockers,
-        recovery,
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         preview_files: Vec::new(),
@@ -495,12 +497,13 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
     );
 
     Ok(OperationPlan {
-        title: format!("Stash pop — apply and remove stash@{{{}}}", index),
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!("Stash pop — apply and remove stash@{{{}}}", index)),
         current,
         predicted,
         warnings: Vec::new(),
-        blockers,
-        recovery,
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         preview_files: Vec::new(),
@@ -584,7 +587,8 @@ fn stash_drop_internal(repo: &mut Repository, index: usize) -> Result<(), GitErr
 /// taken from the remote snapshot (e.g. `"branch: master"`) for display only.
 pub fn plan_stash_drop_remote(stash_label: &str, head_summary: String) -> OperationPlan {
     OperationPlan {
-        title: format!("Drop {stash_label}"),
+        disposition: PlanDisposition::Ready,
+        title: PlanTitle::verbatim(format!("Drop {stash_label}")),
         current: StateSummary {
             head: head_summary.clone(),
             dirty: "remote (read-only view)".to_string(),
@@ -593,15 +597,17 @@ pub fn plan_stash_drop_remote(stash_label: &str, head_summary: String) -> Operat
             head: head_summary,
             dirty: "stash entry removed".to_string(),
         },
-        warnings: vec![
+        warnings: PlanNote::wrap_all(vec![
             "This permanently removes the stash entry on the remote host. \
              It cannot be undone from Kagi."
                 .to_string(),
-        ],
+        ]),
         blockers: Vec::new(),
-        recovery: "A dropped stash commit may remain reachable from the remote's \
+        recovery: Some(PlanRecovery::verbatim(
+            "A dropped stash commit may remain reachable from the remote's \
                    stash reflog until gc, but Kagi does not manage remote recovery."
-            .to_string(),
+                .to_string(),
+        )),
         head_at_plan: Head::Unborn {
             branch: String::new(),
         },
@@ -671,12 +677,13 @@ pub fn plan_stash_drop(repo: &mut Repository, index: usize) -> Result<OperationP
     };
 
     Ok(OperationPlan {
-        title: format!("Stash drop — delete stash@{{{}}}", index),
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!("Stash drop — delete stash@{{{}}}", index)),
         current,
         predicted,
         warnings: Vec::new(),
-        blockers,
-        recovery,
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         preview_files: Vec::new(),
@@ -865,7 +872,10 @@ mod remote_drop_tests {
             "no local blockers for a remote drop"
         );
         assert!(!plan.warnings.is_empty(), "must warn it is irreversible");
-        assert!(plan.title.contains("stash@{0}"), "title names the stash");
+        assert!(
+            plan.title.message_en().contains("stash@{0}"),
+            "title names the stash"
+        );
         assert_eq!(plan.current.head, "branch: main");
     }
 }

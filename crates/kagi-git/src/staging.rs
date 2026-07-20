@@ -34,6 +34,7 @@
 //! * **Conflicts** — `plan_commit` blocks on conflicted files; staging a
 //!   conflicted file is not supported in MVP.
 
+use kagi_domain::plan_note::{PlanDisposition, PlanNote, PlanRecovery, PlanTitle};
 use std::path::{Path, PathBuf};
 
 use git2::{DiffOptions, Repository};
@@ -525,12 +526,13 @@ pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, Gi
     let preview_files: Vec<FileStatus> = status.staged.clone();
 
     Ok(OperationPlan {
-        title: format!("Commit: \"{}\"", msg_summary),
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!("Commit: \"{}\"", msg_summary)),
         current,
         predicted,
-        warnings,
-        blockers,
-        recovery,
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files,

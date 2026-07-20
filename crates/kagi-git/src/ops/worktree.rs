@@ -122,10 +122,10 @@ pub fn plan_create_branch_with_checkout(
 
     let status = working_tree_status(repo)?;
     if !status.conflicted.is_empty() {
-        plan.blockers.push(format!(
+        plan.blockers.push(PlanNote::verbatim(format!(
             "Repository has {} conflicted file(s). Resolve conflicts before checking out the new branch.",
             status.conflicted.len()
-        ));
+        )));
     }
     if !status.staged.is_empty() || !status.unstaged.is_empty() {
         let mut parts = Vec::new();
@@ -135,26 +135,30 @@ pub fn plan_create_branch_with_checkout(
         if !status.unstaged.is_empty() {
             parts.push(format!("{} modified", status.unstaged.len()));
         }
-        plan.blockers.push(format!(
+        plan.blockers.push(PlanNote::verbatim(format!(
             "Working tree has {} — checkout after branch creation could lose work. Stash changes before continuing.",
             parts.join(", ")
-        ));
+        )));
     }
     if !status.untracked.is_empty() {
-        plan.warnings.push(format!(
+        plan.warnings.push(PlanNote::verbatim(format!(
             "{} untracked file(s) will remain after switching branches.",
             status.untracked.len()
-        ));
+        )));
     }
 
-    plan.title = format!("Create branch '{}' @ {} and checkout", name, at.short());
+    plan.title = PlanTitle::verbatim(format!(
+        "Create branch '{}' @ {} and checkout",
+        name,
+        at.short()
+    ));
     plan.predicted.head = format!("branch: {}", name);
-    plan.recovery = format!(
+    plan.recovery = Some(PlanRecovery::verbatim(format!(
         "This creates branch '{}' and then checks it out. If checkout fails, the branch may still exist and can be removed with:\n  git branch -d {}\nTo return after checkout:\n  git checkout {}",
         name,
         name,
         plan.current.head.strip_prefix("branch: ").unwrap_or("<previous-branch>")
-    );
+    )));
     Ok(plan)
 }
 
@@ -216,7 +220,8 @@ fn plan_create_worktree_impl(
             ));
         }
         OperationPlan {
-            title: format!("Open worktree for '{}'", branch),
+            disposition: PlanDisposition::for_blockers(&blockers),
+            title: PlanTitle::verbatim(format!("Open worktree for '{}'", branch)),
             current: StateSummary {
                 head: head.display(),
                 dirty: status_summary_display(&status),
@@ -226,8 +231,8 @@ fn plan_create_worktree_impl(
                 dirty: status_summary_display(&status),
             },
             warnings: Vec::new(),
-            blockers,
-            recovery: String::new(),
+            blockers: PlanNote::wrap_all(blockers),
+            recovery: Some(PlanRecovery::verbatim(String::new())),
             head_at_plan: head,
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
@@ -240,7 +245,7 @@ fn plan_create_worktree_impl(
     let target_path = match validate_worktree_path(repo_root, path.as_ref()) {
         Ok(path) => path,
         Err(msg) => {
-            plan.blockers.push(msg);
+            plan.blockers.push(PlanNote::verbatim(msg));
             if path.as_ref().is_absolute() {
                 normalize_path(path.as_ref())
             } else {
@@ -248,22 +253,22 @@ fn plan_create_worktree_impl(
             }
         }
     };
-    plan.title = format!("Create worktree '{}' @ {}", branch, start.short());
+    plan.title = PlanTitle::verbatim(format!("Create worktree '{}' @ {}", branch, start.short()));
     plan.predicted = StateSummary {
         head: plan.current.head.clone(),
         dirty: plan.current.dirty.clone(),
     };
-    plan.recovery = format!(
+    plan.recovery = Some(PlanRecovery::verbatim(format!(
         "Remove the linked worktree if needed:\n  git worktree remove {}\nThe branch can then be removed with:\n  git branch -d {}",
         target_path.display(),
         branch
-    );
-    plan.warnings.push(format!(
+    )));
+    plan.warnings.push(PlanNote::verbatim(format!(
         "Creates a linked worktree at '{}' with branch '{}' (start point {}).",
         target_path.display(),
         branch,
         start.short()
-    ));
+    )));
 
     Ok(plan)
 }
@@ -426,7 +431,8 @@ pub fn plan_unlock_worktree(repo: &Repository, name: &str) -> Result<OperationPl
     }
 
     Ok(OperationPlan {
-        title: format!("Unlock worktree '{}'", name),
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!("Unlock worktree '{}'", name)),
         current: StateSummary {
             head: head.display(),
             dirty: dirty.clone(),
@@ -435,12 +441,12 @@ pub fn plan_unlock_worktree(repo: &Repository, name: &str) -> Result<OperationPl
             head: head.display(),
             dirty,
         },
-        warnings,
-        blockers,
-        recovery: format!(
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(format!(
             "Re-lock the worktree if needed:\n  git worktree lock --reason \"<why>\" <path-of-{}>",
             name
-        ),
+        ))),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),

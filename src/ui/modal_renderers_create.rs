@@ -15,6 +15,7 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::Input;
 use gpui_component::Sizable as _;
+use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 
 // ──────────────────────────────────────────────────────────────
 // Create-branch modal renderer (T014)
@@ -162,7 +163,7 @@ pub(crate) fn render_create_branch_modal(
                     div()
                         .text_sm()
                         .text_color(rgb(current_theme().text_muted))
-                        .child(SharedString::from(p.title.clone())),
+                        .child(SharedString::from(plan_title_text(&p.title))),
                 ),
         );
 
@@ -171,7 +172,7 @@ pub(crate) fn render_create_branch_modal(
             let lines: Vec<SharedString> = if modal.localized_blockers.is_empty() {
                 p.blockers
                     .iter()
-                    .map(|b| SharedString::from(b.clone()))
+                    .map(|b| SharedString::from(plan_note_text(b)))
                     .collect()
             } else {
                 modal.localized_blockers.clone()
@@ -195,7 +196,7 @@ pub(crate) fn render_create_branch_modal(
                 .text_xs()
                 .text_color(rgb(current_theme().text_muted))
                 .overflow_hidden()
-                .child(SharedString::from(p.recovery.clone())),
+                .child(SharedString::from(plan_recovery_text(p.recovery.as_ref()))),
         );
     }
 
@@ -370,7 +371,7 @@ pub(crate) fn render_create_worktree_modal(
                     div()
                         .text_sm()
                         .text_color(rgb(current_theme().text_muted))
-                        .child(SharedString::from(p.title.clone())),
+                        .child(SharedString::from(plan_title_text(&p.title))),
                 ),
         );
 
@@ -382,7 +383,7 @@ pub(crate) fn render_create_worktree_modal(
                         .text_sm()
                         .text_color(rgb(current_theme().color_warning))
                         .overflow_hidden()
-                        .child(SharedString::from(format!("! {}", w))),
+                        .child(SharedString::from(format!("! {}", plan_note_text(w)))),
                 );
             }
             card = card.child(warn_col);
@@ -393,7 +394,7 @@ pub(crate) fn render_create_worktree_modal(
             let lines: Vec<SharedString> = if modal.localized_blockers.is_empty() {
                 p.blockers
                     .iter()
-                    .map(|b| SharedString::from(b.clone()))
+                    .map(|b| SharedString::from(plan_note_text(b)))
                     .collect()
             } else {
                 modal.localized_blockers.clone()
@@ -416,7 +417,7 @@ pub(crate) fn render_create_worktree_modal(
                 .text_xs()
                 .text_color(rgb(current_theme().text_muted))
                 .overflow_hidden()
-                .child(SharedString::from(p.recovery.clone())),
+                .child(SharedString::from(plan_recovery_text(p.recovery.as_ref()))),
         );
     }
 

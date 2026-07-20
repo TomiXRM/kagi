@@ -77,12 +77,15 @@ impl KagiApp {
                 );
                 // Already-up-to-date pull (nothing to pull by local knowledge)
                 // is not worth a blocking popup (user request): snackbar instead.
-                // Background auto-fetch keeps the behind count fresh; the title
-                // carries the "up to date (local knowledge…)" behind-label from
-                // ops::plan_pull when behind == 0.
+                // Background auto-fetch keeps the behind count fresh;
+                // ops::plan_pull sets NoOp(PullUpToDate) when behind == 0
+                // (ADR-0129 F-1: no string-parsing of the title).
                 if plan.blockers.is_empty()
                     && plan.warnings.is_empty()
-                    && plan.title.contains("up to date (local knowledge")
+                    && matches!(
+                        plan.disposition,
+                        kagi_git::ops::PlanDisposition::NoOp(kagi_git::ops::NoOpKind::PullUpToDate)
+                    )
                 {
                     self.push_toast(
                         ToastKind::Sync,
@@ -129,7 +132,7 @@ impl KagiApp {
                 "pull",
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
-                    blockers: modal.plan.blockers.clone(),
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,
@@ -245,7 +248,7 @@ impl KagiApp {
                 "pull",
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
-                    blockers: modal.plan.blockers.clone(),
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,
@@ -335,12 +338,14 @@ impl KagiApp {
                     plan.preview_commits.len(),
                 );
                 // No-op push (already up to date — nothing to push) is not worth
-                // a blocking popup (user request): show a snackbar instead. The
-                // "nothing to push" blocker is the *only* blocker in this case
-                // (see ops::plan_push step 6).
-                if !plan.blockers.is_empty()
-                    && plan.blockers.iter().all(|b| b.contains("nothing to push"))
-                {
+                // a blocking popup (user request): show a snackbar instead.
+                // ops::plan_push sets NoOp(PushUpToDate) exactly when the
+                // up-to-date blocker is the *only* blocker (ADR-0129 F-2:
+                // no string-matching of blocker text).
+                if matches!(
+                    plan.disposition,
+                    kagi_git::ops::PlanDisposition::NoOp(kagi_git::ops::NoOpKind::PushUpToDate)
+                ) {
                     self.push_toast(
                         ToastKind::Sync,
                         SharedString::from(Msg::AlreadyUpToDatePush.t()),
@@ -385,7 +390,7 @@ impl KagiApp {
                 "push",
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
-                    blockers: modal.plan.blockers.clone(),
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,
@@ -447,7 +452,7 @@ impl KagiApp {
                 "push",
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
-                    blockers: modal.plan.blockers.clone(),
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,

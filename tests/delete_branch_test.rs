@@ -152,7 +152,12 @@ fn test_plan_delete_branch_unmerged_blocker() {
         plan.blockers
     );
 
-    let msg = plan.blockers.join(" ");
+    let msg = plan
+        .blockers
+        .iter()
+        .map(|n| n.message_en())
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
         msg.contains("unmerged") || msg.contains("not reachable"),
         "blocker must mention unmerged/not-reachable: {}",
@@ -178,7 +183,12 @@ fn test_plan_delete_branch_current_branch_blocker() {
         plan.blockers
     );
 
-    let msg = plan.blockers.join(" ");
+    let msg = plan
+        .blockers
+        .iter()
+        .map(|n| n.message_en())
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
         msg.contains("checked-out") || msg.contains("current"),
         "blocker must mention current/checked-out: {}",
@@ -203,7 +213,12 @@ fn test_plan_delete_branch_nonexistent_blocker() {
         plan.blockers
     );
 
-    let msg = plan.blockers.join(" ");
+    let msg = plan
+        .blockers
+        .iter()
+        .map(|n| n.message_en())
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
         msg.contains("does not exist") || msg.contains("not found"),
         "blocker must mention does-not-exist/not-found: {}",
@@ -233,15 +248,19 @@ fn test_delete_branch_recovery_sha() {
     let plan = plan_delete_branch(&repo, "merged").expect("plan should succeed");
 
     assert!(
-        plan.recovery.contains(&tip_short),
-        "recovery string must contain tip SHA '{}', got: {}",
+        plan.recovery
+            .as_ref()
+            .map(|r| r.message_en())
+            .unwrap_or_default()
+            .contains(&tip_short),
+        "recovery string must contain tip SHA '{}', got: {:?}",
         tip_short,
         plan.recovery
     );
 
     // Also check that predicted text contains the tip SHA.
     assert!(
-        plan.title.contains(&tip_short),
+        plan.title.message_en().contains(&tip_short),
         "plan title must contain tip SHA '{}', got: {}",
         tip_short,
         plan.title
@@ -373,7 +392,12 @@ fn test_delete_branch_upstream_warning() {
         !plan.warnings.is_empty(),
         "plan must have a warning about the upstream not being deleted, got none"
     );
-    let warn_msg = plan.warnings.join(" ");
+    let warn_msg = plan
+        .warnings
+        .iter()
+        .map(|n| n.message_en())
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
         warn_msg.contains("upstream") || warn_msg.contains("remote"),
         "warning must mention upstream/remote: {}",
@@ -464,7 +488,9 @@ fn clean_worktree_is_removed_then_branch_deleted() {
         plan.blockers
     );
     assert!(
-        plan.warnings.iter().any(|w| w.contains("worktree")),
+        plan.warnings
+            .iter()
+            .any(|w| w.message_en().contains("worktree")),
         "plan must warn about the worktree removal: {:?}",
         plan.warnings
     );
@@ -494,7 +520,7 @@ fn dirty_worktree_blocks_delete() {
     assert!(
         plan.blockers
             .iter()
-            .any(|b| b.contains("uncommitted") && b.contains("worktree")),
+            .any(|b| b.message_en().contains("uncommitted") && b.message_en().contains("worktree")),
         "dirty worktree must block with a readable message: {:?}",
         plan.blockers
     );
@@ -517,9 +543,9 @@ fn locked_worktree_blocks_delete() {
     let r = git2::Repository::open(&repo.path).unwrap();
     let plan = plan_delete_branch(&r, "merged").unwrap();
     assert!(
-        plan.blockers
-            .iter()
-            .any(|b| b.contains("LOCKED") && b.contains("Unlock worktree")),
+        plan.blockers.iter().any(
+            |b| b.message_en().contains("LOCKED") && b.message_en().contains("Unlock worktree")
+        ),
         "locked worktree must block and point at the sidebar unlock flow: {:?}",
         plan.blockers
     );

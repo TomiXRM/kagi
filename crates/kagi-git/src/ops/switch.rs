@@ -84,15 +84,16 @@ pub fn plan_checkout_tracking_branch(
     );
 
     Ok(OperationPlan {
-        title: format!(
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!(
             "Checkout {} as local branch {}",
             remote_branch, local_branch
-        ),
+        )),
         current,
         predicted,
-        warnings,
-        blockers,
-        recovery,
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -284,21 +285,25 @@ pub fn plan_switch_to_latest(
         .unwrap_or_default();
 
     Ok(OperationPlan {
-        title: format!("Switch to latest {} (fetch {})", branch_name, remote_branch),
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!(
+            "Switch to latest {} (fetch {})",
+            branch_name, remote_branch
+        )),
         current,
         predicted: StateSummary {
             head: predicted_head,
             dirty: "switched (ff-only when safe)".to_string(),
         },
-        warnings,
-        blockers,
-        recovery: format!(
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(format!(
             "Fetches {} then switches to {}, fast-forwarding only when safe. \
              Diverged/ahead branches are switched to but never moved. \
              To go back: git checkout -",
             remote_of_ref(remote_branch),
             branch_name
-        ),
+        ))),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),

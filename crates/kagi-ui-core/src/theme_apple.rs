@@ -28,11 +28,11 @@ pub const APPLE_LIGHT: Theme = Theme {
 
     // systemBackground / systemGray6 / systemGray5 ramp.
     bg_base: 0xffffff,
-    bg_row_alt: 0xf7f7fa,
+    bg_row_alt: 0xf4f5f5,
     surface: 0xe5e5ea,  // systemGray5
     selected: 0xd9edff, // systemBlue 15% on white
-    panel: 0xf2f2f7,    // systemGray6
-    sidebar: 0xebebf0,  // systemGray6 (increased contrast)
+    panel: 0xf9f9f9,    // systemGray6
+    sidebar: 0xf2f2f7,  // systemGray6 (increased contrast)
     modal: 0xffffff,
     modal_overlay: 0x000000,
 
@@ -69,14 +69,15 @@ pub const APPLE_LIGHT: Theme = Theme {
     // Swimlanes are thin strokes on white → Increased contrast (light) set,
     // ordered so adjacent lanes stay maximally distinct (ADR-0104 philosophy).
     lane_hsl: [
-        (0.954, 0.855, 0.488), // pink   #e7124d
-        (0.394, 1.0, 0.269),   // green  #008932
         (0.604, 0.907, 0.537), // blue   #1e6ef4
-        (0.070, 1.0, 0.386),   // orange #c55300
-        (0.525, 1.0, 0.298),   // teal   #008198
         (0.813, 0.610, 0.473), // purple #b02fc2
+        (0.954, 0.855, 0.488), // pink   #e7124d
+        (0.990, 1.0, 0.600),   // red    #ff383c
+        (0.070, 1.0, 0.386),   // orange #c55300
         (0.110, 1.0, 0.316),   // yellow #a16a00
+        (0.394, 1.0, 0.269),   // green  #008932
         (0.546, 1.0, 0.341),   // cyan   #007eae
+
     ],
 
     avatar_sat: 0.55,
@@ -84,26 +85,26 @@ pub const APPLE_LIGHT: Theme = Theme {
 
     // Terminal: white background, ANSI colours from the increased-contrast
     // set (normal) and the vivid default set (bright).
-    term_bg: (0xff, 0xff, 0xff),
-    term_fg: (0x00, 0x00, 0x00),
-    term_cursor: (0x00, 0x00, 0x00),
-    term_black: (0x1c, 0x1c, 0x1e),
-    term_red: (0xe9, 0x15, 0x2d),
-    term_green: (0x00, 0x89, 0x32),
-    term_yellow: (0xa1, 0x6a, 0x00),
-    term_blue: (0x1e, 0x6e, 0xf4),
-    term_magenta: (0xb0, 0x2f, 0xc2),
-    term_cyan: (0x00, 0x7e, 0xae),
-    term_white: (0xc7, 0xc7, 0xcc),
-    term_bright_black: (0x8e, 0x8e, 0x93),
-    term_bright_red: (0xff, 0x38, 0x3c),
-    term_bright_green: (0x34, 0xc7, 0x59),
-    term_bright_yellow: (0xff, 0xcc, 0x00),
-    term_bright_blue: (0x00, 0x88, 0xff),
-    term_bright_magenta: (0xcb, 0x30, 0xe0),
-    term_bright_cyan: (0x00, 0xc0, 0xe8),
-    term_bright_white: (0x00, 0x00, 0x00),
-    term_selection: (0x00, 0x88, 0xff, 0x40),
+    term_bg: (0xff, 0xff, 0xff),              // #ffffff
+    term_fg: (0x00, 0x00, 0x00),              // #000000
+    term_cursor: (0x00, 0x00, 0x00),          // #000000
+    term_black: (0x1c, 0x1c, 0x1e),           // #1c1c1e
+    term_red: (0xe9, 0x15, 0x2d),             // #e9152d
+    term_green: (0x00, 0x89, 0x32),           // #008932
+    term_yellow: (0xa1, 0x6a, 0x00),          // #a16a00
+    term_blue: (0x1e, 0x6e, 0xf4),            // #1e6ef4
+    term_magenta: (0xb0, 0x2f, 0xc2),         // #b02fc2
+    term_cyan: (0x00, 0x7e, 0xae),            // #007eae
+    term_white: (0xc7, 0xc7, 0xcc),           // #c7c7cc
+    term_bright_black: (0x8e, 0x8e, 0x93),    // #8e8e93
+    term_bright_red: (0xff, 0x38, 0x3c),      // #ff383c
+    term_bright_green: (0x34, 0xc7, 0x59),    // #34c759
+    term_bright_yellow: (0xff, 0xcc, 0x00),   // #ffcc00
+    term_bright_blue: (0x00, 0x88, 0xff),     // #0088ff
+    term_bright_magenta: (0xcb, 0x30, 0xe0),  // #cb30e0
+    term_bright_cyan: (0x00, 0xc0, 0xe8),     // #00c0e8
+    term_bright_white: (0x00, 0x00, 0x00),    // #000000 
+    term_selection: (0x00, 0x88, 0xff, 0x40), // #0088ff 25% on white
 };
 
 pub const APPLE_DARK: Theme = Theme {
@@ -155,14 +156,14 @@ pub const APPLE_DARK: Theme = Theme {
 
     // Default (dark) vivids, same adjacency ordering as the light palette.
     lane_hsl: [
-        (0.967, 1.0, 0.608),   // pink   #ff375f
-        (0.375, 0.636, 0.504), // green  #30d158
-        (0.572, 1.0, 0.500),   // blue   #0091ff
-        (0.079, 1.0, 0.594),   // orange #ff9230
-        (0.510, 1.0, 0.439),   // teal   #00d2e0
-        (0.813, 0.880, 0.576), // purple #db34f2
         (0.140, 1.0, 0.500),   // yellow #ffd600
+        (0.375, 0.636, 0.504), // green  #30d158
         (0.537, 0.990, 0.616), // cyan   #3cd3fe
+        (0.572, 1.0, 0.500),   // blue   #0091ff
+        (0.813, 0.880, 0.576), // purple #db34f2
+        (0.967, 1.0, 0.608),   // pink   #ff375f
+        (0.99, 1.0, 0.62),     // red    #ff4245
+        (0.079, 1.0, 0.594),   // orange #ff9230
     ],
 
     avatar_sat: 0.70,
@@ -170,24 +171,24 @@ pub const APPLE_DARK: Theme = Theme {
 
     // Terminal: #1c1c1e background, Default (dark) ANSI colours with the
     // Increased-contrast (dark) set as the bright variants.
-    term_bg: (0x1c, 0x1c, 0x1e),
-    term_fg: (0xff, 0xff, 0xff),
-    term_cursor: (0xff, 0xd6, 0x00),
-    term_black: (0x2c, 0x2c, 0x2e),
-    term_red: (0xff, 0x42, 0x45),
-    term_green: (0x30, 0xd1, 0x58),
-    term_yellow: (0xff, 0xd6, 0x00),
-    term_blue: (0x00, 0x91, 0xff),
-    term_magenta: (0xdb, 0x34, 0xf2),
-    term_cyan: (0x00, 0xd2, 0xe0),
-    term_white: (0xc7, 0xc7, 0xcc),
-    term_bright_black: (0x63, 0x63, 0x66),
-    term_bright_red: (0xff, 0x61, 0x65),
-    term_bright_green: (0x4a, 0xd9, 0x68),
-    term_bright_yellow: (0xfe, 0xdf, 0x43),
-    term_bright_blue: (0x5c, 0xb8, 0xff),
-    term_bright_magenta: (0xea, 0x8d, 0xff),
-    term_bright_cyan: (0x6d, 0xd9, 0xff),
-    term_bright_white: (0xff, 0xff, 0xff),
-    term_selection: (0x00, 0x91, 0xff, 0x66),
+    term_bg: (0x1c, 0x1c, 0x1e),              // #1c1c1e
+    term_fg: (0xff, 0xff, 0xff),              // #ffffff
+    term_cursor: (0xff, 0xd6, 0x00),          // #ffd600
+    term_black: (0x2c, 0x2c, 0x2e),           // #2c2c2e
+    term_red: (0xff, 0x42, 0x45),             // #ff4245
+    term_green: (0x30, 0xd1, 0x58),           // #30d158
+    term_yellow: (0xff, 0xd6, 0x00),          // #ffd600
+    term_blue: (0x00, 0x91, 0xff),            // #0091ff
+    term_magenta: (0xdb, 0x34, 0xf2),         // #db34f2
+    term_cyan: (0x00, 0xd2, 0xe0),            // #00d2e0
+    term_white: (0xc7, 0xc7, 0xcc),           // #c7c7cc
+    term_bright_black: (0x63, 0x63, 0x66),    // #636366
+    term_bright_red: (0xff, 0x61, 0x65),      // #ff6165
+    term_bright_green: (0x4a, 0xd9, 0x68),    // #4ad968
+    term_bright_yellow: (0xfe, 0xdf, 0x43),   // #fddf43  
+    term_bright_blue: (0x5c, 0xb8, 0xff),     // #5cb8ff
+    term_bright_magenta: (0xea, 0x8d, 0xff),  // #ea8dff
+    term_bright_cyan: (0x6d, 0xd9, 0xff),     // #6dd9ff
+    term_bright_white: (0xff, 0xff, 0xff),    // #ffffff
+    term_selection: (0x00, 0x91, 0xff, 0x66), // #0091ff 40% on #1c1c1e
 };

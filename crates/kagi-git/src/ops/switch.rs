@@ -11,6 +11,9 @@
 
 use super::remote_common::{local_branch_oid, short_oid_string};
 use super::*;
+use kagi_domain::plan_note::{
+    CommonNote, DirtyParts, OpPhrase, SwitchNote, SwitchRecovery, SwitchTitle, UntrackedCtx,
+};
 
 // ────────────────────────────────────────────────────────────
 // plan_checkout_tracking_branch / execute_checkout_tracking_branch (T-BCM-061)
@@ -37,40 +40,39 @@ pub fn plan_checkout_tracking_branch(
         head: head.display(),
         dirty: status_summary_display(&status),
     };
-    let mut blockers = Vec::new();
-    let mut warnings = Vec::new();
+    let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     if local_branch.trim().is_empty() {
-        blockers.push("Local branch name is empty.".to_string());
+        blockers.push(PlanNote::Switch(SwitchNote::LocalNameEmpty));
     }
     if repo.find_branch(local_branch, BranchType::Local).is_ok() {
-        blockers.push(format!("Local branch '{}' already exists.", local_branch));
+        blockers.push(PlanNote::Switch(SwitchNote::LocalExists {
+            name: local_branch.to_string(),
+        }));
     }
     if !status.conflicted.is_empty() {
-        blockers.push(format!(
-            "Repository has {} conflicted file(s). Resolve conflicts before checkout.",
-            status.conflicted.len()
-        ));
+        blockers.push(PlanNote::Common(CommonNote::ConflictedFiles {
+            count: status.conflicted.len(),
+            before: OpPhrase::Checkout,
+        }));
     }
     if !status.staged.is_empty() || !status.unstaged.is_empty() {
-        let mut parts = Vec::new();
-        if !status.staged.is_empty() {
-            parts.push(format!("{} staged", status.staged.len()));
-        }
-        if !status.unstaged.is_empty() {
-            parts.push(format!("{} modified", status.unstaged.len()));
-        }
-        blockers.push(format!(
-            "Working tree has {} — stash or commit changes before checkout.",
-            parts.join(", ")
-        ));
-        warnings.push("Suggested command: git stash push -u".to_string());
+        let parts = DirtyParts {
+            staged: status.staged.len(),
+            modified: status.unstaged.len(),
+        };
+        blockers.push(PlanNote::Common(CommonNote::DirtyBlocksOp {
+            parts,
+            before: OpPhrase::Checkout,
+        }));
+        warnings.push(PlanNote::Common(CommonNote::SuggestStashPush));
     }
     if !status.untracked.is_empty() {
-        warnings.push(format!(
-            "{} untracked file(s) will remain after checkout.",
-            status.untracked.len()
-        ));
+        warnings.push(PlanNote::Common(CommonNote::UntrackedRemain {
+            count: status.untracked.len(),
+            ctx: UntrackedCtx::AfterCheckout,
+        }));
     }
 
     let remote_commit = resolve_branch_commit(repo, remote_branch)?;
@@ -78,22 +80,26 @@ pub fn plan_checkout_tracking_branch(
         head: format!("branch: {} (tracks {})", local_branch, remote_branch),
         dirty: current.dirty.clone(),
     };
-    let recovery = format!(
-        "If checkout succeeds but you do not want the branch, switch back and delete it:\n  git checkout -\n  git branch -d {}",
-        local_branch
-    );
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!(
-            "Checkout {} as local branch {}",
-            remote_branch, local_branch
-        )),
+        title: PlanTitle::Switch(SwitchTitle::CheckoutTracking {
+            remote: remote_branch.to_string(),
+            local: local_branch.to_string(),
+        }),
         current,
         predicted,
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        warnings,
+        blockers,
+        recovery: Some(PlanRecovery {
+            kind: RecoveryKind::Switch(SwitchRecovery::CheckoutTracking {
+                local: local_branch.to_string(),
+            }),
+            commands: vec![
+                "git checkout -".to_string(),
+                format!("git branch -d {}", local_branch),
+            ],
+        }),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -166,47 +172,46 @@ pub fn plan_switch_to_latest(
         head: head.display(),
         dirty: status_summary_display(&status),
     };
-    let mut blockers = Vec::new();
-    let mut warnings = Vec::new();
+    let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     if branch_name.trim().is_empty() {
-        blockers.push("Branch name is empty.".to_string());
+        blockers.push(PlanNote::Switch(SwitchNote::NameEmpty));
     }
     if remote_branch.trim().is_empty() {
-        blockers.push("No upstream/remote branch to switch to.".to_string());
+        blockers.push(PlanNote::Switch(SwitchNote::NoUpstreamToSwitch));
     }
     if !status.conflicted.is_empty() {
-        blockers.push(format!(
-            "Repository has {} conflicted file(s). Resolve conflicts before switching.",
-            status.conflicted.len()
-        ));
+        blockers.push(PlanNote::Common(CommonNote::ConflictedFiles {
+            count: status.conflicted.len(),
+            before: OpPhrase::Switching,
+        }));
     }
     if !status.staged.is_empty() || !status.unstaged.is_empty() {
-        let mut parts = Vec::new();
-        if !status.staged.is_empty() {
-            parts.push(format!("{} staged", status.staged.len()));
-        }
-        if !status.unstaged.is_empty() {
-            parts.push(format!("{} modified", status.unstaged.len()));
-        }
-        blockers.push(format!(
-            "Working tree has {} — stash or commit changes before switching.",
-            parts.join(", ")
-        ));
-        warnings.push("Suggested command: git stash push -u".to_string());
+        let parts = DirtyParts {
+            staged: status.staged.len(),
+            modified: status.unstaged.len(),
+        };
+        blockers.push(PlanNote::Common(CommonNote::DirtyBlocksOp {
+            parts,
+            before: OpPhrase::Switching,
+        }));
+        warnings.push(PlanNote::Common(CommonNote::SuggestStashPush));
     }
     if !status.untracked.is_empty() {
-        warnings.push(format!(
-            "{} untracked file(s) will remain after switching.",
-            status.untracked.len()
-        ));
+        warnings.push(PlanNote::Common(CommonNote::UntrackedRemain {
+            count: status.untracked.len(),
+            ctx: UntrackedCtx::AfterSwitching,
+        }));
     }
 
     // Resolve the remote tip from local knowledge (pre-fetch).
     let remote_commit = match resolve_branch_commit(repo, remote_branch) {
         Ok(c) => Some(c),
         Err(e) => {
-            blockers.push(format!("{}", e));
+            blockers.push(PlanNote::Common(CommonNote::GitErrorPassthrough {
+                message: e.to_string(),
+            }));
             None
         }
     };
@@ -216,10 +221,10 @@ pub fn plan_switch_to_latest(
     let predicted_head = if let Some(remote_commit) = remote_commit.as_ref() {
         let remote_oid = remote_commit.id();
         if !local_exists {
-            warnings.push(format!(
-                "Local branch '{}' does not exist; it will be created tracking {}.",
-                branch_name, remote_branch
-            ));
+            warnings.push(PlanNote::Switch(SwitchNote::WillCreateTracking {
+                name: branch_name.to_string(),
+                remote: remote_branch.to_string(),
+            }));
             format!("branch: {} (new, tracks {})", branch_name, remote_branch)
         } else {
             match local_branch_oid(repo, branch_name) {
@@ -234,10 +239,7 @@ pub fn plan_switch_to_latest(
                     let (_, behind) = repo
                         .graph_ahead_behind(local_oid, remote_oid)
                         .unwrap_or((0, 0));
-                    warnings.push(format!(
-                        "Fast-forward {} commit(s) (local knowledge; re-checked after fetch).",
-                        behind
-                    ));
+                    warnings.push(PlanNote::Switch(SwitchNote::FfLocalKnowledge { behind }));
                     format!(
                         "branch: {} -> {}",
                         branch_name,
@@ -252,25 +254,29 @@ pub fn plan_switch_to_latest(
                     let (ahead, _) = repo
                         .graph_ahead_behind(local_oid, remote_oid)
                         .unwrap_or((0, 0));
-                    warnings.push(format!(
-                        "'{}' is {} commit(s) ahead of {}; switching only, not updated.",
-                        branch_name, ahead, remote_branch
-                    ));
+                    warnings.push(PlanNote::Switch(SwitchNote::AheadSwitchOnly {
+                        name: branch_name.to_string(),
+                        ahead,
+                        remote: remote_branch.to_string(),
+                    }));
                     format!("branch: {} (switch only, ahead)", branch_name)
                 }
                 Ok(local_oid) => {
                     let (ahead, behind) = repo
                         .graph_ahead_behind(local_oid, remote_oid)
                         .unwrap_or((0, 0));
-                    warnings.push(format!(
-                        "'{}' has diverged from {} ({} ahead, {} behind); switching only — \
-                         merge or rebase to integrate.",
-                        branch_name, remote_branch, ahead, behind
-                    ));
+                    warnings.push(PlanNote::Switch(SwitchNote::DivergedSwitchOnly {
+                        name: branch_name.to_string(),
+                        remote: remote_branch.to_string(),
+                        ahead,
+                        behind,
+                    }));
                     format!("branch: {} (switch only, diverged)", branch_name)
                 }
                 Err(e) => {
-                    blockers.push(format!("{}", e));
+                    blockers.push(PlanNote::Common(CommonNote::GitErrorPassthrough {
+                        message: e.to_string(),
+                    }));
                     current.head.clone()
                 }
             }
@@ -286,24 +292,24 @@ pub fn plan_switch_to_latest(
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!(
-            "Switch to latest {} (fetch {})",
-            branch_name, remote_branch
-        )),
+        title: PlanTitle::Switch(SwitchTitle::SwitchToLatest {
+            branch: branch_name.to_string(),
+            remote: remote_branch.to_string(),
+        }),
         current,
         predicted: StateSummary {
             head: predicted_head,
             dirty: "switched (ff-only when safe)".to_string(),
         },
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(format!(
-            "Fetches {} then switches to {}, fast-forwarding only when safe. \
-             Diverged/ahead branches are switched to but never moved. \
-             To go back: git checkout -",
-            remote_of_ref(remote_branch),
-            branch_name
-        ))),
+        warnings,
+        blockers,
+        recovery: Some(PlanRecovery {
+            kind: RecoveryKind::Switch(SwitchRecovery::SwitchToLatest {
+                remote: remote_of_ref(remote_branch).to_string(),
+                branch: branch_name.to_string(),
+            }),
+            commands: vec!["git checkout -".to_string()],
+        }),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),

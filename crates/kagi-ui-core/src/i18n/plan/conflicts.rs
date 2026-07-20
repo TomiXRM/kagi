@@ -1,5 +1,5 @@
-//! JA strings for `ConflictsNote` (ADR-0129 Phase 2 — `crates/kagi-git/src/conflicts.rs`,
-//! the Conflict Editor's continue/abort/skip plans).
+//! JA strings for `ConflictsNote` (ADR-0129 Phase 2 — the git backend's
+//! conflict-session module, the Conflict Editor's continue/abort/skip plans).
 
 use kagi_domain::plan_note::{ConflictsNote, ConflictsRecovery, ConflictsTitle};
 

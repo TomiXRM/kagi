@@ -35,21 +35,21 @@ pub mod stash;
 pub mod switch;
 pub mod worktree;
 
-pub use branch::BranchNote;
-pub use checkout::CheckoutNote;
-pub use cherry_revert::CherryRevertNote;
-pub use cleanup::CleanupNote;
-pub use commit::CommitNote;
+pub use branch::{BranchNote, BranchRecovery, BranchTitle};
+pub use checkout::{CheckoutNote, CheckoutRecovery, CheckoutTitle};
+pub use cherry_revert::{CherryRevertNote, CherryRevertRecovery, CherryRevertTitle};
+pub use cleanup::{CleanupNote, CleanupRecovery, CleanupTitle};
+pub use commit::{CommitNote, CommitRecovery, CommitTitle};
 pub use common::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
-pub use conflicts::ConflictsNote;
+pub use conflicts::{ConflictsNote, ConflictsRecovery, ConflictsTitle};
 pub use discard::DiscardNote;
-pub use history::HistoryNote;
-pub use merge::MergeNote;
-pub use pull::PullNote;
-pub use push::PushNote;
-pub use stash::StashNote;
-pub use switch::SwitchNote;
-pub use worktree::WorktreeNote;
+pub use history::{HistoryNote, HistoryRecovery, HistoryTitle};
+pub use merge::{MergeNote, MergeRecovery, MergeTitle};
+pub use pull::{PullNote, PullRecovery, PullTitle};
+pub use push::{PushNote, PushRecovery, PushTitle};
+pub use stash::{StashNote, StashRecovery, StashTitle};
+pub use switch::{SwitchNote, SwitchRecovery, SwitchTitle};
+pub use worktree::{WorktreeNote, WorktreeRecovery, WorktreeTitle};
 
 /// Category-nested note shown in the plan modal's blockers/warnings lists
 /// (ADR-0129 §1). Flat 100+-variant enums are forbidden — one variant space
@@ -148,6 +148,19 @@ pub enum PlanTitle {
         /// Total selected targets.
         count: usize,
     },
+    Branch(BranchTitle),
+    Stash(StashTitle),
+    History(HistoryTitle),
+    Pull(PullTitle),
+    Push(PushTitle),
+    Switch(SwitchTitle),
+    Checkout(CheckoutTitle),
+    Merge(MergeTitle),
+    Worktree(WorktreeTitle),
+    CherryRevert(CherryRevertTitle),
+    Cleanup(CleanupTitle),
+    Conflicts(ConflictsTitle),
+    Commit(CommitTitle),
     /// Migration-only legacy title (Phase 3 deletes).
     Verbatim(String),
 }
@@ -161,6 +174,19 @@ impl PlanTitle {
     /// Sole English renderer — see [`PlanNote::message_en`].
     pub fn message_en(&self) -> String {
         match self {
+            PlanTitle::Branch(t) => t.message_en(),
+            PlanTitle::Stash(t) => t.message_en(),
+            PlanTitle::History(t) => t.message_en(),
+            PlanTitle::Pull(t) => t.message_en(),
+            PlanTitle::Push(t) => t.message_en(),
+            PlanTitle::Switch(t) => t.message_en(),
+            PlanTitle::Checkout(t) => t.message_en(),
+            PlanTitle::Merge(t) => t.message_en(),
+            PlanTitle::Worktree(t) => t.message_en(),
+            PlanTitle::CherryRevert(t) => t.message_en(),
+            PlanTitle::Cleanup(t) => t.message_en(),
+            PlanTitle::Conflicts(t) => t.message_en(),
+            PlanTitle::Commit(t) => t.message_en(),
             PlanTitle::Verbatim(s) => s.clone(),
             PlanTitle::Discard {
                 single: Some(path), ..
@@ -225,6 +251,19 @@ impl PlanRecovery {
     /// Sole English renderer — see [`PlanNote::message_en`].
     pub fn message_en(&self) -> String {
         match &self.kind {
+            RecoveryKind::Branch(r) => r.message_en(),
+            RecoveryKind::Stash(r) => r.message_en(),
+            RecoveryKind::History(r) => r.message_en(),
+            RecoveryKind::Pull(r) => r.message_en(),
+            RecoveryKind::Push(r) => r.message_en(),
+            RecoveryKind::Switch(r) => r.message_en(),
+            RecoveryKind::Checkout(r) => r.message_en(),
+            RecoveryKind::Merge(r) => r.message_en(),
+            RecoveryKind::Worktree(r) => r.message_en(),
+            RecoveryKind::CherryRevert(r) => r.message_en(),
+            RecoveryKind::Cleanup(r) => r.message_en(),
+            RecoveryKind::Conflicts(r) => r.message_en(),
+            RecoveryKind::Commit(r) => r.message_en(),
             RecoveryKind::Verbatim(s) => s.clone(),
             RecoveryKind::Discard => {
                 "This discards your unstaged changes to the selected file(s): \
@@ -242,6 +281,19 @@ impl PlanRecovery {
 pub enum RecoveryKind {
     /// Discard: index-restore / delete-with-backup explanation.
     Discard,
+    Branch(BranchRecovery),
+    Stash(StashRecovery),
+    History(HistoryRecovery),
+    Pull(PullRecovery),
+    Push(PushRecovery),
+    Switch(SwitchRecovery),
+    Checkout(CheckoutRecovery),
+    Merge(MergeRecovery),
+    Worktree(WorktreeRecovery),
+    CherryRevert(CherryRevertRecovery),
+    Cleanup(CleanupRecovery),
+    Conflicts(ConflictsRecovery),
+    Commit(CommitRecovery),
     /// Migration-only legacy text (Phase 3 deletes).
     Verbatim(String),
 }

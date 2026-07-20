@@ -14,3 +14,25 @@ impl WorktreeNote {
         match *self {}
     }
 }
+
+/// Plan titles for the worktree op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorktreeTitle {}
+
+impl WorktreeTitle {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}
+
+/// Recovery kinds for the worktree op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorktreeRecovery {}
+
+impl WorktreeRecovery {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}

@@ -14,3 +14,25 @@ impl ConflictsNote {
         match *self {}
     }
 }
+
+/// Plan titles for the conflicts op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConflictsTitle {}
+
+impl ConflictsTitle {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}
+
+/// Recovery kinds for the conflicts op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConflictsRecovery {}
+
+impl ConflictsRecovery {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}

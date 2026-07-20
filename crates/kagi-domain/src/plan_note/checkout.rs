@@ -14,3 +14,25 @@ impl CheckoutNote {
         match *self {}
     }
 }
+
+/// Plan titles for the checkout op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckoutTitle {}
+
+impl CheckoutTitle {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}
+
+/// Recovery kinds for the checkout op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckoutRecovery {}
+
+impl CheckoutRecovery {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}

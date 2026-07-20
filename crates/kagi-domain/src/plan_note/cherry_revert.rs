@@ -14,3 +14,25 @@ impl CherryRevertNote {
         match *self {}
     }
 }
+
+/// Plan titles for the cherry_revert op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CherryRevertTitle {}
+
+impl CherryRevertTitle {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}
+
+/// Recovery kinds for the cherry_revert op family (filled by its fan-out PR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CherryRevertRecovery {}
+
+impl CherryRevertRecovery {
+    /// Sole English renderer (byte-identical to the legacy strings).
+    pub fn message_en(&self) -> String {
+        match *self {}
+    }
+}

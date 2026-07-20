@@ -30,15 +30,15 @@ pub mod diff_view;
 pub mod diffstat_bar;
 pub mod ecosystem;
 pub mod editor_fs_ops;
-pub mod editor_markdown;
+pub use kagi_ui_editor::markdown as editor_markdown; // ADR-0121: was a shim file
 pub mod editor_tree_menu;
 pub mod editor_workspace;
 pub mod file_history;
 mod file_menu;
-pub mod file_tree;
+pub use kagi_ui_core::file_tree; // ADR-0121: was a shim file
 mod graph_solo;
 pub mod graph_view;
-pub mod i18n;
+pub use kagi_ui_core::i18n; // ADR-0121: was a shim file
 pub mod inspector;
 pub mod main_diff_pane;
 pub mod menu_overlay;
@@ -65,7 +65,7 @@ mod render_helpers;
 mod render_overlay;
 mod render_status;
 mod render_wip;
-pub mod settings;
+pub use kagi_ui_core::settings; // ADR-0121: was a shim file
 pub mod settings_view;
 pub mod sidebar;
 pub mod smart_commit;
@@ -73,7 +73,7 @@ pub mod stash_menu;
 mod tab_view;
 pub mod tabs;
 pub mod terminal;
-pub mod theme;
+pub use kagi_ui_core::theme; // ADR-0121: was a shim file
 pub mod toast_stack;
 pub mod types;
 pub mod view_models;

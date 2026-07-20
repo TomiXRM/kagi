@@ -18,16 +18,16 @@ mod file_history;
 pub mod hotspot;
 mod log;
 pub mod message_gen;
-pub mod message_template;
+pub use kagi_domain::message_template; // ADR-0121: was a shim file
 pub mod oplog;
 pub mod ops;
-mod refs;
+use kagi_domain::refs; // ADR-0121: was a shim file
 pub mod resolution;
 pub mod session;
 mod snapshot;
 mod staging;
 mod status;
-mod trailers;
+use kagi_domain::trailers; // ADR-0121: was a shim file
 pub mod worker;
 
 #[allow(unused_imports)]

@@ -1,5 +1,14 @@
 use super::*;
 
+// ADR-0129 Phase 2: this file's plan text is now structured (`StashNote` /
+// `StashTitle` / `StashRecovery`), not English prose. `message_en()` in
+// kagi-domain renders the exact legacy strings for oplog/klog/EN display
+// (golden-tested there); JA lives in `kagi-ui-core::i18n::plan::stash`.
+use kagi_domain::plan_note::stash::StashDirtyOp;
+use kagi_domain::plan_note::{
+    CommonNote, DirtyParts, OpPhrase, StashNote, StashRecovery, StashTitle,
+};
+
 // ────────────────────────────────────────────────────────────
 // plan_stash_push
 // ────────────────────────────────────────────────────────────
@@ -67,8 +76,8 @@ pub fn plan_stash_push(
     };
 
     // ── 4. Check blockers ────────────────────────────────────
-    let mut blockers: Vec<String> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
+    let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     // Nothing to stash.
     // When include_untracked=false, untracked files don't count as "something to stash".
@@ -78,38 +87,29 @@ pub fn plan_stash_push(
         !status.staged.is_empty() || !status.unstaged.is_empty()
     };
     if !has_something_to_stash {
-        blockers.push(
-            "Nothing to stash: working tree is already clean \
-             (no staged, modified, or untracked files)."
-                .to_string(),
-        );
+        blockers.push(PlanNote::Stash(StashNote::NothingToStash));
     }
 
     // Conflict state.
     if !status.conflicted.is_empty() {
-        blockers.push(format!(
-            "Repository has {} conflicted file(s). \
-             Resolve conflicts before stashing.",
-            status.conflicted.len()
-        ));
+        blockers.push(PlanNote::Common(CommonNote::ConflictedFiles {
+            count: status.conflicted.len(),
+            before: OpPhrase::Stashing,
+        }));
     }
 
     // Untracked files included in stash (warning, not blocker) — only when include_untracked=true.
     if include_untracked && !status.untracked.is_empty() {
-        warnings.push(format!(
-            "{} untracked file(s) will be included in the stash \
-             (equivalent to `git stash push -u`).",
-            status.untracked.len()
-        ));
+        warnings.push(PlanNote::Stash(StashNote::UntrackedIncluded {
+            count: status.untracked.len(),
+        }));
     }
 
     // When include_untracked=false, warn that untracked files will NOT be stashed.
     if !include_untracked && !status.untracked.is_empty() {
-        warnings.push(format!(
-            "{} untracked file(s) will NOT be included in the stash \
-             (include_untracked=false). They will remain in the working tree.",
-            status.untracked.len()
-        ));
+        warnings.push(PlanNote::Stash(StashNote::UntrackedExcluded {
+            count: status.untracked.len(),
+        }));
     }
 
     // ── 5. Predicted StateSummary ─────────────────────────────
@@ -121,24 +121,26 @@ pub fn plan_stash_push(
     };
 
     // ── 6. Recovery guidance ──────────────────────────────────
-    let recovery = format!(
-        "To inspect stash entries:  git stash list\n\
-         To restore without removing the stash entry:  git stash apply stash@{{0}}\n\
-         Stash message that will be used: \"{}\"",
-        msg_label
-    );
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::Stash(StashRecovery::Push {
+            message: msg_label.to_string(),
+        }),
+        commands: vec![
+            "git stash list".to_string(),
+            "git stash apply stash@{0}".to_string(),
+        ],
+    };
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!(
-            "Stash push — save local modifications ({})",
-            stash_count + 1
-        )),
+        title: PlanTitle::Stash(StashTitle::Push {
+            next_count: stash_count + 1,
+        }),
         current,
         predicted,
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        warnings,
+        blockers,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         preview_files: Vec::new(),
@@ -247,41 +249,33 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
     };
 
     // ── 4. Check blockers ────────────────────────────────────
-    let mut blockers: Vec<String> = Vec::new();
+    let mut blockers: Vec<PlanNote> = Vec::new();
 
     // Index out of range.
     if index >= stash_count {
-        blockers.push(format!(
-            "Stash index {} is out of range (only {} stash entr{} exist).",
+        blockers.push(PlanNote::Stash(StashNote::IndexOutOfRange {
             index,
-            stash_count,
-            if stash_count == 1 { "y" } else { "ies" }
-        ));
+            count: stash_count,
+        }));
     }
 
     // Conflict state.
     if !status.conflicted.is_empty() {
-        blockers.push(format!(
-            "Repository has {} conflicted file(s). \
-             Resolve conflicts before applying a stash.",
-            status.conflicted.len()
-        ));
+        blockers.push(PlanNote::Common(CommonNote::ConflictedFiles {
+            count: status.conflicted.len(),
+            before: OpPhrase::ApplyingAStash,
+        }));
     }
 
     // Dirty working tree (staged or unstaged) — MVP policy: clean only.
     if !status.staged.is_empty() || !status.unstaged.is_empty() {
-        let mut parts = Vec::new();
-        if !status.staged.is_empty() {
-            parts.push(format!("{} staged", status.staged.len()));
-        }
-        if !status.unstaged.is_empty() {
-            parts.push(format!("{} modified", status.unstaged.len()));
-        }
-        blockers.push(format!(
-            "Working tree is dirty ({}) — stash apply is only allowed on a clean \
-             working tree to prevent accidental merge conflicts.",
-            parts.join(", ")
-        ));
+        blockers.push(PlanNote::Stash(StashNote::DirtyBlocksApply {
+            parts: DirtyParts {
+                staged: status.staged.len(),
+                modified: status.unstaged.len(),
+            },
+            op: StashDirtyOp::Apply,
+        }));
     }
 
     // ── 5. Predicted StateSummary ─────────────────────────────
@@ -298,22 +292,22 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
     };
 
     // ── 6. Recovery guidance ──────────────────────────────────
-    let recovery = format!(
-        "The stash entry stash@{{{}}} is NOT removed by apply — it remains in the list.\n\
-         If the apply caused conflicts, resolve them manually; the stash is safely preserved.\n\
-         To see remaining stash entries:  git stash list\n\
-         Stash message: \"{}\"",
-        index, stash_message
-    );
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::Stash(StashRecovery::Apply {
+            index,
+            message: stash_message,
+        }),
+        commands: vec!["git stash list".to_string()],
+    };
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!("Stash apply — restore stash@{{{}}}", index)),
+        title: PlanTitle::Stash(StashTitle::Apply { index }),
         current,
         predicted,
         warnings: Vec::new(),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        blockers,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         preview_files: Vec::new(),
@@ -424,41 +418,33 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
     };
 
     // ── 4. Check blockers ────────────────────────────────────
-    let mut blockers: Vec<String> = Vec::new();
+    let mut blockers: Vec<PlanNote> = Vec::new();
 
     // Index out of range.
     if index >= stash_count {
-        blockers.push(format!(
-            "Stash index {} is out of range (only {} stash entr{} exist).",
+        blockers.push(PlanNote::Stash(StashNote::IndexOutOfRange {
             index,
-            stash_count,
-            if stash_count == 1 { "y" } else { "ies" }
-        ));
+            count: stash_count,
+        }));
     }
 
     // Conflict state.
     if !status.conflicted.is_empty() {
-        blockers.push(format!(
-            "Repository has {} conflicted file(s). \
-             Resolve conflicts before applying a stash.",
-            status.conflicted.len()
-        ));
+        blockers.push(PlanNote::Common(CommonNote::ConflictedFiles {
+            count: status.conflicted.len(),
+            before: OpPhrase::ApplyingAStash,
+        }));
     }
 
     // Dirty working tree (staged or unstaged) — same policy as stash apply.
     if !status.staged.is_empty() || !status.unstaged.is_empty() {
-        let mut parts = Vec::new();
-        if !status.staged.is_empty() {
-            parts.push(format!("{} staged", status.staged.len()));
-        }
-        if !status.unstaged.is_empty() {
-            parts.push(format!("{} modified", status.unstaged.len()));
-        }
-        blockers.push(format!(
-            "Working tree is dirty ({}) — stash pop is only allowed on a clean \
-             working tree to prevent accidental merge conflicts.",
-            parts.join(", ")
-        ));
+        blockers.push(PlanNote::Stash(StashNote::DirtyBlocksApply {
+            parts: DirtyParts {
+                staged: status.staged.len(),
+                modified: status.unstaged.len(),
+            },
+            op: StashDirtyOp::Pop,
+        }));
     }
 
     // ── 5. Stash info + conflict prediction (only when index is valid) ────
@@ -488,22 +474,22 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
     };
 
     // ── 7. Recovery guidance ──────────────────────────────────
-    let recovery = format!(
-        "WARNING: pop = apply + drop.  If apply succeeds, stash@{{{}}} is permanently removed.\n\
-         The stash entry \"{}\" will be consumed.\n\
-         To restore without removing the stash: use 'Stash Apply' instead.\n\
-         To see remaining stash entries:  git stash list",
-        index, stash_message
-    );
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::Stash(StashRecovery::Pop {
+            index,
+            message: stash_message,
+        }),
+        commands: vec!["git stash list".to_string()],
+    };
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!("Stash pop — apply and remove stash@{{{}}}", index)),
+        title: PlanTitle::Stash(StashTitle::Pop { index }),
         current,
         predicted,
         warnings: Vec::new(),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        blockers,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         preview_files: Vec::new(),
@@ -588,7 +574,9 @@ fn stash_drop_internal(repo: &mut Repository, index: usize) -> Result<(), GitErr
 pub fn plan_stash_drop_remote(stash_label: &str, head_summary: String) -> OperationPlan {
     OperationPlan {
         disposition: PlanDisposition::Ready,
-        title: PlanTitle::verbatim(format!("Drop {stash_label}")),
+        title: PlanTitle::Stash(StashTitle::DropRemote {
+            label: stash_label.to_string(),
+        }),
         current: StateSummary {
             head: head_summary.clone(),
             dirty: "remote (read-only view)".to_string(),
@@ -597,17 +585,12 @@ pub fn plan_stash_drop_remote(stash_label: &str, head_summary: String) -> Operat
             head: head_summary,
             dirty: "stash entry removed".to_string(),
         },
-        warnings: PlanNote::wrap_all(vec![
-            "This permanently removes the stash entry on the remote host. \
-             It cannot be undone from Kagi."
-                .to_string(),
-        ]),
+        warnings: vec![PlanNote::Stash(StashNote::RemoteDropIrreversible)],
         blockers: Vec::new(),
-        recovery: Some(PlanRecovery::verbatim(
-            "A dropped stash commit may remain reachable from the remote's \
-                   stash reflog until gc, but Kagi does not manage remote recovery."
-                .to_string(),
-        )),
+        recovery: Some(PlanRecovery {
+            kind: RecoveryKind::Stash(StashRecovery::DropRemote),
+            commands: Vec::new(),
+        }),
         head_at_plan: Head::Unborn {
             branch: String::new(),
         },
@@ -644,14 +627,12 @@ pub fn plan_stash_drop(repo: &mut Repository, index: usize) -> Result<OperationP
         dirty: dirty_display,
     };
 
-    let mut blockers: Vec<String> = Vec::new();
+    let mut blockers: Vec<PlanNote> = Vec::new();
     if index >= stash_count {
-        blockers.push(format!(
-            "Stash index {} is out of range (only {} stash entr{} exist).",
+        blockers.push(PlanNote::Stash(StashNote::IndexOutOfRange {
             index,
-            stash_count,
-            if stash_count == 1 { "y" } else { "ies" }
-        ));
+            count: stash_count,
+        }));
     }
 
     let (stash_message, stash_oid) = stashes
@@ -665,25 +646,28 @@ pub fn plan_stash_drop(repo: &mut Repository, index: usize) -> Result<OperationP
         dirty: format!("working tree unchanged (stash@{{{}}} entry deleted)", index),
     };
 
-    let recovery = match stash_oid {
-        Some(oid) => format!(
-            "Drop removes the stash entry only — the working tree is NOT touched.\n\
-             The dropped stash commit {} stays reachable from the stash reflog until \
-             gc; restore it with:\n  git stash store -m \"{}\" {}\n\
-             To see remaining stash entries:  git stash list",
-            oid, stash_message, oid
-        ),
-        None => "Drop removes the stash entry only — the working tree is NOT touched.".to_string(),
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::Stash(StashRecovery::Drop {
+            message: stash_message.clone(),
+            oid: stash_oid.map(|oid| oid.to_string()),
+        }),
+        commands: match stash_oid {
+            Some(oid) => vec![
+                format!("git stash store -m \"{}\" {}", stash_message, oid),
+                "git stash list".to_string(),
+            ],
+            None => Vec::new(),
+        },
     };
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!("Stash drop — delete stash@{{{}}}", index)),
+        title: PlanTitle::Stash(StashTitle::Drop { index }),
         current,
         predicted,
         warnings: Vec::new(),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        blockers,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         preview_files: Vec::new(),
@@ -724,12 +708,12 @@ pub fn execute_stash_drop(repo: &mut Repository, index: usize) -> Result<String,
 /// Merging the stash commit against the current HEAD predicts whether
 /// `git stash apply` would conflict.
 ///
-/// Returns `Some(blocker_message)` if a conflict is predicted, `None` if clean.
+/// Returns `Some(blocker_note)` if a conflict is predicted, `None` if clean.
 fn predict_stash_pop_conflict(
     repo: &Repository,
     head: &Head,
     stash_oid: git2::Oid,
-) -> Option<String> {
+) -> Option<PlanNote> {
     // Resolve HEAD OID.
     let head_oid = match head {
         Head::Attached { target, .. } | Head::Detached { target } => {
@@ -761,18 +745,10 @@ fn predict_stash_pop_conflict(
                 }
             }
         }
-        Some(format!(
-            "Stash pop would produce {} conflict(s): {}. \
-             Pop is blocked to prevent losing the stash entry. \
-             Use 'Stash Apply' instead: it applies the stash without removing it, \
-             allowing you to resolve conflicts safely.",
-            conflict_files.len(),
-            if conflict_files.is_empty() {
-                "(unknown files)".to_string()
-            } else {
-                conflict_files.join(", ")
-            }
-        ))
+        Some(PlanNote::Stash(StashNote::PopWouldConflict {
+            count: conflict_files.len(),
+            files: conflict_files,
+        }))
     } else {
         None
     }

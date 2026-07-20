@@ -54,6 +54,10 @@ tempfile = "3"
 # keys on write. Both crates are already in the tree via gpui.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Local wall-clock for the footer / oplog timestamps (ADR: locale-aware time).
+# Already in the tree transitively; `clock` pulls iana-time-zone for a
+# soundness-safe local UTC offset (no localtime_r footgun in this MT app).
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Windows-only: embeds assets/icon/icon.ico into kagi.exe's resources via
 # build.rs. No-op (unused) on other targets.

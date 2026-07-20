@@ -1,5 +1,15 @@
 use super::*;
 
+// ADR-0129 Phase 2: this file's plan text is now structured (`CherryRevertNote`
+// / `CherryRevertTitle` / `CherryRevertRecovery`), not English prose.
+// `message_en()` in kagi-domain renders the exact legacy strings for
+// oplog/klog/EN display (golden-tested there); JA lives in
+// `kagi-ui-core::i18n::plan::cherry_revert`.
+use kagi_domain::plan_note::{
+    CherryRevertNote, CherryRevertRecovery, CherryRevertTitle, CommonNote, DirtyParts, OpPhrase,
+    PlanOp, UntrackedCtx,
+};
+
 // ────────────────────────────────────────────────────────────
 // plan_cherry_pick  (T016)
 // ────────────────────────────────────────────────────────────
@@ -62,53 +72,48 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
     };
 
     // ── 3. Early blockers (before touching git objects) ──────
-    let mut blockers: Vec<String> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
+    let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     // Unborn HEAD: no commits → cannot cherry-pick.
     if let Head::Unborn { .. } = &head {
-        blockers.push(
-            "HEAD is unborn (no commits exist). Cannot cherry-pick onto an empty branch."
-                .to_string(),
-        );
+        blockers.push(PlanNote::Common(CommonNote::HeadUnborn {
+            op: PlanOp::CherryPick,
+        }));
     }
 
     // Detached HEAD: MVP requires an attached branch.
     if let Head::Detached { .. } = &head {
-        blockers.push(
-            "HEAD is detached. Cherry-pick is only supported when HEAD is on a branch.".to_string(),
-        );
+        blockers.push(PlanNote::Common(CommonNote::HeadDetached {
+            op: PlanOp::CherryPick,
+        }));
     }
 
     // Conflict state in repo.
     if !status.conflicted.is_empty() {
-        blockers.push(format!(
-            "Repository has {} conflicted file(s). Resolve conflicts before cherry-picking.",
-            status.conflicted.len()
-        ));
+        blockers.push(PlanNote::Common(CommonNote::ConflictedFiles {
+            count: status.conflicted.len(),
+            before: OpPhrase::CherryPicking,
+        }));
     }
 
     // Dirty working tree (staged / unstaged).
     if !status.staged.is_empty() || !status.unstaged.is_empty() {
-        let mut parts = Vec::new();
-        if !status.staged.is_empty() {
-            parts.push(format!("{} staged", status.staged.len()));
-        }
-        if !status.unstaged.is_empty() {
-            parts.push(format!("{} modified", status.unstaged.len()));
-        }
-        blockers.push(format!(
-            "Working tree has {} — stash or commit changes before cherry-picking.",
-            parts.join(", ")
-        ));
+        blockers.push(PlanNote::Common(CommonNote::DirtyBlocksOp {
+            parts: DirtyParts {
+                staged: status.staged.len(),
+                modified: status.unstaged.len(),
+            },
+            before: OpPhrase::CherryPicking,
+        }));
     }
 
     // Untracked files: warning only.
     if !status.untracked.is_empty() {
-        warnings.push(format!(
-            "{} untracked file(s) will remain untouched after cherry-pick.",
-            status.untracked.len()
-        ));
+        warnings.push(PlanNote::Common(CommonNote::UntrackedRemain {
+            count: status.untracked.len(),
+            ctx: UntrackedCtx::AfterCherryPick,
+        }));
     }
 
     // ── 4. Resolve target commit ──────────────────────────────
@@ -130,11 +135,12 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
 
     // Merge commit check.
     if commit.parent_count() > 1 {
-        blockers.push(format!(
-            "Commit {} is a merge commit ({} parents). Cherry-picking merge commits \
-             requires explicit mainline selection, which is not supported in MVP.",
-            id.short(),
-            commit.parent_count()
+        blockers.push(PlanNote::CherryRevert(
+            CherryRevertNote::MergeCommitNeedsMainline {
+                sha: id.short().to_string(),
+                parents: commit.parent_count(),
+                op: PlanOp::CherryPick,
+            },
         ));
     }
 
@@ -147,9 +153,10 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
 
     if let Some(head_oid) = head_oid_opt {
         if head_oid == target_oid {
-            blockers.push(format!(
-                "Commit {} is the current HEAD commit. Nothing to cherry-pick.",
-                id.short()
+            blockers.push(PlanNote::CherryRevert(
+                CherryRevertNote::NothingToCherryPickHead {
+                    sha: id.short().to_string(),
+                },
             ));
         }
     }
@@ -165,18 +172,24 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             head: head_display.clone(),
             dirty: current.dirty.clone(),
         };
-        let recovery =
-            "To undo a cherry-pick after execution, use:\n  git revert <new-commit-sha>\n\
-             The previous HEAD sha is recorded in the reflog:\n  git reflog"
-                .to_string();
         return Ok(OperationPlan {
             disposition: PlanDisposition::for_blockers(&blockers),
-            title: PlanTitle::verbatim(format!("Cherry-pick {} onto {}", id.short(), branch_name)),
+            title: PlanTitle::CherryRevert(CherryRevertTitle::CherryPick {
+                sha: id.short().to_string(),
+                summary: None,
+                branch: branch_name,
+            }),
             current,
             predicted,
-            warnings: PlanNote::wrap_all(warnings),
-            blockers: PlanNote::wrap_all(blockers),
-            recovery: Some(PlanRecovery::verbatim(recovery)),
+            warnings,
+            blockers,
+            recovery: Some(PlanRecovery {
+                kind: RecoveryKind::CherryRevert(CherryRevertRecovery::AfterCherryPick),
+                commands: vec![
+                    "git revert <new-commit-sha>".to_string(),
+                    "git reflog".to_string(),
+                ],
+            }),
             head_at_plan: head,
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
@@ -221,11 +234,11 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
                 conflict_files.push(path_str);
             }
         }
-        blockers.push(format!(
-            "Cherry-pick would produce {} conflict(s): {}. Resolve divergence before cherry-picking.",
-            conflict_files.len(),
-            conflict_files.join(", ")
-        ));
+        blockers.push(PlanNote::CherryRevert(CherryRevertNote::WouldConflict {
+            count: conflict_files.len(),
+            files: conflict_files.clone(),
+            op: PlanOp::CherryPick,
+        }));
         let branch_name = match &head {
             Head::Attached { branch, .. } => branch.clone(),
             _ => "(unknown)".to_string(),
@@ -234,18 +247,24 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             head: head_display.clone(),
             dirty: current.dirty.clone(),
         };
-        let recovery =
-            "To undo a cherry-pick after execution, use:\n  git revert <new-commit-sha>\n\
-             The previous HEAD sha is recorded in the reflog:\n  git reflog"
-                .to_string();
         return Ok(OperationPlan {
             disposition: PlanDisposition::for_blockers(&blockers),
-            title: PlanTitle::verbatim(format!("Cherry-pick {} onto {}", id.short(), branch_name)),
+            title: PlanTitle::CherryRevert(CherryRevertTitle::CherryPick {
+                sha: id.short().to_string(),
+                summary: None,
+                branch: branch_name,
+            }),
             current,
             predicted,
-            warnings: PlanNote::wrap_all(warnings),
-            blockers: PlanNote::wrap_all(blockers),
-            recovery: Some(PlanRecovery::verbatim(recovery)),
+            warnings,
+            blockers,
+            recovery: Some(PlanRecovery {
+                kind: RecoveryKind::CherryRevert(CherryRevertRecovery::AfterCherryPick),
+                commands: vec![
+                    "git revert <new-commit-sha>".to_string(),
+                    "git reflog".to_string(),
+                ],
+            }),
             head_at_plan: head,
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
@@ -313,10 +332,10 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
 
     // ── 10. Empty-result check (already applied) ─────────────
     if preview_files.is_empty() {
-        blockers.push(format!(
-            "Cherry-picking {} would produce no changes — it appears to have been applied already.",
-            id.short()
-        ));
+        blockers.push(PlanNote::CherryRevert(CherryRevertNote::NoChanges {
+            sha: id.short().to_string(),
+            op: PlanOp::CherryPick,
+        }));
         let branch_name = match &head {
             Head::Attached { branch, .. } => branch.clone(),
             _ => "(unknown)".to_string(),
@@ -325,18 +344,24 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             head: head_display.clone(),
             dirty: current.dirty.clone(),
         };
-        let recovery =
-            "To undo a cherry-pick after execution, use:\n  git revert <new-commit-sha>\n\
-             The previous HEAD sha is recorded in the reflog:\n  git reflog"
-                .to_string();
         return Ok(OperationPlan {
             disposition: PlanDisposition::for_blockers(&blockers),
-            title: PlanTitle::verbatim(format!("Cherry-pick {} onto {}", id.short(), branch_name)),
+            title: PlanTitle::CherryRevert(CherryRevertTitle::CherryPick {
+                sha: id.short().to_string(),
+                summary: None,
+                branch: branch_name,
+            }),
             current,
             predicted,
-            warnings: PlanNote::wrap_all(warnings),
-            blockers: PlanNote::wrap_all(blockers),
-            recovery: Some(PlanRecovery::verbatim(recovery)),
+            warnings,
+            blockers,
+            recovery: Some(PlanRecovery {
+                kind: RecoveryKind::CherryRevert(CherryRevertRecovery::AfterCherryPick),
+                commands: vec![
+                    "git revert <new-commit-sha>".to_string(),
+                    "git reflog".to_string(),
+                ],
+            }),
             head_at_plan: head,
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
@@ -369,23 +394,24 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
         dirty: "clean".to_string(),
     };
 
-    let recovery = "To undo a cherry-pick after execution, use:\n  git revert <new-commit-sha>\n\
-         The previous HEAD sha is recorded in the reflog:\n  git reflog"
-        .to_string();
-
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!(
-            "Cherry-pick {} '{}' onto {}",
-            id.short(),
-            summary_line,
-            branch_name
-        )),
+        title: PlanTitle::CherryRevert(CherryRevertTitle::CherryPick {
+            sha: id.short().to_string(),
+            summary: Some(summary_line),
+            branch: branch_name,
+        }),
         current,
         predicted,
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        warnings,
+        blockers,
+        recovery: Some(PlanRecovery {
+            kind: RecoveryKind::CherryRevert(CherryRevertRecovery::AfterCherryPick),
+            commands: vec![
+                "git revert <new-commit-sha>".to_string(),
+                "git reflog".to_string(),
+            ],
+        }),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files,
@@ -564,43 +590,38 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
         dirty: dirty_display,
     };
 
-    let mut blockers = Vec::new();
-    let mut warnings = Vec::new();
+    let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     if let Head::Unborn { .. } = &head {
-        blockers.push(
-            "HEAD is unborn (no commits exist). Cannot revert on an empty branch.".to_string(),
-        );
+        blockers.push(PlanNote::Common(CommonNote::HeadUnborn {
+            op: PlanOp::Revert,
+        }));
     }
     if let Head::Detached { .. } = &head {
-        blockers.push(
-            "HEAD is detached. Revert is only supported when HEAD is on a branch.".to_string(),
-        );
+        blockers.push(PlanNote::Common(CommonNote::HeadDetached {
+            op: PlanOp::Revert,
+        }));
     }
     if !status.conflicted.is_empty() {
-        blockers.push(format!(
-            "Repository has {} conflicted file(s). Resolve conflicts before reverting.",
-            status.conflicted.len()
-        ));
+        blockers.push(PlanNote::Common(CommonNote::ConflictedFiles {
+            count: status.conflicted.len(),
+            before: OpPhrase::Reverting,
+        }));
     }
     if !status.staged.is_empty() || !status.unstaged.is_empty() {
-        let mut parts = Vec::new();
-        if !status.staged.is_empty() {
-            parts.push(format!("{} staged", status.staged.len()));
-        }
-        if !status.unstaged.is_empty() {
-            parts.push(format!("{} modified", status.unstaged.len()));
-        }
-        warnings.push(format!(
-            "Working tree has {}. Safe checkout may refuse if those files overlap the revert.",
-            parts.join(", ")
-        ));
+        warnings.push(PlanNote::CherryRevert(CherryRevertNote::DirtyMayRefuse {
+            parts: DirtyParts {
+                staged: status.staged.len(),
+                modified: status.unstaged.len(),
+            },
+        }));
     }
     if !status.untracked.is_empty() {
-        warnings.push(format!(
-            "{} untracked file(s) will remain untouched after revert.",
-            status.untracked.len()
-        ));
+        warnings.push(PlanNote::Common(CommonNote::UntrackedRemain {
+            count: status.untracked.len(),
+            ctx: UntrackedCtx::AfterRevert,
+        }));
     }
 
     let target_oid = if id.0.len() == 40 {
@@ -619,10 +640,12 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
     })?;
 
     if commit.parent_count() > 1 {
-        blockers.push(format!(
-            "Commit {} is a merge commit ({} parents). Reverting merge commits requires explicit mainline selection, which is not supported in MVP.",
-            id.short(),
-            commit.parent_count()
+        blockers.push(PlanNote::CherryRevert(
+            CherryRevertNote::MergeCommitNeedsMainline {
+                sha: id.short().to_string(),
+                parents: commit.parent_count(),
+                op: PlanOp::Revert,
+            },
         ));
     }
 
@@ -638,9 +661,10 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
                 .graph_descendant_of(head_oid, target_oid)
                 .unwrap_or(false);
         if !is_on_current_branch {
-            blockers.push(format!(
-                "Commit {} is not contained in the current branch. Revert only operates on current-branch commits.",
-                id.short()
+            blockers.push(PlanNote::CherryRevert(
+                CherryRevertNote::NotInCurrentBranch {
+                    sha: id.short().to_string(),
+                },
             ));
         }
     }
@@ -657,26 +681,31 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
         .chars()
         .take(72)
         .collect();
-    let recovery = "To undo this revert after execution, revert the new revert commit:\n  git revert <new-revert-commit-sha>\n\
-         The previous HEAD sha is recorded in the reflog:\n  git reflog".to_string();
+    let title = PlanTitle::CherryRevert(CherryRevertTitle::Revert {
+        sha: id.short().to_string(),
+        summary: summary_line.clone(),
+        branch: branch_name.clone(),
+    });
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::CherryRevert(CherryRevertRecovery::AfterRevert),
+        commands: vec![
+            "git revert <new-revert-commit-sha>".to_string(),
+            "git reflog".to_string(),
+        ],
+    };
 
     let blocked_plan =
-        |blockers: Vec<String>, warnings: Vec<String>, current: StateSummary| OperationPlan {
+        |blockers: Vec<PlanNote>, warnings: Vec<PlanNote>, current: StateSummary| OperationPlan {
             disposition: PlanDisposition::for_blockers(&blockers),
-            title: PlanTitle::verbatim(format!(
-                "Revert {} '{}' on {}",
-                id.short(),
-                summary_line,
-                branch_name
-            )),
+            title: title.clone(),
             current: current.clone(),
             predicted: StateSummary {
                 head: head_display.clone(),
                 dirty: current.dirty.clone(),
             },
-            warnings: PlanNote::wrap_all(warnings),
-            blockers: PlanNote::wrap_all(blockers),
-            recovery: Some(PlanRecovery::verbatim(recovery.clone())),
+            warnings,
+            blockers,
+            recovery: Some(recovery.clone()),
             head_at_plan: head.clone(),
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
@@ -716,11 +745,11 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
                 conflict_files.push(String::from_utf8_lossy(&p).into_owned());
             }
         }
-        blockers.push(format!(
-            "Revert would produce {} conflict(s): {}. Resolve divergence before reverting.",
-            conflict_files.len(),
-            conflict_files.join(", ")
-        ));
+        blockers.push(PlanNote::CherryRevert(CherryRevertNote::WouldConflict {
+            count: conflict_files.len(),
+            files: conflict_files.clone(),
+            op: PlanOp::Revert,
+        }));
         return Ok(blocked_plan(blockers, warnings, current));
     }
 
@@ -775,10 +804,10 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
     }
 
     if preview_files.is_empty() {
-        blockers.push(format!(
-            "Reverting {} would produce no changes.",
-            id.short()
-        ));
+        blockers.push(PlanNote::CherryRevert(CherryRevertNote::NoChanges {
+            sha: id.short().to_string(),
+            op: PlanOp::Revert,
+        }));
         return Ok(blocked_plan(blockers, warnings, current));
     }
 
@@ -796,17 +825,12 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!(
-            "Revert {} '{}' on {}",
-            id.short(),
-            summary_line,
-            branch_name
-        )),
+        title,
         current,
         predicted,
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        warnings,
+        blockers,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files,

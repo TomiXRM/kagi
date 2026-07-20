@@ -793,10 +793,30 @@ mod toolbar_tests {
     }
 }
 
-/// Format a Unix-epoch timestamp as `"HH:MM:SS"` (local wall-clock, UTC).
+/// Format a Unix-epoch timestamp as `"HH:MM:SS"` in the machine's **local**
+/// time zone (footer last-refresh clock, oplog overlay timestamps).
 ///
-/// Reuses the same constant-time civil arithmetic as `detail_panel::format_utc`.
+/// Was UTC-only (`epoch % 86400`), which read 9 h off in JST etc. The local
+/// UTC offset is resolved per-instant via chrono (iana-time-zone under the
+/// hood — DST-correct and free of the `localtime_r` data race), then the pure
+/// civil arithmetic in [`hms_from_epoch`] renders the shifted seconds.
 pub fn format_hms(epoch_secs: i64) -> String {
+    hms_from_epoch(epoch_secs + local_utc_offset_secs(epoch_secs))
+}
+
+/// Local UTC offset (seconds) at `epoch_secs`; `0` if it can't be resolved.
+pub(crate) fn local_utc_offset_secs(epoch_secs: i64) -> i64 {
+    use chrono::{Offset, TimeZone};
+    chrono::Local
+        .timestamp_opt(epoch_secs, 0)
+        .single()
+        .map(|dt| dt.offset().fix().local_minus_utc() as i64)
+        .unwrap_or(0)
+}
+
+/// Pure `"HH:MM:SS"` from a (possibly offset-adjusted) epoch second count.
+/// Machine-independent — unit-tested; the tz shift lives in [`format_hms`].
+fn hms_from_epoch(epoch_secs: i64) -> String {
     const SECS_PER_DAY: i64 = 86_400;
     let time_of_day = if epoch_secs >= 0 {
         epoch_secs % SECS_PER_DAY
@@ -808,6 +828,25 @@ pub fn format_hms(epoch_secs: i64) -> String {
     let minute = ((time_of_day % 3_600) / 60) as u32;
     let second = (time_of_day % 60) as u32;
     format!("{:02}:{:02}:{:02}", hour, minute, second)
+}
+
+#[cfg(test)]
+mod hms_tests {
+    use super::hms_from_epoch;
+
+    #[test]
+    fn formats_time_of_day() {
+        assert_eq!(hms_from_epoch(0), "00:00:00");
+        assert_eq!(hms_from_epoch(1_705_311_000), "09:30:00");
+        assert_eq!(hms_from_epoch(86_399), "23:59:59");
+        // wraps across the day boundary (offset can push epoch past a day)
+        assert_eq!(hms_from_epoch(86_400 + 3_661), "01:01:01");
+    }
+
+    #[test]
+    fn negative_epoch_floors() {
+        assert_eq!(hms_from_epoch(-60), "23:59:00");
+    }
 }
 
 // ──────────────────────────────────────────────────────────────

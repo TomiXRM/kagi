@@ -1,4 +1,5 @@
 use super::*;
+use kagi_domain::plan_note::{BranchNote, BranchRecovery, BranchTitle, CommonNote};
 
 // ────────────────────────────────────────────────────────────
 // plan_create_branch
@@ -90,11 +91,12 @@ pub fn plan_create_branch(
 
     // ── 3. Check blockers ────────────────────────────────────
     // The branch-name reasons are computed as keyed errors (W29-I18N-WAVE2) so
-    // the UI can localize them; their `Display` is pushed verbatim into the
-    // English-only `blockers` Vec that the tests pin.
-    let mut blockers: Vec<String> = create_branch_name_errors(repo, name)
+    // the UI can localize them (ADR-0129 appendix §E — kept as `Verbatim`,
+    // localized via the separate `localize_plan_blockers` shim, not a
+    // `BranchNote`); their `Display` is pushed verbatim into `blockers`.
+    let mut blockers: Vec<PlanNote> = create_branch_name_errors(repo, name)
         .iter()
-        .map(|e| e.to_string())
+        .map(|e| PlanNote::verbatim(e.to_string()))
         .collect();
 
     // Commit existence check.
@@ -105,10 +107,9 @@ pub fn plan_create_branch(
         Err(_) => false,
     };
     if !commit_exists {
-        blockers.push(format!(
-            "Commit '{}' does not exist in this repository.",
-            at.short()
-        ));
+        blockers.push(PlanNote::Branch(BranchNote::CommitMissing {
+            sha: at.short().to_string(),
+        }));
     }
 
     // ── 4. Predicted StateSummary ─────────────────────────────
@@ -120,20 +121,25 @@ pub fn plan_create_branch(
     };
 
     // ── 5. Recovery guidance ──────────────────────────────────
-    let recovery = format!(
-        "The new branch '{}' can be removed without side effects:\n  git branch -d {}\n\
-         (Branch creation does not move HEAD or alter the working tree.)",
-        name, name
-    );
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::Branch(BranchRecovery::CreateBranch {
+            name: name.to_string(),
+        }),
+        commands: vec![format!("git branch -d {}", name)],
+    };
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!("Create branch '{}' @ {}", name, short_sha)),
+        title: PlanTitle::Branch(BranchTitle::CreateBranch {
+            name: name.to_string(),
+            at: short_sha,
+            checkout: false,
+        }),
         current,
         predicted,
         warnings: Vec::new(),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        blockers,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -287,31 +293,35 @@ pub fn plan_rename_branch(
         head: head.display(),
         dirty: status_summary_display(&status),
     };
-    let mut blockers = Vec::new();
-    let mut warnings = Vec::new();
+    let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     if repo.find_branch(old_name, BranchType::Local).is_err() {
-        blockers.push(format!("Branch '{}' does not exist.", old_name));
+        blockers.push(PlanNote::Common(CommonNote::BranchMissing {
+            name: old_name.to_string(),
+            in_repo: false,
+        }));
     }
     let existing = local_branch_names(repo)?;
     if let BranchRenameValidation::Invalid(reason) =
         validate_branch_rename(old_name, new_name, &existing)
     {
-        blockers.push(reason.to_string());
+        // ADR-0129 appendix §E: also a keyed `BranchNameError` — localized via
+        // the same `localize_plan_blockers` shim as create-branch, not a
+        // `BranchNote`.
+        blockers.push(PlanNote::verbatim(reason.to_string()));
     }
     if status.is_dirty() {
-        warnings.push(
-            "Working tree is dirty; branch rename is ref-only and will not touch files."
-                .to_string(),
-        );
+        warnings.push(PlanNote::Branch(BranchNote::RenameRefOnlyDirty));
     }
-    warnings.push(
-        "Remote branch names are not renamed automatically; only local branch config is carried over.".to_string(),
-    );
+    warnings.push(PlanNote::Branch(BranchNote::RenameRemoteNotRenamed));
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!("Rename branch '{}' to '{}'", old_name, new_name)),
+        title: PlanTitle::Branch(BranchTitle::RenameBranch {
+            old: old_name.to_string(),
+            new: new_name.to_string(),
+        }),
         current,
         predicted: StateSummary {
             head: match &head {
@@ -322,12 +332,15 @@ pub fn plan_rename_branch(
             },
             dirty: "working tree unchanged".to_string(),
         },
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(format!(
-            "This renames only the local ref. To undo: git branch -m {} {}",
-            new_name, old_name
-        ))),
+        warnings,
+        blockers,
+        recovery: Some(PlanRecovery {
+            kind: RecoveryKind::Branch(BranchRecovery::RenameBranch {
+                old: old_name.to_string(),
+                new: new_name.to_string(),
+            }),
+            commands: vec![format!("git branch -m {} {}", new_name, old_name)],
+        }),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -507,35 +520,40 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
     };
 
     // ── 3. Check blockers ────────────────────────────────────
-    let mut blockers: Vec<String> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
+    let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     // Branch existence check.
     let branch_result = repo.find_branch(name, BranchType::Local);
     let branch = match branch_result {
         Ok(b) => b,
         Err(_) => {
-            blockers.push(format!(
-                "Branch '{}' does not exist in this repository.",
-                name
-            ));
+            blockers.push(PlanNote::Common(CommonNote::BranchMissing {
+                name: name.to_string(),
+                in_repo: true,
+            }));
             // Build minimal plan with blocker and return early.
             let predicted = StateSummary {
                 head: head_display.clone(),
                 dirty: current.dirty.clone(),
             };
-            let recovery = format!(
-                "Branch '{}' could not be found. Use `git branch` to list local branches.",
-                name
-            );
             return Ok(OperationPlan {
                 disposition: PlanDisposition::for_blockers(&blockers),
-                title: PlanTitle::verbatim(format!("Delete branch '{}'", name)),
+                title: PlanTitle::Branch(BranchTitle::DeleteBranch {
+                    name: name.to_string(),
+                    tip: None,
+                }),
                 current,
                 predicted,
-                warnings: PlanNote::wrap_all(warnings),
-                blockers: PlanNote::wrap_all(blockers),
-                recovery: Some(PlanRecovery::verbatim(recovery)),
+                warnings,
+                blockers,
+                recovery: Some(PlanRecovery {
+                    kind: RecoveryKind::Branch(BranchRecovery::DeleteBranch {
+                        name: name.to_string(),
+                        tip: None,
+                    }),
+                    commands: Vec::new(),
+                }),
                 head_at_plan: head,
                 stash_count_at_plan: 0,
                 preview_files: Vec::new(),
@@ -563,11 +581,9 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
     } = head
     {
         if head_branch == name {
-            blockers.push(format!(
-                "Branch '{}' is the currently checked-out branch. \
-                 Checkout a different branch before deleting this one.",
-                name
-            ));
+            blockers.push(PlanNote::Branch(BranchNote::DeleteCurrentBranch {
+                name: name.to_string(),
+            }));
         }
     }
 
@@ -576,28 +592,20 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
     // BLOCK — a clean one becomes part of the plan: remove it, then delete.
     if let Some(wt) = worktree_checkout_of(repo, name) {
         if wt.locked {
-            blockers.push(format!(
-                "Branch '{}' is checked out in LOCKED worktree '{}'. \
-                 Unlock it first (right-click the worktree in the sidebar \
-                 \u{2192} Unlock worktree) before deleting the branch.",
-                name,
-                wt.path.display()
-            ));
+            blockers.push(PlanNote::Branch(BranchNote::DeleteBranchInLockedWorktree {
+                name: name.to_string(),
+                path: wt.path.display().to_string(),
+            }));
         } else if wt.dirty {
-            blockers.push(format!(
-                "Branch '{}' is checked out in worktree '{}' which has \
-                 uncommitted changes. Commit or discard them there first — \
-                 the worktree is not removed while it holds work.",
-                name,
-                wt.path.display()
-            ));
+            blockers.push(PlanNote::Branch(BranchNote::DeleteBranchInDirtyWorktree {
+                name: name.to_string(),
+                path: wt.path.display().to_string(),
+            }));
         } else {
-            warnings.push(format!(
-                "Branch '{}' is checked out in clean worktree '{}'. \
-                 The worktree will be removed, then the branch deleted.",
-                name,
-                wt.path.display()
-            ));
+            warnings.push(PlanNote::Branch(BranchNote::DeleteRemovesPinningWorktree {
+                name: name.to_string(),
+                path: wt.path.display().to_string(),
+            }));
         }
     }
 
@@ -606,11 +614,9 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
         let head_oid_res = git2::Oid::from_str(target);
         if let Ok(head_oid) = head_oid_res {
             if head_oid == tip_oid {
-                blockers.push(format!(
-                    "HEAD is detached and points to the same commit as '{}'. \
-                     This branch cannot be deleted while HEAD is at its tip.",
-                    name
-                ));
+                blockers.push(PlanNote::Branch(BranchNote::DeleteDetachedAtTip {
+                    name: name.to_string(),
+                }));
             }
         }
     }
@@ -638,22 +644,18 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
     };
 
     if !is_merged {
-        blockers.push(format!(
-            "Branch '{}' has unmerged commits (tip {} is not reachable from HEAD). \
-             Merge or discard the branch manually before deleting. \
-             Force delete is not provided.",
-            name, tip_short
-        ));
+        blockers.push(PlanNote::Branch(BranchNote::DeleteUnmerged {
+            name: name.to_string(),
+            tip: tip_short.clone(),
+        }));
     }
 
     // Upstream warning: remote branch is NOT deleted.
     let has_upstream = branch.upstream().is_ok();
     if has_upstream {
-        warnings.push(format!(
-            "Branch '{}' has an upstream tracking branch. \
-             Only the local branch will be deleted; the remote branch is NOT removed.",
-            name
-        ));
+        warnings.push(PlanNote::Branch(BranchNote::DeleteKeepsRemote {
+            name: name.to_string(),
+        }));
     }
 
     // ── 4. Predicted StateSummary ─────────────────────────────
@@ -664,27 +666,28 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
     };
 
     // ── 5. Recovery guidance ──────────────────────────────────
-    let recovery = format!(
-        "To restore the deleted branch:\n  git branch {} {}\n\
-         The branch tip commit '{}' remains in the object store until GC.",
-        name, tip_short, tip_short
-    );
-    // ADR-0129 F-4: the restore command as data — the UI reads
-    // `recovery.commands.first()` instead of parsing the display text's
-    // second line.
-    let recovery_commands = vec![format!("git branch {} {}", name, tip_short)];
+    // ADR-0129 F-4: the restore command is structured data (`commands`) — the
+    // UI reads `recovery.commands.first()` instead of parsing the display
+    // text's second line.
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::Branch(BranchRecovery::DeleteBranch {
+            name: name.to_string(),
+            tip: Some(tip_short.clone()),
+        }),
+        commands: vec![format!("git branch {} {}", name, tip_short)],
+    };
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!("Delete branch '{}' (tip {})", name, tip_short)),
+        title: PlanTitle::Branch(BranchTitle::DeleteBranch {
+            name: name.to_string(),
+            tip: Some(tip_short),
+        }),
         current,
         predicted,
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim_with_commands(
-            recovery,
-            recovery_commands,
-        )),
+        warnings,
+        blockers,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),

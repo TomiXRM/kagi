@@ -64,6 +64,11 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
 
+# Windows-only: embeds assets/icon/icon.ico into kagi.exe's resources via
+# build.rs. No-op (unused) on other targets.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 # Distributed/release builds run compute-heavy paths (tree-sitter highlighting,
 # git2 diffs, commit-graph layout), so tune past Cargo's default release profile
 # (opt-level=3, lto=off, codegen-units=16) for faster runtime + a smaller binary.

@@ -1,4 +1,7 @@
 use super::*;
+use kagi_domain::plan_note::{
+    CommonNote, HistoryNote, HistoryOp, HistoryRecovery, HistoryTitle, OpPhrase, PlanOp,
+};
 
 /// Analyse whether undoing the current HEAD commit is safe and return an
 /// [`OperationPlan`].
@@ -58,24 +61,28 @@ pub fn plan_undo_commit(repo: &Repository) -> Result<OperationPlan, GitError> {
     };
 
     // ── 3. Early structural blockers ─────────────────────────
-    let mut blockers: Vec<String> = Vec::new();
+    let mut blockers: Vec<PlanNote> = Vec::new();
 
     // Detached HEAD: no branch ref to move.
     if let Head::Detached { .. } = &head {
-        blockers.push("HEAD is detached. Undo commit requires HEAD to be on a branch.".to_string());
+        blockers.push(PlanNote::Common(CommonNote::HeadDetached {
+            op: PlanOp::Undo,
+        }));
     }
 
     // Unborn HEAD: no commits to undo.
     if let Head::Unborn { .. } = &head {
-        blockers.push("HEAD is unborn (no commits exist). There is nothing to undo.".to_string());
+        blockers.push(PlanNote::Common(CommonNote::HeadUnborn {
+            op: PlanOp::Undo,
+        }));
     }
 
     // Conflict state: refuse to operate on a repo mid-conflict.
     if !status.conflicted.is_empty() {
-        blockers.push(format!(
-            "Repository has {} conflicted file(s). Resolve conflicts before undoing a commit.",
-            status.conflicted.len()
-        ));
+        blockers.push(PlanNote::Common(CommonNote::ConflictedFiles {
+            count: status.conflicted.len(),
+            before: OpPhrase::UndoingACommit,
+        }));
     }
 
     // ── 4. Resolve HEAD commit (only when attached) ──────────
@@ -112,20 +119,19 @@ pub fn plan_undo_commit(repo: &Repository) -> Result<OperationPlan, GitError> {
 
         // Merge commit check.
         if commit.parent_count() > 1 {
-            blockers.push(format!(
-                "Commit {} is a merge commit ({} parents). \
-                 Undoing merge commits is not supported in MVP.",
-                head_short,
-                commit.parent_count()
-            ));
+            blockers.push(PlanNote::History(HistoryNote::MergeCommitUnsupported {
+                sha: head_short.clone(),
+                parents: commit.parent_count(),
+                op: HistoryOp::Undo,
+            }));
         }
 
         // Root commit check.
         if commit.parent_count() == 0 {
-            blockers.push(format!(
-                "Commit {} is the root commit (no parent). There is nothing to go back to.",
-                head_short
-            ));
+            blockers.push(PlanNote::History(HistoryNote::RootCommit {
+                sha: head_short.clone(),
+                op: HistoryOp::Undo,
+            }));
         }
 
         // Collect the parent OID for use in the plan and execute.
@@ -157,12 +163,10 @@ pub fn plan_undo_commit(repo: &Repository) -> Result<OperationPlan, GitError> {
                                 .unwrap_or(false)
                         };
                         if pushed {
-                            blockers.push(format!(
-                                "Commit {} has been pushed to the upstream tracking branch. \
-                                 Undoing a pushed commit would rewrite published history, which is \
-                                 not allowed. Use `git revert` to create an inverse commit instead.",
-                                head_short
-                            ));
+                            blockers.push(PlanNote::History(HistoryNote::PushedHistoryRewrite {
+                                sha: head_short.clone(),
+                                op: HistoryOp::Undo,
+                            }));
                         }
                     }
                 }
@@ -202,36 +206,37 @@ pub fn plan_undo_commit(repo: &Repository) -> Result<OperationPlan, GitError> {
     };
 
     // ── 6. Recovery guidance ──────────────────────────────────
-    let recovery = if head_short.is_empty() {
-        "Undo commit cannot proceed (see blockers above).".to_string()
-    } else {
-        format!(
-            "The undone commit is NOT deleted — it remains in the object store and reflog.\n\
-             To fully restore (re-commit with the same SHA):\n  git reset --soft {}\n\
-             Changes from the undone commit will be staged immediately after undo.\n\
-             The reflog records every HEAD movement:\n  git reflog",
-            head_short
-        )
+    let blocked = head_short.is_empty();
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::History(HistoryRecovery::Undo {
+            sha: head_short.clone(),
+            blocked,
+        }),
+        commands: if blocked {
+            Vec::new()
+        } else {
+            vec![
+                format!("git reset --soft {}", head_short),
+                "git reflog".to_string(),
+            ]
+        },
     };
 
     // ── 7. Title ───────────────────────────────────────────────
-    let title = if head_short.is_empty() {
-        "Undo last commit (cannot proceed — see blockers)".to_string()
-    } else {
-        format!(
-            "Undo commit {} '{}' — changes will be staged",
-            head_short, head_summary
-        )
-    };
+    let title = PlanTitle::History(HistoryTitle::UndoCommit {
+        sha: head_short.clone(),
+        summary: head_summary.clone(),
+        blocked,
+    });
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(title),
+        title,
         current,
         predicted,
         warnings: Vec::new(),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        blockers,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -383,22 +388,26 @@ pub fn plan_amend(
         dirty: dirty_display.clone(),
     };
 
-    let mut blockers: Vec<String> = Vec::new();
+    let mut blockers: Vec<PlanNote> = Vec::new();
     // `warnings` stays empty in MVP; the checklist lane (ADR-0043) will push into
-    let mut warnings: Vec<String> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     // ── 2. Structural blockers (HEAD shape) ──────────────────
     if let Head::Detached { .. } = &head {
-        blockers.push("HEAD is detached. Amend requires HEAD to be on a branch.".to_string());
+        blockers.push(PlanNote::Common(CommonNote::HeadDetached {
+            op: PlanOp::Amend,
+        }));
     }
     if let Head::Unborn { .. } = &head {
-        blockers.push("HEAD is unborn (no commits exist). There is nothing to amend.".to_string());
+        blockers.push(PlanNote::Common(CommonNote::HeadUnborn {
+            op: PlanOp::Amend,
+        }));
     }
     if !status.conflicted.is_empty() {
-        blockers.push(format!(
-            "Repository has {} conflicted file(s). Resolve conflicts before amending.",
-            status.conflicted.len()
-        ));
+        blockers.push(PlanNote::Common(CommonNote::ConflictedFiles {
+            count: status.conflicted.len(),
+            before: OpPhrase::Amending,
+        }));
     }
 
     // ── 3. Resolve HEAD commit (only when attached) ──────────
@@ -431,19 +440,19 @@ pub fn plan_amend(
 
         // Merge commit: refuse.
         if commit.parent_count() > 1 {
-            blockers.push(format!(
-                "Commit {} is a merge commit ({} parents). Amending merge commits is not supported.",
-                old_short,
-                commit.parent_count()
-            ));
+            blockers.push(PlanNote::History(HistoryNote::MergeCommitUnsupported {
+                sha: old_short.clone(),
+                parents: commit.parent_count(),
+                op: HistoryOp::Amend,
+            }));
         }
 
         // Root commit: refuse (keeps the single-parent invariant of MVP amend).
         if commit.parent_count() == 0 {
-            blockers.push(format!(
-                "Commit {} is the root commit (no parent). Amending the root commit is not supported in MVP.",
-                old_short
-            ));
+            blockers.push(PlanNote::History(HistoryNote::RootCommit {
+                sha: old_short.clone(),
+                op: HistoryOp::Amend,
+            }));
         }
 
         // Pushed check (ADR-0040 案B): refuse if HEAD is reachable from upstream.
@@ -458,12 +467,10 @@ pub fn plan_amend(
                                 .graph_descendant_of(upstream_oid, head_oid)
                                 .unwrap_or(false);
                         if pushed {
-                            blockers.push(format!(
-                                "Commit {} has been pushed to its upstream tracking branch. \
-                                 Amending published history is not allowed (ADR-0040). \
-                                 Create a new commit to make the correction instead.",
-                                old_short
-                            ));
+                            blockers.push(PlanNote::History(HistoryNote::PushedHistoryRewrite {
+                                sha: old_short.clone(),
+                                op: HistoryOp::Amend,
+                            }));
                         }
                     }
                 }
@@ -475,23 +482,21 @@ pub fn plan_amend(
     // ── 4. Mode-specific input blockers ──────────────────────
     let new_message = message.unwrap_or("");
     if mode.replaces_message() && new_message.trim().is_empty() {
-        blockers.push("Commit message must not be empty.".to_string());
+        blockers.push(PlanNote::History(HistoryNote::EmptyMessage));
     }
     if mode.includes_staged() && status.staged.is_empty() {
-        blockers.push(
-            "Nothing staged to fold into the commit. Stage changes first, or use \
-             message-only amend."
-                .to_string(),
-        );
+        blockers.push(PlanNote::History(HistoryNote::NothingStagedForAmend));
     }
 
     // ── 5. Checklist (ADR-0039 / 0043) — same rules as plan_commit ────
     // Only meaningful when staged content is being folded in; message-only
-    // amends keep the old tree, so there is nothing new to scan.
+    // amends keep the old tree, so there is nothing new to scan. checklist's
+    // own strings are out of scope for ADR-0129 (separate module) — wrapped
+    // as Verbatim, unchanged behavior.
     if mode.includes_staged() {
         let (cl_blockers, cl_warnings) = crate::checklist::checklist(repo, &status)?;
-        blockers.extend(cl_blockers);
-        warnings.extend(cl_warnings);
+        blockers.extend(PlanNote::wrap_all(cl_blockers));
+        warnings.extend(PlanNote::wrap_all(cl_warnings));
     }
 
     // ── 6. Predicted state (SHA change is the headline) ──────
@@ -525,31 +530,28 @@ pub fn plan_amend(
     };
 
     // ── 7. Recovery + title ──────────────────────────────────
-    let recovery = if old_short.is_empty() {
-        "Amend cannot proceed (see blockers above).".to_string()
-    } else {
-        format!(
-            "Amend rewrites history: the new commit gets a NEW SHA and the old commit \
-             {} becomes unreachable from the branch (but stays in the reflog).\n\
-             To restore the original commit:\n  git reset --hard {}\n\
-             The reflog records every HEAD movement:\n  git reflog",
-            old_short, old_short
-        )
+    let blocked = old_short.is_empty();
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::History(HistoryRecovery::Amend {
+            sha: old_short.clone(),
+            blocked,
+        }),
+        commands: if blocked {
+            Vec::new()
+        } else {
+            vec![
+                format!("git reset --hard {}", old_short),
+                "git reflog".to_string(),
+            ]
+        },
     };
 
-    let title = if old_short.is_empty() {
-        "Amend last commit (cannot proceed — see blockers)".to_string()
-    } else {
-        let mode_label = match mode {
-            AmendMode::MessageOnly => "message only",
-            AmendMode::Staged => "fold staged",
-            AmendMode::Both => "fold staged + message",
-        };
-        format!(
-            "Amend commit {} '{}' ({}) — SHA will change",
-            old_short, old_summary, mode_label
-        )
-    };
+    let title = PlanTitle::History(HistoryTitle::Amend {
+        sha: old_short.clone(),
+        summary: old_summary.clone(),
+        mode,
+        blocked,
+    });
 
     // Preview the staged files that will be folded in (Staged / Both only).
     let preview_files: Vec<FileStatus> = if mode.includes_staged() {
@@ -560,12 +562,12 @@ pub fn plan_amend(
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(title),
+        title,
         current,
         predicted,
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        warnings,
+        blockers,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files,
@@ -796,37 +798,40 @@ fn plan_history_move(
     let (current, _dirty_parts) = undo_redo_state(repo)?;
     let status = working_tree_status(repo)?;
 
-    let mut blockers: Vec<String> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
+    let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
+
+    // Common's ConflictedFiles op-phrase for this label ("undo"/"redo" are
+    // both already `OpPhrase` discriminants — §A1).
+    let conflicted_phrase = if label == "Undo" {
+        OpPhrase::Undo
+    } else {
+        OpPhrase::Redo
+    };
 
     // Only support the currently checked-out branch in MVP (the ref move must
     // not strand a different branch's working tree).
     match &head {
         Head::Attached { branch: cur, .. } if cur == branch => {}
         Head::Attached { branch: cur, .. } => {
-            blockers.push(format!(
-                "Operation was on branch '{}', but the current branch is '{}'. \
-                 Switch back to '{}' to {} it.",
-                branch,
-                cur,
-                branch,
-                label.to_lowercase()
-            ));
+            blockers.push(PlanNote::History(HistoryNote::WrongBranch {
+                branch: branch.to_string(),
+                current: cur.clone(),
+                label: label.to_lowercase(),
+            }));
         }
         _ => {
-            blockers.push(format!(
-                "HEAD is not on a branch. {} requires the operation's branch to be checked out.",
-                label
-            ));
+            blockers.push(PlanNote::History(HistoryNote::HeadNotOnBranch {
+                label: label.to_string(),
+            }));
         }
     }
 
     if !status.conflicted.is_empty() {
-        blockers.push(format!(
-            "Repository has {} conflicted file(s). Resolve conflicts before {}.",
-            status.conflicted.len(),
-            label.to_lowercase()
-        ));
+        blockers.push(PlanNote::Common(CommonNote::ConflictedFiles {
+            count: status.conflicted.len(),
+            before: conflicted_phrase,
+        }));
     }
 
     // Stale check: branch must currently be at `from`.
@@ -839,40 +844,36 @@ fn plan_history_move(
         match branch_ref.get().target() {
             Some(cur_oid) if cur_oid == from_oid => {}
             Some(cur_oid) => {
-                blockers.push(format!(
-                    "Branch '{}' has moved since this operation (now at {}, expected {}). \
-                     This history entry is stale and will be skipped.",
-                    branch,
-                    &cur_oid.to_string()[..8],
-                    &from_oid.to_string()[..8],
-                ));
+                blockers.push(PlanNote::History(HistoryNote::EntryStaleBranchMoved {
+                    branch: branch.to_string(),
+                    now: short_oid(cur_oid),
+                    expected: short_oid(from_oid),
+                }));
             }
-            None => blockers.push(format!("Branch '{}' has no target commit.", branch)),
+            None => blockers.push(PlanNote::History(HistoryNote::BranchNoTarget {
+                branch: branch.to_string(),
+            })),
         }
     } else {
-        blockers.push(format!("Branch '{}' no longer exists.", branch));
+        blockers.push(PlanNote::History(HistoryNote::BranchGone {
+            branch: branch.to_string(),
+        }));
     }
 
     // Target must be reachable in the ODB.
     if repo.find_commit(to_oid).is_err() {
-        blockers.push(format!(
-            "Target commit {} is no longer reachable in the object store. \
-             This history entry is stale and will be skipped.",
-            &to_oid.to_string()[..8],
-        ));
+        blockers.push(PlanNote::History(HistoryNote::EntryStaleUnreachable {
+            sha: short_oid(to_oid),
+        }));
     }
 
     // Dirty working tree → preserved, but warn.
     if !status.staged.is_empty() || !status.unstaged.is_empty() {
-        warnings.push(
-            "You have uncommitted changes. They will be preserved verbatim; \
-             only the branch ref moves (soft reset — index and working tree untouched)."
-                .to_string(),
-        );
+        warnings.push(PlanNote::History(HistoryNote::SoftMovePreservesChanges));
     }
 
-    let from_short = from.short();
-    let to_short = to.short();
+    let from_short = from.short().to_string();
+    let to_short = to.short().to_string();
 
     let predicted = StateSummary {
         head: match &head {
@@ -886,24 +887,35 @@ fn plan_history_move(
         ),
     };
 
-    let recovery = format!(
-        "{} moves branch '{}' from {} to {} via a safe ref move (no reset --hard, no clean). \
-         The {} commit is NOT deleted — it stays in the object store and reflog:\n  git reflog\n\
-         To restore manually:\n  git update-ref refs/heads/{} {}",
-        label, branch, from_short, to_short, kind_slug, branch, from.0
-    );
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::History(HistoryRecovery::HistoryMove {
+            label: label.to_string(),
+            branch: branch.to_string(),
+            from_short: from_short.clone(),
+            to_short: to_short.clone(),
+            kind_slug: kind_slug.to_string(),
+            from_full: from.0.clone(),
+        }),
+        commands: vec![
+            "git reflog".to_string(),
+            format!("git update-ref refs/heads/{} {}", branch, from.0),
+        ],
+    };
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::verbatim(format!(
-            "{} {} on '{}' — {} → {}",
-            label, kind_slug, branch, from_short, to_short
-        )),
+        title: PlanTitle::History(HistoryTitle::HistoryMove {
+            label: label.to_string(),
+            kind_slug: kind_slug.to_string(),
+            branch: branch.to_string(),
+            from: from_short,
+            to: to_short,
+        }),
         current,
         predicted,
-        warnings: PlanNote::wrap_all(warnings),
-        blockers: PlanNote::wrap_all(blockers),
-        recovery: Some(PlanRecovery::verbatim(recovery)),
+        warnings,
+        blockers,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),

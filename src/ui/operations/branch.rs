@@ -1372,13 +1372,16 @@ impl KagiApp {
                 klog!("async: delete-branch finished");
                 // Worktree-removal plans (clean worktree pinned the branch)
                 // log the cleanup so the headless harness can assert it.
-                // Phase 2 (branch PR) replaces this with a typed-note match; until then
-                // the match runs on the EN rendering (ADR-0129 F-3).
-                if plan
-                    .warnings
-                    .iter()
-                    .any(|w| w.message_en().contains("worktree"))
-                {
+                // ADR-0129 F-3: matched via the typed note variant, not a
+                // substring search over the rendered EN text.
+                if plan.warnings.iter().any(|w| {
+                    matches!(
+                        w,
+                        kagi_git::ops::PlanNote::Branch(
+                            kagi_domain::plan_note::BranchNote::DeleteRemovesPinningWorktree { .. }
+                        )
+                    )
+                }) {
                     klog!("executed: delete-branch removed pinning worktree");
                 }
                 // ADR-0129 F-4: the restore command is structured data now —

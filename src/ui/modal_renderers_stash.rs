@@ -13,6 +13,7 @@ use gpui::{div, prelude::*, rgb, Context, FocusHandle, KeyDownEvent, SharedStrin
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::Input;
 use gpui_component::Sizable as _;
+use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 
 // ──────────────────────────────────────────────────────────────
 // Stash push modal renderer (T015)
@@ -151,7 +152,10 @@ pub(crate) fn render_stash_push_modal(
                         .text_sm()
                         .text_color(rgb(current_theme().color_warning))
                         .overflow_hidden()
-                        .child(SharedString::from(format!("\u{26a0} {}", w))),
+                        .child(SharedString::from(format!(
+                            "\u{26a0} {}",
+                            plan_note_text(w)
+                        ))),
                 );
             }
             card = card.child(warn_col);
@@ -166,7 +170,10 @@ pub(crate) fn render_stash_push_modal(
                         .text_sm()
                         .text_color(rgb(current_theme().color_blocker))
                         .overflow_hidden()
-                        .child(SharedString::from(format!("\u{2717} {}", b))),
+                        .child(SharedString::from(format!(
+                            "\u{2717} {}",
+                            plan_note_text(b)
+                        ))),
                 );
             }
             card = card.child(block_col);
@@ -178,7 +185,7 @@ pub(crate) fn render_stash_push_modal(
                 .text_xs()
                 .text_color(rgb(current_theme().text_muted))
                 .overflow_hidden()
-                .child(SharedString::from(p.recovery.clone())),
+                .child(SharedString::from(plan_recovery_text(p.recovery.as_ref()))),
         );
     }
 
@@ -291,7 +298,7 @@ pub(crate) fn render_stash_apply_modal(
             div()
                 .text_color(rgb(current_theme().text_main))
                 .text_xl()
-                .child(SharedString::from(plan.title.clone())),
+                .child(SharedString::from(plan_title_text(&plan.title))),
         )
         // ── Current → Predicted ─────────────────────────────
         .child(
@@ -356,7 +363,10 @@ pub(crate) fn render_stash_apply_modal(
                     .text_sm()
                     .text_color(rgb(current_theme().color_blocker))
                     .overflow_hidden()
-                    .child(SharedString::from(format!("\u{2717} {}", b))),
+                    .child(SharedString::from(format!(
+                        "\u{2717} {}",
+                        plan_note_text(b)
+                    ))),
             );
         }
         card = card.child(block_col);
@@ -368,7 +378,9 @@ pub(crate) fn render_stash_apply_modal(
             .text_xs()
             .text_color(rgb(current_theme().text_muted))
             .overflow_hidden()
-            .child(SharedString::from(plan.recovery.clone())),
+            .child(SharedString::from(plan_recovery_text(
+                plan.recovery.as_ref(),
+            ))),
     );
 
     // ── Error message ────────────────────────────────────

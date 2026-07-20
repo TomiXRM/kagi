@@ -225,12 +225,13 @@ pub fn plan_undo_commit(repo: &Repository) -> Result<OperationPlan, GitError> {
     };
 
     Ok(OperationPlan {
-        title,
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(title),
         current,
         predicted,
         warnings: Vec::new(),
-        blockers,
-        recovery,
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -558,12 +559,13 @@ pub fn plan_amend(
     };
 
     Ok(OperationPlan {
-        title,
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(title),
         current,
         predicted,
-        warnings,
-        blockers,
-        recovery,
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files,
@@ -892,15 +894,16 @@ fn plan_history_move(
     );
 
     Ok(OperationPlan {
-        title: format!(
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!(
             "{} {} on '{}' — {} → {}",
             label, kind_slug, branch, from_short, to_short
-        ),
+        )),
         current,
         predicted,
-        warnings,
-        blockers,
-        recovery,
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),

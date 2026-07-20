@@ -127,12 +127,13 @@ pub fn plan_create_branch(
     );
 
     Ok(OperationPlan {
-        title: format!("Create branch '{}' @ {}", name, short_sha),
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!("Create branch '{}' @ {}", name, short_sha)),
         current,
         predicted,
         warnings: Vec::new(),
-        blockers,
-        recovery,
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -309,7 +310,8 @@ pub fn plan_rename_branch(
     );
 
     Ok(OperationPlan {
-        title: format!("Rename branch '{}' to '{}'", old_name, new_name),
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!("Rename branch '{}' to '{}'", old_name, new_name)),
         current,
         predicted: StateSummary {
             head: match &head {
@@ -320,12 +322,12 @@ pub fn plan_rename_branch(
             },
             dirty: "working tree unchanged".to_string(),
         },
-        warnings,
-        blockers,
-        recovery: format!(
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(format!(
             "This renames only the local ref. To undo: git branch -m {} {}",
             new_name, old_name
-        ),
+        ))),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -527,12 +529,13 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
                 name
             );
             return Ok(OperationPlan {
-                title: format!("Delete branch '{}'", name),
+                disposition: PlanDisposition::for_blockers(&blockers),
+                title: PlanTitle::verbatim(format!("Delete branch '{}'", name)),
                 current,
                 predicted,
-                warnings,
-                blockers,
-                recovery,
+                warnings: PlanNote::wrap_all(warnings),
+                blockers: PlanNote::wrap_all(blockers),
+                recovery: Some(PlanRecovery::verbatim(recovery)),
                 head_at_plan: head,
                 stash_count_at_plan: 0,
                 preview_files: Vec::new(),
@@ -666,14 +669,22 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
          The branch tip commit '{}' remains in the object store until GC.",
         name, tip_short, tip_short
     );
+    // ADR-0129 F-4: the restore command as data — the UI reads
+    // `recovery.commands.first()` instead of parsing the display text's
+    // second line.
+    let recovery_commands = vec![format!("git branch {} {}", name, tip_short)];
 
     Ok(OperationPlan {
-        title: format!("Delete branch '{}' (tip {})", name, tip_short),
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!("Delete branch '{}' (tip {})", name, tip_short)),
         current,
         predicted,
-        warnings,
-        blockers,
-        recovery,
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim_with_commands(
+            recovery,
+            recovery_commands,
+        )),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),

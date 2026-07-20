@@ -105,6 +105,10 @@ fn any_contains(v: &[String], needle: &str) -> bool {
     v.iter().any(|s| s.contains(needle))
 }
 
+fn any_note_contains(v: &[kagi_git::ops::PlanNote], needle: &str) -> bool {
+    v.iter().any(|s| s.message_en().contains(needle))
+}
+
 // ────────────────────────────────────────────────────────────
 // Rule 4 — conflict markers (block)
 // ────────────────────────────────────────────────────────────
@@ -420,7 +424,7 @@ fn plan_commit_surfaces_marker_blocker() {
 
     let plan = plan_commit(&repo, "fix: resolve").expect("plan_commit");
     assert!(
-        any_contains(&plan.blockers, "Conflict marker"),
+        any_note_contains(&plan.blockers, "Conflict marker"),
         "plan_commit must surface the marker blocker, got {:?}",
         plan.blockers
     );
@@ -435,7 +439,9 @@ fn plan_commit_surfaces_secret_warning() {
 
     let plan = plan_commit(&repo, "chore: add config").expect("plan_commit");
     assert!(
-        plan.warnings.iter().any(|w| w.contains(".env")),
+        plan.warnings
+            .iter()
+            .any(|w| w.message_en().contains(".env")),
         "plan_commit must surface the .env warning, got {:?}",
         plan.warnings
     );

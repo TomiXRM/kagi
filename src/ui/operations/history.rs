@@ -71,7 +71,7 @@ impl KagiApp {
                 "undo-commit",
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
-                    blockers: modal.plan.blockers.clone(),
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,
@@ -378,7 +378,7 @@ impl KagiApp {
                 &op_name,
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
-                    blockers: modal.plan.blockers.clone(),
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,
@@ -577,7 +577,7 @@ impl KagiApp {
                 "amend",
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
-                    blockers: modal.plan.blockers.clone(),
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,
@@ -733,7 +733,7 @@ impl KagiApp {
                 "amend",
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
-                    blockers: modal.plan.blockers.clone(),
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,

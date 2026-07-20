@@ -367,7 +367,12 @@ fn test_plan_amend_pushed_blocker() {
         "pushed commit must block amend, got: {:?}",
         plan.blockers
     );
-    let msg = plan.blockers.join(" ");
+    let msg = plan
+        .blockers
+        .iter()
+        .map(|n| n.message_en())
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
         msg.contains("pushed") || msg.contains("upstream") || msg.contains("published"),
         "blocker must mention pushed/upstream: {}",
@@ -409,7 +414,12 @@ fn test_plan_amend_merge_commit_blocker() {
         plan.blockers
     );
     assert!(
-        plan.blockers.join(" ").contains("merge"),
+        plan.blockers
+            .iter()
+            .map(|n| n.message_en())
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains("merge"),
         "blocker must mention merge: {:?}",
         plan.blockers
     );
@@ -433,7 +443,19 @@ fn test_plan_amend_detached_blocker() {
         plan.blockers
     );
     assert!(
-        plan.blockers.join(" ").contains("detached") || plan.blockers.join(" ").contains("branch"),
+        plan.blockers
+            .iter()
+            .map(|n| n.message_en())
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains("detached")
+            || plan
+                .blockers
+                .iter()
+                .map(|n| n.message_en())
+                .collect::<Vec<_>>()
+                .join(" ")
+                .contains("branch"),
         "blocker must mention detached/branch: {:?}",
         plan.blockers
     );
@@ -465,7 +487,19 @@ fn test_plan_amend_root_commit_blocker() {
         plan.blockers
     );
     assert!(
-        plan.blockers.join(" ").contains("root") || plan.blockers.join(" ").contains("parent"),
+        plan.blockers
+            .iter()
+            .map(|n| n.message_en())
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains("root")
+            || plan
+                .blockers
+                .iter()
+                .map(|n| n.message_en())
+                .collect::<Vec<_>>()
+                .join(" ")
+                .contains("parent"),
         "blocker must mention root/parent: {:?}",
         plan.blockers
     );
@@ -481,7 +515,9 @@ fn test_plan_amend_message_empty_blocker() {
     let repo = Repository::open(&r.path).unwrap();
     let plan = plan_amend(&repo, AmendMode::MessageOnly, Some("   ")).unwrap();
     assert!(
-        plan.blockers.iter().any(|b| b.contains("message")),
+        plan.blockers
+            .iter()
+            .any(|b| b.message_en().contains("message")),
         "empty message must block, got: {:?}",
         plan.blockers
     );
@@ -500,7 +536,8 @@ fn test_plan_amend_staged_nothing_blocker() {
     assert!(
         plan.blockers
             .iter()
-            .any(|b| b.to_lowercase().contains("staged") || b.contains("Nothing")),
+            .any(|b| b.message_en().to_lowercase().contains("staged")
+                || b.message_en().contains("Nothing")),
         "nothing-staged must block staged amend, got: {:?}",
         plan.blockers
     );

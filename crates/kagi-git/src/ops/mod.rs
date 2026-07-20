@@ -84,8 +84,14 @@ pub(crate) use super::GitError;
 
 pub use kagi_domain::plan::{
     AmendMode, AmendOutcome, BranchNameError, BranchRenameValidation, DiscardBackup,
-    DiscardOutcome, FetchOutcome, MergeKind, PullOutcome, PushOutcome, StateSummary, UndoOutcome,
-    WorktreePathError, WorktreeValidationError,
+    DiscardOutcome, FetchOutcome, MergeKind, OperationPlan, PullOutcome, PushOutcome, StateSummary,
+    UndoOutcome, WorktreePathError, WorktreeValidationError,
+};
+// ADR-0129: structured plan text. `OperationPlan` itself moved to kagi-domain
+// (shim re-export above); these are the note/title/recovery/disposition types
+// producers and consumers share.
+pub use kagi_domain::plan_note::{
+    DiscardNote, NoOpKind, PlanDisposition, PlanNote, PlanRecovery, PlanTitle, RecoveryKind,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -124,57 +130,6 @@ pub use worktree::*;
 // ────────────────────────────────────────────────────────────
 // Public types
 // ────────────────────────────────────────────────────────────
-
-/// A complete plan describing what an operation will do, including
-/// any blockers that prevent execution and warnings that should be surfaced.
-///
-/// If `blockers` is non-empty the UI **must not** offer the Execute button.
-#[derive(Debug, Clone)]
-pub struct OperationPlan {
-    /// Human-readable title, e.g. `"Checkout branch 'feature/two'"`.
-    pub title: String,
-    /// Repository state *before* the operation.
-    pub current: StateSummary,
-    /// Predicted repository state *after* the operation.
-    pub predicted: StateSummary,
-    /// Non-fatal observations (shown in yellow).  The operation can still
-    /// proceed if there are warnings but no blockers.
-    pub warnings: Vec<String>,
-    /// Conditions that prevent execution (shown in red).  At least one blocker
-    /// means the Execute button must be hidden.
-    pub blockers: Vec<String>,
-    /// Plain-text recovery guidance shown to the user before they confirm.
-    pub recovery: String,
-    /// The HEAD state captured *at plan time*, used by [`preflight_check`] to
-    /// detect whether the repo has changed between planning and execution.
-    pub(crate) head_at_plan: Head,
-    /// Number of stash entries captured at plan time.  Used by
-    /// [`preflight_check_stash`] to detect concurrent stash modifications.
-    /// For non-stash operations this is always `0`.
-    pub(crate) stash_count_at_plan: usize,
-    /// Files that will be changed by the operation, as computed by an in-memory
-    /// dry run.  Non-empty only for cherry-pick plans.  Used by the plan modal
-    /// to render a preview file tree (T016).
-    pub preview_files: Vec<FileStatus>,
-    /// Commits that will be pushed, as `"<short>  <summary>"` strings.
-    /// Non-empty only for push plans (T-HT-004).  Shown in the plan modal
-    /// (newest first, capped at 100 entries at plan time).
-    pub preview_commits: Vec<String>,
-    /// History-rewriting flag (ADR-0023).  `true` for plans that rewrite
-    /// history (e.g. amend), which the UI must gate behind a **two-stage
-    /// confirmation**.  Defaults to `false` for every other plan.
-    pub destructive: bool,
-}
-
-impl OperationPlan {
-    /// Return the stash entry count captured at plan time.
-    ///
-    /// Pass this value to [`preflight_check_stash`] to verify that the stash
-    /// list has not changed since the plan was generated.
-    pub fn stash_count_at_plan(&self) -> usize {
-        self.stash_count_at_plan
-    }
-}
 
 /// Validate a local branch rename target without touching repository state.
 ///

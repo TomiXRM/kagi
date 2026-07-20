@@ -36,6 +36,9 @@ use crate::settings::{read_setting, write_setting};
 // ──────────────────────────────────────────────────────────────────────────
 
 /// UI language.  `En` is index 0 (the default), `Ja` is index 1.
+pub mod plan;
+pub use plan::{plan_note_text, plan_recovery_text, plan_title_text};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lang {
     En,

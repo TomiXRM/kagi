@@ -157,7 +157,9 @@ fn test_plan_dirty_unstaged_non_overlapping_no_blocker_carries_over() {
         plan.blockers
     );
     assert!(
-        plan.warnings.iter().any(|w| w.contains("carried over")),
+        plan.warnings
+            .iter()
+            .any(|w| w.message_en().contains("carried over")),
         "should warn that changes carry over, got: {:?}",
         plan.warnings
     );
@@ -225,7 +227,7 @@ fn test_plan_dirty_overlapping_has_blocker() {
     assert!(
         plan.blockers
             .iter()
-            .any(|b| b.to_lowercase().contains("stash")),
+            .any(|b| b.message_en().to_lowercase().contains("stash")),
         "blocker should point at stash, got: {:?}",
         plan.blockers
     );
@@ -301,7 +303,7 @@ fn test_plan_nonexistent_branch_has_blocker() {
     let has_not_exist = plan
         .blockers
         .iter()
-        .any(|b| b.contains("not exist") || b.contains("does not exist"));
+        .any(|b| b.message_en().contains("not exist") || b.message_en().contains("does not exist"));
     assert!(
         has_not_exist,
         "blocker should mention branch not existing, got: {:?}",
@@ -328,7 +330,7 @@ fn test_plan_already_head_has_blocker() {
     let has_already = plan
         .blockers
         .iter()
-        .any(|b| b.contains("already") || b.contains("current HEAD"));
+        .any(|b| b.message_en().contains("already") || b.message_en().contains("current HEAD"));
     assert!(
         has_already,
         "blocker should mention 'already' or 'current HEAD', got: {:?}",
@@ -390,12 +392,20 @@ fn test_plan_recovery_mentions_original_branch() {
     let plan = plan_checkout(&repo, "feature/one").expect("plan_checkout failed");
 
     assert!(
-        plan.recovery.contains("main"),
+        plan.recovery
+            .as_ref()
+            .map(|r| r.message_en())
+            .unwrap_or_default()
+            .contains("main"),
         "recovery text should mention 'main' (the original branch), got: {:?}",
         plan.recovery
     );
     assert!(
-        plan.recovery.contains("reflog"),
+        plan.recovery
+            .as_ref()
+            .map(|r| r.message_en())
+            .unwrap_or_default()
+            .contains("reflog"),
         "recovery text should mention 'reflog', got: {:?}",
         plan.recovery
     );
@@ -472,8 +482,13 @@ fn test_checkout_commit_plan_warns_and_execute_detaches_head() {
         plan.predicted.head
     );
     assert!(
-        plan.warnings.iter().any(|w| w.contains("detached HEAD"))
-            && plan.warnings.iter().any(|w| w.contains("Create branch")),
+        plan.warnings
+            .iter()
+            .any(|w| w.message_en().contains("detached HEAD"))
+            && plan
+                .warnings
+                .iter()
+                .any(|w| w.message_en().contains("Create branch")),
         "plan should warn about detached HEAD and branch creation, got: {:?}",
         plan.warnings
     );
@@ -510,7 +525,9 @@ fn test_checkout_commit_dirty_safe_checkout_fails_without_moving_head() {
         plan.blockers
     );
     assert!(
-        plan.blockers.iter().any(|b| b.contains("README.md")),
+        plan.blockers
+            .iter()
+            .any(|b| b.message_en().contains("README.md")),
         "blocker should name the conflicting file, got: {:?}",
         plan.blockers
     );
@@ -657,10 +674,9 @@ fn test_create_branch_same_name_blocker() {
         !plan.blockers.is_empty(),
         "creating a branch with an existing name should have a blocker"
     );
-    let has_already_exists = plan
-        .blockers
-        .iter()
-        .any(|b| b.contains("already exists") || b.contains("already exist"));
+    let has_already_exists = plan.blockers.iter().any(|b| {
+        b.message_en().contains("already exists") || b.message_en().contains("already exist")
+    });
     assert!(
         has_already_exists,
         "blocker should mention 'already exists', got: {:?}",
@@ -685,7 +701,7 @@ fn test_create_branch_invalid_name_with_space() {
     let has_invalid = plan
         .blockers
         .iter()
-        .any(|b| b.contains("not a valid") || b.contains("invalid"));
+        .any(|b| b.message_en().contains("not a valid") || b.message_en().contains("invalid"));
     assert!(
         has_invalid,
         "blocker should mention invalid name, got: {:?}",
@@ -752,7 +768,7 @@ fn test_create_branch_with_checkout_predicts_new_head() {
         plan.blockers
     );
     assert_eq!(plan.predicted.head, "branch: checkout-me");
-    assert!(plan.title.contains("and checkout"));
+    assert!(plan.title.message_en().contains("and checkout"));
 }
 
 // ── T014-5: force=false prevents overwriting existing branch ─
@@ -869,7 +885,7 @@ fn test_stash_push_blocker_on_clean_repo() {
     let has_nothing = plan
         .blockers
         .iter()
-        .any(|b| b.contains("Nothing to stash") || b.contains("clean"));
+        .any(|b| b.message_en().contains("Nothing to stash") || b.message_en().contains("clean"));
     assert!(
         has_nothing,
         "blocker should mention 'Nothing to stash' or 'clean', got: {:?}",
@@ -968,10 +984,11 @@ fn test_stash_apply_blocker_dirty_working_tree() {
         !plan.blockers.is_empty(),
         "dirty working tree should produce a blocker for stash apply"
     );
-    let has_dirty_blocker = plan
-        .blockers
-        .iter()
-        .any(|b| b.contains("dirty") || b.contains("staged") || b.contains("modified"));
+    let has_dirty_blocker = plan.blockers.iter().any(|b| {
+        b.message_en().contains("dirty")
+            || b.message_en().contains("staged")
+            || b.message_en().contains("modified")
+    });
     assert!(
         has_dirty_blocker,
         "blocker should mention dirty tree, got: {:?}",
@@ -996,7 +1013,7 @@ fn test_stash_apply_blocker_index_out_of_range() {
     let has_range = plan
         .blockers
         .iter()
-        .any(|b| b.contains("out of range") || b.contains("range"));
+        .any(|b| b.message_en().contains("out of range") || b.message_en().contains("range"));
     assert!(
         has_range,
         "blocker should mention index out of range, got: {:?}",
@@ -1318,7 +1335,7 @@ fn test_cherry_pick_plan_conflict_blocker_wt_intact() {
     let has_conflict_blocker = plan
         .blockers
         .iter()
-        .any(|b| b.contains("conflict") || b.contains("Conflict"));
+        .any(|b| b.message_en().contains("conflict") || b.message_en().contains("Conflict"));
     assert!(
         has_conflict_blocker,
         "blocker should mention conflict, got: {:?}",
@@ -1363,10 +1380,10 @@ fn test_cherry_pick_plan_dirty_wt_blocker() {
         "dirty working tree should produce blockers"
     );
     let has_dirty_blocker = plan.blockers.iter().any(|b| {
-        b.contains("staged")
-            || b.contains("modified")
-            || b.contains("dirty")
-            || b.contains("Working tree")
+        b.message_en().contains("staged")
+            || b.message_en().contains("modified")
+            || b.message_en().contains("dirty")
+            || b.message_en().contains("Working tree")
     });
     assert!(
         has_dirty_blocker,
@@ -1437,7 +1454,7 @@ fn test_cherry_pick_plan_merge_commit_blocker() {
     let has_merge_blocker = plan
         .blockers
         .iter()
-        .any(|b| b.contains("merge") || b.contains("parent"));
+        .any(|b| b.message_en().contains("merge") || b.message_en().contains("parent"));
     assert!(
         has_merge_blocker,
         "blocker should mention merge commit, got: {:?}",
@@ -1472,10 +1489,11 @@ fn test_cherry_pick_plan_head_same_blocker() {
         !plan.blockers.is_empty(),
         "cherry-picking the current HEAD commit should produce a blocker"
     );
-    let has_same_blocker = plan
-        .blockers
-        .iter()
-        .any(|b| b.contains("current HEAD") || b.contains("same") || b.contains("HEAD commit"));
+    let has_same_blocker = plan.blockers.iter().any(|b| {
+        b.message_en().contains("current HEAD")
+            || b.message_en().contains("same")
+            || b.message_en().contains("HEAD commit")
+    });
     assert!(
         has_same_blocker,
         "blocker should mention HEAD-same, got: {:?}",
@@ -1513,11 +1531,11 @@ fn test_cherry_pick_plan_already_applied_blocker() {
     // - "HEAD same" (deterministic commit hash due to same tree/parent/author/timestamp)
     // Both are valid indicators that the commit cannot/should not be cherry-picked again.
     let has_applied_blocker = plan2.blockers.iter().any(|b| {
-        b.contains("no changes")
-                || b.contains("applied already")
-                || b.contains("empty")
-                || b.contains("current HEAD")  // HEAD-same check fires when hash is deterministic
-                || b.contains("same")
+        b.message_en().contains("no changes")
+                || b.message_en().contains("applied already")
+                || b.message_en().contains("empty")
+                || b.message_en().contains("current HEAD")  // HEAD-same check fires when hash is deterministic
+                || b.message_en().contains("same")
     });
     assert!(
         has_applied_blocker,

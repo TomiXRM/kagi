@@ -125,7 +125,7 @@ impl KagiApp {
                     "create-branch",
                     plan.current.clone(),
                     OpOutcome::Refused {
-                        blockers: plan.blockers.clone(),
+                        blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
                     },
                     rp,
                     cx,
@@ -248,7 +248,11 @@ impl KagiApp {
                     "checkout",
                     checkout_plan.current.clone(),
                     OpOutcome::Refused {
-                        blockers: checkout_plan.blockers.clone(),
+                        blockers: checkout_plan
+                            .blockers
+                            .iter()
+                            .map(|b| b.message_en())
+                            .collect(),
                     },
                     &repo_path,
                     cx,
@@ -367,7 +371,7 @@ impl KagiApp {
                 op_name,
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
-                    blockers: modal.plan.blockers.clone(),
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,
@@ -496,7 +500,7 @@ impl KagiApp {
                 "set-upstream",
                 plan.current.clone(),
                 OpOutcome::Refused {
-                    blockers: plan.blockers.clone(),
+                    blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,
@@ -628,7 +632,7 @@ impl KagiApp {
                 "rename-branch",
                 plan.current.clone(),
                 OpOutcome::Refused {
-                    blockers: plan.blockers.clone(),
+                    blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,
@@ -811,7 +815,7 @@ impl KagiApp {
                 "merge",
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
-                    blockers: modal.plan.blockers.clone(),
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,
@@ -956,7 +960,7 @@ impl KagiApp {
                 "checkout-tracking",
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
-                    blockers: modal.plan.blockers.clone(),
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,
@@ -1079,7 +1083,7 @@ impl KagiApp {
                 "switch-to-latest",
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
-                    blockers: modal.plan.blockers.clone(),
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,
@@ -1230,7 +1234,7 @@ impl KagiApp {
                 "delete-branch",
                 modal.plan.current.clone(),
                 kagi_git::oplog::OpOutcome::Refused {
-                    blockers: modal.plan.blockers.clone(),
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,
@@ -1284,7 +1288,13 @@ impl KagiApp {
                 self.status_footer = FooterStatus::Success(SharedString::from(format!(
                     "delete-branch: '{}' deleted (restore: {})",
                     modal.branch_name,
-                    modal.plan.recovery.lines().nth(1).unwrap_or("git branch …")
+                    modal
+                        .plan
+                        .recovery
+                        .as_ref()
+                        .and_then(|r| r.commands.first())
+                        .map(String::as_str)
+                        .unwrap_or("git branch …")
                 )));
                 self.reload(cx);
             }
@@ -1333,7 +1343,7 @@ impl KagiApp {
                 "delete-branch",
                 modal.plan.current.clone(),
                 kagi_git::oplog::OpOutcome::Refused {
-                    blockers: modal.plan.blockers.clone(),
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
                 },
                 &repo_path,
                 cx,
@@ -1362,13 +1372,22 @@ impl KagiApp {
                 klog!("async: delete-branch finished");
                 // Worktree-removal plans (clean worktree pinned the branch)
                 // log the cleanup so the headless harness can assert it.
-                if plan.warnings.iter().any(|w| w.contains("worktree")) {
+                // Phase 2 (branch PR) replaces this with a typed-note match; until then
+                // the match runs on the EN rendering (ADR-0129 F-3).
+                if plan
+                    .warnings
+                    .iter()
+                    .any(|w| w.message_en().contains("worktree"))
+                {
                     klog!("executed: delete-branch removed pinning worktree");
                 }
+                // ADR-0129 F-4: the restore command is structured data now —
+                // no more parsing the recovery text's second line.
                 let recovery_line = plan
                     .recovery
-                    .lines()
-                    .nth(1)
+                    .as_ref()
+                    .and_then(|r| r.commands.first())
+                    .map(String::as_str)
                     .unwrap_or("git branch …")
                     .to_string();
                 app.record_op(

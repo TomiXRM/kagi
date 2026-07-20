@@ -832,15 +832,19 @@ const TOAST_SLIDE_PX: f32 = 500.0;
 /// `english` is shown in its `localized` form; every other blocker passes
 /// through verbatim. Order follows `blockers`.
 fn localize_plan_blockers(
-    blockers: &[String],
+    blockers: &[kagi_git::ops::PlanNote],
     keyed: impl Iterator<Item = (String, String)>,
 ) -> Vec<SharedString> {
+    // ADR-0129 Phase 1: notes are matched via their English rendering — the
+    // same strings this shim always keyed on. The whole shim is deleted in
+    // Phase 3 once every renderer calls plan_note_text() directly.
     let map: std::collections::HashMap<String, String> = keyed.collect();
     blockers
         .iter()
-        .map(|b| match map.get(b) {
+        .map(|b| b.message_en())
+        .map(|b| match map.get(&b) {
             Some(localized) => SharedString::from(localized.clone()),
-            None => SharedString::from(b.clone()),
+            None => SharedString::from(b),
         })
         .collect()
 }

@@ -49,7 +49,8 @@ pub fn plan_pull_remote(
     }
 
     OperationPlan {
-        title,
+        disposition: PlanDisposition::Ready,
+        title: PlanTitle::verbatim(title),
         current: StateSummary {
             head: head_summary.clone(),
             dirty: if remote_dirty {
@@ -68,11 +69,13 @@ pub fn plan_pull_remote(
                 "fast-forwarded on remote".to_string()
             },
         },
-        warnings,
+        warnings: PlanNote::wrap_all(warnings),
         blockers: Vec::new(),
-        recovery: "Runs `git pull` on the host using its own credentials. \
+        recovery: Some(PlanRecovery::verbatim(
+            "Runs `git pull` on the host using its own credentials. \
                    Conflicts are left for resolution on the host."
-            .to_string(),
+                .to_string(),
+        )),
         head_at_plan: Head::Unborn {
             branch: String::new(),
         },
@@ -243,15 +246,25 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         .to_string();
 
     Ok(OperationPlan {
-        title: format!(
+        // ADR-0129 F-1: the UI's pull no-op detection keyed on the title text
+        // ("up to date (local knowledge…"); the semantic state now travels
+        // with the plan instead.
+        disposition: if !blockers.is_empty() {
+            PlanDisposition::Blocked
+        } else if behind_count == 0 {
+            PlanDisposition::NoOp(NoOpKind::PullUpToDate)
+        } else {
+            PlanDisposition::Ready
+        },
+        title: PlanTitle::verbatim(format!(
             "Pull '{}' from '{}'  ({})",
             branch_name, remote_name, behind_label
-        ),
+        )),
         current,
         predicted,
-        warnings,
-        blockers,
-        recovery,
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -705,22 +718,23 @@ pub fn plan_pull_branch_ff(
     };
 
     Ok(OperationPlan {
-        title: format!(
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!(
             "Pull '{}' from '{}' (ff-only, ref-only, {} behind)",
             branch_name, remote_name, behind_count
-        ),
+        )),
         current,
         predicted: StateSummary {
             head: predicted_head,
             dirty: "working tree unchanged".to_string(),
         },
-        warnings,
-        blockers,
-        recovery: format!(
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(format!(
             "This updates only refs/heads/{} after verifying a fast-forward. \
              The working tree is not changed. If needed, restore the old tip with git branch -f {} <old-sha>.",
             branch_name, branch_name
-        ),
+        ))),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -801,7 +815,7 @@ mod remote_pull_tests {
         );
         assert!(plan.blockers.is_empty());
         assert!(!plan.destructive);
-        assert!(plan.title.contains("3 commit"));
+        assert!(plan.title.message_en().contains("3 commit"));
         assert!(plan.predicted.dirty.contains("fast-forward"));
     }
 
@@ -815,7 +829,10 @@ mod remote_pull_tests {
             false,
             "branch: main".to_string(),
         );
-        assert!(plan.warnings.iter().any(|w| w.contains("diverged")));
+        assert!(plan
+            .warnings
+            .iter()
+            .any(|w| w.message_en().contains("diverged")));
         assert!(plan.predicted.dirty.contains("merge"));
     }
 }

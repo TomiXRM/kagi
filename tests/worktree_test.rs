@@ -97,7 +97,9 @@ fn create_worktree_path_collision_is_blocker() {
     let plan =
         plan_create_worktree(&repo, "wt-collision", &path, &at).expect("plan_create_worktree");
     assert!(
-        plan.blockers.iter().any(|b| b.contains("already exists")),
+        plan.blockers
+            .iter()
+            .any(|b| b.message_en().contains("already exists")),
         "expected path collision blocker, got {:?}",
         plan.blockers
     );
@@ -113,7 +115,9 @@ fn create_worktree_branch_collision_is_blocker() {
 
     let plan = plan_create_worktree(&repo, "main", &path, &at).expect("plan_create_worktree");
     assert!(
-        plan.blockers.iter().any(|b| b.contains("already exists")),
+        plan.blockers
+            .iter()
+            .any(|b| b.message_en().contains("already exists")),
         "expected branch collision blocker, got {:?}",
         plan.blockers
     );
@@ -199,7 +203,8 @@ fn unlock_plan_surfaces_lock_reason_and_execute_unlocks() {
     assert!(
         plan.warnings
             .iter()
-            .any(|w| w.contains("Locked with reason") && w.contains("agent still running")),
+            .any(|w| w.message_en().contains("Locked with reason")
+                && w.message_en().contains("agent still running")),
         "warning must show the recorded reason: {:?}",
         plan.warnings
     );
@@ -225,7 +230,7 @@ fn unlock_plan_without_reason_notes_none_recorded() {
     assert!(
         plan.warnings
             .iter()
-            .any(|w| w.contains("(no reason recorded)")),
+            .any(|w| w.message_en().contains("(no reason recorded)")),
         "warning must note the missing reason: {:?}",
         plan.warnings
     );
@@ -239,7 +244,9 @@ fn unlock_unlocked_worktree_is_blocked() {
 
     let plan = kagi_git::ops::plan_unlock_worktree(&repo, "wt-free").expect("plan");
     assert!(
-        plan.blockers.iter().any(|b| b.contains("already unlocked")),
+        plan.blockers
+            .iter()
+            .any(|b| b.message_en().contains("already unlocked")),
         "unlocked worktree must be a blocker: {:?}",
         plan.blockers
     );
@@ -254,7 +261,9 @@ fn unlock_missing_worktree_is_blocked() {
 
     let plan = kagi_git::ops::plan_unlock_worktree(&repo, "no-such").expect("plan");
     assert!(
-        plan.blockers.iter().any(|b| b.contains("does not exist")),
+        plan.blockers
+            .iter()
+            .any(|b| b.message_en().contains("does not exist")),
         "missing worktree must be a blocker: {:?}",
         plan.blockers
     );

@@ -124,7 +124,7 @@ fn revert_conflict_is_blocker_and_leaves_repo_untouched() {
     assert!(
         plan.blockers
             .iter()
-            .any(|b| b.contains("conflict") && b.contains("file.txt")),
+            .any(|b| b.message_en().contains("conflict") && b.message_en().contains("file.txt")),
         "expected conflict blocker with file name, got: {:?}",
         plan.blockers
     );
@@ -150,7 +150,9 @@ fn revert_merge_commit_is_blocked_by_plan() {
     let repo = Repository::open(dir).unwrap();
     let plan = plan_revert(&repo, &merge_id).expect("plan_revert failed");
     assert!(
-        plan.blockers.iter().any(|b| b.contains("merge commit")),
+        plan.blockers
+            .iter()
+            .any(|b| b.message_en().contains("merge commit")),
         "expected merge blocker, got: {:?}",
         plan.blockers
     );
@@ -176,7 +178,7 @@ fn revert_dirty_worktree_warns_without_blocking() {
     assert!(
         plan.warnings
             .iter()
-            .any(|w| w.contains("modified") || w.contains("untracked")),
+            .any(|w| w.message_en().contains("modified") || w.message_en().contains("untracked")),
         "expected dirty warning, got: {:?}",
         plan.warnings
     );

@@ -46,8 +46,11 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
         dirty: dirty_display.clone(),
     };
 
-    let mut blockers: Vec<String> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
+    // ADR-0129: discard is the first structured producer — notes are typed
+    // (`DiscardNote`), not English prose. `message_en()` renders the exact
+    // legacy strings for oplog/klog/EN display (golden-tested in kagi-domain).
+    let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     // Build the lookup sets from the current status (all repo-relative paths).
     let unstaged_set: std::collections::HashSet<String> = status
@@ -69,7 +72,7 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
     let rels: Vec<String> = paths.iter().map(|p| discard_rel_path(repo, p)).collect();
 
     if rels.is_empty() {
-        blockers.push("Nothing to discard: no files selected.".to_string());
+        blockers.push(PlanNote::Discard(DiscardNote::NothingSelected));
     }
 
     // Count untracked targets — they are discarded by DELETING the file (after
@@ -77,14 +80,15 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
     let mut untracked_targets = 0usize;
     for rel in &rels {
         if conflicted_set.contains(rel) {
-            blockers.push(format!(
-                "'{}' is conflicted. Resolve the conflict instead of discarding it.",
-                rel
-            ));
+            blockers.push(PlanNote::Discard(DiscardNote::TargetConflicted {
+                path: rel.clone(),
+            }));
         } else if untracked_set.contains(rel) {
             untracked_targets += 1;
         } else if !unstaged_set.contains(rel) {
-            blockers.push(format!("'{}' has no unstaged changes to discard.", rel));
+            blockers.push(PlanNote::Discard(DiscardNote::NoUnstagedChanges {
+                path: rel.clone(),
+            }));
         }
     }
 
@@ -98,40 +102,33 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
         },
     };
 
-    let title = if target_count == 1 {
-        format!(
-            "Discard changes to '{}'",
-            rels.first().cloned().unwrap_or_default()
-        )
-    } else {
-        format!("Discard changes to {} file(s)", target_count)
+    let title = PlanTitle::Discard {
+        single: (target_count == 1).then(|| rels.first().cloned().unwrap_or_default()),
+        count: target_count,
     };
 
-    let recovery = "This discards your unstaged changes to the selected file(s): \
-        tracked files are restored from the index, untracked files are deleted from \
-        disk. Either way a backup blob of each file's current content is recorded in \
-        the oplog (op=\"discard\") first; recover with `git cat-file -p <blob-sha>`."
-        .to_string();
+    let recovery = PlanRecovery {
+        kind: RecoveryKind::Discard,
+        commands: vec!["git cat-file -p <blob-sha>".to_string()],
+    };
 
     // ADR-0083: untracked targets are DELETED (after an ODB backup). Surface this
     // as a warning so the confirm step is explicit about the irreversible-looking
     // (but recoverable) deletion.
     if untracked_targets > 0 {
-        warnings.push(format!(
-            "⚠️ {} untracked file(s) will be PERMANENTLY DELETED from disk (and any \
-             now-empty folders removed). A backup blob is saved to the oplog first — \
-             recover with `git cat-file -p <blob-sha>`.",
-            untracked_targets
-        ));
+        warnings.push(PlanNote::Discard(DiscardNote::UntrackedWillBeDeleted {
+            count: untracked_targets,
+        }));
     }
 
     Ok(OperationPlan {
+        disposition: PlanDisposition::for_blockers(&blockers),
         title,
         current,
         predicted,
         warnings,
         blockers,
-        recovery,
+        recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),

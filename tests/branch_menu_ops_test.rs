@@ -178,7 +178,9 @@ fn merge_plan_conflict_is_warning_not_blocker_and_leaves_worktree_intact() {
         other => panic!("expected MergeKind::Conflicts, got {:?}", other),
     }
     assert!(
-        plan.warnings.iter().any(|w| w.contains("same.txt")),
+        plan.warnings
+            .iter()
+            .any(|w| w.message_en().contains("same.txt")),
         "expected a warning mentioning the conflicted file, got {:?}",
         plan.warnings
     );
@@ -401,7 +403,9 @@ fn switch_to_latest_ahead_branch_is_switch_only_warning() {
     let plan = plan_switch_to_latest(&repo, "topic", "origin/topic").expect("plan");
     assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
     assert!(
-        plan.warnings.iter().any(|w| w.contains("ahead")),
+        plan.warnings
+            .iter()
+            .any(|w| w.message_en().contains("ahead")),
         "expected an 'ahead' warning, got {:?}",
         plan.warnings
     );
@@ -418,7 +422,9 @@ fn switch_to_latest_dirty_working_tree_is_blocker() {
 
     let plan = plan_switch_to_latest(&repo, "topic", "origin/topic").expect("plan");
     assert!(
-        plan.blockers.iter().any(|b| b.contains("stash or commit")),
+        plan.blockers
+            .iter()
+            .any(|b| b.message_en().contains("stash or commit")),
         "expected a dirty blocker, got {:?}",
         plan.blockers
     );
@@ -439,7 +445,9 @@ fn checkout_tracking_branch_name_collision_is_blocker() {
 
     let plan = plan_checkout_tracking_branch(&repo, "origin/main", "main").expect("tracking plan");
     assert!(
-        plan.blockers.iter().any(|b| b.contains("already exists")),
+        plan.blockers
+            .iter()
+            .any(|b| b.message_en().contains("already exists")),
         "expected collision blocker, got {:?}",
         plan.blockers
     );

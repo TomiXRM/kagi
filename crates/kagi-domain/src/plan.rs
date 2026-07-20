@@ -250,3 +250,72 @@ impl DiscardOutcome {
         )
     }
 }
+
+// ──────────────────────────────────────────────────────────────
+// OperationPlan (ADR-0129 Phase 1: moved here from kagi-git::ops;
+// kagi-git re-exports it per the naming convention)
+// ──────────────────────────────────────────────────────────────
+
+use crate::head::Head;
+use crate::plan_note::{PlanDisposition, PlanNote, PlanRecovery, PlanTitle};
+use crate::status::FileStatus;
+
+/// A complete plan describing what an operation will do, including
+/// any blockers that prevent execution and warnings that should be surfaced.
+///
+/// If `blockers` is non-empty the UI **must not** offer the Execute button.
+///
+/// ADR-0129: `title`/`warnings`/`blockers`/`recovery` are structured values
+/// localized by the display layer; `disposition` carries the semantic state
+/// the UI used to infer by parsing display strings.
+#[derive(Debug, Clone)]
+pub struct OperationPlan {
+    /// The plan modal's title (one, required).
+    pub title: PlanTitle,
+    /// Repository state *before* the operation.
+    pub current: StateSummary,
+    /// Predicted repository state *after* the operation.
+    pub predicted: StateSummary,
+    /// Non-fatal observations (shown in yellow).  The operation can still
+    /// proceed if there are warnings but no blockers.
+    pub warnings: Vec<PlanNote>,
+    /// Conditions that prevent execution (shown in red).  At least one blocker
+    /// means the Execute button must be hidden.
+    pub blockers: Vec<PlanNote>,
+    /// Recovery guidance shown to the user before they confirm.
+    pub recovery: Option<PlanRecovery>,
+    /// Semantic plan state (ADR-0129 §2): Ready / NoOp(kind) / Blocked.
+    /// Producers set NoOp explicitly; string-parsing no-op detection is gone.
+    pub disposition: PlanDisposition,
+    /// The HEAD state captured *at plan time*, used by `preflight_check` to
+    /// detect whether the repo has changed between planning and execution.
+    /// (Was `pub(crate)` in kagi-git; public since the struct crossed crates —
+    /// treat as read-only outside the git layer.)
+    pub head_at_plan: Head,
+    /// Number of stash entries captured at plan time.  Used by
+    /// `preflight_check_stash` to detect concurrent stash modifications.
+    /// For non-stash operations this is always `0`.
+    pub stash_count_at_plan: usize,
+    /// Files that will be changed by the operation, as computed by an in-memory
+    /// dry run.  Non-empty only for cherry-pick plans.  Used by the plan modal
+    /// to render a preview file tree (T016).
+    pub preview_files: Vec<FileStatus>,
+    /// Commits that will be pushed, as `"<short>  <summary>"` strings.
+    /// Non-empty only for push plans (T-HT-004).  Shown in the plan modal
+    /// (newest first, capped at 100 entries at plan time).
+    pub preview_commits: Vec<String>,
+    /// History-rewriting flag (ADR-0023).  `true` for plans that rewrite
+    /// history (e.g. amend), which the UI must gate behind a **two-stage
+    /// confirmation**.  Defaults to `false` for every other plan.
+    pub destructive: bool,
+}
+
+impl OperationPlan {
+    /// Return the stash entry count captured at plan time.
+    ///
+    /// Pass this value to `preflight_check_stash` to verify that the stash
+    /// list has not changed since the plan was generated.
+    pub fn stash_count_at_plan(&self) -> usize {
+        self.stash_count_at_plan
+    }
+}

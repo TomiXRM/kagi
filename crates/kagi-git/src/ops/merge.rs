@@ -105,15 +105,16 @@ pub fn plan_merge_branch(
 
     let blocked_plan =
         |blockers: Vec<String>, warnings: Vec<String>, current: StateSummary| OperationPlan {
-            title: title.clone(),
+            disposition: PlanDisposition::for_blockers(&blockers),
+            title: PlanTitle::verbatim(title.clone()),
             current: current.clone(),
             predicted: StateSummary {
                 head: current.head.clone(),
                 dirty: current.dirty.clone(),
             },
-            warnings,
-            blockers,
-            recovery: recovery.clone(),
+            warnings: PlanNote::wrap_all(warnings),
+            blockers: PlanNote::wrap_all(blockers),
+            recovery: Some(PlanRecovery::verbatim(recovery.clone())),
             head_at_plan: head.clone(),
             stash_count_at_plan: 0,
             preview_files: Vec::new(),
@@ -225,15 +226,16 @@ pub fn plan_merge_branch(
 
     Ok((
         OperationPlan {
-            title,
+            disposition: PlanDisposition::for_blockers(&blockers),
+            title: PlanTitle::verbatim(title),
             current,
             predicted: StateSummary {
                 head: predicted_head,
                 dirty: predicted_dirty,
             },
-            warnings,
-            blockers,
-            recovery,
+            warnings: PlanNote::wrap_all(warnings),
+            blockers: PlanNote::wrap_all(blockers),
+            recovery: Some(PlanRecovery::verbatim(recovery)),
             head_at_plan: head,
             stash_count_at_plan: 0,
             preview_files,

@@ -36,6 +36,7 @@
 //! content); no force ops / `reset --hard` / `clean`; in-memory first (the repo
 //! is untouched until `execute_*`).
 
+use kagi_domain::plan_note::{PlanDisposition, PlanNote, PlanRecovery, PlanTitle};
 use std::path::{Path, PathBuf};
 
 use git2::{Repository, RepositoryState};
@@ -864,12 +865,13 @@ pub fn plan_conflict_continue(
     );
 
     Ok(OperationPlan {
-        title: format!("Continue {}", session.op.slug()),
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!("Continue {}", session.op.slug())),
         current,
         predicted,
-        warnings,
-        blockers,
-        recovery,
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -1290,15 +1292,16 @@ pub fn plan_conflict_abort(
     );
 
     Ok(OperationPlan {
-        title: format!("Abort {}", session.op.slug()),
+        disposition: PlanDisposition::Ready,
+        title: PlanTitle::verbatim(format!("Abort {}", session.op.slug())),
         current,
         predicted: StateSummary {
             head: predicted_head,
             dirty: "clean".to_string(),
         },
-        warnings,
+        warnings: PlanNote::wrap_all(warnings),
         blockers: Vec::new(),
-        recovery,
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -1460,15 +1463,16 @@ pub fn plan_conflict_skip(
     );
 
     Ok(OperationPlan {
-        title: format!("Skip {} step", session.op.slug()),
+        disposition: PlanDisposition::Ready,
+        title: PlanTitle::verbatim(format!("Skip {} step", session.op.slug())),
         current,
         predicted: StateSummary {
             head: head_display(&head),
             dirty: "current step dropped".to_string(),
         },
-        warnings,
+        warnings: PlanNote::wrap_all(warnings),
         blockers: Vec::new(),
-        recovery,
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),

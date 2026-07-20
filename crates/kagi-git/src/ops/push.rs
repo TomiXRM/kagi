@@ -101,12 +101,13 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
             let recovery =
                 "Push requires a branch. Use `git checkout <branch>` to attach HEAD.".to_string();
             return Ok(OperationPlan {
-                title: "Push (blocked)".to_string(),
+                disposition: PlanDisposition::for_blockers(&blockers),
+                title: PlanTitle::verbatim("Push (blocked)".to_string()),
                 current,
                 predicted,
-                warnings,
-                blockers,
-                recovery,
+                warnings: PlanNote::wrap_all(warnings),
+                blockers: PlanNote::wrap_all(blockers),
+                recovery: Some(PlanRecovery::verbatim(recovery)),
                 head_at_plan: head,
                 stash_count_at_plan: 0,
                 preview_files: Vec::new(),
@@ -180,6 +181,11 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
     };
 
     // ── 6. Upstream-configured but nothing to push ───────────
+    // ADR-0129 F-2: the UI's push no-op detection keyed on this blocker's
+    // text ("nothing to push"); the semantic state now travels with the plan.
+    // NoOp only when it is the sole blocker — any other blocker means the
+    // plan is genuinely blocked, matching the old `.all(contains(…))` check.
+    let nothing_to_push = has_upstream && ahead_count == 0 && blockers.is_empty();
     if has_upstream && ahead_count == 0 {
         blockers.push(format!(
             "Branch '{}' is already up to date with its upstream — nothing to push.",
@@ -230,12 +236,17 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
             .to_string();
 
     Ok(OperationPlan {
-        title,
+        disposition: if nothing_to_push {
+            PlanDisposition::NoOp(NoOpKind::PushUpToDate)
+        } else {
+            PlanDisposition::for_blockers(&blockers)
+        },
+        title: PlanTitle::verbatim(title),
         current,
         predicted,
-        warnings,
-        blockers,
-        recovery,
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(recovery)),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -554,7 +565,9 @@ pub fn plan_push_branch(
         0
     };
 
-    if blockers.is_empty() && has_upstream && ahead_count == 0 {
+    // ADR-0129 F-2: same no-op semantics as plan_push (sole up-to-date blocker).
+    let nothing_to_push = blockers.is_empty() && has_upstream && ahead_count == 0;
+    if nothing_to_push {
         blockers.push(format!(
             "Branch '{}' is already up to date with its upstream; nothing to push.",
             branch_name
@@ -577,15 +590,20 @@ pub fn plan_push_branch(
     };
 
     Ok(OperationPlan {
-        title,
+        disposition: if nothing_to_push {
+            PlanDisposition::NoOp(NoOpKind::PushUpToDate)
+        } else {
+            PlanDisposition::for_blockers(&blockers)
+        },
+        title: PlanTitle::verbatim(title),
         current,
         predicted: StateSummary {
             head: format!("branch: {} (pushed {} commit(s))", branch_name, ahead_count),
             dirty: "working tree unchanged".to_string(),
         },
-        warnings,
-        blockers,
-        recovery: "Push sends commits to the remote and does not modify the working tree. If the push is rejected, fetch or pull first and re-plan.".to_string(),
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim("Push sends commits to the remote and does not modify the working tree. If the push is rejected, fetch or pull first and re-plan.".to_string())),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),
@@ -670,18 +688,19 @@ pub fn plan_set_upstream(
     }
 
     Ok(OperationPlan {
-        title: format!("Set upstream of '{}' to '{}'", branch_name, upstream),
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::verbatim(format!("Set upstream of '{}' to '{}'", branch_name, upstream)),
         current,
         predicted: StateSummary {
             head: format!("branch: {} -> {}", branch_name, upstream),
             dirty: "working tree unchanged".to_string(),
         },
-        warnings,
-        blockers,
-        recovery: format!(
+        warnings: PlanNote::wrap_all(warnings),
+        blockers: PlanNote::wrap_all(blockers),
+        recovery: Some(PlanRecovery::verbatim(format!(
             "This changes only branch.{}.remote and branch.{}.merge in git config. To undo, set the previous upstream again.",
             branch_name, branch_name
-        ),
+        ))),
         head_at_plan: head,
         stash_count_at_plan: 0,
         preview_files: Vec::new(),

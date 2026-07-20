@@ -202,10 +202,10 @@ fn drag_merge_dirty_working_tree_warns_in_plan() {
     // uncommitted edits, and `git merge --abort` would discard both. The plan
     // must refuse execution rather than warn-and-allow.
     assert!(
-        plan.blockers
-            .iter()
-            .any(|b| b.to_lowercase().contains("working tree has")
-                && b.to_lowercase().contains("stash or commit")),
+        plan.blockers.iter().any(
+            |b| b.message_en().to_lowercase().contains("working tree has")
+                && b.message_en().to_lowercase().contains("stash or commit")
+        ),
         "expected a dirty-working-tree BLOCKER, got blockers: {:?}",
         plan.blockers
     );

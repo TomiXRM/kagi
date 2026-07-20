@@ -268,8 +268,10 @@ pub(crate) fn render_merge_modal(
     let (confirm_label, plan): (SharedString, std::sync::Arc<OperationPlan>) =
         if matches!(modal.kind, MergeKind::Conflicts(_)) {
             let mut plan = (*modal.plan).clone();
-            plan.warnings
-                .insert(0, Msg::MergeConflictWarning.t().to_string());
+            plan.warnings.insert(
+                0,
+                kagi_git::ops::PlanNote::verbatim(Msg::MergeConflictWarning.t()),
+            );
             (
                 SharedString::from(Msg::MergeAndResolveConflicts.t()),
                 std::sync::Arc::new(plan),

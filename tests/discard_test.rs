@@ -234,7 +234,7 @@ fn discard_untracked_deletes_file_and_backs_it_up() {
     assert!(
         plan.warnings
             .iter()
-            .any(|w| w.to_lowercase().contains("deleted")),
+            .any(|w| w.message_en().to_lowercase().contains("deleted")),
         "plan should warn the file will be deleted: {:?}",
         plan.warnings
     );
@@ -352,7 +352,7 @@ fn discard_conflicted_is_blocked() {
     assert!(
         plan.blockers
             .iter()
-            .any(|b| b.contains("conflict") || b.contains("Conflict")),
+            .any(|b| b.message_en().contains("conflict") || b.message_en().contains("Conflict")),
         "blocker should mention conflict: {:?}",
         plan.blockers
     );

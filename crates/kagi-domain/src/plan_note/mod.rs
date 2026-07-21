@@ -30,6 +30,7 @@ pub mod history;
 pub mod merge;
 pub mod pull;
 pub mod push;
+pub mod rebase;
 pub mod remote_branch;
 pub mod reset;
 pub mod stash;
@@ -51,6 +52,7 @@ pub use history::{HistoryNote, HistoryOp, HistoryRecovery, HistoryTitle};
 pub use merge::{MergeNote, MergeRecovery, MergeTitle};
 pub use pull::{PullNote, PullRecovery, PullTitle};
 pub use push::{PushNote, PushRecovery, PushTitle};
+pub use rebase::{RebaseNote, RebaseRecovery, RebaseTitle};
 pub use remote_branch::{RemoteBranchNote, RemoteBranchRecovery, RemoteBranchTitle};
 pub use reset::{ResetNote, ResetRecovery, ResetTitle};
 pub use stash::{StashNote, StashRecovery, StashTitle};
@@ -86,6 +88,7 @@ pub enum PlanNote {
     RemoteBranch(RemoteBranchNote),
     Reset(ResetNote),
     ForceLease(ForceLeaseNote),
+    Rebase(RebaseNote),
 }
 
 impl PlanNote {
@@ -114,6 +117,7 @@ impl PlanNote {
             PlanNote::RemoteBranch(n) => n.message_en(),
             PlanNote::Reset(n) => n.message_en(),
             PlanNote::ForceLease(n) => n.message_en(),
+            PlanNote::Rebase(n) => n.message_en(),
         }
     }
 }
@@ -151,6 +155,7 @@ pub enum PlanTitle {
     RemoteBranch(RemoteBranchTitle),
     Reset(ResetTitle),
     ForceLease(ForceLeaseTitle),
+    Rebase(RebaseTitle),
 }
 
 impl PlanTitle {
@@ -174,6 +179,7 @@ impl PlanTitle {
             PlanTitle::RemoteBranch(t) => t.message_en(),
             PlanTitle::Reset(t) => t.message_en(),
             PlanTitle::ForceLease(t) => t.message_en(),
+            PlanTitle::Rebase(t) => t.message_en(),
             PlanTitle::Discard {
                 single: Some(path), ..
             } => format!("Discard changes to '{}'", path),
@@ -226,6 +232,7 @@ impl PlanRecovery {
             RecoveryKind::RemoteBranch(r) => r.message_en(),
             RecoveryKind::Reset(r) => r.message_en(),
             RecoveryKind::ForceLease(r) => r.message_en(),
+            RecoveryKind::Rebase(r) => r.message_en(),
             RecoveryKind::Discard => {
                 "This discards your unstaged changes to the selected file(s): \
                  tracked files are restored from the index, untracked files are deleted from \
@@ -259,6 +266,7 @@ pub enum RecoveryKind {
     RemoteBranch(RemoteBranchRecovery),
     Reset(ResetRecovery),
     ForceLease(ForceLeaseRecovery),
+    Rebase(RebaseRecovery),
 }
 
 /// Semantic plan state (ADR-0129 §2). Replaces every place the UI used to

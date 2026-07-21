@@ -517,8 +517,10 @@ fn rebase_state(ctx: &BranchMenuContext) -> ItemState {
         disabled(Msg::BcmDetachedHead.t())
     } else if matches!(ctx.conflict_mode, BranchConflictMode::Conflicted) {
         disabled(Msg::BcmConflictMode.t())
+    } else if ctx.is_current {
+        disabled(Msg::BcmCurrentBranch.t())
     } else {
-        disabled(Msg::BcmNotImplementedYet.t())
+        ItemState::Enabled
     }
 }
 

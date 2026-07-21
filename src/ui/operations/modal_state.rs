@@ -12,10 +12,10 @@ use super::super::modals::{
     ConflictContinuePlanModal, CreateBranchModal, CreateTagModal, CreateWorktreeModal,
     DeleteBranchModal, DeleteRemoteBranchModal, DiscardModal, EditorDeleteConfirmModal,
     EditorDirtyGuardModal, EditorFsPromptModal, ForceLeasePushModal, HistoryPlanModal,
-    MergePlanModal, PopPlanModal, PullPlanModal, PushPlanModal, RenameBranchModal,
-    ResetCurrentModal, RevertModal, SetUpstreamModal, StashApplyModal, StashDropModal,
-    StashPushModal, SwitchToLatestPlanModal, TrackingCheckoutPlanModal, UndoPlanModal,
-    UnlockWorktreeModal,
+    MergePlanModal, PopPlanModal, PullPlanModal, PushPlanModal, RebaseCurrentOntoModal,
+    RenameBranchModal, ResetCurrentModal, RevertModal, SetUpstreamModal, StashApplyModal,
+    StashDropModal, StashPushModal, SwitchToLatestPlanModal, TrackingCheckoutPlanModal,
+    UndoPlanModal, UnlockWorktreeModal,
 };
 use super::super::KagiApp;
 use gpui::{AppContext as _, Context, Window};
@@ -529,6 +529,23 @@ impl KagiApp {
     #[inline]
     pub fn clear_force_lease_push_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::ForceLeasePush(_))) {
+            self.active_modal = None;
+        }
+    }
+    #[inline]
+    pub fn rebase_current_onto_modal(&self) -> Option<&RebaseCurrentOntoModal> {
+        match &self.active_modal {
+            Some(ActiveModal::RebaseCurrentOnto(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn set_rebase_current_onto_modal(&mut self, m: RebaseCurrentOntoModal) {
+        self.active_modal = Some(ActiveModal::RebaseCurrentOnto(m));
+    }
+    #[inline]
+    pub fn clear_rebase_current_onto_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::RebaseCurrentOnto(_))) {
             self.active_modal = None;
         }
     }

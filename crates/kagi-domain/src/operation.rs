@@ -5,7 +5,10 @@
 
 use crate::{
     commit::CommitId,
-    plan::{AmendMode, AmendOutcome, DiscardOutcome, PullOutcome, PushOutcome, UndoOutcome},
+    plan::{
+        AmendMode, AmendOutcome, DiscardOutcome, PullOutcome, PushOutcome, RebaseOutcome,
+        UndoOutcome,
+    },
 };
 
 /// A write operation request handled by the git backend pipeline.
@@ -113,6 +116,9 @@ pub enum Operation {
         target: CommitId,
     },
     ForceWithLeasePush,
+    RebaseCurrentOnto {
+        onto: String,
+    },
     Discard {
         paths: Vec<String>,
     },
@@ -128,6 +134,7 @@ pub enum OperationOutcome {
     Amend(AmendOutcome),
     Discard(DiscardOutcome),
     MergeIntoConflict(Vec<String>),
+    Rebase(RebaseOutcome),
     Unit,
 }
 

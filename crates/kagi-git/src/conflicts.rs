@@ -44,6 +44,7 @@ use std::path::{Path, PathBuf};
 
 use git2::{Repository, RepositoryState};
 
+use super::cli::run_git;
 use super::log::CommitId;
 use super::ops::{OperationPlan, StateSummary};
 use super::resolution::ResolutionBuffer;
@@ -903,16 +904,18 @@ pub fn plan_conflict_continue(
 /// stage it, and continue the operation.
 ///
 /// For a merge this writes the merge commit (HEAD + MERGE_HEAD parents) and
-/// clears the merge state.  For sequencer operations (cherry-pick / revert /
-/// rebase) this stages the resolution and returns [`ContinueOutcome::Staged`];
-/// driving the sequencer forward (commit + advance to the next pick) belongs to
-/// the dedicated sequence executors, which a later lane wires — this backend
-/// half guarantees the buffer is materialized + staged safely.
+/// clears the merge state. For sequencer operations (cherry-pick / revert /
+/// rebase) this stages the resolution, then shells out `git <op> --continue`
+/// (`run_git`, matching every other CLI-driven op in this codebase) to
+/// actually commit the resolved step and advance — libgit2 exposes no
+/// continue-a-sequence API, and reimplementing rebase's step machine by hand
+/// would duplicate real git's own sequencer.
 ///
 /// **Preconditions** (caller must check the plan first): no blockers.  This
 /// function re-checks marker residue defensively but trusts resolution presence.
 pub fn execute_conflict_continue(
     repo: &Repository,
+    repo_path: &Path,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
 ) -> Result<ContinueOutcome, GitError> {
@@ -932,9 +935,49 @@ pub fn execute_conflict_continue(
         return Ok(ContinueOutcome::Committed(oid));
     }
 
-    // 3. Sequencer operations: the buffer is staged; the sequence executor (a
-    // later lane) commits + advances. We report Staged so callers know the
-    // repo is mid-sequence with conflicts resolved.
+    // 3. Sequencer operations (rebase / cherry-pick / revert): advance via the
+    // real git CLI. `--continue` commits the resolved step with the original
+    // message (no editor is opened) and, for rebase, keeps auto-continuing
+    // through any further non-conflicting commits until it either finishes or
+    // stops at the next conflict.
+    //
+    // A single `--continue` call is *usually* enough to run the whole
+    // remaining sequence (git's own rebase loop keeps going through
+    // non-conflicting commits internally), but some git versions/backends
+    // need an extra nudge per resolved step. Loop while: the repo is still
+    // mid-sequence AND the index carries no unmerged entries (i.e. nothing
+    // is blocking another `--continue` — a real new conflict always leaves
+    // unmerged index entries, which stops the loop immediately). Bounded by
+    // the sequence length so a genuine stuck state can't spin forever.
+    let slug = session.op.slug();
+    let max_attempts = read_rebase_progress(repo.path()).1.max(1) + 1;
+    for _attempt in 0..max_attempts {
+        run_git(repo_path, &[slug, "--continue"])
+            .map_err(|e| GitError::Other(format!("{} --continue failed to start: {}", slug, e)))?;
+
+        if repo.state() == git2::RepositoryState::Clean {
+            break;
+        }
+        let no_conflicts_left = repo
+            .index()
+            .map(|idx| !idx.has_conflicts())
+            .unwrap_or(false);
+        if !no_conflicts_left {
+            break;
+        }
+    }
+
+    // `repo.state()` is the authoritative signal: `Clean` means the whole
+    // sequence finished; anything else means it's still in progress (either
+    // a genuine new conflict, or the retry budget above was exhausted), and
+    // the normal reload + `detect_conflict_session` path picks up whatever
+    // comes next.
+    if repo.state() == git2::RepositoryState::Clean {
+        return Ok(match repo.head().ok().and_then(|h| h.target()) {
+            Some(oid) => ContinueOutcome::Committed(CommitId(oid.to_string())),
+            None => ContinueOutcome::Staged,
+        });
+    }
     Ok(ContinueOutcome::Staged)
 }
 

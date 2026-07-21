@@ -408,6 +408,25 @@ pub(crate) fn render_force_lease_push_modal(
     )
 }
 
+/// Rebase-current-onto confirmation overlay (branch-menu "Integrate" group).
+/// Single confirm, no armed second stage — see `operations/rebase.rs`'s
+/// module doc for why (Guarded, not Destructive; a conflict routes into the
+/// existing conflict editor rather than losing anything).
+pub(crate) fn render_rebase_modal(
+    modal: RebaseCurrentOntoModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    render_plan_modal_wrapper(
+        modal.plan,
+        modal.error,
+        format!("Rebase {}", modal.branch),
+        None,
+        |this, _cx| this.cancel_rebase_modal(),
+        |this, cx| this.start_rebase(cx),
+        cx,
+    )
+}
+
 /// Branch-cleanup confirmation overlay (ADR-0128). Reuses the shared plan
 /// card: the plan's `preview_commits` already lists the branches (with their
 /// local/origin tips), and blockers hide the confirm button.

@@ -398,6 +398,7 @@ impl Backend {
                 self.plan_delete_remote_branch(remote_branch)
             }
             Operation::ResetCurrentToHead { target } => self.plan_reset_current_to_head(target),
+            Operation::ForceWithLeasePush => self.plan_force_with_lease_push(),
             Operation::Discard { paths } => self.plan_discard(paths),
         }
     }
@@ -546,6 +547,9 @@ impl Backend {
                 .map(|()| OperationOutcome::Unit),
             Operation::ResetCurrentToHead { target } => self
                 .execute_reset_current_to_head(target)
+                .map(|()| OperationOutcome::Unit),
+            Operation::ForceWithLeasePush => self
+                .execute_force_with_lease_push()
                 .map(|()| OperationOutcome::Unit),
             Operation::Discard { paths } => self
                 .execute_discard(plan, paths)
@@ -1084,6 +1088,14 @@ impl Backend {
 
     pub fn execute_reset_current_to_head(&self, target: &CommitId) -> Result<(), GitError> {
         ops::execute_reset_current_to_head(&self.repo, target)
+    }
+
+    pub fn plan_force_with_lease_push(&self) -> Result<OperationPlan, GitError> {
+        ops::plan_force_with_lease_push(&self.repo)
+    }
+
+    pub fn execute_force_with_lease_push(&self) -> Result<(), GitError> {
+        ops::execute_force_with_lease_push(&self.repo, &self.path)
     }
 
     /// Branch Cleanup (ADR-0128): validate a selection of delete targets and

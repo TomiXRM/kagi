@@ -11,10 +11,11 @@ use super::super::modals::{
     AmendPlanModal, BranchCleanupModal, BranchPlanModal, CheckoutPlanModal, CherryPickModal,
     ConflictContinuePlanModal, CreateBranchModal, CreateTagModal, CreateWorktreeModal,
     DeleteBranchModal, DeleteRemoteBranchModal, DiscardModal, EditorDeleteConfirmModal,
-    EditorDirtyGuardModal, EditorFsPromptModal, HistoryPlanModal, MergePlanModal, PopPlanModal,
-    PullPlanModal, PushPlanModal, RenameBranchModal, ResetCurrentModal, RevertModal,
-    SetUpstreamModal, StashApplyModal, StashDropModal, StashPushModal, SwitchToLatestPlanModal,
-    TrackingCheckoutPlanModal, UndoPlanModal, UnlockWorktreeModal,
+    EditorDirtyGuardModal, EditorFsPromptModal, ForceLeasePushModal, HistoryPlanModal,
+    MergePlanModal, PopPlanModal, PullPlanModal, PushPlanModal, RenameBranchModal,
+    ResetCurrentModal, RevertModal, SetUpstreamModal, StashApplyModal, StashDropModal,
+    StashPushModal, SwitchToLatestPlanModal, TrackingCheckoutPlanModal, UndoPlanModal,
+    UnlockWorktreeModal,
 };
 use super::super::KagiApp;
 use gpui::{AppContext as _, Context, Window};
@@ -511,6 +512,23 @@ impl KagiApp {
     #[inline]
     pub fn clear_reset_current_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::ResetCurrent(_))) {
+            self.active_modal = None;
+        }
+    }
+    #[inline]
+    pub fn force_lease_push_modal(&self) -> Option<&ForceLeasePushModal> {
+        match &self.active_modal {
+            Some(ActiveModal::ForceLeasePush(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn set_force_lease_push_modal(&mut self, m: ForceLeasePushModal) {
+        self.active_modal = Some(ActiveModal::ForceLeasePush(m));
+    }
+    #[inline]
+    pub fn clear_force_lease_push_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::ForceLeasePush(_))) {
             self.active_modal = None;
         }
     }

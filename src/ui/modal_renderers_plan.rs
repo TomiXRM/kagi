@@ -385,6 +385,29 @@ pub(crate) fn render_reset_current_modal(
     )
 }
 
+/// Force-with-lease push confirmation overlay (branch-menu "Advanced /
+/// Dangerous" group). Two-stage confirm, same shape as
+/// `render_reset_current_modal`.
+pub(crate) fn render_force_lease_push_modal(
+    modal: ForceLeasePushModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let confirm_label: SharedString = if modal.confirm_armed {
+        SharedString::from("\u{26a0} Really force-push — cannot be undone")
+    } else {
+        SharedString::from("Force-with-lease push")
+    };
+    render_plan_modal_wrapper(
+        modal.plan,
+        modal.error,
+        confirm_label,
+        None,
+        |this, _cx| this.cancel_force_lease_push_modal(),
+        |this, cx| this.start_force_lease_push(cx),
+        cx,
+    )
+}
+
 /// Branch-cleanup confirmation overlay (ADR-0128). Reuses the shared plan
 /// card: the plan's `preview_commits` already lists the branches (with their
 /// local/origin tips), and blockers hide the confirm button.

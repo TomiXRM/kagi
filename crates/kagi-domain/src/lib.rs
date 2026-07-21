@@ -29,6 +29,7 @@ pub mod message_template;
 pub mod operation;
 pub mod plan;
 pub mod plan_note;
+pub mod pr_url;
 pub mod refs;
 pub mod remote;
 pub mod remote_diff;

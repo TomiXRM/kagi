@@ -90,6 +90,14 @@ impl Backend {
         self.repo.workdir().map(Path::to_path_buf)
     }
 
+    /// The URL configured for the remote named `name`, if it exists.
+    pub fn remote_url_named(&self, name: &str) -> Option<String> {
+        self.repo
+            .find_remote(name)
+            .ok()
+            .and_then(|r| r.url().ok().map(str::to_string))
+    }
+
     pub fn remote_urls(&self) -> Result<Vec<String>, GitError> {
         let remotes = self
             .repo

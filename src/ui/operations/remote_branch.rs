@@ -209,3 +209,66 @@ impl KagiApp {
         .detach();
     }
 }
+
+impl KagiApp {
+    /// Open the host's "create pull/merge request" page for `head_branch`
+    /// (bare local name, or `<remote>/<branch>` for a Remote-kind item) in
+    /// the system browser, comparing it against the current branch.
+    ///
+    /// No git write at all — this only resolves a URL and opens it, so there
+    /// is no plan/preflight/execute pipeline and no oplog entry, mirroring
+    /// `commands.rs`'s `help.documentation` / `help.reportIssue`.
+    pub fn open_create_pr(
+        &mut self,
+        head_branch: String,
+        kind: BranchKind,
+        cx: &mut Context<Self>,
+    ) {
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from("create-pr: repo session unavailable"));
+                return;
+            }
+        };
+
+        let (remote_name, head_only) = match kind {
+            BranchKind::Remote => match head_branch.split_once('/') {
+                Some((r, b)) => (r.to_string(), b.to_string()),
+                None => ("origin".to_string(), head_branch.clone()),
+            },
+            BranchKind::Local => ("origin".to_string(), head_branch.clone()),
+        };
+        let remote_url = repo
+            .remote_url_named(&remote_name)
+            .or_else(|| repo.remote_urls().ok().and_then(|v| v.into_iter().next()));
+
+        let base_branch = self
+            .active_view
+            .branches
+            .iter()
+            .find(|(_, current)| *current)
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| "main".to_string());
+
+        match remote_url
+            .and_then(|u| kagi_domain::pr_url::pr_create_url(&u, &base_branch, &head_only))
+        {
+            Some(url) => {
+                klog!("create-pr: opening {}", url);
+                cx.open_url(&url);
+            }
+            None => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    "create-pr: remote host not recognized (github.com / gitlab.com / bitbucket.org only)",
+                ));
+                self.push_toast(
+                    ToastKind::Error,
+                    "Create PR: remote host not recognized",
+                    cx,
+                );
+            }
+        }
+    }
+}

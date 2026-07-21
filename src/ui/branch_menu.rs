@@ -179,7 +179,7 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
                 item(
                     BranchAction::CreatePr,
                     "Create PR",
-                    remote_stub_state(ctx),
+                    create_pr_state(ctx),
                     false,
                 ),
             ],
@@ -380,11 +380,13 @@ fn mutating_stub_state(ctx: &BranchMenuContext) -> ItemState {
     }
 }
 
-fn remote_stub_state(ctx: &BranchMenuContext) -> ItemState {
+fn create_pr_state(ctx: &BranchMenuContext) -> ItemState {
     if ctx.busy {
         disabled(Msg::BcmBusy.t())
+    } else if ctx.is_current {
+        disabled(Msg::BcmCurrentBranch.t())
     } else {
-        disabled(Msg::BcmNotImplementedYet.t())
+        ItemState::Enabled
     }
 }
 

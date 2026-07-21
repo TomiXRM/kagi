@@ -1560,8 +1560,12 @@ impl KagiApp {
             BranchAction::CreateTagHere => {
                 self.open_create_tag_modal(state.target, cx);
             }
+            BranchAction::PullFfOnly => {
+                if matches!(state.kind, BranchKind::Local) {
+                    self.open_branch_plan_modal(state.name, BranchPlanKind::PullFfOnly);
+                }
+            }
             BranchAction::NoUpstreamInfo
-            | BranchAction::PullFfOnly
             | BranchAction::FetchRemoteBranch
             | BranchAction::CreatePr
             | BranchAction::RebaseCurrentOnto

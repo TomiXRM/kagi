@@ -154,7 +154,7 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
                 item(
                     BranchAction::PullFfOnly,
                     "Pull ff-only",
-                    mutating_stub_state(ctx),
+                    pull_state(ctx),
                     false,
                 ),
                 item(BranchAction::Push, push_label(ctx), push_state(ctx), false),

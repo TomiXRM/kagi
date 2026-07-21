@@ -886,6 +886,18 @@ impl Backend {
         ops::fetch_remote(&self.repo, &self.path)
     }
 
+    /// Fetch a single remote branch's refspec (`"<remote>/<branch>"`,
+    /// e.g. `"origin/feature/x"`), splitting on the first `/`.
+    pub fn fetch_remote_branch(&self, remote_branch: &str) -> Result<FetchOutcome, GitError> {
+        let (remote, branch) = remote_branch.split_once('/').ok_or_else(|| {
+            GitError::Other(format!(
+                "'{}' is not a <remote>/<branch> name",
+                remote_branch
+            ))
+        })?;
+        ops::fetch_remote_branch(&self.repo, &self.path, remote, branch)
+    }
+
     pub fn plan_push(&self) -> Result<OperationPlan, GitError> {
         ops::plan_push(&self.repo)
     }

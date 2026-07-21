@@ -1570,8 +1570,12 @@ impl KagiApp {
                     self.open_delete_remote_branch_modal(state.name);
                 }
             }
+            BranchAction::FetchRemoteBranch => {
+                if matches!(state.kind, BranchKind::Remote) {
+                    self.fetch_remote_branch_async(state.name, cx);
+                }
+            }
             BranchAction::NoUpstreamInfo
-            | BranchAction::FetchRemoteBranch
             | BranchAction::CreatePr
             | BranchAction::RebaseCurrentOnto
             | BranchAction::ResetCurrentToHead

@@ -79,6 +79,45 @@ fn remote_ref_oids(repo: &Repository) -> Vec<(String, String)> {
     out
 }
 
+/// Fetch a single remote branch's refspec (branch-menu "Fetch remote
+/// branch"), updating only its remote-tracking ref.
+///
+/// Unlike [`fetch_remote`], this never falls back to `--all` — `remote` and
+/// `branch` are already known from the menu item (e.g. `"origin"` /
+/// `"feature/x"` split from `"origin/feature/x"`). Same fetch-only guarantee:
+/// never merges, fast-forwards, or moves the current branch.
+///
+/// # Errors
+///
+/// Returns [`GitError::Other`] when the git CLI fails to start or exits
+/// non-zero.
+pub fn fetch_remote_branch(
+    repo: &Repository,
+    repo_path: &Path,
+    remote: &str,
+    branch: &str,
+) -> Result<FetchOutcome, GitError> {
+    let before = remote_ref_oids(repo);
+
+    let out = run_git(repo_path, &["fetch", "--prune", remote, branch])
+        .map_err(|e| GitError::Other(format!("fetch failed: {}", e)))?;
+
+    if out.status != 0 {
+        return Err(GitError::Other(format!(
+            "fetch failed (exit {}): {}",
+            out.status,
+            out.stderr.trim()
+        )));
+    }
+
+    let after = remote_ref_oids(repo);
+
+    Ok(FetchOutcome {
+        remote: remote.to_string(),
+        changed: before != after,
+    })
+}
+
 /// Best-effort resolution of the remote to fetch: the current branch's
 /// configured upstream remote, else the sole configured remote, else `None`
 /// (caller fetches `--all`).

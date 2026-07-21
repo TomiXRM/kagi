@@ -660,6 +660,26 @@ pub(crate) fn delete_branch_blocking(
     })
 }
 
+pub(crate) fn delete_remote_branch_blocking(
+    repo_path: &std::path::Path,
+    plan: &OperationPlan,
+    remote_branch: &str,
+) -> Result<StateSummary, String> {
+    let mut repo =
+        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+    let op = kagi_git::Operation::DeleteRemoteBranch {
+        remote_branch: remote_branch.to_string(),
+    };
+    repo.run(&op, plan)
+        .map_err(|e| format!("Delete failed: {}", e))?;
+    klog!("executed: delete-remote-branch {}", remote_branch);
+
+    Ok(StateSummary {
+        head: plan.current.head.clone(),
+        dirty: format!("remote branch '{}' deleted", remote_branch),
+    })
+}
+
 pub(crate) fn branch_plan_blocking(
     repo_path: &std::path::Path,
     modal: &BranchPlanModal,

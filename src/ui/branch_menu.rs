@@ -524,7 +524,7 @@ fn delete_remote_state(ctx: &BranchMenuContext) -> ItemState {
     } else if ctx.busy {
         disabled(Msg::BcmBusy.t())
     } else {
-        disabled(Msg::BcmNotImplementedYet.t())
+        ItemState::Enabled
     }
 }
 
@@ -780,7 +780,7 @@ mod tests {
         assert_hidden(&groups, BranchAction::DeleteBranch);
         assert_hidden(&groups, BranchAction::RenameBranch);
         assert_hidden(&groups, BranchAction::SetUpstream);
-        assert_disabled_contains(&groups, BranchAction::DeleteRemoteBranch, "not implemented");
+        assert_enabled(&groups, BranchAction::DeleteRemoteBranch);
     }
 
     #[test]
@@ -854,7 +854,7 @@ mod tests {
         assert_hidden(&groups, BranchAction::SetUpstream);
         assert_hidden(&groups, BranchAction::RenameBranch);
         assert_hidden(&groups, BranchAction::DeleteBranch);
-        assert_disabled_contains(&groups, BranchAction::DeleteRemoteBranch, "not implemented");
+        assert_enabled(&groups, BranchAction::DeleteRemoteBranch);
     }
 
     #[test]

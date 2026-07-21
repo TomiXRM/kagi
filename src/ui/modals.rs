@@ -336,6 +336,26 @@ pub struct DeleteBranchModal {
     pub error: Option<SharedString>,
 }
 
+/// State for an in-progress delete-remote-branch confirmation
+/// (branch-menu "Advanced / Dangerous" group).
+///
+/// Two-stage confirm (mirrors `DiscardModal`'s `confirm_armed`): the first
+/// click only arms the button (label switches to an explicit "really
+/// delete" warning); the second click executes. Deleting a remote branch is
+/// `destructive: true` in the plan and, unlike local delete-branch, kagi
+/// cannot verify "merged" status against the remote before doing it.
+#[derive(Clone)]
+pub struct DeleteRemoteBranchModal {
+    /// `<remote>/<branch>`, e.g. `"origin/feature/x"`.
+    pub remote_branch: String,
+    /// The computed plan.
+    pub plan: std::sync::Arc<OperationPlan>,
+    /// Error message to show if preflight or execute failed.
+    pub error: Option<SharedString>,
+    /// Two-stage confirm gate: `false` = first click pending, `true` = armed.
+    pub confirm_armed: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BranchPlanKind {
     PullFfOnly,
@@ -541,6 +561,7 @@ pub enum ActiveModal {
     Revert(RevertModal),
     History(HistoryPlanModal),
     DeleteBranch(DeleteBranchModal),
+    DeleteRemoteBranch(DeleteRemoteBranchModal),
     BranchCleanup(BranchCleanupModal),
     Discard(DiscardModal),
     ConflictContinue(ConflictContinuePlanModal),

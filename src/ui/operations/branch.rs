@@ -1565,13 +1565,17 @@ impl KagiApp {
                     self.open_branch_plan_modal(state.name, BranchPlanKind::PullFfOnly);
                 }
             }
+            BranchAction::DeleteRemoteBranch => {
+                if matches!(state.kind, BranchKind::Remote) {
+                    self.open_delete_remote_branch_modal(state.name);
+                }
+            }
             BranchAction::NoUpstreamInfo
             | BranchAction::FetchRemoteBranch
             | BranchAction::CreatePr
             | BranchAction::RebaseCurrentOnto
             | BranchAction::ResetCurrentToHead
-            | BranchAction::ForceWithLeasePush
-            | BranchAction::DeleteRemoteBranch => {
+            | BranchAction::ForceWithLeasePush => {
                 self.status_footer =
                     FooterStatus::Idle(SharedString::from(Msg::BcmNotImplementedYet.t()));
             }

@@ -386,6 +386,9 @@ impl Backend {
             Operation::UndoCommit => self.plan_undo_commit(),
             Operation::Amend { mode, message } => self.plan_amend(*mode, message.as_deref()),
             Operation::DeleteBranch { name } => self.plan_delete_branch(name),
+            Operation::DeleteRemoteBranch { remote_branch } => {
+                self.plan_delete_remote_branch(remote_branch)
+            }
             Operation::Discard { paths } => self.plan_discard(paths),
         }
     }
@@ -528,6 +531,9 @@ impl Backend {
                 .map(OperationOutcome::Amend),
             Operation::DeleteBranch { name } => self
                 .execute_delete_branch(plan, name)
+                .map(|()| OperationOutcome::Unit),
+            Operation::DeleteRemoteBranch { remote_branch } => self
+                .execute_delete_remote_branch(remote_branch)
                 .map(|()| OperationOutcome::Unit),
             Operation::Discard { paths } => self
                 .execute_discard(plan, paths)
@@ -1035,6 +1041,17 @@ impl Backend {
 
     pub fn execute_delete_branch(&self, plan: &OperationPlan, name: &str) -> Result<(), GitError> {
         ops::execute_delete_branch(&self.repo, plan, name)
+    }
+
+    pub fn plan_delete_remote_branch(
+        &self,
+        remote_branch: &str,
+    ) -> Result<OperationPlan, GitError> {
+        ops::plan_delete_remote_branch(&self.repo, remote_branch)
+    }
+
+    pub fn execute_delete_remote_branch(&self, remote_branch: &str) -> Result<(), GitError> {
+        ops::execute_delete_remote_branch(&self.path, remote_branch)
     }
 
     /// Branch Cleanup (ADR-0128): validate a selection of delete targets and

@@ -9,6 +9,19 @@ Bundled, non-code resources. Layout:
 | `icons/` | UI SVG glyphs used by the app at runtime. |
 | `fonts/` | Bundled UI / monospace fonts. |
 
+## Bundled fonts
+
+| Files | Purpose | License / provenance |
+| --- | --- | --- |
+| `Inter-*.ttf` | Primary UI Latin font | SIL OFL 1.1; `Inter-OFL.txt` |
+| `JetBrainsMono-*.ttf` | Terminal and code | SIL OFL 1.1; `JetBrainsMono-OFL.txt` |
+| `NotoSansJP-Variable.ttf` | Deterministic Japanese/CJK fallback | SIL OFL 1.1; Google Fonts commit `2f6daa88e1e71320a6fe71cc91ecbfc018928737`; `NotoSansJP-OFL.txt` |
+
+`NotoSansJP-Variable.ttf` has SHA-256
+`c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f`.
+It is embedded by `src/ui/mod.rs`, so the native binary, `.deb`, tarball, and
+AppImage all use the same glyph data without relying on host-installed fonts.
+
 ## Regenerating the app icon
 
 The icon set in `icon/` is generated from the single source `icon-512x512.png`

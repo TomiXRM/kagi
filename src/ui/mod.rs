@@ -210,7 +210,7 @@ fn validate_merge_from_drag(
 
 // UI_FONT / MONO_FONT moved to kagi-ui-core::theme (ADR-0121 C1); re-exported
 // here so `super::UI_FONT` call sites keep working.
-pub use kagi_ui_core::theme::{MONO_FONT, UI_FONT};
+pub use kagi_ui_core::theme::{CJK_FONT, MONO_FONT, UI_FONT};
 
 /// Live window size in whole px (w, h), updated each frame while the window
 /// is plain `Windowed` (maximized/fullscreen sizes are not remembered), and
@@ -3092,8 +3092,9 @@ pub fn run_app(app_state: KagiApp) {
         // Bundle fonts so the UI + monospace look identical on every OS. Linux
         // has no "Menlo"/SF and the platform default is inconsistent, which made
         // fonts render broken on Ubuntu (user-reported). OFL: Inter (UI) +
-        // JetBrains Mono (terminal / conflict editor / code). The family names
-        // here MUST match the fonts' name tables (UI_FONT / MONO_FONT).
+        // JetBrains Mono (terminal / conflict editor / code) + Noto Sans JP
+        // (deterministic Japanese/CJK fallback). The family names here MUST
+        // match the fonts' name tables (UI_FONT / MONO_FONT / CJK_FONT).
         if let Err(e) = cx.text_system().add_fonts(vec![
             std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-Regular.ttf")),
             std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-Bold.ttf")),
@@ -3101,10 +3102,23 @@ pub fn run_app(app_state: KagiApp) {
                 "../../assets/fonts/JetBrainsMono-Regular.ttf"
             )),
             std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/JetBrainsMono-Bold.ttf")),
+            std::borrow::Cow::Borrowed(include_bytes!(
+                "../../assets/fonts/NotoSansJP-Variable.ttf"
+            )),
         ]) {
             klog!("fonts: add_fonts failed (UI may fall back): {e}");
         } else {
             klog!("fonts: loaded Inter + JetBrains Mono");
+            let cjk_ready = cx
+                .text_system()
+                .all_font_names()
+                .iter()
+                .any(|name| name == CJK_FONT);
+            if cjk_ready {
+                klog!("fonts: fallback {CJK_FONT}");
+            } else {
+                klog!("fonts: fallback missing {CJK_FONT}");
+            }
         }
 
         // Persist the last plain-Windowed size so the next launch restores it
@@ -3424,7 +3438,7 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
             // when no listener was bound (bind failed, or headless test mode).
             kagi.update(cx, |app, cx| app.arm_single_instance_listener(cx));
 
-            cx.new(|cx| gpui_component::Root::new(kagi, window, cx))
+            cx.new(|cx| gpui_component::Root::new(kagi, window, cx).font(theme::ui_font()))
         },
     )
     .unwrap();

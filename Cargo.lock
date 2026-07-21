@@ -3395,9 +3395,11 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "gpui-component",
+ "gpui_wgpu",
  "kagi-domain",
  "serde",
  "serde_json",
+ "ttf-parser",
 ]
 
 [[package]]

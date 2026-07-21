@@ -21,6 +21,7 @@ pub mod pull;
 pub mod push;
 pub mod stash;
 pub mod switch;
+pub mod tag;
 pub mod worktree;
 
 use kagi_domain::plan_note::{PlanNote, PlanRecovery, PlanTitle, RecoveryKind};
@@ -48,6 +49,7 @@ pub fn plan_note_text(note: &PlanNote) -> String {
             PlanNote::Conflicts(n) => conflicts::note_ja(n),
             PlanNote::Commit(n) => commit::note_ja(n),
             PlanNote::Checklist(n) => checklist::note_ja(n),
+            PlanNote::Tag(n) => tag::note_ja(n),
         },
     }
 }
@@ -70,6 +72,7 @@ pub fn plan_title_text(title: &PlanTitle) -> String {
             PlanTitle::Cleanup(t) => cleanup::title_ja(t),
             PlanTitle::Conflicts(t) => conflicts::title_ja(t),
             PlanTitle::Commit(t) => commit::title_ja(t),
+            PlanTitle::Tag(t) => tag::title_ja(t),
             PlanTitle::Discard { .. } => discard::title_ja(title),
         },
     }
@@ -97,6 +100,7 @@ pub fn plan_recovery_text(recovery: Option<&PlanRecovery>) -> String {
             RecoveryKind::Cleanup(r) => cleanup::recovery_ja(r),
             RecoveryKind::Conflicts(r) => conflicts::recovery_ja(r),
             RecoveryKind::Commit(r) => commit::recovery_ja(r),
+            RecoveryKind::Tag(r) => tag::recovery_ja(r),
             RecoveryKind::Discard => discard::recovery_ja(),
         },
     }

@@ -219,7 +219,7 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
                 item(
                     BranchAction::CreateTagHere,
                     "Create tag here...",
-                    mutating_stub_state(ctx),
+                    create_tag_state(ctx),
                     false,
                 ),
             ],
@@ -453,6 +453,14 @@ fn create_branch_state(ctx: &BranchMenuContext) -> ItemState {
 }
 
 fn create_worktree_state(ctx: &BranchMenuContext) -> ItemState {
+    if ctx.busy {
+        disabled(Msg::BcmBusy.t())
+    } else {
+        ItemState::Enabled
+    }
+}
+
+fn create_tag_state(ctx: &BranchMenuContext) -> ItemState {
     if ctx.busy {
         disabled(Msg::BcmBusy.t())
     } else {

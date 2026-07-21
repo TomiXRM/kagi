@@ -15,9 +15,10 @@ use tempfile::TempDir;
 use kagi_git::{
     ops::{
         execute_checkout, execute_checkout_commit, execute_cherry_pick, execute_create_branch,
-        execute_stash_apply, execute_stash_push, plan_checkout, plan_checkout_commit,
-        plan_cherry_pick, plan_create_branch, plan_create_branch_with_checkout, plan_stash_apply,
-        plan_stash_push, preflight_check, preflight_check_stash,
+        execute_create_tag, execute_stash_apply, execute_stash_push, plan_checkout,
+        plan_checkout_commit, plan_cherry_pick, plan_create_branch,
+        plan_create_branch_with_checkout, plan_create_tag, plan_stash_apply, plan_stash_push,
+        preflight_check, preflight_check_stash,
     },
     snapshot, CommitId, Head,
 };
@@ -812,6 +813,92 @@ fn test_execute_create_branch_does_not_overwrite_existing() {
     assert_eq!(
         still_oid, feature_commit_id_str,
         "feature/one must not be moved after failed create_branch (force=false)"
+    );
+}
+
+// ────────────────────────────────────────────────────────────
+// create-tag tests (branch-menu "Create tag here...")
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn test_create_tag_normal_creates_tag() {
+    let tmp = TempDir::new().unwrap();
+    let (_repo_dir, repo) = build_two_branch_repo(&tmp);
+
+    let at = head_commit_id(&repo);
+    let plan = plan_create_tag(&repo, "v1.0.0", &at).expect("plan_create_tag failed");
+
+    assert!(
+        plan.blockers.is_empty(),
+        "no blockers expected for valid name + existing commit, got: {:?}",
+        plan.blockers
+    );
+
+    execute_create_tag(&repo, "v1.0.0", &at).expect("execute_create_tag failed");
+
+    assert!(
+        repo.find_reference("refs/tags/v1.0.0").is_ok(),
+        "tag 'v1.0.0' should exist after creation"
+    );
+
+    // HEAD must still be on main — tag creation never moves HEAD.
+    let head_ref = repo.head().expect("repo.head()");
+    assert_eq!(
+        head_ref.shorthand().unwrap_or(""),
+        "main",
+        "HEAD should still be 'main' after create-tag"
+    );
+}
+
+#[test]
+fn test_create_tag_same_name_blocker() {
+    let tmp = TempDir::new().unwrap();
+    let (_repo_dir, repo) = build_two_branch_repo(&tmp);
+    let at = head_commit_id(&repo);
+
+    execute_create_tag(&repo, "v1.0.0", &at).expect("execute_create_tag failed");
+    let plan = plan_create_tag(&repo, "v1.0.0", &at).expect("plan_create_tag failed");
+
+    assert!(
+        !plan.blockers.is_empty(),
+        "creating a tag with an already-used name should be blocked"
+    );
+}
+
+#[test]
+fn test_create_tag_empty_name_blocker() {
+    let tmp = TempDir::new().unwrap();
+    let (_repo_dir, repo) = build_two_branch_repo(&tmp);
+    let at = head_commit_id(&repo);
+
+    let plan = plan_create_tag(&repo, "", &at).expect("plan_create_tag failed");
+    assert!(
+        !plan.blockers.is_empty(),
+        "empty tag name should be blocked"
+    );
+}
+
+#[test]
+fn test_execute_create_tag_does_not_overwrite_existing() {
+    let tmp = TempDir::new().unwrap();
+    let (_repo_dir, repo) = build_two_branch_repo(&tmp);
+    let at = head_commit_id(&repo);
+
+    execute_create_tag(&repo, "v1.0.0", &at).expect("execute_create_tag failed");
+    let tag_ref = repo.find_reference("refs/tags/v1.0.0").unwrap();
+    let original_target = tag_ref.target();
+
+    let result = execute_create_tag(&repo, "v1.0.0", &at);
+    assert!(
+        result.is_err(),
+        "execute_create_tag with an existing tag name must return Err (force=false)"
+    );
+
+    let tag_ref_after = repo.find_reference("refs/tags/v1.0.0").unwrap();
+    assert_eq!(
+        tag_ref_after.target(),
+        original_target,
+        "existing tag must not be moved after failed create_tag (force=false)"
     );
 }
 

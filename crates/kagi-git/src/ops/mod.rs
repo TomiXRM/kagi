@@ -112,6 +112,7 @@ mod push;
 mod remote_common;
 mod stash;
 mod switch;
+mod tag;
 mod worktree;
 
 pub use branch::*;
@@ -126,6 +127,7 @@ pub use pull::*;
 pub use push::*;
 pub use stash::*;
 pub use switch::*;
+pub use tag::*;
 pub use worktree::*;
 
 // ────────────────────────────────────────────────────────────

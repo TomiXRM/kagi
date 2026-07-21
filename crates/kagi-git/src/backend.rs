@@ -329,6 +329,7 @@ impl Backend {
                 at,
                 checkout_after,
             } => self.plan_create_branch_with_checkout(name, at, *checkout_after),
+            Operation::CreateTag { name, at } => self.plan_create_tag(name, at),
             Operation::CreateWorktree {
                 branch,
                 path,
@@ -454,6 +455,9 @@ impl Backend {
                 }
                 Ok(OperationOutcome::Unit)
             }
+            Operation::CreateTag { name, at } => self
+                .execute_create_tag(name, at)
+                .map(|()| OperationOutcome::Unit),
             Operation::CreateWorktree {
                 branch,
                 path,
@@ -690,6 +694,14 @@ impl Backend {
 
     pub fn execute_create_branch(&self, name: &str, at: &CommitId) -> Result<(), GitError> {
         ops::execute_create_branch(&self.repo, name, at)
+    }
+
+    pub fn plan_create_tag(&self, name: &str, at: &CommitId) -> Result<OperationPlan, GitError> {
+        ops::plan_create_tag(&self.repo, name, at)
+    }
+
+    pub fn execute_create_tag(&self, name: &str, at: &CommitId) -> Result<(), GitError> {
+        ops::execute_create_tag(&self.repo, name, at)
     }
 
     pub fn plan_create_branch_with_checkout(

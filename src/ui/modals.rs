@@ -197,6 +197,32 @@ pub struct CreateBranchModal {
     pub error: Option<SharedString>,
 }
 
+// ──────────────────────────────────────────────────────────────
+// CreateTagModal — state for the create-tag-here overlay
+// ──────────────────────────────────────────────────────────────
+
+/// State for an in-progress create-tag confirmation.
+///
+/// The user types a tag name; the plan is regenerated live on each keystroke.
+/// Mirrors [`CreateBranchModal`] minus the checkout-after option (a tag is
+/// never checked out).
+#[derive(Clone)]
+pub struct CreateTagModal {
+    /// The commit the tag will point at.
+    pub at: CommitId,
+    /// First line of the start commit message, used to identify menu origin.
+    pub start_title: String,
+    /// Current text in the tag-name input field (synced from `input_state`).
+    pub input: String,
+    /// Real text-input entity (gpui-component). Created lazily on first
+    /// render (needs a Window); `None` in headless paths.
+    pub input_state: Option<Entity<InputState>>,
+    /// Live plan (re-generated each keystroke from `input` and `at`).
+    pub plan: Option<std::sync::Arc<OperationPlan>>,
+    /// Error message to show if execute or preflight failed.
+    pub error: Option<SharedString>,
+}
+
 /// State for an in-progress create-worktree confirmation.
 #[derive(Clone)]
 pub struct CreateWorktreeModal {
@@ -506,6 +532,7 @@ pub enum ActiveModal {
     TrackingCheckout(TrackingCheckoutPlanModal),
     SwitchToLatest(SwitchToLatestPlanModal),
     CreateBranch(CreateBranchModal),
+    CreateTag(CreateTagModal),
     CreateWorktree(CreateWorktreeModal),
     UnlockWorktree(UnlockWorktreeModal),
     StashPush(StashPushModal),

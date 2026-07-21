@@ -387,6 +387,7 @@ impl Render for KagiApp {
         let tracking_checkout_modal = self.tracking_checkout_modal().cloned();
         let switch_to_latest_modal = self.switch_to_latest_modal().cloned();
         let create_branch_modal = self.create_branch_modal().cloned();
+        let create_tag_modal = self.create_tag_modal().cloned();
         let create_worktree_modal = self.create_worktree_modal().cloned();
         let remote_browse_modal = self.remote_browse_modal.clone();
         let delete_branch_modal = self.delete_branch_modal().cloned();
@@ -751,6 +752,7 @@ impl Render for KagiApp {
             tracking_checkout_modal,
             switch_to_latest_modal,
             create_branch_modal,
+            create_tag_modal,
             create_worktree_modal,
             unlock_worktree_modal,
             remote_browse_modal,

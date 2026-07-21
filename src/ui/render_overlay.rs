@@ -335,6 +335,7 @@ impl KagiApp {
         tracking_checkout_modal: Option<TrackingCheckoutPlanModal>,
         switch_to_latest_modal: Option<SwitchToLatestPlanModal>,
         create_branch_modal: Option<CreateBranchModal>,
+        create_tag_modal: Option<CreateTagModal>,
         create_worktree_modal: Option<CreateWorktreeModal>,
         unlock_worktree_modal: Option<UnlockWorktreeModal>,
         remote_browse_modal: Option<RemoteBrowseModal>,
@@ -416,6 +417,10 @@ impl KagiApp {
         // ── Create-branch modal overlay (above everything) ──
         .when_some(create_branch_modal, |el, modal| {
             el.child(render_create_branch_modal(modal, modal_focus.clone(), cx))
+        })
+        // ── Create-tag modal overlay ─────────────────────
+        .when_some(create_tag_modal, |el, modal| {
+            el.child(render_create_tag_modal(modal, modal_focus.clone(), cx))
         })
         // ── Create-worktree modal overlay ───────────────
         .when_some(create_worktree_modal, |el, modal| {

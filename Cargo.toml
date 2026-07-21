@@ -100,9 +100,8 @@ copyright = "2026, TomiXRM"
 extended-description = "Safety-first, commit-graph Git GUI client built with GPUI."
 section = "vcs"
 depends = "$auto"
-# Noto CJK is the family cosmic-text's per-script fallback asks for by name;
-# without it CJK glyphs fall back to whatever random font covers them.
-recommends = "fonts-noto-cjk"
+# Japanese glyphs are embedded in the binary (Noto Sans JP) so every package
+# format has the same deterministic fallback; no host font package is needed.
 assets = [
     ["target/release/kagi", "usr/bin/", "755"],
     ["assets/linux/kagi.desktop", "usr/share/applications/", "644"],

@@ -26,13 +26,8 @@ use gpui::{hsla, rgb, App, Hsla};
 
 use crate::settings::{read_setting, write_setting, Settings};
 
-/// Bundled UI sans family (OFL Inter), loaded at startup via `add_fonts`, so the
-/// UI looks identical on every OS instead of relying on the platform default.
-/// (Moved here from `src/ui/mod.rs` in ADR-0121 C1; the bin re-exports it.)
-pub const UI_FONT: &str = "Inter";
-/// Bundled monospace family (OFL JetBrains Mono) for the terminal / conflict
-/// editor / code — replaces the macOS-only "Menlo" fallback.
-pub const MONO_FONT: &str = "JetBrains Mono";
+// Compatibility re-export: font constants historically lived in `theme`.
+pub use crate::fonts::{ui_font, CJK_FONT, MONO_FONT, UI_FONT};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Theme struct

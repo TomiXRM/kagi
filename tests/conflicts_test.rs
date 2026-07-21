@@ -542,7 +542,7 @@ fn execute_continue_merge_creates_merge_commit() {
         .unwrap();
 
     let outcome =
-        kagi_git::execute_conflict_continue(&repo, &session, &buffer).expect("continue merge");
+        kagi_git::execute_conflict_continue(&repo, dir, &session, &buffer).expect("continue merge");
     match outcome {
         kagi_git::ContinueOutcome::Committed(id) => {
             // The new commit is a merge (two parents).
@@ -557,6 +557,93 @@ fn execute_continue_merge_creates_merge_commit() {
     assert!(detect_conflict_session(&repo).is_none());
     let content = std::fs::read_to_string(dir.join("file.txt")).unwrap();
     assert!(content.contains("MAIN change") && content.contains("FEATURE change"));
+}
+
+/// The bug this test guards against: `execute_conflict_continue` for a
+/// sequencer op (cherry-pick here; rebase shares the same code path) used to
+/// only stage the resolution and stop — never actually advancing the
+/// sequence. A user who resolved a cherry-pick/rebase conflict in kagi had no
+/// way to finish it without dropping to a terminal.
+#[test]
+fn execute_continue_cherry_pick_advances_and_finishes() {
+    let tmp = cherry_pick_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    assert!(matches!(session.op, ConflictOp::CherryPick { .. }));
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(Path::new("file.txt"), ResolutionChoice::Incoming)
+        .unwrap();
+
+    let outcome = kagi_git::execute_conflict_continue(&repo, dir, &session, &buffer)
+        .expect("continue cherry-pick");
+    match outcome {
+        kagi_git::ContinueOutcome::Committed(id) => {
+            // A real commit was created (not just staged) with a single parent
+            // (cherry-pick, not a merge).
+            let parents = git_output(dir, &["rev-list", "--parents", "-n", "1", &id.0]);
+            assert_eq!(
+                parents.split_whitespace().count(),
+                2,
+                "cherry-pick commit should have exactly 1 parent"
+            );
+        }
+        other => panic!("expected Committed (sequence finished), got {:?}", other),
+    }
+
+    // The sequence is fully finished: no CHERRY_PICK_HEAD, no conflict session.
+    assert!(!dir.join(".git").join("CHERRY_PICK_HEAD").exists());
+    let repo2 = Repository::open(dir).unwrap();
+    assert!(detect_conflict_session(&repo2).is_none());
+
+    // The resolution (Incoming = "SIDE") made it into the finished commit.
+    let content = std::fs::read_to_string(dir.join("file.txt")).unwrap();
+    assert!(content.contains("SIDE"), "got {:?}", content);
+    assert!(!content.contains("<<<<<<<"), "no markers should remain");
+}
+
+/// Same guard as the cherry-pick test above, for rebase specifically — the
+/// feature this fixes exists to unblock ("Rebase current onto").
+#[test]
+fn execute_continue_rebase_advances_and_finishes() {
+    let tmp = rebase_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    assert!(matches!(session.op, ConflictOp::Rebase { .. }));
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(Path::new("file.txt"), ResolutionChoice::Incoming)
+        .unwrap();
+
+    let outcome = kagi_git::execute_conflict_continue(&repo, dir, &session, &buffer)
+        .expect("continue rebase");
+    assert!(
+        matches!(outcome, kagi_git::ContinueOutcome::Committed(_)),
+        "single-commit rebase should finish in one continue, got {:?}",
+        outcome
+    );
+
+    // No longer mid-rebase.
+    assert!(!dir.join(".git").join("rebase-merge").exists());
+    let repo2 = Repository::open(dir).unwrap();
+    assert!(detect_conflict_session(&repo2).is_none());
+
+    // `side` now sits on top of `main`: its tip's parent is main's tip.
+    let side_tip = git_output(dir, &["rev-parse", "side"]);
+    let side_parent = git_output(dir, &["rev-parse", &format!("{}^", side_tip)]);
+    let main_tip = git_output(dir, &["rev-parse", "main"]);
+    assert_eq!(
+        side_parent, main_tip,
+        "side's replayed commit should now be a child of main's tip"
+    );
+
+    let content = std::fs::read_to_string(dir.join("file.txt")).unwrap();
+    assert!(content.contains("SIDE"), "got {:?}", content);
+    assert!(!content.contains("<<<<<<<"), "no markers should remain");
 }
 
 /// Regression: the UI merge route is `stage_conflict_resolution` (on Continue)
@@ -805,6 +892,29 @@ fn cherry_pick_conflict_repo() -> TempDir {
     git(dir, &["commit", "-qam", "main change"]);
 
     git_allow_fail(dir, &["cherry-pick", &side_sha]);
+    tmp
+}
+
+/// Build a repo mid-rebase with a conflict, `side` being replayed onto `main`.
+fn rebase_conflict_repo() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir);
+
+    write_file(dir, "file.txt", "base\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    git(dir, &["checkout", "-q", "-b", "side"]);
+    write_file(dir, "file.txt", "SIDE\n");
+    git(dir, &["commit", "-qam", "side change"]);
+
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "file.txt", "MAIN\n");
+    git(dir, &["commit", "-qam", "main change"]);
+
+    git(dir, &["checkout", "-q", "side"]);
+    git_allow_fail(dir, &["rebase", "main"]);
     tmp
 }
 

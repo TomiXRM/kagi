@@ -399,6 +399,7 @@ impl Backend {
             }
             Operation::ResetCurrentToHead { target } => self.plan_reset_current_to_head(target),
             Operation::ForceWithLeasePush => self.plan_force_with_lease_push(),
+            Operation::RebaseCurrentOnto { onto } => self.plan_rebase_current_onto(onto),
             Operation::Discard { paths } => self.plan_discard(paths),
         }
     }
@@ -551,6 +552,9 @@ impl Backend {
             Operation::ForceWithLeasePush => self
                 .execute_force_with_lease_push()
                 .map(|()| OperationOutcome::Unit),
+            Operation::RebaseCurrentOnto { onto } => self
+                .execute_rebase_current_onto(onto)
+                .map(OperationOutcome::Rebase),
             Operation::Discard { paths } => self
                 .execute_discard(plan, paths)
                 .map(OperationOutcome::Discard),
@@ -621,7 +625,7 @@ impl Backend {
         session: &conflicts::ConflictSession,
         buffer: &ResolutionBuffer,
     ) -> Result<conflicts::ContinueOutcome, GitError> {
-        conflicts::execute_conflict_continue(&self.repo, session, buffer)
+        conflicts::execute_conflict_continue(&self.repo, &self.path, session, buffer)
     }
 
     pub fn execute_conflict_save(
@@ -1096,6 +1100,14 @@ impl Backend {
 
     pub fn execute_force_with_lease_push(&self) -> Result<(), GitError> {
         ops::execute_force_with_lease_push(&self.repo, &self.path)
+    }
+
+    pub fn plan_rebase_current_onto(&self, onto: &str) -> Result<OperationPlan, GitError> {
+        ops::plan_rebase_current_onto(&self.repo, onto)
+    }
+
+    pub fn execute_rebase_current_onto(&self, onto: &str) -> Result<ops::RebaseOutcome, GitError> {
+        ops::execute_rebase_current_onto(&self.repo, &self.path, onto)
     }
 
     /// Branch Cleanup (ADR-0128): validate a selection of delete targets and

@@ -44,6 +44,7 @@ use std::path::{Path, PathBuf};
 
 use git2::{Repository, RepositoryState};
 
+use super::cli::run_git;
 use super::log::CommitId;
 use super::ops::{OperationPlan, StateSummary};
 use super::resolution::ResolutionBuffer;
@@ -903,16 +904,18 @@ pub fn plan_conflict_continue(
 /// stage it, and continue the operation.
 ///
 /// For a merge this writes the merge commit (HEAD + MERGE_HEAD parents) and
-/// clears the merge state.  For sequencer operations (cherry-pick / revert /
-/// rebase) this stages the resolution and returns [`ContinueOutcome::Staged`];
-/// driving the sequencer forward (commit + advance to the next pick) belongs to
-/// the dedicated sequence executors, which a later lane wires — this backend
-/// half guarantees the buffer is materialized + staged safely.
+/// clears the merge state. For sequencer operations (cherry-pick / revert /
+/// rebase) this stages the resolution, then shells out `git <op> --continue`
+/// (`run_git`, matching every other CLI-driven op in this codebase) to
+/// actually commit the resolved step and advance — libgit2 exposes no
+/// continue-a-sequence API, and reimplementing rebase's step machine by hand
+/// would duplicate real git's own sequencer.
 ///
 /// **Preconditions** (caller must check the plan first): no blockers.  This
 /// function re-checks marker residue defensively but trusts resolution presence.
 pub fn execute_conflict_continue(
     repo: &Repository,
+    repo_path: &Path,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
 ) -> Result<ContinueOutcome, GitError> {
@@ -932,9 +935,27 @@ pub fn execute_conflict_continue(
         return Ok(ContinueOutcome::Committed(oid));
     }
 
-    // 3. Sequencer operations: the buffer is staged; the sequence executor (a
-    // later lane) commits + advances. We report Staged so callers know the
-    // repo is mid-sequence with conflicts resolved.
+    // 3. Sequencer operations (rebase / cherry-pick / revert): advance via the
+    // real git CLI. `--continue` commits the resolved step with the original
+    // message (no editor is opened) and, for rebase, keeps auto-continuing
+    // through any further non-conflicting commits until it either finishes or
+    // stops at the next conflict.
+    let slug = session.op.slug();
+    let out = run_git(repo_path, &[slug, "--continue"])
+        .map_err(|e| GitError::Other(format!("{} --continue failed to start: {}", slug, e)))?;
+
+    // A non-zero exit here almost always means the sequence stopped again at
+    // a (possibly new) conflict — expected, not a failure. `repo.state()` is
+    // the authoritative signal: `Clean` means the whole sequence finished;
+    // anything else means it's still in progress, and the normal reload +
+    // `detect_conflict_session` path picks up whatever comes next.
+    if repo.state() == git2::RepositoryState::Clean {
+        return Ok(match repo.head().ok().and_then(|h| h.target()) {
+            Some(oid) => ContinueOutcome::Committed(CommitId(oid.to_string())),
+            None => ContinueOutcome::Staged,
+        });
+    }
+    let _ = out; // exit code intentionally not treated as failure — see above
     Ok(ContinueOutcome::Staged)
 }
 

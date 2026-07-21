@@ -1591,7 +1591,10 @@ impl KagiApp {
                     self.open_force_lease_push_modal(cx);
                 }
             }
-            BranchAction::NoUpstreamInfo | BranchAction::RebaseCurrentOnto => {
+            BranchAction::RebaseCurrentOnto => {
+                self.open_rebase_modal(state.name, cx);
+            }
+            BranchAction::NoUpstreamInfo => {
                 self.status_footer =
                     FooterStatus::Idle(SharedString::from(Msg::BcmNotImplementedYet.t()));
             }

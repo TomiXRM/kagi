@@ -148,6 +148,16 @@ pub enum PullOutcome {
     },
 }
 
+/// Outcome of a rebase-current-onto execute.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RebaseOutcome {
+    /// The whole rebase completed cleanly; `head` is the branch's new tip.
+    Completed { head: CommitId },
+    /// The rebase stopped partway through at a conflict — not a failure, the
+    /// repository is now in the standard git "rebasing" state.
+    Conflicted,
+}
+
 /// Result of a fetch: which remote was fetched.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FetchOutcome {

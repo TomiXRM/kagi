@@ -388,6 +388,22 @@ pub struct ForceLeasePushModal {
     pub confirm_armed: bool,
 }
 
+/// State for an in-progress rebase-current-onto confirmation
+/// (branch-menu "Integrate" group). Single confirm, not two-stage — rebase
+/// is Guarded (ADR-0004), not Destructive: it rewrites only the *local*
+/// branch, and a mid-rebase conflict routes into the existing conflict
+/// editor (with its own Abort) rather than silently losing anything.
+#[derive(Clone)]
+pub struct RebaseCurrentOntoModal {
+    /// The rebase target (`git rebase <onto>`'s argument).
+    pub onto: String,
+    /// The branch being rebased (drives the confirm-button label, mirrors
+    /// `MergePlanModal::into_branch`).
+    pub branch: String,
+    pub plan: std::sync::Arc<OperationPlan>,
+    pub error: Option<SharedString>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BranchPlanKind {
     PullFfOnly,
@@ -596,6 +612,7 @@ pub enum ActiveModal {
     DeleteRemoteBranch(DeleteRemoteBranchModal),
     ResetCurrent(ResetCurrentModal),
     ForceLeasePush(ForceLeasePushModal),
+    RebaseCurrentOnto(RebaseCurrentOntoModal),
     BranchCleanup(BranchCleanupModal),
     Discard(DiscardModal),
     ConflictContinue(ConflictContinuePlanModal),

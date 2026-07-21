@@ -347,6 +347,7 @@ impl KagiApp {
         delete_remote_branch_modal: Option<DeleteRemoteBranchModal>,
         reset_current_modal: Option<ResetCurrentModal>,
         force_lease_push_modal: Option<ForceLeasePushModal>,
+        rebase_current_onto_modal: Option<RebaseCurrentOntoModal>,
         branch_cleanup_modal: Option<BranchCleanupModal>,
         discard_modal: Option<DiscardModal>,
         editor_dirty_guard_modal: Option<EditorDirtyGuardModal>,
@@ -461,6 +462,9 @@ impl KagiApp {
         })
         .when_some(force_lease_push_modal, |el, modal| {
             el.child(render_force_lease_push_modal(modal, cx))
+        })
+        .when_some(rebase_current_onto_modal, |el, modal| {
+            el.child(render_rebase_modal(modal, cx))
         })
         // ── Branch-cleanup modal overlay (ADR-0128) ──────
         .when_some(branch_cleanup_modal, |el, modal| {

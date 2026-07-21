@@ -17,6 +17,44 @@ use std::path::PathBuf;
 use kagi_git::{open_repository, snapshot, Head};
 use ui::{run_app, KagiApp};
 
+/// Append every panic's message + location to `~/.kagi/panic.log` before the
+/// default hook runs.
+///
+/// A release build has no console attached when launched from Finder/Explorer,
+/// so a panic's message (and, on macOS, the FFI-unwind-forced `abort()` that
+/// follows it) is otherwise lost entirely — the crash reporter only records an
+/// opaque stripped-binary backtrace. This hook is the only way to recover
+/// *what* panicked after the fact.
+fn install_panic_log_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if let Some(dir) =
+            kagi_ui_core::settings::settings_path().and_then(|p| p.parent().map(PathBuf::from))
+        {
+            let _ = std::fs::create_dir_all(&dir);
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join("panic.log"))
+            {
+                use std::io::Write;
+                let _ = writeln!(f, "{} {info}", unix_timestamp());
+            }
+        }
+        default_hook(info);
+    }));
+}
+
+/// Seconds since the Unix epoch — enough to correlate a panic.log line with a
+/// crash report's timestamp without pulling in a date/time crate for one log
+/// line.
+fn unix_timestamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// True when the process is running under the `KAGI_*` headless test harness.
 ///
 /// The single-instance socket logic (ADR-0102) MUST be disabled here: the
@@ -40,6 +78,8 @@ fn headless_mode() -> bool {
 }
 
 fn main() {
+    install_panic_log_hook();
+
     // Collect CLI arguments (skip argv[0]).
     let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -231,4 +271,30 @@ fn main() {
     // which takes ownership of `app_state` and ends by calling `run_app`. The
     // mutating plan/execute hooks were retired in the ADR-0077 harness cleanup.
     headless::run_repo_flow(app_state, env_open_repo);
+}
+
+#[cfg(test)]
+mod panic_log_tests {
+    use super::install_panic_log_hook;
+
+    #[test]
+    fn panic_is_appended_to_panic_log() {
+        let dir = std::env::temp_dir().join(format!("kagi-panic-log-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        // SAFETY: single-threaded test process, no concurrent env readers.
+        unsafe { std::env::set_var("KAGI_LOG_DIR", &dir) };
+
+        install_panic_log_hook();
+        let result = std::panic::catch_unwind(|| panic!("panic_log_tests boom"));
+        assert!(result.is_err());
+
+        let log = std::fs::read_to_string(dir.join("panic.log")).expect("panic.log written");
+        assert!(
+            log.contains("panic_log_tests boom"),
+            "log missing message: {log}"
+        );
+
+        unsafe { std::env::remove_var("KAGI_LOG_DIR") };
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

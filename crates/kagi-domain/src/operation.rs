@@ -36,6 +36,10 @@ pub enum Operation {
         at: CommitId,
         checkout_after: bool,
     },
+    CreateTag {
+        name: String,
+        at: CommitId,
+    },
     CreateWorktree {
         branch: String,
         path: String,

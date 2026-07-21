@@ -1557,12 +1557,14 @@ impl KagiApp {
             BranchAction::CreateWorktreeFromHere => {
                 self.open_create_worktree_modal_prefilled(state.target, state.name, false, cx);
             }
+            BranchAction::CreateTagHere => {
+                self.open_create_tag_modal(state.target, cx);
+            }
             BranchAction::NoUpstreamInfo
             | BranchAction::PullFfOnly
             | BranchAction::FetchRemoteBranch
             | BranchAction::CreatePr
             | BranchAction::RebaseCurrentOnto
-            | BranchAction::CreateTagHere
             | BranchAction::ResetCurrentToHead
             | BranchAction::ForceWithLeasePush
             | BranchAction::DeleteRemoteBranch => {

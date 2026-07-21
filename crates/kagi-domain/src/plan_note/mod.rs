@@ -31,6 +31,7 @@ pub mod pull;
 pub mod push;
 pub mod stash;
 pub mod switch;
+pub mod tag;
 pub mod worktree;
 
 pub use branch::{BranchNote, BranchRecovery, BranchTitle};
@@ -48,6 +49,7 @@ pub use pull::{PullNote, PullRecovery, PullTitle};
 pub use push::{PushNote, PushRecovery, PushTitle};
 pub use stash::{StashNote, StashRecovery, StashTitle};
 pub use switch::{SwitchNote, SwitchRecovery, SwitchTitle};
+pub use tag::{TagNote, TagRecovery, TagTitle};
 pub use worktree::{WorktreeNote, WorktreeRecovery, WorktreeTitle};
 
 /// Category-nested note shown in the plan modal's blockers/warnings lists
@@ -74,6 +76,7 @@ pub enum PlanNote {
     Commit(CommitNote),
     /// Commit-checklist findings (ADR-0043 rules 4/5/6 — no title/recovery).
     Checklist(ChecklistNote),
+    Tag(TagNote),
 }
 
 impl PlanNote {
@@ -98,6 +101,7 @@ impl PlanNote {
             PlanNote::Conflicts(n) => n.message_en(),
             PlanNote::Commit(n) => n.message_en(),
             PlanNote::Checklist(n) => n.message_en(),
+            PlanNote::Tag(n) => n.message_en(),
         }
     }
 }
@@ -131,6 +135,7 @@ pub enum PlanTitle {
     Cleanup(CleanupTitle),
     Conflicts(ConflictsTitle),
     Commit(CommitTitle),
+    Tag(TagTitle),
 }
 
 impl PlanTitle {
@@ -150,6 +155,7 @@ impl PlanTitle {
             PlanTitle::Cleanup(t) => t.message_en(),
             PlanTitle::Conflicts(t) => t.message_en(),
             PlanTitle::Commit(t) => t.message_en(),
+            PlanTitle::Tag(t) => t.message_en(),
             PlanTitle::Discard {
                 single: Some(path), ..
             } => format!("Discard changes to '{}'", path),
@@ -198,6 +204,7 @@ impl PlanRecovery {
             RecoveryKind::Cleanup(r) => r.message_en(),
             RecoveryKind::Conflicts(r) => r.message_en(),
             RecoveryKind::Commit(r) => r.message_en(),
+            RecoveryKind::Tag(r) => r.message_en(),
             RecoveryKind::Discard => {
                 "This discards your unstaged changes to the selected file(s): \
                  tracked files are restored from the index, untracked files are deleted from \
@@ -227,6 +234,7 @@ pub enum RecoveryKind {
     Cleanup(CleanupRecovery),
     Conflicts(ConflictsRecovery),
     Commit(CommitRecovery),
+    Tag(TagRecovery),
 }
 
 /// Semantic plan state (ADR-0129 §2). Replaces every place the UI used to

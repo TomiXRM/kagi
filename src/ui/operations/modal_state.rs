@@ -9,12 +9,12 @@
 use super::super::modals::ActiveModal;
 use super::super::modals::{
     AmendPlanModal, BranchCleanupModal, BranchPlanModal, CheckoutPlanModal, CherryPickModal,
-    ConflictContinuePlanModal, CreateBranchModal, CreateWorktreeModal, DeleteBranchModal,
-    DiscardModal, EditorDeleteConfirmModal, EditorDirtyGuardModal, EditorFsPromptModal,
-    HistoryPlanModal, MergePlanModal, PopPlanModal, PullPlanModal, PushPlanModal,
-    RenameBranchModal, RevertModal, SetUpstreamModal, StashApplyModal, StashDropModal,
-    StashPushModal, SwitchToLatestPlanModal, TrackingCheckoutPlanModal, UndoPlanModal,
-    UnlockWorktreeModal,
+    ConflictContinuePlanModal, CreateBranchModal, CreateTagModal, CreateWorktreeModal,
+    DeleteBranchModal, DiscardModal, EditorDeleteConfirmModal, EditorDirtyGuardModal,
+    EditorFsPromptModal, HistoryPlanModal, MergePlanModal, PopPlanModal, PullPlanModal,
+    PushPlanModal, RenameBranchModal, RevertModal, SetUpstreamModal, StashApplyModal,
+    StashDropModal, StashPushModal, SwitchToLatestPlanModal, TrackingCheckoutPlanModal,
+    UndoPlanModal, UnlockWorktreeModal,
 };
 use super::super::KagiApp;
 use gpui::{AppContext as _, Context, Window};
@@ -317,6 +317,30 @@ impl KagiApp {
         }
     }
     #[inline]
+    pub fn create_tag_modal(&self) -> Option<&CreateTagModal> {
+        match &self.active_modal {
+            Some(ActiveModal::CreateTag(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn create_tag_modal_mut(&mut self) -> Option<&mut CreateTagModal> {
+        match &mut self.active_modal {
+            Some(ActiveModal::CreateTag(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn set_create_tag_modal(&mut self, m: CreateTagModal) {
+        self.active_modal = Some(ActiveModal::CreateTag(m));
+    }
+    #[inline]
+    pub fn clear_create_tag_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::CreateTag(_))) {
+            self.active_modal = None;
+        }
+    }
+    #[inline]
     pub fn create_worktree_modal(&self) -> Option<&CreateWorktreeModal> {
         match &self.active_modal {
             Some(ActiveModal::CreateWorktree(m)) => Some(m),
@@ -591,6 +615,25 @@ impl KagiApp {
         if let Some(m) = self.create_branch_modal_mut() {
             if m.input_state.is_none() {
                 let st = cx.new(|cx| InputState::new(window, cx).placeholder("branch-name"));
+                st.update(cx, |s, cx| s.focus(window, cx));
+                m.input_state = Some(st);
+            }
+            let v = m
+                .input_state
+                .as_ref()
+                .map(|st| st.read(cx).value().to_string())
+                .unwrap_or_default();
+            if v != m.input {
+                m.input = v;
+                m.error = None;
+                self.schedule_modal_replan(cx);
+            }
+        }
+
+        // ── Create-tag ───────────────────────────────────────
+        if let Some(m) = self.create_tag_modal_mut() {
+            if m.input_state.is_none() {
+                let st = cx.new(|cx| InputState::new(window, cx).placeholder("tag-name"));
                 st.update(cx, |s, cx| s.focus(window, cx));
                 m.input_state = Some(st);
             }

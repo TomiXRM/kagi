@@ -1746,6 +1746,9 @@ impl KagiApp {
         if self.create_branch_modal().is_some() {
             self.replan_create_branch();
         }
+        if self.create_tag_modal().is_some() {
+            self.replan_create_tag();
+        }
         if self.create_worktree_modal().is_some() {
             self.replan_create_worktree();
         }

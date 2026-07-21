@@ -468,3 +468,195 @@ pub(crate) fn render_create_worktree_modal(
     // ── Full-screen overlay wrapper (shared chrome, T-SPLIT-HELPERS-001) ──
     modal_overlay(focusable_card)
 }
+
+// ──────────────────────────────────────────────────────────────
+// Create-tag modal renderer (branch-menu "Create tag here...")
+// ──────────────────────────────────────────────────────────────
+
+/// Render the create-tag confirmation overlay. Mirrors
+/// [`render_create_branch_modal`] minus the checkout-after checkbox — a tag
+/// is never checked out.
+pub(crate) fn render_create_tag_modal(
+    modal: CreateTagModal,
+    focus_handle: Option<FocusHandle>,
+    cx: &mut Context<KagiApp>,
+) -> impl IntoElement {
+    let plan = modal.plan.clone();
+    let has_blockers = plan
+        .as_ref()
+        .map(|p| !p.blockers.is_empty())
+        .unwrap_or(true);
+
+    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+        this.cancel_create_tag_modal();
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh, cx);
+        }
+        cx.notify();
+    });
+
+    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+        this.confirm_create_tag(cx);
+        if let Some(fh) = this.root_focus.clone() {
+            window.focus(&fh, cx);
+        }
+        cx.notify();
+    });
+
+    let mut card = div()
+        .w(theme::scaled_px(480.))
+        .bg(rgb(current_theme().modal))
+        .rounded_lg()
+        .p_4()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(
+            div()
+                .text_color(rgb(current_theme().text_main))
+                .text_xl()
+                .child(SharedString::from(format!(
+                    "Create tag @ {}  {}",
+                    modal.at.short(),
+                    modal.start_title
+                ))),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(current_theme().text_label))
+                        .child(SharedString::from("Tag name")),
+                )
+                .children(modal.input_state.as_ref().map(|st| Input::new(st).small())),
+        );
+
+    if let Some(ref p) = plan {
+        card = card.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(current_theme().text_label))
+                        .child(SharedString::from("Current")),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .text_sm()
+                        .child(
+                            div()
+                                .text_color(rgb(current_theme().text_main))
+                                .child(SharedString::from(p.current.head.clone())),
+                        )
+                        .child(
+                            div()
+                                .text_color(rgb(current_theme().text_sub))
+                                .child(SharedString::from(format!("[{}]", p.current.dirty))),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(current_theme().text_label))
+                        .child(SharedString::from("\u{2192} Predicted")),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(current_theme().text_muted))
+                        .child(SharedString::from(plan_title_text(&p.title))),
+                ),
+        );
+
+        if !p.blockers.is_empty() {
+            let lines: Vec<SharedString> = p
+                .blockers
+                .iter()
+                .map(|b| SharedString::from(plan_note_text(b)))
+                .collect();
+            let mut block_col = div().flex().flex_col().gap_1();
+            for b in lines {
+                block_col = block_col.child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(current_theme().color_blocker))
+                        .overflow_hidden()
+                        .child(SharedString::from(format!("\u{2717} {}", b))),
+                );
+            }
+            card = card.child(block_col);
+        }
+
+        card = card.child(
+            div()
+                .text_xs()
+                .text_color(rgb(current_theme().text_muted))
+                .overflow_hidden()
+                .child(SharedString::from(plan_recovery_text(p.recovery.as_ref()))),
+        );
+    }
+
+    if let Some(ref err) = modal.error {
+        card = card.child(
+            div()
+                .text_sm()
+                .text_color(rgb(current_theme().color_blocker))
+                .overflow_hidden()
+                .child(err.clone()),
+        );
+    }
+
+    let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
+        Button::new("create-tag-cancel")
+            .label("Cancel")
+            .ghost()
+            .small()
+            .on_click(cancel_handler),
+    );
+
+    if !has_blockers {
+        button_row = button_row.child(
+            KagiButton::accent(
+                "create-tag-confirm",
+                "Create",
+                current_theme().color_success,
+                cx,
+            )
+            .small()
+            .on_click(confirm_handler),
+        );
+    }
+
+    card = card.child(button_row);
+
+    let esc_cancel = cx.listener(|this, e: &KeyDownEvent, window, cx| {
+        if e.keystroke.key == "escape" {
+            this.cancel_create_tag_modal();
+            if let Some(fh) = this.root_focus.clone() {
+                window.focus(&fh, cx);
+            }
+            cx.stop_propagation();
+            cx.notify();
+        }
+    });
+    let focusable_card = {
+        let base = div().on_key_down(esc_cancel);
+        if let Some(ref fh) = focus_handle {
+            base.track_focus(fh).child(card)
+        } else {
+            base.child(card)
+        }
+    };
+
+    modal_overlay(focusable_card)
+}

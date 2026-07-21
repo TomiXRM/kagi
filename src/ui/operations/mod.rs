@@ -15,6 +15,7 @@ pub mod history;
 pub mod modal_state;
 pub mod pull_push;
 pub mod stash;
+pub mod tag;
 pub mod worktree;
 
 use crate::ui::KagiApp;

@@ -19,6 +19,7 @@ pub mod history;
 pub mod merge;
 pub mod pull;
 pub mod push;
+pub mod remote_branch;
 pub mod stash;
 pub mod switch;
 pub mod tag;
@@ -50,6 +51,7 @@ pub fn plan_note_text(note: &PlanNote) -> String {
             PlanNote::Commit(n) => commit::note_ja(n),
             PlanNote::Checklist(n) => checklist::note_ja(n),
             PlanNote::Tag(n) => tag::note_ja(n),
+            PlanNote::RemoteBranch(n) => remote_branch::note_ja(n),
         },
     }
 }
@@ -73,6 +75,7 @@ pub fn plan_title_text(title: &PlanTitle) -> String {
             PlanTitle::Conflicts(t) => conflicts::title_ja(t),
             PlanTitle::Commit(t) => commit::title_ja(t),
             PlanTitle::Tag(t) => tag::title_ja(t),
+            PlanTitle::RemoteBranch(t) => remote_branch::title_ja(t),
             PlanTitle::Discard { .. } => discard::title_ja(title),
         },
     }
@@ -101,6 +104,7 @@ pub fn plan_recovery_text(recovery: Option<&PlanRecovery>) -> String {
             RecoveryKind::Conflicts(r) => conflicts::recovery_ja(r),
             RecoveryKind::Commit(r) => commit::recovery_ja(r),
             RecoveryKind::Tag(r) => tag::recovery_ja(r),
+            RecoveryKind::RemoteBranch(r) => remote_branch::recovery_ja(r),
             RecoveryKind::Discard => discard::recovery_ja(),
         },
     }

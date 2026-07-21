@@ -344,6 +344,7 @@ impl KagiApp {
         cherry_pick_modal: Option<CherryPickModal>,
         revert_modal: Option<RevertModal>,
         delete_branch_modal: Option<DeleteBranchModal>,
+        delete_remote_branch_modal: Option<DeleteRemoteBranchModal>,
         branch_cleanup_modal: Option<BranchCleanupModal>,
         discard_modal: Option<DiscardModal>,
         editor_dirty_guard_modal: Option<EditorDirtyGuardModal>,
@@ -449,6 +450,9 @@ impl KagiApp {
         // ── Delete-branch modal overlay (W2-DELETE) ──────
         .when_some(delete_branch_modal, |el, modal| {
             el.child(render_delete_branch_modal(modal, cx))
+        })
+        .when_some(delete_remote_branch_modal, |el, modal| {
+            el.child(render_delete_remote_branch_modal(modal, cx))
         })
         // ── Branch-cleanup modal overlay (ADR-0128) ──────
         .when_some(branch_cleanup_modal, |el, modal| {

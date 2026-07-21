@@ -106,6 +106,9 @@ pub enum Operation {
     DeleteBranch {
         name: String,
     },
+    DeleteRemoteBranch {
+        remote_branch: String,
+    },
     Discard {
         paths: Vec<String>,
     },

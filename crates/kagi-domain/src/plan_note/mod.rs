@@ -29,6 +29,7 @@ pub mod history;
 pub mod merge;
 pub mod pull;
 pub mod push;
+pub mod remote_branch;
 pub mod stash;
 pub mod switch;
 pub mod tag;
@@ -47,6 +48,7 @@ pub use history::{HistoryNote, HistoryOp, HistoryRecovery, HistoryTitle};
 pub use merge::{MergeNote, MergeRecovery, MergeTitle};
 pub use pull::{PullNote, PullRecovery, PullTitle};
 pub use push::{PushNote, PushRecovery, PushTitle};
+pub use remote_branch::{RemoteBranchNote, RemoteBranchRecovery, RemoteBranchTitle};
 pub use stash::{StashNote, StashRecovery, StashTitle};
 pub use switch::{SwitchNote, SwitchRecovery, SwitchTitle};
 pub use tag::{TagNote, TagRecovery, TagTitle};
@@ -77,6 +79,7 @@ pub enum PlanNote {
     /// Commit-checklist findings (ADR-0043 rules 4/5/6 — no title/recovery).
     Checklist(ChecklistNote),
     Tag(TagNote),
+    RemoteBranch(RemoteBranchNote),
 }
 
 impl PlanNote {
@@ -102,6 +105,7 @@ impl PlanNote {
             PlanNote::Commit(n) => n.message_en(),
             PlanNote::Checklist(n) => n.message_en(),
             PlanNote::Tag(n) => n.message_en(),
+            PlanNote::RemoteBranch(n) => n.message_en(),
         }
     }
 }
@@ -136,6 +140,7 @@ pub enum PlanTitle {
     Conflicts(ConflictsTitle),
     Commit(CommitTitle),
     Tag(TagTitle),
+    RemoteBranch(RemoteBranchTitle),
 }
 
 impl PlanTitle {
@@ -156,6 +161,7 @@ impl PlanTitle {
             PlanTitle::Conflicts(t) => t.message_en(),
             PlanTitle::Commit(t) => t.message_en(),
             PlanTitle::Tag(t) => t.message_en(),
+            PlanTitle::RemoteBranch(t) => t.message_en(),
             PlanTitle::Discard {
                 single: Some(path), ..
             } => format!("Discard changes to '{}'", path),
@@ -205,6 +211,7 @@ impl PlanRecovery {
             RecoveryKind::Conflicts(r) => r.message_en(),
             RecoveryKind::Commit(r) => r.message_en(),
             RecoveryKind::Tag(r) => r.message_en(),
+            RecoveryKind::RemoteBranch(r) => r.message_en(),
             RecoveryKind::Discard => {
                 "This discards your unstaged changes to the selected file(s): \
                  tracked files are restored from the index, untracked files are deleted from \
@@ -235,6 +242,7 @@ pub enum RecoveryKind {
     Conflicts(ConflictsRecovery),
     Commit(CommitRecovery),
     Tag(TagRecovery),
+    RemoteBranch(RemoteBranchRecovery),
 }
 
 /// Semantic plan state (ADR-0129 §2). Replaces every place the UI used to

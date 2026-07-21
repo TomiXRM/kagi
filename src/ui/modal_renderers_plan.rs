@@ -337,6 +337,31 @@ pub(crate) fn render_delete_branch_modal(
     )
 }
 
+/// Delete-remote-branch confirmation overlay (branch-menu "Advanced /
+/// Dangerous" group). Two-stage confirm: the first click only arms the
+/// button (label switches to an explicit "really delete" warning); the
+/// second click executes. Mirrors `DiscardModal`'s `confirm_armed` pattern
+/// via the shared plan-modal card rather than a bespoke renderer.
+pub(crate) fn render_delete_remote_branch_modal(
+    modal: DeleteRemoteBranchModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let confirm_label: SharedString = if modal.confirm_armed {
+        SharedString::from("\u{26a0} Really delete — cannot be undone")
+    } else {
+        SharedString::from("Delete remote branch")
+    };
+    render_plan_modal_wrapper(
+        modal.plan,
+        modal.error,
+        confirm_label,
+        None,
+        |this, _cx| this.cancel_delete_remote_branch_modal(),
+        |this, cx| this.start_delete_remote_branch(cx),
+        cx,
+    )
+}
+
 /// Branch-cleanup confirmation overlay (ADR-0128). Reuses the shared plan
 /// card: the plan's `preview_commits` already lists the branches (with their
 /// local/origin tips), and blockers hide the confirm button.

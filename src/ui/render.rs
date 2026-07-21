@@ -391,6 +391,7 @@ impl Render for KagiApp {
         let create_worktree_modal = self.create_worktree_modal().cloned();
         let remote_browse_modal = self.remote_browse_modal.clone();
         let delete_branch_modal = self.delete_branch_modal().cloned();
+        let delete_remote_branch_modal = self.delete_remote_branch_modal().cloned();
         let branch_cleanup_modal = self.branch_cleanup_modal().cloned();
         let discard_modal = self.discard_modal().cloned();
         let editor_dirty_guard_modal = self.editor_dirty_guard_modal().cloned();
@@ -761,6 +762,7 @@ impl Render for KagiApp {
             cherry_pick_modal,
             revert_modal,
             delete_branch_modal,
+            delete_remote_branch_modal,
             branch_cleanup_modal,
             discard_modal,
             editor_dirty_guard_modal,

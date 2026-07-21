@@ -47,6 +47,7 @@ pub struct GitCliOutput {
 /// |----------------------|-------|-----------------------------------------|
 /// | `GIT_TERMINAL_PROMPT`| `0`   | Disable interactive credential prompts  |
 /// | `LC_ALL`             | `C`   | Stable locale for output parsing        |
+/// | `GIT_EDITOR`         | `true`| No interactive editor (e.g. `--continue` message prompts) |
 ///
 /// # Errors
 ///
@@ -61,6 +62,7 @@ pub fn run_git(repo_dir: &Path, args: &[&str]) -> Result<GitCliOutput, GitError>
         .current_dir(repo_dir)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("LC_ALL", "C")
+        .env("GIT_EDITOR", "true")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 

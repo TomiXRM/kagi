@@ -112,6 +112,7 @@ pub enum Operation {
     ResetCurrentToHead {
         target: CommitId,
     },
+    ForceWithLeasePush,
     Discard {
         paths: Vec<String>,
     },

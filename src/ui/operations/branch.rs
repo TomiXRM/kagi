@@ -1581,9 +1581,17 @@ impl KagiApp {
             BranchAction::ResetCurrentToHead => {
                 self.open_reset_current_modal(state.target, cx);
             }
-            BranchAction::NoUpstreamInfo
-            | BranchAction::RebaseCurrentOnto
-            | BranchAction::ForceWithLeasePush => {
+            BranchAction::ForceWithLeasePush => {
+                let is_current = self
+                    .active_view
+                    .branches
+                    .iter()
+                    .any(|(name, current)| name == &state.name && *current);
+                if is_current {
+                    self.open_force_lease_push_modal(cx);
+                }
+            }
+            BranchAction::NoUpstreamInfo | BranchAction::RebaseCurrentOnto => {
                 self.status_footer =
                     FooterStatus::Idle(SharedString::from(Msg::BcmNotImplementedYet.t()));
             }

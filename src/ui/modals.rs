@@ -373,6 +373,21 @@ pub struct ResetCurrentModal {
     pub confirm_armed: bool,
 }
 
+/// State for an in-progress force-with-lease push confirmation
+/// (branch-menu "Advanced / Dangerous" group).
+///
+/// Two-stage confirm (mirrors `ResetCurrentModal`'s `confirm_armed`): the
+/// first click only arms the button; the second click executes.
+#[derive(Clone)]
+pub struct ForceLeasePushModal {
+    /// The computed plan.
+    pub plan: std::sync::Arc<OperationPlan>,
+    /// Error message to show if preflight or execute failed.
+    pub error: Option<SharedString>,
+    /// Two-stage confirm gate: `false` = first click pending, `true` = armed.
+    pub confirm_armed: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BranchPlanKind {
     PullFfOnly,
@@ -580,6 +595,7 @@ pub enum ActiveModal {
     DeleteBranch(DeleteBranchModal),
     DeleteRemoteBranch(DeleteRemoteBranchModal),
     ResetCurrent(ResetCurrentModal),
+    ForceLeasePush(ForceLeasePushModal),
     BranchCleanup(BranchCleanupModal),
     Discard(DiscardModal),
     ConflictContinue(ConflictContinuePlanModal),

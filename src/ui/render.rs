@@ -393,6 +393,7 @@ impl Render for KagiApp {
         let delete_branch_modal = self.delete_branch_modal().cloned();
         let delete_remote_branch_modal = self.delete_remote_branch_modal().cloned();
         let reset_current_modal = self.reset_current_modal().cloned();
+        let force_lease_push_modal = self.force_lease_push_modal().cloned();
         let branch_cleanup_modal = self.branch_cleanup_modal().cloned();
         let discard_modal = self.discard_modal().cloned();
         let editor_dirty_guard_modal = self.editor_dirty_guard_modal().cloned();
@@ -765,6 +766,7 @@ impl Render for KagiApp {
             delete_branch_modal,
             delete_remote_branch_modal,
             reset_current_modal,
+            force_lease_push_modal,
             branch_cleanup_modal,
             discard_modal,
             editor_dirty_guard_modal,

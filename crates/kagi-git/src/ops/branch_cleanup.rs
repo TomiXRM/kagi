@@ -14,8 +14,9 @@
 //! -d`), so the OID + ancestor re-verification here is the only safety valve —
 //! never call the raw delete outside this pipeline. Remote deletion uses a
 //! plain `git push origin --delete` after the `ls-remote` OID comparison;
-//! `--force-with-lease` is not used anywhere in this codebase (see `push.rs`),
-//! so a small race window between the check and the push remains and is
+//! `--force-with-lease` is not used here (the branch-menu "Force-with-lease
+//! push" action in `force_lease.rs` is the only place that uses it), so a
+//! small race window between the check and the push remains here and is
 //! covered by the oplog recording every deleted tip OID for recovery.
 //!
 //! Deleting a branch is ref-only: the working tree, index, and HEAD are never

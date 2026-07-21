@@ -275,7 +275,7 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
                 item(
                     BranchAction::ForceWithLeasePush,
                     "Force-with-lease push...",
-                    mutating_stub_state(ctx),
+                    force_lease_push_state(ctx),
                     true,
                 ),
                 item(
@@ -370,13 +370,19 @@ fn disabled(reason: impl Into<SharedString>) -> ItemState {
     ItemState::Disabled(reason.into())
 }
 
-fn mutating_stub_state(ctx: &BranchMenuContext) -> ItemState {
+fn force_lease_push_state(ctx: &BranchMenuContext) -> ItemState {
+    // force_with_lease_push always acts on the currently checked-out branch
+    // (mirrors ResetCurrentToHead) — only offer it from that row's menu.
     if ctx.busy {
         disabled(Msg::BcmBusy.t())
     } else if ctx.detached_head {
         disabled(Msg::BcmDetachedHead.t())
+    } else if !ctx.is_current {
+        disabled(Msg::BcmOnlyFromCurrentBranch.t())
+    } else if !ctx.has_upstream {
+        disabled(Msg::BcmNoUpstream.t())
     } else {
-        disabled(Msg::BcmNotImplementedYet.t())
+        ItemState::Enabled
     }
 }
 

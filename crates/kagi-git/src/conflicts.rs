@@ -951,9 +951,18 @@ pub fn execute_conflict_continue(
     // the sequence length so a genuine stuck state can't spin forever.
     let slug = session.op.slug();
     let max_attempts = read_rebase_progress(repo.path()).1.max(1) + 1;
-    for _ in 0..max_attempts {
-        let _ = run_git(repo_path, &[slug, "--continue"])
+    for attempt in 0..max_attempts {
+        let out = run_git(repo_path, &[slug, "--continue"])
             .map_err(|e| GitError::Other(format!("{} --continue failed to start: {}", slug, e)))?;
+        eprintln!(
+            "[kagi-debug] {} --continue attempt {}: status={} state={:?}\nstdout={}\nstderr={}",
+            slug,
+            attempt,
+            out.status,
+            repo.state(),
+            out.stdout.trim(),
+            out.stderr.trim(),
+        );
 
         if repo.state() == git2::RepositoryState::Clean {
             break;

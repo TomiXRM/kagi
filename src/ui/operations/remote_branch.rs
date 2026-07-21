@@ -1,8 +1,14 @@
-//! Delete-remote-branch operation (branch-menu "Advanced / Dangerous" group).
+//! Remote-branch operations: delete-remote-branch (branch-menu "Advanced /
+//! Dangerous" group) and fetch-remote-branch (branch-menu "Sync" group).
 //!
-//! Two-stage confirm (mirrors `operations/discard.rs`'s `confirm_armed`
-//! pattern): the first click only arms the button; the second click runs the
-//! delete on a background thread and reloads.
+//! Delete-remote-branch: two-stage confirm (mirrors `operations/discard.rs`'s
+//! `confirm_armed` pattern) — the first click only arms the button; the
+//! second click runs the delete on a background thread and reloads.
+//!
+//! Fetch-remote-branch: no modal at all, mirroring the repo-level `Fetch`
+//! command (`commands.rs::fetch_async`) — fetch is inherently safe (it only
+//! updates a remote-tracking ref, never merges/moves the current branch), so
+//! it fires directly from the menu click.
 
 use crate::ui::blocking_ops::*;
 use crate::ui::*;
@@ -145,5 +151,61 @@ impl KagiApp {
                 });
             }
         });
+    }
+}
+
+impl KagiApp {
+    /// Fetch a single remote branch's refspec (e.g. `"origin/feature/x"`).
+    /// No modal, no plan — fetch never merges or moves the current branch, so
+    /// it fires directly, mirroring the repo-level `Fetch` command.
+    pub fn fetch_remote_branch_async(&mut self, remote_branch: String, cx: &mut Context<Self>) {
+        if self.busy_op.is_some() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        klog!("fetch-remote-branch: start {}", remote_branch);
+        let bg_path = repo_path.clone();
+        let bg_remote_branch = remote_branch.clone();
+        let task = cx.background_spawn(async move {
+            let backend =
+                kagi_git::Backend::open(&bg_path).map_err(|e| format!("repo open error: {e}"))?;
+            backend
+                .fetch_remote_branch(&bg_remote_branch)
+                .map_err(|e| format!("{e}"))
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                match result {
+                    Ok(outcome) => {
+                        klog!("fetch-remote-branch: ok {}", remote_branch);
+                        if outcome.changed {
+                            app.reload(cx);
+                        }
+                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                            "Fetched {}",
+                            remote_branch
+                        )));
+                        app.push_toast(
+                            ToastKind::Success,
+                            format!("Fetched {}", remote_branch),
+                            cx,
+                        );
+                    }
+                    Err(e) => {
+                        klog!("fetch-remote-branch: failed {} — {}", remote_branch, e);
+                        app.status_footer =
+                            FooterStatus::Failed(SharedString::from(format!("Fetch failed: {e}")));
+                        app.push_toast(ToastKind::Error, format!("Fetch failed: {e}"), cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }

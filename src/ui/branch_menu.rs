@@ -173,7 +173,7 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
                 item(
                     BranchAction::FetchRemoteBranch,
                     "Fetch remote branch",
-                    remote_stub_state(ctx),
+                    fetch_remote_branch_state(ctx),
                     false,
                 ),
                 item(
@@ -385,6 +385,16 @@ fn remote_stub_state(ctx: &BranchMenuContext) -> ItemState {
         disabled(Msg::BcmBusy.t())
     } else {
         disabled(Msg::BcmNotImplementedYet.t())
+    }
+}
+
+fn fetch_remote_branch_state(ctx: &BranchMenuContext) -> ItemState {
+    if matches!(ctx.kind, BranchKind::Local) {
+        ItemState::Hidden
+    } else if ctx.busy {
+        disabled(Msg::BcmBusy.t())
+    } else {
+        ItemState::Enabled
     }
 }
 

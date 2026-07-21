@@ -12,8 +12,8 @@ use super::super::modals::{
     ConflictContinuePlanModal, CreateBranchModal, CreateTagModal, CreateWorktreeModal,
     DeleteBranchModal, DeleteRemoteBranchModal, DiscardModal, EditorDeleteConfirmModal,
     EditorDirtyGuardModal, EditorFsPromptModal, HistoryPlanModal, MergePlanModal, PopPlanModal,
-    PullPlanModal, PushPlanModal, RenameBranchModal, RevertModal, SetUpstreamModal,
-    StashApplyModal, StashDropModal, StashPushModal, SwitchToLatestPlanModal,
+    PullPlanModal, PushPlanModal, RenameBranchModal, ResetCurrentModal, RevertModal,
+    SetUpstreamModal, StashApplyModal, StashDropModal, StashPushModal, SwitchToLatestPlanModal,
     TrackingCheckoutPlanModal, UndoPlanModal, UnlockWorktreeModal,
 };
 use super::super::KagiApp;
@@ -494,6 +494,23 @@ impl KagiApp {
     #[inline]
     pub fn clear_delete_remote_branch_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::DeleteRemoteBranch(_))) {
+            self.active_modal = None;
+        }
+    }
+    #[inline]
+    pub fn reset_current_modal(&self) -> Option<&ResetCurrentModal> {
+        match &self.active_modal {
+            Some(ActiveModal::ResetCurrent(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn set_reset_current_modal(&mut self, m: ResetCurrentModal) {
+        self.active_modal = Some(ActiveModal::ResetCurrent(m));
+    }
+    #[inline]
+    pub fn clear_reset_current_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::ResetCurrent(_))) {
             self.active_modal = None;
         }
     }

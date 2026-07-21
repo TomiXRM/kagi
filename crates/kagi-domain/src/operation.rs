@@ -109,6 +109,9 @@ pub enum Operation {
     DeleteRemoteBranch {
         remote_branch: String,
     },
+    ResetCurrentToHead {
+        target: CommitId,
+    },
     Discard {
         paths: Vec<String>,
     },

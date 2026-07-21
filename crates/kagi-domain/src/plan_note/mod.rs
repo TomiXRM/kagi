@@ -30,6 +30,7 @@ pub mod merge;
 pub mod pull;
 pub mod push;
 pub mod remote_branch;
+pub mod reset;
 pub mod stash;
 pub mod switch;
 pub mod tag;
@@ -49,6 +50,7 @@ pub use merge::{MergeNote, MergeRecovery, MergeTitle};
 pub use pull::{PullNote, PullRecovery, PullTitle};
 pub use push::{PushNote, PushRecovery, PushTitle};
 pub use remote_branch::{RemoteBranchNote, RemoteBranchRecovery, RemoteBranchTitle};
+pub use reset::{ResetNote, ResetRecovery, ResetTitle};
 pub use stash::{StashNote, StashRecovery, StashTitle};
 pub use switch::{SwitchNote, SwitchRecovery, SwitchTitle};
 pub use tag::{TagNote, TagRecovery, TagTitle};
@@ -80,6 +82,7 @@ pub enum PlanNote {
     Checklist(ChecklistNote),
     Tag(TagNote),
     RemoteBranch(RemoteBranchNote),
+    Reset(ResetNote),
 }
 
 impl PlanNote {
@@ -106,6 +109,7 @@ impl PlanNote {
             PlanNote::Checklist(n) => n.message_en(),
             PlanNote::Tag(n) => n.message_en(),
             PlanNote::RemoteBranch(n) => n.message_en(),
+            PlanNote::Reset(n) => n.message_en(),
         }
     }
 }
@@ -141,6 +145,7 @@ pub enum PlanTitle {
     Commit(CommitTitle),
     Tag(TagTitle),
     RemoteBranch(RemoteBranchTitle),
+    Reset(ResetTitle),
 }
 
 impl PlanTitle {
@@ -162,6 +167,7 @@ impl PlanTitle {
             PlanTitle::Commit(t) => t.message_en(),
             PlanTitle::Tag(t) => t.message_en(),
             PlanTitle::RemoteBranch(t) => t.message_en(),
+            PlanTitle::Reset(t) => t.message_en(),
             PlanTitle::Discard {
                 single: Some(path), ..
             } => format!("Discard changes to '{}'", path),
@@ -212,6 +218,7 @@ impl PlanRecovery {
             RecoveryKind::Commit(r) => r.message_en(),
             RecoveryKind::Tag(r) => r.message_en(),
             RecoveryKind::RemoteBranch(r) => r.message_en(),
+            RecoveryKind::Reset(r) => r.message_en(),
             RecoveryKind::Discard => {
                 "This discards your unstaged changes to the selected file(s): \
                  tracked files are restored from the index, untracked files are deleted from \
@@ -243,6 +250,7 @@ pub enum RecoveryKind {
     Commit(CommitRecovery),
     Tag(TagRecovery),
     RemoteBranch(RemoteBranchRecovery),
+    Reset(ResetRecovery),
 }
 
 /// Semantic plan state (ADR-0129 §2). Replaces every place the UI used to

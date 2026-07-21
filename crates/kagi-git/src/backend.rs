@@ -397,6 +397,7 @@ impl Backend {
             Operation::DeleteRemoteBranch { remote_branch } => {
                 self.plan_delete_remote_branch(remote_branch)
             }
+            Operation::ResetCurrentToHead { target } => self.plan_reset_current_to_head(target),
             Operation::Discard { paths } => self.plan_discard(paths),
         }
     }
@@ -542,6 +543,9 @@ impl Backend {
                 .map(|()| OperationOutcome::Unit),
             Operation::DeleteRemoteBranch { remote_branch } => self
                 .execute_delete_remote_branch(remote_branch)
+                .map(|()| OperationOutcome::Unit),
+            Operation::ResetCurrentToHead { target } => self
+                .execute_reset_current_to_head(target)
                 .map(|()| OperationOutcome::Unit),
             Operation::Discard { paths } => self
                 .execute_discard(plan, paths)
@@ -1072,6 +1076,14 @@ impl Backend {
 
     pub fn execute_delete_remote_branch(&self, remote_branch: &str) -> Result<(), GitError> {
         ops::execute_delete_remote_branch(&self.path, remote_branch)
+    }
+
+    pub fn plan_reset_current_to_head(&self, target: &CommitId) -> Result<OperationPlan, GitError> {
+        ops::plan_reset_current_to_head(&self.repo, target)
+    }
+
+    pub fn execute_reset_current_to_head(&self, target: &CommitId) -> Result<(), GitError> {
+        ops::execute_reset_current_to_head(&self.repo, target)
     }
 
     /// Branch Cleanup (ADR-0128): validate a selection of delete targets and

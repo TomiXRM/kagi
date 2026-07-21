@@ -1578,9 +1578,11 @@ impl KagiApp {
             BranchAction::CreatePr => {
                 self.open_create_pr(state.name, state.kind, cx);
             }
+            BranchAction::ResetCurrentToHead => {
+                self.open_reset_current_modal(state.target, cx);
+            }
             BranchAction::NoUpstreamInfo
             | BranchAction::RebaseCurrentOnto
-            | BranchAction::ResetCurrentToHead
             | BranchAction::ForceWithLeasePush => {
                 self.status_footer =
                     FooterStatus::Idle(SharedString::from(Msg::BcmNotImplementedYet.t()));

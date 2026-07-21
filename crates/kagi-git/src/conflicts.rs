@@ -940,22 +940,44 @@ pub fn execute_conflict_continue(
     // message (no editor is opened) and, for rebase, keeps auto-continuing
     // through any further non-conflicting commits until it either finishes or
     // stops at the next conflict.
+    //
+    // A single `--continue` call is *usually* enough to run the whole
+    // remaining sequence (git's own rebase loop keeps going through
+    // non-conflicting commits internally), but some git versions/backends
+    // need an extra nudge per resolved step. Loop while: the repo is still
+    // mid-sequence AND the index carries no unmerged entries (i.e. nothing
+    // is blocking another `--continue` — a real new conflict always leaves
+    // unmerged index entries, which stops the loop immediately). Bounded by
+    // the sequence length so a genuine stuck state can't spin forever.
     let slug = session.op.slug();
-    let out = run_git(repo_path, &[slug, "--continue"])
-        .map_err(|e| GitError::Other(format!("{} --continue failed to start: {}", slug, e)))?;
+    let max_attempts = read_rebase_progress(repo.path()).1.max(1) + 1;
+    for _ in 0..max_attempts {
+        let _ = run_git(repo_path, &[slug, "--continue"])
+            .map_err(|e| GitError::Other(format!("{} --continue failed to start: {}", slug, e)))?;
 
-    // A non-zero exit here almost always means the sequence stopped again at
-    // a (possibly new) conflict — expected, not a failure. `repo.state()` is
-    // the authoritative signal: `Clean` means the whole sequence finished;
-    // anything else means it's still in progress, and the normal reload +
-    // `detect_conflict_session` path picks up whatever comes next.
+        if repo.state() == git2::RepositoryState::Clean {
+            break;
+        }
+        let no_conflicts_left = repo
+            .index()
+            .map(|idx| !idx.has_conflicts())
+            .unwrap_or(false);
+        if !no_conflicts_left {
+            break;
+        }
+    }
+
+    // `repo.state()` is the authoritative signal: `Clean` means the whole
+    // sequence finished; anything else means it's still in progress (either
+    // a genuine new conflict, or the retry budget above was exhausted), and
+    // the normal reload + `detect_conflict_session` path picks up whatever
+    // comes next.
     if repo.state() == git2::RepositoryState::Clean {
         return Ok(match repo.head().ok().and_then(|h| h.target()) {
             Some(oid) => ContinueOutcome::Committed(CommitId(oid.to_string())),
             None => ContinueOutcome::Staged,
         });
     }
-    let _ = out; // exit code intentionally not treated as failure — see above
     Ok(ContinueOutcome::Staged)
 }
 

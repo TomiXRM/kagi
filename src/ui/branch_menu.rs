@@ -269,7 +269,7 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
                     } else {
                         "Reset current to this HEAD..."
                     },
-                    mutating_stub_state(ctx),
+                    reset_current_state(ctx),
                     true,
                 ),
                 item(
@@ -377,6 +377,16 @@ fn mutating_stub_state(ctx: &BranchMenuContext) -> ItemState {
         disabled(Msg::BcmDetachedHead.t())
     } else {
         disabled(Msg::BcmNotImplementedYet.t())
+    }
+}
+
+fn reset_current_state(ctx: &BranchMenuContext) -> ItemState {
+    if ctx.busy {
+        disabled(Msg::BcmBusy.t())
+    } else if ctx.detached_head {
+        disabled(Msg::BcmDetachedHead.t())
+    } else {
+        ItemState::Enabled
     }
 }
 

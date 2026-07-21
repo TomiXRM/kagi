@@ -362,6 +362,29 @@ pub(crate) fn render_delete_remote_branch_modal(
     )
 }
 
+/// Reset-current-to-HEAD confirmation overlay (branch-menu "Advanced /
+/// Dangerous" group). Two-stage confirm, same shape as
+/// `render_delete_remote_branch_modal`.
+pub(crate) fn render_reset_current_modal(
+    modal: ResetCurrentModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let confirm_label: SharedString = if modal.confirm_armed {
+        SharedString::from("\u{26a0} Really reset — cannot be undone")
+    } else {
+        SharedString::from("Reset current branch")
+    };
+    render_plan_modal_wrapper(
+        modal.plan,
+        modal.error,
+        confirm_label,
+        None,
+        |this, _cx| this.cancel_reset_current_modal(),
+        |this, cx| this.start_reset_current(cx),
+        cx,
+    )
+}
+
 /// Branch-cleanup confirmation overlay (ADR-0128). Reuses the shared plan
 /// card: the plan's `preview_commits` already lists the branches (with their
 /// local/origin tips), and blockers hide the confirm button.

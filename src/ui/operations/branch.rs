@@ -1575,8 +1575,10 @@ impl KagiApp {
                     self.fetch_remote_branch_async(state.name, cx);
                 }
             }
+            BranchAction::CreatePr => {
+                self.open_create_pr(state.name, state.kind, cx);
+            }
             BranchAction::NoUpstreamInfo
-            | BranchAction::CreatePr
             | BranchAction::RebaseCurrentOnto
             | BranchAction::ResetCurrentToHead
             | BranchAction::ForceWithLeasePush => {

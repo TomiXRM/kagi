@@ -35,6 +35,7 @@ pub mod editor_tree_menu;
 pub mod editor_workspace;
 pub mod file_history;
 mod file_menu;
+mod fonts;
 pub use kagi_ui_core::file_tree; // ADR-0121: was a shim file
 mod graph_solo;
 pub mod graph_view;
@@ -3089,37 +3090,7 @@ pub fn run_app(app_state: KagiApp) {
     });
 
     application.run(move |cx: &mut App| {
-        // Bundle fonts so the UI + monospace look identical on every OS. Linux
-        // has no "Menlo"/SF and the platform default is inconsistent, which made
-        // fonts render broken on Ubuntu (user-reported). OFL: Inter (UI) +
-        // JetBrains Mono (terminal / conflict editor / code) + Noto Sans JP
-        // (deterministic Japanese/CJK fallback). The family names here MUST
-        // match the fonts' name tables (UI_FONT / MONO_FONT / CJK_FONT).
-        if let Err(e) = cx.text_system().add_fonts(vec![
-            std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-Regular.ttf")),
-            std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-Bold.ttf")),
-            std::borrow::Cow::Borrowed(include_bytes!(
-                "../../assets/fonts/JetBrainsMono-Regular.ttf"
-            )),
-            std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/JetBrainsMono-Bold.ttf")),
-            std::borrow::Cow::Borrowed(include_bytes!(
-                "../../assets/fonts/NotoSansJP-Variable.ttf"
-            )),
-        ]) {
-            klog!("fonts: add_fonts failed (UI may fall back): {e}");
-        } else {
-            klog!("fonts: loaded Inter + JetBrains Mono");
-            let cjk_ready = cx
-                .text_system()
-                .all_font_names()
-                .iter()
-                .any(|name| name == CJK_FONT);
-            if cjk_ready {
-                klog!("fonts: fallback {CJK_FONT}");
-            } else {
-                klog!("fonts: fallback missing {CJK_FONT}");
-            }
-        }
+        fonts::load_bundled_fonts(cx);
 
         // Persist the last plain-Windowed size so the next launch restores it
         // (open_main_window validates against a floor and falls back to the

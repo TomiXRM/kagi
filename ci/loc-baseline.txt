@@ -2,7 +2,7 @@ crates/kagi-domain/src/graph.rs 1043
 crates/kagi-domain/src/message_gen.rs 892
 crates/kagi-domain/src/resolution.rs 905
 crates/kagi-git/src/backend.rs 1145
-crates/kagi-git/src/conflicts.rs 1781
+crates/kagi-git/src/conflicts.rs 1803
 crates/kagi-git/src/message_gen.rs 987
 crates/kagi-git/src/ops/cherry_revert.rs 966
 crates/kagi-git/src/ops/history.rs 1201

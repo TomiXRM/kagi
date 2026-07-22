@@ -1239,6 +1239,14 @@ pub struct KagiApp {
     pub cleanup_cols: branch_cleanup::CleanupCols,
     /// ADR-0128: scroll position of the Branch Cleanup uniform list.
     pub cleanup_scroll: UniformListScrollHandle,
+    /// ADR-0128 follow-up: monotonic token identifying the *current* branch
+    /// cleanup scan. A completing background scan only applies its result
+    /// (`active_view.cleanup_rows`) if this still equals the value it
+    /// captured at start — same guard shape as `ecosystem_gen`, needed
+    /// because the scan moved off the synchronous snapshot path (see
+    /// `KagiApp::start_branch_cleanup_scan`) and can now be superseded by a
+    /// newer reload before it finishes.
+    pub cleanup_gen: u64,
     /// ADR-0119: cached completed mine so reopening the Ecosystem view reuses
     /// the slow `git log` scan. Invalidated on reload / repo switch.
     pub ecosystem_cache: ecosystem::EcosystemCache,
@@ -1421,6 +1429,7 @@ impl KagiApp {
             branch_cleanup_open: false,
             cleanup_cols: branch_cleanup::CleanupCols::load(),
             cleanup_scroll: UniformListScrollHandle::new(),
+            cleanup_gen: 0,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,
@@ -1531,6 +1540,7 @@ impl KagiApp {
             branch_cleanup_open: false,
             cleanup_cols: branch_cleanup::CleanupCols::load(),
             cleanup_scroll: UniformListScrollHandle::new(),
+            cleanup_gen: 0,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,
@@ -1566,6 +1576,14 @@ impl KagiApp {
         // Background auto-fetch ticker (periodic `git fetch` so the graph and
         // ahead/behind stay fresh). Lazily spawned; no-op when off / no repo.
         self.ensure_auto_fetch_ticker(cx);
+
+        // ADR-0128 follow-up: the CLI-launch initial tab (built by hand in
+        // main.rs via `reload_prelaunch`, which has no `cx`) never goes
+        // through `reload_checked`, so it never got a cleanup scan kicked off
+        // for it. Every other case (post-operation reload, tab switch) is
+        // already covered by `reload_checked`'s call — this one is cheap and
+        // generation-guarded, so the redundant call there is harmless.
+        self.start_branch_cleanup_scan(cx);
     }
 
     /// Detect (or clear) Conflict Mode for the currently-open repository.

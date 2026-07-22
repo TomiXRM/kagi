@@ -34,6 +34,33 @@
   store には触れず、upstream 消失を `[gone]` として正しく伝播させるので
   squash ヒューリスティックの入力にもなる。
 
+## 追記(2026-07-22, 実使用報告に基づく follow-up)
+
+上記「テーブル行は `RepoSnapshot.cleanup_rows` として snapshot に載せる」を
+**撤回**。ブランチあたり merge_base 1 回まで削っても、長寿命の未マージ
+ブランチが多いリポジトリでは合成ベンチマークで 300 ブランチ/2300 コミット
+規模で ~1.6 秒(snapshot 全体の 95%)かかることを実測。この処理が
+**メインスレッドで同期的に**、かつ **Branch Cleanup と無関係な全操作の
+reload 後に毎回**(stash・commit・checkout 等)走っていたため、「stash が
+異様に遅い」というユーザー報告(CLI の `git stash` 自体は一瞬)の実体が
+この同期スキャンだった。
+
+- `kagi_git::snapshot::snapshot()` から `collect_branch_cleanup` 呼び出しを
+  削除。`RepoSnapshot.cleanup_rows` は常に空(フィールドは互換のため残置)。
+- 分類は `Backend::collect_branch_cleanup` として独立させ、
+  `KagiApp::start_branch_cleanup_scan`(`src/ui/branch_cleanup.rs`)が
+  Ecosystem mine(ADR-0119)と同型のバックグラウンドタスクとして
+  reload 後・起動後に非同期実行 → 完了時に `active_view.cleanup_rows` を
+  上書き。`ecosystem_gen` と同型の世代カウンタ(`cleanup_gen`)で、reload
+  が連続したときに古いスキャン結果が新しい結果を上書きしないよう保護。
+- `merged-branches: …` klog 契約行は文言・書式そのままに、発火位置だけ
+  `build_tab_view`(snapshot 毎)から `start_branch_cleanup_scan` の完了
+  コールバック(実際に件数が確定した瞬間)へ移動。
+- トレードオフ: サイドバーの件数バッジ・テーブルは reload 直後の 1 フレーム
+  だけ空(または直前の値)で、スキャン完了時に追いつく。「reload のたびに
+  常に最新」という当初の要件より「操作がブロックされない」を優先(実使用
+  報告を受けての判断)。
+
 ## Context
 
 PR ベースの開発では merge 済みブランチがローカル/リモート双方に溜まり続ける。

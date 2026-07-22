@@ -1110,6 +1110,21 @@ impl Backend {
         ops::execute_rebase_current_onto(&self.repo, &self.path, onto)
     }
 
+    /// Branch Cleanup (ADR-0128): collect + classify the merged/stale branch
+    /// table. `now` is Unix seconds (staleness input).
+    ///
+    /// Perf note: this walks main's first-parent history and does one
+    /// `merge_base` per branch — cheap on small repos but measurably not free
+    /// on repos with many long-lived unmerged branches (benchmarked: ~1.6s on
+    /// a synthetic 300-branch/2300-commit repo). It used to run synchronously
+    /// inside `snapshot()` on every reload, which blocked the UI thread after
+    /// *every* git operation (stash, commit, checkout, ...) — see the
+    /// `start_branch_cleanup_scan` app-layer caller, which now runs this on a
+    /// background thread instead (ADR-0128 follow-up, user report 2026-07-22).
+    pub fn collect_branch_cleanup(&self, now: i64) -> Result<Vec<ops::BranchCleanupRow>, GitError> {
+        ops::collect_branch_cleanup(&self.repo, now)
+    }
+
     /// Branch Cleanup (ADR-0128): validate a selection of delete targets and
     /// build the confirmation plan. `now` is Unix seconds (staleness input).
     pub fn plan_delete_merged_branches(

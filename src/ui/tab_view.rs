@@ -169,35 +169,10 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
         snap.worktrees.len()
     );
 
-    // ADR-0128: Branch Cleanup contract line — class counts for the headless
-    // harness (full = safely deletable, squash? = [gone] heuristic, warn =
-    // merged-then-grown, stale = old-tip rows regardless of class).
-    {
-        use kagi_domain::branch_cleanup::MergedBranchStatus as S;
-        let full = snap
-            .cleanup_rows
-            .iter()
-            .filter(|r| r.status == S::FullyMerged)
-            .count();
-        let squash = snap
-            .cleanup_rows
-            .iter()
-            .filter(|r| r.status == S::SquashMergedLikely)
-            .count();
-        let warn = snap
-            .cleanup_rows
-            .iter()
-            .filter(|r| matches!(r.status, S::MergedThenGrown { .. }))
-            .count();
-        let stale = snap.cleanup_rows.iter().filter(|r| r.stale).count();
-        klog!(
-            "merged-branches: {} full, {} squash?, {} warn, {} stale",
-            full,
-            squash,
-            warn,
-            stale
-        );
-    }
+    // ADR-0128 follow-up: the `merged-branches: ...` contract line moved to
+    // `KagiApp::start_branch_cleanup_scan` (src/ui/branch_cleanup.rs) — it's
+    // emitted when the background scan actually completes, since `snapshot()`
+    // no longer computes `cleanup_rows` synchronously (see snapshot.rs).
 
     // T-BP-003: build StatusBarSummary and emit the headless log.
     let mut status_summary = StatusBarSummary::from_snapshot(snap);

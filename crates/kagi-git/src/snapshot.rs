@@ -47,9 +47,11 @@ pub struct RepoSnapshot {
     pub stashes: Vec<Stash>,
     /// Main + linked worktrees registered for this repository.
     pub worktrees: Vec<Worktree>,
-    /// Branch Cleanup table rows (ADR-0128): merged/stale branch candidates,
-    /// classified and sorted. Best-effort — an empty Vec on collection failure
-    /// never fails the snapshot.
+    /// Always empty. Branch Cleanup table rows (ADR-0128) are no longer part
+    /// of a plain snapshot — computing them is too expensive to run
+    /// synchronously on every reload (see the comment in [`snapshot`]). Call
+    /// `Backend::collect_branch_cleanup` separately (the app layer does this
+    /// on a background thread via `KagiApp::start_branch_cleanup_scan`).
     pub cleanup_rows: Vec<kagi_domain::branch_cleanup::BranchCleanupRow>,
     /// Wall-clock time (Unix seconds) of the last `git fetch`, from the
     /// `FETCH_HEAD` mtime — written on every fetch (including no-op ones, and
@@ -89,14 +91,18 @@ pub fn snapshot(repo: &mut Repository, commit_limit: usize) -> Result<RepoSnapsh
     let tags = collect_tags(repo)?;
     let stashes = collect_stashes(repo)?;
     let worktrees = collect_worktrees(repo)?;
-    // ADR-0128: cleanup classification rides along with the snapshot so the UI
-    // always has a fresh table (and the sidebar badge count) after any reload.
-    // Best-effort: a failure here must not take the whole snapshot down.
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let cleanup_rows = super::ops::collect_branch_cleanup(repo, now).unwrap_or_default();
+    // ADR-0128 follow-up (user report 2026-07-22): cleanup classification used
+    // to ride along with the snapshot, but it walks main's first-parent
+    // history plus one `merge_base` per branch — on repos with many
+    // long-lived unmerged branches this measured over a second, and it ran
+    // *synchronously inside every reload* (i.e. after every stash/commit/
+    // checkout/...), blocking the UI thread for an operation that had nothing
+    // to do with branch cleanup. It's now computed separately, off the
+    // snapshot's critical path — see `KagiApp::start_branch_cleanup_scan`,
+    // which calls `Backend::collect_branch_cleanup` on a background thread
+    // after a reload applies. `cleanup_rows` here is always empty; kept on
+    // the struct so `RepoSnapshot` still fully describes "what a plain read
+    // returns" for callers that don't need it (e.g. the SSH remote-repo view).
 
     Ok(RepoSnapshot {
         head,
@@ -107,7 +113,7 @@ pub fn snapshot(repo: &mut Repository, commit_limit: usize) -> Result<RepoSnapsh
         tags,
         stashes,
         worktrees,
-        cleanup_rows,
+        cleanup_rows: Vec::new(),
         last_fetch_secs: last_fetch_secs(repo),
     })
 }

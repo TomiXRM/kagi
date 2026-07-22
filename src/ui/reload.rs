@@ -227,6 +227,13 @@ impl KagiApp {
                 self.commit_panel = None;
             }
         }
+
+        // ADR-0128 follow-up: Branch Cleanup classification no longer rides
+        // along with the snapshot (it was blocking the UI thread on repos
+        // with many branches) — kick it off on a background thread so
+        // `active_view.cleanup_rows` catches up a beat after this reload.
+        self.start_branch_cleanup_scan(cx);
+
         Ok(())
     }
 

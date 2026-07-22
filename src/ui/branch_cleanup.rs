@@ -1,10 +1,18 @@
 //! Branch Cleanup pane + operations (ADR-0128).
 //!
-//! A center-takeover table of merged/stale branch candidates. The rows are
-//! snapshot-derived (`active_view.cleanup_rows`, per-tab) so the table is
-//! always fresh after a reload; this module owns the pane's open flag, the
-//! render, the copy actions, and the plan → confirm → execute pipeline glue
-//! (the ops live in `kagi_git::ops::branch_cleanup`).
+//! A center-takeover table of merged/stale branch candidates. The rows live
+//! in `active_view.cleanup_rows` (per-tab) but are **not** snapshot-derived
+//! any more (ADR-0128 follow-up, 2026-07-22): classifying every branch walks
+//! main's first-parent history plus one `merge_base` per branch, which
+//! measured over a second on repos with many long-lived unmerged branches.
+//! Running that synchronously inside every `snapshot()` blocked the UI
+//! thread after *every* git operation (stash, commit, checkout, ...), not
+//! just Branch Cleanup ones. `start_branch_cleanup_scan` now recomputes it on
+//! a background thread after each reload (same shape as the Ecosystem mine,
+//! `ecosystem.rs`), so the table is a beat behind a reload instead of costing
+//! every reload its time. This module owns the pane's open flag, the render,
+//! the copy actions, and the plan → confirm → execute pipeline glue (the ops
+//! live in `kagi_git::ops::branch_cleanup`).
 //!
 //! Delete affordances follow the domain classification: `FullyMerged` rows
 //! join the bulk action, `SquashMergedLikely` rows are individually deletable,
@@ -49,6 +57,73 @@ impl KagiApp {
     pub fn close_branch_cleanup_view(&mut self, cx: &mut Context<Self>) {
         self.branch_cleanup_open = false;
         cx.notify();
+    }
+
+    /// Recompute the Branch Cleanup table for the current repo on a
+    /// background thread, updating `active_view.cleanup_rows` in place when
+    /// it finishes (ADR-0128 follow-up). Call after every reload — same
+    /// "cheap to call repeatedly" shape as `ensure_startup_repo_io`'s
+    /// sub-tasks: no-op with no repo open, and a superseded scan (repo
+    /// changed, or a newer scan started) just drops its result instead of
+    /// clobbering a fresher one.
+    pub fn start_branch_cleanup_scan(&mut self, cx: &mut Context<Self>) {
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        self.cleanup_gen += 1;
+        let my_gen = self.cleanup_gen;
+        let now = now_secs();
+
+        let bg_path = repo_path.clone();
+        let task = cx.background_spawn(async move {
+            kagi_git::Backend::open(&bg_path)
+                .map_err(|e| e.to_string())
+                .and_then(|b| b.collect_branch_cleanup(now).map_err(|e| e.to_string()))
+        });
+
+        cx.spawn(async move |app, acx| {
+            let result = task.await;
+            let _ = app.update(acx, |app, cx| {
+                // Drop the result if superseded: the repo changed under us, or
+                // a newer scan (another reload) already started.
+                let still_ours = app.cleanup_gen == my_gen
+                    && app.repo_path.as_deref() == Some(repo_path.as_path());
+                if !still_ours {
+                    return;
+                }
+                match result {
+                    Ok(rows) => {
+                        // Same contract line ADR-0128 originally emitted from
+                        // build_tab_view — moved here since this is where the
+                        // counts are actually known now.
+                        use kagi_git::ops::MergedBranchStatus as S;
+                        let full = rows.iter().filter(|r| r.status == S::FullyMerged).count();
+                        let squash = rows
+                            .iter()
+                            .filter(|r| r.status == S::SquashMergedLikely)
+                            .count();
+                        let warn = rows
+                            .iter()
+                            .filter(|r| matches!(r.status, S::MergedThenGrown { .. }))
+                            .count();
+                        let stale = rows.iter().filter(|r| r.stale).count();
+                        klog!(
+                            "merged-branches: {} full, {} squash?, {} warn, {} stale",
+                            full,
+                            squash,
+                            warn,
+                            stale
+                        );
+                        app.active_view.cleanup_rows = rows;
+                        cx.notify();
+                    }
+                    Err(e) => {
+                        klog!("branch-cleanup: scan failed: {}", e);
+                    }
+                }
+            });
+        })
+        .detach();
     }
 
     /// Copy every listed branch name (newline-joined) to the clipboard.

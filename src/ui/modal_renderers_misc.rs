@@ -6,13 +6,13 @@
 
 use super::button_style::KagiButton;
 use super::i18n::Msg;
-use super::modal_renderers::modal_overlay;
+use super::modal_renderers::{modal_overlay, render_modal_title_row, ModalIcon};
 use super::modals::EditorDirtyGuardModal;
 use super::theme::{self, theme as current_theme};
 use super::{smart_commit, KagiApp};
 use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
 use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::{Disableable as _, Sizable as _};
+use gpui_component::{Disableable as _, IconName, Sizable as _};
 
 // ──────────────────────────────────────────────────────────────
 // Smart Commit modal renderer (T-COMMIT-016, ADR-0044)
@@ -64,12 +64,10 @@ pub(crate) fn render_smart_commit_modal(
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(
-                    div()
-                        .text_xl()
-                        .text_color(rgb(current_theme().text_main))
-                        .child(SharedString::from("Enable Local LLM generation?")),
-                )
+                .child(render_modal_title_row(
+                    SharedString::from("Enable Local LLM generation?"),
+                    Some((IconName::Settings.into(), current_theme().color_success)),
+                ))
                 .child(
                     div()
                         .text_sm()
@@ -137,12 +135,10 @@ pub(crate) fn render_smart_commit_modal(
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(
-                    div()
-                        .text_xl()
-                        .text_color(rgb(current_theme().text_main))
-                        .child(SharedString::from("Select a local model")),
-                )
+                .child(render_modal_title_row(
+                    SharedString::from("Select a local model"),
+                    Some((IconName::Settings.into(), current_theme().color_branch)),
+                ))
                 .child(
                     div()
                         .text_sm()
@@ -212,12 +208,13 @@ pub(crate) fn render_update_modal(
             .flex()
             .flex_col()
             .gap_3()
-            .child(
-                div()
-                    .text_color(rgb(current_theme().text_main))
-                    .text_xl()
-                    .child(SharedString::from("Update available")),
-            )
+            .child(render_modal_title_row(
+                SharedString::from("Update available"),
+                Some((
+                    ModalIcon::Path("icons/refresh-cw.svg"),
+                    current_theme().color_branch,
+                )),
+            ))
             .child(
                 div()
                     .flex()
@@ -380,19 +377,18 @@ pub(crate) fn render_editor_dirty_guard_modal(
     let card = div()
         .w(theme::scaled_px(420.))
         .bg(rgb(current_theme().modal))
-        .border_1()
-        .border_color(rgb(current_theme().color_blocker))
         .rounded_lg()
         .p_4()
         .flex()
         .flex_col()
         .gap_3()
-        .child(
-            div()
-                .text_color(rgb(current_theme().color_blocker))
-                .text_lg()
-                .child(Msg::EditorWorkspaceUnsavedTitle.t()),
-        )
+        .child(render_modal_title_row(
+            SharedString::from(Msg::EditorWorkspaceUnsavedTitle.t()),
+            Some((
+                ModalIcon::Path("icons/trash-2.svg"),
+                current_theme().color_blocker,
+            )),
+        ))
         .child(
             div()
                 .flex()

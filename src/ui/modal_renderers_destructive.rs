@@ -7,7 +7,9 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::button_style::KagiButton;
-use super::modal_renderers::modal_overlay;
+use super::modal_renderers::{
+    modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box, ModalIcon,
+};
 use super::modals::*;
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
@@ -15,6 +17,12 @@ use gpui::{div, prelude::*, rgb, Context, KeyDownEvent, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
+
+/// Every fully-bespoke destructive modal in this file badges itself with
+/// `trash-2` (no upstream `IconName` variant — raw asset path, same as the
+/// toolbar's Editor/Graph glyphs) in `color_blocker`, matching every other
+/// destructive plan-confirmation modal (user request 2026-07-23).
+const DESTRUCTIVE_ICON: ModalIcon = ModalIcon::Path("icons/trash-2.svg");
 
 /// Amend confirmation overlay (T-COMMIT-011, ADR-0040 / 0023).
 ///
@@ -57,64 +65,14 @@ pub(crate) fn render_amend_modal(
         .flex()
         .flex_col()
         .gap_3()
-        .child(
-            div()
-                .text_color(rgb(current_theme().text_main))
-                .text_xl()
-                .child(SharedString::from(plan_title_text(&plan.title))),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("Current")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_main))
-                                .child(SharedString::from(plan.current.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", plan.current.dirty))),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("\u{2192} Predicted")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_main))
-                                .child(SharedString::from(plan.predicted.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", plan.predicted.dirty))),
-                        ),
-                ),
-        );
+        .child(render_modal_title_row(
+            SharedString::from(plan_title_text(&plan.title)),
+            Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
+        ))
+        .child(render_current_predicted(
+            &plan,
+            Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
+        ));
 
     // Warnings.
     if !plan.warnings.is_empty() {
@@ -177,15 +135,13 @@ pub(crate) fn render_amend_modal(
     }
 
     // Recovery.
-    card = card.child(
-        div()
-            .text_xs()
-            .text_color(rgb(current_theme().text_muted))
-            .overflow_hidden()
-            .child(SharedString::from(plan_recovery_text(
-                plan.recovery.as_ref(),
-            ))),
-    );
+    let recovery_text = plan_recovery_text(plan.recovery.as_ref());
+    if !recovery_text.is_empty() {
+        card = card.child(render_recovery_box(
+            &recovery_text,
+            current_theme().color_blocker,
+        ));
+    }
 
     // When armed: explicit "what is lost" second-stage notice (ADR-0023).
     if armed && !has_blockers {
@@ -317,22 +273,21 @@ pub(crate) fn render_discard_modal(
     }
 
     // ── Card ─────────────────────────────────────────────────
+    // Icon badge (trash-2 / color_blocker) now carries the danger signal that
+    // the full-card red border used to — matches every other destructive
+    // plan-confirmation modal (user request 2026-07-23), one less box.
     let mut card = div()
         .w(theme::scaled_px(480.))
         .bg(rgb(current_theme().modal))
-        .border_1()
-        .border_color(rgb(current_theme().color_blocker))
         .rounded_lg()
         .p_4()
         .flex()
         .flex_col()
         .gap_3()
-        .child(
-            div()
-                .text_color(rgb(current_theme().color_blocker))
-                .text_xl()
-                .child(SharedString::from(title)),
-        )
+        .child(render_modal_title_row(
+            SharedString::from(title),
+            Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
+        ))
         .child(
             div()
                 .text_sm()
@@ -406,15 +361,13 @@ pub(crate) fn render_discard_modal(
     }
 
     // ── Recovery note ───────────────────────────────────────
-    card = card.child(
-        div()
-            .text_xs()
-            .text_color(rgb(current_theme().text_muted))
-            .overflow_hidden()
-            .child(SharedString::from(plan_recovery_text(
-                plan.recovery.as_ref(),
-            ))),
-    );
+    let recovery_text = plan_recovery_text(plan.recovery.as_ref());
+    if !recovery_text.is_empty() {
+        card = card.child(render_recovery_box(
+            &recovery_text,
+            current_theme().color_blocker,
+        ));
+    }
 
     // ── Error (preflight / execute failure) ─────────────────
     if let Some(err) = &modal.error {

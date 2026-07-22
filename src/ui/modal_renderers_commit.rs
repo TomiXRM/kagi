@@ -6,13 +6,15 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::commit_panel::{status_badge, CommitPlanModal};
-use super::modal_renderers::modal_overlay;
+use super::modal_renderers::{
+    modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box,
+};
 use super::modals::*;
 use super::theme::{self, theme as current_theme};
 use super::{file_tree, KagiApp};
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::Sizable as _;
+use gpui_component::{IconName, Sizable as _};
 use kagi_git::ChangeKind;
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 
@@ -136,56 +138,17 @@ pub(crate) fn render_cherry_pick_modal(
         .flex()
         .flex_col()
         .gap_3()
-        // ── Title ─────────────────────────────────────────
-        .child(
-            div()
-                .text_color(rgb(current_theme().text_main))
-                .text_xl()
-                .child(SharedString::from(plan_title_text(&plan.title))),
-        )
-        // ── Current → Predicted ───────────────────────────
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("Current")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_main))
-                                .child(SharedString::from(plan.current.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", plan.current.dirty))),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("\u{2192} Predicted")),
-                )
-                .child(
-                    div().flex().flex_row().gap_2().text_sm().child(
-                        div()
-                            .text_color(rgb(current_theme().text_main))
-                            .child(SharedString::from(plan.predicted.head.clone())),
-                    ),
-                ),
-        );
+        // ── Title + Current → Predicted (icon-badge treatment, same as
+        // every other plan-confirmation modal — user request 2026-07-23;
+        // `Copy` reads as "duplicate this commit elsewhere") ───────────
+        .child(render_modal_title_row(
+            SharedString::from(plan_title_text(&plan.title)),
+            Some((IconName::Copy.into(), current_theme().color_branch)),
+        ))
+        .child(render_current_predicted(
+            &plan,
+            Some((IconName::Copy.into(), current_theme().color_branch)),
+        ));
 
     // ── Preview files section ─────────────────────────────
     if !plan.preview_files.is_empty() {
@@ -247,15 +210,13 @@ pub(crate) fn render_cherry_pick_modal(
     }
 
     // ── Recovery ──────────────────────────────────────────
-    card = card.child(
-        div()
-            .text_xs()
-            .text_color(rgb(current_theme().text_muted))
-            .overflow_hidden()
-            .child(SharedString::from(plan_recovery_text(
-                plan.recovery.as_ref(),
-            ))),
-    );
+    let recovery_text = plan_recovery_text(plan.recovery.as_ref());
+    if !recovery_text.is_empty() {
+        card = card.child(render_recovery_box(
+            &recovery_text,
+            current_theme().color_branch,
+        ));
+    }
 
     // ── Error message (preflight / execute failure) ───────
     if let Some(ref err) = modal.error {
@@ -408,53 +369,17 @@ pub(crate) fn render_commit_plan_modal(
         .flex()
         .flex_col()
         .gap_3()
-        .child(
-            div()
-                .text_color(rgb(current_theme().text_main))
-                .text_xl()
-                .child(SharedString::from(plan_title_text(&plan.title))),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("Current")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_main))
-                                .child(SharedString::from(plan.current.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", plan.current.dirty))),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("\u{2192} Predicted")),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_main))
-                        .child(SharedString::from(plan.predicted.head.clone())),
-                ),
-        )
+        // Icon-badge header + boxed CURRENT→PREDICTED, same as every other
+        // plan-confirmation modal (user request 2026-07-23). `Plus` matches
+        // the "creates something new" family (a commit is a new object).
+        .child(render_modal_title_row(
+            SharedString::from(plan_title_text(&plan.title)),
+            Some((IconName::Plus.into(), current_theme().color_success)),
+        ))
+        .child(render_current_predicted(
+            &plan,
+            Some((IconName::Plus.into(), current_theme().color_success)),
+        ))
         // Preview files
         .child(preview_col);
 

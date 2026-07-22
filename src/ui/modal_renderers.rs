@@ -541,9 +541,12 @@ fn render_plan_modal_card_styled(
                 )
                 .child(
                     div()
+                        .flex_1()
+                        .min_w(gpui::px(0.))
                         .text_color(rgb(current_theme().text_main))
                         .text_lg()
                         .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .overflow_hidden()
                         .child(SharedString::from(plan_title_text(&plan.title))),
                 )
                 .into_any_element()

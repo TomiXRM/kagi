@@ -22,12 +22,38 @@ use gpui_component::{Icon, IconName, Sizable as _};
 use kagi_git::{BranchRenameValidation, CommitId, OperationPlan};
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 
-/// Richer plan-card header (ADR pending: "richer popup cards", starting with
-/// Pull/Push per user request 2026-07-22): an icon-badge circle in the op's
-/// accent colour, shown left of the title. `None` (every modal except
-/// Pull/Push today) keeps the plain text-only header pixel-identical to
-/// before — this is additive, not a redesign of the shared card.
-pub(crate) type PlanCardAccent = (IconName, u32);
+/// Richer plan-card header (ADR pending: "richer popup cards", started with
+/// Pull/Push per user request 2026-07-22, extended to every plan-confirmation
+/// modal per user request 2026-07-23): an icon-badge circle in the op's
+/// accent colour, shown left of the title. `None` (only a handful of fully
+/// bespoke modals left today) keeps the plain text-only header pixel-identical
+/// to before — this is additive, not a redesign of the shared card.
+pub(crate) type PlanCardAccent = (ModalIcon, u32);
+
+/// A modal-badge icon: either a real `gpui_component::IconName` (has a
+/// matching SVG in gpui-component's own vendored icon set, so `Icon::new`
+/// works), or a raw asset path for icons kagi bundles itself
+/// (`assets/icons/*.svg`, e.g. `trash-2`/`square-pen`/`waypoints`) that have
+/// no upstream `IconName` variant — same `Icon::default().path(...)` idiom
+/// already used for the toolbar's Editor/Graph glyphs (`render_header.rs`).
+#[derive(Clone)]
+pub(crate) enum ModalIcon {
+    Named(IconName),
+    Path(&'static str),
+}
+
+impl From<IconName> for ModalIcon {
+    fn from(name: IconName) -> Self {
+        ModalIcon::Named(name)
+    }
+}
+
+fn modal_icon_element(icon: ModalIcon) -> Icon {
+    match icon {
+        ModalIcon::Named(name) => Icon::new(name),
+        ModalIcon::Path(path) => Icon::default().path(path),
+    }
+}
 
 // T-SPLIT-MODALS-001 / ADR-0116 Wave 3: re-export the per-series renderers moved
 // to focused sibling modules so the existing `modal_renderers::*` call sites keep
@@ -48,6 +74,7 @@ pub(crate) fn render_input_plan_modal(
     validation: Option<BranchRenameValidation>,
     error: Option<SharedString>,
     confirm_label: &'static str,
+    accent: Option<PlanCardAccent>,
     cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> gpui::AnyElement {
@@ -63,12 +90,10 @@ pub(crate) fn render_input_plan_modal(
         .flex()
         .flex_col()
         .gap_3()
-        .child(
-            div()
-                .text_color(rgb(current_theme().text_main))
-                .text_xl()
-                .child(SharedString::from(title)),
-        )
+        .child(render_modal_title_row(
+            SharedString::from(title),
+            accent.clone(),
+        ))
         .child(
             div()
                 .flex()
@@ -97,36 +122,7 @@ pub(crate) fn render_input_plan_modal(
     }
 
     if let Some(plan) = plan {
-        card = card.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("Current")),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_main))
-                        .child(SharedString::from(plan.current.head.clone())),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("\u{2192} Predicted")),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_main))
-                        .child(SharedString::from(plan.predicted.head.clone())),
-                ),
-        );
+        card = card.child(render_current_predicted(&plan, accent.clone()));
 
         if !plan.warnings.is_empty() {
             let mut warn_col = div().flex().flex_col().gap_1();
@@ -431,34 +427,10 @@ fn render_commit_row(line: &str, accent: Option<PlanCardAccent>) -> gpui::AnyEle
 /// `cx.listener` pair — each runs its action, then restores root focus and
 /// notifies (the identical boilerplate that was hand-repeated in ~14 per-modal
 /// renderers) — and delegates to [`render_plan_modal_card_styled`]. A
-/// per-modal renderer now supplies only what differs: the plan/error/label,
-/// the optional create-branch target, and the two actions.
-pub(crate) fn render_plan_modal_wrapper(
-    plan: std::sync::Arc<OperationPlan>,
-    error: Option<SharedString>,
-    confirm_label: impl Into<SharedString>,
-    create_branch_target: Option<CommitId>,
-    cancel_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
-    confirm_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    render_plan_modal_wrapper_styled(
-        plan,
-        error,
-        confirm_label,
-        create_branch_target,
-        None,
-        cancel_action,
-        confirm_action,
-        cx,
-    )
-}
-
-/// Same as [`render_plan_modal_wrapper`], plus an optional icon-badge header
-/// (`accent`) for the richer card treatment. Pull/Push are the first callers
-/// (user request 2026-07-22); every other modal keeps calling the plain
-/// `render_plan_modal_wrapper`, which forwards `None` here and is visually
-/// unchanged.
+/// per-modal renderer supplies what differs: the plan/error/label, the
+/// optional create-branch target, the icon-badge `accent` (every
+/// plan-confirmation modal has one as of the user's 2026-07-23 "do the same
+/// everywhere" request), and the two actions.
 pub(crate) fn render_plan_modal_wrapper_styled(
     plan: std::sync::Arc<OperationPlan>,
     error: Option<SharedString>,
@@ -509,7 +481,7 @@ pub(crate) fn render_modal_title_row(
     accent: Option<PlanCardAccent>,
 ) -> gpui::AnyElement {
     match accent {
-        Some((icon_name, color)) => {
+        Some((icon, color)) => {
             let (badge_bg, badge_border, _) = theme::badge_style(color);
             div()
                 .flex()
@@ -529,7 +501,7 @@ pub(crate) fn render_modal_title_row(
                         .items_center()
                         .justify_center()
                         .child(
-                            Icon::new(icon_name)
+                            modal_icon_element(icon)
                                 .with_size(gpui_component::Size::Size(theme::scaled_px(18.)))
                                 .text_color(rgb(color)),
                         ),

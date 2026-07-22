@@ -5,14 +5,16 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::button_style::KagiButton;
-use super::modal_renderers::modal_overlay;
+use super::modal_renderers::{
+    modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box,
+};
 use super::modals::*;
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, FocusHandle, KeyDownEvent, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::Input;
-use gpui_component::Sizable as _;
+use gpui_component::{IconName, Sizable as _};
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 
 // ──────────────────────────────────────────────────────────────
@@ -67,12 +69,10 @@ pub(crate) fn render_stash_push_modal(
         .flex()
         .flex_col()
         .gap_3()
-        .child(
-            div()
-                .text_color(rgb(current_theme().text_main))
-                .text_xl()
-                .child(SharedString::from("Stash push — save local modifications")),
-        )
+        .child(render_modal_title_row(
+            SharedString::from("Stash push — save local modifications"),
+            Some((IconName::Inbox.into(), current_theme().color_warning)),
+        ))
         // ── Message input ──────────────────────────────────
         .child(
             div()
@@ -90,58 +90,10 @@ pub(crate) fn render_stash_push_modal(
 
     // ── Plan state (current → predicted) ─────────────────
     if let Some(ref p) = plan {
-        card = card.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("Current")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_main))
-                                .child(SharedString::from(p.current.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", p.current.dirty))),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("\u{2192} Predicted")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_main))
-                                .child(SharedString::from(p.predicted.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", p.predicted.dirty))),
-                        ),
-                ),
-        );
+        card = card.child(render_current_predicted(
+            p,
+            Some((IconName::Inbox.into(), current_theme().color_warning)),
+        ));
 
         // ── Warnings ──────────────────────────────────────
         if !p.warnings.is_empty() {
@@ -180,13 +132,13 @@ pub(crate) fn render_stash_push_modal(
         }
 
         // ── Recovery ──────────────────────────────────────
-        card = card.child(
-            div()
-                .text_xs()
-                .text_color(rgb(current_theme().text_muted))
-                .overflow_hidden()
-                .child(SharedString::from(plan_recovery_text(p.recovery.as_ref()))),
-        );
+        let recovery_text = plan_recovery_text(p.recovery.as_ref());
+        if !recovery_text.is_empty() {
+            card = card.child(render_recovery_box(
+                &recovery_text,
+                current_theme().color_warning,
+            ));
+        }
     }
 
     // ── Error message ──────────────────────────────────
@@ -294,65 +246,15 @@ pub(crate) fn render_stash_apply_modal(
         .flex()
         .flex_col()
         .gap_3()
-        .child(
-            div()
-                .text_color(rgb(current_theme().text_main))
-                .text_xl()
-                .child(SharedString::from(plan_title_text(&plan.title))),
-        )
+        .child(render_modal_title_row(
+            SharedString::from(plan_title_text(&plan.title)),
+            Some((IconName::Inbox.into(), current_theme().color_success)),
+        ))
         // ── Current → Predicted ─────────────────────────────
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("Current")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_main))
-                                .child(SharedString::from(plan.current.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", plan.current.dirty))),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("\u{2192} Predicted")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_main))
-                                .child(SharedString::from(plan.predicted.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", plan.predicted.dirty))),
-                        ),
-                ),
-        );
+        .child(render_current_predicted(
+            &plan,
+            Some((IconName::Inbox.into(), current_theme().color_success)),
+        ));
 
     // ── Blockers ──────────────────────────────────────────
     if !plan.blockers.is_empty() {
@@ -373,15 +275,13 @@ pub(crate) fn render_stash_apply_modal(
     }
 
     // ── Recovery ──────────────────────────────────────────
-    card = card.child(
-        div()
-            .text_xs()
-            .text_color(rgb(current_theme().text_muted))
-            .overflow_hidden()
-            .child(SharedString::from(plan_recovery_text(
-                plan.recovery.as_ref(),
-            ))),
-    );
+    let recovery_text = plan_recovery_text(plan.recovery.as_ref());
+    if !recovery_text.is_empty() {
+        card = card.child(render_recovery_box(
+            &recovery_text,
+            current_theme().color_success,
+        ));
+    }
 
     // ── Error message ────────────────────────────────────
     if let Some(ref err) = modal.error {

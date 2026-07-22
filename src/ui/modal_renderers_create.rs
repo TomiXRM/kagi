@@ -17,7 +17,7 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::Input;
 use gpui_component::{IconName, Sizable as _};
-use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
+use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text};
 
 // ──────────────────────────────────────────────────────────────
 // Create-branch modal renderer (T014)
@@ -101,7 +101,7 @@ pub(crate) fn render_create_branch_modal(
                 modal.at.short(),
                 modal.start_title
             )),
-            Some((IconName::Plus, current_theme().color_success)),
+            Some((IconName::Plus.into(), current_theme().color_success)),
         ))
         // ── Name input ────────────────────────────────────
         .child(
@@ -134,7 +134,7 @@ pub(crate) fn render_create_branch_modal(
         // reassurance the recovery text gives, just at a glance.
         card = card.child(render_current_predicted(
             p,
-            Some((IconName::Plus, current_theme().color_success)),
+            Some((IconName::Plus.into(), current_theme().color_success)),
         ));
 
         // ── Blockers (localized) ──────────────────────────
@@ -269,7 +269,7 @@ pub(crate) fn render_create_worktree_modal(
                 modal.at.short(),
                 modal.start_title
             )),
-            Some((IconName::Plus, current_theme().color_success)),
+            Some((IconName::Plus.into(), current_theme().color_success)),
         ))
         .child(
             div()
@@ -304,7 +304,7 @@ pub(crate) fn render_create_worktree_modal(
         // a one-off layout per modal).
         card = card.child(render_current_predicted(
             p,
-            Some((IconName::Plus, current_theme().color_success)),
+            Some((IconName::Plus.into(), current_theme().color_success)),
         ));
 
         if !p.warnings.is_empty() {
@@ -446,16 +446,18 @@ pub(crate) fn render_create_tag_modal(
         .flex()
         .flex_col()
         .gap_3()
-        .child(
-            div()
-                .text_color(rgb(current_theme().text_main))
-                .text_xl()
-                .child(SharedString::from(format!(
-                    "Create tag @ {}  {}",
-                    modal.at.short(),
-                    modal.start_title
-                ))),
-        )
+        // Icon-badge header + boxed CURRENT→PREDICTED + monospace recovery,
+        // same richer treatment as every other plan-confirmation modal (user
+        // request 2026-07-23). `color_tag` matches the tag ref-badge colour
+        // used elsewhere in the app.
+        .child(render_modal_title_row(
+            SharedString::from(format!(
+                "Create tag @ {}  {}",
+                modal.at.short(),
+                modal.start_title
+            )),
+            Some((IconName::Plus.into(), current_theme().color_tag)),
+        ))
         .child(
             div()
                 .flex()
@@ -471,47 +473,10 @@ pub(crate) fn render_create_tag_modal(
         );
 
     if let Some(ref p) = plan {
-        card = card.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("Current")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_main))
-                                .child(SharedString::from(p.current.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", p.current.dirty))),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("\u{2192} Predicted")),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_muted))
-                        .child(SharedString::from(plan_title_text(&p.title))),
-                ),
-        );
+        card = card.child(render_current_predicted(
+            p,
+            Some((IconName::Plus.into(), current_theme().color_tag)),
+        ));
 
         if !p.blockers.is_empty() {
             let lines: Vec<SharedString> = p
@@ -532,13 +497,13 @@ pub(crate) fn render_create_tag_modal(
             card = card.child(block_col);
         }
 
-        card = card.child(
-            div()
-                .text_xs()
-                .text_color(rgb(current_theme().text_muted))
-                .overflow_hidden()
-                .child(SharedString::from(plan_recovery_text(p.recovery.as_ref()))),
-        );
+        let recovery_text = plan_recovery_text(p.recovery.as_ref());
+        if !recovery_text.is_empty() {
+            card = card.child(render_recovery_box(
+                &recovery_text,
+                current_theme().color_tag,
+            ));
+        }
     }
 
     if let Some(ref err) = modal.error {

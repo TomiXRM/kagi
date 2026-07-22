@@ -7,14 +7,14 @@
 //! writes, ADR-0120 §4 scoping).
 
 use super::i18n::Msg;
-use super::modal_renderers::modal_overlay;
+use super::modal_renderers::{modal_overlay, render_modal_title_row, ModalIcon};
 use super::modals::*;
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, FocusHandle, KeyDownEvent, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::Input;
-use gpui_component::Sizable as _;
+use gpui_component::{IconName, Sizable as _};
 
 /// Render the Rename / New File / New Folder name-input prompt.
 pub(crate) fn render_editor_fs_prompt_modal(
@@ -35,6 +35,18 @@ pub(crate) fn render_editor_fs_prompt_modal(
             Msg::EditorFsPromptNewFolderTitle.t(),
             Msg::EditorFsPromptCreateButton.t(),
         ),
+    };
+    // Rename = edit (square-pen), New File/Folder = create (Plus) — same
+    // icon language as the rename-branch and create-branch modals (user
+    // request 2026-07-23).
+    let accent = match modal.kind {
+        EditorFsPromptKind::Rename => (
+            ModalIcon::Path("icons/square-pen.svg"),
+            current_theme().color_branch,
+        ),
+        EditorFsPromptKind::NewFile | EditorFsPromptKind::NewDir => {
+            (IconName::Plus.into(), current_theme().color_success)
+        }
     };
     let name_is_valid = !modal.input.trim().is_empty();
 
@@ -61,12 +73,10 @@ pub(crate) fn render_editor_fs_prompt_modal(
         .flex()
         .flex_col()
         .gap_3()
-        .child(
-            div()
-                .text_color(rgb(current_theme().text_main))
-                .text_xl()
-                .child(SharedString::from(title)),
-        )
+        .child(render_modal_title_row(
+            SharedString::from(title),
+            Some(accent),
+        ))
         .child(
             div()
                 .flex()
@@ -180,19 +190,18 @@ pub(crate) fn render_editor_delete_confirm_modal(
     let mut card = div()
         .w(theme::scaled_px(420.))
         .bg(rgb(current_theme().modal))
-        .border_1()
-        .border_color(rgb(current_theme().color_blocker))
         .rounded_lg()
         .p_4()
         .flex()
         .flex_col()
         .gap_3()
-        .child(
-            div()
-                .text_color(rgb(current_theme().color_blocker))
-                .text_xl()
-                .child(SharedString::from(title)),
-        )
+        .child(render_modal_title_row(
+            SharedString::from(title),
+            Some((
+                ModalIcon::Path("icons/trash-2.svg"),
+                current_theme().color_blocker,
+            )),
+        ))
         .child(
             div()
                 .text_sm()

@@ -6,7 +6,9 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::button_style::KagiButton;
-use super::modal_renderers::modal_overlay;
+use super::modal_renderers::{
+    modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box,
+};
 use super::modals::*;
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
@@ -14,7 +16,7 @@ use gpui::{div, prelude::*, rgb, App, Context, FocusHandle, KeyDownEvent, Shared
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::Input;
-use gpui_component::Sizable as _;
+use gpui_component::{IconName, Sizable as _};
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 
 // ──────────────────────────────────────────────────────────────
@@ -89,17 +91,18 @@ pub(crate) fn render_create_branch_modal(
         .flex()
         .flex_col()
         .gap_3()
-        // ── Title ─────────────────────────────────────────
-        .child(
-            div()
-                .text_color(rgb(current_theme().text_main))
-                .text_xl()
-                .child(SharedString::from(format!(
-                    "Create branch @ {}  {}",
-                    modal.at.short(),
-                    modal.start_title
-                ))),
-        )
+        // ── Title (icon-badge header, matching Pull/Push's richer card —
+        // user request 2026-07-23; `Plus` mirrors the toolbar "Branch"
+        // button's own icon, `color_success` matches this modal's own
+        // Create button accent below) ──────────────────────────
+        .child(render_modal_title_row(
+            SharedString::from(format!(
+                "Create branch @ {}  {}",
+                modal.at.short(),
+                modal.start_title
+            )),
+            Some((IconName::Plus, current_theme().color_success)),
+        ))
         // ── Name input ────────────────────────────────────
         .child(
             div()
@@ -123,49 +126,16 @@ pub(crate) fn render_create_branch_modal(
             ),
         );
 
-    // ── Plan state (current → predicted) ─────────────────
     if let Some(ref p) = plan {
-        card = card.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("Current")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_main))
-                                .child(SharedString::from(p.current.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", p.current.dirty))),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("\u{2192} Predicted")),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_muted))
-                        .child(SharedString::from(plan_title_text(&p.title))),
-                ),
-        );
+        // ── Plan state (current → predicted), same boxed treatment as
+        // Pull/Push (user request 2026-07-23) — creating a branch never
+        // moves HEAD or touches the working tree, so current and predicted
+        // are identical here; showing them side by side is the same
+        // reassurance the recovery text gives, just at a glance.
+        card = card.child(render_current_predicted(
+            p,
+            Some((IconName::Plus, current_theme().color_success)),
+        ));
 
         // ── Blockers (localized) ──────────────────────────
         if !p.blockers.is_empty() {
@@ -187,14 +157,15 @@ pub(crate) fn render_create_branch_modal(
             card = card.child(block_col);
         }
 
-        // ── Recovery ──────────────────────────────────────
-        card = card.child(
-            div()
-                .text_xs()
-                .text_color(rgb(current_theme().text_muted))
-                .overflow_hidden()
-                .child(SharedString::from(plan_recovery_text(p.recovery.as_ref()))),
-        );
+        // ── Recovery (same grouped/monospace treatment as Pull/Push —
+        // user request 2026-07-23) ─────────────────────────
+        let recovery_text = plan_recovery_text(p.recovery.as_ref());
+        if !recovery_text.is_empty() {
+            card = card.child(render_recovery_box(
+                &recovery_text,
+                current_theme().color_success,
+            ));
+        }
     }
 
     // ── Error message (preflight / execute failure) ───────
@@ -292,16 +263,14 @@ pub(crate) fn render_create_worktree_modal(
         .flex()
         .flex_col()
         .gap_3()
-        .child(
-            div()
-                .text_color(rgb(current_theme().text_main))
-                .text_xl()
-                .child(SharedString::from(format!(
-                    "Create worktree @ {}  {}",
-                    modal.at.short(),
-                    modal.start_title
-                ))),
-        )
+        .child(render_modal_title_row(
+            SharedString::from(format!(
+                "Create worktree @ {}  {}",
+                modal.at.short(),
+                modal.start_title
+            )),
+            Some((IconName::Plus, current_theme().color_success)),
+        ))
         .child(
             div()
                 .flex()
@@ -330,47 +299,13 @@ pub(crate) fn render_create_worktree_modal(
         );
 
     if let Some(ref p) = plan {
-        card = card.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("Current")),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_main))
-                                .child(SharedString::from(p.current.head.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_sub))
-                                .child(SharedString::from(format!("[{}]", p.current.dirty))),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("\u{2192} Predicted")),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_muted))
-                        .child(SharedString::from(plan_title_text(&p.title))),
-                ),
-        );
+        // Same boxed current/predicted treatment as Pull/Push/Create-Branch
+        // (user request 2026-07-23: reuse this display everywhere instead of
+        // a one-off layout per modal).
+        card = card.child(render_current_predicted(
+            p,
+            Some((IconName::Plus, current_theme().color_success)),
+        ));
 
         if !p.warnings.is_empty() {
             let mut warn_col = div().flex().flex_col().gap_1();
@@ -406,13 +341,13 @@ pub(crate) fn render_create_worktree_modal(
             card = card.child(block_col);
         }
 
-        card = card.child(
-            div()
-                .text_xs()
-                .text_color(rgb(current_theme().text_muted))
-                .overflow_hidden()
-                .child(SharedString::from(plan_recovery_text(p.recovery.as_ref()))),
-        );
+        let recovery_text = plan_recovery_text(p.recovery.as_ref());
+        if !recovery_text.is_empty() {
+            card = card.child(render_recovery_box(
+                &recovery_text,
+                current_theme().color_success,
+            ));
+        }
     }
 
     if let Some(ref err) = modal.error {

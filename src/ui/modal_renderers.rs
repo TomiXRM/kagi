@@ -248,13 +248,15 @@ pub(crate) fn modal_overlay(card: impl IntoElement) -> gpui::Div {
 /// blockers / recovery / error / Cancel + confirm buttons.  The confirm
 /// button is hidden whenever the plan has blockers.
 ///
-/// ── Richer-card helpers (accent-gated; Pull/Push today) ──────────────────
+/// ── Richer-card helpers (accent-gated; Pull/Push/Create-Branch today) ────
 ///
 /// One current/predicted comparison block. Plain (`accent: None`) matches
 /// every modal's original two-line layout exactly. The icon-badge accent
 /// path wraps both states in a tinted card with a centred accent-coloured
-/// arrow between them instead of a "→ Predicted" text label.
-fn render_current_predicted(
+/// arrow between them instead of a "→ Predicted" text label. Also used by
+/// the bespoke create-branch card (user request 2026-07-23: match Pull's
+/// state-transition display instead of a separate one-off layout).
+pub(crate) fn render_current_predicted(
     plan: &OperationPlan,
     accent: Option<PlanCardAccent>,
 ) -> gpui::AnyElement {
@@ -494,26 +496,19 @@ pub(crate) fn render_plan_modal_wrapper_styled(
     .into_any_element()
 }
 
-/// Builds the plan-confirmation card. `accent` is `None` for the plain,
-/// unchanged card (~14 modals); Pull/Push (user request 2026-07-22) pass an
-/// icon-badge header via `Some(...)` for the richer treatment.
-fn render_plan_modal_card_styled(
-    plan: std::sync::Arc<OperationPlan>,
-    error: Option<SharedString>,
-    confirm_label: impl Into<SharedString>,
-    cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    create_branch_target: Option<CommitId>,
+/// Icon-badge title row, shared by every plan-confirmation card and — as of
+/// the Create Branch richer-card pass (user request 2026-07-23) — the
+/// bespoke create-branch/create-worktree cards too. `None` renders the
+/// original plain `text_xl` title, unconstrained; every modal that hasn't
+/// opted into `accent` keeps this pixel-identical. `Some((icon, color))`
+/// renders the 40x40 icon badge + `text_lg` semibold title, width-constrained
+/// (`flex_1`/`min_w(0)`/`overflow_hidden`) so a long title wraps inside the
+/// card instead of overflowing it (user report 2026-07-23).
+pub(crate) fn render_modal_title_row(
+    title: SharedString,
     accent: Option<PlanCardAccent>,
-    cx: &mut Context<KagiApp>,
-) -> impl IntoElement {
-    // Accept either a `&'static str` (most modals) or a dynamic `String`/
-    // `SharedString` (merge: `Merge <source> into <target>`, T-DNDMERGE-001).
-    let confirm_label: SharedString = confirm_label.into();
-    let has_blockers = !plan.blockers.is_empty();
-
-    // ── Title (plain, or icon-badge header when `accent` is set) ──────
-    let title_row: gpui::AnyElement = match accent.clone() {
+) -> gpui::AnyElement {
+    match accent {
         Some((icon_name, color)) => {
             let (badge_bg, badge_border, _) = theme::badge_style(color);
             div()
@@ -547,16 +542,41 @@ fn render_plan_modal_card_styled(
                         .text_lg()
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .overflow_hidden()
-                        .child(SharedString::from(plan_title_text(&plan.title))),
+                        .child(title),
                 )
                 .into_any_element()
         }
         None => div()
             .text_color(rgb(current_theme().text_main))
             .text_xl()
-            .child(SharedString::from(plan_title_text(&plan.title)))
+            .child(title)
             .into_any_element(),
-    };
+    }
+}
+
+/// Builds the plan-confirmation card. `accent` is `None` for the plain,
+/// unchanged card (~14 modals); Pull/Push (user request 2026-07-22) pass an
+/// icon-badge header via `Some(...)` for the richer treatment.
+fn render_plan_modal_card_styled(
+    plan: std::sync::Arc<OperationPlan>,
+    error: Option<SharedString>,
+    confirm_label: impl Into<SharedString>,
+    cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    create_branch_target: Option<CommitId>,
+    accent: Option<PlanCardAccent>,
+    cx: &mut Context<KagiApp>,
+) -> impl IntoElement {
+    // Accept either a `&'static str` (most modals) or a dynamic `String`/
+    // `SharedString` (merge: `Merge <source> into <target>`, T-DNDMERGE-001).
+    let confirm_label: SharedString = confirm_label.into();
+    let has_blockers = !plan.blockers.is_empty();
+
+    // ── Title (plain, or icon-badge header when `accent` is set) ──────
+    let title_row = render_modal_title_row(
+        SharedString::from(plan_title_text(&plan.title)),
+        accent.clone(),
+    );
 
     // ── Build modal card ────────────────────────────────────
     let mut card = div()

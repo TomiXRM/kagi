@@ -15,12 +15,33 @@ Bundled, non-code resources. Layout:
 | --- | --- | --- |
 | `Inter-*.ttf` | Primary UI Latin font | SIL OFL 1.1; `Inter-OFL.txt` |
 | `JetBrainsMono-*.ttf` | Terminal and code | SIL OFL 1.1; `JetBrainsMono-OFL.txt` |
-| `NotoSansJP-Variable.ttf` | Deterministic Japanese/CJK fallback | SIL OFL 1.1; Google Fonts commit `2f6daa88e1e71320a6fe71cc91ecbfc018928737`; `NotoSansJP-OFL.txt` |
+| `NotoSansJP-Regular.ttf`, `NotoSansJP-Bold.ttf` | Deterministic Japanese/CJK fallback | SIL OFL 1.1; static `wght=400`/`700` instances of Google Fonts commit `2f6daa88e1e71320a6fe71cc91ecbfc018928737` `NotoSansJP[wght].ttf`; `NotoSansJP-OFL.txt` |
 
-`NotoSansJP-Variable.ttf` has SHA-256
-`c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f`.
-It is embedded by `src/ui/mod.rs`, so the native binary, `.deb`, tarball, and
-AppImage all use the same glyph data without relying on host-installed fonts.
+The Japanese fallback ships as **static** Regular(400)/Bold(700) instances, not
+the upstream variable font: on Linux GPUI's cosmic-text renders a *variable*
+fallback at its default axis, and Noto Sans JP's variable default is Thin
+(`wght=100`), so Japanese text rendered thin (ADR-0130). Static faces carry the
+weight in `usWeightClass`, so the requested weight resolves directly — the same
+way the bundled Inter/JetBrains Mono pairs are shipped.
+
+Provenance is the upstream Google Fonts variable font at commit
+`2f6daa88e1e71320a6fe71cc91ecbfc018928737` (`ofl/notosansjp/NotoSansJP[wght].ttf`,
+SHA-256 `c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f`).
+Regenerate the two faces from it with `fontTools.varLib.instancer`:
+
+```sh
+pip install fonttools
+python3 scripts/instance_noto.py path/to/NotoSansJP[wght].ttf
+```
+
+As-shipped SHA-256 of the committed faces (integrity fingerprint; fontTools may
+not reproduce them byte-for-byte across versions):
+
+- `NotoSansJP-Regular.ttf`: `991c8e65b73a0c9f46b9f6b53354c69952cef6bd675cf181c1dc9a0e41dc1d9b`
+- `NotoSansJP-Bold.ttf`: `c441b828cfde42526f3b4961d1fbfd1cde1ef528e872f486370f2e029fd3a6d8`
+
+They are embedded by `src/ui/fonts.rs`, so the native binary, `.deb`, tarball,
+and AppImage all use the same glyph data without relying on host-installed fonts.
 
 ## Regenerating the app icon
 

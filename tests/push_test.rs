@@ -8,6 +8,7 @@
 //! | 1 | `test_push_ahead_two`               | ahead 2 → push succeeds, remote ref = HEAD, preview_commits has 2 entries |
 //! | 2 | `test_push_ahead_zero_blocker`       | ahead 0 → plan has blocker |
 //! | 3 | `test_push_set_upstream`             | no upstream + origin → set-upstream plan → execute sets upstream, ahead/behind appear |
+//! | 3b | `test_push_set_upstream_excludes_commits_already_on_remote` | no upstream, branch forked from an advanced main → preview excludes main's already-remote commits |
 //! | 4 | `test_push_non_ff_fails`             | non-FF (remote is ahead) → execute returns Err, stderr contains "rejected", local untouched |
 //! | 5 | `test_push_detached_blocker`         | detached HEAD → plan has blocker |
 //! | 6 | `test_push_no_force_in_args`         | execute_push never passes --force / --force-with-lease |
@@ -254,6 +255,42 @@ fn test_push_set_upstream() {
     assert_eq!(
         remote_sha, local_sha,
         "remote branch should match local HEAD"
+    );
+}
+
+/// Test 3b: no upstream, but the branch's ancestry already contains commits
+/// the remote knows about via `main` (e.g. branched after a rebase/merge) —
+/// preview_commits must exclude those, not walk to the root (user report
+/// 2026-07-23: "commits to push" showed 100 for a branch with 1 new commit).
+#[test]
+fn test_push_set_upstream_excludes_commits_already_on_remote() {
+    let r = setup();
+
+    // Advance `main` on the remote via the `other` clone, then fetch so
+    // local's `refs/remotes/origin/main` reflects it.
+    remote_commit(&r, "advance.txt", "advance\n", "main advance");
+    git(&r.local, &["fetch", "-q", "origin"]);
+    git(&r.local, &["merge", "-q", "--ff-only", "origin/main"]);
+
+    // Branch off the now-advanced main; its ancestry includes "main advance".
+    git(&r.local, &["checkout", "-q", "-b", "feature/new"]);
+    write_file(&r.local, "feat.txt", "feature work\n");
+    git(&r.local, &["add", "-A"]);
+    git(&r.local, &["commit", "-qm", "feature commit"]);
+
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_push(&repo).expect("plan_push should succeed");
+    assert_eq!(
+        plan.preview_commits.len(),
+        1,
+        "preview should only contain the branch's own new commit, not main's \
+         history the remote already has: {:?}",
+        plan.preview_commits
+    );
+    assert!(
+        plan.preview_commits[0].contains("feature commit"),
+        "preview should be the feature commit: {:?}",
+        plan.preview_commits
     );
 }
 

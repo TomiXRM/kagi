@@ -401,7 +401,12 @@ pub fn execute_push(repo: &Repository, repo_path: &Path) -> Result<PushOutcome, 
 /// Build the preview_commits list for a push plan.
 ///
 /// - `has_upstream=true`:  walk HEAD, hide the upstream OID  (`upstream..HEAD`).
-/// - `has_upstream=false`: walk all commits reachable from HEAD (set-upstream flow).
+/// - `has_upstream=false`: walk HEAD, hide every `refs/remotes/<remote>/*` tip
+///   (set-upstream flow) — this is the branch's first push, but the remote
+///   may already have most of the commit's ancestry via other branches
+///   (e.g. commits merged into the default branch since this branch was
+///   created). Hiding only those already-known tips, rather than walking to
+///   the root, keeps the preview to what actually needs to transfer.
 ///
 /// Both paths are capped at 100 commits, newest first.
 ///
@@ -427,11 +432,15 @@ fn build_push_preview(
     walk.push(head_oid)
         .map_err(|e| GitError::Other(format!("revwalk push failed: {}", e.message())))?;
 
-    // Hide the upstream tip so we only see commits not yet on the remote.
     if has_upstream {
+        // Hide the upstream tip so we only see commits not yet on the remote.
         if let Ok(upstream_oid) = resolve_upstream_oid(repo, branch_name, remote_name) {
             let _ = walk.hide(upstream_oid);
         }
+    } else {
+        // No upstream yet: hide every other branch already known on this
+        // remote, so already-merged history doesn't count as "to push".
+        let _ = walk.hide_glob(&format!("refs/remotes/{}/*", remote_name));
     }
 
     // Topological sort, newest first.

@@ -104,7 +104,7 @@ depends = "$auto"
 # format has the same deterministic fallback; no host font package is needed.
 assets = [
     ["target/release/kagi", "usr/bin/", "755"],
-    ["assets/linux/kagi.desktop", "usr/share/applications/", "644"],
+    ["assets/linux/com.tomixrm.kagi.desktop", "usr/share/applications/com.tomixrm.kagi.desktop", "644"],
     ["assets/icon/icon_512x512.png", "usr/share/icons/hicolor/512x512/apps/kagi.png", "644"],
 ]
 

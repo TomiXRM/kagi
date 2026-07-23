@@ -1,7 +1,7 @@
 //! Linux AppImage packaging (ADR-0047 追補, W21-APPIMAGE).
 //!
 //! `bundle-appimage --bin <path> [--arch x86_64|aarch64]` assembles a
-//! `Kagi.AppDir/` (AppRun + kagi.desktop + kagi.png + usr/bin/kagi). When an
+//! `Kagi.AppDir/` (AppRun + com.tomixrm.kagi.desktop + kagi.png + usr/bin/kagi). When an
 //! `appimagetool` is available — on `$APPIMAGETOOL` or `PATH` — it is invoked to
 //! produce `target/dist/Kagi-<arch>.AppImage`; otherwise we stop after the
 //! AppDir with a clear message (the local macOS case, where appimagetool is
@@ -31,6 +31,9 @@ fn normalize_arch(arch: &str) -> Result<&'static str, String> {
 fn desktop_entry() -> String {
     // `appimagetool` requires a top-level .desktop in the AppDir with a matching
     // Icon= key (no extension) and a Categories entry.
+    // `StartupWMClass` must equal the window's runtime app_id (`ui::APP_ID`,
+    // "com.tomixrm.kagi") so the desktop environment binds the window to this
+    // launcher instead of spawning a separate generic ("unknown") taskbar entry.
     "\
 [Desktop Entry]
 Type=Application
@@ -41,7 +44,7 @@ Exec=kagi %F
 Icon=kagi
 Terminal=false
 Categories=Development;
-StartupWMClass=Kagi
+StartupWMClass=com.tomixrm.kagi
 "
     .to_string()
 }
@@ -141,7 +144,7 @@ pub fn bundle(root: &Path, override_bin: Option<&str>, arch: &str) -> Result<(),
     std::fs::write(&apprun, apprun_script()).map_err(|e| format!("write AppRun: {e}"))?;
     make_executable(&apprun)?;
 
-    std::fs::write(appdir.join("kagi.desktop"), desktop_entry())
+    std::fs::write(appdir.join("com.tomixrm.kagi.desktop"), desktop_entry())
         .map_err(|e| format!("write desktop: {e}"))?;
     std::fs::copy(&icon, appdir.join("kagi.png")).map_err(|e| format!("copy icon: {e}"))?;
 
@@ -230,4 +233,20 @@ pub fn bundle(root: &Path, override_bin: Option<&str>, arch: &str) -> Result<(),
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Must equal the window's runtime `app_id` (`kagi::APP_ID`) so the desktop
+    // environment binds the window to this launcher; see
+    // `tests/desktop_integration_test.rs`.
+    #[test]
+    fn desktop_entry_wmclass_is_reverse_dns_app_id() {
+        assert!(
+            desktop_entry().contains("StartupWMClass=com.tomixrm.kagi"),
+            "AppImage desktop entry must set StartupWMClass to the app_id",
+        );
+    }
 }

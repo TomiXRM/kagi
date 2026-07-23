@@ -3297,6 +3297,10 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: main_window_titlebar(),
             window_decorations: main_window_decorations(),
+            // Linux: gpui sets the Wayland app_id / X11 WM_CLASS from this so
+            // GNOME binds the window to com.tomixrm.kagi.desktop instead of a
+            // generic "unknown" entry. See `kagi::APP_ID`. No-op on macOS/Windows.
+            app_id: Some(kagi::APP_ID.to_string()),
             ..Default::default()
         },
         |window, cx| {

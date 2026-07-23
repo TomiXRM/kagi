@@ -15,7 +15,7 @@
 
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
-use gpui::{div, prelude::*, rgb, Context, Entity, SharedString, Window};
+use gpui::{div, prelude::*, relative, rgb, Context, Entity, SharedString, Window};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::{Icon, IconName, Sizable as _};
@@ -551,8 +551,15 @@ fn render_plan_modal_card_styled(
     );
 
     // ── Build modal card ────────────────────────────────────
+    // Capped + scrollable (user report 2026-07-23): a push plan with many
+    // preview commits could grow the card taller than the window, pushing
+    // the confirm/cancel buttons off-screen. Bounding height to a fraction
+    // of the viewport and scrolling the overflow keeps buttons reachable.
     let mut card = div()
+        .id("plan-modal-card")
         .w(theme::scaled_px(480.))
+        .max_h(relative(0.85))
+        .overflow_y_scroll()
         .bg(rgb(current_theme().modal))
         .rounded_lg()
         .p_4()

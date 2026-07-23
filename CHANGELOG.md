@@ -3,6 +3,21 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.13.6] — 2026-07-23
+
+### Fixed
+- **Japanese text no longer renders thin on Linux (Ubuntu).** The bundled Noto
+  Sans JP fallback shipped as a variable font whose default weight axis is Thin
+  (100); on Linux GPUI's text backend rendered every weight at that default, so
+  Japanese UI text looked too light. Kagi now bundles static Regular (400) and
+  Bold (700) faces, so text renders at the requested weight.
+- **The window now binds to its launcher on Linux (Ubuntu).** The main window
+  advertised no application id, so on GNOME/Wayland it appeared as a separate,
+  unnamed taskbar entry with a generic ("gear") icon — clicking the dock icon
+  spawned that stray entry, and quitting it closed Kagi. The window now sets its
+  app id to `com.tomixrm.kagi`, matching the installed `.desktop` launcher, so
+  the desktop environment groups it under the Kagi icon with the correct name.
+
 ## [0.6.0] — 2026-06-22
 
 ### Added

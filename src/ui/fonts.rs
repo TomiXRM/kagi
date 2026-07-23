@@ -14,7 +14,13 @@ pub(super) fn load_bundled_fonts(cx: &mut App) {
             "../../assets/fonts/JetBrainsMono-Regular.ttf"
         )),
         std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/JetBrainsMono-Bold.ttf")),
-        std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/NotoSansJP-Variable.ttf")),
+        // Static Regular(400)/Bold(700) instances, not the variable font: on
+        // Linux cosmic-text renders a *variable* fallback at its default axis,
+        // and Noto Sans JP's default is Thin (wght=100), so Japanese looked
+        // thin. Two static faces let fontdb resolve the requested weight
+        // directly, exactly like the bundled Inter/JetBrains pair. (ADR-0130.)
+        std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/NotoSansJP-Regular.ttf")),
+        std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/NotoSansJP-Bold.ttf")),
     ]) {
         klog!("fonts: add_fonts failed (UI may fall back): {e}");
         return;

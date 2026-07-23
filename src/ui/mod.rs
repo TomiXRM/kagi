@@ -1719,11 +1719,6 @@ impl KagiApp {
 
     // ── Revert modal (T-CM-034) ─────────────────────────────
 
-    // ── Oplog + footer helper (T017) ────────────────────────
-
-    /// Record an operation to the oplog and update the status footer.
-    ///
-    /// Write failures are non-fatal: they emit a stderr warning only.
     // ── W3-NOTIFY: toast helpers ──────────────────────────────
 
     /// Queue a snackbar toast (bottom-left). Delegates to the `ToastStack`
@@ -2397,9 +2392,7 @@ impl KagiApp {
         use kagi_git::CommitId;
 
         // Early-exit if no repo is open (the session is None in that case too).
-        if self.repo_session.is_none() {
-            return None;
-        }
+        self.repo_session.as_ref()?;
         let detail = self.active_view.details.get(index)?;
         let id = CommitId(detail.full_sha.as_ref().to_string());
 

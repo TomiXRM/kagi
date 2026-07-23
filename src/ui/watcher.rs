@@ -20,7 +20,12 @@
 //!         c. upgrades the `WeakEntity<KagiApp>` and calls `reload()` + sets the
 //!            refreshed footer message.
 
-use std::path::{Path, PathBuf};
+// The module doc and the SKIP_COMPONENTS note use hand-indented nested lists /
+// summary lines that clippy's CommonMark parser flags as lazy/overindented
+// continuations; the formatting is intentional for terminal readability.
+#![allow(clippy::doc_lazy_continuation, clippy::doc_overindented_list_items)]
+
+use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -154,7 +159,7 @@ fn path_is_relevant(p: &Path) -> bool {
 /// not exist or the watcher could not be created (e.g. inotify limit exceeded) —
 /// treat as a no-op rather than fatal.
 pub fn start_git_watcher(
-    repo_root: &PathBuf,
+    repo_root: &Path,
 ) -> Option<(mpsc::Receiver<WatchEvent>, RecommendedWatcher)> {
     if !repo_root.exists() {
         eprintln!(

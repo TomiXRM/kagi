@@ -19,7 +19,7 @@ use gpui::{prelude::*, Context, Entity, ListState, WeakEntity, Window};
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::Sizable as _;
 
-use super::diff_view::{MainDiffSource, MainDiffView};
+use super::diff_view::{MainDiffSource, MainDiffView, RowHighlights};
 use super::render_helpers::{new_diff_list_state, render_diff_list};
 use super::KagiApp;
 
@@ -52,12 +52,7 @@ impl MainDiffPane {
     /// ADR-0109: apply an off-thread highlight result if the pane still shows
     /// the same commit file it was requested for (stale results — the user
     /// stepped to another file first — are discarded, as before).
-    pub(crate) fn apply_highlights(
-        &mut self,
-        row: usize,
-        file: usize,
-        highlights: Vec<(usize, Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>)>,
-    ) {
+    pub(crate) fn apply_highlights(&mut self, row: usize, file: usize, highlights: RowHighlights) {
         match self.view.source {
             MainDiffSource::Commit {
                 row_index,

@@ -18,6 +18,10 @@ use super::{Backend, GitError, OperationPlan};
 use kagi_domain::operation::{Operation, OperationOutcome};
 
 /// A request sent from the UI to the worker thread.
+// `Run` is inherently larger than `Shutdown`, but a request is sent at most once
+// per user operation over an unbounded channel — boxing to equalize the variants
+// would only add an allocation with no measurable benefit.
+#[allow(clippy::large_enum_variant)]
 enum WorkRequest {
     /// Execute a mutating operation via `Backend::run` (ADR-0104).
     Run {

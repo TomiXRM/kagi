@@ -394,9 +394,7 @@ mod tests {
     fn commits_with_merge_and_multiline_body() {
         // Two records: a merge (two parents) then a root commit. Bodies contain
         // newlines; records are RS-separated, fields US-separated.
-        let out = format!(
-            "m\u{1f}p1 p2\u{1f}Alice\u{1f}a@x\u{1f}1000\u{1f}Alice\u{1f}a@x\u{1f}1001\u{1f}Merge branch\n\nlong body\u{1e}\nr\u{1f}\u{1f}Bob\u{1f}b@x\u{1f}900\u{1f}Bob\u{1f}b@x\u{1f}900\u{1f}root\u{1e}"
-        );
+        let out = "m\u{1f}p1 p2\u{1f}Alice\u{1f}a@x\u{1f}1000\u{1f}Alice\u{1f}a@x\u{1f}1001\u{1f}Merge branch\n\nlong body\u{1e}\nr\u{1f}\u{1f}Bob\u{1f}b@x\u{1f}900\u{1f}Bob\u{1f}b@x\u{1f}900\u{1f}root\u{1e}".to_string();
         let commits = parse_commits(&out);
         assert_eq!(commits.len(), 2);
 
@@ -484,11 +482,7 @@ mod tests {
         assert_eq!(s.conflicted, vec![PathBuf::from("conflict.rs")]);
         assert!(s.is_dirty());
         // rename carries the old path on the staged side
-        let renamed = s
-            .staged
-            .iter()
-            .find(|f| f.path == PathBuf::from("renamed.rs"))
-            .unwrap();
+        let renamed = s.staged.iter().find(|f| f.path == *"renamed.rs").unwrap();
         assert_eq!(
             renamed.change,
             ChangeKind::Renamed {

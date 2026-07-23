@@ -473,6 +473,7 @@ pub(crate) fn render_load_more_row(
 /// Layout (fills remaining width after sidebar + divider):
 /// - Header row: `← Back` + file name + stats
 /// - Body: `uniform_list` id `"main-diff-list"` with line numbers
+///
 /// W6-TABSPEED / ADR-0030: center-pane placeholder shown while an uncached tab
 /// is loading on a background thread.  The tab strip stays operable above it.
 pub(crate) fn render_loading_placeholder(label: SharedString) -> impl IntoElement {

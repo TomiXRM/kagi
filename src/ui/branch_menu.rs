@@ -587,9 +587,7 @@ fn push_state(ctx: &BranchMenuContext) -> ItemState {
         disabled(Msg::BcmBusy.t())
     } else if ctx.detached_head {
         disabled(Msg::BcmDetachedHead.t())
-    } else if matches!(ctx.kind, BranchKind::Remote) {
-        ItemState::Hidden
-    } else if !ctx.has_upstream {
+    } else if matches!(ctx.kind, BranchKind::Remote) || !ctx.has_upstream {
         ItemState::Hidden
     } else if ctx.ahead == 0 {
         disabled(Msg::BcmNothingToPush.t())

@@ -413,7 +413,7 @@ pub fn remote_commit_file_diff(
 /// (ADR-0089 Phase 3 — the first remote *write*). Mirrors the local
 /// `execute_stash_drop` (ADR-0087, Destructive): it only removes the stash ref,
 /// never touches the working tree, and is gated behind the danger-confirm modal
-/// + oplog in the UI. `git stash drop` prints the dropped entry to stdout on
+/// and oplog in the UI. `git stash drop` prints the dropped entry to stdout on
 /// success; a non-zero exit (e.g. the index no longer exists) is surfaced as a
 /// [`RemoteError`].
 pub fn remote_stash_drop(

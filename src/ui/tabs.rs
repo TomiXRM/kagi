@@ -775,7 +775,7 @@ impl KagiApp {
                 _ => None,
             };
             if let Some(path) = picked {
-                let _ = acx.update(|cx| {
+                acx.update(|cx| {
                     let _ = weak.update(cx, |app, cx| {
                         app.open_repository(path, cx);
                     });
@@ -873,7 +873,7 @@ impl KagiApp {
                 .gap_1()
                 // Worktree tabs are tinted with the SAME lane colour as that
                 // worktree's WIP row (user request), washed when inactive.
-                .when(!(is_wt && !is_active), |el| el.bg(rgb(bg)))
+                .when(!is_wt || is_active, |el| el.bg(rgb(bg)))
                 .when_some(wt_color.filter(|_| is_wt && !is_active), |el, c| {
                     el.bg(gpui::hsla(c.h, c.s, c.l, 0.20))
                 })

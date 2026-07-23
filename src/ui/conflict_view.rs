@@ -417,10 +417,10 @@ impl ConflictMode {
         None
     }
 
-    /// Paths eligible for "Mark all clean files resolved": files with no marker
-    /// residue AND a resolvable resolution draft (ADR-0063).  We approximate
-    /// "index-resolvable" with "has a clean buffer resolution" — the plan
-    /// pipeline re-checks the live index before writing.
+    // Paths eligible for "Mark all clean files resolved": files with no marker
+    // residue AND a resolvable resolution draft (ADR-0063).  We approximate
+    // "index-resolvable" with "has a clean buffer resolution" — the plan
+    // pipeline re-checks the live index before writing.
 
     /// The role labels for the current operation (ADR-0058, never ours/theirs).
     pub fn labels(&self) -> SideLabels {

@@ -637,6 +637,9 @@ fn render_blank_row(row_index: usize, hunk_index: usize, selected_hunk: usize) -
         .into_any_element()
 }
 
+// Row renderers take the row's full identity + selection context by value; a
+// params struct would only move the same fields behind one more indirection.
+#[allow(clippy::too_many_arguments)]
 fn render_hunk_header_row(
     row_index: usize,
     path: Arc<std::path::PathBuf>,
@@ -725,6 +728,7 @@ fn render_hunk_header_row(
         .into_any_element()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_code_line_row(
     row_index: usize,
     path: Arc<std::path::PathBuf>,

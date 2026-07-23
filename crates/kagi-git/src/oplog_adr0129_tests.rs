@@ -34,7 +34,7 @@ fn pre_migration_literal_jsonl_parses() {
 fn mixed_old_and_new_lines_parse_together() {
     // New line: written through today's writer from a plan whose notes are
     // structured — the boundary renders them to plain strings first.
-    let notes = vec![
+    let notes = [
         PlanNote::Discard(DiscardNote::TargetConflicted {
             path: "src/a.rs".to_string(),
         }),

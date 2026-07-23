@@ -7,4 +7,4 @@ Exec=kagi %F
 Icon=kagi
 Terminal=false
 Categories=Development;
-StartupWMClass=Kagi
+StartupWMClass=com.tomixrm.kagi

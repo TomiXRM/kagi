@@ -3297,6 +3297,15 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: main_window_titlebar(),
             window_decorations: main_window_decorations(),
+            // Bind the window to our `.desktop` launcher. On Linux gpui sets the
+            // Wayland `app_id` / X11 `WM_CLASS` from this; without it GNOME/Mutter
+            // cannot match the window to `com.tomixrm.kagi.desktop`, so on Ubuntu
+            // (Wayland) the window spawns as a *separate* taskbar entry with the
+            // generic fallback ("gear") icon named "unknown" instead of grouping
+            // under the Kagi launcher. `kagi::APP_ID` is the single source of
+            // truth, kept equal to every shipped desktop file's `StartupWMClass`.
+            // No-op on macOS/Windows, which identify apps via bundle id instead.
+            app_id: Some(kagi::APP_ID.to_string()),
             ..Default::default()
         },
         |window, cx| {

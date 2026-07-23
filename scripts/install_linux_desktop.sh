@@ -74,7 +74,7 @@ Exec=${INSTALLED_APPIMAGE} %F
 Icon=kagi
 Terminal=false
 Categories=Development;
-StartupWMClass=${APP_NAME}
+StartupWMClass=${APP_ID}
 EOF
 
 chmod 644 "${APPLICATIONS_DIR}/${APP_ID}.desktop"

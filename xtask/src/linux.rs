@@ -2,7 +2,7 @@
 //!
 //! Layout (relative to the tarball root `kagi-<version>-<arch>/`):
 //!   bin/kagi
-//!   share/applications/kagi.desktop
+//!   share/applications/com.tomixrm.kagi.desktop
 //!   share/icons/hicolor/512x512/apps/kagi.png
 //!
 //! On the CI ubuntu runner the binary is a real Linux build. On macOS (local
@@ -18,6 +18,9 @@ use crate::util;
 const BIN_NAME: &str = "kagi";
 
 fn desktop_entry() -> String {
+    // `StartupWMClass` must equal the window's runtime app_id (`ui::APP_ID`,
+    // "com.tomixrm.kagi") so the desktop environment binds the window to this
+    // launcher instead of spawning a separate generic ("unknown") taskbar entry.
     "\
 [Desktop Entry]
 Type=Application
@@ -28,6 +31,7 @@ Exec=kagi
 Icon=kagi
 Terminal=false
 Categories=Development;RevisionControl;
+StartupWMClass=com.tomixrm.kagi
 "
     .to_string()
 }
@@ -80,7 +84,7 @@ pub fn bundle(root: &Path, override_bin: Option<&str>) -> Result<(), String> {
     }
 
     std::fs::copy(&bin, bin_dir.join(BIN_NAME)).map_err(|e| format!("copy bin: {e}"))?;
-    std::fs::write(apps_dir.join("kagi.desktop"), desktop_entry())
+    std::fs::write(apps_dir.join("com.tomixrm.kagi.desktop"), desktop_entry())
         .map_err(|e| format!("write desktop: {e}"))?;
     std::fs::copy(&icon, icon_dir.join("kagi.png")).map_err(|e| format!("copy icon: {e}"))?;
 
@@ -107,4 +111,20 @@ pub fn bundle(root: &Path, override_bin: Option<&str>) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Must equal the window's runtime `app_id` (`kagi::APP_ID`) so the desktop
+    // environment binds the window to this launcher; see
+    // `tests/desktop_integration_test.rs`.
+    #[test]
+    fn desktop_entry_wmclass_is_reverse_dns_app_id() {
+        assert!(
+            desktop_entry().contains("StartupWMClass=com.tomixrm.kagi"),
+            "tar.gz desktop entry must set StartupWMClass to the app_id",
+        );
+    }
 }

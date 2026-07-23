@@ -32,6 +32,24 @@
   `update-desktop-database` / `gtk-update-icon-cache` を best-effort 実行。
   curl|bash 型ではなく**zip 同梱・検査可能**な形を採用
 
+#### 追補(2026-07-23): ウィンドウ app_id ↔ `.desktop` の紐付け
+
+メインウィンドウは `WindowOptions.app_id = Some(kagi::APP_ID)`(= `com.tomixrm.kagi`)を
+設定する。Linux では gpui がこれを **Wayland `app_id` / X11 `WM_CLASS`** に流す。未設定
+(`None`)だと GNOME/Mutter(Ubuntu 既定の Wayland)がウィンドウを `com.tomixrm.kagi.desktop`
+ランチャーに紐付けられず、**汎用フォールバックの歯車アイコン・名前 "unknown" の別
+taskbar エントリ**として現れる(minimize→そのエントリから復帰、quit で本体が落ちる、と
+いうユーザー報告の症状)。macOS/Windows は bundle id で識別するため no-op。
+
+そのため配布経路ごとに散っていた `.desktop` を **id・`StartupWMClass` ともに
+`com.tomixrm.kagi` に統一**する:
+- `.deb`: `assets/linux/com.tomixrm.kagi.desktop`(旧 `kagi.desktop` をリネーム)
+- tar.gz / AppImage 埋込: `xtask` が `com.tomixrm.kagi.desktop` を生成、`StartupWMClass=com.tomixrm.kagi`
+- AppImage install: `install_linux_desktop.sh` が `${APP_ID}.desktop` / `StartupWMClass=${APP_ID}`
+
+`kagi::APP_ID` を単一の真実源とし、`tests/desktop_integration_test.rs` と `xtask` の
+ユニットテストでドリフトを固定する。
+
 ### 実装方式(ADR-0038 からの確定差分)
 
 - **cargo-bundle は使わない**: `.app` は構造が単純(Contents/MacOS + Info.plist + Resources/icns)なので

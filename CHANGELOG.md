@@ -3,6 +3,22 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.13.7] — 2026-07-23
+
+### Fixed
+- **Push preview no longer over-counts commits for a branch with no upstream.**
+  When a branch had never been pushed, the "commits to push" preview walked
+  every commit reachable from `HEAD` back to the root instead of excluding
+  history the remote already has via other branches (e.g. commits merged into
+  `main` after the branch diverged) — a branch with one new commit could show
+  a padded, capped-at-100 count. The preview now hides every
+  `refs/remotes/<remote>/*` tip, matching what `git push` actually needs to
+  transfer.
+- **The plan confirmation modal (push/pull/merge/etc.) no longer overflows the
+  window.** A plan with many warnings or preview commits could grow taller
+  than the viewport, pushing the Confirm/Cancel buttons off-screen and out of
+  reach. The card is now capped at 85% of the viewport height and scrolls.
+
 ## [0.13.6] — 2026-07-23
 
 ### Fixed

@@ -41,6 +41,7 @@ use kagi_domain::plan_note::{CommonNote, PlanOp, PushNote, PushRecovery, PushTit
 ///
 /// - Upstream configured: revwalk from HEAD, hiding the upstream tip.
 /// - Set-upstream flow: revwalk from HEAD (no hide — all commits are "new").
+///
 /// Both paths are capped at 100 commits.
 ///
 /// # Warning
@@ -401,6 +402,7 @@ pub fn execute_push(repo: &Repository, repo_path: &Path) -> Result<PushOutcome, 
 ///
 /// - `has_upstream=true`:  walk HEAD, hide the upstream OID  (`upstream..HEAD`).
 /// - `has_upstream=false`: walk all commits reachable from HEAD (set-upstream flow).
+///
 /// Both paths are capped at 100 commits, newest first.
 ///
 /// Returns an empty Vec on any error (non-fatal — preview is best-effort).

@@ -237,7 +237,7 @@ fn execute_deletes_local_and_remote() {
     let target = row.delete_target().expect("target");
     let expected_tip = target.local_tip.clone().unwrap();
 
-    let plan = plan_delete_merged_branches(&repo, NOW, &[target.clone()]).unwrap();
+    let plan = plan_delete_merged_branches(&repo, NOW, std::slice::from_ref(&target)).unwrap();
     assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
 
     let outcome = execute_delete_merged_branches(&repo, dir, &plan, &[target]).unwrap();
@@ -277,7 +277,7 @@ fn execute_refuses_moved_local_tip() {
         .find(|r| r.name == "merged")
         .and_then(|r| r.delete_target())
         .expect("target");
-    let plan = plan_delete_merged_branches(&repo, NOW, &[target.clone()]).unwrap();
+    let plan = plan_delete_merged_branches(&repo, NOW, std::slice::from_ref(&target)).unwrap();
     assert!(plan.blockers.is_empty());
 
     // A commit lands on the branch between plan and execute (HEAD unmoved,

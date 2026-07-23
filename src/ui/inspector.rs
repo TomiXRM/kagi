@@ -5,7 +5,7 @@
 //!   2. Meta row       (avatar · author name · committed date · short-hash chip)
 //!   3. Actions row    (Create branch · Cherry-pick — compact; Copy SHA = hash chip click)
 //!   4. Message box    (independent vertical scroll, resizable)
-//!   ── InspectorSplit divider (drag to change message:files ratio) ──
+//!      ── InspectorSplit divider (drag to change message:files ratio) ──
 //!   5. Counts row     (N modified · N added · N deleted · N renamed)
 //!   6. Changed files  (tree or flat path list, Path⇄Tree toggle, scroll)
 //!

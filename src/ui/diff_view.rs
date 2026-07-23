@@ -17,6 +17,10 @@ use super::theme;
 use super::{commit_panel, diff_view, KagiApp};
 use gpui::Context;
 
+/// Per-row syntax-highlight spans: `(row_index, [(byte_range, style), …])`.
+/// Named to keep the diff-highlight signatures readable (clippy::type_complexity).
+pub(crate) type RowHighlights = Vec<(usize, Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>)>;
+
 // FileDiffView — pre-rendered diff rows for the diff panel
 // ──────────────────────────────────────────────────────────────
 
@@ -357,10 +361,7 @@ pub(crate) fn highlight_diff_rows(
 pub(crate) fn highlight_diff_rows_send(
     rows: &[DiffRow],
     file_path: &std::path::Path,
-) -> (
-    String,
-    Vec<(usize, Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>)>,
-) {
+) -> (String, RowHighlights) {
     use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};
     use gpui_component::Rope;
 
@@ -397,8 +398,7 @@ pub(crate) fn highlight_diff_rows_send(
 
     // Distribute styles back to per-row vectors (Send-safe: no DiffRow, just
     // the row index + the highlight span list).
-    let mut result: Vec<(usize, Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>)> =
-        Vec::with_capacity(line_offsets.len());
+    let mut result: RowHighlights = Vec::with_capacity(line_offsets.len());
     for k in 0..line_offsets.len() {
         let (row_i, rope_start) = line_offsets[k];
         let rope_end = if k + 1 < line_offsets.len() {
@@ -897,7 +897,7 @@ impl KagiApp {
                 // plumbing it out of `build_main_diff_view`) keeps this log
                 // line's value identical without widening the shared fn's
                 // return type for one caller.
-                let hl_lang = diff_view::lang_for_path(&path).unwrap_or("none");
+                let hl_lang = diff_view::lang_for_path(path).unwrap_or("none");
                 eprintln!(
                     "[kagi] main-diff: open {} rows={} highlight={}",
                     path.display(),
@@ -1205,7 +1205,7 @@ impl KagiApp {
                 self.diff_caches
                     .file_content
                     .insert((selected, file_index), arc.clone());
-                self.set_commit_main_diff(&arc, &path, selected, file_index, cx.as_deref_mut());
+                self.set_commit_main_diff(&arc, &path, selected, file_index, cx);
             }
             Err(e) => {
                 klog!("diff error: {}", e);

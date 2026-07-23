@@ -180,6 +180,15 @@ impl KagiTerminalSession {
 // PTY + TerminalView construction
 // ──────────────────────────────────────────────────────────────────────────────
 
+/// The view + PTY master handle (kept alive for resize callbacks) + writer that
+/// [`build_terminal_view`] returns on success. Named for readability
+/// (clippy::type_complexity).
+type TerminalBuild = (
+    Entity<TerminalView>,
+    Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
+    SharedWriter,
+);
+
 /// Attempt to open a PTY, spawn `shell`, and create an `Entity<TerminalView>`.
 ///
 /// On success returns the entity and the PTY master handle (kept alive for
@@ -191,14 +200,7 @@ pub fn build_terminal_view(
     shell: &str,
     repo_path: &std::path::Path,
     cx: &mut Context<crate::ui::KagiApp>,
-) -> Result<
-    (
-        Entity<TerminalView>,
-        Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
-        SharedWriter,
-    ),
-    String,
-> {
+) -> Result<TerminalBuild, String> {
     // Open the PTY pair.
     let pty_system = NativePtySystem::default();
     let pair = pty_system

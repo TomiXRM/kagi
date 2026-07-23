@@ -9,7 +9,7 @@
 //! - `KAGI_UNSTAGE_FILE=<path>`  起動時に1ファイル unstage
 //! - `KAGI_COMMIT_MSG=<msg>`     コミットメッセージ設定 + KAGI_AUTO_CONFIRM=1 で実際にコミット
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui::{prelude::*, Entity, SharedString, UniformListScrollHandle, WeakEntity};
 use gpui_component::input::InputState;
@@ -93,7 +93,7 @@ pub struct CommitPanelState {
 
 impl CommitPanelState {
     /// Create a new CommitPanelState from the current repo status.
-    pub fn from_repo(repo_path: &PathBuf) -> Self {
+    pub fn from_repo(repo_path: &Path) -> Self {
         let mut state = CommitPanelState {
             unstaged: Vec::new(),
             staged: Vec::new(),
@@ -120,7 +120,7 @@ impl CommitPanelState {
     }
 
     /// Reload unstaged/staged lists from the repository.
-    pub fn reload_status(&mut self, repo_path: &PathBuf) {
+    pub fn reload_status(&mut self, repo_path: &Path) {
         let backend = match Backend::open(repo_path) {
             Ok(r) => r,
             Err(e) => {

@@ -186,7 +186,7 @@ impl KagiApp {
     /// Only seeds when empty — an in-session stack (with precise summaries) is
     /// never clobbered. Reflog read failures are logged and ignored (best-effort).
     pub(crate) fn seed_history_from_reflog(&mut self, backend: &kagi_git::Backend) {
-        if self.operation_history.len() != 0 {
+        if !self.operation_history.is_empty() {
             return;
         }
         self.apply_reflog_seed(backend.history_from_reflog().map_err(|e| e.to_string()));

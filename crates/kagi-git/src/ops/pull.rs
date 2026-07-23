@@ -276,14 +276,14 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
 /// 4. If HEAD is an ancestor of upstream tip (fast-forward possible):
 ///    - Advance the branch ref to the upstream tip.
 ///    - `checkout_tree` (safe) + `set_head` to sync the WT.
-///    → `FastForward { to }`.
+///      → `FastForward { to }`.
 /// 5. Otherwise (diverged):
 ///    - `repo.merge_commits(&head_commit, &upstream_commit, None)` — in-memory.
 ///    - If the index has conflicts → `GitError::Other("merge would conflict: …")`.
 ///      **No MERGING state is set.  The repo is left completely untouched.**
 ///    - Clean: `index.write_tree_to` → `repo.commit(…, parents=[head, upstream])`
 ///      → `index.read_tree` + `index.write` → `checkout_head(safe, recreate_missing)`.
-///    → `Merged { commit }`.
+///      → `Merged { commit }`.
 ///
 /// # Errors
 ///

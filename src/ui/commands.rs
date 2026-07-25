@@ -138,8 +138,10 @@ pub fn lang_for_command(id: &str) -> Option<Lang> {
 pub fn theme_slug_for_command(id: &str) -> Option<&'static str> {
     match id {
         "theme.catppuccin" => Some("catppuccin"),
-        "theme.xcodeDark" => Some("xcode-dark"),
-        "theme.xcodeLight" => Some("xcode-light"),
+        // Retired themes — redirected to their Apple successors so an existing
+        // keybinding or palette entry still lands somewhere sensible.
+        "theme.xcodeDark" => Some("apple-dark"),
+        "theme.xcodeLight" => Some("apple-light"),
         "theme.oneDark" => Some("one-dark"),
         "theme.oneLight" => Some("one-light"),
         "theme.monokai" => Some("monokai"),
@@ -985,8 +987,6 @@ fn theme_submenu() -> Menu {
         // Each theme has a distinct action so dispatch is 1:1.
         let item = match t.slug {
             "catppuccin" => MenuItem::action(label, ThemeCatppuccin),
-            "xcode-dark" => MenuItem::action(label, ThemeXcodeDark),
-            "xcode-light" => MenuItem::action(label, ThemeXcodeLight),
             "one-dark" => MenuItem::action(label, ThemeOneDark),
             "one-light" => MenuItem::action(label, ThemeOneLight),
             "monokai" => MenuItem::action(label, ThemeMonokai),
@@ -1287,14 +1287,23 @@ impl KagiApp {
             "view.zoomIn" => {
                 let z = theme::set_zoom(theme::zoom() + theme::ZOOM_STEP);
                 klog!("zoom: {:.2}x", z);
+                // The terminal is a pixel-sized PTY grid, not rem-scaled text,
+                // so it needs the new zoom pushed in explicitly.
+                self.apply_terminal_config(cx);
             }
             "view.zoomOut" => {
                 let z = theme::set_zoom(theme::zoom() - theme::ZOOM_STEP);
                 klog!("zoom: {:.2}x", z);
+                // The terminal is a pixel-sized PTY grid, not rem-scaled text,
+                // so it needs the new zoom pushed in explicitly.
+                self.apply_terminal_config(cx);
             }
             "view.zoomReset" => {
                 let z = theme::set_zoom(1.0);
                 klog!("zoom: {:.2}x", z);
+                // The terminal is a pixel-sized PTY grid, not rem-scaled text,
+                // so it needs the new zoom pushed in explicitly.
+                self.apply_terminal_config(cx);
             }
             "view.fullScreen" => window.toggle_fullscreen(),
             "view.toggleSidebar" => {
@@ -1396,6 +1405,21 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// Rebuild the terminal config from the current theme + zoom and push it
+    /// into every live session.
+    ///
+    /// Called on both theme switches (palette) and zoom changes (font size) —
+    /// a running PTY view keeps its own config until told otherwise.
+    fn apply_terminal_config(&mut self, cx: &mut Context<Self>) {
+        let new_config = super::terminal::build_terminal_config();
+        for session in self.terminal_sessions.values() {
+            if let Some(view) = session.view.clone() {
+                let cfg = new_config.clone();
+                view.update(cx, |v, vcx| v.update_config(cfg, vcx));
+            }
+        }
+    }
+
     /// Switch the active colour theme (W9-THEME / ADR-0036).
     ///
     /// 1. Update + persist the active theme (`theme::set_active`).
@@ -1418,13 +1442,7 @@ impl KagiApp {
         theme::sync_gpui_component_theme(cx);
 
         // Live-apply to running terminal sessions.
-        let new_config = super::terminal::build_terminal_config();
-        for session in self.terminal_sessions.values() {
-            if let Some(view) = session.view.clone() {
-                let cfg = new_config.clone();
-                view.update(cx, |v, vcx| v.update_config(cfg, vcx));
-            }
-        }
+        self.apply_terminal_config(cx);
 
         // Rebuild the menu bar (active marker moved).
         cx.set_menus(build_menus());

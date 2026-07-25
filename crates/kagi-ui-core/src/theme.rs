@@ -130,6 +130,48 @@ pub struct Theme {
     pub term_bright_white: (u8, u8, u8),
     /// Terminal selection highlight RGBA.
     pub term_selection: (u8, u8, u8, u8),
+
+    /// Per-theme code colours (T-SYNTAX-001). Before this existed every theme
+    /// shared gpui-component's bundled palette, picked by `dark` alone — so
+    /// Apple Dark and Catppuccin Mocha highlighted identically (user report).
+    pub syntax: SyntaxPalette,
+}
+
+/// The ten code-token colours a theme defines, expanded to gpui-component's
+/// full ~42-entry `SyntaxColors` by [`syntax_theme_json`].
+///
+/// Ten rather than forty-two because that is the honest granularity: the
+/// upstream palettes these are ported from distinguish roughly this many
+/// roles, and the rest are aliases of them (`boolean` is a `number`, `enum` is
+/// a `type`, …). Deriving keeps 11 themes maintainable and stops the table
+/// filling with repeats.
+///
+/// Where an upstream theme deliberately does NOT colour a role — Xcode gives
+/// operators and punctuation no colour at all, and several dark themes leave
+/// punctuation plain — set it to the theme's own `text_main`. Flat is the
+/// design there; inventing a colour would misrepresent the theme.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SyntaxPalette {
+    /// `fn`, `let`, `if`, `pub`, `impl`, `return`…
+    pub keyword: u32,
+    /// String literals (and, derived, escapes / regex).
+    pub string: u32,
+    /// Line and block comments; rendered italic.
+    pub comment: u32,
+    /// Type names, structs, enums, primitives.
+    pub type_name: u32,
+    /// Function and method names.
+    pub function: u32,
+    /// Numeric and boolean literals.
+    pub number: u32,
+    /// `+ - = == => -> &` …
+    pub operator: u32,
+    /// Braces, brackets, commas, semicolons.
+    pub punctuation: u32,
+    /// Plain identifiers, locals, parameters.
+    pub variable: u32,
+    /// Rust `#[derive(…)]`, decorators, annotations.
+    pub attribute: u32,
 }
 
 impl Theme {
@@ -425,7 +467,24 @@ pub fn init_auto_fetch() {
 
 /// Look up a theme index by slug.
 pub fn index_of(slug: &str) -> Option<usize> {
-    THEMES.iter().position(|t| t.slug == slug)
+    THEMES
+        .iter()
+        .position(|t| t.slug == legacy_slug_alias(slug))
+}
+
+/// Map retired theme slugs onto their successors so an existing
+/// `settings.json` (or `KAGI_THEME`) doesn't silently fall back to the
+/// default.
+///
+/// The Xcode themes were byte-identical to the Apple ones — they were the
+/// same Apple `.xccolortheme` files — so they were removed and the Apple
+/// themes now carry Xcode's official code colours (T-SYNTAX-001).
+fn legacy_slug_alias(slug: &str) -> &str {
+    match slug {
+        "xcode-dark" => "apple-dark",
+        "xcode-light" => "apple-light",
+        other => other,
+    }
 }
 
 /// Set the active theme by slug and persist it to `settings.json`.
@@ -626,23 +685,123 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     // (user report). Pick the matching preset, then override the editor
     // surfaces to kagi's own palette so the panes blend with the rest of the UI
     // (active line = the subtle row-highlight `selected`, not a bright bar).
-    let mut ht = if k.dark {
-        (*gpui_component::highlighter::HighlightTheme::default_dark()).clone()
-    } else {
-        (*gpui_component::highlighter::HighlightTheme::default_light()).clone()
-    };
-    ht.style.editor_background = Some(to_hsla(k.bg_base));
-    ht.style.editor_foreground = Some(to_hsla(k.text_main));
-    ht.style.editor_active_line = Some(to_hsla(k.bg_row_alt));
-    ht.style.editor_line_number = Some(to_hsla(k.text_muted));
-    ht.style.editor_active_line_number = Some(to_hsla(k.text_sub));
-    gc.highlight_theme = std::sync::Arc::new(ht);
+    //
+    // T-SYNTAX-001: the *syntax* colours now come from the active theme too,
+    // via [`highlight_theme`] — previously only these five editor surfaces were
+    // overridden and `style.syntax` kept gpui-component's bundled palette, so
+    // every dark theme highlighted code identically.
+    gc.highlight_theme = highlight_theme(k);
 
     // ── Tokens (0.5.2) ──────────────────────────────────────────
     // Widgets increasingly read `theme().tokens.*` (Radio, Select popup, …),
     // which is a snapshot derived from `colors` — rebuild it LAST or every
     // mapping above is invisible to token-reading widgets.
     gc.tokens = gpui_component::theme::ThemeTokens::from(&gc.colors);
+}
+
+/// Build the gpui-component highlight theme for `k` (T-SYNTAX-001).
+///
+/// Shared by the CodeEditor panes (through `gc.highlight_theme`) and the diff
+/// views (`diff_view::highlight_diff_rows*`), so both render code the same way
+/// — they previously disagreed, because the diff side called
+/// `HighlightTheme::default_dark()` directly and never saw even the editor
+/// surface overrides.
+///
+/// Built by serialising a Zed-format theme and deserialising it, rather than
+/// constructing `SyntaxColors` field by field: gpui-component's `ThemeStyle`
+/// keeps its `color`/`font_style` fields private, so JSON is the only public
+/// way in. Cheap and done once per theme switch.
+pub fn highlight_theme(k: &Theme) -> std::sync::Arc<gpui_component::highlighter::HighlightTheme> {
+    let s = &k.syntax;
+    // Roles the ten palette entries expand to. Derivations follow the source
+    // palettes: booleans are numbers, enums/variants are types, constructors
+    // and titles are functions, doc comments are comments.
+    let hex = |c: u32| format!("#{:06x}", c & 0x00ff_ffff);
+    let json = format!(
+        r##"{{
+          "name": "kagi-{slug}",
+          "appearance": "{appearance}",
+          "style": {{
+            "editor.background": "{bg}",
+            "editor.foreground": "{fg}",
+            "editor.active_line.background": "{active}",
+            "editor.line_number": "{lineno}",
+            "editor.active_line_number": "{lineno_active}",
+            "syntax": {{
+              "keyword":                    {{ "color": "{keyword}" }},
+              "operator":                   {{ "color": "{operator}" }},
+              "punctuation":                {{ "color": "{punct}" }},
+              "punctuation.bracket":        {{ "color": "{punct}" }},
+              "punctuation.delimiter":      {{ "color": "{punct}" }},
+              "punctuation.special":        {{ "color": "{operator}" }},
+              "punctuation.list_marker":    {{ "color": "{punct}" }},
+              "string":                     {{ "color": "{string}" }},
+              "string.escape":              {{ "color": "{number}" }},
+              "string.regex":               {{ "color": "{string}" }},
+              "string.special":             {{ "color": "{string}" }},
+              "string.special.symbol":      {{ "color": "{string}" }},
+              "comment":                    {{ "color": "{comment}", "font_style": "italic" }},
+              "comment.doc":                {{ "color": "{comment}", "font_style": "italic" }},
+              "type":                       {{ "color": "{type_name}" }},
+              "enum":                       {{ "color": "{type_name}" }},
+              "variant":                    {{ "color": "{type_name}" }},
+              "constructor":                {{ "color": "{function}" }},
+              "function":                   {{ "color": "{function}" }},
+              "title":                      {{ "color": "{function}" }},
+              "number":                     {{ "color": "{number}" }},
+              "boolean":                    {{ "color": "{number}" }},
+              "constant":                   {{ "color": "{number}" }},
+              "text.literal":               {{ "color": "{string}" }},
+              "variable":                   {{ "color": "{variable}" }},
+              "variable.special":           {{ "color": "{variable}" }},
+              "property":                   {{ "color": "{variable}" }},
+              "label":                      {{ "color": "{variable}" }},
+              "attribute":                  {{ "color": "{attribute}" }},
+              "tag":                        {{ "color": "{keyword}" }},
+              "preproc":                    {{ "color": "{attribute}" }},
+              "embedded":                   {{ "color": "{fg}" }},
+              "primary":                    {{ "color": "{fg}" }},
+              "hint":                       {{ "color": "{comment}" }},
+              "predictive":                 {{ "color": "{comment}" }},
+              "link_text":                  {{ "color": "{function}" }},
+              "link_uri":                   {{ "color": "{string}" }},
+              "emphasis":                   {{ "color": "{fg}" }},
+              "emphasis.strong":            {{ "color": "{keyword}" }}
+            }}
+          }}
+        }}"##,
+        slug = k.slug,
+        appearance = if k.dark { "dark" } else { "light" },
+        bg = hex(k.bg_base),
+        fg = hex(k.text_main),
+        active = hex(k.bg_row_alt),
+        lineno = hex(k.text_muted),
+        lineno_active = hex(k.text_sub),
+        keyword = hex(s.keyword),
+        operator = hex(s.operator),
+        punct = hex(s.punctuation),
+        string = hex(s.string),
+        comment = hex(s.comment),
+        type_name = hex(s.type_name),
+        function = hex(s.function),
+        number = hex(s.number),
+        variable = hex(s.variable),
+        attribute = hex(s.attribute),
+    );
+
+    match serde_json::from_str(&json) {
+        Ok(t) => std::sync::Arc::new(t),
+        // A malformed literal above is a programming error, not a user-facing
+        // one; fall back to the bundled preset rather than killing the app
+        // mid-theme-switch. The unit test below keeps every theme honest.
+        Err(_e) => {
+            if k.dark {
+                gpui_component::highlighter::HighlightTheme::default_dark()
+            } else {
+                gpui_component::highlighter::HighlightTheme::default_light()
+            }
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -666,8 +825,6 @@ pub static THEMES: &[Theme] = &[
     ONE_LIGHT,
     PINKY_BOO,
     TOKYO_NIGHT,
-    XCODE_DARK,
-    XCODE_LIGHT,
 ];
 
 // ── Catppuccin Mocha (default) ───────────────────────────────────────────
@@ -776,154 +933,22 @@ const CATPPUCCIN_MOCHA: Theme = Theme {
     term_bright_cyan: (0x89, 0xdc, 0xeb),
     term_bright_white: (0xcd, 0xd6, 0xf4),
     term_selection: (0x58, 0x5b, 0x70, 0x99),
-};
 
-// ── Xcode Dark ────────────────────────────────────────────────────────────
-//
-// Palette from Apple's Xcode "Default (Dark)" theme: editor bg #292a30,
-// source-editor text #ffffff, syntax accent colours (keyword pink #ff7ab2,
-// string red-orange #ff8170, type teal #6bdfff, number #d9c97c, etc.).
-const XCODE_DARK: Theme = Theme {
-    slug: "xcode-dark",
-    name: "Xcode Dark",
-    dark: true,
-
-    bg_base: 0x292a30,
-    bg_row_alt: 0x25262b,
-    surface: 0x3a3c44,
-    selected: 0x4b4e58,
-    panel: 0x1f2024,
-    sidebar: 0x191a1f,
-    modal: 0x3a3c44,
-    modal_overlay: 0x000000,
-
-    text_main: 0xdfdfe0,
-    text_sub: 0xb0b3bb,
-    text_muted: 0x7f8493,
-    text_label: 0x6c7080,
-
-    color_head: 0xff8170,   // red-orange (strings)
-    color_branch: 0x6bb0ff, // blue
-    color_remote: 0x78c2b3, // teal/green
-    color_tag: 0xd9c97c,    // sand/number
-
-    color_success: 0x78c2b3,
-    color_warning: 0xd9c97c,
-    color_blocker: 0xff8170,
-    color_blocker_muted: 0x8a544e,
-
-    diff_added_bg: 0x1f3a2b,
-    diff_removed_bg: 0x3a2222,
-    diff_hunk: 0x6bb0ff,
-
-    change_added: 0x78c2b3,
-    change_modified: 0xd9c97c,
-    change_deleted: 0xff8170,
-    change_renamed: 0x6bb0ff,
-    change_typechange: 0x7f8493,
-    change_dir: 0x6c7080,
-
-    accent: 0xdabaff, // purple (keyword-ish)
-
-    lane_hsl: LANE_PALETTE_DARK,
-
-    avatar_sat: 0.60,
-    avatar_light: 0.58,
-
-    term_bg: (0x29, 0x2a, 0x30),
-    term_fg: (0xdf, 0xdf, 0xe0),
-    term_cursor: (0xff, 0xff, 0xff),
-    term_black: (0x41, 0x43, 0x4a),
-    term_red: (0xff, 0x81, 0x70),
-    term_green: (0x78, 0xc2, 0xb3),
-    term_yellow: (0xd9, 0xc9, 0x7c),
-    term_blue: (0x6b, 0xb0, 0xff),
-    term_magenta: (0xff, 0x7a, 0xb2),
-    term_cyan: (0x6b, 0xdf, 0xff),
-    term_white: (0xdf, 0xdf, 0xe0),
-    term_bright_black: (0x7f, 0x84, 0x93),
-    term_bright_red: (0xff, 0x8a, 0x7a),
-    term_bright_green: (0x83, 0xc9, 0xba),
-    term_bright_yellow: (0xff, 0xee, 0x9c),
-    term_bright_blue: (0x4e, 0xb0, 0xcc),
-    term_bright_magenta: (0xff, 0x85, 0xb8),
-    term_bright_cyan: (0x8b, 0xe9, 0xff),
-    term_bright_white: (0xff, 0xff, 0xff),
-    term_selection: (0x64, 0x69, 0x78, 0x99),
-};
-
-// ── Xcode Light ───────────────────────────────────────────────────────────
-//
-// Palette from Apple's Xcode "Default (Light)" theme: editor bg #ffffff,
-// text #000000, keyword #9b2393, string #c41a16, type #0b4f79, number #1c00cf,
-// comment #5d6c79.
-const XCODE_LIGHT: Theme = Theme {
-    slug: "xcode-light",
-    name: "Xcode Light",
-    dark: false,
-
-    bg_base: 0xffffff,
-    bg_row_alt: 0xf4f5f7,
-    surface: 0xeceded,
-    selected: 0xd5e3f7,
-    panel: 0xf6f6f6,
-    sidebar: 0xeceef1,
-    modal: 0xffffff,
-    modal_overlay: 0x32384a,
-
-    text_main: 0x1a1a1a,
-    text_sub: 0x4c4f54,
-    text_muted: 0x8a8f99,
-    text_label: 0x6f747e,
-
-    color_head: 0xc41a16,   // string red
-    color_branch: 0x0b4f79, // type blue
-    color_remote: 0x2e8b57, // green
-    color_tag: 0xb06000,    // amber
-
-    color_success: 0x2e8b57,
-    color_warning: 0xb06000,
-    color_blocker: 0xc41a16,
-    color_blocker_muted: 0xc98a87,
-
-    diff_added_bg: 0xd6f2df,
-    diff_removed_bg: 0xfbdcdc,
-    diff_hunk: 0x0b4f79,
-
-    change_added: 0x2e8b57,
-    change_modified: 0xb06000,
-    change_deleted: 0xc41a16,
-    change_renamed: 0x0b4f79,
-    change_typechange: 0x8a8f99,
-    change_dir: 0x6f747e,
-
-    accent: 0x9b2393, // keyword magenta
-
-    lane_hsl: LANE_PALETTE_LIGHT,
-
-    avatar_sat: 0.55,
-    avatar_light: 0.45,
-
-    term_bg: (0xff, 0xff, 0xff),
-    term_fg: (0x1a, 0x1a, 0x1a),
-    term_cursor: (0x00, 0x00, 0x00),
-    term_black: (0x32, 0x33, 0x37),
-    term_red: (0xc4, 0x1a, 0x16),
-    term_green: (0x2e, 0x8b, 0x57),
-    term_yellow: (0xb0, 0x60, 0x00),
-    term_blue: (0x0b, 0x4f, 0x79),
-    term_magenta: (0x9b, 0x23, 0x93),
-    term_cyan: (0x1c, 0x6f, 0x8b),
-    term_white: (0xc8, 0xc8, 0xc8),
-    term_bright_black: (0x8a, 0x8f, 0x99),
-    term_bright_red: (0xd1, 0x2f, 0x1b),
-    term_bright_green: (0x3c, 0xa0, 0x68),
-    term_bright_yellow: (0xc8, 0x76, 0x00),
-    term_bright_blue: (0x14, 0x66, 0x9b),
-    term_bright_magenta: (0xb0, 0x3a, 0xa8),
-    term_bright_cyan: (0x2a, 0x8a, 0xab),
-    term_bright_white: (0x1a, 0x1a, 0x1a),
-    term_selection: (0xb3, 0xcf, 0xf2, 0xcc),
+    // Code colours: Catppuccin Mocha, roles per the project's own style guide
+    // ("Language Defaults"). Named palette entries in comments so the mapping
+    // stays auditable against upstream.
+    syntax: SyntaxPalette {
+        keyword: 0xcba6f7,     // Mauve
+        string: 0xa6e3a1,      // Green
+        comment: 0x9399b2,     // Overlay 2
+        type_name: 0xf9e2af,   // Yellow
+        function: 0x89b4fa,    // Blue
+        number: 0xfab387,      // Peach
+        operator: 0x89dceb,    // Sky
+        punctuation: 0x9399b2, // Overlay 2
+        variable: 0xeba0ac,    // Maroon
+        attribute: 0xf9e2af,   // Yellow
+    },
 };
 
 // ── One Dark (Atom One Dark) ──────────────────────────────────────────────
@@ -997,6 +1022,20 @@ const ONE_DARK: Theme = Theme {
     term_bright_cyan: (0x56, 0xb6, 0xc2),
     term_bright_white: (0xff, 0xff, 0xff),
     term_selection: (0x3e, 0x44, 0x51, 0xcc),
+
+    // Code colours: Atom One Dark (via One Dark Pro). Punctuation is plain.
+    syntax: SyntaxPalette {
+        keyword: 0xc678dd, // purple
+        string: 0x98c379,  // green
+        comment: 0x7f848e,
+        type_name: 0xe5c07b,   // yellow
+        function: 0x61afef,    // blue
+        number: 0xd19a66,      // orange
+        operator: 0x56b6c2,    // cyan
+        punctuation: 0xabb2bf, // Foreground — flat by design
+        variable: 0xe06c75,    // red
+        attribute: 0x61afef,
+    },
 };
 
 // ── One Light (Atom One Light) ────────────────────────────────────────────
@@ -1071,6 +1110,20 @@ const ONE_LIGHT: Theme = Theme {
     term_bright_cyan: (0x01, 0x84, 0xbc),
     term_bright_white: (0x38, 0x3a, 0x42),
     term_selection: (0xc6, 0xd8, 0xf7, 0xcc),
+
+    // Code colours: Atom One Light.
+    syntax: SyntaxPalette {
+        keyword: 0xa626a4,
+        string: 0x50a14f,
+        comment: 0xa0a1a7,
+        type_name: 0xc18401,
+        function: 0x4078f2,
+        number: 0x986801,
+        operator: 0x0184bc,
+        punctuation: 0x383a42, // Foreground — flat by design
+        variable: 0xe45649,
+        attribute: 0x986801,
+    },
 };
 
 // ── Monokai (= tomixrm Warm Hybrid, dark variant) ─────────────────────────
@@ -1172,6 +1225,21 @@ const MONOKAI: Theme = Theme {
     term_bright_cyan: (0xa0, 0xf0, 0xff),
     term_bright_white: (0xff, 0xff, 0xff),
     term_selection: (0x5a, 0x53, 0x62, 0xb3),
+
+    // Code colours: classic Monokai as shipped in VS Code's built-in
+    // theme-monokai. Operators share the keyword rule; punctuation is plain.
+    syntax: SyntaxPalette {
+        keyword: 0xf92672,
+        string: 0xe6db74,
+        comment: 0x88846f, // VS Code port (the original .tmTheme is #75715e)
+        type_name: 0x66d9ef,
+        function: 0xa6e22e,
+        number: 0xae81ff,
+        operator: 0xf92672,    // same rule as keyword upstream
+        punctuation: 0xf8f8f2, // Foreground — flat by design
+        variable: 0xf8f8f2,
+        attribute: 0xa6e22e,
+    },
 };
 
 // ── Tokyo Night ───────────────────────────────────────────────────────────
@@ -1246,6 +1314,21 @@ const TOKYO_NIGHT: Theme = Theme {
     term_bright_cyan: (0x7d, 0xcf, 0xff),
     term_bright_white: (0xc0, 0xca, 0xf5),
     term_selection: (0x28, 0x34, 0x57, 0xb3),
+
+    // Code colours: Tokyo Night (main dark variant). Upstream deliberately
+    // shares one rule for operators and punctuation.
+    syntax: SyntaxPalette {
+        keyword: 0xbb9af7, // purple
+        string: 0x9ece6a,  // green
+        comment: 0x51597d,
+        type_name: 0x0db9d7, // cyan
+        function: 0x7aa2f7,  // blue
+        number: 0xff9e64,    // orange
+        operator: 0x89ddff,
+        punctuation: 0x89ddff, // shares the operator rule upstream
+        variable: 0xc0caf5,
+        attribute: 0x7aa2f7,
+    },
 };
 
 // ── IBM PC ────────────────────────────────────────────────────────────────
@@ -1321,6 +1404,23 @@ const IBM_PC: Theme = Theme {
     term_bright_cyan: (0x55, 0xff, 0xff),
     term_bright_white: (0xff, 0xff, 0xff),
     term_selection: (0x00, 0x00, 0xaa, 0xb3),
+
+    // Code colours: CONSTRUCTED, not ported — no IBM PC syntax theme exists.
+    // Every value is an exact entry from the standard CGA/EGA 16-colour
+    // hardware palette (Turbo-Pascal-flavoured); only the token->colour
+    // assignment is ours, so it is free to be reshuffled to taste.
+    syntax: SyntaxPalette {
+        keyword: 0xffff55,     // bright yellow
+        string: 0x55ffff,      // bright cyan
+        comment: 0x555555,     // dark gray
+        type_name: 0x55ff55,   // bright green
+        function: 0xff55ff,    // bright magenta
+        number: 0xff5555,      // bright red
+        operator: 0xffffff,    // white
+        punctuation: 0xaaaaaa, // light gray (foreground)
+        variable: 0xaaaaaa,    // light gray
+        attribute: 0xaa5500,   // brown
+    },
 };
 
 // ── Pinky Boo ───────────────────────────────────────────────────────────────
@@ -1396,6 +1496,29 @@ const PINKY_BOO: Theme = Theme {
     term_bright_cyan: (0x05, 0x98, 0xbc),
     term_bright_white: (0xa5, 0xa5, 0xa5),
     term_selection: (0xc9, 0xc9, 0xc9, 0x40),
+
+    // Code colours: Pinky Boo (kissa1001/pinky-boo-vscode-theme, a light
+    // One-Dark-Pro derivative). Its `keyword.operator` catch-all is the plain
+    // foreground; per-language sub-scopes vary, which we don't model.
+    //
+    // Darkened from upstream, hue and saturation preserved. Pinky Boo inherits
+    // several token colours unchanged from its DARK ancestor (One Dark's
+    // string `#98c379`, function `#47b0e6`), which on this theme's near-white
+    // `#fbfbfb` background wash out to the point of illegibility — string
+    // measured 1.9:1 contrast, i.e. barely visible (user report: "text goes
+    // white"). Each value here is the upstream hue taken down to >= 4.0:1.
+    syntax: SyntaxPalette {
+        keyword: 0x138a82,     // upstream 0x1bc5b9 (2.1:1)
+        string: 0x5c873d,      // upstream 0x98c379 (1.9:1)
+        comment: 0x7f848e,     // left as-is: comments are meant to recede
+        type_name: 0xc45f00,   // upstream 0xd56700 (3.5:1)
+        function: 0x1983b9,    // upstream 0x47b0e6 (2.4:1)
+        number: 0xac6e34,      // upstream 0xd19a66 (2.4:1)
+        operator: 0x5a5a5a,    // Foreground — flat by design
+        punctuation: 0x5a5a5a, // Foreground
+        variable: 0xf30067,    // upstream 0xff398d (3.3:1)
+        attribute: 0xac6e34,   // upstream 0xd19a66 (2.4:1)
+    },
 };
 
 // ── Catppuccin Latte ─────────────────────────────────────────────────────────
@@ -1470,6 +1593,20 @@ const CATPPUCCIN_LATTE: Theme = Theme {
     term_bright_cyan: (0x04, 0xa5, 0xe5),
     term_bright_white: (0x4c, 0x4f, 0x69),
     term_selection: (0xac, 0xb0, 0xbe, 0x99),
+
+    // Code colours: Catppuccin Latte — same role mapping as Mocha.
+    syntax: SyntaxPalette {
+        keyword: 0x8839ef,     // Mauve
+        string: 0x40a02b,      // Green
+        comment: 0x7c7f93,     // Overlay 2
+        type_name: 0xdf8e1d,   // Yellow
+        function: 0x1e66f5,    // Blue
+        number: 0xfe640b,      // Peach
+        operator: 0x04a5e5,    // Sky
+        punctuation: 0x7c7f93, // Overlay 2
+        variable: 0xe64553,    // Maroon
+        attribute: 0xdf8e1d,   // Yellow
+    },
 };
 
 // ── Dracula ──────────────────────────────────────────────────────────────────
@@ -1544,6 +1681,21 @@ const DRACULA: Theme = Theme {
     term_bright_cyan: (0xa4, 0xff, 0xff),
     term_bright_white: (0xff, 0xff, 0xff),
     term_selection: (0x44, 0x47, 0x5a, 0x99),
+
+    // Code colours: Dracula (official spec / VS Code theme). Punctuation and
+    // plain variables are the foreground by design; operators reuse Pink.
+    syntax: SyntaxPalette {
+        keyword: 0xff79c6,     // Pink
+        string: 0xf1fa8c,      // Yellow
+        comment: 0x6272a4,     // Comment blue
+        type_name: 0x8be9fd,   // Cyan
+        function: 0x50fa7b,    // Green
+        number: 0xbd93f9,      // Purple
+        operator: 0xff79c6,    // Pink (no separate operator rule)
+        punctuation: 0xf8f8f2, // Foreground — flat by design
+        variable: 0xf8f8f2,    // Foreground
+        attribute: 0x50fa7b,   // Green
+    },
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1555,12 +1707,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn six_themes_with_unique_slugs() {
-        assert_eq!(THEMES.len(), 13);
+    fn themes_have_unique_slugs() {
+        // 11 since the Xcode pair was retired — they were byte-identical to
+        // the Apple themes (same Apple `.xccolortheme` source).
+        assert_eq!(THEMES.len(), 11);
         let mut slugs: Vec<&str> = THEMES.iter().map(|t| t.slug).collect();
         slugs.sort_unstable();
         slugs.dedup();
-        assert_eq!(slugs.len(), 13, "theme slugs must be unique");
+        assert_eq!(slugs.len(), 11, "theme slugs must be unique");
     }
 
     #[test]
@@ -1622,12 +1776,134 @@ mod tests {
         }
     }
 
+    /// T-SYNTAX-001: every theme must produce a usable highlight theme —
+    /// the JSON in `highlight_theme` is a format string, so a typo in any
+    /// single theme would silently fall back to the bundled preset.
+    #[test]
+    fn every_theme_builds_a_syntax_palette() {
+        for t in THEMES {
+            let ht = highlight_theme(t);
+            assert_eq!(ht.name, format!("kagi-{}", t.slug), "{} fell back", t.slug);
+            let syn = &ht.style.syntax;
+            for (name, present) in [
+                ("keyword", syn.keyword.is_some()),
+                ("string", syn.string.is_some()),
+                ("comment", syn.comment.is_some()),
+                ("type", syn.type_.is_some()),
+                ("function", syn.function.is_some()),
+                ("number", syn.number.is_some()),
+                ("variable", syn.variable.is_some()),
+                ("attribute", syn.attribute.is_some()),
+                // The tokens the bundled palette omitted entirely, which is
+                // why identifiers/operators/punctuation used to render as
+                // plain text in every theme.
+                ("operator", syn.operator.is_some()),
+                ("punctuation", syn.punctuation.is_some()),
+            ] {
+                assert!(present, "{}: syntax.{} missing", t.slug, name);
+            }
+        }
+    }
+
+    /// The actual reported bug: Apple Dark and Catppuccin Mocha highlighted
+    /// code identically because only `dark` was consulted.
+    #[test]
+    fn dark_themes_do_not_share_one_syntax_palette() {
+        let apple = THEMES.iter().find(|t| t.slug == "apple-dark").unwrap();
+        let mocha = THEMES.iter().find(|t| t.slug == "catppuccin").unwrap();
+        assert!(apple.dark && mocha.dark);
+        assert_ne!(apple.syntax, mocha.syntax);
+        assert_ne!(apple.syntax.keyword, mocha.syntax.keyword);
+    }
+
+    /// Every syntax colour must stay legible on its own theme's background.
+    ///
+    /// This is the guard for a real bug: Pinky Boo inherited several token
+    /// colours unchanged from its dark ancestor, and on its near-white
+    /// background `string` measured 1.9:1 — the user saw code "turn white".
+    ///
+    /// `comment` is exempt: every theme deliberately mutes comments, and
+    /// upstream palettes routinely put them at 2.5:1.
+    #[test]
+    fn syntax_colours_are_legible_on_their_background() {
+        /// WCAG relative luminance.
+        fn luminance(c: u32) -> f64 {
+            let ch = |v: u32| {
+                let v = v as f64 / 255.0;
+                if v <= 0.03928 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * ch((c >> 16) & 0xff) + 0.7152 * ch((c >> 8) & 0xff) + 0.0722 * ch(c & 0xff)
+        }
+        fn contrast(a: u32, b: u32) -> f64 {
+            let (la, lb) = (luminance(a), luminance(b));
+            (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+        }
+
+        // Deliberately below WCAG AA (4.5) — several *officially published*
+        // palettes (notably Catppuccin) sit in the 3s by design, and matching
+        // upstream matters more than beating a threshold they never targeted.
+        // 3.0 catches "illegible", not "lower contrast than I'd choose".
+        const MIN: f64 = 3.0;
+
+        // Catppuccin Latte ships these exact values upstream (Green #40a02b,
+        // Yellow #df8e1d, … on Base #eff1f5) and sits in the 2.3-3.0 band by
+        // its own design. Deviating would misrepresent a palette people pick
+        // *because* they know how it looks, so it is exempted rather than
+        // "corrected" — deliberately listed here so the choice stays visible.
+        // Every other theme is held to MIN.
+        const LOW_CONTRAST_BY_UPSTREAM_DESIGN: &[&str] = &["catppuccin-latte"];
+
+        for t in THEMES {
+            if LOW_CONTRAST_BY_UPSTREAM_DESIGN.contains(&t.slug) {
+                continue;
+            }
+            let s = &t.syntax;
+            for (name, colour) in [
+                ("keyword", s.keyword),
+                ("string", s.string),
+                ("type_name", s.type_name),
+                ("function", s.function),
+                ("number", s.number),
+                ("operator", s.operator),
+                ("punctuation", s.punctuation),
+                ("variable", s.variable),
+                ("attribute", s.attribute),
+            ] {
+                let c = contrast(colour, t.bg_base);
+                assert!(
+                    c >= MIN,
+                    "{}: syntax.{} {:#08x} is {:.1}:1 on bg {:#08x} — illegible",
+                    t.slug,
+                    name,
+                    colour,
+                    c,
+                    t.bg_base
+                );
+            }
+        }
+    }
+
+    /// Retired Xcode slugs must resolve to their Apple successors, so an
+    /// existing settings.json doesn't silently drop to the default theme.
+    #[test]
+    fn legacy_xcode_slugs_alias_to_apple() {
+        assert_eq!(index_of("xcode-dark"), index_of("apple-dark"));
+        assert_eq!(index_of("xcode-light"), index_of("apple-light"));
+        assert!(index_of("apple-dark").is_some());
+        assert_eq!(index_of("still-not-a-theme"), None);
+    }
+
     #[test]
     fn dark_and_light_counts() {
         let dark = THEMES.iter().filter(|t| t.dark).count();
         let light = THEMES.iter().filter(|t| !t.dark).count();
-        // catppuccin, xcode-dark, one-dark, monokai, tokyo-night, ibm-pc
-        assert_eq!(dark, 8); // + dracula, apple-dark
-        assert_eq!(light, 5); // xcode-light, one-light, pinky-boo, catppuccin-latte, apple-light
+        // catppuccin, one-dark, monokai, tokyo-night, ibm-pc, dracula, apple-dark
+        assert_eq!(dark, 7);
+        // one-light, pinky-boo, catppuccin-latte, apple-light
+        assert_eq!(light, 4);
     }
 }

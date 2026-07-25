@@ -33,6 +33,10 @@ kagi-ui-file-history = { path = "crates/kagi-ui-file-history" }
 gpui = { git = "https://github.com/zed-industries/zed" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "b004e595cf5d", features = ["tree-sitter-languages"] }
+# Icon SVGs behind `IconName` (search panel, etc). gpui-component resolves them
+# through the app's AssetSource, so kagi must be able to serve them — see
+# `src/ui/assets.rs`.
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "b004e595cf5d" }
 gpui-terminal = { path = "vendor/gpui-terminal" }  # vendored fork (ADR-0035): selection/copy not yet upstream
 portable-pty = "0.9"
 git2 = { version = "0.21", default-features = false }

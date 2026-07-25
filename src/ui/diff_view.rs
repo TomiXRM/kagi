@@ -258,7 +258,7 @@ pub(crate) fn highlight_diff_rows(
     rows: &mut [DiffRow],
     file_path: &std::path::Path,
 ) -> &'static str {
-    use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};
+    use gpui_component::highlighter::SyntaxHighlighter;
     use gpui_component::Rope;
 
     // Determine language from the path (well-known filenames + extension).
@@ -303,13 +303,13 @@ pub(crate) fn highlight_diff_rows(
     let rope = Rope::from_str(&combined);
     highlighter.update(None, &rope, None);
 
-    // Use a syntax-highlight theme matching the active UI theme's brightness
-    // (W9-THEME): dark themes → default_dark, light themes → default_light.
-    let hl_theme = if theme::theme().dark {
-        HighlightTheme::default_dark()
-    } else {
-        HighlightTheme::default_light()
-    };
+    // T-SYNTAX-001: the ACTIVE theme's own code colours, the same
+    // `HighlightTheme` the CodeEditor panes get through
+    // `gc.highlight_theme`. This used to call `HighlightTheme::default_dark()`
+    // directly, which meant (a) every dark theme highlighted identically and
+    // (b) the diff didn't even see kagi's editor-surface overrides, so diff
+    // and editor disagreed.
+    let hl_theme = theme::highlight_theme(theme::theme());
     let all_styles = highlighter.styles(&(0..combined.len()), &hl_theme);
 
     // Distribute styles back to rows.
@@ -362,7 +362,7 @@ pub(crate) fn highlight_diff_rows_send(
     rows: &[DiffRow],
     file_path: &std::path::Path,
 ) -> (String, RowHighlights) {
-    use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};
+    use gpui_component::highlighter::SyntaxHighlighter;
     use gpui_component::Rope;
 
     let lang = lang_for_path(file_path).unwrap_or("none");
@@ -389,11 +389,8 @@ pub(crate) fn highlight_diff_rows_send(
     let mut highlighter = SyntaxHighlighter::new(lang);
     let rope = Rope::from_str(&combined);
     highlighter.update(None, &rope, None);
-    let hl_theme = if theme::theme().dark {
-        HighlightTheme::default_dark()
-    } else {
-        HighlightTheme::default_light()
-    };
+    // Same active-theme highlight theme as the UI-thread path above.
+    let hl_theme = theme::highlight_theme(theme::theme());
     let all_styles = highlighter.styles(&(0..combined.len()), &hl_theme);
 
     // Distribute styles back to per-row vectors (Send-safe: no DiffRow, just

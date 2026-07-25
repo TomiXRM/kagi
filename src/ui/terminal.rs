@@ -93,11 +93,20 @@ pub fn build_color_palette() -> ColorPalette {
 }
 
 /// Build the full terminal config (font + the active-theme palette).  Used both
+/// Terminal font size at 1.0x zoom, in px.
+pub(crate) const TERMINAL_FONT_SIZE: f32 = 13.0;
+
 /// to start a session and to live-apply a theme switch via `update_config`.
 pub fn build_terminal_config() -> TerminalConfig {
     TerminalConfig {
         font_family: pick_font_family(),
-        font_size: px(13.0),
+        // Follows the global UI zoom (View -> Zoom In/Out), like every other
+        // text surface: kagi applies zoom by scaling the window's rem size,
+        // but the terminal is a PTY grid sized in real pixels, so it never saw
+        // that and stayed at a fixed 13px however far the rest of the UI was
+        // zoomed (user report: terminal text can't be resized). Re-applied to
+        // live sessions by `KagiApp::apply_terminal_config`.
+        font_size: px(TERMINAL_FONT_SIZE * crate::ui::theme::zoom()),
         cols: 80,
         rows: 24,
         scrollback: 10_000,
@@ -416,5 +425,32 @@ pub fn ensure_terminal(
             record_failure(e);
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod font_size_tests {
+    use super::*;
+
+    /// Regression: the terminal font was a hardcoded `px(13.0)` and ignored
+    /// the UI zoom entirely, so View -> Zoom In/Out resized every surface
+    /// except the terminal (user report).
+    #[test]
+    fn terminal_font_follows_ui_zoom() {
+        let at = |z: f32| {
+            crate::ui::theme::set_zoom(z);
+            f32::from(build_terminal_config().font_size)
+        };
+
+        let one = at(1.0);
+        assert!(
+            (one - TERMINAL_FONT_SIZE).abs() < 0.01,
+            "1.0x must be the base size, got {one}"
+        );
+        assert!(at(1.5) > one, "zooming in must enlarge the terminal font");
+        assert!(at(0.8) < one, "zooming out must shrink the terminal font");
+
+        // Restore so a shared-process test run isn't left zoomed.
+        crate::ui::theme::set_zoom(1.0);
     }
 }

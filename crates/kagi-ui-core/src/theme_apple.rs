@@ -17,7 +17,7 @@
 //! * Grays are the iOS `systemGray`..`systemGray6` ramp; secondary text is
 //!   the effective (alpha-composited) label colour.
 
-use crate::theme::Theme;
+use crate::theme::{SyntaxPalette, Theme};
 
 /// Apple system colors — Default (light) / Default (dark) and the
 /// Increased-contrast light variants used by the light theme (HIG 2025).
@@ -104,6 +104,21 @@ pub const APPLE_LIGHT: Theme = Theme {
     term_bright_cyan: (0x00, 0xc0, 0xe8),     // #00c0e8
     term_bright_white: (0x00, 0x00, 0x00),    // #000000
     term_selection: (0x00, 0x88, 0xff, 0x40), // #0088ff 25% on white
+
+    // Code colours: Xcode's own "Default (Light)" theme (T-SYNTAX-001).
+    // Same note as Apple Dark: operators/punctuation are plain by design.
+    syntax: SyntaxPalette {
+        keyword: 0x9b2393,
+        string: 0xc41a16,
+        comment: 0x5d6c79,
+        type_name: 0x1c464a,
+        function: 0x326d74,
+        number: 0x1c00cf,
+        operator: 0x000000,
+        punctuation: 0x000000,
+        variable: 0x326d74,
+        attribute: 0x815f03,
+    },
 };
 
 pub const APPLE_DARK: Theme = Theme {
@@ -190,4 +205,23 @@ pub const APPLE_DARK: Theme = Theme {
     term_bright_cyan: (0x6d, 0xd9, 0xff),     // #6dd9ff
     term_bright_white: (0xff, 0xff, 0xff),    // #ffffff
     term_selection: (0x00, 0x91, 0xff, 0x66), // #0091ff 40% on #1c1c1e
+
+    // Code colours: Xcode's own "Default (Dark)" theme (T-SYNTAX-001).
+    // Xcode assigns operators and punctuation no colour of their own, so they
+    // deliberately stay at the plain editor foreground rather than being
+    // invented here. `type`/`function` use Xcode's *project* symbol colours
+    // (it also has separate system-symbol colours, a distinction a TextMate
+    // grammar can't make).
+    syntax: SyntaxPalette {
+        keyword: 0xfc5fa3,
+        string: 0xfc6a5d,
+        comment: 0x6c7986,
+        type_name: 0x9ef1dd,
+        function: 0x67b7a4,
+        number: 0xd0bf69,
+        operator: 0xffffff,
+        punctuation: 0xffffff,
+        variable: 0x67b7a4,
+        attribute: 0xbf8555,
+    },
 };

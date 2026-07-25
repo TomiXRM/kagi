@@ -139,18 +139,66 @@ const ASSETS: &[(&str, &[u8])] = &[
 ];
 
 impl AssetSource for KagiAssets {
+    /// kagi's own bundled assets first, then gpui-component's embedded icons.
+    ///
+    /// The fallback is not optional: gpui-component's widgets reference their
+    /// icons through `IconName`, whose paths (`icons/<name>.svg`) are resolved
+    /// against *the application's* `AssetSource`. Anything kagi doesn't ship
+    /// silently renders as nothing — which is exactly what happened to the
+    /// code editor's Cmd-F search panel, whose case-sensitive / prev / next /
+    /// replace / close buttons drew no icon at all (user report). kagi ships
+    /// 25 icons of its own; `gpui-component-assets` covers the rest.
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        Ok(ASSETS
-            .iter()
-            .find(|(p, _)| *p == path)
-            .map(|(_, bytes)| Cow::Borrowed(*bytes)))
+        if let Some((_, bytes)) = ASSETS.iter().find(|(p, _)| *p == path) {
+            return Ok(Some(Cow::Borrowed(*bytes)));
+        }
+        gpui_component_assets::Assets.load(path)
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        Ok(ASSETS
+        let mut out: Vec<SharedString> = ASSETS
             .iter()
             .filter(|(p, _)| p.starts_with(path))
             .map(|(p, _)| SharedString::from(*p))
-            .collect())
+            .collect();
+        out.extend(gpui_component_assets::Assets.list(path)?);
+        out.sort_unstable();
+        out.dedup();
+        Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: the code editor's Cmd-F search panel rendered no icons
+    /// because `IconName` paths resolve against kagi's `AssetSource`, and
+    /// kagi only served its own 25 SVGs. Every gpui-component icon kagi's UI
+    /// can surface must load.
+    #[test]
+    fn gpui_component_icons_resolve() {
+        for path in [
+            // The search panel's five buttons.
+            "icons/case-sensitive.svg",
+            "icons/chevron-left.svg",
+            "icons/chevron-right.svg",
+            "icons/close.svg",
+            "icons/replace.svg",
+        ] {
+            let got = KagiAssets.load(path).expect("load must not error");
+            assert!(
+                got.is_some(),
+                "{path} did not resolve — search panel icons would be blank"
+            );
+            assert!(!got.unwrap().is_empty(), "{path} resolved but is empty");
+        }
+    }
+
+    /// kagi's own assets keep priority over the fallback.
+    #[test]
+    fn kagi_assets_still_resolve() {
+        let got = KagiAssets.load("icons/refresh-cw.svg").expect("load");
+        assert!(got.is_some(), "kagi's own icons must still resolve");
     }
 }

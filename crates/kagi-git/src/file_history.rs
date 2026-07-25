@@ -62,7 +62,7 @@ pub struct FileHistoryRequest {
 // existing `kagi_git::FileHistory` paths keep working.
 pub use kagi_domain::file_history::{
     CommitSummary, FileChangeSummary, FileChangeType, FileHistory, FileHistoryEntry,
-    FileHistoryEntryKind,
+    FileHistoryEntryKind, FileSnapshotContent,
 };
 
 // ────────────────────────────────────────────────────────────

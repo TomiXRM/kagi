@@ -8,6 +8,10 @@
 #[macro_use]
 pub mod klog;
 
+pub mod avatar;
+pub mod change_badge;
+pub mod commit_header;
+pub mod commit_row;
 pub mod divider;
 pub mod file_tree;
 pub mod fonts;
@@ -16,3 +20,4 @@ pub mod settings;
 pub mod theme;
 pub mod theme_apple;
 pub mod time;
+pub mod time_parse;

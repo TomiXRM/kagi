@@ -16,7 +16,7 @@ pub use kagi_ui_file_history::*;
 
 use super::*;
 
-use kagi_git::FileHistoryEntryKind;
+use kagi_git::{FileDiff, FileHistoryEntry, FileHistoryEntryKind};
 
 /// Host-side diff viewer slot for the File History pane (ADR-0121 C3).
 ///
@@ -61,6 +61,47 @@ impl Render for FhDiffPane {
                 .into_any_element(),
         }
     }
+}
+
+/// Load `entry`'s diff, resolving ITS OWN historical path
+/// (`entry.change.path_after`) — never the file's current path, which may
+/// differ across a rename crossed between `entry`'s commit and today.
+///
+/// Shared by File History's own diff pane (`fh_load_diff` below) and the
+/// Editor Workspace's History tab (`start_editor_history_diff_load`,
+/// `editor_workspace.rs`) — both need exactly this "given a selected
+/// history entry, load its diff" step, and it's subtle enough (WIP vs
+/// Commit branch, which Backend method, which path) that duplicating it is
+/// how the Editor Workspace's rename bug happened the first time.
+///
+/// `Some(Ok(_))` / `Some(Err(_))` mirrors the Backend call's own
+/// `Result` (callers still get to decide how to report a real failure —
+/// e.g. `fh_load_diff`'s `klog!` line); `None` means the load couldn't even
+/// be attempted (repo open failed, or a `Commit` entry with no commit).
+pub(crate) fn load_history_entry_file_diff(
+    repo_path: &Path,
+    entry: &FileHistoryEntry,
+) -> Option<Result<FileDiff, String>> {
+    let path = &entry.change.path_after;
+    let repo = kagi_git::Backend::open(repo_path).ok()?;
+    let result = match entry.kind {
+        FileHistoryEntryKind::Wip => {
+            // Prefer the unstaged diff; fall back to staged (e.g. fully
+            // staged change) so the WIP entry still shows something.
+            match repo.unstaged_file_diff(path) {
+                Ok(d) if !d.hunks.is_empty() || d.is_binary => Ok(d),
+                _ => repo.staged_file_diff(path),
+            }
+        }
+        FileHistoryEntryKind::Commit => {
+            let id = entry
+                .commit
+                .as_ref()
+                .map(|c| CommitId(c.full_hash.clone()))?;
+            repo.commit_file_diff(&id, path)
+        }
+    };
+    Some(result.map_err(|e| e.to_string()))
 }
 
 /// The pane's diff slot, recovered from its opaque `AnyView` handle.
@@ -226,8 +267,6 @@ impl KagiApp {
         };
 
         let path = entry.change.path_after.clone();
-        let kind = entry.kind;
-        let commit_id = entry.commit.as_ref().map(|c| CommitId(c.full_hash.clone()));
 
         // Bump the pane's monotonic per-diff token and capture it (plus the
         // view's `generation`) so the marshalled result is applied only if
@@ -240,25 +279,8 @@ impl KagiApp {
         // Off-thread: open the repo and compute the per-file diff (the expensive
         // I/O + diff work). `FileDiff` is plain `kagi_git` data (`Send`); the GPUI
         // view types are built on the UI thread in the marshalled result below.
-        let diff_path = path.clone();
-        let task = cx.background_spawn(async move {
-            let repo = kagi_git::Backend::open(&repo_path).ok()?;
-            let result = match kind {
-                FileHistoryEntryKind::Wip => {
-                    // Prefer the unstaged diff; fall back to staged (e.g. fully
-                    // staged change) so the WIP entry still shows something.
-                    match repo.unstaged_file_diff(&diff_path) {
-                        Ok(d) if !d.hunks.is_empty() || d.is_binary => Ok(d),
-                        _ => repo.staged_file_diff(&diff_path),
-                    }
-                }
-                FileHistoryEntryKind::Commit => match commit_id {
-                    Some(id) => repo.commit_file_diff(&id, &diff_path),
-                    None => return None,
-                },
-            };
-            Some(result.map_err(|e| e.to_string()))
-        });
+        let task =
+            cx.background_spawn(async move { load_history_entry_file_diff(&repo_path, &entry) });
 
         let view = view.downgrade();
         let pane = pane.downgrade();

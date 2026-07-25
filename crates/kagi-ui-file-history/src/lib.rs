@@ -23,11 +23,9 @@ use std::rc::Rc;
 use gpui::{AnyView, Context, EventEmitter, Pixels, Point, SharedString};
 
 use kagi_domain::commit::CommitId;
-use kagi_domain::file_history::{
-    FileChangeType, FileHistory, FileHistoryEntry, FileHistoryEntryKind,
-};
+use kagi_domain::file_history::{FileHistory, FileHistoryEntry, FileHistoryEntryKind};
 use kagi_ui_core::klog;
-use kagi_ui_core::theme::{self, theme};
+use kagi_ui_core::theme;
 
 pub use render::render_file_history_view;
 
@@ -175,6 +173,12 @@ pub struct FileHistoryView {
     /// crate only embeds it below the commit list; the host fills it on
     /// [`FileHistoryEvent::DiffLoadRequested`].
     pub diff_pane: AnyView,
+    /// Resolved commit-author avatars, pushed in by the host each frame
+    /// (`FileHistoryItem::render`) — this crate can't reach `KagiApp.avatars`,
+    /// and the map fills in asynchronously as the background resolution pass
+    /// lands. Empty is a fine steady state: the detail pane's shared commit
+    /// header just draws initial circles.
+    pub avatars: kagi_ui_core::avatar::AvatarImages,
 }
 
 impl EventEmitter<FileHistoryEvent> for FileHistoryView {}
@@ -196,6 +200,7 @@ impl FileHistoryView {
             geom,
             panel_width,
             diff_pane,
+            avatars: Default::default(),
         }
     }
 
@@ -334,101 +339,18 @@ impl FileHistoryView {
     }
 }
 
-/// The one-letter change badge + its colour for a history entry.
-///
-/// WIP rows render an orange `WIP`-style `●`; commit rows use the per-type
-/// letter (A/M/D/R/C) coloured from the theme's change palette.
-pub fn entry_badge(entry: &FileHistoryEntry) -> (&'static str, u32) {
-    if entry.kind == FileHistoryEntryKind::Wip {
-        return ("●", theme().color_warning);
-    }
-    change_type_badge(entry.change.change_type)
-}
+// ADR-0121: the change-badge trio (`entry_badge` / `change_type_badge` /
+// `change_type_label`) moved verbatim to `kagi-ui-core` so
+// `kagi-ui-editor`'s History tab can badge its own commit rows with the same
+// letters and colours — sibling pane crates can't depend on each other, only
+// on `kagi-ui-core`. Re-exported here so existing
+// `kagi_ui_file_history::entry_badge` paths keep resolving (same shim recipe
+// as `theme`/`i18n`/`settings` in the bin).
+pub use kagi_ui_core::change_badge::{change_type_badge, change_type_label, entry_badge};
 
-/// Map a [`FileChangeType`] to its display letter + colour.
-pub fn change_type_badge(ct: FileChangeType) -> (&'static str, u32) {
-    let t = theme();
-    match ct {
-        FileChangeType::Added => ("A", t.change_added),
-        FileChangeType::Modified => ("M", t.change_modified),
-        FileChangeType::Deleted => ("D", t.change_deleted),
-        FileChangeType::Renamed => ("R", t.change_renamed),
-        // Copied has no dedicated theme colour; reuse the rename (purple/blue).
-        FileChangeType::Copied => ("C", t.change_renamed),
-        FileChangeType::Unknown => ("?", t.text_muted),
-    }
-}
-
-/// Human label for a change type (used in the diff banner / detail pane).
-pub fn change_type_label(ct: FileChangeType) -> &'static str {
-    match ct {
-        FileChangeType::Added => "Added",
-        FileChangeType::Modified => "Modified",
-        FileChangeType::Deleted => "Deleted",
-        FileChangeType::Renamed => "Renamed",
-        FileChangeType::Copied => "Copied",
-        FileChangeType::Unknown => "Changed",
-    }
-}
-
-/// Parse an ISO-8601 / RFC-3339 timestamp (`git --date=iso-strict`, e.g.
-/// `2026-01-02T15:04:05+09:00`) into seconds since the Unix epoch.
-///
-/// A tiny hand-rolled parser — the project has no chrono dependency in the UI
-/// layer, and the format is fixed by our own `git log` invocation.  Returns
-/// `None` on any malformed input so callers can fall back gracefully.
-pub fn iso_to_epoch(s: &str) -> Option<i64> {
-    let s = s.trim();
-    // Expect at least "YYYY-MM-DDTHH:MM:SS".
-    let bytes = s.as_bytes();
-    if bytes.len() < 19 {
-        return None;
-    }
-    let year: i64 = s.get(0..4)?.parse().ok()?;
-    let month: i64 = s.get(5..7)?.parse().ok()?;
-    let day: i64 = s.get(8..10)?.parse().ok()?;
-    let hour: i64 = s.get(11..13)?.parse().ok()?;
-    let min: i64 = s.get(14..16)?.parse().ok()?;
-    let sec: i64 = s.get(17..19)?.parse().ok()?;
-
-    // Days from the civil date (Howard Hinnant's algorithm), giving days since
-    // 1970-01-01.
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400; // [0, 399]
-    let mp = (month + 9) % 12; // [0, 11], Mar=0
-    let doy = (153 * mp + 2) / 5 + day - 1; // [0, 365]
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
-    let days = era * 146_097 + doe - 719_468;
-
-    let mut secs = days * 86_400 + hour * 3_600 + min * 60 + sec;
-
-    // Timezone offset suffix: 'Z' (UTC) or ±HH:MM / ±HHMM.
-    if let Some(off) = s.get(19..) {
-        let off = off.trim();
-        if !off.is_empty() && off != "Z" && off != "z" {
-            let sign = match off.as_bytes()[0] {
-                b'+' => 1,
-                b'-' => -1,
-                _ => 0,
-            };
-            if sign != 0 {
-                let rest = &off[1..];
-                let digits: String = rest.chars().filter(|c| c.is_ascii_digit()).collect();
-                if digits.len() >= 4 {
-                    let oh: i64 = digits[0..2].parse().ok()?;
-                    let om: i64 = digits[2..4].parse().ok()?;
-                    secs -= sign * (oh * 3_600 + om * 60);
-                } else if digits.len() >= 2 {
-                    let oh: i64 = digits[0..2].parse().ok()?;
-                    secs -= sign * oh * 3_600;
-                }
-            }
-        }
-    }
-
-    Some(secs)
-}
+// ADR-0121: `iso_to_epoch` moved to `kagi-ui-core::time_parse` so the shared
+// commit-row model can compute relative dates. Re-exported for existing paths.
+pub use kagi_ui_core::time_parse::iso_to_epoch;
 
 #[cfg(test)]
 mod tests {

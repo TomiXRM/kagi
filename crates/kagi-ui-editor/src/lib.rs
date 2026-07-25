@@ -23,6 +23,7 @@
 //! header toolbar button.
 
 pub mod markdown;
+mod panes;
 
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -37,12 +38,15 @@ use gpui::{
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::scroll::Scrollbar;
 use gpui_component::Sizable as _;
+use kagi_domain::file_history::{FileHistory, FileSnapshotContent};
 use kagi_domain::status::{ChangeKind, WorkingTreeStatus};
 use kagi_ui_core::divider::{DividerDrag, DividerGhost, DividerKind};
 use kagi_ui_core::file_tree::{self, status_badge, TreeRow};
 use kagi_ui_core::i18n::Msg;
 use kagi_ui_core::klog;
 use kagi_ui_core::theme::{self, theme};
+
+pub(crate) use panes::{render_history_pane, render_snapshot_pane};
 
 /// What the Editor Workspace asks of the host app (ADR-0121 C4). Everything
 /// outward-facing that used to be a `WeakEntity<KagiApp>` back-call is one of
@@ -67,6 +71,19 @@ pub enum EditorWorkspaceEvent {
     /// Load `path`'s WIP diff (unstaged, falling back to staged; needs
     /// `Backend`); seed the built diff view via `seed_diff(req, …)`.
     DiffRequested { req: u64, path: PathBuf },
+    /// Load `path`'s commit history (needs `Backend`; ADR-0089's data layer);
+    /// seed the result via `seed_history(req, …)`.
+    HistoryRequested { req: u64, path: PathBuf },
+    /// Load `commit_hash`'s diff for this file (needs `Backend`); seed the
+    /// built diff view via `seed_history_diff(req, …)`. No `path` field —
+    /// the commit's own historical path (which may differ from today's
+    /// across a rename) is resolved bin-side from the already-loaded
+    /// `FileHistory` via `FileHistory::entry_by_hash`, not supplied here.
+    HistoryDiffRequested { req: u64, commit_hash: String },
+    /// Load `commit_hash`'s full text content for this file (needs
+    /// `Backend`); seed the result via `seed_snapshot(req, …)`. Same
+    /// path-resolution note as `HistoryDiffRequested`.
+    SnapshotRequested { req: u64, commit_hash: String },
 }
 
 impl EventEmitter<EditorWorkspaceEvent> for EditorWorkspaceView {}
@@ -95,9 +112,15 @@ pub struct EditorHooks {
     pub lang_for_path: fn(&Path) -> Option<&'static str>,
     pub image_from_bytes: fn(Vec<u8>) -> Option<Arc<gpui::Image>>,
     pub render_hunks: RenderHunksFn,
+    /// Renders [`EditorWorkspaceView::history_diff`] (the selected History
+    /// commit's diff) — same downcast-to-`MainDiffView` shape as
+    /// `render_hunks`, over a second opaque field so the WIP hunks diff and
+    /// the History diff never clobber each other.
+    pub render_history_diff: RenderHunksFn,
 }
 
-/// Boxed hunks-pane renderer (see [`EditorHooks::render_hunks`]).
+/// Boxed diff-pane renderer (see [`EditorHooks::render_hunks`] /
+/// [`EditorHooks::render_history_diff`]).
 pub type RenderHunksFn =
     Box<dyn Fn(&EditorWorkspaceView, &mut Context<EditorWorkspaceView>) -> AnyElement>;
 
@@ -135,6 +158,29 @@ pub enum TreeSource {
     /// Every tracked + untracked (non-ignored) file, with changed ones still
     /// badged (`Backend::worktree_files` merged against `working_tree_status`).
     All,
+}
+
+/// What the right pane shows (T-WS-EDITOR-008: History tab).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RightPaneTab {
+    /// The open file's WIP hunks (v1 behaviour, unchanged).
+    #[default]
+    Diff,
+    /// The open file's commit history (`git log --follow`, ADR-0089's data
+    /// layer). Selecting a row drives the center pane's Diff/Snapshot tabs.
+    History,
+}
+
+/// What the center pane shows once a History row is selected. Ignored (the
+/// pane falls back to the normal WIP code viewer) while
+/// `selected_history_commit` is `None`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MiddlePaneTab {
+    /// The selected commit's diff for this file.
+    #[default]
+    Diff,
+    /// The file's full read-only text content as of the selected commit.
+    Snapshot,
 }
 
 /// A file entry in the workspace tree: repo-relative path + its change kind,
@@ -212,6 +258,16 @@ pub struct EditorWorkspaceView {
     /// Repo root. Constant for the entity's life (dropped on repo/tab switch
     /// by `reset_per_repo_ui`, same as `FileHistoryView` / `EcosystemView`).
     pub repo_path: PathBuf,
+    /// `KagiApp.root_focus`, cloned in at construction (ADR-0121 C4 — this
+    /// crate has no other way to reach it). GPUI never auto-restores focus
+    /// after another element steals it (T-BP-003, the convention every modal
+    /// renderer in the bin follows on cancel/confirm) — the code-editor
+    /// `Input` grabs window focus the moment it's clicked, which silently
+    /// broke both History's arrow-key stepping AND the pre-existing file-tree
+    /// arrow-key stepping (bug report) the moment a user had clicked into the
+    /// text pane even once. `set_right_tab` / `select_history_commit`
+    /// reclaim it explicitly.
+    root_focus: gpui::FocusHandle,
 
     /// Which files `files`/`tree` are currently listing (T-WS-EDITOR-004).
     pub source: TreeSource,
@@ -297,8 +353,66 @@ pub struct EditorWorkspaceView {
     /// loading or if there is nothing to show.
     pub diff: Option<Box<dyn Any>>,
     /// Monotonic per-file load token; discards a superseded content/diff load
-    /// (rapid tree clicks).
+    /// (rapid tree clicks) — also guards the History/Snapshot loads below,
+    /// since all of them become stale together when the open file changes.
     file_req: u64,
+
+    /// Right pane: WIP hunks (default) or this file's commit history
+    /// (T-WS-EDITOR-008). Reset to `Diff` on every file switch (`open_tab`).
+    pub right_tab: RightPaneTab,
+    /// This file's commit history, seeded by the bin ([`seed_history`]
+    /// (Self::seed_history)) once `right_tab` first switches to `History`.
+    /// `None` while loading or before the tab has ever been opened for this
+    /// file.
+    pub history: Option<FileHistory>,
+    /// `true` while the History load is in flight.
+    pub history_loading: bool,
+    /// Full hash of the History row the user clicked, if any. Drives the
+    /// center pane's Diff/Snapshot tabs — `None` means "show the normal WIP
+    /// code viewer" regardless of `middle_tab`.
+    pub selected_history_commit: Option<String>,
+    /// Center pane: which of the selected commit's views to show. Ignored
+    /// while `selected_history_commit` is `None`.
+    pub middle_tab: MiddlePaneTab,
+    /// The selected commit's diff for this file, seeded by the bin
+    /// ([`seed_history_diff`](Self::seed_history_diff)) as an opaque
+    /// `MainDiffView` (`hooks.render_history_diff` downcasts it back) — a
+    /// second, independent field from `diff` (the WIP hunks) so switching
+    /// History commits never touches the right pane's WIP diff.
+    pub history_diff: Option<Box<dyn Any>>,
+    /// `true` while the History-commit diff load is in flight.
+    pub history_diff_loading: bool,
+    /// Scroll state for `history_diff`'s list — separate from `diff_scroll`
+    /// (the WIP hunks pane), which the History diff never shares.
+    pub history_diff_scroll: gpui::ListState,
+    /// The selected commit's full file content, seeded by the bin
+    /// ([`seed_snapshot`](Self::seed_snapshot)). Plain `kagi_domain` data —
+    /// no downcast needed, unlike the diff views above.
+    pub snapshot: Option<FileSnapshotContent>,
+    /// `true` while the Snapshot load is in flight.
+    pub snapshot_loading: bool,
+    /// Scroll handle for the virtualized History commit list.
+    pub history_scroll: UniformListScrollHandle,
+    /// Resolved commit-author avatars, pushed in by the host each frame while
+    /// the History tab is open (`EditorWorkspaceItem::render`, ADR-0121 C4 —
+    /// this crate can't reach `KagiApp.avatars`, and the map fills in
+    /// asynchronously as the background resolution pass lands). Empty is a
+    /// fine steady state: the header just draws initial circles.
+    pub avatars: kagi_ui_core::avatar::AvatarImages,
+    /// The Snapshot tab's OWN `InputState`, independent of the WIP `editor`
+    /// below — same `code_editor(lang).line_number(true)` recipe (bug
+    /// report: a hand-rolled `uniform_list` of styled divs had none of that
+    /// widget's font/line-number/selection behavior). Lazily created by
+    /// `sync_snapshot_editor`, mirroring `sync_editor`'s pattern for
+    /// `editor`. No dirty-tracking subscription — nothing reads back an
+    /// edit here (there's nowhere to save a historical commit's content
+    /// to); gpui-component has no read-only-but-selectable mode distinct
+    /// from `disabled` (which also blocks focus/selection), so an
+    /// unobserved-edits editable input is the closest available.
+    pub snapshot_editor: Option<Entity<InputState>>,
+    /// Hash of the last `(path, content)` pushed into `snapshot_editor` —
+    /// same guard shape as `pushed_sig`/`content_sig` for `editor`.
+    snapshot_pushed_sig: u64,
 
     /// The code viewer `InputState`, created lazily on first render (needs a
     /// `Window`, only available there — see `sync_editor`).
@@ -364,10 +478,11 @@ pub struct EditorWorkspaceView {
 }
 
 impl EditorWorkspaceView {
-    pub fn new(repo_path: PathBuf, hooks: EditorHooks) -> Self {
+    pub fn new(repo_path: PathBuf, hooks: EditorHooks, root_focus: gpui::FocusHandle) -> Self {
         Self {
             hooks,
             repo_path,
+            root_focus,
             source: TreeSource::default(),
             files: Vec::new(),
             tree: Vec::new(),
@@ -392,6 +507,20 @@ impl EditorWorkspaceView {
             content_sig: 0,
             diff: None,
             file_req: 0,
+            right_tab: RightPaneTab::default(),
+            history: None,
+            history_loading: false,
+            selected_history_commit: None,
+            middle_tab: MiddlePaneTab::default(),
+            history_diff: None,
+            history_diff_loading: false,
+            history_diff_scroll: new_diff_list_state(),
+            snapshot: None,
+            snapshot_loading: false,
+            history_scroll: UniformListScrollHandle::new(),
+            avatars: Default::default(),
+            snapshot_editor: None,
+            snapshot_pushed_sig: 0,
             editor: None,
             pushed_sig: 0,
             dirty: false,
@@ -529,6 +658,11 @@ impl EditorWorkspaceView {
         }
         // Preview mode is per-open-action, not sticky across files.
         self.preview_markdown = false;
+        // T-WS-EDITOR-008: the History/Snapshot *content* is per-file and not
+        // tab-cached (ponytail — nothing asked for per-tab persistence here),
+        // so it resets on every actual file switch — but `right_tab` itself
+        // (Diff ⇄ History) survives the reset and is refreshed below.
+        self.reset_history_panel();
         let is_new = !self.open_tabs.contains(&path);
         if let Some(active) = self.open_path.clone() {
             if is_new && !self.dirty {
@@ -571,6 +705,7 @@ impl EditorWorkspaceView {
             self.open_path = Some(path);
             self.load_selected(cx);
         }
+        self.maybe_load_history(cx);
         cx.notify();
     }
 
@@ -834,6 +969,251 @@ impl EditorWorkspaceView {
         cx.notify();
     }
 
+    /// Reset every PER-FILE History/Snapshot field to its empty state (file
+    /// switch — `open_tab`): the loaded commit list, the selected commit,
+    /// and its Diff/Snapshot content all belong to the file being left.
+    /// `right_tab` (Diff ⇄ History) is deliberately NOT reset here — user
+    /// report: switching files while browsing History kept bouncing the
+    /// right pane back to Diff, which was more disruptive than useful.
+    /// `open_tab` re-triggers the History load below (`maybe_load_history`)
+    /// if `right_tab` is still `History` after this reset.
+    fn reset_history_panel(&mut self) {
+        self.history = None;
+        self.history_loading = false;
+        self.selected_history_commit = None;
+        // `middle_tab` (Diff ⇄ Snapshot), like `right_tab`, is a persistent
+        // preference — not reset here. See `select_history_commit`.
+        self.history_diff = None;
+        self.history_diff_loading = false;
+        self.snapshot = None;
+        self.snapshot_loading = false;
+        // Drop the InputState too, not just its content — otherwise it
+        // lingers (unrendered but alive) for every file ever snapshotted in
+        // the session.
+        self.snapshot_editor = None;
+        self.snapshot_pushed_sig = 0;
+    }
+
+    /// Right-pane tab click: WIP hunks ⇄ commit history. Kicks off the
+    /// History load the first time this file's History tab is opened
+    /// (cached in `self.history` afterward — `right_tab` alone toggles the
+    /// view on repeat clicks).
+    pub fn set_right_tab(
+        &mut self,
+        tab: RightPaneTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.right_tab == tab {
+            return;
+        }
+        self.right_tab = tab;
+        self.maybe_load_history(cx);
+        // Bug report: arrow keys didn't step the History list. The
+        // code-editor `Input` (still mounted whenever no commit is selected
+        // yet) grabs window focus on click and GPUI never gives it back —
+        // reclaim `root_focus` so the root ↑/↓ handler's `!Input` keybinding
+        // predicate can match again. See the field's doc comment.
+        window.focus(&self.root_focus, cx);
+        cx.notify();
+    }
+
+    /// Kick off the History load when the right pane is (already, or just
+    /// switched to) the History tab and there's nothing loaded yet for the
+    /// current file. Shared by `set_right_tab` (tab click) and `open_tab`
+    /// (file switch — `right_tab` now persists across files, T-WS-EDITOR-008
+    /// user report, so landing on a new file with History already active
+    /// must refresh it instead of silently showing the old file's list, or
+    /// nothing at all).
+    fn maybe_load_history(&mut self, cx: &mut Context<Self>) {
+        if self.right_tab != RightPaneTab::History || self.history.is_some() || self.history_loading
+        {
+            return;
+        }
+        let Some(path) = self.open_path.clone() else {
+            return;
+        };
+        self.history_loading = true;
+        cx.emit(EditorWorkspaceEvent::HistoryRequested {
+            req: self.file_req,
+            path,
+        });
+    }
+
+    /// The bin's answer to [`EditorWorkspaceEvent::HistoryRequested`].
+    pub fn seed_history(
+        &mut self,
+        req: u64,
+        path: &Path,
+        result: Result<FileHistory, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.file_req != req || self.open_path.as_deref() != Some(path) {
+            return;
+        }
+        self.history_loading = false;
+        self.history = result.ok();
+        cx.notify();
+    }
+
+    /// History-row click: select a commit and load its Diff (the center
+    /// pane's default tab). Re-clicking the already-selected row is a no-op.
+    pub fn select_history_commit(
+        &mut self,
+        commit_hash: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_history_commit.as_deref() == Some(commit_hash.as_str()) {
+            return;
+        }
+        self.selected_history_commit = Some(commit_hash.clone());
+        // `middle_tab` is a user preference, not per-commit state (user
+        // report: clicking through commits kept bouncing the center pane
+        // back to Diff even while browsing Snapshot) — only the CONTENT
+        // resets here; `request_middle_tab_load` reads the still-current
+        // `middle_tab` to fetch the right side for the newly selected commit.
+        self.history_diff = None;
+        self.snapshot = None;
+        self.request_middle_tab_load(commit_hash, cx);
+        // Same focus-reclaim as `set_right_tab` — a row click doesn't itself
+        // steal focus, but the code editor Input might already hold it from
+        // an earlier click, which would otherwise silently swallow the next
+        // ↑/↓ (bug report).
+        window.focus(&self.root_focus, cx);
+    }
+
+    /// Root ↑/↓ handler branch for the History list (user report: with the
+    /// right pane on the History tab, the arrow keys were still stepping the
+    /// left file tree instead). Only meaningful while `right_tab == History`
+    /// — `KagiApp::step_editor_ws_selection` checks that before calling this.
+    /// Clamped, not wrapped — same convention as `step_selection` (the file
+    /// tree stepper) above.
+    pub fn step_history_selection(
+        &mut self,
+        delta: i32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(history) = self.history.as_ref() else {
+            return;
+        };
+        let hashes: Vec<&str> = history
+            .entries
+            .iter()
+            .filter_map(|e| e.commit.as_ref())
+            .map(|c| c.full_hash.as_str())
+            .collect();
+        if hashes.is_empty() {
+            return;
+        }
+        let cur = self
+            .selected_history_commit
+            .as_deref()
+            .and_then(|h| hashes.iter().position(|&x| x == h));
+        let next = match cur {
+            Some(p) => (p as i64 + i64::from(delta)).clamp(0, hashes.len() as i64 - 1) as usize,
+            None => 0,
+        };
+        self.select_history_commit(hashes[next].to_string(), window, cx);
+    }
+
+    /// Center-pane tab click (only meaningful once a History commit is
+    /// selected): commit Diff ⇄ read-only Snapshot. Lazily loads whichever
+    /// side hasn't been fetched yet for the current commit.
+    pub fn set_middle_tab(&mut self, tab: MiddlePaneTab, cx: &mut Context<Self>) {
+        if self.middle_tab == tab {
+            return;
+        }
+        self.middle_tab = tab;
+        let Some(commit_hash) = self.selected_history_commit.clone() else {
+            return;
+        };
+        self.request_middle_tab_load(commit_hash, cx);
+    }
+
+    /// The file's path AS OF `commit_hash`, from the already-loaded History
+    /// list (`FileHistoryEntry::change::path_after`) — NOT `self.open_path`,
+    /// which is the file's path today and may not match at an older commit
+    /// that predates a rename.
+    /// Emit whichever of `HistoryDiffRequested`/`SnapshotRequested` the
+    /// active `middle_tab` needs and hasn't already got, for `commit_hash`.
+    ///
+    /// No path resolution happens here (bug report: an earlier version of
+    /// this crate looked up the commit's own historical path itself and
+    /// still got it wrong once, right after the bin's `FileHistory::entry_by_hash`
+    /// lookup had already solved it correctly for File History's own diff
+    /// pane). The bin-side loaders (`start_editor_history_diff_load` /
+    /// `start_editor_snapshot_load`, `src/ui/editor_workspace.rs`) now do
+    /// that resolution themselves, from the same `FileHistory` this crate
+    /// already handed them via `seed_history` — one implementation, not two.
+    fn request_middle_tab_load(&mut self, commit_hash: String, cx: &mut Context<Self>) {
+        match self.middle_tab {
+            MiddlePaneTab::Diff => {
+                if self.history_diff.is_some() || self.history_diff_loading {
+                    return;
+                }
+                self.history_diff_loading = true;
+                cx.emit(EditorWorkspaceEvent::HistoryDiffRequested {
+                    req: self.file_req,
+                    commit_hash,
+                });
+            }
+            MiddlePaneTab::Snapshot => {
+                if self.snapshot.is_some() || self.snapshot_loading {
+                    return;
+                }
+                self.snapshot_loading = true;
+                cx.emit(EditorWorkspaceEvent::SnapshotRequested {
+                    req: self.file_req,
+                    commit_hash,
+                });
+            }
+        }
+        cx.notify();
+    }
+
+    /// The bin's answer to [`EditorWorkspaceEvent::HistoryDiffRequested`]:
+    /// the diff at `commit_hash` (for whatever path that commit's entry
+    /// resolved — see `path_at_selected_commit`), already built into the
+    /// bin's `MainDiffView` (opaque here — `hooks.render_history_diff`
+    /// downcasts it). Guarded by `file_req` (still the same open file) and
+    /// `commit_hash` (still the same selected commit) — NOT `open_path`:
+    /// the request's `path` is deliberately the commit's OWN historical
+    /// path, which legitimately differs from `open_path` across a rename.
+    pub fn seed_history_diff(
+        &mut self,
+        req: u64,
+        commit_hash: &str,
+        diff: Option<Box<dyn Any>>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.file_req != req || self.selected_history_commit.as_deref() != Some(commit_hash) {
+            return;
+        }
+        self.history_diff_loading = false;
+        self.history_diff = diff;
+        cx.notify();
+    }
+
+    /// The bin's answer to [`EditorWorkspaceEvent::SnapshotRequested`]: the
+    /// file's content as of `commit_hash`. Same staleness guard as
+    /// `seed_history_diff`.
+    pub fn seed_snapshot(
+        &mut self,
+        req: u64,
+        commit_hash: &str,
+        result: Option<FileSnapshotContent>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.file_req != req || self.selected_history_commit.as_deref() != Some(commit_hash) {
+            return;
+        }
+        self.snapshot_loading = false;
+        self.snapshot = result;
+        cx.notify();
+    }
+
     /// Lazily create the code-viewer `InputState` (needs a `Window`, only
     /// available in `Render`) and push the selected file's content into it,
     /// guarded by a content-hash sig so a re-render that changed nothing
@@ -905,6 +1285,36 @@ impl EditorWorkspaceView {
             editor.update(cx, |s, cx| {
                 s.set_highlighter(lang, cx);
                 s.set_value(content, window, cx);
+            });
+        }
+    }
+
+    /// Lazily create the Snapshot tab's `InputState` and push the loaded
+    /// commit content into it — same recipe as `sync_editor` above, minus
+    /// the dirty-tracking subscription (see `snapshot_editor`'s doc
+    /// comment). No-ops while there's nothing loaded yet.
+    fn sync_snapshot_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(text) = self.snapshot.as_ref().and_then(|s| s.content.clone()) else {
+            return;
+        };
+        if self.snapshot_editor.is_none() {
+            let state = cx.new(|cx| {
+                InputState::new(window, cx)
+                    .code_editor(self.content_lang)
+                    .line_number(true)
+            });
+            self.snapshot_editor = Some(state);
+        }
+        let sig = buffer_sig(self.open_path.as_deref().unwrap_or(Path::new("")), &text);
+        if self.snapshot_pushed_sig == sig {
+            return;
+        }
+        self.snapshot_pushed_sig = sig;
+        let lang = self.content_lang;
+        if let Some(editor) = self.snapshot_editor.clone() {
+            editor.update(cx, |s, cx| {
+                s.set_highlighter(lang, cx);
+                s.set_value(text, window, cx);
             });
         }
     }
@@ -1551,6 +1961,7 @@ impl EditorWorkspaceView {
 impl Render for EditorWorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_editor(window, cx);
+        self.sync_snapshot_editor(window, cx);
         if self.preview_markdown {
             self.ensure_preview_mermaids(cx);
         }
@@ -2125,6 +2536,32 @@ fn render_center_pane(
         pane = pane.child(strip);
     }
 
+    // T-WS-EDITOR-008: a History row is selected AND the right pane is still
+    // on the History tab — show its Diff/Snapshot tabs instead of the normal
+    // WIP code viewer below. Flipping the right pane back to Diff reverts the
+    // center pane to the normal WIP view too (without losing the selection —
+    // `selected_history_commit`/`history_diff`/`snapshot` stay cached, so
+    // flipping back to History instantly re-shows them, no reload). Returns
+    // early, same shape as the placeholder/image early-returns further down.
+    if view.right_tab == RightPaneTab::History && view.selected_history_commit.is_some() {
+        pane = pane.child(panes::render_middle_pane_tabs(view, cx));
+        pane = match view.middle_tab {
+            MiddlePaneTab::Diff => match &view.history_diff {
+                Some(_) => pane.child((view.hooks.render_history_diff)(view, cx)),
+                None => {
+                    let msg = if view.history_diff_loading {
+                        Msg::EditorWorkspaceLoading.t()
+                    } else {
+                        Msg::EditorWorkspaceNoDiff.t()
+                    };
+                    pane.child(placeholder_text(msg))
+                }
+            },
+            MiddlePaneTab::Snapshot => pane.child(render_snapshot_pane(view, cx)),
+        };
+        return pane.into_any_element();
+    }
+
     // T-WS-EDITOR-002 §4: external-change banner — only when the buffer is
     // dirty (a clean buffer just silently re-reads via `on_worktree_changed`).
     // Reload replaces an unsaved edit with the on-disk text, so it routes
@@ -2303,6 +2740,13 @@ fn render_center_pane(
             .flex_1()
             .min_h(px(0.))
             .w_full()
+            // gpui-component's `code_editor()` does NOT apply a monospace
+            // face — `mono_font_family` is only consumed by its own debug
+            // inspector and markdown code blocks, so an `Input` just inherits
+            // whatever the ancestor sets, i.e. kagi's root `UI_FONT` (Inter).
+            // Code needs a fixed-pitch face (user report), so set it on the
+            // container and let it cascade into the widget.
+            .font_family(theme::MONO_FONT)
             .child(
                 // T-WS-EDITOR-002: editable now — `disabled(true)` gated
                 // typing/paste/cut/undo behind gpui-component 0.5.1's
@@ -2320,8 +2764,8 @@ fn render_center_pane(
     .into_any_element()
 }
 
-/// Right pane: the selected file's WIP hunks via the generic diff-list
-/// renderer, or a placeholder when there is nothing to show.
+/// Right pane: a Diff/History tab strip (T-WS-EDITOR-008) over either the
+/// selected file's WIP hunks (unchanged v1 behaviour) or its commit history.
 fn render_hunks_pane(
     view: &EditorWorkspaceView,
     cx: &mut Context<EditorWorkspaceView>,
@@ -2334,20 +2778,29 @@ fn render_hunks_pane(
         .flex_col()
         .bg(rgb(theme().panel));
 
-    match &view.diff {
-        Some(_) => {
-            // The diff list renderer (and the `MainDiffView` downcast) is
-            // bin-owned — see [`EditorHooks::render_hunks`].
-            pane = pane.child((view.hooks.render_hunks)(view, cx));
+    if view.open_path.is_some() {
+        pane = pane.child(panes::render_right_pane_tabs(view, cx));
+    }
+
+    match view.right_tab {
+        RightPaneTab::History => {
+            pane = pane.child(render_history_pane(view, cx));
         }
-        None => {
-            let msg = if view.file_loading || view.loading {
-                Msg::EditorWorkspaceLoading.t()
-            } else {
-                Msg::EditorWorkspaceNoDiff.t()
-            };
-            pane = pane.child(placeholder_text(msg));
-        }
+        RightPaneTab::Diff => match &view.diff {
+            Some(_) => {
+                // The diff list renderer (and the `MainDiffView` downcast) is
+                // bin-owned — see [`EditorHooks::render_hunks`].
+                pane = pane.child((view.hooks.render_hunks)(view, cx));
+            }
+            None => {
+                let msg = if view.file_loading || view.loading {
+                    Msg::EditorWorkspaceLoading.t()
+                } else {
+                    Msg::EditorWorkspaceNoDiff.t()
+                };
+                pane = pane.child(placeholder_text(msg));
+            }
+        },
     }
     pane.into_any_element()
 }

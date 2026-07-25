@@ -580,7 +580,7 @@ impl Render for KagiApp {
                     // (T-WS-EDITOR-005 finding #5: Analyze beats Editor mode
                     // in the resolver, so a hidden editor must not steal
                     // these arrow keys or emit its `editor-ws: file` klog).
-                    this.step_editor_ws_selection(-1, cx);
+                    this.step_editor_ws_selection(-1, window, cx);
                 } else if this.main_diff.is_some() {
                     this.main_diff_step(-1, cx);
                 } else {
@@ -595,7 +595,7 @@ impl Render for KagiApp {
                 if this.file_history.is_some() {
                     this.step_file_history_selection(1, cx);
                 } else if this.ecosystem.is_none() && this.editor_workspace.is_some() {
-                    this.step_editor_ws_selection(1, cx);
+                    this.step_editor_ws_selection(1, window, cx);
                 } else if this.main_diff.is_some() {
                     this.main_diff_step(1, cx);
                 } else {

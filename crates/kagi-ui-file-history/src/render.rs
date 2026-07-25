@@ -11,15 +11,14 @@ use gpui_component::tooltip::Tooltip;
 use gpui_component::Sizable as _;
 
 use kagi_domain::commit::CommitId;
+use kagi_ui_core::commit_row::{commit_row_model, render_commit_row, CommitRowLayout};
 use kagi_ui_core::divider::{DividerDrag, DividerGhost, DividerKind};
 use kagi_ui_core::theme::{self, theme};
-use kagi_ui_core::time::{now_unix_secs, relative_time};
+use kagi_ui_core::time::now_unix_secs;
 
 use crate::detail::{render_fh_detail_pane, render_fh_row_menu};
-use crate::{
-    entry_badge, fh_row_height, iso_to_epoch, FileHistoryEvent, FileHistoryState, FileHistoryView,
-};
-use kagi_domain::file_history::{FileChangeType, FileHistoryEntry, FileHistoryEntryKind};
+use crate::{fh_row_height, FileHistoryEvent, FileHistoryState, FileHistoryView};
+use kagi_domain::file_history::{FileChangeType, FileHistoryEntry};
 
 impl Render for FileHistoryView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -230,7 +229,7 @@ pub fn render_file_history_view(
             |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
         );
 
-    let detail_pane = render_fh_detail_pane(state, panel_width, cx);
+    let detail_pane = render_fh_detail_pane(state, panel_width, &view.avatars, cx);
 
     // ── Optional row context menu overlay ──────────────────────────
     let menu_overlay = file_history_menu.map(|(ix, pos)| render_fh_row_menu(state, ix, pos, cx));
@@ -475,54 +474,10 @@ pub(crate) fn render_fh_row(
     now: i64,
     cx: &mut Context<FileHistoryView>,
 ) -> impl IntoElement {
-    let (badge, badge_color) = entry_badge(entry);
-    let is_wip = entry.kind == FileHistoryEntryKind::Wip;
-
-    let (subject, author, date, short_hash) = if is_wip {
-        (
-            SharedString::from("WIP \u{2014} Uncommitted changes"),
-            SharedString::from(""),
-            SharedString::from(""),
-            SharedString::from(""),
-        )
-    } else if let Some(c) = entry.commit.as_ref() {
-        let date = iso_to_epoch(&c.author_date)
-            .map(|e| relative_time(e, now))
-            .unwrap_or_default();
-        (
-            SharedString::from(c.subject.clone()),
-            SharedString::from(c.author_name.clone()),
-            SharedString::from(date),
-            SharedString::from(c.short_hash.clone()),
-        )
-    } else {
-        (
-            SharedString::from("(unknown)"),
-            SharedString::from(""),
-            SharedString::from(""),
-            SharedString::from(""),
-        )
-    };
-
-    let ins = entry.change.insertions;
-    let del = entry.change.deletions;
-    let stat = if entry.change.is_binary {
-        SharedString::from("bin")
-    } else {
-        SharedString::from(format!(
-            "+{} \u{2212}{}",
-            ins.unwrap_or(0),
-            del.unwrap_or(0)
-        ))
-    };
-
-    let row_bg = if is_selected {
-        theme().selected
-    } else if ix % 2 == 1 {
-        theme().bg_row_alt
-    } else {
-        theme().panel
-    };
+    // Row shape + display data are shared with the Editor Workspace's
+    // History tab (`kagi_ui_core::commit_row`); only the interactions below
+    // are File-History-specific.
+    let model = commit_row_model(entry, now);
 
     let click = cx.listener(move |this, e: &gpui::ClickEvent, _w, cx| {
         this.menu = None;
@@ -548,83 +503,15 @@ pub(crate) fn render_fh_row(
         cx.notify();
     });
 
-    div()
-        .id(("fh-row", ix))
-        .flex()
-        .flex_row()
-        .items_center()
-        .w_full()
-        .px_3()
-        .py_px()
-        .h(px(fh_row_height()))
-        .flex_shrink_0()
-        .bg(rgb(row_bg))
-        .on_click(click)
-        .on_mouse_down(MouseButton::Right, ctx)
-        .cursor_pointer()
-        // Hover uses the subtle `surface` tint (like the commit panel / branch
-        // list), NOT `selected` — using the selection colour made a hovered row
-        // indistinguishable from the selected one, so the row the mouse was left
-        // on after a click looked "still selected" while the arrows moved the
-        // real selection elsewhere. The selected row keeps its colour on hover.
-        .when(!is_selected, |el| el.hover(|s| s.bg(rgb(theme().surface))))
-        // change-type letter
-        .child(
-            div()
-                .w(theme::scaled_px(18.))
-                .flex_shrink_0()
-                .text_sm()
-                .text_color(rgb(badge_color))
-                .child(SharedString::from(badge)),
-        )
-        // subject
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .truncate()
-                .child(subject),
-        )
-        // author
-        .child(
-            div()
-                .w(theme::scaled_px(90.))
-                .flex_shrink_0()
-                .text_xs()
-                .text_color(rgb(theme().text_sub))
-                .truncate()
-                .child(author),
-        )
-        // relative date
-        .child(
-            div()
-                .w(theme::scaled_px(64.))
-                .flex_shrink_0()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .truncate()
-                .child(date),
-        )
-        // +ins / -del
-        .child(
-            div()
-                .w(theme::scaled_px(72.))
-                .flex_shrink_0()
-                .text_xs()
-                .text_color(rgb(theme().text_sub))
-                .truncate()
-                .child(stat),
-        )
-        // short hash
-        .child(
-            div()
-                .w(theme::scaled_px(64.))
-                .flex_shrink_0()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .truncate()
-                .child(short_hash),
-        )
+    render_commit_row(
+        "fh-row",
+        ix,
+        &model,
+        CommitRowLayout::Table {
+            row_height: fh_row_height(),
+        },
+        is_selected,
+    )
+    .on_click(click)
+    .on_mouse_down(MouseButton::Right, ctx)
 }

@@ -160,6 +160,10 @@ pub enum Msg {
     DiffViewSplit,
     /// ADR-0124: diff-header toggle tooltip → switch back to unified.
     DiffViewUnified,
+    /// `kagi_ui_core::commit_header::render_commit_header`'s placeholder
+    /// before any commit is selected — shared by the Editor Workspace's
+    /// History pane and File History's detail pane.
+    CommitHeaderSelectPrompt,
 
     // ── Placeholder / unimplemented menu reasons ────────────────────
     CloneUnimplemented,
@@ -557,6 +561,25 @@ pub enum Msg {
     /// Editor Workspace header: the "Editor Workspace" title label.
     EditorWorkspaceTitle,
 
+    // ── Editor Workspace History/Snapshot tabs (T-WS-EDITOR-008) ─
+    /// Right-pane tab: the open file's WIP hunks (default, unchanged v1
+    /// behaviour).
+    EditorRightTabDiff,
+    /// Right-pane tab: the open file's commit history.
+    EditorRightTabHistory,
+    /// Center-pane tab (once a History row is selected): the selected
+    /// commit's diff for this file.
+    EditorMiddleTabDiff,
+    /// Center-pane tab (once a History row is selected): the file's full
+    /// read-only text as of the selected commit.
+    EditorMiddleTabSnapshot,
+    /// Right-pane History tab placeholder when the file has no commit
+    /// history.
+    EditorHistoryEmpty,
+    /// Snapshot tab placeholder when the load finished but found nothing
+    /// (e.g. the path didn't exist yet at that commit).
+    EditorSnapshotUnavailable,
+
     // ── Editor Workspace tree context menu (T-WS-EDITOR-007) ────
     /// File/dir row: rename.
     EditorTreeRename,
@@ -638,6 +661,8 @@ impl Msg {
             (Ja, DiffViewSplit) => "横並びで表示",
             (En, DiffViewUnified) => "Unified view",
             (Ja, DiffViewUnified) => "1カラムで表示",
+            (En, CommitHeaderSelectPrompt) => "Select a commit to see its details.",
+            (Ja, CommitHeaderSelectPrompt) => "コミットを選択すると詳細が表示されます。",
 
             // ── Placeholders ────────────────────────────────────────
             (En, CloneUnimplemented) => "clone is not implemented yet",
@@ -1201,6 +1226,20 @@ impl Msg {
             (Ja, EditorWorkspaceBackToGraph) => "\u{2190} グラフ",
             (En, EditorWorkspaceTitle) => "Editor Workspace",
             (Ja, EditorWorkspaceTitle) => "エディタワークスペース",
+
+            // ── Editor Workspace History/Snapshot tabs (T-WS-EDITOR-008) ──
+            (En, EditorRightTabDiff) => "Diff",
+            (Ja, EditorRightTabDiff) => "差分",
+            (En, EditorRightTabHistory) => "History",
+            (Ja, EditorRightTabHistory) => "変更履歴",
+            (En, EditorMiddleTabDiff) => "Diff",
+            (Ja, EditorMiddleTabDiff) => "差分",
+            (En, EditorMiddleTabSnapshot) => "Snapshot",
+            (Ja, EditorMiddleTabSnapshot) => "スナップショット",
+            (En, EditorHistoryEmpty) => "No history for this file.",
+            (Ja, EditorHistoryEmpty) => "このファイルの変更履歴はありません。",
+            (En, EditorSnapshotUnavailable) => "Content not available for this commit.",
+            (Ja, EditorSnapshotUnavailable) => "このコミット時点のコンテンツは取得できません。",
 
             // ── Editor Workspace tree context menu (T-WS-EDITOR-007) ──
             (En, EditorTreeRename) => "Rename…",

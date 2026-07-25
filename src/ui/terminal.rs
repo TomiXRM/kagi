@@ -96,6 +96,12 @@ pub fn build_color_palette() -> ColorPalette {
 /// Terminal font size at 1.0x zoom, in px.
 pub(crate) const TERMINAL_FONT_SIZE: f32 = 13.0;
 
+/// Terminal font size at `zoom`. Pure, so it can be tested without touching
+/// the process-global zoom (which other tests read concurrently).
+pub(crate) fn terminal_font_size(zoom: f32) -> f32 {
+    TERMINAL_FONT_SIZE * zoom
+}
+
 /// to start a session and to live-apply a theme switch via `update_config`.
 pub fn build_terminal_config() -> TerminalConfig {
     TerminalConfig {
@@ -106,7 +112,7 @@ pub fn build_terminal_config() -> TerminalConfig {
         // that and stayed at a fixed 13px however far the rest of the UI was
         // zoomed (user report: terminal text can't be resized). Re-applied to
         // live sessions by `KagiApp::apply_terminal_config`.
-        font_size: px(TERMINAL_FONT_SIZE * crate::ui::theme::zoom()),
+        font_size: px(terminal_font_size(crate::ui::theme::zoom())),
         cols: 80,
         rows: 24,
         scrollback: 10_000,
@@ -435,22 +441,25 @@ mod font_size_tests {
     /// Regression: the terminal font was a hardcoded `px(13.0)` and ignored
     /// the UI zoom entirely, so View -> Zoom In/Out resized every surface
     /// except the terminal (user report).
+    ///
+    /// Deliberately exercises the pure `terminal_font_size` rather than
+    /// `set_zoom` + `build_terminal_config`: zoom is process-global state and
+    /// `graph_view`'s own zoom test reads it from a parallel test thread, so
+    /// mutating it here made that test fail intermittently.
     #[test]
     fn terminal_font_follows_ui_zoom() {
-        let at = |z: f32| {
-            crate::ui::theme::set_zoom(z);
-            f32::from(build_terminal_config().font_size)
-        };
-
-        let one = at(1.0);
+        let base = terminal_font_size(1.0);
         assert!(
-            (one - TERMINAL_FONT_SIZE).abs() < 0.01,
-            "1.0x must be the base size, got {one}"
+            (base - TERMINAL_FONT_SIZE).abs() < f32::EPSILON,
+            "1.0x must be the base size, got {base}"
         );
-        assert!(at(1.5) > one, "zooming in must enlarge the terminal font");
-        assert!(at(0.8) < one, "zooming out must shrink the terminal font");
-
-        // Restore so a shared-process test run isn't left zoomed.
-        crate::ui::theme::set_zoom(1.0);
+        assert!(
+            terminal_font_size(1.5) > base,
+            "zooming in must enlarge the terminal font"
+        );
+        assert!(
+            terminal_font_size(0.8) < base,
+            "zooming out must shrink the terminal font"
+        );
     }
 }

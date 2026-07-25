@@ -60,7 +60,7 @@ pub use drafts::{clear_draft, load_draft, save_draft, Draft};
 #[allow(unused_imports)]
 pub use file_history::{
     file_history, CommitSummary, FileChangeSummary, FileChangeType, FileHistory, FileHistoryEntry,
-    FileHistoryEntryKind, FileHistoryRequest,
+    FileHistoryEntryKind, FileHistoryRequest, FileSnapshotContent,
 };
 #[allow(unused_imports)]
 pub use hotspot::{repo_ecosystem, EcosystemRequest};

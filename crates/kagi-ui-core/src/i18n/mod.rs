@@ -557,6 +557,22 @@ pub enum Msg {
     /// Editor Workspace header: the "Editor Workspace" title label.
     EditorWorkspaceTitle,
 
+    // ── Editor Workspace History/Snapshot tabs (T-WS-EDITOR-008) ─
+    /// Right-pane tab: the open file's WIP hunks (default, unchanged v1
+    /// behaviour).
+    EditorRightTabDiff,
+    /// Right-pane tab: the open file's commit history.
+    EditorRightTabHistory,
+    /// Center-pane tab (once a History row is selected): the selected
+    /// commit's diff for this file.
+    EditorMiddleTabDiff,
+    /// Center-pane tab (once a History row is selected): the file's full
+    /// read-only text as of the selected commit.
+    EditorMiddleTabSnapshot,
+    /// Right-pane History tab placeholder when the file has no commit
+    /// history.
+    EditorHistoryEmpty,
+
     // ── Editor Workspace tree context menu (T-WS-EDITOR-007) ────
     /// File/dir row: rename.
     EditorTreeRename,
@@ -1201,6 +1217,18 @@ impl Msg {
             (Ja, EditorWorkspaceBackToGraph) => "\u{2190} グラフ",
             (En, EditorWorkspaceTitle) => "Editor Workspace",
             (Ja, EditorWorkspaceTitle) => "エディタワークスペース",
+
+            // ── Editor Workspace History/Snapshot tabs (T-WS-EDITOR-008) ──
+            (En, EditorRightTabDiff) => "Diff",
+            (Ja, EditorRightTabDiff) => "差分",
+            (En, EditorRightTabHistory) => "History",
+            (Ja, EditorRightTabHistory) => "変更履歴",
+            (En, EditorMiddleTabDiff) => "Diff",
+            (Ja, EditorMiddleTabDiff) => "差分",
+            (En, EditorMiddleTabSnapshot) => "Snapshot",
+            (Ja, EditorMiddleTabSnapshot) => "スナップショット",
+            (En, EditorHistoryEmpty) => "No history for this file.",
+            (Ja, EditorHistoryEmpty) => "このファイルの変更履歴はありません。",
 
             // ── Editor Workspace tree context menu (T-WS-EDITOR-007) ──
             (En, EditorTreeRename) => "Rename…",

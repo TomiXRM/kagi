@@ -57,6 +57,26 @@ fn editor_hooks() -> EditorHooks {
             )
             .into_any_element()
         }),
+        // T-WS-EDITOR-008: same downcast shape as `render_hunks`, over the
+        // independent `history_diff` field so selecting a History commit
+        // never touches the WIP hunks pane's diff.
+        render_history_diff: Box::new(|view, cx| {
+            let Some(diff) = view
+                .history_diff
+                .as_ref()
+                .and_then(|d| d.downcast_ref::<MainDiffView>())
+            else {
+                return gpui::div().into_any_element();
+            };
+            render_diff_list::<EditorWorkspaceView>(
+                diff.clone(),
+                None,
+                None,
+                view.history_diff_scroll.clone(),
+                cx,
+            )
+            .into_any_element()
+        }),
     }
 }
 
@@ -130,6 +150,29 @@ impl KagiApp {
             EditorWorkspaceEvent::DiffRequested { req, path } => {
                 self.start_editor_diff_load(view, *req, path.clone(), cx);
             }
+            EditorWorkspaceEvent::HistoryRequested { req, path } => {
+                self.start_editor_history_load(view, *req, path.clone(), cx);
+            }
+            EditorWorkspaceEvent::HistoryDiffRequested {
+                req,
+                path,
+                commit_hash,
+            } => {
+                self.start_editor_history_diff_load(
+                    view,
+                    *req,
+                    path.clone(),
+                    commit_hash.clone(),
+                    cx,
+                );
+            }
+            EditorWorkspaceEvent::SnapshotRequested {
+                req,
+                path,
+                commit_hash,
+            } => {
+                self.start_editor_snapshot_load(view, *req, path.clone(), commit_hash.clone(), cx);
+            }
         }
     }
 
@@ -201,6 +244,108 @@ impl KagiApp {
                     )) as Box<dyn std::any::Any>
                 });
                 v.seed_diff(req, &path, diff, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// `Backend` half of the crate's History load (`HistoryRequested` →
+    /// `seed_history`): `path`'s commit history via ADR-0089's data layer.
+    /// `include_wip: false` — the WIP row is already covered by this same
+    /// pane's Diff tab, so the History list only ever lists real commits
+    /// (`render_history_row` on the crate side relies on this).
+    fn start_editor_history_load(
+        &mut self,
+        view: Entity<EditorWorkspaceView>,
+        req: u64,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let repo_path = view.read(cx).repo_path.clone();
+        let bg_path = path.clone();
+        let task = cx.background_spawn(async move {
+            let req = kagi_git::FileHistoryRequest {
+                repo_dir: repo_path,
+                file_path: bg_path,
+                follow_renames: true,
+                include_wip: false,
+                limit: 500,
+            };
+            kagi_git::file_history(&req).map_err(|e| e.to_string())
+        });
+        let view = view.downgrade();
+        cx.spawn(async move |_app, acx| {
+            let result = task.await;
+            let _ = view.update(acx, |v, cx| v.seed_history(req, &path, result, cx));
+        })
+        .detach();
+    }
+
+    /// `Backend` half of the crate's History-commit diff load
+    /// (`HistoryDiffRequested` → `seed_history_diff`): `path`'s diff at
+    /// `commit_hash`, built into a `MainDiffView` (mirrors
+    /// `start_editor_diff_load`, reusing `MainDiffSource::Unstaged` the same
+    /// way `FileHistoryView::load_diff` already does for a per-commit diff —
+    /// see `src/ui/file_history.rs`).
+    fn start_editor_history_diff_load(
+        &mut self,
+        view: Entity<EditorWorkspaceView>,
+        req: u64,
+        path: PathBuf,
+        commit_hash: String,
+        cx: &mut Context<Self>,
+    ) {
+        let repo_path = view.read(cx).repo_path.clone();
+        let bg_path = path.clone();
+        let bg_hash = commit_hash.clone();
+        let task = cx.background_spawn(async move {
+            let id = kagi_git::CommitId(bg_hash);
+            kagi_git::Backend::open(&repo_path)
+                .ok()
+                .and_then(|repo| repo.commit_file_diff(&id, &bg_path).ok())
+        });
+        let view = view.downgrade();
+        cx.spawn(async move |_app, acx| {
+            let file_diff = task.await;
+            let _ = view.update(acx, |v, cx| {
+                let diff = file_diff.map(|d| {
+                    Box::new(build_main_diff_view(
+                        &d,
+                        &path,
+                        0,
+                        MainDiffSource::Unstaged { path: path.clone() },
+                    )) as Box<dyn std::any::Any>
+                });
+                v.seed_history_diff(req, &path, &commit_hash, diff, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// `Backend` half of the crate's Snapshot load (`SnapshotRequested` →
+    /// `seed_snapshot`): `path`'s full text content as of `commit_hash`.
+    fn start_editor_snapshot_load(
+        &mut self,
+        view: Entity<EditorWorkspaceView>,
+        req: u64,
+        path: PathBuf,
+        commit_hash: String,
+        cx: &mut Context<Self>,
+    ) {
+        let repo_path = view.read(cx).repo_path.clone();
+        let bg_path = path.clone();
+        let bg_hash = commit_hash.clone();
+        let task = cx.background_spawn(async move {
+            let id = kagi_git::CommitId(bg_hash);
+            kagi_git::Backend::open(&repo_path)
+                .ok()
+                .and_then(|repo| repo.file_content_at_commit(&id, &bg_path).ok().flatten())
+        });
+        let view = view.downgrade();
+        cx.spawn(async move |_app, acx| {
+            let result = task.await;
+            let _ = view.update(acx, |v, cx| {
+                v.seed_snapshot(req, &path, &commit_hash, result, cx)
             });
         })
         .detach();

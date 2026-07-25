@@ -84,3 +84,12 @@ pub enum FileChangeType {
     Copied,
     Unknown,
 }
+
+/// A file's full text content as of a specific commit (read-only "snapshot"
+/// view — not the write-path `RepoSnapshot`, which is unrelated).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileSnapshotContent {
+    /// `None` when the blob is binary (no text to display).
+    pub content: Option<String>,
+    pub is_binary: bool,
+}

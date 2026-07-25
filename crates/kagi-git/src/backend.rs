@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use git2::Repository;
+use kagi_domain::checklist::content_looks_binary;
 use kagi_domain::history::HistoryEntry;
 use kagi_domain::operation::{Operation, OperationOutcome};
 
@@ -8,8 +9,8 @@ use super::{
     conflicts, diff, diffstat, file_history, hotspot, message_gen, ops,
     resolution::ResolutionBuffer, resolve_head, snapshot, staging, status, AmendMode, AmendOutcome,
     BranchRenameValidation, CommitId, CommitPreview, DiscardOutcome, FetchOutcome, FileDiff,
-    FileDiffStat, FileHistory, FileHistoryRequest, FileStatus, GitError, Head, MergeKind,
-    OperationPlan, PullOutcome, PushOutcome, RawEcosystem, RepoSnapshot, UndoOutcome,
+    FileDiffStat, FileHistory, FileHistoryRequest, FileSnapshotContent, FileStatus, GitError, Head,
+    MergeKind, OperationPlan, PullOutcome, PushOutcome, RawEcosystem, RepoSnapshot, UndoOutcome,
     WorkingTreeStatus,
 };
 
@@ -160,11 +161,12 @@ impl Backend {
         diff::commit_file_diff(&self.repo, id, path)
     }
 
-    /// Raw blob bytes for `path` in the tree of commit `id`.
+    /// Resolve the blob for `path` in the tree of commit `id`.
     ///
     /// `Ok(None)` when the path is absent from that tree (added later /
-    /// deleted earlier). Used by the diff view's image preview (W-IMG).
-    pub fn blob_bytes_at(&self, id: &CommitId, path: &Path) -> Result<Option<Vec<u8>>, GitError> {
+    /// deleted earlier). Shared by [`Self::blob_bytes_at`] and
+    /// [`Self::file_content_at_commit`].
+    fn find_blob_at(&self, id: &CommitId, path: &Path) -> Result<Option<git2::Blob<'_>>, GitError> {
         let oid =
             git2::Oid::from_str(&id.0).map_err(|e| GitError::Other(e.message().to_string()))?;
         let commit = self
@@ -183,7 +185,39 @@ impl Backend {
             .repo
             .find_blob(entry.id())
             .map_err(|e| GitError::Other(e.message().to_string()))?;
-        Ok(Some(blob.content().to_vec()))
+        Ok(Some(blob))
+    }
+
+    /// Raw blob bytes for `path` in the tree of commit `id`.
+    ///
+    /// `Ok(None)` when the path is absent from that tree (added later /
+    /// deleted earlier). Used by the diff view's image preview (W-IMG).
+    pub fn blob_bytes_at(&self, id: &CommitId, path: &Path) -> Result<Option<Vec<u8>>, GitError> {
+        Ok(self.find_blob_at(id, path)?.map(|b| b.content().to_vec()))
+    }
+
+    /// The file's full text content as of commit `id` (editor mode's
+    /// right-pane History → middle-pane Snapshot tab).
+    ///
+    /// `Ok(None)` when the path is absent from that commit's tree. Binary
+    /// blobs come back with `content: None, is_binary: true` rather than a
+    /// lossy/garbled text dump.
+    pub fn file_content_at_commit(
+        &self,
+        id: &CommitId,
+        path: &Path,
+    ) -> Result<Option<FileSnapshotContent>, GitError> {
+        let Some(blob) = self.find_blob_at(id, path)? else {
+            return Ok(None);
+        };
+        let bytes = blob.content();
+        let is_binary = blob.is_binary() || content_looks_binary(bytes);
+        let content = if is_binary {
+            None
+        } else {
+            Some(String::from_utf8_lossy(bytes).into_owned())
+        };
+        Ok(Some(FileSnapshotContent { content, is_binary }))
     }
 
     /// First parent of `id`, if any (image preview: the "before" side).

@@ -314,7 +314,12 @@ pub(crate) fn render_update_modal(
         .child(
             Button::new("update-page")
                 .label("Release page")
-                .ghost()
+                // The modal's actual call to action. It was ghost like the
+                // other two, so nothing signalled which button mattered
+                // (user report) — a filled primary next to ghost "Later" /
+                // "Skip this version" is the same pairing every other modal
+                // in the app uses for confirm-vs-cancel.
+                .primary()
                 .small()
                 .on_click(open_page),
         )

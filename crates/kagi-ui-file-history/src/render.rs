@@ -6,7 +6,7 @@
 
 use gpui::prelude::*;
 use gpui::{div, px, rgb, AnyView, ClipboardItem, Context, MouseButton, SharedString, Window};
-use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::button::Button;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::Sizable as _;
 
@@ -40,7 +40,11 @@ pub(crate) fn fh_header_button(
 ) -> impl IntoElement {
     Button::new(id)
         .label(label.into())
-        .ghost()
+        // `outline`, not `ghost`: a ghost button paints no background of its
+        // own, so it took the header bar's colour exactly and read as plain
+        // text rather than a control (user report — same fix as the main
+        // diff header's Back/History/view-mode buttons).
+        .outline()
         .small()
         .on_click(cx.listener(on_click))
 }
@@ -146,7 +150,9 @@ pub fn render_file_history_view(
         .px_3()
         .py_1()
         .gap_2()
-        .bg(rgb(theme().surface))
+        // Darker than the `surface` this used to be, matching the main diff
+        // header, so the outlined buttons read as raised controls.
+        .bg(rgb(theme().bg_base))
         .child(back)
         .child(
             div()

@@ -455,7 +455,10 @@ pub(crate) fn render_remote_browse_modal(
                     .child(
                         Button::new("remote-change-host")
                             .label("Change host")
-                            .ghost()
+                            // outline, not ghost — a ghost button paints no
+                            // background of its own and reads as plain text
+                            // (same fix as the diff / File History headers).
+                            .outline()
                             .xsmall()
                             .on_click(change_host),
                     ),
@@ -614,7 +617,9 @@ pub(crate) fn render_remote_browse_modal(
                 div().flex().flex_row().gap_2().justify_end().child(
                     Button::new("remote-browse-close")
                         .label("Close")
-                        .ghost()
+                        // Lone footer action with no primary beside it, so
+                        // ghost left it looking like a label.
+                        .outline()
                         .small()
                         .on_click(cancel),
                 ),

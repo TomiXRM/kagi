@@ -13,8 +13,8 @@ use gpui_component::input::Input;
 
 use kagi_domain::file_history::{CommitSummary, FileHistoryEntry, FileHistoryEntryKind};
 use kagi_ui_core::avatar::AvatarImages;
-use kagi_ui_core::change_badge::entry_badge;
 use kagi_ui_core::commit_header::render_commit_header;
+use kagi_ui_core::commit_row::{commit_row_model, render_commit_row, CommitRowLayout};
 use kagi_ui_core::i18n::Msg;
 use kagi_ui_core::theme::{self, theme};
 
@@ -161,6 +161,8 @@ pub(crate) fn render_history_pane(
     let scroll_handle = view.history_scroll.clone();
     let scrollbar_handle = scroll_handle.clone();
     let selected = view.selected_history_commit.clone();
+    // One clock read per list render, not per row.
+    let now = kagi_ui_core::time::now_unix_secs();
     let list = with_vertical_scrollbar(
         "ews-history-scroll",
         &scrollbar_handle,
@@ -169,7 +171,9 @@ pub(crate) fn render_history_pane(
             row_count,
             cx.processor(move |this, range: Range<usize>, _window, cx| {
                 range
-                    .filter_map(|i| render_history_row(this, i, entries.get(i)?, &selected, cx))
+                    .filter_map(|i| {
+                        render_history_row(this, i, entries.get(i)?, &selected, now, cx)
+                    })
                     .collect::<Vec<_>>()
             }),
         )
@@ -232,7 +236,13 @@ fn render_history_header(commit: Option<&CommitSummary>, avatars: &AvatarImages)
         .into_any_element()
 }
 
-/// One row in the History list: subject, then short hash / author / date.
+/// One row in the History list, rendered through the shared
+/// `kagi_ui_core::commit_row` in its `Card` layout — the same model and
+/// styling File History's full-width `Table` rows use, differing only in
+/// shape. Only the click handler is local: this list drives the center
+/// pane's Diff/Snapshot tabs, where File History instead opens its own
+/// inline diff (and adds a double-click jump + context menu).
+///
 /// `include_wip: false` on the backing request (see `start_editor_history_load`
 /// in the bin) means every entry here is a real, selectable commit — the WIP
 /// row is never duplicated into this list (the Diff tab already covers it).
@@ -241,6 +251,7 @@ fn render_history_row(
     ix: usize,
     entry: &FileHistoryEntry,
     selected: &Option<String>,
+    now: i64,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> Option<AnyElement> {
     debug_assert_ne!(entry.kind, FileHistoryEntryKind::Wip);
@@ -250,75 +261,18 @@ fn render_history_row(
     let click = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
         this.select_history_commit(hash.clone(), window, cx);
     });
-    let row_bg = if is_selected {
-        theme().selected
-    } else if ix % 2 == 1 {
-        theme().bg_row_alt
-    } else {
-        theme().panel
-    };
-    // `author_date` is `git log`'s strict-ISO8601 (`%aI`) — the leading 10
-    // bytes are always `YYYY-MM-DD`; no date parser needed for this compact
-    // sidebar row (the full-width File History panel has the relative-time
-    // treatment already; this row just isn't wide enough for it).
-    let date = commit.author_date.get(0..10).unwrap_or("").to_string();
 
-    // User report: this list showed no change-type marker at all, unlike
-    // every other file list in the app. Same `entry_badge` File History's
-    // rows use (moved to `kagi-ui-core` so this crate can reach it), in a
-    // fixed-width leading column so the two text lines stay aligned down the
-    // list regardless of letter.
-    let (badge, badge_color) = entry_badge(entry);
-
+    let model = commit_row_model(entry, now);
     Some(
-        div()
-            .id(("ews-history-row", ix))
-            .flex()
-            .flex_row()
-            .items_start()
-            .w_full()
-            .px_2()
-            .py_1()
-            .gap_1()
-            .bg(rgb(row_bg))
-            .cursor_pointer()
-            .when(!is_selected, |el| el.hover(|s| s.bg(rgb(theme().surface))))
-            .on_click(click)
-            .child(
-                div()
-                    .w(theme::scaled_px(14.))
-                    .flex_shrink_0()
-                    .text_sm()
-                    .text_color(rgb(badge_color))
-                    .child(SharedString::from(badge)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .flex()
-                    .flex_col()
-                    .gap_px()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(theme().text_main))
-                            .truncate()
-                            .child(SharedString::from(commit.subject.clone())),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap_2()
-                            .text_xs()
-                            .text_color(rgb(theme().text_muted))
-                            .child(SharedString::from(commit.short_hash.clone()))
-                            .child(SharedString::from(commit.author_name.clone()))
-                            .child(SharedString::from(date)),
-                    ),
-            )
-            .into_any_element(),
+        render_commit_row(
+            "ews-history-row",
+            ix,
+            &model,
+            CommitRowLayout::Card,
+            is_selected,
+        )
+        .on_click(click)
+        .into_any_element(),
     )
 }
 

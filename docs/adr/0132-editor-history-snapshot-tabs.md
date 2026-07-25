@@ -112,14 +112,23 @@ File History gained from the consolidation too — its detail pane now shows
 the richer shared header (reflowed body, co-authors, avatars) instead of a
 plain "Message" row.
 
-What deliberately stays separate is only the list/row *layout* (~149 lines
-here vs. ~160 in File History): a ~380px two-line sidebar card vs. a
-full-width six-column table, and — structurally, not just cosmetically —
-File History owns its diff pane inline while this pane's list drives a
-separate center pane with Diff/Snapshot tabs. Collapsing them would mean
-mode-flagging away File History's header, detail sub-pane, split divider
-and diff slot: one component doing two jobs by conditionals, which ages
-worse than two small renderers over shared primitives.
+The row rendering itself is shared too, via
+`kagi-ui-core::commit_row`. The two panes genuinely need different shapes —
+File History's full-width six-column table vs. the Editor tab's two-line
+card in a ~380px sidebar — so *the layout is the parameter*
+(`CommitRowLayout::{Table { row_height }, Card}`) and everything feeding it
+is common: `commit_row_model` derives every display string once (badge,
+subject, author, both date formats, `+ins −del`, short hash) and
+`row_background` owns the zebra/selection rule both lists had copy-pasted.
+
+`render_commit_row` returns a `Stateful<Div>` rather than a finished
+element, so each pane attaches its own interactions — File History a
+double-click-to-jump plus a right-click context menu, the Editor tab a
+single click that drives the *separate* center pane. That keeps the
+handler differences out of the shared code entirely, instead of growing
+callback parameters only one caller ever passes. Net effect: the two row
+functions are now 48 and 29 lines (from 160 and 149), and both are almost
+entirely their own interactions.
 
 **Guidance for the next pane:** when a new pane needs something an existing
 pane already renders, extract the shared piece *first* and have both

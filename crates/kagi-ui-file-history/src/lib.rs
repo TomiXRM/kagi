@@ -175,6 +175,12 @@ pub struct FileHistoryView {
     /// crate only embeds it below the commit list; the host fills it on
     /// [`FileHistoryEvent::DiffLoadRequested`].
     pub diff_pane: AnyView,
+    /// Resolved commit-author avatars, pushed in by the host each frame
+    /// (`FileHistoryItem::render`) — this crate can't reach `KagiApp.avatars`,
+    /// and the map fills in asynchronously as the background resolution pass
+    /// lands. Empty is a fine steady state: the detail pane's shared commit
+    /// header just draws initial circles.
+    pub avatars: kagi_ui_core::avatar::AvatarImages,
 }
 
 impl EventEmitter<FileHistoryEvent> for FileHistoryView {}
@@ -196,6 +202,7 @@ impl FileHistoryView {
             geom,
             panel_width,
             diff_pane,
+            avatars: Default::default(),
         }
     }
 

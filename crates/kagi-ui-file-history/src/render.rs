@@ -230,7 +230,7 @@ pub fn render_file_history_view(
             |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
         );
 
-    let detail_pane = render_fh_detail_pane(state, panel_width, cx);
+    let detail_pane = render_fh_detail_pane(state, panel_width, &view.avatars, cx);
 
     // ── Optional row context menu overlay ──────────────────────────
     let menu_overlay = file_history_menu.map(|(ix, pos)| render_fh_row_menu(state, ix, pos, cx));

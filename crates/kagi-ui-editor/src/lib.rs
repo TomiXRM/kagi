@@ -393,6 +393,12 @@ pub struct EditorWorkspaceView {
     pub snapshot_loading: bool,
     /// Scroll handle for the virtualized History commit list.
     pub history_scroll: UniformListScrollHandle,
+    /// Resolved commit-author avatars, pushed in by the host each frame while
+    /// the History tab is open (`EditorWorkspaceItem::render`, ADR-0121 C4 —
+    /// this crate can't reach `KagiApp.avatars`, and the map fills in
+    /// asynchronously as the background resolution pass lands). Empty is a
+    /// fine steady state: the header just draws initial circles.
+    pub avatars: kagi_ui_core::avatar::AvatarImages,
     /// The Snapshot tab's OWN `InputState`, independent of the WIP `editor`
     /// below — same `code_editor(lang).line_number(true)` recipe (bug
     /// report: a hand-rolled `uniform_list` of styled divs had none of that
@@ -512,6 +518,7 @@ impl EditorWorkspaceView {
             snapshot: None,
             snapshot_loading: false,
             history_scroll: UniformListScrollHandle::new(),
+            avatars: Default::default(),
             snapshot_editor: None,
             snapshot_pushed_sig: 0,
             editor: None,

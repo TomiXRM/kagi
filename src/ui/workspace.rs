@@ -108,9 +108,17 @@ impl WorkspaceItem for FileHistoryItem {
         &self,
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
-        _cx: &mut Context<KagiApp>,
+        cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        Some(app.file_history.clone()?.into_any_element())
+        let ev = app.file_history.clone()?;
+        // Same avatar push as `EditorWorkspaceItem::render` — the detail
+        // pane's shared commit header draws from the app-owned resolved-image
+        // cache, which this crate can't reach.
+        let avatars = app.avatars.images.clone();
+        ev.update(cx, |v, _| {
+            v.avatars = avatars;
+        });
+        Some(ev.into_any_element())
     }
     // ADR-0117: File History is per-repo; drop the entity on repo/tab switch
     // so its captured `repo_path` can't keep reading the previous repo (and
@@ -228,8 +236,19 @@ impl WorkspaceItem for EditorWorkspaceItem {
     ) -> Option<AnyElement> {
         let ev = app.editor_workspace.clone()?;
         let show_tree = layout.left == LeftPane::FileTree;
+        // T-WS-EDITOR-008: the History header draws commit-author avatars from
+        // the app-owned resolved-image cache, which the crate can't reach —
+        // push it the same way `show_tree` is pushed. Cloned only while the
+        // History tab is actually open (the map is small — one entry per
+        // distinct author the resolution pass has landed — but there's no
+        // reason to copy it every frame for the common Diff-tab case).
+        let avatars = (ev.read(cx).right_tab == super::editor_workspace::RightPaneTab::History)
+            .then(|| app.avatars.images.clone());
         ev.update(cx, |v, _| {
             v.show_tree = show_tree;
+            if let Some(avatars) = avatars {
+                v.avatars = avatars;
+            }
         });
         Some(
             div()

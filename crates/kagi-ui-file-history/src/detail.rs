@@ -16,6 +16,7 @@ use crate::{change_type_label, FileHistoryEvent, FileHistoryState, FileHistoryVi
 pub(crate) fn render_fh_detail_pane(
     state: &FileHistoryState,
     panel_width: f32,
+    avatars: &kagi_ui_core::avatar::AvatarImages,
     cx: &mut Context<FileHistoryView>,
 ) -> gpui::AnyElement {
     // Clone the entry out so listeners can capture owned data.
@@ -90,7 +91,10 @@ pub(crate) fn render_fh_detail_pane(
         // (full hash, author email, committer name) than the shared header's
         // compact meta line.
         pane = pane
-            .child(kagi_ui_core::commit_header::render_commit_header(Some(c)))
+            .child(kagi_ui_core::commit_header::render_commit_header(
+                Some(c),
+                avatars,
+            ))
             .child(line("Full Hash", c.full_hash.clone()))
             .child(line("Short Hash", c.short_hash.clone()));
 

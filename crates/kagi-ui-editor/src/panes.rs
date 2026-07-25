@@ -12,6 +12,7 @@ use gpui::{div, px, relative, rgb, uniform_list, AnyElement, Context, SharedStri
 use gpui_component::input::Input;
 
 use kagi_domain::file_history::{CommitSummary, FileHistoryEntry, FileHistoryEntryKind};
+use kagi_ui_core::avatar::AvatarImages;
 use kagi_ui_core::commit_header::render_commit_header;
 use kagi_ui_core::i18n::Msg;
 use kagi_ui_core::theme::theme;
@@ -152,7 +153,7 @@ pub(crate) fn render_history_pane(
         .as_deref()
         .and_then(|hash| history.entry_by_hash(hash))
         .and_then(|e| e.commit.as_ref());
-    let header = render_history_header(selected_commit);
+    let header = render_history_header(selected_commit, &view.avatars);
 
     let entries = Arc::new(history.entries.clone());
     let row_count = entries.len();
@@ -207,7 +208,7 @@ pub(crate) fn render_history_pane(
 /// `overflow_hidden` on the sized outer box, `overflow_y_scroll` on an
 /// unconstrained inner child, so wrapped text can't feed back into the flex
 /// solve).
-fn render_history_header(commit: Option<&CommitSummary>) -> AnyElement {
+fn render_history_header(commit: Option<&CommitSummary>, avatars: &AvatarImages) -> AnyElement {
     div()
         .flex()
         .flex_col()
@@ -225,7 +226,7 @@ fn render_history_header(commit: Option<&CommitSummary>) -> AnyElement {
                 .size_full()
                 .min_h(px(0.))
                 .overflow_y_scroll()
-                .child(render_commit_header(commit)),
+                .child(render_commit_header(commit, avatars)),
         )
         .into_any_element()
 }

@@ -16,7 +16,7 @@
 //! `render_helpers::render_diff_list` directly, exactly as before.
 
 use gpui::{prelude::*, Context, Entity, ListState, WeakEntity, Window};
-use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::button::Button;
 use gpui_component::Sizable as _;
 
 use super::diff_view::{MainDiffSource, MainDiffView, RowHighlights};
@@ -84,22 +84,31 @@ impl Render for MainDiffPane {
                 .ok();
         });
         let history_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+            // Read the source HERE, off `this` — this listener runs while the
+            // pane entity is leased, so the app must not read it back out of
+            // `self.main_diff` (that panicked: "cannot read MainDiffPane while
+            // it is already being updated").
+            let source = this.view.source.clone();
             this.app
                 .update(cx, |app, cx| {
-                    app.open_file_history_from_main_diff(cx);
+                    app.open_file_history_from_main_diff(source, cx);
                     cx.notify();
                 })
                 .ok();
         });
         let leading = Button::new("main-diff-back")
             .label("\u{2190} Back")
-            .ghost()
+            // `outline`, not `ghost`: a ghost button paints no background of
+            // its own, so it took the header bar's colour exactly and read as
+            // plain text rather than a control (user report). Outline gives it
+            // the theme's input background plus a border.
+            .outline()
             .small()
             .on_click(back_click)
             .into_any_element();
         let trailing = Button::new("main-diff-history")
             .label("History")
-            .ghost()
+            .outline()
             .small()
             .flex_shrink_0()
             .on_click(history_click)

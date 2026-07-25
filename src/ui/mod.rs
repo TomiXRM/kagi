@@ -2227,15 +2227,18 @@ impl KagiApp {
     /// Open File History for the file currently shown in the main diff view
     /// (diff-header "History" button, 导线 #3).  Resolves the repo-relative
     /// path from the open `MainDiffView`'s source.
-    pub fn open_file_history_from_main_diff(&mut self, cx: &mut Context<Self>) {
-        // ADR-0121 B2: the view lives inside the pane entity now.
-        let Some(source) = self
-            .main_diff
-            .as_ref()
-            .map(|p| p.read(cx).view.source.clone())
-        else {
-            return;
-        };
+    /// `source` is passed in, NOT read back from `self.main_diff`: the only
+    /// caller is `MainDiffPane`'s own "History" header button, whose
+    /// `cx.listener` runs while that entity is leased — reading it here
+    /// panicked with "cannot read MainDiffPane while it is already being
+    /// updated" (regression from ADR-0121 B2, which moved the view inside the
+    /// entity while this kept reaching for it through the app). The caller
+    /// already holds the value, so hand it over instead.
+    pub fn open_file_history_from_main_diff(
+        &mut self,
+        source: MainDiffSource,
+        cx: &mut Context<Self>,
+    ) {
         let (path, origin) = match &source {
             MainDiffSource::Unstaged { path } | MainDiffSource::Staged { path } => {
                 (path.clone(), None)

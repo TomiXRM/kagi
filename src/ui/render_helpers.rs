@@ -569,12 +569,16 @@ pub(crate) fn render_diff_list<V: 'static>(
     } else {
         super::i18n::Msg::DiffViewSplit.t()
     };
-    use gpui_component::button::ButtonVariants as _;
     use gpui_component::Sizable as _;
     let mode_toggle = gpui_component::button::Button::new("diff-mode-toggle")
         .label(mode_label)
-        .ghost()
-        .xsmall()
+        // See the Back/History buttons in `main_diff_pane.rs` — ghost buttons
+        // are invisible against the header bar they sit on.
+        .outline()
+        // `small`, matching the Back/History buttons it sits beside (and
+        // `fh_header_button`): this was `xsmall`, so the one header row had
+        // two different button text sizes in it (user report).
+        .small()
         .on_click(cx.listener(|_this, _ev, _window, cx| {
             let on = !super::theme::diff_split();
             super::theme::set_diff_split(on);
@@ -632,7 +636,10 @@ pub(crate) fn render_diff_list<V: 'static>(
                 .px_3()
                 .py_1()
                 .gap_2()
-                .bg(rgb(theme().surface))
+                // Darker than the `surface` this used to be, so the outlined
+                // buttons above read as raised controls against the chrome
+                // instead of blending into it (user report).
+                .bg(rgb(theme().bg_base))
                 // ← Back button (only for the standalone main diff; the File
                 // History view embeds this diff and has its own Back).
                 .when_some(leading, |el, btn| el.child(btn))

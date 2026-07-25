@@ -8,11 +8,18 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use gpui::prelude::*;
-use gpui::{div, px, rgb, uniform_list, AnyElement, App, Context, SharedString, Window};
+use gpui::{div, px, relative, rgb, uniform_list, AnyElement, Context, SharedString, Window};
+use gpui_component::input::Input;
 
-use kagi_domain::file_history::{FileHistoryEntry, FileHistoryEntryKind};
+use kagi_domain::file_history::{CommitSummary, FileHistoryEntry, FileHistoryEntryKind};
+use kagi_ui_core::commit_header::render_commit_header;
 use kagi_ui_core::i18n::Msg;
-use kagi_ui_core::theme::{theme, MONO_FONT};
+use kagi_ui_core::theme::theme;
+
+/// Fixed top:bottom ratio for the History pane's commit-detail header vs.
+/// the commit list (user request — "3:7"; not a drag-resizable
+/// `InspectorSplit`-style divider, at least not in this v1).
+const HISTORY_HEADER_RATIO: f32 = 0.3;
 
 use crate::{
     placeholder_text, with_vertical_scrollbar, EditorWorkspaceView, MiddlePaneTab, RightPaneTab,
@@ -26,11 +33,12 @@ fn render_tab_chip(
     id: (&'static str, usize),
     label: SharedString,
     active: bool,
-    on_click: impl Fn(&mut EditorWorkspaceView, &mut Context<EditorWorkspaceView>) + 'static,
+    on_click: impl Fn(&mut EditorWorkspaceView, &mut Window, &mut Context<EditorWorkspaceView>)
+        + 'static,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
-    let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        on_click(this, cx);
+    let click = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+        on_click(this, window, cx);
     });
     div()
         .id(id)
@@ -77,14 +85,14 @@ pub(crate) fn render_right_pane_tabs(
             ("ews-right-tab", 0),
             Msg::EditorRightTabDiff.t().into(),
             view.right_tab == RightPaneTab::Diff,
-            |this, cx| this.set_right_tab(RightPaneTab::Diff, cx),
+            |this, window, cx| this.set_right_tab(RightPaneTab::Diff, window, cx),
             cx,
         ))
         .child(render_tab_chip(
             ("ews-right-tab", 1),
             Msg::EditorRightTabHistory.t().into(),
             view.right_tab == RightPaneTab::History,
-            |this, cx| this.set_right_tab(RightPaneTab::History, cx),
+            |this, window, cx| this.set_right_tab(RightPaneTab::History, window, cx),
             cx,
         ))
         .into_any_element()
@@ -110,14 +118,14 @@ pub(crate) fn render_middle_pane_tabs(
             ("ews-middle-tab", 0),
             Msg::EditorMiddleTabDiff.t().into(),
             view.middle_tab == MiddlePaneTab::Diff,
-            |this, cx| this.set_middle_tab(MiddlePaneTab::Diff, cx),
+            |this, _window, cx| this.set_middle_tab(MiddlePaneTab::Diff, cx),
             cx,
         ))
         .child(render_tab_chip(
             ("ews-middle-tab", 1),
             Msg::EditorMiddleTabSnapshot.t().into(),
             view.middle_tab == MiddlePaneTab::Snapshot,
-            |this, cx| this.set_middle_tab(MiddlePaneTab::Snapshot, cx),
+            |this, _window, cx| this.set_middle_tab(MiddlePaneTab::Snapshot, cx),
             cx,
         ))
         .into_any_element()
@@ -138,6 +146,13 @@ pub(crate) fn render_history_pane(
     if history.entries.is_empty() {
         return placeholder_text(Msg::EditorHistoryEmpty.t()).into_any_element();
     }
+
+    let selected_commit = view
+        .selected_history_commit
+        .as_deref()
+        .and_then(|hash| history.entry_by_hash(hash))
+        .and_then(|e| e.commit.as_ref());
+    let header = render_history_header(selected_commit);
 
     let entries = Arc::new(history.entries.clone());
     let row_count = entries.len();
@@ -161,12 +176,57 @@ pub(crate) fn render_history_pane(
         .min_h(px(0.)),
         false,
     );
+    // Fixed 3:7 ratio (user request), not a drag divider — both boxes use
+    // `flex_basis(relative(_)) + flex_shrink(1.)` with no explicit
+    // `flex_grow`, the same recipe `inspector.rs`'s `InspectorSplit` uses to
+    // avoid the wrapped-text-feeds-back-into-layout jitter that plain
+    // `overflow_y_scroll` directly on a flex-sized box causes.
+    let list_box = div()
+        .flex()
+        .flex_col()
+        .min_h(px(0.))
+        .flex_basis(relative(1.0 - HISTORY_HEADER_RATIO))
+        .flex_shrink(1.)
+        .child(list);
     div()
         .flex_1()
         .min_h(px(0.))
         .flex()
         .flex_col()
-        .child(list)
+        .child(header)
+        .child(list_box)
+        .into_any_element()
+}
+
+/// Top of the History pane: the selected commit's subject/meta/body via the
+/// shared `kagi_ui_core::commit_header::render_commit_header` — also used by
+/// File History's detail pane (see that function's doc comment for why Graph
+/// mode's Inspector isn't folded in too). This wrapper supplies only the
+/// Editor-specific layout: a fixed 30% box with its own inner scroll (same
+/// double-div anti-jitter technique `inspector.rs`'s `InspectorSplit` uses —
+/// `overflow_hidden` on the sized outer box, `overflow_y_scroll` on an
+/// unconstrained inner child, so wrapped text can't feed back into the flex
+/// solve).
+fn render_history_header(commit: Option<&CommitSummary>) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .min_h(px(0.))
+        .flex_basis(relative(HISTORY_HEADER_RATIO))
+        .flex_shrink(1.)
+        .overflow_hidden()
+        .px_2()
+        .py_2()
+        .border_b_1()
+        .border_color(rgb(theme().surface))
+        .child(
+            div()
+                .id("ews-history-header-scroll")
+                .size_full()
+                .min_h(px(0.))
+                .overflow_y_scroll()
+                .child(render_commit_header(commit)),
+        )
         .into_any_element()
 }
 
@@ -185,8 +245,8 @@ fn render_history_row(
     let commit = entry.commit.as_ref()?;
     let is_selected = selected.as_deref() == Some(commit.full_hash.as_str());
     let hash = commit.full_hash.clone();
-    let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        this.select_history_commit(hash.clone(), cx);
+    let click = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+        this.select_history_commit(hash.clone(), window, cx);
     });
     let row_bg = if is_selected {
         theme().selected
@@ -236,11 +296,15 @@ fn render_history_row(
     )
 }
 
-/// Center pane's Snapshot tab body: the selected commit's full read-only
-/// file text, virtualized line-by-line (same `uniform_list` technique the
-/// left file tree uses — a single un-virtualized div would choke on a large
-/// file). Deliberately never touches `editor`/`content` (the live, saveable
-/// WIP buffer) — this is a separate, read-only display.
+/// Center pane's Snapshot tab body: the selected commit's full file text via
+/// `view.snapshot_editor` (`sync_snapshot_editor`, `lib.rs`) — the same
+/// `code_editor` `InputState` widget the WIP buffer uses, so Snapshot gets
+/// the same monospace font, line numbers, and text selection/copy for free
+/// (bug report: an earlier hand-rolled `uniform_list` of styled divs had
+/// none of the three). Deliberately a SEPARATE `InputState` from `editor`
+/// (the live, saveable WIP buffer) — typing here is inert, never read back
+/// or persisted (see `snapshot_editor`'s doc comment for why: gpui-component
+/// has no read-only-but-selectable input mode in this version).
 pub(crate) fn render_snapshot_pane(
     view: &EditorWorkspaceView,
     _cx: &mut Context<EditorWorkspaceView>,
@@ -248,55 +312,32 @@ pub(crate) fn render_snapshot_pane(
     if view.snapshot_loading {
         return placeholder_text(Msg::EditorWorkspaceLoading.t()).into_any_element();
     }
+    // Bug report: this used to also show "Loading…" here, forever — but a
+    // finished load that found nothing (e.g. this commit predates a rename
+    // and the path didn't exist yet) is a distinct, resolved state, not a
+    // stuck spinner.
     let Some(snapshot) = view.snapshot.as_ref() else {
-        return placeholder_text(Msg::EditorWorkspaceLoading.t()).into_any_element();
+        return placeholder_text(Msg::EditorSnapshotUnavailable.t()).into_any_element();
     };
     if snapshot.is_binary {
         return placeholder_text(Msg::EditorWorkspaceBinary.t()).into_any_element();
     }
-    let Some(content) = snapshot.content.as_ref() else {
+    if snapshot.content.is_none() {
         return placeholder_text(Msg::EditorWorkspaceDeleted.t()).into_any_element();
+    }
+    let Some(editor) = view.snapshot_editor.clone() else {
+        return placeholder_text(Msg::EditorWorkspaceLoading.t()).into_any_element();
     };
-
-    let lines = Arc::new(content.lines().map(SharedString::from).collect::<Vec<_>>());
-    let row_count = lines.len();
-    let scroll_handle = view.snapshot_scroll.clone();
-    let scrollbar_handle = scroll_handle.clone();
-    // No entity access needed per row (plain text, no click handler) — a
-    // raw closure is enough, unlike the History list's `cx.processor` (whose
-    // rows need `cx.listener` for the select-commit click).
-    let list = with_vertical_scrollbar(
-        "ews-snapshot-scroll",
-        &scrollbar_handle,
-        uniform_list(
-            "ews-snapshot-list",
-            row_count,
-            move |range: Range<usize>, _window: &mut Window, _cx: &mut App| {
-                range
-                    .filter_map(|i| lines.get(i).cloned())
-                    .map(|line| {
-                        div()
-                            .w_full()
-                            .px_2()
-                            .font_family(MONO_FONT)
-                            .text_sm()
-                            .text_color(rgb(theme().text_main))
-                            .child(line)
-                            .into_any_element()
-                    })
-                    .collect::<Vec<_>>()
-            },
-        )
-        .track_scroll(&scroll_handle)
-        .flex_1()
-        .min_h(px(0.)),
-        false,
-    );
     div()
+        .id("ews-snapshot")
         .flex_1()
         .min_h(px(0.))
-        .flex()
-        .flex_col()
-        .child(list)
+        .w_full()
+        .child(
+            Input::new(&editor)
+                .appearance(false)
+                .bordered(false)
+                .h_full(),
+        )
         .into_any_element()
 }

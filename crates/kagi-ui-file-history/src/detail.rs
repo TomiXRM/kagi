@@ -83,19 +83,17 @@ pub(crate) fn render_fh_detail_pane(
 
     if let Some(c) = entry.commit.as_ref() {
         let full = c.full_hash.clone();
+        // Subject + body: shared with the Editor Workspace's History pane
+        // header (`kagi_ui_core::commit_header`) instead of a plain
+        // unwrapped "Message" line() row — the extra hash/author/committer
+        // rows below stay as their own line()s since they show more detail
+        // (full hash, author email, committer name) than the shared header's
+        // compact meta line.
         pane = pane
-            .child(
-                div()
-                    .text_base()
-                    .text_color(rgb(theme().text_main))
-                    .child(SharedString::from(c.subject.clone())),
-            )
+            .child(kagi_ui_core::commit_header::render_commit_header(Some(c)))
             .child(line("Full Hash", c.full_hash.clone()))
             .child(line("Short Hash", c.short_hash.clone()));
 
-        if let Some(body) = c.body.as_ref() {
-            pane = pane.child(line("Message", body.clone()));
-        }
         pane = pane
             .child(line(
                 "Author",

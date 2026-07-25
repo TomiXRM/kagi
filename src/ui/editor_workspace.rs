@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 
 use gpui::prelude::*;
-use gpui::{Context, Entity, SharedString};
+use gpui::{Context, Entity, SharedString, Window};
 
 pub use kagi_ui_editor::*;
 
@@ -97,9 +97,17 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
+        // T-BP-003: the crate has no other way to reach `root_focus` (it
+        // can't see `KagiApp`) — cloned in once at construction so
+        // `set_right_tab`/`select_history_commit` can reclaim it after the
+        // code-editor `Input` steals window focus on click (see the field's
+        // doc comment on `EditorWorkspaceView` for the full bug story).
+        let Some(root_focus) = self.root_focus.clone() else {
+            return;
+        };
         self.close_file_history();
         self.close_ecosystem_view();
-        let view = cx.new(|_| EditorWorkspaceView::new(repo_path, editor_hooks()));
+        let view = cx.new(|_| EditorWorkspaceView::new(repo_path, editor_hooks(), root_focus));
         cx.subscribe(&view, Self::on_editor_workspace_event)
             .detach();
         self.editor_workspace = Some(view.clone());
@@ -153,25 +161,11 @@ impl KagiApp {
             EditorWorkspaceEvent::HistoryRequested { req, path } => {
                 self.start_editor_history_load(view, *req, path.clone(), cx);
             }
-            EditorWorkspaceEvent::HistoryDiffRequested {
-                req,
-                path,
-                commit_hash,
-            } => {
-                self.start_editor_history_diff_load(
-                    view,
-                    *req,
-                    path.clone(),
-                    commit_hash.clone(),
-                    cx,
-                );
+            EditorWorkspaceEvent::HistoryDiffRequested { req, commit_hash } => {
+                self.start_editor_history_diff_load(view, *req, commit_hash.clone(), cx);
             }
-            EditorWorkspaceEvent::SnapshotRequested {
-                req,
-                path,
-                commit_hash,
-            } => {
-                self.start_editor_snapshot_load(view, *req, path.clone(), commit_hash.clone(), cx);
+            EditorWorkspaceEvent::SnapshotRequested { req, commit_hash } => {
+                self.start_editor_snapshot_load(view, *req, commit_hash.clone(), cx);
             }
         }
     }
@@ -282,33 +276,43 @@ impl KagiApp {
     }
 
     /// `Backend` half of the crate's History-commit diff load
-    /// (`HistoryDiffRequested` → `seed_history_diff`): `path`'s diff at
-    /// `commit_hash`, built into a `MainDiffView` (mirrors
-    /// `start_editor_diff_load`, reusing `MainDiffSource::Unstaged` the same
-    /// way `FileHistoryView::load_diff` already does for a per-commit diff —
-    /// see `src/ui/file_history.rs`).
+    /// (`HistoryDiffRequested` → `seed_history_diff`): `commit_hash`'s diff,
+    /// built into a `MainDiffView` (mirrors `start_editor_diff_load`,
+    /// reusing `MainDiffSource::Unstaged` the same way
+    /// `FileHistoryView::load_diff` already does for a per-commit diff).
+    ///
+    /// The entry (and therefore its OWN historical path — never today's
+    /// current path, which may differ across a rename) is resolved from
+    /// `view.history` here via `FileHistory::entry_by_hash`, and the actual
+    /// diff computation is `load_history_entry_file_diff`
+    /// (`src/ui/file_history.rs`) — the same function File History's own
+    /// `fh_load_diff` uses, so this logic is maintained in exactly one place.
     fn start_editor_history_diff_load(
         &mut self,
         view: Entity<EditorWorkspaceView>,
         req: u64,
-        path: PathBuf,
         commit_hash: String,
         cx: &mut Context<Self>,
     ) {
+        let Some(entry) = view
+            .read(cx)
+            .history
+            .as_ref()
+            .and_then(|h| h.entry_by_hash(&commit_hash))
+            .cloned()
+        else {
+            return;
+        };
         let repo_path = view.read(cx).repo_path.clone();
-        let bg_path = path.clone();
-        let bg_hash = commit_hash.clone();
+        let path = entry.change.path_after.clone();
         let task = cx.background_spawn(async move {
-            let id = kagi_git::CommitId(bg_hash);
-            kagi_git::Backend::open(&repo_path)
-                .ok()
-                .and_then(|repo| repo.commit_file_diff(&id, &bg_path).ok())
+            super::file_history::load_history_entry_file_diff(&repo_path, &entry)
         });
         let view = view.downgrade();
         cx.spawn(async move |_app, acx| {
             let file_diff = task.await;
             let _ = view.update(acx, |v, cx| {
-                let diff = file_diff.map(|d| {
+                let diff = file_diff.and_then(|r| r.ok()).map(|d| {
                     Box::new(build_main_diff_view(
                         &d,
                         &path,
@@ -316,37 +320,48 @@ impl KagiApp {
                         MainDiffSource::Unstaged { path: path.clone() },
                     )) as Box<dyn std::any::Any>
                 });
-                v.seed_history_diff(req, &path, &commit_hash, diff, cx);
+                v.seed_history_diff(req, &commit_hash, diff, cx);
             });
         })
         .detach();
     }
 
     /// `Backend` half of the crate's Snapshot load (`SnapshotRequested` →
-    /// `seed_snapshot`): `path`'s full text content as of `commit_hash`.
+    /// `seed_snapshot`): `commit_hash`'s full text content. Same
+    /// entry-resolution-by-hash as `start_editor_history_diff_load` above —
+    /// no File History equivalent to share this specific Backend call with
+    /// (File History has no Snapshot tab), but the path still comes from
+    /// the entry, not `view.open_path`.
     fn start_editor_snapshot_load(
         &mut self,
         view: Entity<EditorWorkspaceView>,
         req: u64,
-        path: PathBuf,
         commit_hash: String,
         cx: &mut Context<Self>,
     ) {
+        let Some(entry) = view
+            .read(cx)
+            .history
+            .as_ref()
+            .and_then(|h| h.entry_by_hash(&commit_hash))
+            .cloned()
+        else {
+            return;
+        };
         let repo_path = view.read(cx).repo_path.clone();
-        let bg_path = path.clone();
         let bg_hash = commit_hash.clone();
         let task = cx.background_spawn(async move {
             let id = kagi_git::CommitId(bg_hash);
-            kagi_git::Backend::open(&repo_path)
-                .ok()
-                .and_then(|repo| repo.file_content_at_commit(&id, &bg_path).ok().flatten())
+            kagi_git::Backend::open(&repo_path).ok().and_then(|repo| {
+                repo.file_content_at_commit(&id, &entry.change.path_after)
+                    .ok()
+                    .flatten()
+            })
         });
         let view = view.downgrade();
         cx.spawn(async move |_app, acx| {
             let result = task.await;
-            let _ = view.update(acx, |v, cx| {
-                v.seed_snapshot(req, &path, &commit_hash, result, cx)
-            });
+            let _ = view.update(acx, |v, cx| v.seed_snapshot(req, &commit_hash, result, cx));
         })
         .detach();
     }
@@ -379,10 +394,25 @@ impl KagiApp {
 
     /// Root ↑/↓ handler branch for the Editor workspace: step the file
     /// selection on the entity (normal parent→child `update`; the entity is
-    /// not leased here).
-    pub fn step_editor_ws_selection(&mut self, delta: i32, cx: &mut Context<Self>) {
+    /// not leased here) — or, while the right pane is on the History tab
+    /// (T-WS-EDITOR-008 user report), step the commit selection there
+    /// instead. `right_tab` is a cheap high-level mode check, the same shape
+    /// `render.rs`'s root handler already uses one level up (file-history
+    /// overlay vs Editor mode vs main diff vs commit list).
+    pub fn step_editor_ws_selection(
+        &mut self,
+        delta: i32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(ev) = self.editor_workspace.clone() {
-            ev.update(cx, |v, cx| v.step_selection(delta, cx));
+            ev.update(cx, |v, cx| {
+                if v.right_tab == RightPaneTab::History {
+                    v.step_history_selection(delta, window, cx);
+                } else {
+                    v.step_selection(delta, cx);
+                }
+            });
         }
     }
 

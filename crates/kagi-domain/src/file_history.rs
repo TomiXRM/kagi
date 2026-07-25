@@ -24,6 +24,19 @@ pub struct FileHistory {
     pub entries: Vec<FileHistoryEntry>,
 }
 
+impl FileHistory {
+    /// The entry whose commit has `hash` as its full SHA, if any.
+    ///
+    /// Callers needing that commit's OWN historical path must read
+    /// `entry.change.path_after` from the result — never assume it equals
+    /// `self.current_path` (a rename between then and now means it won't).
+    pub fn entry_by_hash(&self, hash: &str) -> Option<&FileHistoryEntry> {
+        self.entries
+            .iter()
+            .find(|e| e.commit.as_ref().is_some_and(|c| c.full_hash == hash))
+    }
+}
+
 /// A single row in the history list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileHistoryEntry {
@@ -92,4 +105,66 @@ pub struct FileSnapshotContent {
     /// `None` when the blob is binary (no text to display).
     pub content: Option<String>,
     pub is_binary: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn commit_entry(hash: &str, path_after: &str) -> FileHistoryEntry {
+        FileHistoryEntry {
+            kind: FileHistoryEntryKind::Commit,
+            commit: Some(CommitSummary {
+                full_hash: hash.to_string(),
+                short_hash: hash[..7].to_string(),
+                subject: "subject".to_string(),
+                body: None,
+                author_name: "Test".to_string(),
+                author_email: "test@example.com".to_string(),
+                author_date: "2026-01-01T00:00:00+09:00".to_string(),
+                committer_name: "Test".to_string(),
+                committer_date: "2026-01-01T00:00:00+09:00".to_string(),
+            }),
+            change: FileChangeSummary {
+                change_type: FileChangeType::Modified,
+                path_before: None,
+                path_after: PathBuf::from(path_after),
+                insertions: Some(1),
+                deletions: Some(1),
+                is_binary: false,
+            },
+        }
+    }
+
+    /// Regression test for the bug this method exists to prevent: a commit
+    /// that predates a rename must resolve to ITS OWN path, not the file's
+    /// current one — a caller that instead assumed `current_path` for every
+    /// entry (as the Editor Workspace's History tab originally did) would
+    /// look up the wrong tree path and silently find nothing.
+    #[test]
+    fn entry_by_hash_resolves_the_pre_rename_path() {
+        let history = FileHistory {
+            current_path: PathBuf::from("new.rs"),
+            entries: vec![
+                commit_entry("aaaa000post", "new.rs"),
+                commit_entry("bbbb111pre", "old.rs"),
+            ],
+        };
+
+        let post = history.entry_by_hash("aaaa000post").expect("post entry");
+        assert_eq!(post.change.path_after, PathBuf::from("new.rs"));
+
+        let pre = history.entry_by_hash("bbbb111pre").expect("pre entry");
+        assert_eq!(pre.change.path_after, PathBuf::from("old.rs"));
+        assert_ne!(pre.change.path_after, history.current_path);
+    }
+
+    #[test]
+    fn entry_by_hash_unknown_hash_returns_none() {
+        let history = FileHistory {
+            current_path: PathBuf::from("new.rs"),
+            entries: vec![commit_entry("aaaa000post", "new.rs")],
+        };
+        assert!(history.entry_by_hash("does-not-exist").is_none());
+    }
 }

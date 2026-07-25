@@ -8,6 +8,7 @@
 #[macro_use]
 pub mod klog;
 
+pub mod commit_header;
 pub mod divider;
 pub mod file_tree;
 pub mod fonts;

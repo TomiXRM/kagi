@@ -160,6 +160,10 @@ pub enum Msg {
     DiffViewSplit,
     /// ADR-0124: diff-header toggle tooltip → switch back to unified.
     DiffViewUnified,
+    /// `kagi_ui_core::commit_header::render_commit_header`'s placeholder
+    /// before any commit is selected — shared by the Editor Workspace's
+    /// History pane and File History's detail pane.
+    CommitHeaderSelectPrompt,
 
     // ── Placeholder / unimplemented menu reasons ────────────────────
     CloneUnimplemented,
@@ -572,6 +576,9 @@ pub enum Msg {
     /// Right-pane History tab placeholder when the file has no commit
     /// history.
     EditorHistoryEmpty,
+    /// Snapshot tab placeholder when the load finished but found nothing
+    /// (e.g. the path didn't exist yet at that commit).
+    EditorSnapshotUnavailable,
 
     // ── Editor Workspace tree context menu (T-WS-EDITOR-007) ────
     /// File/dir row: rename.
@@ -654,6 +661,8 @@ impl Msg {
             (Ja, DiffViewSplit) => "横並びで表示",
             (En, DiffViewUnified) => "Unified view",
             (Ja, DiffViewUnified) => "1カラムで表示",
+            (En, CommitHeaderSelectPrompt) => "Select a commit to see its details.",
+            (Ja, CommitHeaderSelectPrompt) => "コミットを選択すると詳細が表示されます。",
 
             // ── Placeholders ────────────────────────────────────────
             (En, CloneUnimplemented) => "clone is not implemented yet",
@@ -1229,6 +1238,8 @@ impl Msg {
             (Ja, EditorMiddleTabSnapshot) => "スナップショット",
             (En, EditorHistoryEmpty) => "No history for this file.",
             (Ja, EditorHistoryEmpty) => "このファイルの変更履歴はありません。",
+            (En, EditorSnapshotUnavailable) => "Content not available for this commit.",
+            (Ja, EditorSnapshotUnavailable) => "このコミット時点のコンテンツは取得できません。",
 
             // ── Editor Workspace tree context menu (T-WS-EDITOR-007) ──
             (En, EditorTreeRename) => "Rename…",

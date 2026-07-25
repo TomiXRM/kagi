@@ -24,6 +24,8 @@ use gpui_component::Sizable as _;
 
 use kagi_git::{find_stat, parse_coauthors, ChangeKind, CommitId, FileDiffStat, FileStatus};
 
+use kagi_ui_core::file_tree::status_badge;
+
 use super::{
     avatar::{avatar_color, avatar_initial},
     commit_list::{BadgeKind, RefBadge},
@@ -151,7 +153,7 @@ pub fn render_inspector(
                         change,
                     } => {
                         let indent = (*depth as f32) * 12.0;
-                        let (badge_char, badge_color) = change_badge(change.as_ref());
+                        let (badge_char, badge_color, _) = status_badge(change.as_ref(), false);
                         let fi = *file_index;
                         let stat =
                             stat_for_index(truncated_files.as_ref(), changed_diffstat.as_ref(), fi);
@@ -212,7 +214,7 @@ pub fn render_inspector(
                 .iter()
                 .enumerate()
                 .map(|(fi, fs)| {
-                    let (badge_char, badge_color) = change_badge(Some(&fs.change));
+                    let (badge_char, badge_color, _) = status_badge(Some(&fs.change), false);
                     let path_text = SharedString::from(fs.path.to_string_lossy().into_owned());
                     let stat = changed_diffstat
                         .as_ref()
@@ -965,18 +967,6 @@ fn stat_for_index<'a>(
 }
 
 /// Change-kind badge char and colour. `None` (T-WS-EDITOR-004: an unmodified
-/// file in the Editor Workspace's `TreeSource::All`) renders a blank badge.
-fn change_badge(change: Option<&ChangeKind>) -> (&'static str, u32) {
-    match change {
-        Some(ChangeKind::Added) => ("A", theme().change_added),
-        Some(ChangeKind::Modified) => ("M", theme().change_modified),
-        Some(ChangeKind::Deleted) => ("D", theme().change_deleted),
-        Some(ChangeKind::Renamed { .. }) => ("R", theme().change_renamed),
-        Some(ChangeKind::TypeChange) => ("T", theme().change_typechange),
-        None => ("", theme().text_muted),
-    }
-}
-
 /// Sort key for badge priority: HeadBranch=0, Branch=1, Tag=2, Remote=3.
 fn badge_priority(kind: &BadgeKind) -> u8 {
     match kind {

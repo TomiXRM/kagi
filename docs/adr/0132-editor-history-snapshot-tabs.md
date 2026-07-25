@@ -88,6 +88,47 @@ commit diff (not a new `Commit`-shaped variant) — the same choice
 `FileHistoryView::load_diff` already made for its own per-commit diff, since
 neither embedding wires up `MainDiffSource`'s image-preview stepping context.
 
+## What ended up shared with File History (revised after review)
+
+The first cut of this pane rendered its own commit rows and reimplemented
+the surrounding behaviour. That was the wrong default and it showed: five
+successive user reports were each a variant of "File History already does
+this" — an older commit predating a rename resolved against today's path
+and displayed nothing; no A/M/D/R badge; no commit subject/body header; no
+author/co-author avatars; the UI font in code panes. Each was fixed by
+going back and sharing the thing that already existed.
+
+What is shared now, and by whom:
+
+| piece | home | consumers |
+|---|---|---|
+| `FileHistory::entry_by_hash` | `kagi-domain::file_history` | both panes |
+| `load_history_entry_file_diff` | `src/ui/file_history.rs` | both panes |
+| `render_commit_header` (subject/meta/body/co-authors + avatars) | `kagi-ui-core::commit_header` | both panes |
+| `entry_badge` / `change_type_badge` / `change_type_label` | `kagi-ui-core::change_badge` | both panes |
+| `avatar_color` / `avatar_initial` / `AvatarImages` | `kagi-ui-core::avatar` | both panes + bin |
+
+File History gained from the consolidation too — its detail pane now shows
+the richer shared header (reflowed body, co-authors, avatars) instead of a
+plain "Message" row.
+
+What deliberately stays separate is only the list/row *layout* (~149 lines
+here vs. ~160 in File History): a ~380px two-line sidebar card vs. a
+full-width six-column table, and — structurally, not just cosmetically —
+File History owns its diff pane inline while this pane's list drives a
+separate center pane with Diff/Snapshot tabs. Collapsing them would mean
+mode-flagging away File History's header, detail sub-pane, split divider
+and diff slot: one component doing two jobs by conditionals, which ages
+worse than two small renderers over shared primitives.
+
+**Guidance for the next pane:** when a new pane needs something an existing
+pane already renders, extract the shared piece *first* and have both
+consume it. Do not write a second renderer and back-port features as bug
+reports arrive. ADR-0121's rule that sibling `kagi-ui-*` crates cannot
+depend on each other makes duplication the path of least resistance — which
+is exactly why the extraction into `kagi-ui-core` has to be a deliberate
+first step rather than a cleanup afterwards.
+
 ## Consequences
 
 - `Backend::blob_bytes_at` and `file_content_at_commit` now share one
@@ -95,5 +136,12 @@ neither embedding wires up `MainDiffSource`'s image-preview stepping context.
 - The center pane gained a second, independent diff surface
   (`history_diff`); any future third diff embedding in this entity has a
   template to copy rather than improvising a new opacity trick.
-- No new ADR-0089 changes — the center-pane File History takeover is
-  unaffected by this work.
+- ADR-0089's center-pane File History takeover keeps its behaviour, but its
+  detail pane and badge helpers now come from `kagi-ui-core` (shims left in
+  place, so `kagi_ui_file_history::entry_badge` etc. still resolve).
+- `render_diff_list` sets `MONO_FONT` on the diff body: gpui-component's
+  `code_editor()` never applies a monospace face (its `mono_font_family` is
+  only read by that crate's own inspector and markdown blocks), so every
+  code surface in kagi must set the font itself. Known remaining duplicate:
+  `src/ui/inspector.rs::change_badge` is a third copy of
+  `kagi_ui_core::file_tree::status_badge` — flagged, not yet merged.

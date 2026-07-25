@@ -682,24 +682,46 @@ pub(crate) fn render_diff_list<V: 'static>(
             // `gpui::ListState` (src/scroll/scrollbar.rs) — no local newtype
             // needed, unlike `UniformListScrollHandle`'s wrapper elsewhere.
             let scrollbar_handle = scroll_handle.clone();
-            with_vertical_scrollbar(
-                "main-diff-list-scroll",
-                &scrollbar_handle,
-                gpui::list(scroll_handle, move |ix, _window, _cx| {
-                    // ADR-0124: split mode renders paired cells; unified keeps
-                    // the original single-column rows.
-                    match &srows {
-                        Some(s) => {
-                            super::diff_split::render_main_diff_split_row(&rows_for_list, s, ix)
-                        }
-                        None => render_main_diff_row(&rows_for_list, ix),
-                    }
-                })
+            // User report: diff text rendered in the UI font (the root div's
+            // `UI_FONT`), which is proportional — wrong for code, and it also
+            // broke the `format!("{:5}", n)` line-number gutters, which only
+            // line up in a monospace face. Set once here on the list BODY
+            // (GPUI text styles cascade, so every row and both render modes
+            // inherit it) rather than per-row; the header above keeps the UI
+            // font, the same UI-chrome-over-mono-code split the conflict
+            // editor uses.
+            //
+            // `MONO_FONT`, not `terminal::pick_font_family()`: the latter
+            // prefers a Nerd Font for the terminal's icon glyphs, which a diff
+            // has no use for, and the diff sits directly beside code rendered
+            // by `InputState::code_editor` (the Editor Workspace's Diff ⇄
+            // Snapshot tabs swap in the same pane), which draws with
+            // gpui-component's `mono_font_family` — i.e. `MONO_FONT`. Matching
+            // the neighbour matters more than the Nerd Font preference here.
+            div()
                 .flex_1()
-                .min_h(px(0.)),
-                true,
-            )
-            .into_any_element()
+                .min_h(px(0.))
+                .flex()
+                .flex_col()
+                .font_family(super::MONO_FONT)
+                .child(with_vertical_scrollbar(
+                    "main-diff-list-scroll",
+                    &scrollbar_handle,
+                    gpui::list(scroll_handle, move |ix, _window, _cx| {
+                        // ADR-0124: split mode renders paired cells; unified keeps
+                        // the original single-column rows.
+                        match &srows {
+                            Some(s) => {
+                                super::diff_split::render_main_diff_split_row(&rows_for_list, s, ix)
+                            }
+                            None => render_main_diff_row(&rows_for_list, ix),
+                        }
+                    })
+                    .flex_1()
+                    .min_h(px(0.)),
+                    true,
+                ))
+                .into_any_element()
         })
 }
 

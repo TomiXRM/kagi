@@ -9,6 +9,7 @@
 pub mod klog;
 
 pub mod avatar;
+pub mod change_badge;
 pub mod commit_header;
 pub mod divider;
 pub mod file_tree;

@@ -2740,6 +2740,13 @@ fn render_center_pane(
             .flex_1()
             .min_h(px(0.))
             .w_full()
+            // gpui-component's `code_editor()` does NOT apply a monospace
+            // face — `mono_font_family` is only consumed by its own debug
+            // inspector and markdown code blocks, so an `Input` just inherits
+            // whatever the ancestor sets, i.e. kagi's root `UI_FONT` (Inter).
+            // Code needs a fixed-pitch face (user report), so set it on the
+            // container and let it cascade into the widget.
+            .font_family(theme::MONO_FONT)
             .child(
                 // T-WS-EDITOR-002: editable now — `disabled(true)` gated
                 // typing/paste/cut/undo behind gpui-component 0.5.1's

@@ -305,6 +305,16 @@ pub fn build_terminal_view(
 /// Order: RobotoMono Nerd Font → JetBrainsMono Nerd Font → Hack Nerd Font →
 /// bundled JetBrains Mono.
 pub(crate) fn pick_font_family() -> String {
+    // Memoized: the uncached probe below `read_dir`s up to 6 font directories
+    // per candidate family, and callers are render-path (the conflict editor
+    // calls it ~6x per frame; the diff list once per pane). Installed fonts
+    // don't change under a running process, so resolving once is correct as
+    // well as cheap.
+    static CACHED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CACHED.get_or_init(pick_font_family_uncached).clone()
+}
+
+fn pick_font_family_uncached() -> String {
     // Windows ships Consolas (a good monospace); the Nerd Font dirs below are
     // Unix-only, so resolve directly.
     #[cfg(target_os = "windows")]

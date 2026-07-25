@@ -23,11 +23,9 @@ use std::rc::Rc;
 use gpui::{AnyView, Context, EventEmitter, Pixels, Point, SharedString};
 
 use kagi_domain::commit::CommitId;
-use kagi_domain::file_history::{
-    FileChangeType, FileHistory, FileHistoryEntry, FileHistoryEntryKind,
-};
+use kagi_domain::file_history::{FileHistory, FileHistoryEntry, FileHistoryEntryKind};
 use kagi_ui_core::klog;
-use kagi_ui_core::theme::{self, theme};
+use kagi_ui_core::theme;
 
 pub use render::render_file_history_view;
 
@@ -341,42 +339,14 @@ impl FileHistoryView {
     }
 }
 
-/// The one-letter change badge + its colour for a history entry.
-///
-/// WIP rows render an orange `WIP`-style `●`; commit rows use the per-type
-/// letter (A/M/D/R/C) coloured from the theme's change palette.
-pub fn entry_badge(entry: &FileHistoryEntry) -> (&'static str, u32) {
-    if entry.kind == FileHistoryEntryKind::Wip {
-        return ("●", theme().color_warning);
-    }
-    change_type_badge(entry.change.change_type)
-}
-
-/// Map a [`FileChangeType`] to its display letter + colour.
-pub fn change_type_badge(ct: FileChangeType) -> (&'static str, u32) {
-    let t = theme();
-    match ct {
-        FileChangeType::Added => ("A", t.change_added),
-        FileChangeType::Modified => ("M", t.change_modified),
-        FileChangeType::Deleted => ("D", t.change_deleted),
-        FileChangeType::Renamed => ("R", t.change_renamed),
-        // Copied has no dedicated theme colour; reuse the rename (purple/blue).
-        FileChangeType::Copied => ("C", t.change_renamed),
-        FileChangeType::Unknown => ("?", t.text_muted),
-    }
-}
-
-/// Human label for a change type (used in the diff banner / detail pane).
-pub fn change_type_label(ct: FileChangeType) -> &'static str {
-    match ct {
-        FileChangeType::Added => "Added",
-        FileChangeType::Modified => "Modified",
-        FileChangeType::Deleted => "Deleted",
-        FileChangeType::Renamed => "Renamed",
-        FileChangeType::Copied => "Copied",
-        FileChangeType::Unknown => "Changed",
-    }
-}
+// ADR-0121: the change-badge trio (`entry_badge` / `change_type_badge` /
+// `change_type_label`) moved verbatim to `kagi-ui-core` so
+// `kagi-ui-editor`'s History tab can badge its own commit rows with the same
+// letters and colours — sibling pane crates can't depend on each other, only
+// on `kagi-ui-core`. Re-exported here so existing
+// `kagi_ui_file_history::entry_badge` paths keep resolving (same shim recipe
+// as `theme`/`i18n`/`settings` in the bin).
+pub use kagi_ui_core::change_badge::{change_type_badge, change_type_label, entry_badge};
 
 /// Parse an ISO-8601 / RFC-3339 timestamp (`git --date=iso-strict`, e.g.
 /// `2026-01-02T15:04:05+09:00`) into seconds since the Unix epoch.

@@ -13,9 +13,10 @@ use gpui_component::input::Input;
 
 use kagi_domain::file_history::{CommitSummary, FileHistoryEntry, FileHistoryEntryKind};
 use kagi_ui_core::avatar::AvatarImages;
+use kagi_ui_core::change_badge::entry_badge;
 use kagi_ui_core::commit_header::render_commit_header;
 use kagi_ui_core::i18n::Msg;
-use kagi_ui_core::theme::theme;
+use kagi_ui_core::theme::{self, theme};
 
 /// Fixed top:bottom ratio for the History pane's commit-detail header vs.
 /// the commit list (user request — "3:7"; not a drag-resizable
@@ -262,36 +263,60 @@ fn render_history_row(
     // treatment already; this row just isn't wide enough for it).
     let date = commit.author_date.get(0..10).unwrap_or("").to_string();
 
+    // User report: this list showed no change-type marker at all, unlike
+    // every other file list in the app. Same `entry_badge` File History's
+    // rows use (moved to `kagi-ui-core` so this crate can reach it), in a
+    // fixed-width leading column so the two text lines stay aligned down the
+    // list regardless of letter.
+    let (badge, badge_color) = entry_badge(entry);
+
     Some(
         div()
             .id(("ews-history-row", ix))
             .flex()
-            .flex_col()
+            .flex_row()
+            .items_start()
             .w_full()
             .px_2()
             .py_1()
-            .gap_px()
+            .gap_1()
             .bg(rgb(row_bg))
             .cursor_pointer()
             .when(!is_selected, |el| el.hover(|s| s.bg(rgb(theme().surface))))
             .on_click(click)
             .child(
                 div()
+                    .w(theme::scaled_px(14.))
+                    .flex_shrink_0()
                     .text_sm()
-                    .text_color(rgb(theme().text_main))
-                    .truncate()
-                    .child(SharedString::from(commit.subject.clone())),
+                    .text_color(rgb(badge_color))
+                    .child(SharedString::from(badge)),
             )
             .child(
                 div()
+                    .flex_1()
+                    .min_w(px(0.))
                     .flex()
-                    .flex_row()
-                    .gap_2()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(commit.short_hash.clone()))
-                    .child(SharedString::from(commit.author_name.clone()))
-                    .child(SharedString::from(date)),
+                    .flex_col()
+                    .gap_px()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(theme().text_main))
+                            .truncate()
+                            .child(SharedString::from(commit.subject.clone())),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .text_xs()
+                            .text_color(rgb(theme().text_muted))
+                            .child(SharedString::from(commit.short_hash.clone()))
+                            .child(SharedString::from(commit.author_name.clone()))
+                            .child(SharedString::from(date)),
+                    ),
             )
             .into_any_element(),
     )
@@ -334,6 +359,9 @@ pub(crate) fn render_snapshot_pane(
         .flex_1()
         .min_h(px(0.))
         .w_full()
+        // Same reason as the WIP editor's container in `lib.rs`: `code_editor()`
+        // inherits its font, and the root sets the proportional `UI_FONT`.
+        .font_family(theme::MONO_FONT)
         .child(
             Input::new(&editor)
                 .appearance(false)

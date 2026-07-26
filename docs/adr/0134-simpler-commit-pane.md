@@ -105,6 +105,29 @@ pins the icons to the vertical centre of a tall multi-line box, and absolute
 positioning would let a long body run underneath them. A real stacked row cannot
 overlap by construction.
 
+### ✨ always overwrites
+
+Generating used to refuse when the message was non-empty and report "message
+not empty — kept your text". Clicking the button is an explicit request, so the
+silent refusal read as the button being broken (user report). Both the
+rule-based and LLM paths now replace whatever is in the inputs.
+
+The generation-counter guard stays: a result whose `gen` no longer matches has
+been superseded by a newer click and is still dropped. Only the
+"is it still empty?" check is gone.
+
+### The Template toggle
+
+A `commit.template` is opt-out per user, not per repo: the toggle at the bottom
+left of the body box adds or removes the template block, and the choice is
+persisted (`commit_template_enabled`, absent = on). It is only rendered when the
+user actually has a template configured.
+
+Its on/off state is *derived from the body text* (does it contain a comment
+line?) rather than tracked in a flag, so it cannot disagree with what is
+actually in the box after the user edits or deletes the comments by hand. The
+raw template is kept on the entity so switching back on can restore it.
+
 ### Text selection is an accent tint, not the row-highlight colour
 
 `gc.colors.selection` was `theme().selected` — the list-row highlight, which is
@@ -137,7 +160,9 @@ now follows `i18n::lang()`; an explicitly saved value still wins.
   Conventional Commits, and nothing replaced that selector. Conversely
   `want_body` is now always true — there is always a body input to fill, where
   before it was only requested in template mode.
-- The footer is five elements: subject, body, icon row, optional unstaged
-  warning, button.
+- The footer is four elements: subject, body (with the template toggle and icon
+  actions inside it), an optional status/warning line, and the button.
+- The transient smart-commit status is its own full-width line. Inside the
+  right-aligned icon group it pushed the icons sideways as the text appeared.
 - `parse_coauthors` gains a second caller in spirit (the picker writes what the
   inspector reads), so the trailer format is now load-bearing in both directions.

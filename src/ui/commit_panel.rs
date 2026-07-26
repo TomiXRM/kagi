@@ -17,6 +17,15 @@ use gpui_component::input::InputState;
 use kagi_git::{Backend, ChangeKind, CommitPreview, FileDiffStat, FileStatus};
 use kagi_ui_core::i18n::Msg;
 
+/// settings.json key: whether the body is seeded from `commit.template`.
+/// Absent means yes — a configured template is opt-out, not opt-in.
+const KEY_COMMIT_TEMPLATE: &str = "commit_template_enabled";
+
+/// Whether a configured `commit.template` should seed the body on open.
+pub fn template_enabled() -> bool {
+    crate::ui::settings::read_setting(KEY_COMMIT_TEMPLATE).as_deref() != Some("0")
+}
+
 use crate::ui::file_tree::{self, TreeRow};
 use crate::ui::smart_commit::SmartCommitState;
 use crate::ui::KagiApp;
@@ -269,6 +278,9 @@ pub struct CommitPanelView {
     /// Co-author picker: `Some(candidates)` while the popover is open. Loaded
     /// on click rather than per-frame — it walks recent history.
     pub coauthor_menu: Option<Vec<kagi_git::AuthorCandidate>>,
+    /// The user's `commit.template`, verbatim, or `None` when unset. Kept so the
+    /// footer's Template toggle can put it back after it has been removed.
+    pub commit_template: Option<String>,
     /// A smart-commit message generated on a background thread, queued for the
     /// next render to push into the input (which needs `&mut Window`).
     pub pending_smart_msg: Option<String>,
@@ -321,6 +333,7 @@ impl CommitPanelView {
             title_input: None,
             body_input: None,
             coauthor_menu: None,
+            commit_template: None,
             pending_smart_msg: None,
             last_draft_value: String::new(),
             draft_save_gen: 0,
@@ -369,6 +382,50 @@ impl CommitPanelView {
         };
         let body = kagi_domain::message::strip_template_comments(&read(&self.body_input));
         kagi_git::join_title_body(&read(&self.title_input), &body)
+    }
+
+    /// Whether the body currently carries the template's comment block.
+    ///
+    /// Derived from the text rather than tracked in a flag, so the toggle can
+    /// never disagree with what is actually in the box (the user can delete the
+    /// comments by hand).
+    pub fn template_active(&self, cx: &gpui::App) -> bool {
+        self.body_input
+            .as_ref()
+            .map(|i| {
+                i.read(cx)
+                    .value()
+                    .lines()
+                    .any(kagi_domain::message::is_comment_line)
+            })
+            .unwrap_or(false)
+    }
+
+    /// Add or remove the `commit.template` block in the body, and remember the
+    /// choice for the next open.
+    pub fn toggle_template(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
+        let Some(body) = self.body_input.clone() else {
+            return;
+        };
+        let current = body.read(cx).value().to_string();
+        let on = !self.template_active(cx);
+        let next = if on {
+            let Some(tpl) = self.commit_template.clone() else {
+                return;
+            };
+            let written = kagi_domain::message::strip_template_comments(&current);
+            if written.trim().is_empty() {
+                tpl
+            } else {
+                format!("{}\n\n{}", written.trim_end(), tpl)
+            }
+        } else {
+            kagi_domain::message::strip_template_comments(&current)
+        };
+        body.update(cx, |s, cx| s.set_value(next, window, cx));
+        crate::ui::settings::write_setting(KEY_COMMIT_TEMPLATE, Some(if on { "1" } else { "0" }));
+        klog!("commit template: {}", if on { "on" } else { "off" });
+        cx.notify();
     }
 
     /// Open or close the co-author picker.

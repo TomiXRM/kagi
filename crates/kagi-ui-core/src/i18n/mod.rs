@@ -383,6 +383,10 @@ pub enum Msg {
     AmendLastCommit,
     /// Commit panel: co-author picker with nothing to offer.
     NoRecentAuthors,
+    /// Commit panel: tooltip on the commit.template toggle.
+    ToggleCommitTemplate,
+    /// Commit panel: label on the commit.template toggle.
+    Template,
     /// Footer idle status.
     Ready,
     /// Welcome screen help line.
@@ -1023,6 +1027,10 @@ impl Msg {
             (En, AmendLastCommit) => "Amend last commit",
             (Ja, AmendLastCommit) => "直前のコミットを修正",
             (En, NoRecentAuthors) => "No other authors in recent history",
+            (En, ToggleCommitTemplate) => "Use your commit.template",
+            (Ja, ToggleCommitTemplate) => "commit.template を使う",
+            (En, Template) => "Template",
+            (Ja, Template) => "テンプレート",
             (Ja, NoRecentAuthors) => "最近の履歴に他の作成者がいません",
             (Ja, CoAuthoredBy) => "共同作成者",
             (En, Ready) => "Ready",

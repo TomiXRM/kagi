@@ -49,15 +49,17 @@ pub fn join_title_body(title: &str, body: &str) -> String {
     }
 }
 
+/// Whether a line is a commit-message comment (git's `core.commentChar`, `#`).
+pub fn is_comment_line(line: &str) -> bool {
+    line.trim_start().starts_with('#')
+}
+
 /// Drop the comment lines from a `commit.template` file.
 ///
 /// git strips these when the editor exits; kagi has no editor step, so the
 /// template is stripped on load and what the user sees is what gets committed.
 pub fn strip_template_comments(text: &str) -> String {
-    let kept: Vec<&str> = text
-        .lines()
-        .filter(|l| !l.trim_start().starts_with('#'))
-        .collect();
+    let kept: Vec<&str> = text.lines().filter(|l| !is_comment_line(l)).collect();
     kept.join("\n").trim_end().to_string()
 }
 

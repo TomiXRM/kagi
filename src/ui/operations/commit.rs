@@ -132,8 +132,13 @@ impl KagiApp {
                         .ok()
                         .and_then(|b| b.commit_template())
                     {
-                        klog!("commit template: loaded");
-                        body_input.update(cx, |s, cx| s.set_value(tpl, window, cx));
+                        // Kept on the entity even when switched off, so the
+                        // footer's Template toggle can put it back.
+                        entity.update(cx, |v, _| v.commit_template = Some(tpl.clone()));
+                        if commit_panel::template_enabled() {
+                            klog!("commit template: loaded");
+                            body_input.update(cx, |s, cx| s.set_value(tpl, window, cx));
+                        }
                     }
                 }
             }
@@ -240,23 +245,6 @@ impl KagiApp {
         self.ensure_smart_commit_detection(cx);
     }
 
-    /// Read the current commit-message Input value (UI) or headless `commit_msg`.
-    fn smart_commit_current_msg(&self, cx: &Context<Self>) -> String {
-        match self.commit_panel.as_ref() {
-            Some(e) => {
-                let v = e.read(cx);
-                if v.title_input.is_some() {
-                    // Comment-stripped: a body holding only a template's
-                    // cheat-sheet counts as empty, so ✨ still fills it in.
-                    v.committable_message(cx)
-                } else {
-                    v.state.commit_msg.clone()
-                }
-            }
-            None => String::new(),
-        }
-    }
-
     /// Write `msg` into the commit-message Input (and the headless mirror).
     /// Only overwrites a non-empty existing message after the caller has
     /// decided to (rule-based/LLM both call this to *insert* the draft).
@@ -290,9 +278,11 @@ impl KagiApp {
 
     /// "Suggest" button — rule-based draft (always available, never networked).
     ///
-    /// Inserts the draft into the message Input.  If the Input already holds a
-    /// non-empty message it is left untouched (the user's text wins; ticket:
-    /// overwrite only when empty).
+    /// Inserts the draft into the message Inputs, replacing whatever is there.
+    ///
+    /// ADR-0134: this used to refuse when the message was non-empty. Clicking ✨
+    /// is an explicit request — silently keeping the old text and reporting
+    /// "message not empty" read as the button being broken (user report).
     pub fn smart_suggest(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(_repo_path) = self.repo_path.clone() else {
             return;
@@ -316,13 +306,8 @@ impl KagiApp {
         if std::env::var("KAGI_SMART_SUGGEST").as_deref() == Ok("1") {
             klog!("smart-suggest: {}", msg);
         }
-        let existing = self.smart_commit_current_msg(cx);
-        if existing.trim().is_empty() {
-            self.smart_commit_set_msg(&msg, window, cx);
-            self.smart_commit.status = Some("Rule-based suggestion inserted".to_string());
-        } else {
-            self.smart_commit.status = Some("Message not empty — kept your text".to_string());
-        }
+        self.smart_commit_set_msg(&msg, window, cx);
+        self.smart_commit.status = Some("Rule-based suggestion inserted".to_string());
         cx.notify();
     }
 
@@ -430,10 +415,9 @@ impl KagiApp {
         let want_body = true;
         let host = smart_commit::SmartCommitState::ollama_host();
         let provider = self.smart_commit.provider;
-        let overwrite_ok = self.smart_commit_current_msg(cx).trim().is_empty();
         // T-ENTITY-COMMITPANEL-001 (correction #5): bump the entity's generation
         // guard and capture it. A stale result whose `gen` no longer matches the
-        // entity's is dropped (tightens the racy `overwrite_ok` check).
+        // entity's is dropped.
         let cp_entity = self.commit_panel.clone();
         let gen = match cp_entity.as_ref() {
             Some(e) => e.update(cx, |v, _| {
@@ -498,16 +482,12 @@ impl KagiApp {
                 };
                 match out {
                     Some((msg, used_llm)) if !msg.trim().is_empty() => {
-                        // Correction #5: drop the result if a newer generate
-                        // superseded this one (bumped `gen`), OR if the message is
-                        // no longer empty — i.e. the user typed something AFTER
-                        // requesting generation (`overwrite_ok` was captured at
-                        // start, so it alone can't catch type-during). Re-checking
-                        // emptiness at apply time prevents a stale generated message
-                        // from clobbering the user's newer input.
+                        // Correction #5: drop the result only if a NEWER generate
+                        // superseded this one (bumped `gen`). ADR-0134 removed the
+                        // "is it still empty?" guard: the click is an explicit
+                        // request to replace whatever is in the inputs.
                         let stale = entity.read(cx).gen != gen;
-                        let still_empty = app.smart_commit_current_msg(cx).trim().is_empty();
-                        if overwrite_ok && still_empty && !stale {
+                        if !stale {
                             // The Input's set_value needs `&mut Window`, which is
                             // unavailable here. Mirror into the panel state and
                             // queue the message on the entity; the next render
@@ -521,9 +501,6 @@ impl KagiApp {
                             } else {
                                 "LLM unavailable — used rule-based".to_string()
                             });
-                        } else {
-                            app.smart_commit.status =
-                                Some("Message not empty — kept your text".to_string());
                         }
                     }
                     _ => {

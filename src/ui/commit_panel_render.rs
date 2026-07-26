@@ -1015,7 +1015,7 @@ impl CommitPanelView {
                 },
             ));
 
-            let mut row = div()
+            let row = div()
                 .flex()
                 .flex_row()
                 .items_center()
@@ -1024,21 +1024,45 @@ impl CommitPanelView {
                 .child(coauthor_btn)
                 .child(amend_btn);
 
-            // Transient smart-commit status (generating / inserted / fell back)
-            // stays as a quiet trailing line rather than its own toolbar row.
-            if let Some(ref status) = smart.status {
-                row = row.child(
-                    div()
-                        .flex_1()
-                        .text_xs()
-                        .text_color(rgb(theme().text_muted))
-                        .child(SharedString::from(status.clone())),
-                );
-            }
             div()
                 .relative()
                 .child(row)
                 .children(render_coauthor_menu(coauthor_menu.as_deref(), cx))
+        };
+
+        // The radius `Input` gives itself, read once so both boxes match.
+        let input_radius = gpui_component::ActiveTheme::theme(&**cx).radius;
+
+        // ── commit.template toggle (bottom-left of the body box) ──────
+        // Only offered when the user actually has a `commit.template`; without
+        // one the control would toggle nothing.
+        let template_toggle: gpui::AnyElement = if self.commit_template.is_some() {
+            let on = self.template_active(cx);
+            div()
+                .id("cp-template-toggle")
+                .px_1p5()
+                .py_px()
+                .rounded_sm()
+                .text_xs()
+                .text_color(rgb(if on {
+                    theme().color_branch
+                } else {
+                    theme().text_muted
+                }))
+                .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+                .tooltip(|w, cx| {
+                    gpui_component::tooltip::Tooltip::new(Msg::ToggleCommitTemplate.t())
+                        .build(w, cx)
+                })
+                .on_click(cx.listener(
+                    |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
+                        view.toggle_template(window, cx);
+                    },
+                ))
+                .child(SharedString::from(Msg::Template.t()))
+                .into_any_element()
+        } else {
+            div().into_any_element()
         };
 
         // ── Commit message: subject + body (ADR-0134) ─────────────────
@@ -1060,12 +1084,24 @@ impl CommitPanelView {
                     div()
                         .flex()
                         .flex_col()
-                        .rounded_sm()
+                        // Same radius the `Input` gives itself, so the two boxes
+                        // do not have visibly different corners.
+                        .rounded(input_radius)
                         .border_1()
                         .border_color(rgb(theme().text_muted))
                         .bg(rgb(theme().bg_base))
                         .child(Input::new(body).appearance(false).bordered(false))
-                        .child(div().flex().justify_end().px_1().pb_1().child(icon_row)),
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .justify_between()
+                                .px_1()
+                                .pb_1()
+                                .child(template_toggle)
+                                .child(icon_row),
+                        ),
                 )
                 .into_any_element(),
             // No window yet (headless); the message still flows through
@@ -1218,6 +1254,17 @@ impl CommitPanelView {
                     .bg(rgb(theme().surface))
                     // Subject + body (the icon actions live inside the body box)
                     .child(msg_inputs)
+                    // Transient smart-commit status. Its own full-width line:
+                    // inside the right-aligned icon group it pushed the icons
+                    // sideways as the text appeared (user report).
+                    .when_some(smart.status.clone(), |el, status| {
+                        el.child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(theme().text_muted))
+                                .child(SharedString::from(status)),
+                        )
+                    })
                     // Unstaged warning
                     .when(has_unstaged_warning, |el| {
                         el.child(

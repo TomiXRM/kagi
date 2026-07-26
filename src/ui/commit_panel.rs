@@ -11,10 +11,11 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui::{Entity, SharedString, UniformListScrollHandle, WeakEntity};
+use gpui::{prelude::*, Entity, SharedString, UniformListScrollHandle, WeakEntity};
 use gpui_component::input::InputState;
 
 use kagi_git::{Backend, ChangeKind, CommitPreview, FileDiffStat, FileStatus};
+use kagi_ui_core::i18n::Msg;
 
 use crate::ui::file_tree::{self, TreeRow};
 use crate::ui::smart_commit::SmartCommitState;
@@ -280,6 +281,11 @@ pub struct CommitPanelView {
     /// Bumped on each generate; a stale background result whose captured `gen`
     /// no longer matches is dropped instead of clobbering a newer input.
     pub gen: u64,
+    /// UI language the two message inputs were built with. `InputState` bakes
+    /// its placeholder at construction and exposes no setter, so switching
+    /// language rebuilds them (carrying the text across) rather than leaving a
+    /// stale-language placeholder on screen.
+    pub input_lang: kagi_ui_core::i18n::Lang,
     /// PERF: scroll handle for the Unstaged `uniform_list`.
     pub unstaged_scroll_handle: UniformListScrollHandle,
     /// PERF: scroll handle for the Staged `uniform_list`.
@@ -319,6 +325,7 @@ impl CommitPanelView {
             last_draft_value: String::new(),
             draft_save_gen: 0,
             gen: 0,
+            input_lang: kagi_ui_core::i18n::lang(),
             unstaged_scroll_handle: UniformListScrollHandle::new(),
             staged_scroll_handle: UniformListScrollHandle::new(),
             active_wip: None,
@@ -346,6 +353,22 @@ impl CommitPanelView {
                 .unwrap_or_default()
         };
         kagi_git::join_title_body(&read(&self.title_input), &read(&self.body_input))
+    }
+
+    /// The message as it will actually be committed: [`Self::effective_commit_message`]
+    /// with the body's comment lines removed.
+    ///
+    /// Templates are mostly comments, so the two differ whenever one is loaded:
+    /// the raw form is what the user sees and what the draft stores, this is what
+    /// reaches git. Commit, amend and "is there a message yet?" all use this one.
+    pub fn committable_message(&self, cx: &gpui::App) -> String {
+        let read = |i: &Option<Entity<InputState>>| {
+            i.as_ref()
+                .map(|i| i.read(cx).value().to_string())
+                .unwrap_or_default()
+        };
+        let body = kagi_domain::message::strip_template_comments(&read(&self.body_input));
+        kagi_git::join_title_body(&read(&self.title_input), &body)
     }
 
     /// Open or close the co-author picker.
@@ -404,6 +427,32 @@ impl CommitPanelView {
     /// `sync_modal_inputs` half). Runs on this entity's own render path with
     /// `&mut Window`, so the parent never reads the child's input each frame.
     pub fn sync_inputs(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
+        // ── Language switch → rebuild the inputs for their placeholders. ──
+        // `InputState` has no placeholder setter, so the text is carried across
+        // a fresh pair. Rare (a menu action), and it only costs the caret.
+        let lang = kagi_ui_core::i18n::lang();
+        if lang != self.input_lang {
+            self.input_lang = lang;
+            if let Some(old) = self.title_input.clone() {
+                let text = old.read(cx).value().to_string();
+                let fresh =
+                    cx.new(|cx| InputState::new(window, cx).placeholder(Msg::CommitTitle.t()));
+                fresh.update(cx, |s, cx| s.set_value(text, window, cx));
+                self.title_input = Some(fresh);
+            }
+            if let Some(old) = self.body_input.clone() {
+                let text = old.read(cx).value().to_string();
+                let fresh = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .multi_line(true)
+                        .auto_grow(3, 12)
+                        .placeholder(Msg::CommitBody.t())
+                });
+                fresh.update(cx, |s, cx| s.set_value(text, window, cx));
+                self.body_input = Some(fresh);
+            }
+        }
+
         // ── Queued smart-commit message → Input (needs `&mut Window`). ──
         if let Some(msg) = self.pending_smart_msg.take() {
             let (title, body) = kagi_git::split_title_body(&msg);

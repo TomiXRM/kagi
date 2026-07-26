@@ -16,20 +16,20 @@ impl KagiApp {
     // entity's own inputs / draft state. The parent-side methods below delegate to
     // the entity via `self.commit_panel`.
 
-    /// Effective single-message text for the current mode (template assembled vs
-    /// plain Input), read off the entity. `""` when no panel is open.
-    pub(crate) fn effective_commit_message(&self, cx: &Context<Self>) -> String {
-        match self.commit_panel.as_ref() {
-            Some(e) => e.read(cx).effective_commit_message(cx),
-            None => String::new(),
-        }
-    }
-
     /// The panel's commit-subject `InputState` (entity-owned), if any.
     fn cp_commit_input(&self, cx: &Context<Self>) -> Option<Entity<InputState>> {
         self.commit_panel
             .as_ref()
             .and_then(|e| e.read(cx).title_input.clone())
+    }
+
+    /// The message as it will be committed (comments stripped) — see
+    /// [`CommitPanelView::committable_message`]. `""` when no panel is open.
+    pub(crate) fn committable_message(&self, cx: &Context<Self>) -> String {
+        match self.commit_panel.as_ref() {
+            Some(e) => e.read(cx).committable_message(cx),
+            None => String::new(),
+        }
     }
 
     /// Whether the panel has its message inputs (entity-owned).
@@ -246,7 +246,9 @@ impl KagiApp {
             Some(e) => {
                 let v = e.read(cx);
                 if v.title_input.is_some() {
-                    v.effective_commit_message(cx)
+                    // Comment-stripped: a body holding only a template's
+                    // cheat-sheet counts as empty, so ✨ still fills it in.
+                    v.committable_message(cx)
                 } else {
                     v.state.commit_msg.clone()
                 }
@@ -267,7 +269,20 @@ impl KagiApp {
                 input.update(cx, |state, cx| state.set_value(title, window, cx));
             }
             if let Some(input) = body_input {
-                input.update(cx, |state, cx| state.set_value(body, window, cx));
+                // Keep a loaded commit.template's comment block: the generated
+                // body goes above it rather than replacing it.
+                let existing = input.read(cx).value().to_string();
+                let comments = existing
+                    .lines()
+                    .skip_while(|l| !l.trim_start().starts_with('#'))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let next = match (body.trim().is_empty(), comments.trim().is_empty()) {
+                    (_, true) => body,
+                    (true, false) => existing,
+                    (false, false) => format!("{}\n\n{}", body.trim_end(), comments),
+                };
+                input.update(cx, |state, cx| state.set_value(next, window, cx));
             }
             entity.update(cx, |v, _| v.state.commit_msg = msg.to_string());
         }
@@ -804,7 +819,7 @@ impl KagiApp {
         // T026: prefer the effective message (subject + body from the two
         // Inputs); fall back to commit_msg (headless path).
         let msg: String = if self.cp_has_commit_input(cx) {
-            self.effective_commit_message(cx)
+            self.committable_message(cx)
         } else {
             match self.commit_panel.as_ref() {
                 Some(e) => e.read(cx).state.commit_msg.clone(),
@@ -877,7 +892,7 @@ impl KagiApp {
             return;
         }
         let commit_message: String = if self.cp_has_commit_input(cx) {
-            self.effective_commit_message(cx)
+            self.committable_message(cx)
         } else {
             self.commit_panel
                 .as_ref()

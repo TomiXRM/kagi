@@ -7,7 +7,6 @@
 
 use crate::GitError;
 use git2::Repository;
-use kagi_domain::message::strip_template_comments;
 use std::path::{Path, PathBuf};
 
 /// A person offered in the co-author picker.
@@ -24,8 +23,13 @@ impl AuthorCandidate {
     }
 }
 
-/// Resolve `commit.template` and return its contents with comment lines
-/// stripped, or `None` when unset / unreadable.
+/// Resolve `commit.template` and return its contents verbatim, or `None` when
+/// unset / unreadable / empty.
+///
+/// Comments are deliberately KEPT: most templates are mostly comments (an emoji
+/// or type cheat-sheet the author reads while writing), so stripping on load
+/// would show an empty body. They are stripped when the message is committed,
+/// exactly as git does — see `CommitPanelView::committable_message`.
 ///
 /// An unreadable template is deliberately `None` rather than an error: a stale
 /// `commit.template` path is common and must not block committing.
@@ -40,8 +44,7 @@ pub fn load_commit_template(repo: &Repository) -> Option<String> {
         repo.workdir()?.join(path)
     };
     let text = std::fs::read_to_string(path).ok()?;
-    let stripped = strip_template_comments(&text);
-    (!stripped.trim().is_empty()).then_some(stripped)
+    (!text.trim().is_empty()).then_some(text)
 }
 
 /// Expand a leading `~` against `$HOME`. Returns `None` for an empty path.

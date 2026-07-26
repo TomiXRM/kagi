@@ -106,6 +106,16 @@ mod title_body_tests {
         assert_eq!(strip_template_comments(tpl), "\nSummary:\nWhy:");
     }
 
+    /// The common shape: a template that is *entirely* a cheat-sheet of
+    /// comments. It must survive in the body input (so the author can read it)
+    /// and strip to nothing at commit time — stripping it on load instead made
+    /// the template look like it had failed to load at all.
+    #[test]
+    fn a_comment_only_template_strips_to_nothing() {
+        let tpl = "\n# ==== Emojis ====\n# ✨ :sparkles: Add new feature\n#\n# Subject\n";
+        assert_eq!(strip_template_comments(tpl), "");
+    }
+
     #[test]
     fn keeps_markdown_headings_that_are_not_leading_comments() {
         // A '#' inside a line is not a comment marker.

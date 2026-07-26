@@ -19,6 +19,7 @@ use super::render_helpers::*;
 use super::*;
 use crate::ui::button_style::KagiButton;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::Disableable as _;
 
 // ──────────────────────────────────────────────────────────────
 // Commit Panel — virtualized per-row builders (PERF)
@@ -878,7 +879,7 @@ impl CommitPanelView {
             (Some(title), Some(body)) => div()
                 .flex()
                 .flex_col()
-                .gap_1()
+                .gap_2()
                 .child(Input::new(title).appearance(true).bordered(true))
                 .child(Input::new(body).appearance(true).bordered(true))
                 .into_any_element(),
@@ -901,38 +902,23 @@ impl CommitPanelView {
             .map(|p| p.target_branch.clone())
             .unwrap_or_default();
         let commit_label = SharedString::from(i18n::commit_to_branch(&branch_label));
-        let commit_btn = if can_commit {
-            let commit_click = cx.listener(
-                |view: &mut CommitPanelView, _event: &gpui::ClickEvent, window, cx| {
-                    view.defer_open_commit_plan_modal(window, cx);
-                },
-            );
-            Button::new("cp-commit-btn")
-                .label(commit_label)
-                .primary()
-                .small()
-                .mt_1()
-                .w_full()
-                .on_click(commit_click)
-                .into_any_element()
-        } else {
-            // Same label, visibly inert. The reason it is disabled is already on
-            // screen (nothing staged / no summary typed), so it is not repeated.
-            div()
-                .id("cp-commit-btn-disabled")
-                .mt_1()
-                .w_full()
-                .px_2()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().surface))
-                .text_sm()
-                .text_color(rgb(theme().text_muted))
-                .flex()
-                .justify_center()
-                .child(commit_label)
-                .into_any_element()
-        };
+        let commit_click = cx.listener(
+            |view: &mut CommitPanelView, _event: &gpui::ClickEvent, window, cx| {
+                view.defer_open_commit_plan_modal(window, cx);
+            },
+        );
+        // One Button in both states (`.disabled`), so enabling it does not change
+        // the footer's height, and the disabled form still reads as a button
+        // rather than blending into the footer background.
+        let commit_btn = Button::new("cp-commit-btn")
+            .label(commit_label)
+            .primary()
+            .small()
+            .mt_1()
+            .w_full()
+            .disabled(!can_commit)
+            .when(can_commit, |b| b.on_click(commit_click))
+            .into_any_element();
 
         // ── Footer icon row (ADR-0134) ────────────────────────────
         // Three icon actions replace the old pill toolbar + full-width Amend
@@ -1211,9 +1197,9 @@ impl CommitPanelView {
                     .flex_shrink_0()
                     .flex()
                     .flex_col()
-                    .px_2()
-                    .py_1()
-                    .gap_1()
+                    .px_3()
+                    .py_2()
+                    .gap_2()
                     .bg(rgb(theme().surface))
                     // Subject + body inputs
                     .child(msg_inputs)

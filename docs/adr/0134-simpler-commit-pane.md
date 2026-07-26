@@ -40,15 +40,30 @@ to keep working.
 Drafts written by older builds in `mode=template` stored their *expanded* plain
 text (ADR-0042), so splitting them on load restores them correctly. No migration.
 
-### The body is seeded from `commit.template`
+### The body is seeded from `commit.template`, comments and all
 
 `Backend::commit_template()` resolves the `commit.template` config, expands a
-leading `~`, reads the file and strips comment lines. It fills the body on first
-open when there is no draft to restore.
+leading `~` and reads the file **verbatim**. It fills the body on first open
+when there is no draft to restore.
 
-Comments are stripped on **load**, not at commit time: kagi has no editor step
-where git would strip them, so leaving them in would either commit them or make
-the pane lie about what it will commit.
+Comments are stripped at **commit** time, not on load — exactly where git strips
+them. The first implementation stripped on load, on a "what you see is what you
+commit" argument. That was wrong about what templates actually contain: the
+common template is *entirely* comments (an emoji or commit-type cheat-sheet the
+author reads while writing), so stripping on load produced an empty body and
+looked like the template had failed to load. Reported as exactly that.
+
+So the message exists in two forms, and the split is load-bearing:
+
+| | includes comments | used by |
+|---|---|---|
+| `effective_commit_message` | yes | the draft file (must round-trip the template) |
+| `committable_message` | no | commit, amend, "is there a message yet?" |
+
+The "is there a message yet?" check uses the stripped form so that a body
+holding only a cheat-sheet still counts as empty — otherwise ✨ would refuse to
+fill it in. For the same reason a generated body is inserted *above* the
+retained comment block rather than replacing it.
 
 An unset or unreadable template is `None`, never an error — a stale
 `commit.template` path is common and must not block committing.
@@ -62,6 +77,21 @@ no extra plumbing, and the user can edit or delete one like any other text.
 
 Candidates are distinct authors from recent history minus `user.email`, walked
 on click rather than per frame (the panel re-renders at 60fps).
+
+### One button in both states
+
+The commit button is a single `Button` with `.disabled(!can_commit)` rather than
+a `Button` swapped for a styled `div`. Two different elements meant the footer
+changed height the moment a message was typed, and the disabled `div` used
+`theme().surface` — the footer's own background — so it read as a ghost. Same
+class of bug as the header buttons fixed in #220.
+
+### Placeholders follow the UI language
+
+`InputState` bakes its placeholder at construction and exposes no setter, so a
+language switch left stale-language placeholders on screen. The panel records
+which language its inputs were built with and rebuilds the pair (carrying the
+text across) when that changes. Rare enough that the lost caret does not matter.
 
 ### Three icons instead of a pill toolbar
 

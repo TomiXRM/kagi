@@ -499,7 +499,7 @@ impl KagiApp {
             Some(e) => {
                 let v = e.read(cx);
                 if v.title_input.is_some() {
-                    v.effective_commit_message(cx)
+                    v.committable_message(cx)
                 } else {
                     v.state.commit_msg.clone()
                 }

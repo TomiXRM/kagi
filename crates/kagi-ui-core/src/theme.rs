@@ -542,6 +542,10 @@ pub fn init_active() {
 /// Convert a kagi `0xRRGGBB` colour to `gpui::Hsla` (opaque) via `gpui::rgb`.
 /// `Hsla: From<Rgba>` is provided by gpui, so this never loses precision beyond
 /// the RGB→HSL round-trip the renderer would do anyway.
+/// Alpha for the text-selection tint. Matches the cap gpui-component applies to
+/// its own bundled themes (`theme/schema.rs`), so text stays legible through it.
+const SELECTION_ALPHA: f32 = 0.30;
+
 #[inline]
 fn to_hsla(rgb_u32: u32) -> Hsla {
     Hsla::from(rgb(rgb_u32))
@@ -591,7 +595,12 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     gc.colors.popover = to_hsla(k.modal);
     gc.colors.popover_foreground = to_hsla(k.text_main);
     gc.colors.overlay = to_hsla(k.modal_overlay);
-    gc.colors.selection = to_hsla(k.selected);
+    // Text selection is NOT `selected` (the list-row highlight): that colour is
+    // deliberately a near-background neutral, and against an Input's background
+    // it reads as "nothing happened" (user report). gpui-component paints the
+    // selection *under* the text and caps its own themes at alpha 0.3, so an
+    // accent tint at that alpha is both visible and safe for legibility.
+    gc.colors.selection = to_hsla(k.color_branch).alpha(SELECTION_ALPHA);
 
     // ── Primary / accent (Checkbox checked, focus ring, links) ──
     gc.colors.primary = to_hsla(k.color_branch);
@@ -1822,6 +1831,39 @@ mod tests {
     /// colours unchanged from its dark ancestor, and on its near-white
     /// background `string` measured 1.9:1 — the user saw code "turn white".
     ///
+    /// The text-selection tint must actually differ from the surface it is
+    /// drawn on. It used to be `selected` — the list-row neutral — which on an
+    /// Input's background was invisible (user report: selecting text showed no
+    /// highlight at all).
+    #[test]
+    fn selection_tint_is_distinguishable_from_the_input_background() {
+        for t in THEMES {
+            let (r, g, b) = (
+                (t.color_branch >> 16) & 0xff,
+                (t.color_branch >> 8) & 0xff,
+                t.color_branch & 0xff,
+            );
+            let (br, bg_, bb) = (
+                (t.bg_base >> 16) & 0xff,
+                (t.bg_base >> 8) & 0xff,
+                t.bg_base & 0xff,
+            );
+            // The tint as composited over the Input background.
+            let blend = |fg: u32, bg: u32| {
+                (fg as f32 * SELECTION_ALPHA + bg as f32 * (1.0 - SELECTION_ALPHA)) as i32
+            };
+            let delta = (blend(r, br) - br as i32).abs()
+                + (blend(g, bg_) - bg_ as i32).abs()
+                + (blend(b, bb) - bb as i32).abs();
+            assert!(
+                delta >= 24,
+                "{}: selection tint is only {} away from the input background",
+                t.slug,
+                delta
+            );
+        }
+    }
+
     /// `comment` is exempt: every theme deliberately mutes comments, and
     /// upstream palettes routinely put them at 2.5:1.
     #[test]

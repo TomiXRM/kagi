@@ -93,10 +93,28 @@ language switch left stale-language placeholders on screen. The panel records
 which language its inputs were built with and rebuilds the pair (carrying the
 text across) when that changes. Rare enough that the lost caret does not matter.
 
-### Three icons instead of a pill toolbar
+### Three icons instead of a pill toolbar, inside the body box
 
 Sparkles generates a message, person+ adds a co-author, undo amends. Amend keeps
 its full behaviour and its plan; only its full-width button is gone.
+
+The icons sit *inside* the body's box (GitHub Desktop's placement). The box is a
+plain div wearing the Input's border and background, holding an unstyled `Input`
+and the icon row stacked under it. Two alternatives were rejected: `Input::suffix`
+pins the icons to the vertical centre of a tall multi-line box, and absolute
+positioning would let a long body run underneath them. A real stacked row cannot
+overlap by construction.
+
+### Text selection is an accent tint, not the row-highlight colour
+
+`gc.colors.selection` was `theme().selected` — the list-row highlight, which is
+deliberately a near-background neutral. Against an Input's background that read
+as no highlight at all (user report). It is now the theme's accent at alpha 0.30,
+matching the cap gpui-component applies to its own bundled themes; the selection
+is painted *under* the text, so legibility is unaffected. A test asserts the
+composited tint differs from the input background for every theme.
+
+This is app-wide, not commit-pane-specific — every `Input` was affected.
 
 ### What was deleted, and what took over its job
 

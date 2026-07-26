@@ -871,29 +871,6 @@ impl CommitPanelView {
             staged_count
         };
 
-        // ── Commit message: subject + body (ADR-0134) ─────────────────
-        // Two inputs mirroring git's own shape, replacing the single field and
-        // the six-field template mode. The body is seeded from the user's
-        // `commit.template` on first open and holds the co-author trailers.
-        let msg_inputs: gpui::AnyElement = match (&title_input, &body_input) {
-            (Some(title), Some(body)) => div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(Input::new(title).appearance(true).bordered(true))
-                .child(Input::new(body).appearance(true).bordered(true))
-                .into_any_element(),
-            // No window yet (headless); the message still flows through
-            // `state.commit_msg`, so this is a placeholder, not a failure.
-            _ => div()
-                .px_2()
-                .py_1()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from("(commit message input unavailable)"))
-                .into_any_element(),
-        };
-
         // ── Commit button ─────────────────────────────────────────
         // The destination branch is on the button rather than in a preview line
         // above it (ADR-0134) — one place to look before committing.
@@ -1064,6 +1041,44 @@ impl CommitPanelView {
                 .children(render_coauthor_menu(coauthor_menu.as_deref(), cx))
         };
 
+        // ── Commit message: subject + body (ADR-0134) ─────────────────
+        // Two inputs mirroring git's own shape, replacing the single field and
+        // the six-field template mode. The body is seeded from the user's
+        // `commit.template` on first open and holds the co-author trailers.
+        //
+        // The icon row lives INSIDE the body's box: the box is a plain div
+        // wearing the Input's own border/background, with an unstyled `Input`
+        // and the icons stacked in it. Drawn as a real row rather than absolutely
+        // positioned so it can never overlap a long body.
+        let msg_inputs: gpui::AnyElement = match (&title_input, &body_input) {
+            (Some(title), Some(body)) => div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(Input::new(title).appearance(true).bordered(true))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(theme().text_muted))
+                        .bg(rgb(theme().bg_base))
+                        .child(Input::new(body).appearance(false).bordered(false))
+                        .child(div().flex().justify_end().px_1().pb_1().child(icon_row)),
+                )
+                .into_any_element(),
+            // No window yet (headless); the message still flows through
+            // `state.commit_msg`, so this is a placeholder, not a failure.
+            _ => div()
+                .px_2()
+                .py_1()
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from("(commit message input unavailable)"))
+                .into_any_element(),
+        };
+
         // ── Assemble panel ───────────────────────────────────────
         // T-UI-003: diff ボックス廃止。Unstaged/Staged 箱が flex_1 で全体を占める(1:1)。
         div()
@@ -1201,10 +1216,8 @@ impl CommitPanelView {
                     .py_2()
                     .gap_2()
                     .bg(rgb(theme().surface))
-                    // Subject + body inputs
+                    // Subject + body (the icon actions live inside the body box)
                     .child(msg_inputs)
-                    // ✨ generate · 👤+ co-author · ⟲ amend
-                    .child(icon_row)
                     // Unstaged warning
                     .when(has_unstaged_warning, |el| {
                         el.child(

@@ -116,6 +116,21 @@ impl KagiApp {
             let v = entity.read(cx);
             (v.title_input.clone(), v.body_input.clone())
         };
+        // The template is read on EVERY open, not only when it is about to be
+        // used: the footer's Template toggle is rendered from
+        // `commit_template.is_some()`, so a session that restored a draft
+        // instead would otherwise show no toggle at all (user report).
+        // Cached after the first read — this touches the filesystem.
+        if entity.read(cx).commit_template.is_none() {
+            if let Some(tpl) = kagi_git::Backend::open(&repo_path)
+                .ok()
+                .and_then(|b| b.commit_template())
+            {
+                klog!("commit template: available");
+                entity.update(cx, |v, _| v.commit_template = Some(tpl));
+            }
+        }
+
         if is_new {
             if let (Some(title_input), Some(body_input)) = (&title_entity, &body_entity) {
                 let empty = title_input.read(cx).value().trim().is_empty()
@@ -128,13 +143,7 @@ impl KagiApp {
                         title_input.update(cx, |s, cx| s.set_value(title, window, cx));
                         body_input.update(cx, |s, cx| s.set_value(body, window, cx));
                         entity.update(cx, |v, _| v.last_draft_value = d.message);
-                    } else if let Some(tpl) = kagi_git::Backend::open(&repo_path)
-                        .ok()
-                        .and_then(|b| b.commit_template())
-                    {
-                        // Kept on the entity even when switched off, so the
-                        // footer's Template toggle can put it back.
-                        entity.update(cx, |v, _| v.commit_template = Some(tpl.clone()));
+                    } else if let Some(tpl) = entity.read(cx).commit_template.clone() {
                         if commit_panel::template_enabled() {
                             klog!("commit template: loaded");
                             body_input.update(cx, |s, cx| s.set_value(tpl, window, cx));

@@ -527,6 +527,9 @@ impl Render for KagiApp {
             if this.cancel_active_modal(cx) {
                 return;
             }
+            if this.close_coauthor_menu(cx) {
+                return;
+            }
             if this.commit_menu.is_some() {
                 this.commit_menu = None;
                 cx.notify();

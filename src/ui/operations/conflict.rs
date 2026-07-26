@@ -248,14 +248,18 @@ impl KagiApp {
                 // deferred from the ConflictView Continue listener — correction #6),
                 // so updating the freshly-created CommitPanelView here is safe.
                 if let Some(entity) = self.commit_panel.clone() {
-                    let input = entity.read(cx).commit_input.clone();
-                    if let Some(input) = input {
-                        input.update(cx, |state, cx| state.set_value(message.clone(), window, cx));
+                    let (title_input, body_input) = {
+                        let v = entity.read(cx);
+                        (v.title_input.clone(), v.body_input.clone())
+                    };
+                    let (title, body) = kagi_git::split_title_body(&message);
+                    if let Some(input) = title_input {
+                        input.update(cx, |state, cx| state.set_value(title, window, cx));
                     }
-                    entity.update(cx, |v, _| {
-                        v.commit_template_mode = false;
-                        v.state.commit_msg = message.clone();
-                    });
+                    if let Some(input) = body_input {
+                        input.update(cx, |state, cx| state.set_value(body, window, cx));
+                    }
+                    entity.update(cx, |v, _| v.state.commit_msg = message.clone());
                 }
                 self.conflict_merge_pending = true;
             }

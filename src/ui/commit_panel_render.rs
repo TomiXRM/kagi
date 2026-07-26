@@ -8,7 +8,7 @@
 //! commit/amend, discard, smart-commit, the parent `file_menu` overlay) DEFERS to
 //! the parent via `cx.spawn_in(window, …)` + `weak_app.update_in(acx, …)` so the
 //! leased entity is never re-entered. Pure entity-internal mutations (tree↔flat,
-//! plain↔template, type-chip pick) stay synchronous + a child `cx.notify()`.
+//! the co-author picker) stay synchronous + a child `cx.notify()`.
 //! Element tree / styles / [kagi] lines / i18n are byte-identical to the
 //! pre-entity version.
 
@@ -19,6 +19,7 @@ use super::render_helpers::*;
 use super::*;
 use crate::ui::button_style::KagiButton;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::Disableable as _;
 
 // ──────────────────────────────────────────────────────────────
 // Commit Panel — virtualized per-row builders (PERF)
@@ -450,6 +451,92 @@ pub(crate) fn render_staged_tree_row(
     }
 }
 
+/// The co-author popover, or `None` when the picker is closed.
+///
+/// Anchored above the icon row (the footer sits at the bottom of the panel, so
+/// a downward menu would open off-screen) and wrapped in `gpui::deferred` so it
+/// paints after all of its ancestors. Without that the body box's own border is
+/// drawn over the menu, which overflows that box (user report).
+fn render_coauthor_menu(
+    candidates: Option<&[kagi_git::AuthorCandidate]>,
+    cx: &mut Context<CommitPanelView>,
+) -> Option<gpui::AnyElement> {
+    let candidates = candidates?;
+    let mut menu = div()
+        .absolute()
+        .bottom(theme::scaled_px(26.0))
+        // Anchored to the RIGHT edge so the menu grows leftward: the commit
+        // panel is the right-most pane, and a left-anchored 260px menu opened
+        // past the window edge (user report).
+        .right_0()
+        .w(theme::scaled_px(260.0))
+        .id("cp-coauthor-menu")
+        .max_h(theme::scaled_px(220.0))
+        .overflow_y_scroll()
+        .rounded_sm()
+        .border_1()
+        .border_color(rgb(theme().selected))
+        .bg(rgb(theme().panel))
+        .flex()
+        .flex_col()
+        .py_1()
+        .on_mouse_down_out(cx.listener(
+            |view: &mut CommitPanelView, _e: &gpui::MouseDownEvent, _w, cx| {
+                view.coauthor_menu = None;
+                cx.notify();
+            },
+        ));
+
+    if candidates.is_empty() {
+        return Some(
+            gpui::deferred(
+                menu.child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .text_xs()
+                        .text_color(rgb(theme().text_muted))
+                        .child(SharedString::from(Msg::NoRecentAuthors.t())),
+                ),
+            )
+            .into_any_element(),
+        );
+    }
+
+    for (i, c) in candidates.iter().enumerate() {
+        let candidate = c.clone();
+        menu = menu.child(
+            div()
+                .id(("cp-coauthor-row", i))
+                .px_2()
+                .py_1()
+                .flex()
+                .flex_col()
+                .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+                .on_click(cx.listener(
+                    move |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
+                        view.add_coauthor(&candidate, window, cx);
+                        view.coauthor_menu = None;
+                        cx.notify();
+                    },
+                ))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(theme().text_main))
+                        .child(SharedString::from(c.name.clone())),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(theme().text_muted))
+                        .child(SharedString::from(c.email.clone())),
+                ),
+        );
+    }
+    Some(gpui::deferred(menu).into_any_element())
+}
+
 // ──────────────────────────────────────────────────────────────
 // CommitPanelView — deferred Backend dispatch (re-entrancy invariant)
 // ──────────────────────────────────────────────────────────────
@@ -566,17 +653,6 @@ impl CommitPanelView {
         })
         .detach();
     }
-
-    fn defer_smart_toggle_lang(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let weak_app = self.app.clone();
-        cx.spawn_in(window, async move |_v, acx| {
-            let _ = weak_app.update_in(acx, |app, _window, cx| {
-                app.smart_commit.toggle_lang();
-                cx.notify();
-            });
-        })
-        .detach();
-    }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -608,9 +684,9 @@ impl CommitPanelView {
     ) -> impl IntoElement {
         let panel = &self.state;
         let preview = panel.preview.clone();
-        let commit_input = self.commit_input.clone();
-        let template_mode = self.commit_template_mode;
-        let template_inputs = self.commit_template_inputs.clone();
+        let title_input = self.title_input.clone();
+        let body_input = self.body_input.clone();
+        let coauthor_menu = self.coauthor_menu.clone();
         let smart = self.smart_snapshot.clone();
         let unstaged_scroll_handle = self.unstaged_scroll_handle.clone();
         let staged_scroll_handle = self.staged_scroll_handle.clone();
@@ -628,30 +704,12 @@ impl CommitPanelView {
             .iter()
             .filter(|f| !panel.is_conflicted(&f.path))
             .count();
-        // T026 / T-COMMIT-009: can_commit uses the effective message — in template
-        // mode the assembled fields, else the plain Input value (headless: commit_msg).
-        let input_msg_nonempty = if template_mode {
-            // Non-empty when summary or any field yields a non-empty assembled message.
-            template_inputs
-                .as_ref()
-                .map(|inp| {
-                    let fields = kagi_git::TemplateFields::new(
-                        inp[0].read(cx).value().to_string(),
-                        inp[1].read(cx).value().to_string(),
-                        inp[2].read(cx).value().to_string(),
-                        inp[3].read(cx).value().to_string(),
-                        inp[4].read(cx).value().to_string(),
-                        inp[5].read(cx).value().to_string(),
-                    );
-                    !kagi_git::assemble(&fields).trim().is_empty()
-                })
-                .unwrap_or(false)
-        } else {
-            commit_input
-                .as_ref()
-                .map(|e| !e.read(cx).value().trim().is_empty())
-                .unwrap_or(!panel.commit_msg.trim().is_empty())
-        };
+        // T026: the subject line alone decides whether there is a message —
+        // a body without a subject is not a commit.
+        let input_msg_nonempty = title_input
+            .as_ref()
+            .map(|e| !e.read(cx).value().trim().is_empty())
+            .unwrap_or(!panel.commit_msg.trim().is_empty());
         let can_commit = !panel.staged.is_empty() && input_msg_nonempty;
         let has_unstaged_warning = !panel.unstaged.is_empty() && staged_count > 0;
         // PERF: selected_file is read per visible row from the entity inside the
@@ -826,199 +884,65 @@ impl CommitPanelView {
             staged_count
         };
 
-        // ── plain ⇄ template mode toggle (T-COMMIT-009) ───────────────
-        let mode_toggle = {
-            let toggle_click = cx.listener(
-                |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                    view.toggle_template_mode(window, cx);
-                },
-            );
-            let label = if template_mode {
-                "Plain message"
-            } else {
-                "Template fields"
-            };
-            div()
-                .id("cp-template-toggle")
-                .px_1p5()
-                .py_px()
-                .rounded_sm()
-                .text_xs()
-                .bg(rgb(theme().surface))
-                .text_color(rgb(theme().color_branch))
-                .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
-                .on_click(toggle_click)
-                .child(SharedString::from(format!("⇄ {}", label)))
-        };
+        // ── Commit button ─────────────────────────────────────────
+        // The destination branch is on the button rather than in a preview line
+        // above it (ADR-0134) — one place to look before committing.
+        let branch_label = preview
+            .as_ref()
+            .map(|p| p.target_branch.clone())
+            .unwrap_or_default();
+        let commit_label = SharedString::from(i18n::commit_to_branch(&branch_label));
+        let commit_click = cx.listener(
+            |view: &mut CommitPanelView, _event: &gpui::ClickEvent, window, cx| {
+                view.defer_open_commit_plan_modal(window, cx);
+            },
+        );
+        // One Button in both states (`.disabled`), so enabling it does not change
+        // the footer's height, and the disabled form still reads as a button
+        // rather than blending into the footer background.
+        let commit_btn = Button::new("cp-commit-btn")
+            .label(commit_label)
+            .primary()
+            .small()
+            .mt_1()
+            .w_full()
+            .disabled(!can_commit)
+            .when(can_commit, |b| b.on_click(commit_click))
+            .into_any_element();
 
-        // ── Commit message input (T026/T-COMMIT-009) ──────────────────
-        // Template mode renders the six structured fields (gpui-component Input for
-        // each — no hand-written widgets); plain mode renders the single Input.
-        let msg_input_wrapper: gpui::AnyElement = if template_mode {
-            if let Some(inp) = template_inputs.clone() {
-                let [ty, scope, summary, body, test, risk] = inp;
-
-                // Labeled single-line field.
-                let field = |label: &'static str, state: &Entity<InputState>| {
-                    div()
+        // ── Footer icon row (ADR-0134) ────────────────────────────
+        // Three icon actions replace the old pill toolbar + full-width Amend
+        // button: sparkles = generate a message, person+ = add a co-author,
+        // undo = amend the previous commit.
+        let staged_empty = panel.staged.is_empty();
+        let icon_row = {
+            let icon_btn =
+                |id: &'static str, path: &'static str, tip: String, enabled: bool, accent: u32| {
+                    let mut b = div()
+                        .id(id)
+                        .p_1()
+                        .rounded_sm()
                         .flex()
-                        .flex_col()
-                        .gap_px()
+                        .items_center()
+                        .justify_center()
+                        .tooltip(move |_w, cx| {
+                            gpui_component::tooltip::Tooltip::new(tip.clone()).build(_w, cx)
+                        })
                         .child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(theme().text_label))
-                                .child(SharedString::from(label)),
-                        )
-                        .child(Input::new(state).appearance(true).bordered(true))
+                            gpui::svg()
+                                .path(path)
+                                .w(theme::scaled_px(16.0))
+                                .h(theme::scaled_px(16.0))
+                                .text_color(rgb(if enabled { accent } else { theme().text_muted })),
+                        );
+                    if enabled {
+                        b = b.hover(|s| s.bg(rgb(theme().selected)).cursor_pointer());
+                    }
+                    b
                 };
 
-                // type quick-pick chips (also free-typeable in the type field above).
-                let mut chips = div().flex().flex_row().flex_wrap().gap_1();
-                for &choice in kagi_git::TYPE_CHOICES {
-                    let ty_state = ty.clone();
-                    let pick = cx.listener(
-                        move |_view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                            ty_state
-                                .update(cx, |s, cx| s.set_value(choice.to_string(), window, cx));
-                        },
-                    );
-                    chips = chips.child(
-                        div()
-                            .id(SharedString::from(format!("cp-type-chip-{}", choice)))
-                            .px_1()
-                            .py_px()
-                            .rounded_sm()
-                            .text_xs()
-                            .bg(rgb(theme().surface))
-                            .text_color(rgb(theme().text_main))
-                            .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
-                            .on_click(pick)
-                            .child(SharedString::from(choice)),
-                    );
-                }
-
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(field("type", &ty))
-                    .child(chips)
-                    .child(field("scope", &scope))
-                    .child(field("summary", &summary))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_px()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(theme().text_label))
-                                    .child(SharedString::from("body")),
-                            )
-                            .child(Input::new(&body).appearance(true).bordered(true)),
-                    )
-                    .child(field("test", &test))
-                    .child(field("risk", &risk))
-                    .into_any_element()
-            } else {
-                // Template mode requested but inputs not yet created (no &mut Window
-                // here) — should not occur because the toggle creates them.
-                div()
-                    .px_2()
-                    .py_1()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from("(template fields unavailable)"))
-                    .into_any_element()
-            }
-        } else if let Some(ref input_entity) = commit_input {
-            // Use gpui-component Input element — handles IME, clipboard, arrow keys, etc.
-            Input::new(input_entity)
-                .appearance(true)
-                .bordered(true)
-                .into_any_element()
-        } else {
-            // Fallback for headless / no-window case (should not occur in normal UI flow).
-            div()
-                .px_2()
-                .py_1()
-                .bg(rgb(theme().bg_base))
-                .rounded_sm()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from("(commit message input unavailable)"))
-                .into_any_element()
-        };
-
-        // ── Commit button ─────────────────────────────────────────
-        let commit_btn = if can_commit {
-            let commit_click = cx.listener(
-                |view: &mut CommitPanelView, _event: &gpui::ClickEvent, window, cx| {
-                    view.defer_open_commit_plan_modal(window, cx);
-                },
-            );
-            Button::new("cp-commit-btn")
-                .label(SharedString::from(format!(
-                    "Commit ({} file{})",
-                    staged_count,
-                    if staged_count == 1 { "" } else { "s" }
-                )))
-                .primary()
-                .small()
-                .mt_1()
-                .w_full()
-                .on_click(commit_click)
-                .into_any_element()
-        } else {
-            // Tell the user exactly why the button is disabled.
-            let reason = if staged_count == 0 && !input_msg_nonempty {
-                "Commit — stage a file and enter a message first"
-            } else if staged_count == 0 {
-                "Commit — stage at least one file first"
-            } else {
-                "Commit — enter a commit message first"
-            };
-            div()
-                .id("cp-commit-btn-disabled")
-                .mt_1()
-                .w_full()
-                .px_2()
-                .py_1()
-                .rounded_sm()
-                .bg(rgb(theme().surface))
-                .text_sm()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(reason))
-                .into_any_element()
-        };
-
-        // ── Smart Commit Message toolbar (T-COMMIT-016) ───────────
-        // Rule-based "Suggest" is always available; "Generate with Local LLM" is
-        // offered only when an Ollama server is detected and the user opted in.
-        let staged_empty = panel.staged.is_empty();
-        let smart_toolbar = {
-            // Small reusable button factory.
-            let pill = |id: &'static str, label: SharedString, enabled: bool, accent: u32| {
-                let mut b = div()
-                    .id(id)
-                    .px_1p5()
-                    .py_px()
-                    .rounded_sm()
-                    .text_xs()
-                    .bg(rgb(theme().surface))
-                    .text_color(rgb(if enabled { accent } else { theme().text_muted }))
-                    .child(label);
-                if enabled {
-                    b = b.hover(|s| s.bg(rgb(theme().selected)).cursor_pointer());
-                }
-                b
-            };
-
-            // Suggest — one button: uses the local LLM when it's usable (green),
-            // otherwise the rule-based draft (blue). Shows "Generating…" while the
-            // LLM runs. (The separate "Generate with Local LLM" button is gone.)
+            // Sparkles — generate a commit message. Uses the local LLM when it is
+            // usable (green), otherwise the rule-based draft.
             let llm_on = smart.llm_offered();
             let suggest_enabled = !staged_empty && !smart.generating;
             let suggest_color = if llm_on {
@@ -1027,49 +951,42 @@ impl CommitPanelView {
                 theme().color_branch
             };
             let suggest_btn: gpui::AnyElement = if smart.generating {
-                // Animated braille "dots" spinner while the LLM generates (user
-                // request — the spinning-dots glyph). The whole panel re-renders each
-                // animation frame, so the closure rebuilds a fresh single-child div.
+                // Spin the same icon rather than swapping in a text spinner, so
+                // the row does not change width mid-generation.
                 use gpui::AnimationExt as _;
-                const FRAMES: [&str; 10] = [
-                    "\u{280B}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283C}", "\u{2834}",
-                    "\u{2826}", "\u{2827}", "\u{2807}", "\u{280F}",
-                ];
-                let spinner = div()
-                    .text_xs()
-                    .text_color(rgb(suggest_color))
-                    .with_animation(
-                        "cp-smart-spinner",
-                        gpui::Animation::new(Duration::from_millis(800)).repeat(),
-                        |el, delta| {
-                            let i = ((delta * FRAMES.len() as f32) as usize).min(FRAMES.len() - 1);
-                            el.child(SharedString::from(FRAMES[i]))
-                        },
-                    );
                 div()
                     .id("cp-smart-suggest")
-                    .px_1p5()
-                    .py_px()
-                    .rounded_sm()
-                    .text_xs()
-                    .bg(rgb(theme().surface))
-                    .text_color(rgb(suggest_color))
+                    .p_1()
                     .flex()
-                    .flex_row()
                     .items_center()
-                    .gap_1()
-                    .child(spinner)
-                    .child(SharedString::from("Generating…"))
+                    .justify_center()
+                    .child(
+                        gpui::svg()
+                            .path("icons/loader-circle.svg")
+                            .w(theme::scaled_px(16.0))
+                            .h(theme::scaled_px(16.0))
+                            .text_color(rgb(suggest_color))
+                            .with_animation(
+                                "cp-smart-spinner",
+                                gpui::Animation::new(Duration::from_millis(900)).repeat(),
+                                |svg, delta| {
+                                    svg.with_transformation(gpui::Transformation::rotate(
+                                        gpui::radians(delta * std::f32::consts::TAU),
+                                    ))
+                                },
+                            ),
+                    )
                     .into_any_element()
             } else {
-                let mut b = pill(
+                let mut b = icon_btn(
                     "cp-smart-suggest",
-                    SharedString::from("Suggest"),
+                    "icons/sparkles.svg",
+                    Msg::GenerateMessage.t().to_string(),
                     suggest_enabled,
                     suggest_color,
                 );
                 if suggest_enabled {
-                    let suggest_click = cx.listener(
+                    b = b.on_click(cx.listener(
                         move |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
                             if llm_on {
                                 view.defer_smart_generate(window, cx);
@@ -1077,141 +994,138 @@ impl CommitPanelView {
                                 view.defer_smart_suggest(window, cx);
                             }
                         },
-                    );
-                    b = b.on_click(suggest_click);
+                    ));
                 }
                 b.into_any_element()
             };
 
-            // Lang toggle (En / 日本語).
-            let lang_label = match smart.lang {
-                message_gen::Lang::En => "Lang: EN",
-                message_gen::Lang::Ja => "Lang: 日本語",
-            };
-            let lang_click = cx.listener(
-                |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                    view.defer_smart_toggle_lang(window, cx);
-                },
-            );
-            let lang_btn = pill(
-                "cp-smart-lang",
-                SharedString::from(lang_label),
+            // Person+ — co-author picker.
+            let coauthor_btn = icon_btn(
+                "cp-coauthor",
+                "icons/user-plus.svg",
+                Msg::AddCoAuthor.t().to_string(),
                 true,
                 theme().text_main,
             )
-            .on_click(lang_click);
+            .on_click(cx.listener(
+                |view: &mut CommitPanelView, _e: &gpui::ClickEvent, _w, cx| {
+                    view.toggle_coauthor_menu(cx);
+                },
+            ));
 
-            // ADR-0090: the Style (CC vs Plain) toggle was removed — style now
-            // follows the commit-panel mode (template → Conventional, plain → Plain).
+            // Undo — amend the previous commit (the plan still blocks pushed
+            // commits; this only opens the modal).
+            let amend_btn = icon_btn(
+                "cp-amend-btn",
+                "icons/undo-2.svg",
+                Msg::AmendLastCommit.t().to_string(),
+                true,
+                theme().color_warning,
+            )
+            .on_click(cx.listener(
+                |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
+                    view.defer_amend(window, cx);
+                },
+            ));
 
-            let mut row = div()
+            let row = div()
                 .flex()
                 .flex_row()
-                .flex_wrap()
                 .items_center()
                 .gap_1()
                 .child(suggest_btn)
-                .child(lang_btn);
+                .child(coauthor_btn)
+                .child(amend_btn);
 
-            // "Generate with Local LLM" is folded into Suggest (above). When the LLM
-            // is detected but not yet enabled, offer an opt-in affordance so the user
-            // can turn it on (after which Suggest goes green and uses it).
-            if smart.ollama_available && !smart.llm_enabled {
-                let enable_click = cx.listener(
-                    |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                        view.defer_smart_generate(window, cx);
-                    },
-                );
-                let enable_btn = pill(
-                    "cp-smart-enable-llm",
-                    SharedString::from("Enable Local LLM…"),
-                    !staged_empty,
-                    theme().color_success,
-                )
-                .when(!staged_empty, |el| el.on_click(enable_click));
-                row = row.child(enable_btn);
-            }
-
-            // "Local LLM available" indicator.
-            let mut col = div().flex().flex_col().gap_px().child(row);
-            if smart.ollama_available {
-                col = col.child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(theme().color_success))
-                        .child(SharedString::from("● Local LLM available")),
-                );
-            }
-            // Transient status line (rule-based inserted / generating / fell back).
-            if let Some(ref status) = smart.status {
-                col = col.child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(theme().text_muted))
-                        .child(SharedString::from(status.clone())),
-                );
-            }
-            col
+            div()
+                .relative()
+                .child(row)
+                .children(render_coauthor_menu(coauthor_menu.as_deref(), cx))
         };
 
-        // ── Commit preview header (T-COMMIT-001) ──────────────────
-        // Shows what the *next* commit contains: staged count, A/M/D summary,
-        // target branch (detached/unborn handled), and author.  Pure read from
-        // `commit_preview()`; hidden if the preview could not be built.
-        let preview_block: gpui::AnyElement = if let Some(ref pv) = preview {
-            let count_line = format!(
-                "{} file{} staged",
-                pv.staged_count,
-                if pv.staged_count == 1 { "" } else { "s" }
-            );
-            let summary = pv.summary();
-            let mut col = div()
+        // The radius `Input` gives itself, read once so both boxes match.
+        let input_radius = gpui_component::ActiveTheme::theme(&**cx).radius;
+
+        // ── commit.template toggle (bottom-left of the body box) ──────
+        // Only offered when the user actually has a `commit.template`; without
+        // one the control would toggle nothing.
+        let template_toggle: gpui::AnyElement = if self.commit_template.is_some() {
+            let on = self.template_active(cx);
+            div()
+                .id("cp-template-toggle")
+                .px_1p5()
+                .py_px()
+                .rounded_sm()
+                .text_xs()
+                .text_color(rgb(if on {
+                    theme().color_branch
+                } else {
+                    theme().text_muted
+                }))
+                .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+                .tooltip(|w, cx| {
+                    gpui_component::tooltip::Tooltip::new(Msg::ToggleCommitTemplate.t())
+                        .build(w, cx)
+                })
+                .on_click(cx.listener(
+                    |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
+                        view.toggle_template(window, cx);
+                    },
+                ))
+                .child(SharedString::from(Msg::Template.t()))
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        };
+
+        // ── Commit message: subject + body (ADR-0134) ─────────────────
+        // Two inputs mirroring git's own shape, replacing the single field and
+        // the six-field template mode. The body is seeded from the user's
+        // `commit.template` on first open and holds the co-author trailers.
+        //
+        // The icon row lives INSIDE the body's box: the box is a plain div
+        // wearing the Input's own border/background, with an unstyled `Input`
+        // and the icons stacked in it. Drawn as a real row rather than absolutely
+        // positioned so it can never overlap a long body.
+        let msg_inputs: gpui::AnyElement = match (&title_input, &body_input) {
+            (Some(title), Some(body)) => div()
                 .flex()
                 .flex_col()
-                .gap_px()
-                // Line 1: count + A/M/D summary
+                .gap_2()
+                .child(Input::new(title).appearance(true).bordered(true))
                 .child(
                     div()
                         .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
+                        .flex_col()
+                        // Same radius the `Input` gives itself, so the two boxes
+                        // do not have visibly different corners.
+                        .rounded(input_radius)
+                        .border_1()
+                        .border_color(rgb(theme().text_muted))
+                        .bg(rgb(theme().bg_base))
+                        .child(Input::new(body).appearance(false).bordered(false))
                         .child(
                             div()
-                                .text_xs()
-                                .text_color(rgb(theme().text_main))
-                                .child(SharedString::from(count_line)),
-                        )
-                        .when(!summary.is_empty(), |el| {
-                            el.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(theme().text_muted))
-                                    .child(SharedString::from(summary)),
-                            )
-                        }),
-                );
-            // Line 2: target branch
-            col = col.child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .overflow_hidden()
-                    .truncate()
-                    .child(SharedString::from(format!("→ {}", pv.target_branch))),
-            );
-            // Line 3: author
-            col = col.child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .overflow_hidden()
-                    .truncate()
-                    .child(SharedString::from(format!("by {}", pv.author))),
-            );
-            col.into_any_element()
-        } else {
-            div().into_any_element()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .justify_between()
+                                .px_1()
+                                .pb_1()
+                                .child(template_toggle)
+                                .child(icon_row),
+                        ),
+                )
+                .into_any_element(),
+            // No window yet (headless); the message still flows through
+            // `state.commit_msg`, so this is a placeholder, not a failure.
+            _ => div()
+                .px_2()
+                .py_1()
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from("(commit message input unavailable)"))
+                .into_any_element(),
         };
 
         // ── Assemble panel ───────────────────────────────────────
@@ -1341,48 +1255,29 @@ impl CommitPanelView {
                             }),
                     ),
             )
-            // Commit footer: message input + warning + button
+            // Commit footer: subject + body, icon actions, commit button.
             .child(
                 div()
                     .flex_shrink_0()
                     .flex()
                     .flex_col()
-                    .px_2()
-                    .py_1()
-                    .gap_1()
+                    .px_3()
+                    .py_2()
+                    .gap_2()
                     .bg(rgb(theme().surface))
-                    // T-COMMIT-001: staged preview (count / A·M·D / branch / author)
-                    .child(preview_block)
-                    // Message label + plain⇄template toggle
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .justify_between()
-                            .child(div().text_xs().text_color(rgb(theme().text_label)).child(
-                                SharedString::from(if template_mode {
-                                    "Commit message (template)"
-                                } else {
-                                    "Commit message"
-                                }),
-                            ))
-                            .child(mode_toggle),
-                    )
-                    // Template mode stacks six fields and overflows the footer; bound
-                    // its height and let it scroll so the commit button stays reachable.
-                    .child(if template_mode {
-                        div()
-                            .id("cp-template-scroll")
-                            .max_h(theme::scaled_px(300.))
-                            .overflow_y_scroll()
-                            .child(msg_input_wrapper)
-                            .into_any_element()
-                    } else {
-                        msg_input_wrapper
+                    // Subject + body (the icon actions live inside the body box)
+                    .child(msg_inputs)
+                    // Transient smart-commit status. Its own full-width line:
+                    // inside the right-aligned icon group it pushed the icons
+                    // sideways as the text appeared (user report).
+                    .when_some(smart.status.clone(), |el, status| {
+                        el.child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(theme().text_muted))
+                                .child(SharedString::from(status)),
+                        )
                     })
-                    // Smart Commit Message toolbar (Suggest / Generate / toggles)
-                    .child(smart_toolbar)
                     // Unstaged warning
                     .when(has_unstaged_warning, |el| {
                         el.child(
@@ -1394,31 +1289,7 @@ impl CommitPanelView {
                                 ))),
                         )
                     })
-                    // Commit button
-                    .child(commit_btn)
-                    // T-COMMIT-011: Amend the previous commit (unpushed only —
-                    // the plan blocks pushed/merge/etc.). Mode follows what the
-                    // user has provided: staged changes, a new message, or both.
-                    .child({
-                        let amend_click = cx.listener(
-                            |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                                view.defer_amend(window, cx);
-                            },
-                        );
-                        div()
-                            .id("cp-amend-btn")
-                            .mt_1()
-                            .w_full()
-                            .px_2()
-                            .py_1()
-                            .rounded_sm()
-                            .bg(rgb(theme().surface))
-                            .text_sm()
-                            .text_color(rgb(theme().color_warning))
-                            .on_click(amend_click)
-                            .hover(|st| st.bg(rgb(theme().selected)))
-                            .child(SharedString::from("Amend last commit…"))
-                    }),
+                    .child(commit_btn),
             )
     }
 }

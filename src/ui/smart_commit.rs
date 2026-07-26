@@ -152,9 +152,16 @@ impl SmartCommitState {
         SmartCommitState {
             llm_enabled: settings::read_setting(KEY_ENABLED).as_deref() == Some("1"),
             model: settings::read_setting(KEY_MODEL).filter(|m| !m.is_empty()),
+            // ADR-0134: the Lang pill in the commit footer is gone, so an
+            // unset `smart_commit_lang` follows the UI language rather than
+            // being stuck on English with no way to change it. An explicitly
+            // saved value still wins.
             lang: settings::read_setting(KEY_LANG)
                 .map(|l| Lang::from_slug(&l))
-                .unwrap_or(Lang::En),
+                .unwrap_or_else(|| match kagi_ui_core::i18n::lang() {
+                    kagi_ui_core::i18n::Lang::Ja => Lang::Ja,
+                    kagi_ui_core::i18n::Lang::En => Lang::En,
+                }),
             provider: settings::read_setting(KEY_PROVIDER)
                 .map(|p| SmartProvider::from_slug(&p))
                 .unwrap_or(SmartProvider::Ollama),
@@ -187,15 +194,6 @@ impl SmartCommitState {
             CliProvider::ClaudeCode => self.claude_available,
             CliProvider::Codex => self.codex_available,
         }
-    }
-
-    /// Toggle language and persist.
-    pub fn toggle_lang(&mut self) {
-        self.lang = match self.lang {
-            Lang::En => Lang::Ja,
-            Lang::Ja => Lang::En,
-        };
-        settings::write_setting(KEY_LANG, Some(self.lang.slug()));
     }
 
     /// Whether the "Generate with LLM" button should be *offered* at all.
@@ -283,15 +281,5 @@ mod tests {
         assert!(!s.llm_offered());
         s.claude_available = true;
         assert!(s.llm_offered());
-    }
-
-    #[test]
-    fn toggle_lang_flips() {
-        let mut s = SmartCommitState::default();
-        // Avoid touching real settings.json in CI: set a throwaway dir.
-        std::env::set_var("KAGI_LOG_DIR", std::env::temp_dir().join("kagi-sc-test"));
-        let _ = std::fs::create_dir_all(std::env::temp_dir().join("kagi-sc-test"));
-        s.toggle_lang();
-        assert_eq!(s.lang, Lang::Ja);
     }
 }

@@ -15,6 +15,16 @@ use gpui::{prelude::*, Entity, SharedString, UniformListScrollHandle, WeakEntity
 use gpui_component::input::InputState;
 
 use kagi_git::{Backend, ChangeKind, CommitPreview, FileDiffStat, FileStatus};
+use kagi_ui_core::i18n::Msg;
+
+/// settings.json key: whether the body is seeded from `commit.template`.
+/// Absent means yes — a configured template is opt-out, not opt-in.
+const KEY_COMMIT_TEMPLATE: &str = "commit_template_enabled";
+
+/// Whether a configured `commit.template` should seed the body on open.
+pub fn template_enabled() -> bool {
+    crate::ui::settings::read_setting(KEY_COMMIT_TEMPLATE).as_deref() != Some("0")
+}
 
 use crate::ui::file_tree::{self, TreeRow};
 use crate::ui::smart_commit::SmartCommitState;
@@ -234,13 +244,13 @@ impl CommitPanelState {
 /// its own `Entity<T>`, mirroring the `ConflictView` fat-entity template.
 ///
 /// The entity OWNS the `CommitPanelState` view data **and** the nested input
-/// entities (`commit_input` + the six `commit_template_inputs`), the template
-/// mode flag, the queued smart-commit message, the per-branch draft autosave
-/// state (`last_draft_value` / `draft_save_gen` — moved OFF the parent so the
-/// parent render never reads the child's input each frame), a smart-commit
-/// generation guard (`gen`), and the two file-list scroll handles. Self-rendering
-/// child with its own `cx.notify()` scope: file select/highlight, the
-/// tree↔flat toggle, and the plain↔template toggle re-render only this subtree.
+/// entities (`title_input` + `body_input`), the queued smart-commit message,
+/// the per-branch draft autosave state (`last_draft_value` / `draft_save_gen` —
+/// moved OFF the parent so the parent render never reads the child's input each
+/// frame), a smart-commit generation guard (`gen`), the co-author picker, and
+/// the two file-list scroll handles. Self-rendering child with its own
+/// `cx.notify()` scope: file select/highlight, the tree↔flat toggle and the
+/// co-author picker re-render only this subtree.
 ///
 /// # Re-entrancy invariant (CRITICAL — proven by `ConflictView`)
 /// A `CommitPanelView` listener leases this entity. NO listener may synchronously
@@ -258,13 +268,19 @@ impl CommitPanelState {
 pub struct CommitPanelView {
     /// The staging lists / stats / trees / preview / selection / plan-modal data.
     pub state: CommitPanelState,
-    /// gpui-component `InputState` for the plain commit message (IME/focus).
+    /// gpui-component `InputState` for the commit subject line (IME/focus).
     /// Created lazily in a `Window` context; kept STABLE across status reloads.
-    pub commit_input: Option<Entity<InputState>>,
-    /// `true` when authoring via the six structured template fields.
-    pub commit_template_mode: bool,
-    /// Lazily-created `InputState`s for `[type, scope, summary, body, test, risk]`.
-    pub commit_template_inputs: Option<[Entity<InputState>; 6]>,
+    pub title_input: Option<Entity<InputState>>,
+    /// Multi-line `InputState` for the commit body. Seeded from the user's
+    /// `commit.template` on first open (ADR-0134) and the home of the
+    /// `Co-authored-by:` trailers the co-author picker appends.
+    pub body_input: Option<Entity<InputState>>,
+    /// Co-author picker: `Some(candidates)` while the popover is open. Loaded
+    /// on click rather than per-frame — it walks recent history.
+    pub coauthor_menu: Option<Vec<kagi_git::AuthorCandidate>>,
+    /// The user's `commit.template`, verbatim, or `None` when unset. Kept so the
+    /// footer's Template toggle can put it back after it has been removed.
+    pub commit_template: Option<String>,
     /// A smart-commit message generated on a background thread, queued for the
     /// next render to push into the input (which needs `&mut Window`).
     pub pending_smart_msg: Option<String>,
@@ -277,6 +293,11 @@ pub struct CommitPanelView {
     /// Bumped on each generate; a stale background result whose captured `gen`
     /// no longer matches is dropped instead of clobbering a newer input.
     pub gen: u64,
+    /// UI language the two message inputs were built with. `InputState` bakes
+    /// its placeholder at construction and exposes no setter, so switching
+    /// language rebuilds them (carrying the text across) rather than leaving a
+    /// stale-language placeholder on screen.
+    pub input_lang: kagi_ui_core::i18n::Lang,
     /// PERF: scroll handle for the Unstaged `uniform_list`.
     pub unstaged_scroll_handle: UniformListScrollHandle,
     /// PERF: scroll handle for the Staged `uniform_list`.
@@ -309,13 +330,15 @@ impl CommitPanelView {
     pub fn new(state: CommitPanelState, app: WeakEntity<KagiApp>, repo_path: PathBuf) -> Self {
         Self {
             state,
-            commit_input: None,
-            commit_template_mode: false,
-            commit_template_inputs: None,
+            title_input: None,
+            body_input: None,
+            coauthor_menu: None,
+            commit_template: None,
             pending_smart_msg: None,
             last_draft_value: String::new(),
             draft_save_gen: 0,
             gen: 0,
+            input_lang: kagi_ui_core::i18n::lang(),
             unstaged_scroll_handle: UniformListScrollHandle::new(),
             staged_scroll_handle: UniformListScrollHandle::new(),
             active_wip: None,
@@ -326,157 +349,133 @@ impl CommitPanelView {
         }
     }
 
-    /// Compute the effective single-message text for the current mode: the
-    /// assembled template (template mode) or the plain Input value (plain mode).
-    /// Mirrors the former `KagiApp::effective_commit_message`.
+    /// Whether a body line is a git trailer (`Key: value` with a hyphenated,
+    /// space-free key) — used to keep appended co-authors in one block.
+    fn is_trailer_line(line: &str) -> bool {
+        line.split_once(": ")
+            .is_some_and(|(k, v)| !k.contains(' ') && k.contains('-') && !v.trim().is_empty())
+    }
+
+    /// The effective commit message: subject, blank line, body (see
+    /// [`kagi_git::join_title_body`]). The single string every consumer wants —
+    /// the split into two inputs is a UI concern only.
     pub fn effective_commit_message(&self, cx: &gpui::App) -> String {
-        if self.commit_template_mode {
-            kagi_git::assemble(&self.template_fields_from_inputs(cx))
-        } else {
-            self.commit_input
-                .as_ref()
+        let read = |i: &Option<Entity<InputState>>| {
+            i.as_ref()
                 .map(|i| i.read(cx).value().to_string())
                 .unwrap_or_default()
-        }
+        };
+        kagi_git::join_title_body(&read(&self.title_input), &read(&self.body_input))
     }
 
-    /// Read the six template `InputState`s into a [`kagi_git::TemplateFields`].
-    pub fn template_fields_from_inputs(&self, cx: &gpui::App) -> kagi_git::TemplateFields {
-        match &self.commit_template_inputs {
-            Some([ty, scope, summary, body, test, risk]) => kagi_git::TemplateFields::new(
-                ty.read(cx).value().to_string(),
-                scope.read(cx).value().to_string(),
-                summary.read(cx).value().to_string(),
-                body.read(cx).value().to_string(),
-                test.read(cx).value().to_string(),
-                risk.read(cx).value().to_string(),
-            ),
-            None => kagi_git::TemplateFields::default(),
-        }
-    }
-
-    /// Lazily create the six template-field `InputState`s (requires `&mut
-    /// Window`). Order: `[type, scope, summary, body, test, risk]`. No-op once
-    /// created. (Moved verbatim from `KagiApp::ensure_template_inputs`.)
-    fn ensure_template_inputs(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
-        if self.commit_template_inputs.is_some() {
-            return;
-        }
-        let ty = cx.new(|cx| InputState::new(window, cx).placeholder("type (feat, fix, …)"));
-        let scope = cx.new(|cx| InputState::new(window, cx).placeholder("scope (optional)"));
-        let summary = cx.new(|cx| InputState::new(window, cx).placeholder("summary"));
-        let body = cx.new(|cx| {
-            InputState::new(window, cx)
-                .multi_line(true)
-                .auto_grow(2, 8)
-                .placeholder("body (optional)")
-        });
-        let test =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Test: how verified (optional)"));
-        let risk =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Risk: known risks (optional)"));
-        self.commit_template_inputs = Some([ty, scope, summary, body, test, risk]);
-    }
-
-    /// Write a [`kagi_git::TemplateFields`] into the six template `InputState`s.
-    /// (Moved verbatim from `KagiApp::set_template_inputs`.)
-    pub fn set_template_inputs(
-        &mut self,
-        fields: &kagi_git::TemplateFields,
-        window: &mut gpui::Window,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        self.ensure_template_inputs(window, cx);
-        if let Some([ty, scope, summary, body, test, risk]) = self.commit_template_inputs.clone() {
-            ty.update(cx, |s, cx| s.set_value(fields.r#type.clone(), window, cx));
-            scope.update(cx, |s, cx| s.set_value(fields.scope.clone(), window, cx));
-            summary.update(cx, |s, cx| s.set_value(fields.summary.clone(), window, cx));
-            body.update(cx, |s, cx| s.set_value(fields.body.clone(), window, cx));
-            test.update(cx, |s, cx| s.set_value(fields.test.clone(), window, cx));
-            risk.update(cx, |s, cx| s.set_value(fields.risk.clone(), window, cx));
-        }
-    }
-
-    /// Toggle between plain and template authoring modes, carrying the content
-    /// across so a toggle never loses the user's work (T-COMMIT-009).
-    /// Entity-internal: operates only on this entity's own inputs / draft state.
-    /// (Moved from `KagiApp::toggle_commit_template_mode`.)
-    pub fn toggle_template_mode(
-        &mut self,
-        window: &mut gpui::Window,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        if self.commit_template_mode {
-            // template → plain: assemble + pour into the plain Input.
-            let fields = self.template_fields_from_inputs(cx);
-            let assembled = kagi_git::assemble(&fields);
-            if self.commit_input.is_none() {
-                let st = cx.new(|cx| InputState::new(window, cx).placeholder("Commit message"));
-                self.commit_input = Some(st);
-            }
-            if let Some(input) = self.commit_input.clone() {
-                input.update(cx, |s, cx| s.set_value(assembled, window, cx));
-                input.update(cx, |s, cx| s.focus(window, cx));
-            }
-            self.commit_template_mode = false;
-        } else {
-            // plain → template: parse the plain Input into the fields.
-            let plain = self
-                .commit_input
-                .as_ref()
+    /// The message as it will actually be committed: [`Self::effective_commit_message`]
+    /// with the body's comment lines removed.
+    ///
+    /// Templates are mostly comments, so the two differ whenever one is loaded:
+    /// the raw form is what the user sees and what the draft stores, this is what
+    /// reaches git. Commit, amend and "is there a message yet?" all use this one.
+    pub fn committable_message(&self, cx: &gpui::App) -> String {
+        let read = |i: &Option<Entity<InputState>>| {
+            i.as_ref()
                 .map(|i| i.read(cx).value().to_string())
-                .unwrap_or_default();
-            let fields = kagi_git::parse_message(&plain);
-            self.set_template_inputs(&fields, window, cx);
-            self.commit_template_mode = true;
-            // Focus the summary field (index 2) — the most-edited one.
-            if let Some(inputs) = self.commit_template_inputs.clone() {
-                inputs[2].update(cx, |s, cx| s.focus(window, cx));
+                .unwrap_or_default()
+        };
+        let body = kagi_domain::message::strip_template_comments(&read(&self.body_input));
+        kagi_git::join_title_body(&read(&self.title_input), &body)
+    }
+
+    /// Whether the body currently carries the template's comment block.
+    ///
+    /// Derived from the text rather than tracked in a flag, so the toggle can
+    /// never disagree with what is actually in the box (the user can delete the
+    /// comments by hand).
+    pub fn template_active(&self, cx: &gpui::App) -> bool {
+        self.body_input
+            .as_ref()
+            .map(|i| {
+                i.read(cx)
+                    .value()
+                    .lines()
+                    .any(kagi_domain::message::is_comment_line)
+            })
+            .unwrap_or(false)
+    }
+
+    /// Add or remove the `commit.template` block in the body, and remember the
+    /// choice for the next open.
+    pub fn toggle_template(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
+        let Some(body) = self.body_input.clone() else {
+            return;
+        };
+        let current = body.read(cx).value().to_string();
+        let on = !self.template_active(cx);
+        let next = if on {
+            let Some(tpl) = self.commit_template.clone() else {
+                return;
+            };
+            let written = kagi_domain::message::strip_template_comments(&current);
+            if written.trim().is_empty() {
+                tpl
+            } else {
+                format!("{}\n\n{}", written.trim_end(), tpl)
             }
-        }
-        // Persist the new mode immediately (with the current effective message).
-        self.bump_draft_for_mode_change(cx);
+        } else {
+            kagi_domain::message::strip_template_comments(&current)
+        };
+        body.update(cx, |s, cx| s.set_value(next, window, cx));
+        crate::ui::settings::write_setting(KEY_COMMIT_TEMPLATE, Some(if on { "1" } else { "0" }));
+        klog!("commit template: {}", if on { "on" } else { "off" });
         cx.notify();
     }
 
-    /// Force a draft save on the next debounce tick after a mode change, so the
-    /// `mode` field is persisted even if the message text is unchanged.
-    /// (Moved from `KagiApp::bump_draft_for_mode_change`; the branch is read off
-    /// the parent via the weak handle inside the debounced task.)
-    fn bump_draft_for_mode_change(&mut self, cx: &mut gpui::Context<Self>) {
-        let msg = self.effective_commit_message(cx);
-        self.last_draft_value = msg;
-        self.draft_save_gen = self.draft_save_gen.wrapping_add(1);
-        let gen = self.draft_save_gen;
-        let mode = if self.commit_template_mode {
-            "template"
-        } else {
-            "plain"
+    /// Open or close the co-author picker.
+    ///
+    /// Candidates are walked on open, not per frame — the walk touches recent
+    /// history and the panel re-renders at 60fps. Entity-internal (no parent
+    /// read), so it stays synchronous.
+    pub fn toggle_coauthor_menu(&mut self, cx: &mut gpui::Context<Self>) {
+        self.coauthor_menu = match self.coauthor_menu {
+            Some(_) => None,
+            None => Some(
+                Backend::open(&self.repo_path)
+                    .map(|b| b.recent_authors(20))
+                    .unwrap_or_default(),
+            ),
+        };
+        cx.notify();
+    }
+
+    /// Append a `Co-authored-by:` trailer to the body, skipping duplicates.
+    /// Trailers live in the body text itself rather than in a side list, so the
+    /// draft file, the plan modal and `parse_coauthors` all keep working with no
+    /// extra plumbing.
+    pub fn add_coauthor(
+        &mut self,
+        candidate: &kagi_git::AuthorCandidate,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(body) = self.body_input.clone() else {
+            return;
+        };
+        let trailer = candidate.trailer();
+        let current = body.read(cx).value().to_string();
+        if current
+            .lines()
+            .any(|l| l.trim().eq_ignore_ascii_case(&trailer))
+        {
+            return;
         }
-        .to_string();
-        let repo_path = self.repo_path.clone();
-        let weak_app = self.app.clone();
-        cx.spawn(async move |this, acx| {
-            acx.background_executor()
-                .timer(std::time::Duration::from_millis(250))
-                .await;
-            // Read the current branch off the parent (it owns status_summary).
-            let branch = weak_app
-                .read_with(acx, |app, _| app.active_view.status_summary.branch.clone())
-                .unwrap_or_default();
-            let _ = this.update(acx, |view, _cx| {
-                if view.draft_save_gen != gen {
-                    return;
-                }
-                let msg = view.last_draft_value.clone();
-                if msg.trim().is_empty() {
-                    let _ = kagi_git::clear_draft(&repo_path, &branch);
-                } else {
-                    let _ = kagi_git::save_draft(&repo_path, &branch, &msg, &mode);
-                }
-            });
-        })
-        .detach();
+        // Trailers are their own block at the end, separated by a blank line.
+        let next = if current.trim().is_empty() {
+            trailer
+        } else if current.lines().last().is_some_and(Self::is_trailer_line) {
+            format!("{}\n{}", current.trim_end(), trailer)
+        } else {
+            format!("{}\n\n{}", current.trim_end(), trailer)
+        };
+        body.update(cx, |s, cx| s.set_value(next, window, cx));
+        cx.notify();
     }
 
     /// Render-time input sync: push a queued smart-commit message into the Input
@@ -485,33 +484,51 @@ impl CommitPanelView {
     /// `sync_modal_inputs` half). Runs on this entity's own render path with
     /// `&mut Window`, so the parent never reads the child's input each frame.
     pub fn sync_inputs(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
+        // ── Language switch → rebuild the inputs for their placeholders. ──
+        // `InputState` has no placeholder setter, so the text is carried across
+        // a fresh pair. Rare (a menu action), and it only costs the caret.
+        let lang = kagi_ui_core::i18n::lang();
+        if lang != self.input_lang {
+            self.input_lang = lang;
+            if let Some(old) = self.title_input.clone() {
+                let text = old.read(cx).value().to_string();
+                let fresh =
+                    cx.new(|cx| InputState::new(window, cx).placeholder(Msg::CommitTitle.t()));
+                fresh.update(cx, |s, cx| s.set_value(text, window, cx));
+                self.title_input = Some(fresh);
+            }
+            if let Some(old) = self.body_input.clone() {
+                let text = old.read(cx).value().to_string();
+                let fresh = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .multi_line(true)
+                        .auto_grow(3, 12)
+                        .placeholder(Msg::CommitBody.t())
+                });
+                fresh.update(cx, |s, cx| s.set_value(text, window, cx));
+                self.body_input = Some(fresh);
+            }
+        }
+
         // ── Queued smart-commit message → Input (needs `&mut Window`). ──
         if let Some(msg) = self.pending_smart_msg.take() {
-            if self.commit_template_mode {
-                let fields = kagi_git::parse_message(&msg);
-                self.set_template_inputs(&fields, window, cx);
-            } else if let Some(input) = self.commit_input.clone() {
-                input.update(cx, |state, cx| {
-                    state.set_value(msg, window, cx);
-                });
+            let (title, body) = kagi_git::split_title_body(&msg);
+            if let Some(input) = self.title_input.clone() {
+                input.update(cx, |state, cx| state.set_value(title, window, cx));
+            }
+            if let Some(input) = self.body_input.clone() {
+                input.update(cx, |state, cx| state.set_value(body, window, cx));
             }
         }
 
         // ── Commit-message draft autosave (T-COMMIT-007 / T-COMMIT-009) ──
-        let has_input = self.commit_input.is_some()
-            || (self.commit_template_mode && self.commit_template_inputs.is_some());
-        if has_input {
+        if self.title_input.is_some() || self.body_input.is_some() {
             let v = self.effective_commit_message(cx);
             if v != self.last_draft_value {
                 self.last_draft_value = v;
                 self.draft_save_gen = self.draft_save_gen.wrapping_add(1);
                 let gen = self.draft_save_gen;
-                let mode = if self.commit_template_mode {
-                    "template"
-                } else {
-                    "plain"
-                }
-                .to_string();
+                let mode = "plain".to_string();
                 let repo_path = self.repo_path.clone();
                 let weak_app = self.app.clone();
                 cx.spawn(async move |this, acx| {

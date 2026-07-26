@@ -463,7 +463,10 @@ fn render_coauthor_menu(
     let mut menu = div()
         .absolute()
         .bottom(theme::scaled_px(26.0))
-        .left_0()
+        // Anchored to the RIGHT edge so the menu grows leftward: the commit
+        // panel is the right-most pane, and a left-anchored 260px menu opened
+        // past the window edge (user report).
+        .right_0()
         .w(theme::scaled_px(260.0))
         .id("cp-coauthor-menu")
         .max_h(theme::scaled_px(220.0))
@@ -474,7 +477,13 @@ fn render_coauthor_menu(
         .bg(rgb(theme().panel))
         .flex()
         .flex_col()
-        .py_1();
+        .py_1()
+        .on_mouse_down_out(cx.listener(
+            |view: &mut CommitPanelView, _e: &gpui::MouseDownEvent, _w, cx| {
+                view.coauthor_menu = None;
+                cx.notify();
+            },
+        ));
 
     if candidates.is_empty() {
         return Some(

@@ -527,6 +527,18 @@ impl Render for KagiApp {
             if this.cancel_active_modal(cx) {
                 return;
             }
+            // The commit panel's co-author picker is entity-owned, so it is
+            // closed through the entity rather than a field on `this`.
+            if let Some(panel) = this.commit_panel.clone() {
+                let open = panel.read(cx).coauthor_menu.is_some();
+                if open {
+                    panel.update(cx, |v, cx| {
+                        v.coauthor_menu = None;
+                        cx.notify();
+                    });
+                    return;
+                }
+            }
             if this.commit_menu.is_some() {
                 this.commit_menu = None;
                 cx.notify();

@@ -371,6 +371,18 @@ pub enum Msg {
     DiffUnavailable,
     /// Inspector co-author section caption.
     CoAuthoredBy,
+    /// Commit panel: subject-line input placeholder.
+    CommitTitle,
+    /// Commit panel: body input placeholder.
+    CommitBody,
+    /// Commit panel: tooltip on the sparkles (AI message) icon.
+    GenerateMessage,
+    /// Commit panel: tooltip on the person+ (co-author) icon.
+    AddCoAuthor,
+    /// Commit panel: tooltip on the amend icon.
+    AmendLastCommit,
+    /// Commit panel: co-author picker with nothing to offer.
+    NoRecentAuthors,
     /// Footer idle status.
     Ready,
     /// Welcome screen help line.
@@ -1000,6 +1012,18 @@ impl Msg {
             (En, DiffUnavailable) => "(diff unavailable)",
             (Ja, DiffUnavailable) => "(diff を取得できません)",
             (En, CoAuthoredBy) => "Co-authored by",
+            (En, CommitTitle) => "Summary",
+            (Ja, CommitTitle) => "概要",
+            (En, CommitBody) => "Description (optional)",
+            (Ja, CommitBody) => "説明（任意）",
+            (En, GenerateMessage) => "Generate commit message",
+            (Ja, GenerateMessage) => "コミットメッセージを生成",
+            (En, AddCoAuthor) => "Add co-author",
+            (Ja, AddCoAuthor) => "共同作成者を追加",
+            (En, AmendLastCommit) => "Amend last commit",
+            (Ja, AmendLastCommit) => "直前のコミットを修正",
+            (En, NoRecentAuthors) => "No other authors in recent history",
+            (Ja, NoRecentAuthors) => "最近の履歴に他の作成者がいません",
             (Ja, CoAuthoredBy) => "共同作成者",
             (En, Ready) => "Ready",
             (Ja, Ready) => "準備完了",
@@ -1416,6 +1440,15 @@ pub fn unstaged_not_included(n: usize) -> String {
     match lang() {
         Lang::En => format!("⚠ {} unstaged change{} not included", n, plural),
         Lang::Ja => format!("⚠ unstaged な変更 {} 件は含まれません", n),
+    }
+}
+
+/// Commit-button label naming its destination — the branch is on the button
+/// instead of in a separate preview line (ADR-0134).
+pub fn commit_to_branch(branch: &str) -> String {
+    match lang() {
+        Lang::En => format!("Commit to {}", branch),
+        Lang::Ja => format!("{} にコミット", branch),
     }
 }
 

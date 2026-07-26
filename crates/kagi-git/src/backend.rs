@@ -142,6 +142,18 @@ impl Backend {
         snapshot::snapshot(&mut self.repo, commit_limit)
     }
 
+    /// The user's `commit.template`, comment lines stripped; `None` when unset
+    /// or unreadable (see [`crate::load_commit_template`]).
+    pub fn commit_template(&self) -> Option<String> {
+        crate::load_commit_template(&self.repo)
+    }
+
+    /// Distinct recent commit authors (excluding `user.email`) to offer as
+    /// co-authors. Errors surface as an empty list — the picker is optional.
+    pub fn recent_authors(&self, limit: usize) -> Vec<crate::AuthorCandidate> {
+        crate::recent_authors(&self.repo, 400, limit).unwrap_or_default()
+    }
+
     pub fn working_tree_status(&self) -> Result<WorkingTreeStatus, GitError> {
         status::working_tree_status(&self.repo)
     }

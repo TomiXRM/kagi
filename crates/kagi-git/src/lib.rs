@@ -7,6 +7,7 @@
 //! computing the file-level diff for a single commit.
 //! Network transports (https/ssh) are not used in the MVP.
 
+pub mod authoring;
 pub mod backend;
 mod checklist;
 pub mod cli;
@@ -30,6 +31,8 @@ mod status;
 use kagi_domain::trailers; // ADR-0121: was a shim file
 pub mod worker;
 
+#[allow(unused_imports)]
+pub use authoring::{load_commit_template, recent_authors, AuthorCandidate};
 #[allow(unused_imports)]
 pub use backend::Backend;
 #[allow(unused_imports)]
@@ -64,6 +67,7 @@ pub use file_history::{
 };
 #[allow(unused_imports)]
 pub use hotspot::{repo_ecosystem, EcosystemRequest};
+pub use kagi_domain::message::{join_title_body, split_title_body};
 #[allow(unused_imports)]
 pub use log::{commit_log, Commit, CommitId, Signature};
 #[allow(unused_imports)]
@@ -71,7 +75,6 @@ pub use message_gen::{
     collect_staged_diff, collect_staged_files, generate_message, ollama_available,
     ollama_list_models, rule_based, GenError, GenInput, Lang, MessageBackend, Style,
 };
-#[allow(unused_imports)]
 pub use message_template::{assemble, parse_message, TemplateFields, TYPE_CHOICES};
 #[allow(unused_imports)]
 pub use oplog::{append_oplog, read_oplog_tail, OpLogEntry, OpOutcome};

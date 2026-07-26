@@ -25,26 +25,18 @@ impl KagiApp {
         }
     }
 
-    /// Whether the panel is in template authoring mode (entity-owned).
-    fn cp_template_mode(&self, cx: &Context<Self>) -> bool {
-        self.commit_panel
-            .as_ref()
-            .map(|e| e.read(cx).commit_template_mode)
-            .unwrap_or(false)
-    }
-
-    /// The panel's plain commit-message `InputState` (entity-owned), if any.
+    /// The panel's commit-subject `InputState` (entity-owned), if any.
     fn cp_commit_input(&self, cx: &Context<Self>) -> Option<Entity<InputState>> {
         self.commit_panel
             .as_ref()
-            .and_then(|e| e.read(cx).commit_input.clone())
+            .and_then(|e| e.read(cx).title_input.clone())
     }
 
-    /// Whether the panel has a plain commit Input (entity-owned).
+    /// Whether the panel has its message inputs (entity-owned).
     fn cp_has_commit_input(&self, cx: &Context<Self>) -> bool {
         self.commit_panel
             .as_ref()
-            .map(|e| e.read(cx).commit_input.is_some())
+            .map(|e| e.read(cx).title_input.is_some())
             .unwrap_or(false)
     }
 
@@ -91,56 +83,63 @@ impl KagiApp {
         self.selected = None;
         self.main_diff = None;
 
-        // T026: lazy-create the InputState (requires &mut Window) inside the
-        // entity so it stays STABLE across status reloads (IME/focus).
+        // T026: lazy-create the InputStates (requires &mut Window) inside the
+        // entity so they stay STABLE across status reloads (IME/focus).
         entity.update(cx, |v, cx| {
-            if v.commit_input.is_none() {
-                let st = cx.new(|cx| InputState::new(window, cx).placeholder("Commit message"));
-                v.commit_input = Some(st);
+            if v.title_input.is_none() {
+                v.title_input = Some(
+                    cx.new(|cx| InputState::new(window, cx).placeholder(Msg::CommitTitle.t())),
+                );
+            }
+            if v.body_input.is_none() {
+                v.body_input = Some(cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .multi_line(true)
+                        .auto_grow(3, 12)
+                        .placeholder(Msg::CommitBody.t())
+                }));
             }
         });
 
-        // T-COMMIT-007 / T-COMMIT-009: restore the per-branch draft into an
-        // empty input, honouring the persisted mode. A template draft stores its
-        // expanded plain text (ADR-0042); on restore we re-parse it back into the
-        // structured fields and re-open in template mode.
+        // T-COMMIT-007: restore the per-branch draft into empty inputs, else seed
+        // the body from the user's `commit.template` (ADR-0134).
         //
         // FIRST OPEN ONLY (`is_new`): on REOPEN the reused entity already holds
-        // the user's in-memory authoring state (plain text OR template fields +
-        // mode). The restore keys off the *plain* input being empty, which is also
-        // true in template mode — so running it on reopen would clobber unsaved
-        // template fields and flip the mode to plain (R2 finding). The draft was
-        // already restored on the first open and is preserved on the entity.
-        let input_entity = entity.read(cx).commit_input.clone();
+        // the user's in-memory authoring state, and the restore keys off the
+        // inputs being empty — running it again would clobber unsaved edits
+        // (R2 finding). The draft was already restored on the first open.
+        //
+        // A draft written by an older build with `mode=template` stored its
+        // *expanded* plain text (ADR-0042), so splitting it is the correct
+        // restore for those too — no migration needed.
+        let (title_entity, body_entity) = {
+            let v = entity.read(cx);
+            (v.title_input.clone(), v.body_input.clone())
+        };
         if is_new {
-            if let Some(ref input_entity) = input_entity {
-                let current = input_entity.read(cx).value().to_string();
-                if current.trim().is_empty() {
+            if let (Some(title_input), Some(body_input)) = (&title_entity, &body_entity) {
+                let empty = title_input.read(cx).value().trim().is_empty()
+                    && body_input.read(cx).value().trim().is_empty();
+                if empty {
                     let branch = self.active_view.status_summary.branch.clone();
                     if let Some(d) = kagi_git::load_draft(&repo_path, &branch) {
                         klog!("draft: loaded {} (mode={})", branch, d.mode);
-                        let input = input_entity.clone();
-                        if d.mode == "template" {
-                            let fields = kagi_git::parse_message(&d.message);
-                            entity.update(cx, |v, cx| {
-                                v.set_template_inputs(&fields, window, cx);
-                                v.commit_template_mode = true;
-                                v.last_draft_value = d.message;
-                            });
-                        } else {
-                            input.update(cx, |state, cx| {
-                                state.set_value(d.message, window, cx);
-                            });
-                            let loaded = input.read(cx).value().to_string();
-                            entity.update(cx, |v, _| {
-                                v.commit_template_mode = false;
-                                v.last_draft_value = loaded;
-                            });
-                        }
+                        let (title, body) = kagi_git::split_title_body(&d.message);
+                        title_input.update(cx, |s, cx| s.set_value(title, window, cx));
+                        body_input.update(cx, |s, cx| s.set_value(body, window, cx));
+                        entity.update(cx, |v, _| v.last_draft_value = d.message);
+                    } else if let Some(tpl) = kagi_git::Backend::open(&repo_path)
+                        .ok()
+                        .and_then(|b| b.commit_template())
+                    {
+                        klog!("commit template: loaded");
+                        body_input.update(cx, |s, cx| s.set_value(tpl, window, cx));
                     }
                 }
             }
         }
+
+        let input_entity = title_entity;
 
         // T026: focus the InputState after opening the panel.
         if let Some(ref input_entity) = input_entity {
@@ -246,8 +245,8 @@ impl KagiApp {
         match self.commit_panel.as_ref() {
             Some(e) => {
                 let v = e.read(cx);
-                if let Some(ref input) = v.commit_input {
-                    input.read(cx).value().to_string()
+                if v.title_input.is_some() {
+                    v.effective_commit_message(cx)
                 } else {
                     v.state.commit_msg.clone()
                 }
@@ -261,11 +260,14 @@ impl KagiApp {
     /// decided to (rule-based/LLM both call this to *insert* the draft).
     fn smart_commit_set_msg(&mut self, msg: &str, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entity) = self.commit_panel.clone() {
-            let input = entity.read(cx).commit_input.clone();
-            if let Some(input) = input {
-                input.update(cx, |state, cx| {
-                    state.set_value(msg.to_string(), window, cx);
-                });
+            let (title, body) = kagi_git::split_title_body(msg);
+            let v = entity.read(cx);
+            let (title_input, body_input) = (v.title_input.clone(), v.body_input.clone());
+            if let Some(input) = title_input {
+                input.update(cx, |state, cx| state.set_value(title, window, cx));
+            }
+            if let Some(input) = body_input {
+                input.update(cx, |state, cx| state.set_value(body, window, cx));
             }
             entity.update(cx, |v, _| v.state.commit_msg = msg.to_string());
         }
@@ -286,18 +288,14 @@ impl KagiApp {
             None => return,
         };
         let files = repo.collect_staged_files();
-        let template_mode = self.cp_template_mode(cx);
-        // ADR-0090: style follows the mode (template → Conventional, else Plain).
-        let style = if template_mode {
-            message_gen::Style::ConventionalCommits
-        } else {
-            message_gen::Style::Plain
-        };
+        // ADR-0134: the template mode that used to select Conventional Commits
+        // is gone, so generated subjects are plain prose. The panel now always
+        // has a body input, so a body is always wanted.
         let gi = message_gen::GenInput {
             diff: String::new(),
             lang: self.smart_commit.lang,
-            style,
-            want_body: template_mode,
+            style: message_gen::Style::Plain,
+            want_body: true,
         };
         let msg = message_gen::rule_based(&gi, &files);
         if std::env::var("KAGI_SMART_SUGGEST").as_deref() == Ok("1") {
@@ -410,17 +408,11 @@ impl KagiApp {
             },
             smart_commit::SmartProvider::Cli(_) => String::new(),
         };
-        // ADR-0090: the standalone Style toggle is gone — derive it from the
-        // mode. Template mode needs a Conventional subject so it can be parsed
-        // into the type/scope/summary fields; plain mode uses a plain subject.
-        let template_mode = self.cp_template_mode(cx);
-        let style = if template_mode {
-            message_gen::Style::ConventionalCommits
-        } else {
-            message_gen::Style::Plain
-        };
-        // Template mode wants a body too (its body field would otherwise be empty).
-        let want_body = template_mode;
+        // ADR-0134: the template mode that used to select Conventional Commits
+        // is gone, so generated subjects are plain prose. The panel now always
+        // has a body input, so a body is always wanted.
+        let style = message_gen::Style::Plain;
+        let want_body = true;
         let host = smart_commit::SmartCommitState::ollama_host();
         let provider = self.smart_commit.provider;
         let overwrite_ok = self.smart_commit_current_msg(cx).trim().is_empty();
@@ -809,10 +801,9 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        // T026 / T-COMMIT-009: prefer the effective message (assembled template
-        // in template mode, else the plain Input); fall back to commit_msg
-        // (headless path).
-        let msg: String = if self.cp_has_commit_input(cx) || self.cp_template_mode(cx) {
+        // T026: prefer the effective message (subject + body from the two
+        // Inputs); fall back to commit_msg (headless path).
+        let msg: String = if self.cp_has_commit_input(cx) {
             self.effective_commit_message(cx)
         } else {
             match self.commit_panel.as_ref() {
@@ -885,7 +876,7 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let commit_message: String = if self.cp_has_commit_input(cx) || self.cp_template_mode(cx) {
+        let commit_message: String = if self.cp_has_commit_input(cx) {
             self.effective_commit_message(cx)
         } else {
             self.commit_panel

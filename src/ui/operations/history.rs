@@ -498,9 +498,10 @@ impl KagiApp {
         let message: String = match self.commit_panel.as_ref() {
             Some(e) => {
                 let v = e.read(cx);
-                match v.commit_input.as_ref() {
-                    Some(input) => input.read(cx).value().to_string(),
-                    None => v.state.commit_msg.clone(),
+                if v.title_input.is_some() {
+                    v.effective_commit_message(cx)
+                } else {
+                    v.state.commit_msg.clone()
                 }
             }
             None => String::new(),

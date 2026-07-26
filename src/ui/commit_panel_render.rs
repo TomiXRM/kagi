@@ -454,7 +454,9 @@ pub(crate) fn render_staged_tree_row(
 /// The co-author popover, or `None` when the picker is closed.
 ///
 /// Anchored above the icon row (the footer sits at the bottom of the panel, so
-/// a downward menu would open off-screen).
+/// a downward menu would open off-screen) and wrapped in `gpui::deferred` so it
+/// paints after all of its ancestors. Without that the body box's own border is
+/// drawn over the menu, which overflows that box (user report).
 fn render_coauthor_menu(
     candidates: Option<&[kagi_git::AuthorCandidate]>,
     cx: &mut Context<CommitPanelView>,
@@ -487,13 +489,15 @@ fn render_coauthor_menu(
 
     if candidates.is_empty() {
         return Some(
-            menu.child(
-                div()
-                    .px_2()
-                    .py_1()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::NoRecentAuthors.t())),
+            gpui::deferred(
+                menu.child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .text_xs()
+                        .text_color(rgb(theme().text_muted))
+                        .child(SharedString::from(Msg::NoRecentAuthors.t())),
+                ),
             )
             .into_any_element(),
         );
@@ -530,7 +534,7 @@ fn render_coauthor_menu(
                 ),
         );
     }
-    Some(menu.into_any_element())
+    Some(gpui::deferred(menu).into_any_element())
 }
 
 // ──────────────────────────────────────────────────────────────

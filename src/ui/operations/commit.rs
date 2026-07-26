@@ -32,6 +32,23 @@ impl KagiApp {
         }
     }
 
+    /// Close the commit panel's co-author picker if it is open; returns whether
+    /// it was. Lives here rather than inline in the Esc handler because the
+    /// picker is entity-owned, not a field on `KagiApp`.
+    pub(crate) fn close_coauthor_menu(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(panel) = self.commit_panel.clone() else {
+            return false;
+        };
+        if panel.read(cx).coauthor_menu.is_none() {
+            return false;
+        }
+        panel.update(cx, |v, cx| {
+            v.coauthor_menu = None;
+            cx.notify();
+        });
+        true
+    }
+
     /// Whether the panel has its message inputs (entity-owned).
     fn cp_has_commit_input(&self, cx: &Context<Self>) -> bool {
         self.commit_panel

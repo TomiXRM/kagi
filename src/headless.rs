@@ -59,6 +59,10 @@ pub(crate) fn init_tab(app: &mut KagiApp, path: &PathBuf) {
     });
     app.active_tab = app.tabs.len() - 1;
     app.repo_path = Some(path.clone());
+    // ADR-0107: write paths (conflict continue/abort, checkout, commit, …)
+    // require the per-tab RepoSession and otherwise fail with "session
+    // unavailable" — the same gap main.rs fixed for the CLI-argument tab.
+    app.repo_session = kagi_git::session::RepoSession::open(&path).ok();
     // Rebuild the heavyweight per-repo display state from a fresh snapshot.
     app.reload_prelaunch();
     app.log_tabs();

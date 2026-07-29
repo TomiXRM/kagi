@@ -37,7 +37,7 @@ use gpui_component::input::InputState;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{Disableable as _, Sizable as _};
 
-use kagi_git::conflicts::{ConflictKind, ConflictOp, ConflictStatus, SideLabels};
+use kagi_git::conflicts::{ConflictKind, ConflictStatus, SideLabels};
 
 use super::button_style::{apply_accent, KagiButton};
 use super::context_menu::{ItemState, MenuGroup, MenuItem};
@@ -82,6 +82,11 @@ pub struct EditorChrome {
     pub geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     /// Measured (left, right) screen-px bounds of the A·B row.
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
+    /// Per-side syntax-highlight cache for the A/B row lists (ADR-0135).
+    /// Interior-mutable so the render path can fill it lazily; keyed by
+    /// (path, theme slug) — row TEXT never changes within a session, only the
+    /// selection flags do, so selection clicks never re-parse.
+    pub hl_cache: std::rc::Rc<std::cell::RefCell<Option<crate::ui::conflict_editor::SideHlCache>>>,
 }
 
 /// ADR-0118 (Phase 5.2) / T-ENTITY-CONFLICT-001: the Conflict-resolution panel
@@ -149,6 +154,9 @@ pub struct ConflictView {
     /// ADR-0070: shared A/B uniform-list scroll handle for synchronized vertical
     /// scrolling in the Conflict Editor.
     pub ab_scroll_handle: UniformListScrollHandle,
+    /// See [`EditorChrome::hl_cache`]; the cell lives on the entity so the
+    /// cache survives across frames.
+    pub hl_cache: std::rc::Rc<std::cell::RefCell<Option<crate::ui::conflict_editor::SideHlCache>>>,
     /// T-CONFLICT-DASH-022: the open per-file "…" context menu, as
     /// `(file_index, anchor)` where `anchor` is the click position in window px.
     /// `None` when no menu is open. Rendered as a top-level overlay.
@@ -180,6 +188,7 @@ impl ConflictView {
             result_split: super::CONFLICT_RESULT_DEFAULT,
             geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
+            hl_cache: std::rc::Rc::new(std::cell::RefCell::new(None)),
             selected_hunk: 0,
             ab_scroll_handle: UniformListScrollHandle::new(),
             file_menu: None,
@@ -432,46 +441,6 @@ impl ConflictMode {
 // Small localized helpers
 // ────────────────────────────────────────────────────────────
 
-/// One-line "what is being merged into what" summary, using ADR-0058 direction
-/// wording (Merging X into Y / Rebasing X onto Y / Cherry-picking abc onto Y /
-/// Reverting abc on Y).  Never says ours/theirs.  Branch / commit names verbatim.
-fn op_summary(mode: &ConflictMode) -> String {
-    let labels = mode.labels();
-    match &mode.session.op {
-        ConflictOp::Rebase { step, total, .. } => format!(
-            "{} {} {} {} — {} {}/{}",
-            Msg::ConflictRebasing.t(),
-            labels.incoming.name,
-            Msg::ConflictOnto.t(),
-            labels.current.name,
-            Msg::ConflictCommit.t(),
-            step,
-            total
-        ),
-        ConflictOp::Merge { .. } => format!(
-            "{} {} {} {}",
-            Msg::ConflictMerging.t(),
-            labels.incoming.name,
-            Msg::ConflictOnto.t(),
-            labels.current.name
-        ),
-        ConflictOp::CherryPick { .. } => format!(
-            "{} {} {} {}",
-            Msg::ConflictCherryPicking.t(),
-            labels.incoming.name,
-            Msg::ConflictOnto.t(),
-            labels.current.name
-        ),
-        ConflictOp::Revert { .. } => format!(
-            "{} {} {} {}",
-            Msg::ConflictReverting.t(),
-            labels.incoming.name,
-            Msg::ConflictOnto.t(),
-            labels.current.name
-        ),
-    }
-}
-
 /// Map a backend [`kagi_git::ContinueBlocker`] to its localized UI message
 /// (ADR-0067 — surface the specific blocking reason).  Used by `conflict_continue`
 /// when the plan pipeline refuses, so the toast names the precise reason.
@@ -506,10 +475,9 @@ fn kind_tag(kind: ConflictKind) -> &'static str {
 // ADR-0118 / T-ENTITY-CONFLICT-001: ConflictView entity render + listeners.
 //
 // The entity renders the conflict BODY (center 3-pane editor + right Dashboard).
-// The persistent banner is rendered separately by the parent (it sits under the
-// header, a different flex_col position than the body, and is shown even during
-// `conflict_merge_pending` while the body is not) via the free `render_banner`
-// below, fed a cloned `ConflictMode` so the entity is never double-rendered.
+// The old persistent banner under the header was removed (ADR-0135): it
+// repeated the operation summary and n/m that the Dashboard header and the
+// editor toolbar already show.
 // ────────────────────────────────────────────────────────────
 
 impl Render for ConflictView {
@@ -544,6 +512,7 @@ impl ConflictView {
             selected_hunk: self.selected_hunk,
             geom: self.geom.clone(),
             ab_geom: self.ab_geom.clone(),
+            hl_cache: self.hl_cache.clone(),
         }
     }
 }
@@ -901,7 +870,12 @@ impl ConflictView {
             .unwrap_or(true);
 
         if need_create {
-            let result = cx.new(|cx| InputState::new(window, cx).code_editor("text"));
+            let lang = super::diff_view::lang_for_path(&path).unwrap_or("text");
+            let result = cx.new(|cx| {
+                InputState::new(window, cx)
+                    .code_editor(lang)
+                    .line_number(true)
+            });
             self.editor_inputs = Some(super::ConflictEditorInputs {
                 path: path.clone(),
                 result,
@@ -918,59 +892,6 @@ impl ConflictView {
             inputs.content_sig = sig;
         }
     }
-}
-
-/// Render the persistent conflict banner shown directly under the header.
-///
-/// Free function (no listeners): the parent calls it with a cloned [`ConflictMode`]
-/// (read out of the entity before the body is rendered) so the entity is never
-/// rendered twice in one frame.
-pub fn render_banner(mode: &ConflictMode) -> gpui::AnyElement {
-    let total = mode.session.total_count();
-    let resolved = mode.resolved_count();
-    let progress = format!("{} {}/{}", Msg::ConflictResolved.t(), resolved, total);
-
-    div()
-        .id("conflict-banner")
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_3()
-        .w_full()
-        .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(6.))
-        .bg(rgb(theme().surface))
-        .border_b_1()
-        .border_color(rgb(theme().color_warning))
-        .child(
-            // operation summary + progress laid out horizontally (was stacked)
-            // to reduce the banner's height.
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .flex_grow(1.)
-                .gap_3()
-                .child(
-                    div()
-                        .text_size(theme::scaled_px(13.))
-                        .text_color(rgb(theme().text_main))
-                        .overflow_hidden()
-                        .child(SharedString::from(op_summary(mode))),
-                )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_size(theme::scaled_px(11.))
-                        .text_color(if mode.can_continue() {
-                            rgb(theme().color_success)
-                        } else {
-                            rgb(theme().text_sub)
-                        })
-                        .child(SharedString::from(progress)),
-                ),
-        )
-        .into_any_element()
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1032,10 +953,9 @@ fn render_dashboard(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui
         .border_color(rgb(theme().surface))
         .bg(rgb(theme().sidebar))
         .overflow_y_scroll()
-        // ── State ──
-        .child(dash_header(mode))
-        .child(dash_role_badges(mode))
-        .child(dash_counts(mode, cx))
+        // ── State (ADR-0135: one compact block — the old header / role-badge
+        // boxes / counts stack said "merge conflict" three ways) ──
+        .child(dash_state(mode, cx))
         // ── Next action (Continue + Abort side by side) ──
         .child(dash_primary(mode, cx))
         // ── Files (per-card actions: icons + "…" overflow menu) ──
@@ -1043,101 +963,10 @@ fn render_dashboard(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui
         .into_any_element()
 }
 
-/// Header: operation-specific "Merge conflicts detected" + direction summary.
-fn dash_header(mode: &ConflictMode) -> gpui::AnyElement {
-    div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(10.))
-        .border_b_1()
-        .border_color(rgb(theme().surface))
-        .child(
-            div()
-                .text_size(theme::scaled_px(14.))
-                .text_color(rgb(theme().text_main))
-                .child(SharedString::from(Msg::ConflictDashHeader.t())),
-        )
-        .child(
-            div()
-                .text_size(theme::scaled_px(11.))
-                .text_color(rgb(theme().text_sub))
-                .child(SharedString::from(op_summary(mode))),
-        )
-        .into_any_element()
-}
-
-/// Current / Incoming role + real-name badges (tooltip notes the git stage).
-fn dash_role_badges(mode: &ConflictMode) -> gpui::AnyElement {
+/// Compact state block: operation summary, the two side chips (colour-keyed to
+/// the editor's bands), and the conflicted/resolved counts with prev/next nav.
+fn dash_state(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::AnyElement {
     let labels = mode.labels();
-    div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(8.))
-        .border_b_1()
-        .border_color(rgb(theme().surface))
-        .child(role_badge(
-            Msg::ConflictRoleCurrent.t(),
-            &labels.current.role,
-            &labels.current.name,
-            theme().color_branch,
-        ))
-        .child(role_badge(
-            Msg::ConflictRoleIncoming.t(),
-            &labels.incoming.role,
-            &labels.incoming.name,
-            theme().color_remote,
-        ))
-        .into_any_element()
-}
-
-/// A single role badge: side tag + role word + real name. The git-stage hint is
-/// attached as a tooltip (ADR-0058 — internal term only in tooltip).
-fn role_badge(side: &str, role: &str, name: &str, accent: u32) -> gpui::AnyElement {
-    div()
-        .id(SharedString::from(format!("conflict-role-{}", side)))
-        .flex()
-        .flex_col()
-        .gap_1()
-        .px(theme::scaled_px(8.))
-        .py(theme::scaled_px(5.))
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(accent))
-        .tooltip(move |window, cx| Tooltip::new(Msg::ConflictGitTermHint.t()).build(window, cx))
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .gap_2()
-                .items_center()
-                .child(
-                    div()
-                        .text_size(theme::scaled_px(10.))
-                        .text_color(rgb(accent))
-                        .child(SharedString::from(side.to_string())),
-                )
-                .child(
-                    div()
-                        .text_size(theme::scaled_px(10.))
-                        .text_color(rgb(theme().text_sub))
-                        .child(SharedString::from(role.to_string())),
-                ),
-        )
-        .child(
-            div()
-                .text_size(theme::scaled_px(12.))
-                .text_color(rgb(theme().text_main))
-                .child(SharedString::from(name.to_string())),
-        )
-        .into_any_element()
-}
-
-/// Conflicted count / resolved count line, with prev/next unresolved nav.
-fn dash_counts(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::AnyElement {
     let conflicted = mode.conflicted_count();
     let resolved = mode.resolved_count();
 
@@ -1150,42 +979,109 @@ fn dash_counts(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::Any
         cx.notify();
     });
 
+    // A side chip: coloured dot + real name; the role word lives in the tooltip.
+    let chip = |id: &'static str, role: String, name: &str, accent: u32| {
+        div()
+            .id(id)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .px(theme::scaled_px(6.))
+            .py(theme::scaled_px(2.))
+            .rounded_md()
+            .border_1()
+            .border_color(rgb(accent))
+            .tooltip(move |window, cx| {
+                Tooltip::new(format!("{} — {}", role, Msg::ConflictGitTermHint.t()))
+                    .build(window, cx)
+            })
+            .child(
+                div()
+                    .text_size(theme::scaled_px(10.))
+                    .text_color(rgb(accent))
+                    .child(SharedString::from("●")),
+            )
+            .child(
+                div()
+                    .text_size(theme::scaled_px(11.))
+                    .text_color(rgb(theme().text_main))
+                    .truncate()
+                    .child(SharedString::from(name.to_string())),
+            )
+    };
+
     div()
         .flex()
-        .flex_row()
-        .items_center()
-        .gap_4()
+        .flex_col()
+        .gap_2()
         .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(8.))
+        .py(theme::scaled_px(10.))
         .border_b_1()
         .border_color(rgb(theme().surface))
         .child(
             div()
-                .text_size(theme::scaled_px(11.))
-                .text_color(rgb(if conflicted == 0 {
-                    theme().text_sub
-                } else {
-                    theme().color_blocker
-                }))
-                .child(SharedString::from(format!(
-                    "{} {}",
-                    conflicted,
-                    Msg::ConflictConflictedCount.t()
-                ))),
+                .text_size(theme::scaled_px(13.))
+                .text_color(rgb(theme().text_main))
+                .child(SharedString::from(Msg::ConflictDashHeader.t())),
         )
         .child(
             div()
-                .flex_grow(1.)
-                .text_size(theme::scaled_px(11.))
-                .text_color(rgb(theme().color_success))
-                .child(SharedString::from(format!(
-                    "{} {}",
-                    resolved,
-                    Msg::ConflictResolvedCount.t()
-                ))),
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(chip(
+                    "conflict-chip-current",
+                    format!("{} · {}", Msg::ConflictRoleCurrent.t(), labels.current.role),
+                    &labels.current.name,
+                    theme().color_branch,
+                ))
+                .child(chip(
+                    "conflict-chip-incoming",
+                    format!(
+                        "{} · {}",
+                        Msg::ConflictRoleIncoming.t(),
+                        labels.incoming.role
+                    ),
+                    &labels.incoming.name,
+                    theme().color_remote,
+                )),
         )
-        .child(nav_button("‹", prev))
-        .child(nav_button("›", next))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_4()
+                .child(
+                    div()
+                        .text_size(theme::scaled_px(11.))
+                        .text_color(rgb(if conflicted == 0 {
+                            theme().text_sub
+                        } else {
+                            theme().color_blocker
+                        }))
+                        .child(SharedString::from(format!(
+                            "{} {}",
+                            conflicted,
+                            Msg::ConflictConflictedCount.t()
+                        ))),
+                )
+                .child(
+                    div()
+                        .flex_grow(1.)
+                        .text_size(theme::scaled_px(11.))
+                        .text_color(rgb(theme().color_success))
+                        .child(SharedString::from(format!(
+                            "{} {}",
+                            resolved,
+                            Msg::ConflictResolvedCount.t()
+                        ))),
+                )
+                .child(nav_button("‹", prev))
+                .child(nav_button("›", next)),
+        )
         .into_any_element()
 }
 
@@ -1609,30 +1505,6 @@ fn section(
                 cx.notify();
             },
         );
-        let ext = cx.listener(
-            move |view: &mut ConflictView, _e: &gpui::MouseDownEvent, window, cx| {
-                cx.stop_propagation();
-                let weak_app = view.app.clone();
-                cx.spawn_in(window, async move |_view, acx| {
-                    let _ = weak_app.update_in(acx, |app, _window, cx| {
-                        app.conflict_open_external_tool(idx, cx)
-                    });
-                })
-                .detach();
-            },
-        );
-        let copy = cx.listener(
-            move |view: &mut ConflictView, _e: &gpui::MouseDownEvent, window, cx| {
-                cx.stop_propagation();
-                let weak_app = view.app.clone();
-                cx.spawn_in(window, async move |_view, acx| {
-                    let _ =
-                        weak_app.update_in(acx, |app, _window, cx| app.conflict_copy_path(idx, cx));
-                })
-                .detach();
-            },
-        );
-
         let row_el = div()
             .id(SharedString::from(format!("conflict-row-{}", idx)))
             .flex()
@@ -1685,23 +1557,13 @@ fn section(
                     .items_center()
                     .gap(theme::scaled_px(1.))
                     .flex_shrink_0()
+                    // ADR-0135: "…" only — open-externally / copy-path lived
+                    // here AND in this menu AND (open) in the editor toolbar.
                     .child(card_icon(
                         format!("conflict-more-{}", idx),
                         gpui_component::IconName::Ellipsis,
                         Msg::ConflictMore.t(),
                         more,
-                    ))
-                    .child(card_icon(
-                        format!("conflict-ext-{}", idx),
-                        gpui_component::IconName::ExternalLink,
-                        Msg::ConflictExternalTool.t(),
-                        ext,
-                    ))
-                    .child(card_icon(
-                        format!("conflict-copy-{}", idx),
-                        gpui_component::IconName::Copy,
-                        Msg::ConflictCopyPath.t(),
-                        copy,
                     )),
             );
 
@@ -2054,27 +1916,24 @@ mod tests {
         assert_eq!(mode.continue_blocker(), Some(Msg::ConflictBlockerMarker));
     }
 
+    /// ADR-0058 guard, retargeted: the op-summary banner is gone (ADR-0135),
+    /// so the words the dashboard actually shows now come from `mode.labels()`
+    /// — assert THOSE never leak ours/theirs and name the branch verbatim.
     #[test]
-    fn heading_uses_roles_not_ours_theirs() {
+    fn side_labels_use_roles_not_ours_theirs() {
         let td = merge_conflict_repo();
         let mode = detect(td.path(), "main");
-        let heading = op_summary(&mode);
-        let lower = heading.to_lowercase();
-        assert!(
-            !lower.contains("ours"),
-            "heading leaked 'ours': {}",
-            heading
-        );
-        assert!(
-            !lower.contains("theirs"),
-            "heading leaked 'theirs': {}",
-            heading
-        );
-        // Merge summary names the current branch verbatim.
-        assert!(
-            heading.contains("main"),
-            "summary should name current branch: {}",
-            heading
-        );
+        let labels = mode.labels();
+        for text in [
+            &labels.current.role,
+            &labels.current.name,
+            &labels.incoming.role,
+            &labels.incoming.name,
+        ] {
+            let lower = text.to_lowercase();
+            assert!(!lower.contains("ours"), "label leaked 'ours': {}", text);
+            assert!(!lower.contains("theirs"), "label leaked 'theirs': {}", text);
+        }
+        assert_eq!(labels.current.name, "main", "current side names the branch");
     }
 }

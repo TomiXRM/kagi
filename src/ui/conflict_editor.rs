@@ -22,12 +22,14 @@
 //! └───────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! The accept controls are **checkbox toggles in each pane header** (UX-010);
-//! the both-order buttons sit **between** the A·B row and the Result pane
-//! (UX-011).  Both drive the existing per-hunk apply
-//! (`conflict_editor_apply_hunk` / `HunkChoice`).  MVP stays hunk-level — the
-//! header toggles apply to *all* hunks of the file (the simplest extensible
-//! mapping; per-line is v0.2 per UX-012).
+//! ADR-0135: the accept controls are Xcode-style **coloured accent bands**, not
+//! checkboxes. Clicking a hunk's band header takes/releases that whole side;
+//! clicking an individual line toggles just that line (untaken lines render
+//! dimmed); a small "Use all" pill in each pane header takes the whole file's
+//! side. All of it drives the same tri-state selection model (ADR-0071) — only
+//! the control surface changed. A/B rows are syntax-highlighted through the
+//! same tree-sitter + per-theme pipeline as the diff (ADR-0133), cached per
+//! (path, theme) so selection clicks never re-parse.
 //!
 //! Terminology (ADR-0058): side labels come from `mode.labels()`; the words
 //! "ours" / "theirs" never appear.  All prose is via [`Msg`] (en + ja).  Sizes
@@ -277,7 +279,7 @@ fn render_panes(
         "conflict-pane-a",
         current_label,
         theme().color_branch,
-        Some(side_file_checkbox(
+        Some(side_use_all_pill(
             path,
             model.file_side_state(SelectionSide::Current),
             SelectionSide::Current,
@@ -289,6 +291,7 @@ fn render_panes(
             SelectionSide::Current,
             scroll.clone(),
             chrome.selected_hunk,
+            chrome,
             cx,
         ),
     );
@@ -297,7 +300,7 @@ fn render_panes(
         "conflict-pane-b",
         incoming_label,
         theme().color_remote,
-        Some(side_file_checkbox(
+        Some(side_use_all_pill(
             path,
             model.file_side_state(SelectionSide::Incoming),
             SelectionSide::Incoming,
@@ -309,6 +312,7 @@ fn render_panes(
             SelectionSide::Incoming,
             scroll,
             chrome.selected_hunk,
+            chrome,
             cx,
         ),
     );
@@ -377,6 +381,112 @@ fn render_panes(
 // A/B row lists: file/chunk/line tri-state checkbox hierarchy (ADR-0071)
 // ────────────────────────────────────────────────────────────
 
+/// Per-row syntax-highlight spans for one side's row list, aligned by row
+/// index to the `Vec<SideRow>` build order (ADR-0135).
+pub type RowHl = Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>;
+
+/// Cache for both sides' highlights. Row text is fixed for a given file within
+/// a conflict session (selection only flips `taken` flags), so the key is the
+/// path plus the theme slug (a theme switch re-colours the spans).
+pub struct SideHlCache {
+    key: (std::path::PathBuf, &'static str),
+    current: Arc<Vec<RowHl>>,
+    incoming: Arc<Vec<RowHl>>,
+}
+
+/// Fetch (or lazily build) the highlight spans for `side`. Returns an empty
+/// per-row vec when the language is unknown — rows then render as plain text.
+fn side_highlights(
+    chrome: &EditorChrome,
+    path: &std::path::Path,
+    model: &kagi_git::resolution::HunkModel,
+    side: SelectionSide,
+) -> Arc<Vec<RowHl>> {
+    let key = (path.to_path_buf(), theme().slug);
+    {
+        let cache = chrome.hl_cache.borrow();
+        if let Some(c) = cache.as_ref() {
+            if c.key == key {
+                return match side {
+                    SelectionSide::Current => c.current.clone(),
+                    SelectionSide::Incoming => c.incoming.clone(),
+                };
+            }
+        }
+    }
+    let current = Arc::new(highlight_side_rows(
+        &build_side_rows(model, SelectionSide::Current),
+        path,
+    ));
+    let incoming = Arc::new(highlight_side_rows(
+        &build_side_rows(model, SelectionSide::Incoming),
+        path,
+    ));
+    let out = match side {
+        SelectionSide::Current => current.clone(),
+        SelectionSide::Incoming => incoming.clone(),
+    };
+    *chrome.hl_cache.borrow_mut() = Some(SideHlCache {
+        key,
+        current,
+        incoming,
+    });
+    out
+}
+
+/// Tree-sitter highlight for a side's rows, mirroring `diff_view`'s proven
+/// combine → parse once → distribute-spans-per-row approach (no sigil offset
+/// here: ranges are row-local from byte 0).
+fn highlight_side_rows(rows: &[SideRow], path: &std::path::Path) -> Vec<RowHl> {
+    use gpui_component::highlighter::SyntaxHighlighter;
+    use gpui_component::Rope;
+
+    let mut out: Vec<RowHl> = vec![Vec::new(); rows.len()];
+    let Some(lang) = super::diff_view::lang_for_path(path) else {
+        return out;
+    };
+
+    let mut line_offsets: Vec<(usize, usize)> = Vec::new(); // (row_index, byte_start)
+    let mut combined = String::new();
+    for (i, row) in rows.iter().enumerate() {
+        let text = match row {
+            SideRow::Line { text, .. } => text,
+            SideRow::Context { text, .. } => text,
+            _ => continue,
+        };
+        line_offsets.push((i, combined.len()));
+        combined.push_str(text);
+        combined.push('\n');
+    }
+    if combined.is_empty() {
+        return out;
+    }
+
+    let mut highlighter = SyntaxHighlighter::new(lang);
+    let rope = Rope::from_str(&combined);
+    highlighter.update(None, &rope, None);
+    let hl_theme = theme::highlight_theme(theme::theme());
+    let all_styles = highlighter.styles(&(0..combined.len()), &hl_theme);
+
+    for k in 0..line_offsets.len() {
+        let (row_i, start) = line_offsets[k];
+        let end = if k + 1 < line_offsets.len() {
+            line_offsets[k + 1].1
+        } else {
+            combined.len()
+        };
+        let content_end = end.saturating_sub(1); // strip the \n
+        for (range, style) in &all_styles {
+            let s0 = range.start.max(start);
+            let s1 = range.end.min(content_end);
+            if s0 < s1 {
+                out[row_i].push((s0 - start..s1 - start, *style));
+            }
+        }
+    }
+    out
+}
+
 #[derive(Clone)]
 enum SideRow {
     HunkHeader {
@@ -403,7 +513,9 @@ enum SideRow {
     Blank { hunk_index: usize },
 }
 
-fn side_file_checkbox(
+/// Pane-header pill that takes/releases the whole file for one side —
+/// replaces the old file-level tri-checkbox (ADR-0135).
+fn side_use_all_pill(
     path: &std::path::Path,
     state: TriState,
     side: SelectionSide,
@@ -415,12 +527,21 @@ fn side_file_checkbox(
         this.conflict_editor_set_file_side(&p, side, next);
         cx.notify();
     });
-    tri_checkbox(
-        format!("file-side-{:?}", side),
-        state,
-        theme().text_sub,
-        handler,
-    )
+    let accent = side_accent(side);
+    let on = state == TriState::All;
+    div()
+        .id(SharedString::from(format!("file-side-{:?}", side)))
+        .px(theme::scaled_px(6.))
+        .py(theme::scaled_px(1.))
+        .rounded_sm()
+        .border_1()
+        .border_color(rgb(if on { accent } else { theme().selected }))
+        .text_size(theme::scaled_px(9.))
+        .text_color(rgb(if on { accent } else { theme().text_sub }))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(theme().bg_row_alt)))
+        .child(SharedString::from(Msg::EditorUseAll.t()))
+        .on_click(handler)
 }
 
 fn build_side_rows(model: &kagi_git::resolution::HunkModel, side: SelectionSide) -> Vec<SideRow> {
@@ -499,9 +620,11 @@ fn side_row_list(
     side: SelectionSide,
     scroll: UniformListScrollHandle,
     selected_hunk: usize,
+    chrome: &EditorChrome,
     cx: &mut Context<ConflictView>,
 ) -> gpui::Stateful<gpui::Div> {
     let rows = Arc::new(build_side_rows(model, side));
+    let highlights = side_highlights(chrome, path, model, side);
     let row_count = rows.len();
     let rows_for_list = rows.clone();
     let p = Arc::new(path.to_path_buf());
@@ -523,7 +646,15 @@ fn side_row_list(
                 list_id,
                 row_count,
                 cx.processor(move |_this, range, _window, cx| {
-                    render_side_rows(&rows_for_list, p.clone(), side, selected_hunk, range, cx)
+                    render_side_rows(
+                        &rows_for_list,
+                        &highlights,
+                        p.clone(),
+                        side,
+                        selected_hunk,
+                        range,
+                        cx,
+                    )
                 }),
             )
             .track_scroll(&scroll)
@@ -535,6 +666,7 @@ fn side_row_list(
 
 fn render_side_rows(
     rows: &[SideRow],
+    highlights: &[RowHl],
     path: Arc<std::path::PathBuf>,
     side: SelectionSide,
     selected_hunk: usize,
@@ -571,12 +703,18 @@ fn render_side_rows(
                 line_index,
                 line_no,
                 text,
+                highlights.get(i).cloned().unwrap_or_default(),
                 taken,
                 side,
                 selected_hunk,
                 cx,
             ),
-            SideRow::Context { line_no, text } => render_context_row(i, line_no, text),
+            SideRow::Context { line_no, text } => render_context_row(
+                i,
+                line_no,
+                text,
+                highlights.get(i).cloned().unwrap_or_default(),
+            ),
             SideRow::Blank { hunk_index } => render_blank_row(i, hunk_index, selected_hunk),
         })
         .collect()
@@ -584,7 +722,12 @@ fn render_side_rows(
 
 /// A non-conflicting context line: no checkbox, muted text, real gutter number.
 /// Shown identically on both panes so the editor mirrors the full file.
-fn render_context_row(row_index: usize, line_no: usize, text_value: String) -> AnyElement {
+fn render_context_row(
+    row_index: usize,
+    line_no: usize,
+    text_value: String,
+    highlights: RowHl,
+) -> AnyElement {
     div()
         .id(SharedString::from(format!("side-ctx-{}", row_index)))
         .flex()
@@ -592,43 +735,35 @@ fn render_context_row(row_index: usize, line_no: usize, text_value: String) -> A
         .items_center()
         .min_w(relative(1.0))
         .h(theme::scaled_px(17.))
-        .px(theme::scaled_px(4.))
+        .pr(theme::scaled_px(4.))
         .gap_1()
+        // Transparent band keeps context columns aligned with hunk rows.
+        .border_l(theme::scaled_px(3.))
+        .border_color(rgb(theme().bg_base))
         .bg(rgb(theme().bg_base))
         .child(
-            // Spacer matching the checkbox column so context text aligns with
-            // code lines.
-            div().w(theme::scaled_px(15.)),
-        )
-        .child(
             div()
+                .pl(theme::scaled_px(3.))
                 .w(theme::scaled_px(42.))
+                .flex_shrink_0()
                 .text_size(theme::scaled_px(11.))
                 .line_height(theme::scaled_px(17.))
                 .font_family(terminal::pick_font_family())
                 .text_color(rgb(theme().text_muted))
                 .child(SharedString::from(format!("{:>4}", line_no))),
         )
-        .child(
-            div()
-                .flex_shrink_0()
-                .whitespace_nowrap()
-                .text_size(theme::scaled_px(12.))
-                .line_height(theme::scaled_px(17.))
-                .font_family(terminal::pick_font_family())
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(text_value)),
-        )
+        .child(code_text(text_value, highlights, theme().text_sub))
         .into_any_element()
 }
 
-/// An empty filler row (same height as a code line) used to keep the two side
-/// panes aligned when a hunk has a different number of lines on each side.
 fn render_blank_row(row_index: usize, hunk_index: usize, selected_hunk: usize) -> AnyElement {
     div()
         .id(SharedString::from(format!("side-blank-{}", row_index)))
         .w_full()
         .h(theme::scaled_px(17.))
+        // Transparent band so filler rows align with the banded hunk rows.
+        .border_l(theme::scaled_px(3.))
+        .border_color(rgb(theme().bg_base))
         .bg(rgb(if selected_hunk == hunk_index {
             theme().bg_row_alt
         } else {
@@ -650,9 +785,12 @@ fn render_hunk_header_row(
     selected_hunk: usize,
     cx: &mut Context<ConflictView>,
 ) -> AnyElement {
+    // ADR-0135 (Xcode-style): clicking the header takes/releases this whole
+    // side of the hunk — the header IS the control, no checkbox.
     let next = state != TriState::All;
     let p = path.clone();
-    let toggle = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+    let take = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_editor_select_hunk(hunk_index);
         this.conflict_editor_set_hunk_side(&p, hunk_index, side, next);
         cx.notify();
     });
@@ -665,13 +803,16 @@ fn render_hunk_header_row(
         this.conflict_editor_set_hunk_order(&p_order, hunk_index, next_order);
         cx.notify();
     });
-    let focus_click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_editor_select_hunk(hunk_index);
-        cx.notify();
-    });
     let order_label = match order {
         LineOrder::CurrentFirst => Msg::EditorCurrentFirst.t(),
         LineOrder::IncomingFirst => Msg::EditorIncomingFirst.t(),
+    };
+    let accent = side_accent(side);
+    // Band opacity mirrors the tri-state: solid / half / off.
+    let band = match state {
+        TriState::All => rgb(accent),
+        TriState::Partial => rgb(accent),
+        TriState::None => rgb(theme().selected),
     };
     div()
         .id(SharedString::from(format!("side-hunk-{}", row_index)))
@@ -680,35 +821,46 @@ fn render_hunk_header_row(
         .items_center()
         .gap_2()
         .w_full()
-        .h(theme::scaled_px(20.))
-        .px(theme::scaled_px(4.))
-        // Blend with the editor bg (no lighter "stripe" band); only the focused
-        // hunk gets a subtle tint. A thin top divider separates hunks instead.
-        .border_t_1()
-        .border_color(rgb(theme().selected))
-        .bg(rgb(if selected_hunk == hunk_index {
-            theme().bg_row_alt
-        } else {
-            theme().bg_base
-        }))
-        .hover(|s| s.bg(rgb(theme().selected)))
-        .on_click(focus_click)
-        .child(tri_checkbox(
-            format!("hunk-side-{:?}-{}", side, hunk_index),
-            state,
-            theme().text_sub,
-            toggle,
-        ))
+        .h(theme::scaled_px(22.))
+        .pr(theme::scaled_px(4.))
+        .border_l(theme::scaled_px(3.))
+        .border_color(band)
+        .map(|el| {
+            let focused = selected_hunk == hunk_index;
+            if state != TriState::None {
+                el.bg(side_tint(side, if focused { 0.28 } else { 0.18 }))
+            } else if focused {
+                el.bg(rgb(theme().bg_row_alt))
+            } else {
+                el.bg(rgb(theme().bg_base))
+            }
+        })
+        .cursor_pointer()
+        .hover(|s| s.bg(side_tint(side, 0.35)))
+        .on_click(take)
         .child(
             div()
+                .pl(theme::scaled_px(6.))
                 .text_size(theme::scaled_px(10.))
-                .text_color(rgb(theme().text_label))
+                .text_color(rgb(if state == TriState::None {
+                    theme().text_muted
+                } else {
+                    accent
+                }))
                 .child(SharedString::from(format!(
                     "{} {}",
                     Msg::EditorHunkLabel.t(),
                     hunk_index + 1
                 ))),
         )
+        .when(state == TriState::Partial, |el| {
+            el.child(
+                div()
+                    .text_size(theme::scaled_px(9.))
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from("±")),
+            )
+        })
         .child(
             div()
                 .id(SharedString::from(format!("hunk-order-{}", row_index)))
@@ -728,6 +880,23 @@ fn render_hunk_header_row(
         .into_any_element()
 }
 
+/// The per-side accent colour (Current = branch, Incoming = remote).
+fn side_accent(side: SelectionSide) -> u32 {
+    match side {
+        SelectionSide::Current => theme().color_branch,
+        SelectionSide::Incoming => theme().color_remote,
+    }
+}
+
+/// The side accent as a translucent row background — the diff-view idiom
+/// (coloured code rows), so conflict regions read as *colour*, not just
+/// bright-vs-dim (user report).
+fn side_tint(side: SelectionSide, alpha: f32) -> gpui::Hsla {
+    let mut c: gpui::Hsla = rgb(side_accent(side)).into();
+    c.a = alpha;
+    c
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_code_line_row(
     row_index: usize,
@@ -736,24 +905,21 @@ fn render_code_line_row(
     line_index: usize,
     line_no: usize,
     text_value: String,
+    highlights: RowHl,
     taken: bool,
     side: SelectionSide,
     selected_hunk: usize,
     cx: &mut Context<ConflictView>,
 ) -> AnyElement {
+    // ADR-0135: the line itself is the control — clicking it toggles just this
+    // line in/out of the taken set (the old line checkbox, without the glyph).
     let p = path.clone();
     let toggle = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+        this.conflict_editor_select_hunk(hunk_index);
         this.conflict_editor_set_hunk_line(&p, hunk_index, side, line_index, !taken);
         cx.notify();
     });
-    let focus_click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_editor_select_hunk(hunk_index);
-        cx.notify();
-    });
-    let accent = match side {
-        SelectionSide::Current => theme().color_branch,
-        SelectionSide::Incoming => theme().color_remote,
-    };
+    let accent = side_accent(side);
     div()
         .id(SharedString::from(format!("side-line-{}", row_index)))
         .flex()
@@ -761,93 +927,67 @@ fn render_code_line_row(
         .items_center()
         .min_w(relative(1.0))
         .h(theme::scaled_px(17.))
-        .px(theme::scaled_px(4.))
+        .pr(theme::scaled_px(4.))
         .gap_1()
+        .border_l(theme::scaled_px(3.))
+        .border_color(if taken {
+            rgb(accent)
+        } else {
+            rgb(theme().selected)
+        })
         .bg(rgb(if selected_hunk == hunk_index {
             theme().bg_row_alt
         } else {
             theme().bg_base
         }))
+        .cursor_pointer()
         .hover(|s| s.bg(rgb(theme().selected)))
-        .on_click(focus_click)
-        .child(line_checkbox(
-            taken,
-            accent,
-            format!("line-side-{:?}-{}-{}", side, hunk_index, line_index),
-            toggle,
-        ))
+        .on_click(toggle)
+        // Untaken lines keep their syntax colours but fade — Xcode-style
+        // "the other side is dimmed", per line. 0.22: at 0.4 the rejected side
+        // still read almost as clearly as the taken one (user report).
+        .when(!taken, |el| el.opacity(0.22))
         .child(
             div()
+                .pl(theme::scaled_px(3.))
                 .w(theme::scaled_px(42.))
+                .flex_shrink_0()
                 .text_size(theme::scaled_px(11.))
                 .line_height(theme::scaled_px(17.))
                 .font_family(terminal::pick_font_family())
                 .text_color(rgb(theme().text_muted))
                 .child(SharedString::from(format!("{:>4}", line_no))),
         )
-        .child(
-            div()
-                .flex_shrink_0()
-                .whitespace_nowrap()
-                .text_size(theme::scaled_px(12.))
-                .line_height(theme::scaled_px(17.))
-                .font_family(terminal::pick_font_family())
-                .text_color(rgb(if taken {
-                    theme().text_main
-                } else {
-                    theme().text_muted
-                }))
-                .child(SharedString::from(text_value)),
-        )
+        .child(code_text(text_value, highlights, theme().text_main))
         .into_any_element()
 }
 
-fn tri_checkbox<H>(
-    id: impl Into<String>,
-    state: TriState,
-    accent: u32,
-    handler: H,
-) -> gpui::Stateful<gpui::Div>
-where
-    H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-{
-    let glyph = match state {
-        TriState::All => "\u{2611}",
-        TriState::Partial => "\u{2014}",
-        TriState::None => "\u{2610}",
-    };
-    // No outer box/border (user request): the ☑/☐/— glyph itself is the
-    // checkbox; just give it a click target + colour.
-    div()
-        .id(SharedString::from(id.into()))
-        .flex()
-        .items_center()
-        .justify_center()
-        .w(theme::scaled_px(15.))
-        .text_size(theme::scaled_px(15.))
+/// Monospace code text with validated syntax-highlight spans (the same
+/// out-of-bounds guard as the diff renderers).
+fn code_text(text_value: String, highlights: RowHl, base_color: u32) -> gpui::Div {
+    let shared = SharedString::from(text_value);
+    let el = div()
+        .flex_shrink_0()
+        .whitespace_nowrap()
+        .text_size(theme::scaled_px(12.))
         .line_height(theme::scaled_px(17.))
-        .text_color(rgb(accent))
-        .cursor_pointer()
-        .hover(|s| s.text_color(rgb(theme().text_main)))
-        .child(SharedString::from(glyph))
-        .on_click(handler)
-}
-
-fn line_checkbox<H>(
-    taken: bool,
-    accent: u32,
-    id: impl Into<String>,
-    handler: H,
-) -> gpui::Stateful<gpui::Div>
-where
-    H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-{
-    tri_checkbox(
-        id,
-        if taken { TriState::All } else { TriState::None },
-        accent,
-        handler,
-    )
+        .font_family(terminal::pick_font_family())
+        .text_color(rgb(base_color));
+    if highlights.is_empty() {
+        return el.child(shared);
+    }
+    let text_str: &str = shared.as_ref();
+    let text_len = text_str.len();
+    let valid: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> = highlights
+        .into_iter()
+        .filter(|(r, _)| {
+            r.start <= r.end
+                && r.end <= text_len
+                && text_str.is_char_boundary(r.start)
+                && text_str.is_char_boundary(r.end)
+        })
+        .collect();
+    el.child(gpui::StyledText::new(shared.clone()).with_highlights(valid))
 }
 
 fn guidance_pane(msg: &str) -> gpui::AnyElement {
@@ -1021,72 +1161,25 @@ fn render_result_pane(
             cx,
         ));
 
-    // Body: Preview renders custom monospace rows that exactly match the A/B
-    // line lists (12px + terminal font); Edit uses the InputState so the text is
-    // editable. (The InputState reads window.text_style at prepaint, which the
-    // parent div's text-style cascade does NOT reach, so its font/size can't be
-    // matched to the A/B rows — hence the custom Preview rendering.)
-    let preview_body: gpui::AnyElement = if editing {
-        div()
-            .flex_grow(1.)
-            .w_full()
-            .min_h(px(0.))
-            .child(
-                Input::new(&inputs.result)
-                    .disabled(false)
-                    .appearance(true)
-                    .bordered(false)
-                    .h_full(),
-            )
-            .into_any_element()
-    } else {
-        let text = mode
-            .buffer
-            .hunk_model(path)
-            .map(|m| m.assembled_text())
-            .unwrap_or_default();
-        let mut col = div()
-            .id("conflict-result-preview")
-            .flex()
-            .flex_col()
-            .flex_grow(1.)
-            .min_h(px(0.))
-            .w_full()
-            .overflow_scroll();
-        for (i, line) in text.lines().enumerate() {
-            col = col.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .min_w(relative(1.0))
-                    .h(theme::scaled_px(17.))
-                    .px(theme::scaled_px(4.))
-                    .gap_1()
-                    .child(
-                        div()
-                            .w(theme::scaled_px(42.))
-                            .flex_shrink_0()
-                            .text_size(theme::scaled_px(11.))
-                            .line_height(theme::scaled_px(17.))
-                            .font_family(terminal::pick_font_family())
-                            .text_color(rgb(theme().text_muted))
-                            .child(SharedString::from(format!("{:>4}", i + 1))),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .whitespace_nowrap()
-                            .text_size(theme::scaled_px(12.))
-                            .line_height(theme::scaled_px(17.))
-                            .font_family(terminal::pick_font_family())
-                            .text_color(rgb(theme().text_main))
-                            .child(SharedString::from(line.to_string())),
-                    ),
-            );
-        }
-        col.into_any_element()
-    };
+    // Body: ONE CodeEditor for both modes — Preview is the same component
+    // with `disabled(true)` (user request: the two modes previously used
+    // different renderers and their font/size drifted). The CodeEditor
+    // highlights via the ADR-0133 per-theme pipeline; disabled only skips the
+    // interaction handlers and keeps the syntax colours.
+    let preview_body: gpui::AnyElement = div()
+        .flex_grow(1.)
+        .w_full()
+        .min_h(px(0.))
+        // Font via the wrapper text-style cascade (Snapshot-pane pattern, #219).
+        .font_family(terminal::pick_font_family())
+        .child(
+            Input::new(&inputs.result)
+                .disabled(!editing)
+                .appearance(false)
+                .bordered(false)
+                .h_full(),
+        )
+        .into_any_element();
 
     div()
         .id("conflict-pane-result")

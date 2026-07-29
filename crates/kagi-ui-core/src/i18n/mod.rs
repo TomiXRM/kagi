@@ -383,6 +383,8 @@ pub enum Msg {
     AmendLastCommit,
     /// Commit panel: co-author picker with nothing to offer.
     NoRecentAuthors,
+    /// Conflict editor: pane-header pill that takes the whole file's side.
+    EditorUseAll,
     /// Commit panel: tooltip on the commit.template toggle.
     ToggleCommitTemplate,
     /// Commit panel: label on the commit.template toggle.
@@ -931,10 +933,12 @@ impl Msg {
             // ── T-CONFLICT-UX-010/012: per-hunk accept controls ──
             (En, EditorHunkLabel) => "Hunk",
             (Ja, EditorHunkLabel) => "Hunk",
-            (En, EditorCurrentFirst) => "Current first",
-            (Ja, EditorCurrentFirst) => "現在の側を先",
-            (En, EditorIncomingFirst) => "Incoming first",
-            (Ja, EditorIncomingFirst) => "取り込む側を先",
+            // Deliberately English in BOTH languages: the JA reading ("現在の
+            // 方を先") was more confusing than the English (user feedback), and
+            // the arrow shows what "first" even means — the order the two
+            // blocks land in the result when both sides are taken.
+            (En | Ja, EditorCurrentFirst) => "Current → Incoming",
+            (En | Ja, EditorIncomingFirst) => "Incoming → Current",
             // ── W33-CONFLICT-DASHBOARD ───────────────────────────────
             (En, ConflictDashHeader) => "Merge conflicts detected",
             (Ja, ConflictDashHeader) => "conflict が検出されました",
@@ -1027,6 +1031,8 @@ impl Msg {
             (En, AmendLastCommit) => "Amend last commit",
             (Ja, AmendLastCommit) => "直前のコミットを修正",
             (En, NoRecentAuthors) => "No other authors in recent history",
+            (En, EditorUseAll) => "Use all",
+            (Ja, EditorUseAll) => "すべて採用",
             (En, ToggleCommitTemplate) => "Use your commit.template",
             (Ja, ToggleCommitTemplate) => "commit.template を使う",
             (En, Template) => "Template",

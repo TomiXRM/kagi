@@ -414,7 +414,6 @@ impl Render for KagiApp {
         // the banner is a free function fed a cloned `ConflictMode` read out of
         // the entity here so the entity is never rendered twice in one frame.
         let conflict_entity = self.conflict.clone();
-        let conflict_banner_mode = self.conflict.as_ref().and_then(|e| e.read(cx).mode.clone());
         // T-CONFLICT-FLOW-030: while a continued merge waits for its commit
         // message, show the normal body (commit panel) instead of the conflict
         // resolution body (ADR-0068). Conflict Mode is still active (MERGE_HEAD
@@ -675,14 +674,6 @@ impl Render for KagiApp {
                 self.active_view.rows.first().map(|r| r.summary.to_string()),
                 cx,
             ))
-            // ── W30-CONFLICT-UI: persistent conflict banner (under header) ──
-            // Free function fed a cloned `ConflictMode` (the entity itself renders
-            // only the body — rendering it twice in one frame is unsound).
-            .children(
-                conflict_banner_mode
-                    .as_ref()
-                    .map(conflict_view::render_banner),
-            )
             // ── Body slot: in Conflict Mode the conflict resolution pane
             //    replaces the normal sidebar | list | panel body. The center is
             //    the A/B hunk editor + Result Preview; the right is always the

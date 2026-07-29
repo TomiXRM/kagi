@@ -1916,27 +1916,24 @@ mod tests {
         assert_eq!(mode.continue_blocker(), Some(Msg::ConflictBlockerMarker));
     }
 
+    /// ADR-0058 guard, retargeted: the op-summary banner is gone (ADR-0135),
+    /// so the words the dashboard actually shows now come from `mode.labels()`
+    /// — assert THOSE never leak ours/theirs and name the branch verbatim.
     #[test]
-    fn heading_uses_roles_not_ours_theirs() {
+    fn side_labels_use_roles_not_ours_theirs() {
         let td = merge_conflict_repo();
         let mode = detect(td.path(), "main");
-        let heading = op_summary(&mode);
-        let lower = heading.to_lowercase();
-        assert!(
-            !lower.contains("ours"),
-            "heading leaked 'ours': {}",
-            heading
-        );
-        assert!(
-            !lower.contains("theirs"),
-            "heading leaked 'theirs': {}",
-            heading
-        );
-        // Merge summary names the current branch verbatim.
-        assert!(
-            heading.contains("main"),
-            "summary should name current branch: {}",
-            heading
-        );
+        let labels = mode.labels();
+        for text in [
+            &labels.current.role,
+            &labels.current.name,
+            &labels.incoming.role,
+            &labels.incoming.name,
+        ] {
+            let lower = text.to_lowercase();
+            assert!(!lower.contains("ours"), "label leaked 'ours': {}", text);
+            assert!(!lower.contains("theirs"), "label leaked 'theirs': {}", text);
+        }
+        assert_eq!(labels.current.name, "main", "current side names the branch");
     }
 }

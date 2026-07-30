@@ -153,7 +153,6 @@ impl KagiApp {
                                         // node_color is unused for them.
                                         sr.lane,
                                         edges,
-                                        visible_lanes,
                                         false,
                                         false,
                                         true,

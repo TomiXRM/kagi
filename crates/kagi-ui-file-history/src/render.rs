@@ -21,8 +21,8 @@ use crate::{fh_row_height, FileHistoryEvent, FileHistoryState, FileHistoryView};
 use kagi_domain::file_history::{FileChangeType, FileHistoryEntry};
 
 impl Render for FileHistoryView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        render_file_history_view(self, cx)
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        render_file_history_view(self, window.viewport_size(), cx)
     }
 }
 
@@ -56,6 +56,7 @@ pub(crate) fn fh_header_button(
 /// in place of the normal center+right area.
 pub fn render_file_history_view(
     view: &FileHistoryView,
+    viewport: gpui::Size<gpui::Pixels>,
     cx: &mut Context<FileHistoryView>,
 ) -> gpui::AnyElement {
     // ADR-0117: the entity renders itself. Read only `self`'s data here; every
@@ -238,7 +239,8 @@ pub fn render_file_history_view(
     let detail_pane = render_fh_detail_pane(state, panel_width, &view.avatars, cx);
 
     // ── Optional row context menu overlay ──────────────────────────
-    let menu_overlay = file_history_menu.map(|(ix, pos)| render_fh_row_menu(state, ix, pos, cx));
+    let menu_overlay =
+        file_history_menu.map(|(ix, pos)| render_fh_row_menu(state, ix, pos, viewport, cx));
 
     div()
         .id("file-history-view")

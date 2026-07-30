@@ -233,7 +233,6 @@ pub fn graph_canvas(
     // for the ● node and the label→node connector; edges carry their own colour.
     node_color: usize,
     edges: Vec<GraphEdge>,
-    visible_lanes: usize,
     is_head: bool,
     is_merge: bool,
     has_badges: bool,
@@ -254,237 +253,229 @@ pub fn graph_canvas(
     canvas(
         // prepaint: nothing to measure
         move |_bounds: Bounds<Pixels>, _window: &mut Window, _cx: &mut App| {},
-        // paint: draw edges first, node on top
+        // paint: draw edges first, node on top. The whole body runs under a
+        // content mask = the canvas bounds: the canvas would otherwise paint
+        // outside its bounds in both directions. Masking (instead of the old
+        // skip-whole-edge lane culling) means an edge whose other end is
+        // horizontally scrolled out of view still draws its visible part —
+        // scrolling right used to erase every line touching an off-screen
+        // lane, including the row's own node curves (user report). Vertical
+        // culling is unaffected (uniform_list only renders visible rows).
         move |bounds: Bounds<Pixels>, _prepaint: (), window: &mut Window, _cx: &mut App| {
-            let ox = f32::from(bounds.origin.x); // absolute left edge
-            let oy = f32::from(bounds.origin.y); // absolute top edge
-                                                 // Use the actual canvas height rather than the ROW_H constant so
-                                                 // edges always span the full row even if the row height changes.
-                                                 // W28: use the measured row height for vertical anchoring. The row
-                                                 // container height is itself `scaled_px(row_height)`, so `mid_y`
-                                                 // (and thus the ● node centre + edge endpoints) tracks zoom with no
-                                                 // extra scaling here — that is what keeps the node centred and the
-                                                 // edges drift-free at any zoom.
-            let row_h = f32::from(bounds.size.height);
-            let mid_y = node_center_y(oy, row_h);
+            let mask = gpui::ContentMask { bounds };
+            window.with_content_mask(Some(mask), |window| {
+                let ox = f32::from(bounds.origin.x); // absolute left edge
+                let oy = f32::from(bounds.origin.y); // absolute top edge
+                                                     // Use the actual canvas height rather than the ROW_H constant so
+                                                     // edges always span the full row even if the row height changes.
+                                                     // W28: use the measured row height for vertical anchoring. The row
+                                                     // container height is itself `scaled_px(row_height)`, so `mid_y`
+                                                     // (and thus the ● node centre + edge endpoints) tracks zoom with no
+                                                     // extra scaling here — that is what keeps the node centred and the
+                                                     // edges drift-free at any zoom.
+                let row_h = f32::from(bounds.size.height);
+                let mid_y = node_center_y(oy, row_h);
 
-            // W28: zoom-scaled lane pitch — read once so the closure reuses it.
-            let lw = lane_w();
+                // Helper: x-centre of a lane in absolute coords (scroll-aware).
+                // Shares `lane_center_x` with the unit tests so the drawn geometry
+                // and the asserted geometry are guaranteed identical. `pad_l` shifts
+                // the lanes right; the connector below still anchors at `ox`.
+                let lane_x = |lane: usize| -> f32 { lane_center_x(ox + pad_l, lane, scroll_x) };
 
-            // Helper: x-centre of a lane in absolute coords (scroll-aware).
-            // Shares `lane_center_x` with the unit tests so the drawn geometry
-            // and the asserted geometry are guaranteed identical. `pad_l` shifts
-            // the lanes right; the connector below still anchors at `ox`.
-            let lane_x = |lane: usize| -> f32 { lane_center_x(ox + pad_l, lane, scroll_x) };
+                // ── Draw edges (mask does the clipping) ─────────
+                for edge in &edges {
+                    // Colour comes from the edge's carried (branch-stable) colour
+                    // index — not the column index — so a branch keeps its colour
+                    // even when compaction shifts its lane.
+                    let color = if is_stash_lane(edge.from_lane) || is_stash_lane(edge.to_lane) {
+                        stash_color
+                    } else {
+                        lane_color(edge.color)
+                    };
 
-            // Visible lane window for the current scroll offset.  The canvas
-            // paints outside its bounds in BOTH directions, so clipping is
-            // done by skipping lanes whose centre falls outside the window
-            // (same technique as the original right-edge clip).
-            let lane_lo = (scroll_x / lw).floor().max(0.0) as usize;
-            let clip = lane_lo + visible_lanes;
-            let lane_in = |lane: usize| -> bool { lane >= lane_lo && lane < clip };
+                    let mut builder = PathBuilder::stroke(theme::scaled_px(EDGE_W));
 
-            // ── Draw edges ──────────────────────────────────
-            for edge in &edges {
-                // Skip edges that touch any lane outside the visible window.
-                // (Partially-visible edges would bleed over the neighbouring
-                // columns because the canvas does not clip.)
-                if !lane_in(edge.from_lane) || !lane_in(edge.to_lane) {
-                    continue;
-                }
-
-                // Colour comes from the edge's carried (branch-stable) colour
-                // index — not the column index — so a branch keeps its colour
-                // even when compaction shifts its lane.
-                let color = if is_stash_lane(edge.from_lane) || is_stash_lane(edge.to_lane) {
-                    stash_color
-                } else {
-                    lane_color(edge.color)
-                };
-
-                let mut builder = PathBuilder::stroke(theme::scaled_px(EDGE_W));
-
-                match edge.kind {
-                    EdgeKind::Pass => {
-                        let x_from = lane_x(edge.from_lane);
-                        if edge.from_lane == edge.to_lane {
-                            // Straight vertical line, full row height.
-                            builder.move_to(point(px(x_from), px(oy)));
-                            builder.line_to(point(px(x_from), px(oy + row_h)));
-                        } else {
-                            // Compaction shift: the lane moved column between
-                            // rows — draw an S-curve from top to bottom column.
+                    match edge.kind {
+                        EdgeKind::Pass => {
+                            let x_from = lane_x(edge.from_lane);
+                            if edge.from_lane == edge.to_lane {
+                                // Straight vertical line, full row height.
+                                builder.move_to(point(px(x_from), px(oy)));
+                                builder.line_to(point(px(x_from), px(oy + row_h)));
+                            } else {
+                                // Compaction shift: the lane moved column between
+                                // rows — draw an S-curve from top to bottom column.
+                                let x_to = lane_x(edge.to_lane);
+                                draw_shift(&mut builder, x_from, oy, x_to, oy + row_h);
+                            }
+                        }
+                        EdgeKind::IntoNode => {
+                            let x_from = lane_x(edge.from_lane);
+                            let x_node = lane_x(node_lane);
+                            if edge.from_lane == node_lane {
+                                // Same lane: straight vertical.
+                                builder.move_to(point(px(x_from), px(oy)));
+                                builder.line_to(point(px(x_node), px(mid_y)));
+                            } else {
+                                draw_into_node(&mut builder, x_from, oy, x_node, mid_y);
+                            }
+                        }
+                        EdgeKind::OutOfNode => {
+                            let x_node = lane_x(node_lane);
                             let x_to = lane_x(edge.to_lane);
-                            draw_shift(&mut builder, x_from, oy, x_to, oy + row_h);
+                            if node_lane == edge.to_lane {
+                                // Same lane: straight vertical.
+                                builder.move_to(point(px(x_node), px(mid_y)));
+                                builder.line_to(point(px(x_to), px(oy + row_h)));
+                            } else {
+                                draw_out_of_node(&mut builder, x_node, mid_y, x_to, oy + row_h);
+                            }
                         }
                     }
-                    EdgeKind::IntoNode => {
-                        let x_from = lane_x(edge.from_lane);
-                        let x_node = lane_x(node_lane);
-                        if edge.from_lane == node_lane {
-                            // Same lane: straight vertical.
-                            builder.move_to(point(px(x_from), px(oy)));
-                            builder.line_to(point(px(x_node), px(mid_y)));
-                        } else {
-                            draw_into_node(&mut builder, x_from, oy, x_node, mid_y);
-                        }
+
+                    if let Ok(path) = builder.build() {
+                        window.paint_path(path, color);
                     }
-                    EdgeKind::OutOfNode => {
-                        let x_node = lane_x(node_lane);
-                        let x_to = lane_x(edge.to_lane);
-                        if node_lane == edge.to_lane {
-                            // Same lane: straight vertical.
-                            builder.move_to(point(px(x_node), px(mid_y)));
-                            builder.line_to(point(px(x_to), px(oy + row_h)));
+                }
+
+                // ── Draw label→node connector line (W2-GRAPH item 5) ──
+                // When the badge column has chips, draw a 1px horizontal line from
+                // the left edge of the graph canvas (= right edge of badge column)
+                // to the node centre. The line uses the node's lane colour.
+                //
+                // Skipped in swimlane mode (pad_l > 0): there the badge/spacer
+                // connector already runs the label up to the lane band's left edge,
+                // and the band itself carries the eye across to the avatar node — an
+                // extra in-graph line just adds noise.
+                if has_badges && scroll_x < 0.5 && pad_l <= 0.5 {
+                    let x_node = lane_x(node_lane);
+                    // Draw from the left edge of the graph area (ox) to the node.
+                    // If the node is in lane 0 the line has zero length; only draw
+                    // when there is meaningful horizontal distance.
+                    if x_node > ox + 0.5 {
+                        let color = if is_stash_lane(node_lane) {
+                            stash_color
                         } else {
-                            draw_out_of_node(&mut builder, x_node, mid_y, x_to, oy + row_h);
+                            lane_color(node_color)
+                        };
+                        let mut builder = PathBuilder::stroke(theme::scaled_px(1.0));
+                        builder.move_to(point(px(ox), px(mid_y)));
+                        builder.line_to(point(px(x_node), px(mid_y)));
+                        if let Ok(path) = builder.build() {
+                            window.paint_path(path, color);
                         }
                     }
                 }
 
-                if let Ok(path) = builder.build() {
-                    window.paint_path(path, color);
-                }
-            }
-
-            // ── Draw label→node connector line (W2-GRAPH item 5) ──
-            // When the badge column has chips, draw a 1px horizontal line from
-            // the left edge of the graph canvas (= right edge of badge column)
-            // to the node centre. The line uses the node's lane colour.
-            //
-            // Skipped in swimlane mode (pad_l > 0): there the badge/spacer
-            // connector already runs the label up to the lane band's left edge,
-            // and the band itself carries the eye across to the avatar node — an
-            // extra in-graph line just adds noise.
-            if has_badges && lane_in(node_lane) && scroll_x < 0.5 && pad_l <= 0.5 {
-                let x_node = lane_x(node_lane);
-                // Draw from the left edge of the graph area (ox) to the node.
-                // If the node is in lane 0 the line has zero length; only draw
-                // when there is meaningful horizontal distance.
-                if x_node > ox + 0.5 {
+                // ── Draw node ● (mask clips it at the column edges) ──
+                {
+                    let cx_abs = lane_x(node_lane);
                     let color = if is_stash_lane(node_lane) {
                         stash_color
                     } else {
                         lane_color(node_color)
                     };
-                    let mut builder = PathBuilder::stroke(theme::scaled_px(1.0));
-                    builder.move_to(point(px(ox), px(mid_y)));
-                    builder.line_to(point(px(x_node), px(mid_y)));
-                    if let Ok(path) = builder.build() {
-                        window.paint_path(path, color);
+
+                    // W2-GRAPH: HEAD node gets a larger radius + outer ring.
+                    // W2-GRAPH: merge node gets a double-circle (filled inner + stroked outer).
+                    // W28: node radii scale with zoom so the ● keeps its size ratio
+                    // to the (scaled) lane pitch and row height. `node_radius()` is
+                    // the same helper the unit tests assert against.
+                    let base_r = node_radius();
+                    let head_r = base_r * 1.5; // 1.5× radius for HEAD
+
+                    const SEGMENTS: usize = 12;
+
+                    if is_head {
+                        // HEAD: large filled circle + outer ring (same colour, slightly transparent).
+                        // Outer ring (stroke).
+                        let ring_r = head_r + theme::scaled(1.5);
+                        let mut rb = PathBuilder::stroke(theme::scaled_px(1.2));
+                        for i in 0..=SEGMENTS {
+                            let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
+                            let px_val = cx_abs + ring_r * angle.cos();
+                            let py_val = mid_y + ring_r * angle.sin();
+                            if i == 0 {
+                                rb.move_to(point(px(px_val), px(py_val)));
+                            } else {
+                                rb.line_to(point(px(px_val), px(py_val)));
+                            }
+                        }
+                        rb.close();
+                        if let Ok(path) = rb.build() {
+                            window.paint_path(path, color);
+                        }
+                        // Filled inner circle.
+                        let mut fb = PathBuilder::fill();
+                        for i in 0..=SEGMENTS {
+                            let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
+                            let px_val = cx_abs + head_r * angle.cos();
+                            let py_val = mid_y + head_r * angle.sin();
+                            if i == 0 {
+                                fb.move_to(point(px(px_val), px(py_val)));
+                            } else {
+                                fb.line_to(point(px(px_val), px(py_val)));
+                            }
+                        }
+                        fb.close();
+                        if let Ok(path) = fb.build() {
+                            window.paint_path(path, color);
+                        }
+                    } else if is_merge {
+                        // Merge: double circle — stroked outer ring + stroked inner circle.
+                        // Outer ring.
+                        let outer_r = base_r + theme::scaled(2.5);
+                        let mut rb = PathBuilder::stroke(theme::scaled_px(1.2));
+                        for i in 0..=SEGMENTS {
+                            let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
+                            let px_val = cx_abs + outer_r * angle.cos();
+                            let py_val = mid_y + outer_r * angle.sin();
+                            if i == 0 {
+                                rb.move_to(point(px(px_val), px(py_val)));
+                            } else {
+                                rb.line_to(point(px(px_val), px(py_val)));
+                            }
+                        }
+                        rb.close();
+                        if let Ok(path) = rb.build() {
+                            window.paint_path(path, color);
+                        }
+                        // Filled inner circle (standard size).
+                        let mut fb = PathBuilder::fill();
+                        for i in 0..=SEGMENTS {
+                            let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
+                            let px_val = cx_abs + base_r * angle.cos();
+                            let py_val = mid_y + base_r * angle.sin();
+                            if i == 0 {
+                                fb.move_to(point(px(px_val), px(py_val)));
+                            } else {
+                                fb.line_to(point(px(px_val), px(py_val)));
+                            }
+                        }
+                        fb.close();
+                        if let Ok(path) = fb.build() {
+                            window.paint_path(path, color);
+                        }
+                    } else {
+                        // Normal node: filled circle (existing behaviour).
+                        let mut builder = PathBuilder::fill();
+                        for i in 0..=SEGMENTS {
+                            let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
+                            let px_val = cx_abs + base_r * angle.cos();
+                            let py_val = mid_y + base_r * angle.sin();
+                            if i == 0 {
+                                builder.move_to(point(px(px_val), px(py_val)));
+                            } else {
+                                builder.line_to(point(px(px_val), px(py_val)));
+                            }
+                        }
+                        builder.close();
+                        if let Ok(path) = builder.build() {
+                            window.paint_path(path, color);
+                        }
                     }
                 }
-            }
-
-            // ── Draw node ● ─────────────────────────────────
-            if lane_in(node_lane) {
-                let cx_abs = lane_x(node_lane);
-                let color = if is_stash_lane(node_lane) {
-                    stash_color
-                } else {
-                    lane_color(node_color)
-                };
-
-                // W2-GRAPH: HEAD node gets a larger radius + outer ring.
-                // W2-GRAPH: merge node gets a double-circle (filled inner + stroked outer).
-                // W28: node radii scale with zoom so the ● keeps its size ratio
-                // to the (scaled) lane pitch and row height. `node_radius()` is
-                // the same helper the unit tests assert against.
-                let base_r = node_radius();
-                let head_r = base_r * 1.5; // 1.5× radius for HEAD
-
-                const SEGMENTS: usize = 12;
-
-                if is_head {
-                    // HEAD: large filled circle + outer ring (same colour, slightly transparent).
-                    // Outer ring (stroke).
-                    let ring_r = head_r + theme::scaled(1.5);
-                    let mut rb = PathBuilder::stroke(theme::scaled_px(1.2));
-                    for i in 0..=SEGMENTS {
-                        let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
-                        let px_val = cx_abs + ring_r * angle.cos();
-                        let py_val = mid_y + ring_r * angle.sin();
-                        if i == 0 {
-                            rb.move_to(point(px(px_val), px(py_val)));
-                        } else {
-                            rb.line_to(point(px(px_val), px(py_val)));
-                        }
-                    }
-                    rb.close();
-                    if let Ok(path) = rb.build() {
-                        window.paint_path(path, color);
-                    }
-                    // Filled inner circle.
-                    let mut fb = PathBuilder::fill();
-                    for i in 0..=SEGMENTS {
-                        let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
-                        let px_val = cx_abs + head_r * angle.cos();
-                        let py_val = mid_y + head_r * angle.sin();
-                        if i == 0 {
-                            fb.move_to(point(px(px_val), px(py_val)));
-                        } else {
-                            fb.line_to(point(px(px_val), px(py_val)));
-                        }
-                    }
-                    fb.close();
-                    if let Ok(path) = fb.build() {
-                        window.paint_path(path, color);
-                    }
-                } else if is_merge {
-                    // Merge: double circle — stroked outer ring + stroked inner circle.
-                    // Outer ring.
-                    let outer_r = base_r + theme::scaled(2.5);
-                    let mut rb = PathBuilder::stroke(theme::scaled_px(1.2));
-                    for i in 0..=SEGMENTS {
-                        let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
-                        let px_val = cx_abs + outer_r * angle.cos();
-                        let py_val = mid_y + outer_r * angle.sin();
-                        if i == 0 {
-                            rb.move_to(point(px(px_val), px(py_val)));
-                        } else {
-                            rb.line_to(point(px(px_val), px(py_val)));
-                        }
-                    }
-                    rb.close();
-                    if let Ok(path) = rb.build() {
-                        window.paint_path(path, color);
-                    }
-                    // Filled inner circle (standard size).
-                    let mut fb = PathBuilder::fill();
-                    for i in 0..=SEGMENTS {
-                        let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
-                        let px_val = cx_abs + base_r * angle.cos();
-                        let py_val = mid_y + base_r * angle.sin();
-                        if i == 0 {
-                            fb.move_to(point(px(px_val), px(py_val)));
-                        } else {
-                            fb.line_to(point(px(px_val), px(py_val)));
-                        }
-                    }
-                    fb.close();
-                    if let Ok(path) = fb.build() {
-                        window.paint_path(path, color);
-                    }
-                } else {
-                    // Normal node: filled circle (existing behaviour).
-                    let mut builder = PathBuilder::fill();
-                    for i in 0..=SEGMENTS {
-                        let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
-                        let px_val = cx_abs + base_r * angle.cos();
-                        let py_val = mid_y + base_r * angle.sin();
-                        if i == 0 {
-                            builder.move_to(point(px(px_val), px(py_val)));
-                        } else {
-                            builder.line_to(point(px(px_val), px(py_val)));
-                        }
-                    }
-                    builder.close();
-                    if let Ok(path) = builder.build() {
-                        window.paint_path(path, color);
-                    }
-                }
-            }
+            }); // with_content_mask
         },
     )
 }

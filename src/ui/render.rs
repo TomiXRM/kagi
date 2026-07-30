@@ -529,6 +529,11 @@ impl Render for KagiApp {
             if this.close_coauthor_menu(cx) {
                 return;
             }
+            if this.inspector_file_menu.is_some() {
+                this.inspector_file_menu = None;
+                cx.notify();
+                return;
+            }
             if this.commit_menu.is_some() {
                 this.commit_menu = None;
                 cx.notify();

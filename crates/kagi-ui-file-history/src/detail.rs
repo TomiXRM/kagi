@@ -169,8 +169,12 @@ pub(crate) fn render_fh_row_menu(
     state: &FileHistoryState,
     ix: usize,
     pos: gpui::Point<gpui::Pixels>,
+    viewport: gpui::Size<gpui::Pixels>,
     cx: &mut Context<FileHistoryView>,
 ) -> gpui::AnyElement {
+    // 4 rows worst-case (checkout snapshot / copy hash / copy path / open);
+    // clamp so the menu never overflows the window (shared bug class).
+    let pos = kagi_ui_core::theme::clamp_menu_pos(pos, 220.0, 4.0 + 4.0 * 22.0, viewport);
     // Resolve the entry's data up front (commit hash + path at this commit).
     let (commit_hash, path_at) = {
         let entry = state.history.as_ref().and_then(|h| h.entries.get(ix));

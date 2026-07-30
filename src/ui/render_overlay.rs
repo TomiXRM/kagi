@@ -490,9 +490,23 @@ impl KagiApp {
         .when_some(editor_delete_confirm_modal, |el, modal| {
             el.child(render_editor_delete_confirm_modal(modal, cx))
         })
+        // ── Inspector/Compare file context menu (History/Edit/Copy) ──
+        .when_some(self.inspector_file_menu, |el, (fi, pos)| {
+            el.child(render_inspector_file_menu_overlay(
+                fi,
+                pos,
+                window.viewport_size(),
+                cx,
+            ))
+        })
         // ── Unstaged file context menu (right-click → Discard) ──
         .when_some(file_menu, |el, (fi, pos)| {
-            el.child(render_file_menu_overlay(fi, pos, cx))
+            el.child(render_file_menu_overlay(
+                fi,
+                pos,
+                window.viewport_size(),
+                cx,
+            ))
         })
         // ── Commit plan modal overlay (T025) ─────────────
         .when(commit_panel_open && commit_plan_modal.is_some(), |el| {

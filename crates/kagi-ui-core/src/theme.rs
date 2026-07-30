@@ -542,6 +542,37 @@ pub fn init_active() {
 /// Convert a kagi `0xRRGGBB` colour to `gpui::Hsla` (opaque) via `gpui::rgb`.
 /// `Hsla: From<Rgba>` is provided by gpui, so this never loses precision beyond
 /// the RGB→HSL round-trip the renderer would do anyway.
+/// Clamp a context-menu anchor so the menu stays inside the viewport.
+///
+/// `menu_w` / `menu_h` are the menu's design size in UNSCALED px (the caller's
+/// best estimate for height is fine); the cursor `pos` is in raw window px.
+/// Zoom scaling is applied here so callers never repeat it. Every
+/// cursor-anchored overlay must route through this — hand-positioned menus
+/// overflowing the right/bottom edge was a recurring bug class.
+pub fn clamp_menu_pos(
+    pos: gpui::Point<gpui::Pixels>,
+    menu_w: f32,
+    menu_h: f32,
+    viewport: gpui::Size<gpui::Pixels>,
+) -> gpui::Point<gpui::Pixels> {
+    const MARGIN: f32 = 8.0;
+    let z = zoom();
+    let (w, h) = (menu_w * z, menu_h * z);
+    let (vw, vh) = (f32::from(viewport.width), f32::from(viewport.height));
+    let (raw_x, raw_y) = (f32::from(pos.x), f32::from(pos.y));
+    let x = if raw_x + w + MARGIN > vw {
+        (vw - w - MARGIN).max(MARGIN)
+    } else {
+        raw_x.max(MARGIN)
+    };
+    let y = if raw_y + h + MARGIN > vh {
+        (vh - h - MARGIN).max(MARGIN)
+    } else {
+        raw_y.max(MARGIN)
+    };
+    gpui::point(gpui::px(x), gpui::px(y))
+}
+
 /// Alpha for the text-selection tint. Matches the cap gpui-component applies to
 /// its own bundled themes (`theme/schema.rs`), so text stays legible through it.
 const SELECTION_ALPHA: f32 = 0.30;

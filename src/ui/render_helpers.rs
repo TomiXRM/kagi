@@ -298,7 +298,6 @@ pub(crate) fn render_rows(
                                         row.lane,
                                         row.node_color,
                                         row.edges.clone(),
-                                        visible_lanes,
                                         row.is_head,
                                         row.is_merge,
                                         has_badges,

@@ -8,11 +8,17 @@ use super::*;
 /// Only attached to eligible rows (tracked, non-conflicted), so the item is
 /// always actionable. Backdrop click dismisses; backdrop AND card `.occlude()`
 /// (click-through bug).
+/// Unscaled per-row height of these compact menus (px_3 / py 3 / text_sm).
+const FILE_MENU_ROW_H: f32 = 22.0;
+
 pub(crate) fn render_file_menu_overlay(
     fi: usize,
     pos: gpui::Point<gpui::Pixels>,
+    viewport: gpui::Size<gpui::Pixels>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    let pos =
+        kagi_ui_core::theme::clamp_menu_pos(pos, 190.0, 4.0 + 2.0 * FILE_MENU_ROW_H, viewport);
     let dismiss = cx.listener(|this, _e: &gpui::MouseDownEvent, _window, cx| {
         this.file_menu = None;
         cx.notify();
@@ -78,6 +84,113 @@ pub(crate) fn render_file_menu_overlay(
                         .on_click(discard_click)
                         .child(SharedString::from("Discard changes…")),
                 ),
+        )
+        .into_any_element()
+}
+
+/// Inspector / Compare changed-file row context menu: History / Open in
+/// Editor / Copy Path. Same overlay skeleton as the unstaged-file menu above
+/// (backdrop dismiss, `.occlude()` on both layers).
+pub(crate) fn render_inspector_file_menu_overlay(
+    fi: usize,
+    pos: gpui::Point<gpui::Pixels>,
+    viewport: gpui::Size<gpui::Pixels>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let pos =
+        kagi_ui_core::theme::clamp_menu_pos(pos, 190.0, 4.0 + 3.0 * FILE_MENU_ROW_H, viewport);
+    let dismiss = cx.listener(|this, _e: &gpui::MouseDownEvent, _window, cx| {
+        this.inspector_file_menu = None;
+        cx.notify();
+    });
+    let history_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
+        this.inspector_file_menu = None;
+        this.open_file_history_inspector_file(fi, cx);
+        cx.notify();
+    });
+    let edit_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
+        this.inspector_file_menu = None;
+        if let Some((path, _)) = this.inspector_file_ref(fi, cx) {
+            // Reuse a running workspace — `open_editor_workspace` rebuilds the
+            // entity and would drop open tabs / dirty buffers.
+            if this.editor_workspace.is_none() {
+                this.open_editor_workspace(cx);
+            }
+            if let Some(ws) = this.editor_workspace.clone() {
+                ws.update(cx, |v, cx| v.open_tab(path, cx));
+            }
+        }
+        cx.notify();
+    });
+    let copy_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
+        this.inspector_file_menu = None;
+        if let Some((path, _)) = this.inspector_file_ref(fi, cx) {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                path.to_string_lossy().into_owned(),
+            ));
+            this.push_toast(
+                ToastKind::Info,
+                SharedString::from(Msg::EditorTreeCopyPath.t()),
+                cx,
+            );
+        }
+        cx.notify();
+    });
+
+    fn item<H>(
+        id: (&'static str, usize),
+        label: SharedString,
+        handler: H,
+    ) -> gpui::Stateful<gpui::Div>
+    where
+        H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    {
+        div()
+            .id(id)
+            .px_3()
+            .py(theme::scaled_px(3.))
+            .text_sm()
+            .text_color(rgb(theme().text_main))
+            .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+            .on_click(handler)
+            .child(label)
+    }
+
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .occlude()
+        .on_mouse_down(MouseButton::Left, dismiss)
+        .child(
+            div()
+                .absolute()
+                .left(pos.x)
+                .top(pos.y)
+                .w(theme::scaled_px(190.))
+                .occlude()
+                .bg(rgb(theme().panel))
+                .border_1()
+                .border_color(rgb(theme().surface))
+                .rounded_md()
+                .shadow_lg()
+                .py(theme::scaled_px(2.))
+                .child(item(
+                    ("insp-menu-history", fi),
+                    SharedString::from(Msg::MenuShowFileHistory.t()),
+                    history_click,
+                ))
+                .child(item(
+                    ("insp-menu-edit", fi),
+                    SharedString::from(Msg::MenuOpenInEditor.t()),
+                    edit_click,
+                ))
+                .child(item(
+                    ("insp-menu-copy", fi),
+                    SharedString::from(Msg::EditorTreeCopyPath.t()),
+                    copy_click,
+                )),
         )
         .into_any_element()
 }

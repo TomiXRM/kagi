@@ -385,6 +385,10 @@ pub enum Msg {
     NoRecentAuthors,
     /// Conflict editor: pane-header pill that takes the whole file's side.
     EditorUseAll,
+    /// Inspector file context menu: open the file in the Editor Workspace.
+    MenuOpenInEditor,
+    /// Inspector file context menu: show this file's history.
+    MenuShowFileHistory,
     /// Commit panel: tooltip on the commit.template toggle.
     ToggleCommitTemplate,
     /// Commit panel: label on the commit.template toggle.
@@ -1032,6 +1036,10 @@ impl Msg {
             (Ja, AmendLastCommit) => "直前のコミットを修正",
             (En, NoRecentAuthors) => "No other authors in recent history",
             (En, EditorUseAll) => "Use all",
+            (En, MenuOpenInEditor) => "Open in Editor",
+            (Ja, MenuOpenInEditor) => "エディタで開く",
+            (En, MenuShowFileHistory) => "Show File History",
+            (Ja, MenuShowFileHistory) => "ファイルの履歴を表示",
             (Ja, EditorUseAll) => "すべて採用",
             (En, ToggleCommitTemplate) => "Use your commit.template",
             (Ja, ToggleCommitTemplate) => "commit.template を使う",

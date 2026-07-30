@@ -162,16 +162,17 @@ pub fn render_inspector(
                                 this.open_main_diff_inspector_file(fi, cx);
                                 cx.notify();
                             });
-                        // ADR-0089 (导线 #2): right-click → Show File History.
-                        let history_click =
-                            cx.listener(move |this, _e: &gpui::MouseDownEvent, _window, cx| {
-                                this.open_file_history_inspector_file(fi, cx);
+                        // Right-click → context menu (History / Edit / Copy
+                        // Path); used to jump straight to File History.
+                        let menu_click =
+                            cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
+                                this.inspector_file_menu = Some((fi, e.position));
                                 cx.stop_propagation();
                                 cx.notify();
                             });
                         div()
                             .id(("file-row", fi))
-                            .on_mouse_down(MouseButton::Right, history_click)
+                            .on_mouse_down(MouseButton::Right, menu_click)
                             .flex()
                             .flex_row()
                             .items_center()
@@ -223,16 +224,17 @@ pub fn render_inspector(
                         this.open_main_diff_inspector_file(fi, cx);
                         cx.notify();
                     });
-                    // ADR-0089 (导线 #2): right-click → Show File History.
-                    let history_click =
-                        cx.listener(move |this, _e: &gpui::MouseDownEvent, _window, cx| {
-                            this.open_file_history_inspector_file(fi, cx);
+                    // Right-click → context menu (History / Edit / Copy Path);
+                    // used to jump straight to File History.
+                    let menu_click =
+                        cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
+                            this.inspector_file_menu = Some((fi, e.position));
                             cx.stop_propagation();
                             cx.notify();
                         });
                     div()
                         .id(("file-flat", fi))
-                        .on_mouse_down(MouseButton::Right, history_click)
+                        .on_mouse_down(MouseButton::Right, menu_click)
                         .flex()
                         .flex_row()
                         .items_center()

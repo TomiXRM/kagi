@@ -1137,6 +1137,11 @@ pub struct KagiApp {
     /// Unstaged file-row context menu (right-click): (unstaged index, anchor).
     /// Offers Discard for eligible (tracked, non-conflicted) rows.
     pub file_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
+    /// Right-click context menu on an Inspector / Compare changed-file row
+    /// (`Some((file_index, cursor_pos))` while open): History / Open in
+    /// Editor / Copy Path. Replaces the old right-click-jumps-straight-to-
+    /// History behaviour (ADR-0089 导线 #2).
+    pub inspector_file_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
     // ── W5-MENU: command registry / menu bar ─────────────────
     /// Whether the right commit-details inspector is shown (View → Toggle Commit
     /// Details).  Default `true`.
@@ -1402,6 +1407,7 @@ impl KagiApp {
             stash_menu: None,
             worktree_menu: None,
             file_menu: None,
+            inspector_file_menu: None,
             // W5-MENU
             inspector_visible: true,
             menu_overlay: None,
@@ -1513,6 +1519,7 @@ impl KagiApp {
             stash_menu: None,
             worktree_menu: None,
             file_menu: None,
+            inspector_file_menu: None,
             // W5-MENU
             inspector_visible: true,
             menu_overlay: None,
@@ -2195,33 +2202,37 @@ impl KagiApp {
     /// (导线 #2).  Resolves the path the same way `open_main_diff_commit` /
     /// `open_main_diff_compare` does (commit diff cache or compare view).
     pub fn open_file_history_inspector_file(&mut self, file_index: usize, cx: &mut Context<Self>) {
+        let Some((path, origin)) = self.inspector_file_ref(file_index, cx) else {
+            return;
+        };
+        self.open_file_history(path, origin, cx);
+    }
+
+    /// Resolve an Inspector / Compare changed-file row index to its
+    /// repo-relative path (+ the history origin commit for the plain-Inspector
+    /// case). Shared by the row's context-menu actions.
+    pub(crate) fn inspector_file_ref(
+        &self,
+        file_index: usize,
+        cx: &Context<Self>,
+    ) -> Option<(PathBuf, Option<kagi_git::CommitId>)> {
         if let Some(pane) = self.compare_view.as_ref() {
             // ADR-0121 B2: the view lives inside the ComparePane entity now.
-            let path = pane
+            return pane
                 .read(cx)
                 .view
                 .files
                 .get(file_index)
-                .map(|f| f.path.clone());
-            if let Some(path) = path {
-                self.open_file_history(path, None, cx);
-            }
-            return;
+                .map(|f| (f.path.clone(), None));
         }
-        let Some(selected) = self.selected else {
-            return;
-        };
+        let selected = self.selected?;
         let origin = self.commit_id_for_row(selected);
-        let path = self
-            .diff_caches
+        self.diff_caches
             .changed_files
             .get(&selected)
             .and_then(|v| v.as_ref())
             .and_then(|files| files.get(file_index))
-            .map(|f| f.path.clone());
-        if let Some(path) = path {
-            self.open_file_history(path, origin, cx);
-        }
+            .map(|f| (f.path.clone(), origin))
     }
 
     /// Open File History for the file currently shown in the main diff view

@@ -67,27 +67,11 @@ where
         })
         .count() as f32;
 
-    // The box is rendered with `scaled_px`, so its on-screen footprint is
-    // `zoom()`-scaled. Off-screen clamping happens in raw window pixels (mouse
-    // position is unscaled), so scale the width/height here to match.
-    let z = theme::zoom();
-    let menu_w_scaled = menu_w * z;
-    let menu_h =
-        (MENU_HEADER_H + visible_items * MENU_ROW_H + visible_groups * MENU_GROUP_H + 16.0) * z;
-    let viewport_w = f32::from(viewport.width);
+    // Estimated unscaled height; clamping (zoom-aware) is the shared helper.
+    let menu_h = MENU_HEADER_H + visible_items * MENU_ROW_H + visible_groups * MENU_GROUP_H + 16.0;
+    let clamped = kagi_ui_core::theme::clamp_menu_pos(position, menu_w, menu_h, viewport);
+    let (x, y) = (f32::from(clamped.x), f32::from(clamped.y));
     let viewport_h = f32::from(viewport.height);
-    let raw_x = f32::from(position.x);
-    let raw_y = f32::from(position.y);
-    let x = if raw_x + menu_w_scaled + MENU_MARGIN > viewport_w {
-        (viewport_w - menu_w_scaled - MENU_MARGIN).max(MENU_MARGIN)
-    } else {
-        raw_x.max(MENU_MARGIN)
-    };
-    let y = if raw_y + menu_h + MENU_MARGIN > viewport_h {
-        (viewport_h - menu_h - MENU_MARGIN).max(MENU_MARGIN)
-    } else {
-        raw_y.max(MENU_MARGIN)
-    };
 
     let dismiss_left = {
         let on_dismiss = on_dismiss.clone();

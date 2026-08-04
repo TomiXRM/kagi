@@ -138,7 +138,7 @@ pub(crate) fn render_input_plan_modal(
                         ))),
                 );
             }
-            card = card.child(warn_col);
+            card = card.child(warn_col.flex_shrink_0());
         }
         if !plan.blockers.is_empty() {
             let mut block_col = div().flex().flex_col().gap_1();
@@ -154,7 +154,7 @@ pub(crate) fn render_input_plan_modal(
                         ))),
                 );
             }
-            card = card.child(block_col);
+            card = card.child(block_col.flex_shrink_0());
         }
     }
 
@@ -566,9 +566,16 @@ fn render_plan_modal_card_styled(
         .flex()
         .flex_col()
         .gap_3()
-        .child(title_row)
+        // Sections are flex_shrink_0-wrapped: the card scrolls its overflow
+        // (max_h above), and without the guard flex would compress the rows
+        // instead of scrolling (same T027 bug class as the discard list).
+        .child(div().flex_shrink_0().child(title_row))
         // ── Current → Predicted ───────────────────────────
-        .child(render_current_predicted(&plan, accent.clone()));
+        .child(
+            div()
+                .flex_shrink_0()
+                .child(render_current_predicted(&plan, accent.clone())),
+        );
 
     // ── Warnings ─────────────────────────────────────────
     if !plan.warnings.is_empty() {
@@ -581,7 +588,7 @@ fn render_plan_modal_card_styled(
                 accent.is_some(),
             ));
         }
-        card = card.child(warn_col);
+        card = card.child(warn_col.flex_shrink_0());
     }
 
     // ── Commits to push (T-HT-004) ────────────────────────
@@ -611,7 +618,7 @@ fn render_plan_modal_card_styled(
                     ))),
             );
         }
-        card = card.child(commit_col);
+        card = card.child(commit_col.flex_shrink_0());
     }
 
     // ── Blockers ──────────────────────────────────────────
@@ -625,27 +632,30 @@ fn render_plan_modal_card_styled(
                 accent.is_some(),
             ));
         }
-        card = card.child(block_col);
+        card = card.child(block_col.flex_shrink_0());
     }
 
     // ── Recovery ──────────────────────────────────────────
     let recovery_text = plan_recovery_text(plan.recovery.as_ref());
     if !recovery_text.is_empty() {
-        card = card.child(match accent {
-            Some((_, color)) => render_recovery_box(&recovery_text, color),
-            None => div()
-                .text_xs()
-                .text_color(rgb(current_theme().text_muted))
-                .overflow_hidden()
-                .child(SharedString::from(recovery_text))
-                .into_any_element(),
-        });
+        card = card.child(
+            div().flex_shrink_0().child(match accent {
+                Some((_, color)) => render_recovery_box(&recovery_text, color),
+                None => div()
+                    .text_xs()
+                    .text_color(rgb(current_theme().text_muted))
+                    .overflow_hidden()
+                    .child(SharedString::from(recovery_text))
+                    .into_any_element(),
+            }),
+        );
     }
 
     // ── Error message (preflight / execute failure) ───────
     if let Some(err) = &error {
         card = card.child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .overflow_hidden()
@@ -696,7 +706,7 @@ fn render_plan_modal_card_styled(
         );
     }
 
-    card = card.child(button_row);
+    card = card.child(button_row.flex_shrink_0());
 
     // ── Full-screen overlay wrapper (shared chrome, T-SPLIT-HELPERS-001) ──
     modal_overlay(card)

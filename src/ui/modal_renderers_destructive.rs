@@ -265,6 +265,10 @@ pub(crate) fn render_discard_modal(
         let line: String = p.chars().take(80).collect();
         file_list = file_list.child(
             div()
+                // flex_shrink_0: without it the capped flex_col COMPRESSES the
+                // rows to fit max_h instead of scrolling them (T027 bug class —
+                // user report: file names squashed together).
+                .flex_shrink_0()
                 .text_xs()
                 .text_color(rgb(current_theme().text_main))
                 .overflow_hidden()
@@ -314,6 +318,7 @@ pub(crate) fn render_discard_modal(
             let line: String = p.chars().take(80).collect();
             skip_col = skip_col.child(
                 div()
+                    .flex_shrink_0()
                     .text_xs()
                     .text_color(rgb(current_theme().text_muted))
                     .overflow_hidden()

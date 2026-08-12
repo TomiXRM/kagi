@@ -474,13 +474,58 @@ pub(crate) fn build_main_diff_view(
 /// row and returns `AnyElement` directly. Out-of-range `i` (shouldn't happen —
 /// `list`'s item count tracks `rows.len()`, see `render_diff_list`) renders an
 /// empty div rather than panicking.
-pub(crate) fn render_main_diff_row(rows: &[DiffRow], i: usize) -> gpui::AnyElement {
+/// R1: wire a diff row (or split cell) into the line-selection machinery.
+/// Mouse-down starts a selection at `i`, dragging with the button held
+/// extends it, mouse-up freezes the copy text from `rows`. `window.refresh()`
+/// repaints without an entity notify — these are free-function renderers
+/// shared by three host entities, so there is no `cx` to notify through.
+pub(crate) fn attach_selection_handlers(
+    el: gpui::Stateful<gpui::Div>,
+    rows: &std::sync::Arc<Vec<DiffRow>>,
+    i: usize,
+    sel_key: u64,
+) -> gpui::Stateful<gpui::Div> {
+    let rows_up = rows.clone();
+    el.on_mouse_down(
+        gpui::MouseButton::Left,
+        move |_e: &gpui::MouseDownEvent, window, _cx| {
+            super::diff_selection::begin(sel_key, i);
+            window.refresh();
+        },
+    )
+    .on_mouse_move(move |e: &gpui::MouseMoveEvent, window, _cx| {
+        if e.pressed_button == Some(gpui::MouseButton::Left)
+            && super::diff_selection::drag_to(sel_key, i)
+        {
+            window.refresh();
+        }
+    })
+    .on_mouse_up(
+        gpui::MouseButton::Left,
+        move |_e: &gpui::MouseUpEvent, window, _cx| {
+            if let Some((lo, hi)) = super::diff_selection::range(sel_key) {
+                super::diff_selection::set_text(
+                    sel_key,
+                    super::diff_selection::build_text(&rows_up, lo, hi),
+                );
+                window.refresh();
+            }
+        },
+    )
+}
+
+pub(crate) fn render_main_diff_row(
+    rows: &std::sync::Arc<Vec<DiffRow>>,
+    i: usize,
+    sel_key: u64,
+) -> gpui::AnyElement {
     let Some(row) = rows.get(i) else {
         return div().into_any();
     };
     match row {
         DiffRow::HunkHeader(header) => div()
             .id(("main-diff-hunk", i))
+            .map(|el| attach_selection_handlers(el, rows, i, sel_key))
             .w_full()
             .px_2()
             .py_px()
@@ -563,6 +608,7 @@ pub(crate) fn render_main_diff_row(rows: &[DiffRow], i: usize) -> gpui::AnyEleme
                     .into_any()
             };
 
+            let selected = super::diff_selection::contains(sel_key, i);
             div()
                 .id(("main-diff-line", i))
                 .w_full()
@@ -574,7 +620,18 @@ pub(crate) fn render_main_diff_row(rows: &[DiffRow], i: usize) -> gpui::AnyEleme
                 // what clipped the wrapped continuation before this ticket).
                 .items_start()
                 .py_px()
-                .bg(rgb(bg))
+                .map(|el| {
+                    // R1: selection tint wins over the added/removed row bg —
+                    // the same accent-alpha idiom as text selection (#224).
+                    if selected {
+                        let mut c: gpui::Hsla = rgb(theme::theme().color_branch).into();
+                        c.a = 0.30;
+                        el.bg(c)
+                    } else {
+                        el.bg(rgb(bg))
+                    }
+                })
+                .map(|el| attach_selection_handlers(el, rows, i, sel_key))
                 .text_sm()
                 // Old line number
                 .child(

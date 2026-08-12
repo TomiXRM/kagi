@@ -526,6 +526,12 @@ impl Render for KagiApp {
             if this.cancel_active_modal(cx) {
                 return;
             }
+            // R1: a diff line selection is the most transient state — clear it
+            // before anything gets closed.
+            if diff_selection::clear() {
+                cx.notify();
+                return;
+            }
             if this.close_coauthor_menu(cx) {
                 return;
             }
@@ -548,6 +554,21 @@ impl Render for KagiApp {
 
         // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
         // No-ops when the workspace is closed or the buffer is clean.
+        // R1: ⌘C — copy the diff line selection (kept across the copy so the
+        // user sees what was taken; Esc clears it).
+        let copy_diff_selection = cx.listener(|this, _: &CopyDiffSelection, _window, cx| {
+            if let Some(text) = diff_selection::selected_text() {
+                let lines = text.lines().count();
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                this.push_toast(
+                    ToastKind::Info,
+                    SharedString::from(i18n::diff_lines_copied(lines)),
+                    cx,
+                );
+                cx.notify();
+            }
+        });
+
         let save_editor_file = cx.listener(|this, _: &SaveEditorFile, _window, cx| {
             this.save_editor_file(cx);
         });
@@ -569,7 +590,7 @@ impl Render for KagiApp {
             .on_action(toggle_bottom_panel)
             // T-UI-003: Esc closes the main diff view.
             .on_action(close_main_diff)
-            // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
+            .on_action(copy_diff_selection)
             .on_action(save_editor_file)
             // Arrows: step diff files while the main diff is open, otherwise
             // move the commit selection (user request).

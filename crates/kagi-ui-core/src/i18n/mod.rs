@@ -389,6 +389,8 @@ pub enum Msg {
     MenuOpenInEditor,
     /// Inspector file context menu: show this file's history.
     MenuShowFileHistory,
+    /// Context menus: open the file in the user's external editor.
+    OpenInExternalEditor,
     /// Commit panel: tooltip on the commit.template toggle.
     ToggleCommitTemplate,
     /// Commit panel: label on the commit.template toggle.
@@ -1039,6 +1041,8 @@ impl Msg {
             (En, MenuOpenInEditor) => "Open in Editor",
             (Ja, MenuOpenInEditor) => "エディタで開く",
             (En, MenuShowFileHistory) => "Show File History",
+            (En, OpenInExternalEditor) => "Open in External Editor",
+            (Ja, OpenInExternalEditor) => "外部エディタで開く",
             (Ja, MenuShowFileHistory) => "ファイルの履歴を表示",
             (Ja, EditorUseAll) => "すべて採用",
             (En, ToggleCommitTemplate) => "Use your commit.template",

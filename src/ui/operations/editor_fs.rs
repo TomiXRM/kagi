@@ -372,6 +372,7 @@ impl KagiApp {
             EditorTreeAction::Delete { path, is_dir } => {
                 self.open_editor_delete_confirm(path, is_dir, cx);
             }
+            EditorTreeAction::OpenExternal(path) => self.open_in_external_editor(&path, None, cx),
             EditorTreeAction::CopyPath(path) => self.copy_editor_path(&path, cx),
             EditorTreeAction::CopyRelativePath(path) => self.copy_editor_relative_path(&path, cx),
             EditorTreeAction::Reveal(path) => self.reveal_editor_path_in_finder(&path),

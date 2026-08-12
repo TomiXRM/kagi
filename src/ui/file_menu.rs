@@ -40,6 +40,17 @@ pub(crate) fn render_file_menu_overlay(
         }
         cx.notify();
     });
+    let wip_ext_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
+        this.file_menu = None;
+        if let Some(path) = this
+            .commit_panel
+            .as_ref()
+            .and_then(|e| e.read(cx).state.unstaged.get(fi).map(|f| f.path.clone()))
+        {
+            this.open_in_external_editor(&path, None, cx);
+        }
+        cx.notify();
+    });
     div()
         .absolute()
         .top_0()
@@ -62,6 +73,17 @@ pub(crate) fn render_file_menu_overlay(
                 // W27-UIPOLISH: compact (Zed-style) density — tighter vertical
                 // padding to match the commit/branch context menus.
                 .py(theme::scaled_px(2.))
+                .child(
+                    div()
+                        .id(("file-menu-ext", fi))
+                        .px_3()
+                        .py(theme::scaled_px(3.))
+                        .text_sm()
+                        .text_color(rgb(theme().text_main))
+                        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+                        .on_click(wip_ext_click)
+                        .child(SharedString::from(Msg::OpenInExternalEditor.t())),
+                )
                 .child(
                     div()
                         .id(("file-menu-history", fi))
@@ -119,6 +141,13 @@ pub(crate) fn render_inspector_file_menu_overlay(
             if let Some(ws) = this.editor_workspace.clone() {
                 ws.update(cx, |v, cx| v.open_tab(path, cx));
             }
+        }
+        cx.notify();
+    });
+    let ext_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
+        this.inspector_file_menu = None;
+        if let Some((path, _)) = this.inspector_file_ref(fi, cx) {
+            this.open_in_external_editor(&path, None, cx);
         }
         cx.notify();
     });
@@ -185,6 +214,11 @@ pub(crate) fn render_inspector_file_menu_overlay(
                     ("insp-menu-edit", fi),
                     SharedString::from(Msg::MenuOpenInEditor.t()),
                     edit_click,
+                ))
+                .child(item(
+                    ("insp-menu-ext", fi),
+                    SharedString::from(Msg::OpenInExternalEditor.t()),
+                    ext_click,
                 ))
                 .child(item(
                     ("insp-menu-copy", fi),

@@ -33,6 +33,7 @@ pub mod editor_fs_ops;
 pub use kagi_ui_editor::markdown as editor_markdown; // ADR-0121: was a shim file
 pub mod editor_tree_menu;
 pub mod editor_workspace;
+mod external_editor;
 pub mod file_history;
 mod file_menu;
 mod fonts;
@@ -2250,9 +2251,24 @@ impl KagiApp {
         source: MainDiffSource,
         cx: &mut Context<Self>,
     ) {
-        let (path, origin) = match &source {
+        let Some((path, origin)) = self.main_diff_source_ref(&source, cx) else {
+            return;
+        };
+        self.close_main_diff();
+        self.open_file_history(path, origin, cx);
+    }
+
+    /// Resolve a [`MainDiffSource`] to the shown file's repo-relative path
+    /// (+ the history origin commit where one exists). Shared by the diff
+    /// header's History and Open-in-External-Editor actions.
+    pub(crate) fn main_diff_source_ref(
+        &self,
+        source: &MainDiffSource,
+        cx: &Context<Self>,
+    ) -> Option<(PathBuf, Option<kagi_git::CommitId>)> {
+        match source {
             MainDiffSource::Unstaged { path } | MainDiffSource::Staged { path } => {
-                (path.clone(), None)
+                Some((path.clone(), None))
             }
             MainDiffSource::Commit {
                 row_index,
@@ -2264,12 +2280,8 @@ impl KagiApp {
                     .get(row_index)
                     .and_then(|v| v.as_ref())
                     .and_then(|files| files.get(*file_index))
-                    .map(|f| f.path.clone());
-                let origin = self.commit_id_for_row(*row_index);
-                match path {
-                    Some(p) => (p, origin),
-                    None => return,
-                }
+                    .map(|f| f.path.clone())?;
+                Some((path, self.commit_id_for_row(*row_index)))
             }
             MainDiffSource::Compare { file_index, .. } => {
                 // ADR-0121 B2: the view lives inside the ComparePane entity now.
@@ -2277,15 +2289,10 @@ impl KagiApp {
                     .compare_view
                     .as_ref()
                     .and_then(|p| p.read(cx).view.files.get(*file_index).cloned())
-                    .map(|f| f.path);
-                match path {
-                    Some(p) => (p, None),
-                    None => return,
-                }
+                    .map(|f| f.path)?;
+                Some((path, None))
             }
-        };
-        self.close_main_diff();
-        self.open_file_history(path, origin, cx);
+        }
     }
 
     /// Close the File History view (Back → returns to the commit graph).

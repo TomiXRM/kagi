@@ -31,6 +31,7 @@ pub enum EditorTreeAction {
     PreviewMarkdown(PathBuf),
     Delete { path: PathBuf, is_dir: bool },
     CopyPath(PathBuf),
+    OpenExternal(PathBuf),
     CopyRelativePath(PathBuf),
     Reveal(PathBuf),
     History(PathBuf),
@@ -169,6 +170,11 @@ fn build_editor_tree_menu(
             item(
                 EditorTreeAction::Rename(path.clone()),
                 Msg::EditorTreeRename.t(),
+                false,
+            ),
+            item(
+                EditorTreeAction::OpenExternal(path.clone()),
+                Msg::OpenInExternalEditor.t(),
                 false,
             ),
             item(

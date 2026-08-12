@@ -106,12 +106,40 @@ impl Render for MainDiffPane {
             .small()
             .on_click(back_click)
             .into_any_element();
-        let trailing = Button::new("main-diff-history")
-            .label("History")
-            .outline()
-            .small()
+        let ext_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+            // Same lease rule as history_click: read the source off `this`.
+            let source = this.view.source.clone();
+            this.app
+                .update(cx, |app, cx| {
+                    if let Some((path, _)) = app.main_diff_source_ref(&source, cx) {
+                        app.open_in_external_editor(&path, None, cx);
+                    }
+                    cx.notify();
+                })
+                .ok();
+        });
+        let trailing = gpui::div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
             .flex_shrink_0()
-            .on_click(history_click)
+            .child(
+                Button::new("main-diff-ext-editor")
+                    .label(gpui::SharedString::from(
+                        crate::ui::i18n::Msg::OpenInExternalEditor.t(),
+                    ))
+                    .outline()
+                    .small()
+                    .on_click(ext_click),
+            )
+            .child(
+                Button::new("main-diff-history")
+                    .label("History")
+                    .outline()
+                    .small()
+                    .on_click(history_click),
+            )
             .into_any_element();
 
         render_diff_list::<MainDiffPane>(

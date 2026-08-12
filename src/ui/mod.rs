@@ -31,6 +31,7 @@ pub mod diffstat_bar;
 pub mod ecosystem;
 pub mod editor_fs_ops;
 pub use kagi_ui_editor::markdown as editor_markdown; // ADR-0121: was a shim file
+mod diff_selection;
 pub mod editor_tree_menu;
 pub mod editor_workspace;
 mod external_editor;
@@ -121,6 +122,7 @@ actions!(
     [
         ToggleBottomPanel,
         CloseMainDiff,
+        CopyDiffSelection,
         DiffPrevFile,
         DiffNextFile,
         CheckoutSelected,
@@ -3182,6 +3184,13 @@ pub fn run_app(app_state: KagiApp) {
         // T-UI-003: Esc closes the main diff view (no-op when main_diff is None).
         // Scoped `!Terminal` so Escape reaches a focused terminal (vim/less/etc.).
         cx.bind_keys([KeyBinding::new("escape", CloseMainDiff, Some("!Terminal"))]);
+        // R1: ⌘C copies the diff line selection. Gated on !Input so a focused
+        // text field keeps its own copy; no-ops when nothing is selected.
+        cx.bind_keys([KeyBinding::new(
+            "secondary-c",
+            CopyDiffSelection,
+            Some("!Terminal && !Input"),
+        )]);
         // T-TERM-INTERACT-001 follow-up: Tab completion in the embedded
         // terminal. Deeper "Terminal" context outranks gpui_component Root's
         // "tab" → focus-cycling binding; handlers live on the terminal

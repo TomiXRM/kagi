@@ -1469,6 +1469,14 @@ pub fn unstaged_not_included(n: usize) -> String {
     }
 }
 
+/// Toast after ⌘C on a diff line selection.
+pub fn diff_lines_copied(n: usize) -> String {
+    match lang() {
+        Lang::En => format!("Copied {} line{}", n, if n == 1 { "" } else { "s" }),
+        Lang::Ja => format!("{} 行をコピーしました", n),
+    }
+}
+
 /// Commit-button label naming its destination — the branch is on the button
 /// instead of in a separate preview line (ADR-0134).
 pub fn commit_to_branch(branch: &str) -> String {

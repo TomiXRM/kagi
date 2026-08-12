@@ -72,7 +72,12 @@ enum SplitSide {
 /// One half-width cell of a split row: line-number column + (highlighted)
 /// content, or an empty filler when `idx` is `None`. Mirrors the unified
 /// Line-arm styling in [`render_main_diff_row`] (wrap enabled, top-aligned).
-fn split_cell(rows: &[DiffRow], idx: Option<usize>, side: SplitSide) -> gpui::AnyElement {
+fn split_cell(
+    rows: &std::sync::Arc<Vec<DiffRow>>,
+    idx: Option<usize>,
+    side: SplitSide,
+    sel_key: u64,
+) -> gpui::AnyElement {
     let Some(DiffRow::Line {
         kind,
         text,
@@ -142,14 +147,32 @@ fn split_cell(rows: &[DiffRow], idx: Option<usize>, side: SplitSide) -> gpui::An
     // line spacing is painted in the cell's own background — padding on the
     // uncoloured row let the pane background bleed through as a 2px "border"
     // between rows (user report).
+    let row_ix = idx.unwrap_or(0);
+    let selected = idx.is_some() && crate::ui::diff_selection::contains(sel_key, row_ix);
     div()
+        .id(("split-cell", i_id(side, row_ix)))
+        .map(|el| {
+            if idx.is_some() {
+                crate::ui::diff_view::attach_selection_handlers(el, rows, row_ix, sel_key)
+            } else {
+                el
+            }
+        })
         .flex_1()
         .min_w(px(0.))
         .flex()
         .flex_row()
         .items_start()
         .py_px()
-        .bg(rgb(bg))
+        .map(|el| {
+            if selected {
+                let mut c: gpui::Hsla = rgb(theme::theme().color_branch).into();
+                c.a = 0.30;
+                el.bg(c)
+            } else {
+                el.bg(rgb(bg))
+            }
+        })
         .child(
             div()
                 .flex_shrink_0()
@@ -161,17 +184,26 @@ fn split_cell(rows: &[DiffRow], idx: Option<usize>, side: SplitSide) -> gpui::An
         .into_any()
 }
 
+/// Stable element-id disambiguator for split cells (old/new share row idx).
+fn i_id(side: SplitSide, ix: usize) -> usize {
+    match side {
+        SplitSide::Old => ix * 2,
+        SplitSide::New => ix * 2 + 1,
+    }
+}
+
 /// Render one side-by-side row (ADR-0124). Full-width rows delegate to the
 /// unified renderer; pair rows render two half-width [`split_cell`]s around a
 /// hairline divider.
 pub(crate) fn render_main_diff_split_row(
-    rows: &[DiffRow],
+    rows: &std::sync::Arc<Vec<DiffRow>>,
     srows: &[SplitDiffRow],
     i: usize,
+    sel_key: u64,
 ) -> gpui::AnyElement {
     match srows.get(i) {
         None => div().into_any(),
-        Some(SplitDiffRow::Full(idx)) => render_main_diff_row(rows, *idx),
+        Some(SplitDiffRow::Full(idx)) => render_main_diff_row(rows, *idx, sel_key),
         // No padding and no `items_start` on the row itself: cells stretch to
         // the full row height (flex default), so a wrapped line on one side
         // never leaves an unpainted strip under the shorter cell, and rows sit
@@ -182,14 +214,14 @@ pub(crate) fn render_main_diff_split_row(
             .flex()
             .flex_row()
             .text_sm()
-            .child(split_cell(rows, *left, SplitSide::Old))
+            .child(split_cell(rows, *left, SplitSide::Old, sel_key))
             .child(
                 div()
                     .flex_shrink_0()
                     .w(px(1.))
                     .bg(rgb(theme::theme().surface)),
             )
-            .child(split_cell(rows, *right, SplitSide::New))
+            .child(split_cell(rows, *right, SplitSide::New, sel_key))
             .into_any(),
     }
 }

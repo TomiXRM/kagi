@@ -558,6 +558,8 @@ pub(crate) fn render_diff_list<V: 'static>(
     let images = view.images.clone();
     let rows = std::sync::Arc::new(view.rows);
     let rows_for_list = rows.clone();
+    // R1: one selection surface per diff (title+count identity).
+    let sel_key = super::diff_selection::surface_key(view.title.as_ref(), rows.len());
 
     // ADR-0124: unified ⇄ side-by-side toggle. The label names the mode the
     // click switches TO; the flag is global (kagi-ui-core atomic) and
@@ -717,10 +719,13 @@ pub(crate) fn render_diff_list<V: 'static>(
                         // ADR-0124: split mode renders paired cells; unified keeps
                         // the original single-column rows.
                         match &srows {
-                            Some(s) => {
-                                super::diff_split::render_main_diff_split_row(&rows_for_list, s, ix)
-                            }
-                            None => render_main_diff_row(&rows_for_list, ix),
+                            Some(s) => super::diff_split::render_main_diff_split_row(
+                                &rows_for_list,
+                                s,
+                                ix,
+                                sel_key,
+                            ),
+                            None => render_main_diff_row(&rows_for_list, ix, sel_key),
                         }
                     })
                     .flex_1()

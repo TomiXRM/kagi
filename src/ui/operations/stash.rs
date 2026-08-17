@@ -461,9 +461,10 @@ impl KagiApp {
         action: stash_menu::StashAction,
         state: stash_menu::StashMenuState,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         match action {
+            stash_menu::StashAction::Peek => self.open_stash_peek(state.index, cx),
             stash_menu::StashAction::Pop => self.open_pop_modal(state.index),
             stash_menu::StashAction::Apply => self.open_stash_apply_modal(state.index),
             stash_menu::StashAction::Drop => self.open_stash_drop_modal(state.index),

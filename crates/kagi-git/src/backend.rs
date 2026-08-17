@@ -127,6 +127,33 @@ impl Backend {
         message_gen::collect_staged_diff(&self.repo)
     }
 
+    /// The stash commit's id and its first parent (the HEAD it was stashed
+    /// on) — the pair a stash "peek" diffs (`git stash show` semantics:
+    /// tracked changes; the untracked third parent is not included).
+    pub fn stash_peek_ids(&mut self, index: usize) -> Result<(CommitId, CommitId), GitError> {
+        let mut stash_oid = None;
+        self.repo
+            .stash_foreach(|i, _msg, oid| {
+                if i == index {
+                    stash_oid = Some(*oid);
+                    false
+                } else {
+                    true
+                }
+            })
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        let oid =
+            stash_oid.ok_or_else(|| GitError::Other(format!("stash@{{{}}} not found", index)))?;
+        let commit = self
+            .repo
+            .find_commit(oid)
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        let parent = commit
+            .parent_id(0)
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        Ok((CommitId(oid.to_string()), CommitId(parent.to_string())))
+    }
+
     pub fn stash_count(&mut self) -> Result<usize, GitError> {
         let mut count = 0usize;
         self.repo

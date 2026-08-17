@@ -59,8 +59,12 @@ impl KagiApp {
                     });
                     passing_lanes.push(sr.lane);
                 }
-                let pop = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-                    this.open_pop_modal(index);
+                // R-STASH-PEEK: click PEEKS (read-only compare). Pop moved to
+                // the context menu — popping on a plain click made stashes too
+                // dangerous to inspect (user report: an agent's stash could get
+                // committed mid-run just from looking at it).
+                let peek = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+                    this.open_stash_peek(index, cx);
                     cx.notify();
                 });
                 let menu = cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {
@@ -77,7 +81,7 @@ impl KagiApp {
                     .w_full()
                     .px_3()
                     .h(px(rh))
-                    .on_click(pop)
+                    .on_click(peek)
                     .on_mouse_down(gpui::MouseButton::Right, menu)
                     .hover(|s| s.bg(rgb(theme().selected)))
                     // Badge column: a yellow stash chip with an inbox icon.

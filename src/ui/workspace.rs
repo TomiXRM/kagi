@@ -654,15 +654,15 @@ pub fn resolve_workspace(i: &WorkspaceInputs) -> WorkspaceLayout {
         } else {
             RightPane::Hidden
         }
+    } else if i.inspector_visible && i.compare_open {
+        // ADR-0121 B2: an open compare replaces the Inspector body. Unlike the
+        // Inspector it does NOT require `has_detail` (a selected commit) — a
+        // stash peek opens a compare with no commit selected, and gating it on
+        // the selection made the pane invisible until the user happened to
+        // click a commit first (R-STASH-PEEK bug).
+        RightPane::Compare
     } else if i.inspector_visible && i.has_detail {
-        // ADR-0121 B2: an open compare replaces the Inspector body. Same
-        // visibility gates — before the split the single Inspector arm
-        // rendered the compare inputs itself.
-        if i.compare_open {
-            RightPane::Compare
-        } else {
-            RightPane::Inspector
-        }
+        RightPane::Inspector
     } else {
         RightPane::Hidden
     };
@@ -686,6 +686,18 @@ mod tests {
             has_detail: true,
             ..Default::default()
         }
+    }
+
+    /// R-STASH-PEEK: a compare opened with NO commit selected (stash peek)
+    /// must still get the right pane — it does not depend on commit detail.
+    #[test]
+    fn compare_shows_without_a_selected_commit() {
+        let layout = resolve_workspace(&WorkspaceInputs {
+            compare_open: true,
+            has_detail: false,
+            ..base()
+        });
+        assert_eq!(layout.right, RightPane::Compare);
     }
 
     #[test]
@@ -885,9 +897,9 @@ mod tests {
             ..base()
         };
         assert_eq!(resolve_workspace(&i).right, RightPane::Compare);
-        // ...but only under the Inspector's own gates: hidden when the
-        // inspector is toggled off or no detail resolved (pre-split behavior —
-        // the compare rendered inside the Inspector arm).
+        // ...and hides only with the inspector toggle. `has_detail` is NOT a
+        // gate for compare any more (R-STASH-PEEK: a stash peek opens a
+        // compare with no commit selected).
         let i = WorkspaceInputs {
             inspector_visible: false,
             ..i
@@ -898,7 +910,7 @@ mod tests {
             has_detail: false,
             ..i
         };
-        assert_eq!(resolve_workspace(&i).right, RightPane::Hidden);
+        assert_eq!(resolve_workspace(&i).right, RightPane::Compare);
     }
 
     #[test]

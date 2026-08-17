@@ -24,6 +24,7 @@ pub struct StashMenuState {
 /// Drop live in the right-click menu.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StashAction {
+    Peek,
     Pop,
     Apply,
     Drop,
@@ -45,6 +46,7 @@ pub fn build_stash_menu() -> Vec<MenuGroup<StashAction>> {
         MenuGroup {
             title: Some("Restore"),
             items: vec![
+                item(StashAction::Peek, "Peek contents", false),
                 item(StashAction::Pop, "Pop (apply and remove)", false),
                 item(StashAction::Apply, "Apply (keep stash)", false),
             ],

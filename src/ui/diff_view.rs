@@ -133,6 +133,8 @@ pub enum MainDiffSource {
 pub enum CompareTarget {
     Head,
     WorkingTree,
+    /// A fixed commit (stash peek: base = stash parent, target = stash commit).
+    Commit(CommitId),
 }
 
 #[derive(Clone, Debug)]
@@ -705,6 +707,7 @@ impl KagiApp {
                 let new = match target {
                     CompareTarget::Head => repo.blob_bytes_head(path).ok().flatten(),
                     CompareTarget::WorkingTree => workdir_bytes(),
+                    CompareTarget::Commit(id) => repo.blob_bytes_at(id, path).ok().flatten(),
                 };
                 (old, new)
             }
@@ -999,6 +1002,7 @@ impl KagiApp {
             CompareTarget::WorkingTree => {
                 repo.compare_commit_to_workdir_file_diff(&view.base, &path)
             }
+            CompareTarget::Commit(ref id) => repo.compare_file_diff(&view.base, id, &path),
         };
 
         match file_diff_result {

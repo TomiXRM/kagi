@@ -2539,6 +2539,57 @@ impl KagiApp {
         }
     }
 
+    /// R-STASH-PEEK: open the stash's tracked changes in the Compare pane —
+    /// `git stash show` semantics (base = the commit the stash was made on,
+    /// target = the stash commit). Read-only: nothing touches the working
+    /// tree, which is the point — peeking must never risk a pop.
+    pub fn open_stash_peek(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        // `stash_foreach` needs `&mut Repository`, which the shared session
+        // backend doesn't hand out — open a short-lived read-only Backend.
+        let Ok(mut repo) = kagi_git::Backend::open(&repo_path) else {
+            return;
+        };
+        let (stash_id, parent_id) = match repo.stash_peek_ids(index) {
+            Ok(ids) => ids,
+            Err(e) => {
+                klog!("stash-peek: error: {}", e);
+                return;
+            }
+        };
+        match repo.compare_commits(&parent_id, &stash_id) {
+            Ok(files) => {
+                klog!("stash-peek: stash@{{{}}} files={}", index, files.len());
+                // The compare body renders the SELECTED commit's metadata as
+                // its header and bails without one — select the stash's parent
+                // (the commit it was stashed on), which is also the right
+                // thing to show. Without this, peeking with nothing selected
+                // rendered an empty right pane (user report).
+                if let Some(row) = self.row_for_commit_id(&parent_id) {
+                    if self.selected != Some(row) {
+                        self.select(row);
+                    }
+                }
+                self.main_diff = None;
+                let title = SharedString::from(format!("stash@{{{}}}", index));
+                let view = CompareView {
+                    base: parent_id,
+                    target: CompareTarget::Commit(stash_id),
+                    files,
+                    title,
+                };
+                self.show_compare(view, cx);
+            }
+            Err(e) => {
+                klog!("stash-peek: error: {}", e);
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("Stash peek failed: {}", e)));
+            }
+        }
+    }
+
     /// ADR-0121 B2: `cx` — see [`Self::open_compare_with_head`].
     pub fn open_compare_with_working_tree(
         &mut self,

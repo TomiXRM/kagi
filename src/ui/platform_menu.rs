@@ -58,9 +58,8 @@ impl KagiApp {
             let label = platform_menu_label(id, command.map(|c| c.label).unwrap_or(id));
             // Render the stored `secondary-*` notation as a platform label
             // (Ctrl+J on Linux), so the menu matches what the user must press.
-            let key = command
-                .and_then(|c| c.keystroke)
-                .map(commands::display_keystroke)
+            let key = commands::effective_keystroke(id)
+                .map(|k| commands::display_keystroke(&k))
                 .unwrap_or_default();
             let invoke = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
                 if commands::is_enabled(this, id) {

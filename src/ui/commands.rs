@@ -493,7 +493,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         id: "view.toggleSidebar",
         label: "Toggle Sidebar",
-        keystroke: None,
+        keystroke: Some("secondary-b"),
         dangerous: false,
     },
     Command {
@@ -505,13 +505,13 @@ pub const COMMANDS: &[Command] = &[
     Command {
         id: "view.toggleCommitDetails",
         label: "Toggle Commit Details",
-        keystroke: None,
+        keystroke: Some("secondary-alt-b"),
         dangerous: false,
     },
     Command {
         id: "view.toggleDiffView",
         label: "Toggle Diff View",
-        keystroke: None,
+        keystroke: Some("secondary-shift-d"),
         dangerous: false,
     },
     Command {
@@ -529,19 +529,19 @@ pub const COMMANDS: &[Command] = &[
     Command {
         id: "repo.fetch",
         label: "Fetch",
-        keystroke: None,
+        keystroke: Some("secondary-shift-f"),
         dangerous: false,
     },
     Command {
         id: "repo.pull",
         label: "Pull",
-        keystroke: None,
+        keystroke: Some("secondary-shift-l"),
         dangerous: false,
     },
     Command {
         id: "repo.push",
         label: "Push",
-        keystroke: None,
+        keystroke: Some("secondary-shift-k"),
         dangerous: false,
     },
     Command {
@@ -1059,38 +1059,89 @@ actions!(
 // Keybinding registration.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Register all menu keystrokes as gpui `KeyBinding`s so they (a) actually fire
-/// when the root has focus and (b) are rendered next to their menu items.
+/// The keystroke a command is bound to: the user's `settings.json` override
+/// (`"keybinding.<command id>": "<gpui keystroke>"`, `""` = unbound) if
+/// present, else the registry default. Read once per process — the bindings
+/// are registered at startup, so a change takes effect on the next launch.
+///
+/// Keystroke notation is gpui's: `secondary-shift-b` (`secondary` = Cmd on
+/// macOS / Ctrl elsewhere), `alt-`, `ctrl-`, `shift-`; e.g. `"secondary-b"`.
+pub fn effective_keystroke(id: &str) -> Option<String> {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static OVERRIDES: OnceLock<HashMap<String, String>> = OnceLock::new();
+    let overrides = OVERRIDES.get_or_init(|| {
+        COMMANDS
+            .iter()
+            .filter_map(|c| {
+                super::settings::read_setting(&format!("keybinding.{}", c.id))
+                    .map(|k| (c.id.to_string(), k.trim().to_string()))
+            })
+            .collect()
+    });
+    match overrides.get(id) {
+        Some(k) if k.is_empty() => None,
+        Some(k) => Some(k.clone()),
+        None => command(id).and_then(|c| c.keystroke.map(str::to_string)),
+    }
+}
+
+/// Register the menu keystrokes as gpui `KeyBinding`s so they (a) actually
+/// fire when the root has focus and (b) are rendered next to their menu items.
+/// Every binding goes through [`effective_keystroke`], so a `settings.json`
+/// `keybinding.*` entry re-maps (or unbinds) it.
 ///
 /// Deliberately **excludes**:
 /// - `cmd-j` (already bound by the bottom-panel ticket; reused for
 ///   Toggle Terminal — re-binding would double it),
 /// - all Edit actions (os_action only — must not shadow text-input).
 pub fn register_keybindings(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new("secondary-q", Quit, None),
+    // (id, action). The keystroke comes from the registry / settings; a
+    // command with no effective keystroke is simply not bound.
+    macro_rules! bind {
+        ($cx:expr, $( $id:literal => $action:expr ),* $(,)?) => {{
+            let mut v: Vec<KeyBinding> = Vec::new();
+            $(
+                if let Some(ks) = effective_keystroke($id) {
+                    v.push(KeyBinding::new(&ks, $action, None));
+                }
+            )*
+            $cx.bind_keys(v);
+        }};
+    }
+    bind!(cx,
+        "app.quit" => Quit,
         // T-SETTINGS-001: secondary-, opens Settings (Cmd-, on macOS / Ctrl-, elsewhere).
-        KeyBinding::new("secondary-,", OpenSettings, None),
-        KeyBinding::new("secondary-t", NewTab, None),
-        KeyBinding::new("secondary-w", CloseTab, None),
-        KeyBinding::new("secondary-shift-o", CloneRepository, None),
-        KeyBinding::new("secondary-o", OpenRepository, None),
-        KeyBinding::new("secondary-r", RefreshRepository, None),
+        "app.settings" => OpenSettings,
+        "file.newTab" => NewTab,
+        "file.closeTab" => CloseTab,
+        "file.cloneRepository" => CloneRepository,
+        "file.openRepository" => OpenRepository,
+        "file.refresh" => RefreshRepository,
         // W27-UIPOLISH: UI zoom. `secondary-=` is the conventional "zoom in" (so
         // the user doesn't need shift for `+`); `secondary--` zoom out; `0` reset.
         // `secondary` = Cmd on macOS, Ctrl on Linux/Windows (GUI-CLICK: the keys
         // were `cmd-*`, which on Linux is the Super key — so Ctrl-+ never fired).
-        KeyBinding::new("secondary-=", ZoomIn, None),
-        KeyBinding::new("secondary-+", ZoomIn, None),
-        KeyBinding::new("secondary--", ZoomOut, None),
-        KeyBinding::new("secondary-0", ZoomReset, None),
-        KeyBinding::new("ctrl-cmd-f", EnterFullScreen, None),
-        KeyBinding::new("secondary-m", MinimizeWindow, None),
+        "view.zoomIn" => ZoomIn,
+        "view.zoomOut" => ZoomOut,
+        "view.zoomReset" => ZoomReset,
+        "view.fullScreen" => EnterFullScreen,
+        "view.toggleSidebar" => ToggleSidebar,
+        "view.toggleCommitDetails" => ToggleCommitDetails,
+        "view.toggleDiffView" => ToggleDiffView,
         // T-WS-EDITOR-001: Graph ⇄ Editor workspace mode (Cmd-Shift-E on
         // macOS / Ctrl-Shift-E elsewhere) — verified free of collisions
         // against every other `KeyBinding::new` in the app.
-        KeyBinding::new("secondary-shift-e", ToggleEditorWorkspace, None),
-        KeyBinding::new("secondary-shift-p", TogglePrMode, None),
+        "view.toggleEditorWorkspace" => ToggleEditorWorkspace,
+        "view.togglePrMode" => TogglePrMode,
+        "repo.fetch" => Fetch,
+        "repo.pull" => Pull,
+        "repo.push" => Push,
+    );
+    // The `+` alias for zoom-in has no command id of its own; keep it fixed.
+    cx.bind_keys([
+        KeyBinding::new("secondary-+", ZoomIn, None),
+        KeyBinding::new("secondary-m", MinimizeWindow, None),
     ]);
 }
 
@@ -1161,7 +1212,7 @@ pub fn display_keystroke(ks: &str) -> String {
 pub fn dump_menu_states(app: &KagiApp) {
     klog!("menu: dump begin n={}", COMMANDS.len());
     for cmd in COMMANDS {
-        let ks = cmd.keystroke.unwrap_or("-");
+        let ks = effective_keystroke(cmd.id).unwrap_or_else(|| "-".to_string());
         let state = match command_state(app, cmd.id) {
             CommandState::Enabled => "enabled".to_string(),
             CommandState::Disabled(reason) => format!("disabled({reason})"),
@@ -1184,8 +1235,7 @@ pub fn shortcut_listing() -> Vec<(SharedString, SharedString)> {
     COMMANDS
         .iter()
         .filter_map(|c| {
-            c.keystroke
-                .map(|k| (SharedString::from(c.label), SharedString::from(k)))
+            effective_keystroke(c.id).map(|k| (SharedString::from(c.label), SharedString::from(k)))
         })
         .collect()
 }
@@ -1673,10 +1723,16 @@ impl KagiApp {
 
     /// Build the Keyboard Shortcuts overlay from the registry (auto-generated).
     fn open_shortcuts_overlay(&mut self) {
-        let lines: Vec<SharedString> = shortcut_listing()
+        let mut lines: Vec<SharedString> = shortcut_listing()
             .into_iter()
             .map(|(label, key)| SharedString::from(format!("{key}    {label}")))
             .collect();
+        // Tell the user these are re-mappable, and how (settings.json is the
+        // one config surface kagi has; no in-app editor for this yet).
+        lines.push(SharedString::from(""));
+        lines.push(SharedString::from(
+            "Remap in ~/.kagi/settings.json: \"keybinding.<command id>\": \"secondary-shift-b\" (\"\" = unbind); restart to apply.",
+        ));
         self.menu_overlay = Some(MenuOverlay::Info {
             title: SharedString::from("Keyboard Shortcuts"),
             lines,
@@ -1889,6 +1945,41 @@ mod tests {
                 theme_slug_for_command(id).is_some() || lang_for_command(id).is_some(),
                 "dynamic submenu id {id:?} maps to neither a theme nor a language"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod keybinding_tests {
+    use super::*;
+
+    /// Every default keystroke in the registry must be unique — two commands
+    /// on one key would make the later binding silently win.
+    #[test]
+    fn default_keystrokes_are_unique() {
+        let mut seen = std::collections::HashMap::new();
+        for c in COMMANDS {
+            if let Some(k) = c.keystroke {
+                if let Some(prev) = seen.insert(k, c.id) {
+                    panic!("{} and {} both bound to {}", prev, c.id, k);
+                }
+            }
+        }
+    }
+
+    /// The new defaults are wired: registry says what the shortcut listing
+    /// and the effective lookup say (no override present in tests).
+    #[test]
+    fn view_and_repo_defaults_present() {
+        for (id, key) in [
+            ("view.toggleSidebar", "secondary-b"),
+            ("view.toggleCommitDetails", "secondary-alt-b"),
+            ("view.toggleDiffView", "secondary-shift-d"),
+            ("repo.fetch", "secondary-shift-f"),
+            ("repo.pull", "secondary-shift-l"),
+            ("repo.push", "secondary-shift-k"),
+        ] {
+            assert_eq!(command(id).and_then(|c| c.keystroke), Some(key), "{id}");
         }
     }
 }

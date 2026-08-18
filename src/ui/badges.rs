@@ -121,17 +121,35 @@ pub(crate) fn render_badges_column(
         // would eat a trailing ✓ on a long name (user report), so split the
         // decorations out and render them as non-shrinking siblings: only the
         // NAME truncates, the indicator glyphs always stay visible.
-        let full_label: &str = badge.label.as_ref();
-        let (prefix_glyph, rest) = match full_label.strip_prefix("\u{1f332} ") {
-            Some(rest) => (Some("\u{1f332}"), rest),
-            None => (None, full_label),
+        // Where the ref lives is drawn as LEADING ICONS — laptop = local,
+        // cloud = remote, both when a local+remote pair was folded into one
+        // chip (`remotes`). Icons, not colour or position, carry the meaning
+        // (user request: no local rules that need decoding). See
+        // `badge_display`.
+        let (display, wh) = super::commit_list::badge_display(badge);
+        let (prefix_glyph, rest) = match display.strip_prefix("\u{1f332} ") {
+            Some(rest) => (Some("\u{1f332}"), rest.to_string()),
+            None => (None, display.clone()),
         };
         let (name, suffix_glyph) = match rest.strip_suffix(" \u{2713}") {
-            Some(name) => (name, Some("\u{2713}")),
-            None => (rest, None),
+            Some(name) => (name.to_string(), Some("\u{2713}")),
+            None => (rest.clone(), None),
         };
-        let name: SharedString = SharedString::from(name.to_string());
-        let tooltip_label: SharedString = badge.label.clone();
+        // The current branch shows ✓ IN PLACE of the laptop icon (HEAD is by
+        // definition local) and leads the chip, so it can never be trimmed
+        // when the column is narrow — the badge column's scarcest pixels go
+        // to "which branch am I on" (user request).
+        let is_head = suffix_glyph.is_some();
+        let where_icons: Vec<&'static str> = [
+            (wh.local && !is_head).then_some("icons/laptop.svg"),
+            wh.remote.then_some("icons/cloud.svg"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let name: SharedString = SharedString::from(name);
+        let tooltip_label: SharedString =
+            SharedString::from(super::commit_list::badge_tooltip(badge));
         let is_primary = i == 0;
         let (badge_bg, badge_border, badge_text) = theme::badge_style(color);
         let chip = div()
@@ -166,10 +184,18 @@ pub(crate) fn render_badges_column(
             .when_some(prefix_glyph, |c, g| {
                 c.child(div().flex_shrink_0().child(SharedString::from(g)))
             })
-            .child(div().min_w(px(0.)).truncate().child(name))
-            .when_some(suffix_glyph, |c, g| {
-                c.child(div().flex_shrink_0().child(SharedString::from(g)))
-            });
+            .when(is_head, |c| {
+                c.child(div().flex_shrink_0().child(SharedString::from("\u{2713}")))
+            })
+            .children(where_icons.into_iter().map(|path| {
+                gpui::svg()
+                    .path(path)
+                    .flex_shrink_0()
+                    .w(theme::scaled_px(11.))
+                    .h(theme::scaled_px(11.))
+                    .text_color(rgb(badge_text))
+            }))
+            .child(div().min_w(px(0.)).truncate().child(name));
 
         // T-DNDMERGE-001 / ADR-0079: wire drag/drop onto the chip based on kind.
         //   - `BadgeKind::Branch` / `BadgeKind::Remote` → INDEPENDENTLY draggable,

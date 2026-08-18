@@ -742,6 +742,7 @@ pub fn render_inspector(
             .mb_1();
         let mut by_prio = badges;
         by_prio.sort_by_key(|b| badge_priority(&b.kind));
+        let mut row_ix = 0usize;
         for badge in &by_prio {
             let color = match badge.kind {
                 BadgeKind::HeadBranch => theme().color_head,
@@ -749,15 +750,30 @@ pub fn render_inspector(
                 BadgeKind::Remote => theme().color_remote,
                 BadgeKind::Tag => theme().color_tag,
             };
-            let label: SharedString = if badge.label.chars().count() > MAX_BADGE_CHARS {
-                let s: String = badge.label.chars().take(MAX_BADGE_CHARS - 1).collect();
+            // Same folding + leading where-icons as the graph chips (laptop =
+            // local, cloud = remote; see `badge_display`).
+            let (display, wh) = super::commit_list::badge_display(badge);
+            // HEAD: leading ✓ replaces the laptop icon (same as the graph chips).
+            let is_head = display.ends_with(" \u{2713}");
+            let display = display.trim_end_matches(" \u{2713}").to_string();
+            let where_icons: Vec<&'static str> = [
+                (wh.local && !is_head).then_some("icons/laptop.svg"),
+                wh.remote.then_some("icons/cloud.svg"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            let label: SharedString = if display.chars().count() > MAX_BADGE_CHARS {
+                let s: String = display.chars().take(MAX_BADGE_CHARS - 1).collect();
                 SharedString::from(format!("{}\u{2026}", s))
             } else {
-                badge.label.clone()
+                SharedString::from(display)
             };
+            let tip = SharedString::from(super::commit_list::badge_tooltip(badge));
             let (badge_bg, badge_border, badge_text) = super::theme::badge_style(color);
             row = row.child(
                 div()
+                    .id(("inspector-ref", row_ix))
                     .px_1()
                     .rounded_sm()
                     .bg(gpui::rgba(badge_bg))
@@ -766,8 +782,25 @@ pub fn render_inspector(
                     .text_color(rgb(badge_text))
                     .text_xs()
                     .flex_shrink_0()
+                    .tooltip(move |w, cx| {
+                        gpui_component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
+                    })
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .when(is_head, |c| c.child(SharedString::from("\u{2713}")))
+                    .children(where_icons.into_iter().map(|path| {
+                        gpui::svg()
+                            .path(path)
+                            .flex_shrink_0()
+                            .w(theme::scaled_px(10.))
+                            .h(theme::scaled_px(10.))
+                            .text_color(rgb(badge_text))
+                    }))
                     .child(label),
             );
+            row_ix += 1;
         }
         // PR chips: `#N ✓` in the CI colour, click opens the PR in the browser.
         for pr in &prs_here {

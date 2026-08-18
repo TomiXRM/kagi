@@ -58,6 +58,7 @@ impl KagiApp {
             cmds::ToggleEditorWorkspace,
             "view.toggleEditorWorkspace"
         );
+        let el = menu_act!(el, cmds::TogglePrMode, "view.togglePrMode");
         let el = menu_act!(el, cmds::Fetch, "repo.fetch");
         let el = menu_act!(el, cmds::Pull, "repo.pull");
         let el = menu_act!(el, cmds::Push, "repo.push");
@@ -174,6 +175,13 @@ impl KagiApp {
         let editor_ws_on = self.repo_path.is_some();
         let editor_ws_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
             this.handle_menu_command("view.toggleEditorWorkspace", window, cx);
+            cx.notify();
+        });
+        // GitHub Phase 1c: PR mode toggle, just left of Editor. Same
+        // handle_menu_command route as the View menu item / Cmd-Shift-P.
+        let pr_mode_on = self.repo_path.is_some() && kagi_git::github::gh_available();
+        let pr_mode_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
+            this.handle_menu_command("view.togglePrMode", window, cx);
             cx.notify();
         });
 
@@ -690,6 +698,29 @@ impl KagiApp {
                             )
                         },
                     )
+                    // PR mode toggle (GitHub Phase 1c) — just left of Editor.
+                    // Same "shows what it switches TO" rule as the Editor
+                    // button: the pull-request glyph in Graph mode, the
+                    // waypoints "Graph" glyph while PR mode is open. Hidden
+                    // when gh isn't installed (the mode has nothing to show).
+                    .when(pr_mode_on, |el| {
+                        let pr_open = self.pr_mode.is_some();
+                        el.child(
+                            make_btn(
+                                "tb-pr-mode",
+                                if pr_open { "Graph" } else { "PRs" },
+                                gpui_component::Icon::default().path(if pr_open {
+                                    "icons/waypoints.svg"
+                                } else {
+                                    "icons/git-pull-request.svg"
+                                }),
+                                true,
+                                0,
+                            )
+                            .on_click(pr_mode_click),
+                        )
+                        .child(div().w(theme::scaled_px(2.0)))
+                    })
                     // Editor Workspace toggle (T-WS-EDITOR-004) — just left of
                     // Analyze. Shows what it switches TO (user request): the
                     // square-pen "Editor" glyph in Graph mode, the waypoints

@@ -79,6 +79,7 @@ actions!(
         ToggleDiffView,
         // T-WS-EDITOR-001: Graph ⇄ Editor workspace mode.
         ToggleEditorWorkspace,
+        TogglePrMode,
         // Repository
         Fetch,
         Pull,
@@ -270,6 +271,7 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Command("view.toggleCommitDetails"),
             MenuNode::Command("view.toggleDiffView"),
             MenuNode::Command("view.toggleEditorWorkspace"),
+            MenuNode::Command("view.togglePrMode"),
             MenuNode::Separator,
             // W9-THEME / W22-I18N: dynamic submenus (active item gets "✓ ").
             MenuNode::Submenu(DynSubmenu::Theme),
@@ -516,6 +518,12 @@ pub const COMMANDS: &[Command] = &[
         id: "view.toggleEditorWorkspace",
         label: "Toggle Editor Workspace",
         keystroke: Some("secondary-shift-e"),
+        dangerous: false,
+    },
+    Command {
+        id: "view.togglePrMode",
+        label: "Toggle Pull Request Mode",
+        keystroke: Some("secondary-shift-p"),
         dangerous: false,
     },
     Command {
@@ -823,7 +831,7 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         }
 
         // ── View toggles tied to view state ──────────────────────────────
-        "view.toggleCommitDetails" | "view.toggleEditorWorkspace" => {
+        "view.toggleCommitDetails" | "view.toggleEditorWorkspace" | "view.togglePrMode" => {
             if has_repo {
                 Enabled
             } else {
@@ -889,6 +897,7 @@ fn action_menu_item(id: &str) -> MenuItem {
         "view.toggleCommitDetails" => MenuItem::action(label, ToggleCommitDetails),
         "view.toggleDiffView" => MenuItem::action(label, ToggleDiffView),
         "view.toggleEditorWorkspace" => MenuItem::action(label, ToggleEditorWorkspace),
+        "view.togglePrMode" => MenuItem::action(label, TogglePrMode),
         // Repository
         "repo.fetch" => MenuItem::action(label, Fetch),
         "repo.pull" => MenuItem::action(label, Pull),
@@ -1081,6 +1090,7 @@ pub fn register_keybindings(cx: &mut App) {
         // macOS / Ctrl-Shift-E elsewhere) — verified free of collisions
         // against every other `KeyBinding::new` in the app.
         KeyBinding::new("secondary-shift-e", ToggleEditorWorkspace, None),
+        KeyBinding::new("secondary-shift-p", TogglePrMode, None),
     ]);
 }
 
@@ -1327,6 +1337,7 @@ impl KagiApp {
                     self.close_main_diff();
                 }
             }
+            "view.togglePrMode" => self.toggle_pr_mode(cx),
             "view.toggleEditorWorkspace" => {
                 // T-WS-EDITOR-002 §5: don't silently discard dirty buffers —
                 // this dispatch is shared by the View menu item, Cmd-Shift-E,

@@ -56,6 +56,45 @@ pub use kagi_domain::commit::{Commit, CommitId, Signature};
 ///
 /// Returns [`GitError::Other`] on unexpected libgit2 failures (e.g. a
 /// corrupted object database).
+/// Commits reachable from `head` but not from `base` (`base..head`), newest
+/// first — a PR's own commits (PR mode). Bounded by `limit`.
+pub fn commits_between(
+    repo: &Repository,
+    base: &CommitId,
+    head: &CommitId,
+    limit: usize,
+) -> Result<Vec<Commit>, GitError> {
+    let mut walk = repo
+        .revwalk()
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    let h = git2::Oid::from_str(&head.0).map_err(|e| GitError::Other(e.message().to_string()))?;
+    let b = git2::Oid::from_str(&base.0).map_err(|e| GitError::Other(e.message().to_string()))?;
+    walk.push(h)
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    walk.hide(b)
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    let mut commits = Vec::new();
+    for oid in walk.take(limit) {
+        let oid = oid.map_err(|e| GitError::Other(e.message().to_string()))?;
+        let raw = repo
+            .find_commit(oid)
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        let message = String::from_utf8_lossy(raw.message_bytes()).into_owned();
+        let summary = message.lines().next().unwrap_or("").trim_end().to_string();
+        commits.push(Commit {
+            id: CommitId(oid.to_string()),
+            parents: raw.parent_ids().map(|p| CommitId(p.to_string())).collect(),
+            author: sig_from_git2(raw.author()),
+            committer: sig_from_git2(raw.committer()),
+            summary,
+            message,
+        });
+    }
+    Ok(commits)
+}
+
 pub fn commit_log(repo: &Repository, limit: usize) -> Result<Vec<Commit>, GitError> {
     // NOTE: an unborn HEAD does NOT imply an empty repository — after
     // `git checkout --orphan` HEAD is unborn while other branches still hold

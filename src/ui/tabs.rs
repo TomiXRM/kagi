@@ -179,6 +179,9 @@ impl KagiApp {
         // Reset every per-repo UI surface up-front so a cached instant-apply
         // never shows the previous tab's selection / modals (ADR-0027).
         self.reset_per_repo_ui();
+        // GitHub Phase 1: refetch PRs for the new repo right away (the
+        // ticker alone left the tab at 0 PRs until its next tick).
+        self.refresh_github_prs(cx);
 
         // W6-TABSPEED: bump the switch generation so an in-flight background
         // load from an earlier (superseded) switch discards its result.

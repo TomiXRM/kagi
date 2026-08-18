@@ -40,6 +40,12 @@ pub enum DividerKind {
     /// (0 = branch name, 1 = where, 2 = merged-at, 3 = status). Adjusts the
     /// corresponding `KagiApp::cleanup_cols` width.
     CleanupCol(u8),
+    /// GitHub Phase 1c: PR mode's left (PR list | center) divider. Adjusts
+    /// `PrModeState::left_w`.
+    PrModeLeft,
+    /// GitHub Phase 1c: PR mode's right (center | stack+files) divider.
+    /// Adjusts `PrModeState::right_w`.
+    PrModeRight,
 }
 
 /// Drag payload for a divider drag.  Only the divider kind is needed: widths

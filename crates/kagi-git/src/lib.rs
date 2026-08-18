@@ -70,7 +70,7 @@ pub use file_history::{
 pub use hotspot::{repo_ecosystem, EcosystemRequest};
 pub use kagi_domain::message::{join_title_body, split_title_body};
 #[allow(unused_imports)]
-pub use log::{commit_log, Commit, CommitId, Signature};
+pub use log::{commit_log, commits_between, Commit, CommitId, Signature};
 #[allow(unused_imports)]
 pub use message_gen::{
     collect_staged_diff, collect_staged_files, generate_message, ollama_available,

@@ -251,6 +251,18 @@ pub(crate) fn render_pr_menu_overlay(
         this.copy_pr_url(&pr_copy, cx);
         cx.notify();
     });
+    let pr_peek = pr.clone();
+    let peek_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
+        this.pr_menu = None;
+        this.open_pr_peek(&pr_peek, cx);
+        cx.notify();
+    });
+    let pr_jump = pr.clone();
+    let jump_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
+        this.pr_menu = None;
+        this.jump_to_pr_head(&pr_jump, cx);
+        cx.notify();
+    });
     let n = pr.number as usize;
     div()
         .absolute()
@@ -272,6 +284,16 @@ pub(crate) fn render_pr_menu_overlay(
                 .rounded_md()
                 .shadow_lg()
                 .py(theme::scaled_px(2.))
+                .child(item(
+                    ("pr-menu-peek", n),
+                    SharedString::from(Msg::PrPeek.t()),
+                    peek_click,
+                ))
+                .child(item(
+                    ("pr-menu-jump", n),
+                    SharedString::from(Msg::PrJumpToBranch.t()),
+                    jump_click,
+                ))
                 .child(item(
                     ("pr-menu-open", n),
                     SharedString::from(Msg::PrOpenOnGitHub.t()),

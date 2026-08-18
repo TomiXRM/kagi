@@ -167,6 +167,38 @@ impl WorkspaceItem for EcosystemItem {
     }
 }
 
+/// Pull Requests takeover (GitHub Phase 1b) — bridges `KagiApp.pr_pane_open`.
+pub struct PullRequestsItem;
+
+impl WorkspaceItem for PullRequestsItem {
+    fn slot(&self) -> Slot {
+        Slot::CenterTakeover
+    }
+    fn center(&self) -> Option<CenterPane> {
+        Some(CenterPane::PullRequests)
+    }
+    fn is_open(&self, app: &KagiApp) -> bool {
+        app.pr_pane_open
+    }
+    fn render(
+        &self,
+        app: &mut KagiApp,
+        _layout: &WorkspaceLayout,
+        cx: &mut Context<KagiApp>,
+    ) -> Option<AnyElement> {
+        Some(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .child(super::pr_pane::render_pr_pane(app, cx))
+                .into_any_element(),
+        )
+    }
+    fn dispose(&self, app: &mut KagiApp) {
+        app.pr_pane_open = false;
+    }
+}
+
 /// Branch Cleanup takeover (ADR-0128) — bridges `KagiApp.branch_cleanup_open`.
 /// Unlike the entity-backed takeovers, the table data lives in
 /// `active_view.cleanup_rows` (snapshot-derived, per-tab), so the gate is a
@@ -305,10 +337,11 @@ impl WorkspaceItem for MainDiffItem {
 /// The registered entity-backed panes (ADR-0121 B1/B2). Loading / CommitList /
 /// CommitPanel / Inspector are not items yet — B2 migrates panes one by one;
 /// until then `render_body` keeps plain arms for them.
-pub const CENTER_ITEMS: [&dyn WorkspaceItem; 5] = [
+pub const CENTER_ITEMS: [&dyn WorkspaceItem; 6] = [
     &FileHistoryItem,
     &EcosystemItem,
     &BranchCleanupItem,
+    &PullRequestsItem,
     &EditorWorkspaceItem,
     &MainDiffItem,
 ];
@@ -552,6 +585,8 @@ pub enum CenterPane {
     Ecosystem,
     /// Branch Cleanup table takeover (ADR-0128) — spans center + right.
     BranchCleanup,
+    /// Pull Requests takeover (GitHub Phase 1b) — spans center + right.
+    PullRequests,
     /// `Loading <repo>…` placeholder during an uncached tab open (W6-TABSPEED).
     Loading,
     /// Read-only code viewer (Editor mode, T-WS-EDITOR-001).
@@ -599,6 +634,8 @@ pub struct WorkspaceInputs {
     pub ecosystem_open: bool,
     /// `branch_cleanup_open` (ADR-0128).
     pub branch_cleanup_open: bool,
+    /// `pr_pane_open` (GitHub Phase 1b).
+    pub pr_pane_open: bool,
     /// `loading_tab.is_some()`.
     pub loading: bool,
     /// `main_diff.is_some()`.
@@ -640,6 +677,8 @@ pub fn resolve_workspace(i: &WorkspaceInputs) -> WorkspaceLayout {
         CenterPane::Ecosystem
     } else if i.branch_cleanup_open {
         CenterPane::BranchCleanup
+    } else if i.pr_pane_open {
+        CenterPane::PullRequests
     } else if i.loading {
         CenterPane::Loading
     } else if i.editor_mode {

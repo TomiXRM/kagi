@@ -548,6 +548,10 @@ impl Render for KagiApp {
                 cx.notify();
                 return;
             }
+            if this.pr_pane_open {
+                this.close_pr_pane(cx);
+                return;
+            }
             if this.commit_menu.is_some() {
                 this.commit_menu = None;
                 cx.notify();

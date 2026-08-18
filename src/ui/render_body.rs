@@ -53,6 +53,7 @@ impl KagiApp {
             .iter()
             .filter(|r| r.status != kagi_git::ops::MergedBranchStatus::NotMerged)
             .count();
+        let pr_count = self.github_prs.len();
 
         // Build divider 1: sidebar | main.
         let divider1 = div()
@@ -411,6 +412,7 @@ impl KagiApp {
             file_history_open: workspace::FileHistoryItem.is_open(self),
             ecosystem_open: workspace::EcosystemItem.is_open(self),
             branch_cleanup_open: workspace::BranchCleanupItem.is_open(self),
+            pr_pane_open: workspace::PullRequestsItem.is_open(self),
             loading: self.loading_tab.is_some(),
             diff_open: workspace::MainDiffItem.is_open(self),
             commit_panel_open,
@@ -437,6 +439,7 @@ impl KagiApp {
                     sidebar_row_count,
                     sidebar_scroll_handle,
                     cleanup_count,
+                    pr_count,
                     cx,
                 ))
                 // ── Sidebar divider ───────────────────────

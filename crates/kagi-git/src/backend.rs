@@ -311,6 +311,16 @@ impl Backend {
             .map_err(|e| GitError::Other(e.message().to_string()))
     }
 
+    /// `base..head` commits, newest first (PR mode's commit strip).
+    pub fn commits_between(
+        &self,
+        base: &CommitId,
+        head: &CommitId,
+        limit: usize,
+    ) -> Result<Vec<super::Commit>, GitError> {
+        super::commits_between(&self.repo, base, head, limit)
+    }
+
     pub fn compare_commits(&self, a: &CommitId, b: &CommitId) -> Result<Vec<FileStatus>, GitError> {
         diff::compare_commits(&self.repo, a, b)
     }

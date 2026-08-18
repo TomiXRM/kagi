@@ -1561,7 +1561,7 @@ pub fn render_sidebar(
     let pr_entry: Option<gpui::AnyElement> = kagi_git::github::gh_available().then(|| {
         let n = pr_count;
         let open_handler = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
-            this.toggle_pr_pane(cx);
+            this.toggle_pr_mode(cx);
         });
         let count_color = if n > 0 {
             theme().color_branch

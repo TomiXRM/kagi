@@ -167,18 +167,20 @@ impl WorkspaceItem for EcosystemItem {
     }
 }
 
-/// Pull Requests takeover (GitHub Phase 1b) — bridges `KagiApp.pr_pane_open`.
-pub struct PullRequestsItem;
+/// PR mode (GitHub Phase 1c) — bridges `KagiApp.pr_mode`. Renders its own
+/// three columns (PR list | tabs + commits + diff | stack + files), so it is
+/// a center takeover with the sidebar suppressed (`LeftPane::PrList`).
+pub struct PrModeItem;
 
-impl WorkspaceItem for PullRequestsItem {
+impl WorkspaceItem for PrModeItem {
     fn slot(&self) -> Slot {
         Slot::CenterTakeover
     }
     fn center(&self) -> Option<CenterPane> {
-        Some(CenterPane::PullRequests)
+        Some(CenterPane::PrMode)
     }
     fn is_open(&self, app: &KagiApp) -> bool {
-        app.pr_pane_open
+        app.pr_mode.is_some()
     }
     fn render(
         &self,
@@ -186,16 +188,10 @@ impl WorkspaceItem for PullRequestsItem {
         _layout: &WorkspaceLayout,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        Some(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .child(super::pr_pane::render_pr_pane(app, cx))
-                .into_any_element(),
-        )
+        Some(super::pr_mode::render_pr_mode(app, cx))
     }
     fn dispose(&self, app: &mut KagiApp) {
-        app.pr_pane_open = false;
+        app.pr_mode = None;
     }
 }
 
@@ -341,7 +337,7 @@ pub const CENTER_ITEMS: [&dyn WorkspaceItem; 6] = [
     &FileHistoryItem,
     &EcosystemItem,
     &BranchCleanupItem,
-    &PullRequestsItem,
+    &PrModeItem,
     &EditorWorkspaceItem,
     &MainDiffItem,
 ];
@@ -571,6 +567,8 @@ pub enum LeftPane {
     Navigator,
     /// Working-tree changed-file tree (Editor mode, T-WS-EDITOR-001).
     FileTree,
+    /// PR list, rendered inside the PR-mode takeover (GitHub Phase 1c).
+    PrList,
     /// Sidebar toggled off (View → Toggle Sidebar).
     Hidden,
 }
@@ -585,8 +583,8 @@ pub enum CenterPane {
     Ecosystem,
     /// Branch Cleanup table takeover (ADR-0128) — spans center + right.
     BranchCleanup,
-    /// Pull Requests takeover (GitHub Phase 1b) — spans center + right.
-    PullRequests,
+    /// PR mode (GitHub Phase 1c) — spans center + right, own left column.
+    PrMode,
     /// `Loading <repo>…` placeholder during an uncached tab open (W6-TABSPEED).
     Loading,
     /// Read-only code viewer (Editor mode, T-WS-EDITOR-001).
@@ -634,8 +632,8 @@ pub struct WorkspaceInputs {
     pub ecosystem_open: bool,
     /// `branch_cleanup_open` (ADR-0128).
     pub branch_cleanup_open: bool,
-    /// `pr_pane_open` (GitHub Phase 1b).
-    pub pr_pane_open: bool,
+    /// `pr_mode.is_some()` (GitHub Phase 1c).
+    pub pr_mode: bool,
     /// `loading_tab.is_some()`.
     pub loading: bool,
     /// `main_diff.is_some()`.
@@ -677,8 +675,8 @@ pub fn resolve_workspace(i: &WorkspaceInputs) -> WorkspaceLayout {
         CenterPane::Ecosystem
     } else if i.branch_cleanup_open {
         CenterPane::BranchCleanup
-    } else if i.pr_pane_open {
-        CenterPane::PullRequests
+    } else if i.pr_mode {
+        CenterPane::PrMode
     } else if i.loading {
         CenterPane::Loading
     } else if i.editor_mode {
@@ -691,6 +689,8 @@ pub fn resolve_workspace(i: &WorkspaceInputs) -> WorkspaceLayout {
 
     let left = if !i.sidebar_visible {
         LeftPane::Hidden
+    } else if center == CenterPane::PrMode {
+        LeftPane::PrList
     } else if i.editor_mode {
         LeftPane::FileTree
     } else {

@@ -10,7 +10,7 @@ use kagi_domain::github::PullRequest;
 
 use super::i18n::Msg;
 use super::types::ToastKind;
-use super::KagiApp;
+use super::{CompareTarget, CompareView, FooterStatus, KagiApp};
 
 /// Refresh cadence. `gh pr list` is one API call; a minute keeps CI status
 /// fresh without hammering the rate limit.
@@ -107,6 +107,59 @@ impl KagiApp {
                 SharedString::from(format!("{}: {}", Msg::PrBranchNotFetched.t(), pr.head)),
                 cx,
             ),
+        }
+    }
+
+    /// Read-only PR peek: Compare pane over merge-base(base, head) → head using
+    /// the fetched remote tips. Both branches must exist as `origin/…`.
+    pub fn open_pr_peek(&mut self, pr: &PullRequest, cx: &mut Context<Self>) {
+        let tip = |name: &str| {
+            self.active_view
+                .remote_branches
+                .iter()
+                .find(|rb| rb.name == name)
+                .map(|rb| rb.target.clone())
+        };
+        let (Some(base_tip), Some(head_tip)) = (tip(&pr.base), tip(&pr.head)) else {
+            self.push_toast(
+                ToastKind::Info,
+                SharedString::from(format!(
+                    "{}: {} / {}",
+                    Msg::PrBranchNotFetched.t(),
+                    pr.base,
+                    pr.head
+                )),
+                cx,
+            );
+            return;
+        };
+        let Some(session) = self.repo_session.as_ref() else {
+            return;
+        };
+        let repo = session.backend();
+        let base = repo.merge_base(&base_tip, &head_tip).unwrap_or(base_tip);
+        match repo.compare_commits(&base, &head_tip) {
+            Ok(files) => {
+                klog!("pr-peek: #{} files={}", pr.number, files.len());
+                if let Some(row) = self.row_for_commit_id(&head_tip) {
+                    if self.selected != Some(row) {
+                        self.select(row);
+                    }
+                }
+                self.main_diff = None;
+                let view = CompareView {
+                    base,
+                    target: CompareTarget::Commit(head_tip),
+                    files,
+                    title: SharedString::from(format!("#{} {}", pr.number, pr.head)),
+                };
+                self.show_compare(view, cx);
+            }
+            Err(e) => {
+                klog!("pr-peek: error: {}", e);
+                self.status_footer =
+                    FooterStatus::Failed(SharedString::from(format!("PR peek failed: {}", e)));
+            }
         }
     }
 

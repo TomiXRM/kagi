@@ -391,6 +391,14 @@ pub enum Msg {
     MenuShowFileHistory,
     /// Context menus: open the file in the user's external editor.
     OpenInExternalEditor,
+    /// Sidebar PR row: the head branch is not fetched locally.
+    PrBranchNotFetched,
+    /// PR context menu.
+    PrOpenOnGitHub,
+    PrCopyUrl,
+    /// PR row tooltip fragments.
+    PrDraft,
+    PrStacked,
     /// Commit panel: tooltip on the commit.template toggle.
     ToggleCommitTemplate,
     /// Commit panel: label on the commit.template toggle.
@@ -1042,6 +1050,16 @@ impl Msg {
             (Ja, MenuOpenInEditor) => "エディタで開く",
             (En, MenuShowFileHistory) => "Show File History",
             (En, OpenInExternalEditor) => "Open in External Editor",
+            (En, PrBranchNotFetched) => "Branch not fetched",
+            (Ja, PrBranchNotFetched) => "ブランチが未取得です",
+            (En, PrOpenOnGitHub) => "Open on GitHub",
+            (Ja, PrOpenOnGitHub) => "GitHub で開く",
+            (En, PrCopyUrl) => "Copy PR URL",
+            (Ja, PrCopyUrl) => "PR の URL をコピー",
+            (En, PrDraft) => "draft",
+            (Ja, PrDraft) => "ドラフト",
+            (En, PrStacked) => "stacked on",
+            (Ja, PrStacked) => "積み上げ先",
             (Ja, OpenInExternalEditor) => "外部エディタで開く",
             (Ja, MenuShowFileHistory) => "ファイルの履歴を表示",
             (Ja, EditorUseAll) => "すべて採用",

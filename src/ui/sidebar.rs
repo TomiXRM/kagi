@@ -94,6 +94,8 @@ pub const SECTION_REMOTE: &str = "remote";
 pub const SECTION_TAGS: &str = "tags";
 pub const SECTION_WORKTREES: &str = "worktrees";
 pub const SECTION_STASHES: &str = "stashes";
+/// GitHub Phase 1: open pull requests (from `gh`).
+pub const SECTION_PRS: &str = "prs";
 
 // ──────────────────────────────────────────────────────────────
 // W13-BRANCHTREE: `/`-prefix grouping of branch names
@@ -457,6 +459,12 @@ pub enum SidebarRow {
     },
     /// A stash leaf.
     Stash { index: usize, message: String },
+    /// GitHub Phase 1: an open pull request. `stacked` = its base is another
+    /// open PR's head.
+    PullRequest {
+        pr: kagi_domain::github::PullRequest,
+        stacked: bool,
+    },
 }
 
 /// T-PERF-RENDER-002 (ADR-0116 Wave 2): a cheap, allocation-free fingerprint of
@@ -473,6 +481,7 @@ pub enum SidebarRow {
 #[allow(clippy::too_many_arguments)]
 pub fn sidebar_rows_fingerprint(
     view_epoch: u64,
+    prs_epoch: u64,
     branches_len: usize,
     remote_branches_len: usize,
     tags_len: usize,
@@ -485,6 +494,7 @@ pub fn sidebar_rows_fingerprint(
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     view_epoch.hash(&mut hasher);
+    prs_epoch.hash(&mut hasher);
     branches_len.hash(&mut hasher);
     remote_branches_len.hash(&mut hasher);
     tags_len.hash(&mut hasher);
@@ -522,6 +532,7 @@ pub fn sidebar_rows_fingerprint(
 #[allow(clippy::too_many_arguments)]
 pub fn build_sidebar_rows(
     branches: &[(String, bool)],
+    prs: &[kagi_domain::github::PullRequest],
     remote_branches: &[RemoteBranch],
     tags: &[Tag],
     stashes: &[Stash],
@@ -596,6 +607,29 @@ pub fn build_sidebar_rows(
                         });
                     }
                 }
+            }
+        }
+    }
+
+    // ── PULL REQUESTS (GitHub Phase 1) ───────────────────────────
+    // Only rendered when there is something to show or gh is present: an
+    // always-empty section would be noise for non-GitHub repos.
+    if !prs.is_empty() {
+        let section_collapsed = collapsed.contains(SECTION_PRS);
+        rows.push(SidebarRow::SectionHeader {
+            section: SECTION_PRS,
+            title: "PULL REQUESTS",
+            count: prs.len(),
+            collapsed: section_collapsed,
+        });
+        if !section_collapsed {
+            for pr in prs.iter().filter(|p| {
+                matches(&p.title) || matches(&p.head) || matches(&format!("#{}", p.number))
+            }) {
+                rows.push(SidebarRow::PullRequest {
+                    pr: pr.clone(),
+                    stacked: pr.is_stacked_on(prs),
+                });
             }
         }
     }
@@ -825,6 +859,7 @@ fn build_sidebar_row(
             locked,
         } => build_worktree_row(name, path_label, *is_current, *is_main, *locked, cx),
         SidebarRow::Stash { index, message } => build_stash_row(*index, message, cx),
+        SidebarRow::PullRequest { pr, stacked } => build_pr_row(pr, *stacked, cx),
     }
 }
 
@@ -1271,9 +1306,11 @@ fn build_worktree_row(
 fn build_stash_row(index: usize, message: &str, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let raw_label = format!("stash@{{{}}}: {}", index, message);
     let full_name = SharedString::from(raw_label.clone());
+    // #236: click PEEKS (read-only), same as the graph's stash row; Pop lives
+    // in the context menu only.
     let click_handler = cx.listener(
         move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
-            this.open_pop_modal(index);
+            this.open_stash_peek(index, cx);
             cx.notify();
         },
     );
@@ -1691,4 +1728,94 @@ mod tests {
             ]
         );
     }
+}
+
+// ──────────────────────────────────────────────────────────────
+// PULL REQUESTS row (GitHub Phase 1)
+// ──────────────────────────────────────────────────────────────
+
+/// `#N title` with a CI glyph and review/draft cues. Click jumps the graph to
+/// the head branch; right-click opens the PR menu (open on GitHub / copy URL).
+fn build_pr_row(
+    pr: &kagi_domain::github::PullRequest,
+    stacked: bool,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    use kagi_domain::github::{CiState, ReviewState};
+    let (ci_glyph, ci_color) = match pr.ci {
+        CiState::Success => ("\u{2713}", theme().color_success),
+        CiState::Failure => ("\u{2717}", theme().color_blocker),
+        CiState::Pending => ("\u{25CF}", theme().color_warning),
+        CiState::None => ("\u{25CB}", theme().text_muted),
+    };
+    let review_glyph = match pr.review {
+        ReviewState::Approved => Some(("\u{2714}", theme().color_success)),
+        ReviewState::ChangesRequested => Some(("\u{21BA}", theme().color_warning)),
+        ReviewState::ReviewRequired | ReviewState::None => None,
+    };
+    let label = format!("#{} {}", pr.number, pr.title);
+    let mut tip = format!(
+        "#{} {} \u{2190} {}\n@{}",
+        pr.number, pr.head, pr.base, pr.author
+    );
+    if pr.is_draft {
+        tip.push_str(&format!("\n{}", Msg::PrDraft.t()));
+    }
+    if stacked {
+        tip.push_str(&format!("\n{} {}", Msg::PrStacked.t(), pr.base));
+    }
+    let pr_click = pr.clone();
+    let click_handler = cx.listener(
+        move |this: &mut KagiApp, _e: &gpui::ClickEvent, _window, cx| {
+            this.jump_to_pr_head(&pr_click, cx);
+            cx.notify();
+        },
+    );
+    let pr_menu = pr.clone();
+    let menu_handler = cx.listener(
+        move |this: &mut KagiApp, e: &gpui::MouseDownEvent, _window, cx| {
+            this.pr_menu = Some((pr_menu.clone(), e.position));
+            cx.stop_propagation();
+            cx.notify();
+        },
+    );
+    div()
+        .id(("sidebar-pr", pr.number as usize))
+        .h(theme::scaled_px(SIDEBAR_ROW_H))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .px_3()
+        .text_sm()
+        .overflow_hidden()
+        .on_click(click_handler)
+        .on_mouse_down(gpui::MouseButton::Right, menu_handler)
+        .hover(|style| style.bg(rgb(theme().surface)))
+        .tooltip(name_tooltip(SharedString::from(tip)))
+        // Drafts read dimmed; stacked PRs get a small indent so the chain is
+        // visible at a glance (Graphite-style, without the full tree yet).
+        .when(pr.is_draft, |el| el.opacity(0.55))
+        .when(stacked, |el| el.pl(theme::scaled_px(24.)))
+        .child(
+            div()
+                .flex_shrink_0()
+                .w(theme::scaled_px(12.))
+                .text_color(rgb(ci_color))
+                .child(SharedString::from(ci_glyph)),
+        )
+        .child(
+            div()
+                .flex_1()
+                .truncate()
+                .text_color(rgb(theme().text_main))
+                .child(SharedString::from(label)),
+        )
+        .children(review_glyph.map(|(g, c)| {
+            div()
+                .flex_shrink_0()
+                .text_color(rgb(c))
+                .child(SharedString::from(g))
+        }))
+        .into_any()
 }

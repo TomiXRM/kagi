@@ -17,6 +17,7 @@ pub mod coupling_graph;
 pub mod diff;
 pub mod diffstat;
 pub mod file_history;
+pub mod github;
 pub mod graph;
 pub mod head;
 pub mod history;

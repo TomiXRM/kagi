@@ -346,6 +346,12 @@ impl KagiApp {
     /// so a cached swap never leaks the previous tab's UI.
     fn reset_per_repo_ui(&mut self) {
         self.selected = None;
+        // GitHub PRs are per repo; drop them so the sidebar never shows the
+        // previous tab's list. The ticker refetches for the new repo.
+        self.github_prs.clear();
+        self.github_prs_for = None;
+        self.github_prs_epoch = self.github_prs_epoch.wrapping_add(1);
+        self.pr_menu = None;
         self.diff_caches.clear();
         self.wip_diffstat = None;
         // ADR-0121 B2: `main_diff` is dropped via the CENTER_ITEMS dispose

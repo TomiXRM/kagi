@@ -347,6 +347,7 @@ impl Render for KagiApp {
             .unwrap_or_default();
         let sidebar_fingerprint = sidebar::sidebar_rows_fingerprint(
             self.view_epoch,
+            self.github_prs_epoch,
             self.active_view.branches.len(),
             self.active_view.remote_branches.len(),
             self.active_view.tags.len(),
@@ -359,6 +360,7 @@ impl Render for KagiApp {
         if sidebar_fingerprint != self.sidebar.rows_fingerprint {
             self.sidebar.rows = sidebar::build_sidebar_rows(
                 &self.active_view.branches,
+                &self.github_prs,
                 &self.active_view.remote_branches,
                 &self.active_view.tags,
                 &self.active_view.stashes,
@@ -537,6 +539,11 @@ impl Render for KagiApp {
             }
             if this.inspector_file_menu.is_some() {
                 this.inspector_file_menu = None;
+                cx.notify();
+                return;
+            }
+            if this.pr_menu.is_some() {
+                this.pr_menu = None;
                 cx.notify();
                 return;
             }

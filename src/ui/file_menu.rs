@@ -166,25 +166,6 @@ pub(crate) fn render_inspector_file_menu_overlay(
         cx.notify();
     });
 
-    fn item<H>(
-        id: (&'static str, usize),
-        label: SharedString,
-        handler: H,
-    ) -> gpui::Stateful<gpui::Div>
-    where
-        H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    {
-        div()
-            .id(id)
-            .px_3()
-            .py(theme::scaled_px(3.))
-            .text_sm()
-            .text_color(rgb(theme().text_main))
-            .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
-            .on_click(handler)
-            .child(label)
-    }
-
     div()
         .absolute()
         .top_0()
@@ -223,6 +204,82 @@ pub(crate) fn render_inspector_file_menu_overlay(
                 .child(item(
                     ("insp-menu-copy", fi),
                     SharedString::from(Msg::EditorTreeCopyPath.t()),
+                    copy_click,
+                )),
+        )
+        .into_any_element()
+}
+
+/// Compact menu row shared by the hand-rolled overlays here.
+fn item<H>(id: (&'static str, usize), label: SharedString, handler: H) -> gpui::Stateful<gpui::Div>
+where
+    H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+{
+    div()
+        .id(id)
+        .px_3()
+        .py(theme::scaled_px(3.))
+        .text_sm()
+        .text_color(rgb(theme().text_main))
+        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+        .on_click(handler)
+        .child(label)
+}
+
+/// GitHub Phase 1: sidebar PR row context menu — Open on GitHub / Copy URL.
+pub(crate) fn render_pr_menu_overlay(
+    pr: kagi_domain::github::PullRequest,
+    pos: gpui::Point<gpui::Pixels>,
+    viewport: gpui::Size<gpui::Pixels>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let pos =
+        kagi_ui_core::theme::clamp_menu_pos(pos, 190.0, 4.0 + 2.0 * FILE_MENU_ROW_H, viewport);
+    let dismiss = cx.listener(|this, _e: &gpui::MouseDownEvent, _window, cx| {
+        this.pr_menu = None;
+        cx.notify();
+    });
+    let pr_open = pr.clone();
+    let open_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
+        this.pr_menu = None;
+        this.open_pr_in_browser(&pr_open);
+        cx.notify();
+    });
+    let pr_copy = pr.clone();
+    let copy_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
+        this.pr_menu = None;
+        this.copy_pr_url(&pr_copy, cx);
+        cx.notify();
+    });
+    let n = pr.number as usize;
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .occlude()
+        .on_mouse_down(MouseButton::Left, dismiss)
+        .child(
+            div()
+                .absolute()
+                .left(pos.x)
+                .top(pos.y)
+                .w(theme::scaled_px(190.))
+                .occlude()
+                .bg(rgb(theme().panel))
+                .border_1()
+                .border_color(rgb(theme().surface))
+                .rounded_md()
+                .shadow_lg()
+                .py(theme::scaled_px(2.))
+                .child(item(
+                    ("pr-menu-open", n),
+                    SharedString::from(Msg::PrOpenOnGitHub.t()),
+                    open_click,
+                ))
+                .child(item(
+                    ("pr-menu-copy", n),
+                    SharedString::from(Msg::PrCopyUrl.t()),
                     copy_click,
                 )),
         )

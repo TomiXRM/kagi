@@ -64,6 +64,8 @@ pub fn render_inspector(
     d: CommitDetail,
     at: CommitId,
     badges: Vec<RefBadge>,
+    // GitHub Phase 1: open PRs whose head branch tip is this commit.
+    prs_here: Vec<kagi_domain::github::PullRequest>,
     changed_files: Option<Vec<FileStatus>>,
     // W16-DIFFSTAT: per-file additions/deletions for the changed files (commit
     // vs parent). `None` when unavailable or in compare mode.
@@ -765,6 +767,44 @@ pub fn render_inspector(
                     .text_xs()
                     .flex_shrink_0()
                     .child(label),
+            );
+        }
+        // PR chips: `#N ✓` in the CI colour, click opens the PR in the browser.
+        for pr in &prs_here {
+            use kagi_domain::github::CiState;
+            let (glyph, color) = match pr.ci {
+                CiState::Success => ("\u{2713}", theme().color_success),
+                CiState::Failure => ("\u{2717}", theme().color_blocker),
+                CiState::Pending => ("\u{25CF}", theme().color_warning),
+                CiState::None => ("", theme().text_muted),
+            };
+            let (badge_bg, badge_border, badge_text) = super::theme::badge_style(color);
+            let pr_click = pr.clone();
+            let open = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+                this.open_pr_in_browser(&pr_click);
+                cx.notify();
+            });
+            let tip = SharedString::from(format!("#{} {}\n{}", pr.number, pr.title, pr.url));
+            row = row.child(
+                div()
+                    .id(("inspector-pr", pr.number as usize))
+                    .px_1()
+                    .rounded_sm()
+                    .bg(gpui::rgba(badge_bg))
+                    .border_1()
+                    .border_color(gpui::rgba(badge_border))
+                    .text_color(rgb(badge_text))
+                    .text_xs()
+                    .flex_shrink_0()
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.8))
+                    .tooltip(move |w, cx| {
+                        gpui_component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
+                    })
+                    .on_click(open)
+                    .child(SharedString::from(
+                        format!("#{} {}", pr.number, glyph).trim().to_string(),
+                    )),
             );
         }
         row

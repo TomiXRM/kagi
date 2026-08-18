@@ -19,3 +19,6 @@ tempfile = "3"
 # gitignore-format matching for the Analyze exclude list (ADR-0119) — already
 # in the workspace lock transitively, so this adds no new download.
 ignore = "0.4"
+# `gh pr list --json` parsing (github.rs). Already in the workspace lock via
+# the bin's settings.json handling, so no new download.
+serde_json = "1"

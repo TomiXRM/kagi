@@ -38,6 +38,7 @@ mod external_editor;
 pub mod file_history;
 mod file_menu;
 mod fonts;
+mod github;
 pub use kagi_ui_core::file_tree; // ADR-0121: was a shim file
 mod graph_solo;
 pub mod graph_view;
@@ -1118,6 +1119,21 @@ pub struct KagiApp {
     /// True while the periodic background auto-fetch ticker task is alive
     /// (spawned lazily from render; see `ensure_auto_fetch_ticker`).
     pub auto_fetch_ticker_alive: bool,
+    /// GitHub Phase 1: open PRs for the active repo, from `gh pr list`,
+    /// refreshed by [`Self::ensure_github_ticker`]. Stamped with the repo they
+    /// belong to so a tab switch never shows another repo's PRs while the
+    /// first refresh for the new one is in flight.
+    pub github_prs: Vec<kagi_domain::github::PullRequest>,
+    pub github_prs_for: Option<PathBuf>,
+    /// Bumped whenever `github_prs` changes — folded into the sidebar rows
+    /// fingerprint so the list rebuilds exactly when the data does.
+    pub github_prs_epoch: u64,
+    pub github_ticker_alive: bool,
+    /// The authenticated `gh` login (fetched once by the ticker); drives the
+    /// sidebar's Mine / Review requested / Others grouping.
+    pub github_login: Option<String>,
+    /// Right-click menu on a sidebar PR row: `Some((pr, cursor))` while open.
+    pub pr_menu: Option<(kagi_domain::github::PullRequest, gpui::Point<gpui::Pixels>)>,
     /// When `Some`, the refresh icon spins (set on click; cleared after one
     /// full rotation in render).
     pub refresh_spin_started: Option<Instant>,
@@ -1395,12 +1411,21 @@ impl KagiApp {
             analyze_ignore_input: None,
             graph_scroll_x: 0.0,
             // W2-SIDEBAR
-            branch_groups_collapsed: HashSet::new(),
+            // GitHub Phase 1: the "Others" PR sub-group starts collapsed — a
+            // busy repo has dozens of other people's PRs and they'd bury the
+            // sections below.
+            branch_groups_collapsed: HashSet::from([sidebar::PR_GROUP_OTHERS.to_string()]),
             // W3-NOTIFY
             // Created in `open_main_window`'s `cx.new` closure (needs `cx`).
             toast_stack: None,
             fetch_in_flight: false,
             auto_fetch_ticker_alive: false,
+            github_prs: Vec::new(),
+            github_prs_for: None,
+            github_prs_epoch: 0,
+            github_ticker_alive: false,
+            github_login: None,
+            pr_menu: None,
             busy_op: None,
             modal_replan_gen: 0,
             refresh_spin_started: None,
@@ -1507,12 +1532,21 @@ impl KagiApp {
             analyze_ignore_input: None,
             graph_scroll_x: 0.0,
             // W2-SIDEBAR
-            branch_groups_collapsed: HashSet::new(),
+            // GitHub Phase 1: the "Others" PR sub-group starts collapsed — a
+            // busy repo has dozens of other people's PRs and they'd bury the
+            // sections below.
+            branch_groups_collapsed: HashSet::from([sidebar::PR_GROUP_OTHERS.to_string()]),
             // W3-NOTIFY
             // Created in `open_main_window`'s `cx.new` closure (needs `cx`).
             toast_stack: None,
             fetch_in_flight: false,
             auto_fetch_ticker_alive: false,
+            github_prs: Vec::new(),
+            github_prs_for: None,
+            github_prs_epoch: 0,
+            github_ticker_alive: false,
+            github_login: None,
+            pr_menu: None,
             busy_op: None,
             modal_replan_gen: 0,
             refresh_spin_started: None,
@@ -1586,6 +1620,7 @@ impl KagiApp {
         // Background auto-fetch ticker (periodic `git fetch` so the graph and
         // ahead/behind stay fresh). Lazily spawned; no-op when off / no repo.
         self.ensure_auto_fetch_ticker(cx);
+        self.ensure_github_ticker(cx);
 
         // ADR-0128 follow-up: the CLI-launch initial tab (built by hand in
         // main.rs via `reload_prelaunch`, which has no `cx`) never goes

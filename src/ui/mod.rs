@@ -3869,10 +3869,7 @@ mod draggable_branch_name_tests {
     use crate::ui::commit_list::{BadgeKind, RefBadge};
 
     fn badge(kind: BadgeKind, label: &str) -> RefBadge {
-        RefBadge {
-            kind,
-            label: label.to_string().into(),
-        }
+        RefBadge::new(kind, label.to_string())
     }
 
     #[test]

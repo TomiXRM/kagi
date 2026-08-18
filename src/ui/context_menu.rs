@@ -558,10 +558,7 @@ mod tests {
     fn requirements_detached_head_row() {
         let mut c = ctx();
         c.detached = true;
-        c.refs_here = vec![RefBadge {
-            kind: BadgeKind::Tag,
-            label: SharedString::from("v1.0.0"),
-        }];
+        c.refs_here = vec![RefBadge::new(BadgeKind::Tag, SharedString::from("v1.0.0"))];
         let groups = build_commit_menu(&c);
 
         assert_enabled(&groups, CommitAction::CreateBranchHere);
@@ -582,14 +579,8 @@ mod tests {
     fn checkout_ref_prefers_local_branch_here() {
         let mut c = ctx();
         c.refs_here = vec![
-            RefBadge {
-                kind: BadgeKind::Tag,
-                label: SharedString::from("v1.0.0"),
-            },
-            RefBadge {
-                kind: BadgeKind::Branch,
-                label: SharedString::from("feature/checkout ✓"),
-            },
+            RefBadge::new(BadgeKind::Tag, SharedString::from("v1.0.0")),
+            RefBadge::new(BadgeKind::Branch, SharedString::from("feature/checkout ✓")),
         ];
         let groups = build_commit_menu(&c);
         let item = groups
@@ -622,10 +613,7 @@ mod tests {
     #[test]
     fn remote_only_badge_offers_tracking_checkout() {
         let mut c = ctx();
-        c.refs_here = vec![RefBadge {
-            kind: BadgeKind::Remote,
-            label: "origin/feature".into(),
-        }];
+        c.refs_here = vec![RefBadge::new(BadgeKind::Remote, "origin/feature")];
         // No local `feature` → offer "checkout as local branch".
         c.local_branches = vec!["main".to_string()];
         let groups = build_commit_menu(&c);
@@ -635,10 +623,7 @@ mod tests {
     #[test]
     fn remote_badge_with_local_counterpart_has_no_tracking_checkout() {
         let mut c = ctx();
-        c.refs_here = vec![RefBadge {
-            kind: BadgeKind::Remote,
-            label: "origin/feature".into(),
-        }];
+        c.refs_here = vec![RefBadge::new(BadgeKind::Remote, "origin/feature")];
         // A local `feature` already exists → no tracking-checkout item.
         c.local_branches = vec!["main".to_string(), "feature".to_string()];
         let groups = build_commit_menu(&c);

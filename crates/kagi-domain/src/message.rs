@@ -63,6 +63,157 @@ pub fn strip_template_comments(text: &str) -> String {
     kept.join("\n").trim_end().to_string()
 }
 
+/// Make GitHub-flavoured markdown safe for kagi's native renderer.
+///
+/// gpui-component's inline layout asserts that no text run contains a raw
+/// `\n`; mdast keeps line endings inside inline nodes, and a code span or
+/// emphasis that wraps across lines reaches the layouter with the newline
+/// still inside — a hard panic. So: CRLF → LF, and any newline inside an
+/// inline code span (backticks, outside fenced blocks) becomes a space, which
+/// is what CommonMark renders anyway.
+pub fn sanitize_markdown_for_view(src: &str) -> String {
+    let src = src.replace("\r\n", "\n").replace('\r', "\n");
+    // Raw HTML (bot footers: `<!-- -->` comments, `<a><picture>…`, `<details>`)
+    // is handed to the layouter as one multi-line text run — the actual crash
+    // on a codesmith footer. Drop comments entirely and reduce tags to their
+    // text content (a `<details><summary>x</summary>` degrades to "x …").
+    let src = strip_html(&src);
+    let mut out = String::with_capacity(src.len());
+    let mut in_fence = false;
+    // Open inline code span carried across lines (its `\n` becomes a space).
+    let mut in_span = false;
+    for (i, line) in src.split('\n').enumerate() {
+        if i > 0 {
+            out.push(if in_span && !in_fence { ' ' } else { '\n' });
+        }
+        let t = line.trim_start();
+        if t.starts_with("```") || t.starts_with("~~~") {
+            in_fence = !in_fence;
+            in_span = false;
+            out.push_str(line);
+            continue;
+        }
+        if in_fence {
+            out.push_str(line);
+            continue;
+        }
+        // Track backtick spans within the line (a run of N backticks opens /
+        // closes a span; unmatched runs stay open into the next line).
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            out.push(c);
+            if c == '`' {
+                while chars.peek() == Some(&'`') {
+                    out.push(chars.next().unwrap());
+                }
+                in_span = !in_span;
+            }
+        }
+    }
+    out
+}
+
+/// Remove `<!-- … -->` comments and HTML tags, keeping text content. Code
+/// spans / fences are left alone (a `<T>` in code is not a tag).
+fn strip_html(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let mut in_fence = false;
+    for (i, line) in src.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let t = line.trim_start();
+        if t.starts_with("```") || t.starts_with("~~~") {
+            in_fence = !in_fence;
+        }
+        if in_fence || t.starts_with("```") || t.starts_with("~~~") {
+            out.push_str(line);
+            continue;
+        }
+        out.push_str(&strip_html_line(line));
+    }
+    // Comments may span lines: second pass over the joined text.
+    let mut result = String::with_capacity(out.len());
+    let mut rest = out.as_str();
+    while let Some(start) = rest.find("<!--") {
+        result.push_str(&rest[..start]);
+        match rest[start..].find("-->") {
+            Some(end) => rest = &rest[start + end + 3..],
+            None => {
+                rest = "";
+            }
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
+fn strip_html_line(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut in_code = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '`' {
+            in_code = !in_code;
+            out.push(c);
+            continue;
+        }
+        if !in_code && c == '<' && !line.starts_with("<!--") {
+            // A tag: `<` followed by a letter, `/` or `!` — otherwise it is
+            // a literal (e.g. "a < b").
+            let is_tag = matches!(chars.peek(), Some(n) if n.is_ascii_alphabetic() || *n == '/' || *n == '!');
+            if is_tag {
+                let mut depth_closed = false;
+                for n in chars.by_ref() {
+                    if n == '>' {
+                        depth_closed = true;
+                        break;
+                    }
+                }
+                if depth_closed {
+                    // Block-ish tags become a space so words don't glue.
+                    out.push(' ');
+                    continue;
+                }
+                return out;
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+
+#[cfg(test)]
+mod markdown_sanitize_tests {
+    use super::sanitize_markdown_for_view;
+
+    #[test]
+    fn html_comments_and_tags_are_stripped_but_code_kept() {
+        let s = "text\n<!-- codesmith:footer -->\n---\n<a href=\"x\"><picture><source media=\"y\"></picture></a>\n<sup>Need help? Tag <code>@codesmith</code></sup>\n`<T>` stays\n";
+        let out = sanitize_markdown_for_view(s);
+        assert!(!out.contains("<!--"), "{out}");
+        assert!(!out.contains("<a "), "{out}");
+        assert!(out.contains("Need help? Tag  @codesmith"), "{out}");
+        assert!(out.contains("`<T>` stays"), "{out}");
+    }
+
+    #[test]
+    fn crlf_becomes_lf() {
+        assert_eq!(sanitize_markdown_for_view("a\r\nb"), "a\nb");
+    }
+
+    #[test]
+    fn newline_inside_inline_code_becomes_space() {
+        assert_eq!(sanitize_markdown_for_view("x `a\nb` y"), "x `a b` y");
+    }
+
+    #[test]
+    fn fenced_blocks_are_left_alone() {
+        let s = "```\nlet a;\nlet b;\n```\n";
+        assert_eq!(sanitize_markdown_for_view(s), s);
+    }
+}
+
 #[cfg(test)]
 mod title_body_tests {
     use super::*;

@@ -261,7 +261,7 @@ pub fn render_markdown_preview(
 /// and trailing space from a code span, but a thin space survives and
 /// widens the highlight. Selection/copy picks up the thin spaces — accepted
 /// trade-off. One line only; multi-line code spans are left untouched.
-fn pad_inline_code(src: &str) -> String {
+pub fn pad_inline_code(src: &str) -> String {
     const PAD: char = '\u{2009}';
     let chars: Vec<char> = src.chars().collect();
     let mut out = String::with_capacity(src.len());

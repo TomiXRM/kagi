@@ -37,6 +37,8 @@ pub struct PullRequest {
     pub author: String,
     /// Logins with a pending review request.
     pub reviewers: Vec<String>,
+    /// PR description (markdown), possibly empty.
+    pub body: String,
 }
 
 /// Which sidebar group a PR belongs to, from the viewer's perspective.
@@ -170,6 +172,7 @@ mod tests {
             url: String::new(),
             author: String::new(),
             reviewers: Vec::new(),
+            body: String::new(),
         };
         let prs = vec![mk(1, "feat/a", "main"), mk(2, "feat/b", "feat/a")];
         assert!(!prs[0].is_stacked_on(&prs));
@@ -189,6 +192,7 @@ mod tests {
             url: String::new(),
             author: String::new(),
             reviewers: Vec::new(),
+            body: String::new(),
         };
         // 3 stacked on 1; 2 independent; 4 stacked on 3.
         let prs = vec![
@@ -217,6 +221,7 @@ mod tests {
             url: String::new(),
             author: "alice".into(),
             reviewers: vec!["bob".into()],
+            body: String::new(),
         };
         let local = vec!["main".to_string()];
         assert_eq!(pr.group_for(Some("alice"), &local), PrGroup::Mine);

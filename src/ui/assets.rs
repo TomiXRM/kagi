@@ -29,6 +29,10 @@ const ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../../assets/icons/arrow-up.svg"),
     ),
     (
+        "icons/git-pull-request.svg",
+        include_bytes!("../../assets/icons/git-pull-request.svg"),
+    ),
+    (
         "icons/sparkles.svg",
         include_bytes!("../../assets/icons/sparkles.svg"),
     ),

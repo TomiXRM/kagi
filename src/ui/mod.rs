@@ -126,6 +126,8 @@ actions!(
         CloseMainDiff,
         CopyDiffSelection,
         DiffPrevFile,
+        PrModePrevPane,
+        PrModeNextPane,
         DiffNextFile,
         CheckoutSelected,
         // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
@@ -3301,6 +3303,10 @@ pub fn run_app(app_state: KagiApp) {
         cx.bind_keys([
             KeyBinding::new("up", DiffPrevFile, Some("!Terminal && !Input")),
             KeyBinding::new("down", DiffNextFile, Some("!Terminal && !Input")),
+            // GitHub Phase 1c: ←/→ cycle PR mode's focused pane. No-op outside
+            // PR mode (handler checks), so graph mode keeps ←/→ free.
+            KeyBinding::new("left", PrModePrevPane, Some("!Terminal && !Input")),
+            KeyBinding::new("right", PrModeNextPane, Some("!Terminal && !Input")),
         ]);
         // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
         // No context predicate — gpui-component 0.5.1's "Input" context binds

@@ -18,7 +18,7 @@
 //! whole PR, or for one selected commit. Nothing is checked out. Inputs
 //! (creating / editing a PR) deliberately go to GitHub's own UI.
 
-use gpui::{div, prelude::*, px, rgb, Context, ListState, SharedString};
+use gpui::{div, prelude::*, px, relative, rgb, Context, ListState, SharedString};
 use kagi_domain::github::{stack_order, CiState, PrGroup, PullRequest, ReviewState};
 use kagi_git::{Commit, CommitId, FileStatus};
 use kagi_ui_core::file_tree::status_badge;
@@ -28,7 +28,7 @@ use super::i18n::Msg;
 use super::render_helpers::render_diff_list;
 use super::theme::{self, theme};
 use super::types::ToastKind;
-use super::{CompareTarget, KagiApp, MainDiffSource};
+use super::{CompareTarget, DividerDrag, DividerGhost, DividerKind, KagiApp, MainDiffSource};
 
 /// One open PR tab.
 pub struct PrTab {
@@ -46,11 +46,42 @@ pub struct PrTab {
     pub diff_scroll: ListState,
 }
 
-#[derive(Default)]
+/// Which list the arrow keys drive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PrFocus {
+    #[default]
+    List,
+    Commits,
+    Files,
+    Stack,
+}
+
 pub struct PrModeState {
     pub tabs: Vec<PrTab>,
     pub active: Option<usize>,
+    /// Keyboard focus target for ↑/↓; ←/→ cycle it. Set by clicking a pane.
+    pub focus: PrFocus,
+    /// Left / right column widths (unscaled px), dragged via the dividers.
+    pub left_w: f32,
+    pub right_w: f32,
 }
+
+impl Default for PrModeState {
+    fn default() -> Self {
+        Self {
+            tabs: Vec::new(),
+            active: None,
+            focus: PrFocus::List,
+            left_w: LEFT_W,
+            right_w: RIGHT_W,
+        }
+    }
+}
+
+pub const LEFT_MIN: f32 = 160.0;
+pub const LEFT_MAX: f32 = 480.0;
+pub const RIGHT_MIN: f32 = 220.0;
+pub const RIGHT_MAX: f32 = 640.0;
 
 const COMMIT_LIMIT: usize = 500;
 
@@ -201,6 +232,108 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// ←/→: cycle the focused pane (List → Commits → Files → Stack).
+    pub fn pr_mode_cycle_focus(&mut self, delta: i32, cx: &mut Context<Self>) {
+        const ORDER: [PrFocus; 4] = [
+            PrFocus::List,
+            PrFocus::Commits,
+            PrFocus::Files,
+            PrFocus::Stack,
+        ];
+        if let Some(m) = self.pr_mode.as_mut() {
+            let i = ORDER.iter().position(|f| *f == m.focus).unwrap_or(0) as i32;
+            let n = ORDER.len() as i32;
+            m.focus = ORDER[((i + delta) % n + n) as usize % ORDER.len()];
+        }
+        cx.notify();
+    }
+
+    /// ↑/↓ inside the focused pane.
+    pub fn pr_mode_step(&mut self, delta: i32, cx: &mut Context<Self>) {
+        let Some(m) = self.pr_mode.as_ref() else {
+            return;
+        };
+        match m.focus {
+            PrFocus::List => {
+                // Step through the left list in its display order; open the
+                // neighbour of the active PR (or the first one).
+                let order = pr_list_order(self);
+                if order.is_empty() {
+                    return;
+                }
+                let cur = m
+                    .active
+                    .and_then(|i| m.tabs.get(i))
+                    .and_then(|t| order.iter().position(|p| p.number == t.pr.number));
+                let next = match cur {
+                    Some(i) => (i as i32 + delta).clamp(0, order.len() as i32 - 1) as usize,
+                    None => 0,
+                };
+                let pr = order[next].clone();
+                self.pr_mode_open(&pr, cx);
+            }
+            PrFocus::Commits => {
+                let Some(t) = m.active.and_then(|i| m.tabs.get(i)) else {
+                    return;
+                };
+                // Row 0 = "All changes", rows 1..=n = commits.
+                let n = t.commits.len() as i32;
+                let cur = t.selected_commit.map(|i| i as i32 + 1).unwrap_or(0);
+                let next = (cur + delta).clamp(0, n);
+                let sel = if next == 0 {
+                    None
+                } else {
+                    Some((next - 1) as usize)
+                };
+                if sel != t.selected_commit {
+                    self.pr_mode_select_commit(sel, cx);
+                }
+            }
+            PrFocus::Files => {
+                let Some(t) = m.active.and_then(|i| m.tabs.get(i)) else {
+                    return;
+                };
+                if t.files.is_empty() {
+                    return;
+                }
+                let cur = t.selected_file.unwrap_or(0) as i32;
+                let next = (cur + delta).clamp(0, t.files.len() as i32 - 1) as usize;
+                self.pr_mode_select_file(next, cx);
+            }
+            PrFocus::Stack => {
+                let Some(t) = m.active.and_then(|i| m.tabs.get(i)) else {
+                    return;
+                };
+                let prs: Vec<PullRequest> = stack_for(&t.pr, &self.github_prs)
+                    .into_iter()
+                    .filter_map(|r| match r {
+                        StackRow::Pr(p) => Some(p),
+                        StackRow::Trunk(_) => None,
+                    })
+                    .collect();
+                let Some(cur) = prs.iter().position(|p| p.number == t.pr.number) else {
+                    return;
+                };
+                let next = (cur as i32 + delta).clamp(0, prs.len() as i32 - 1) as usize;
+                if next != cur {
+                    let pr = prs[next].clone();
+                    self.pr_mode_open(&pr, cx);
+                    // Keep the focus on the stack after the tab switch.
+                    if let Some(m) = self.pr_mode.as_mut() {
+                        m.focus = PrFocus::Stack;
+                    }
+                }
+            }
+        }
+    }
+
+    fn pr_mode_focus(&mut self, f: PrFocus, cx: &mut Context<Self>) {
+        if let Some(m) = self.pr_mode.as_mut() {
+            m.focus = f;
+        }
+        cx.notify();
+    }
+
     // Take/put the active tab so `pr_tab_reload_diff` can borrow `self`
     // (the repo session) without fighting the `pr_mode` borrow.
     fn pr_mode_take_active(&mut self) -> Option<PrTab> {
@@ -265,8 +398,14 @@ impl KagiApp {
 // Rendering — three columns inside one center-takeover element
 // ────────────────────────────────────────────────────────────
 
-const LEFT_W: f32 = 240.0;
-const RIGHT_W: f32 = 260.0;
+const LEFT_W: f32 = 230.0;
+const RIGHT_W: f32 = 320.0;
+/// Deepest indent level drawn in the left list; beyond it depth is shown by
+/// the └ marker only, so a tall stack can never push rows out of the pane.
+const MAX_INDENT_DEPTH: usize = 3;
+/// Fixed commit-strip height (≈8 rows) so it neither collapses for short PRs
+/// nor swallows the diff for long ones; it scrolls internally.
+const COMMIT_STRIP_H: f32 = 210.0;
 const ROW_H: f32 = 24.0;
 
 pub fn render_pr_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
@@ -282,19 +421,29 @@ pub fn render_pr_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::Any
         .h_full()
         .bg(rgb(theme().bg_base))
         .child(left)
-        .child(vdivider())
+        .child(vdivider(DividerKind::PrModeLeft))
         .child(center)
-        .child(vdivider())
+        .child(vdivider(DividerKind::PrModeRight))
         .child(right)
         .into_any_element()
 }
 
-fn vdivider() -> gpui::Div {
+fn vdivider(kind: DividerKind) -> gpui::Stateful<gpui::Div> {
+    let id = match kind {
+        DividerKind::PrModeLeft => "pr-mode-div-left",
+        _ => "pr-mode-div-right",
+    };
     div()
-        .w(theme::scaled_px(1.))
+        .id(id)
+        .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
         .bg(rgb(theme().surface))
+        .hover(|s| s.bg(rgb(theme().color_branch)).cursor_col_resize())
+        .cursor_col_resize()
+        .on_drag(DividerDrag { kind }, |_drag, _position, _window, cx| {
+            cx.new(|_| DividerGhost)
+        })
 }
 
 fn section_label(text: String) -> gpui::Div {
@@ -316,8 +465,47 @@ fn ci_glyph(ci: CiState) -> (&'static str, u32) {
     }
 }
 
+/// The left list's display order (groups, each stack-ordered) — shared by
+/// the renderer and ↑/↓ stepping so they can never disagree.
+fn pr_list_order(app: &KagiApp) -> Vec<PullRequest> {
+    let login = app.github_login.clone();
+    let local: Vec<String> = app
+        .active_view
+        .branches
+        .iter()
+        .map(|(n, _)| n.clone())
+        .collect();
+    let mut out = Vec::new();
+    for group in [PrGroup::Mine, PrGroup::ReviewRequested, PrGroup::Others] {
+        let members: Vec<PullRequest> = app
+            .github_prs
+            .iter()
+            .filter(|p| p.group_for(login.as_deref(), &local) == group)
+            .cloned()
+            .collect();
+        for (ix, _) in stack_order(&members) {
+            out.push(members[ix].clone());
+        }
+    }
+    out
+}
+
+/// A pane's focus cue: a 2px accent top border when it owns the arrow keys.
+fn focus_border<E: gpui::Styled>(el: E, focused: bool) -> E {
+    el.border_t_2().border_color(rgb(if focused {
+        theme().color_branch
+    } else {
+        theme().panel
+    }))
+}
+
 // ── Left: PR list, grouped, stack-ordered ────────────────────
 fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let focused = app.pr_mode.as_ref().map(|m| m.focus) == Some(PrFocus::List);
+    let left_w = app.pr_mode.as_ref().map(|m| m.left_w).unwrap_or(LEFT_W);
+    let focus_click = cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
+        this.pr_mode_focus(PrFocus::List, cx);
+    });
     let login = app.github_login.clone();
     let local: Vec<String> = app
         .active_view
@@ -331,15 +519,19 @@ fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement 
         .as_ref()
         .and_then(|m| m.active.and_then(|i| m.tabs.get(i)))
         .map(|t| t.pr.number);
-    let mut col = div()
-        .id("pr-mode-list")
-        .w(theme::scaled_px(LEFT_W))
-        .flex_shrink_0()
-        .h_full()
-        .overflow_y_scroll()
-        .flex()
-        .flex_col()
-        .bg(rgb(theme().sidebar));
+    let mut col = focus_border(
+        div()
+            .id("pr-mode-list")
+            .w(theme::scaled_px(left_w))
+            .flex_shrink_0()
+            .h_full()
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .bg(rgb(theme().sidebar))
+            .on_mouse_down(gpui::MouseButton::Left, focus_click),
+        focused,
+    );
     // Header: title + exit
     let exit = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
         this.toggle_pr_mode(cx);
@@ -422,7 +614,9 @@ fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement 
                     .flex_row()
                     .items_center()
                     .gap_1()
-                    .pl(theme::scaled_px(12. + depth as f32 * 14.))
+                    .pl(theme::scaled_px(
+                        12. + depth.min(MAX_INDENT_DEPTH) as f32 * 12.,
+                    ))
                     .pr_3()
                     .text_sm()
                     .cursor_pointer()
@@ -431,6 +625,19 @@ fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement 
                     .on_click(click)
                     .on_mouse_down(gpui::MouseButton::Right, menu)
                     .when(pr.is_draft, |el| el.opacity(0.55))
+                    .when(depth > 0, |el| {
+                        el.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_xs()
+                                .text_color(rgb(theme().text_muted))
+                                .child(SharedString::from(if depth > MAX_INDENT_DEPTH {
+                                    format!("\u{2514}{}", depth)
+                                } else {
+                                    "\u{2514}".to_string()
+                                })),
+                        )
+                    })
                     .child(
                         div()
                             .flex_shrink_0()
@@ -630,39 +837,48 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         this.pr_mode_select_commit(None, cx);
     });
     let now = kagi_ui_core::time::now_unix_secs();
-    let mut strip = div()
-        .id("pr-mode-commits")
-        .flex_shrink_0()
-        .max_h(theme::scaled_px(180.))
-        .overflow_y_scroll()
-        .flex()
-        .flex_col()
-        .border_b_1()
-        .border_color(rgb(theme().surface))
-        .child(
-            div()
-                .id("pr-mode-commits-all")
-                .h(theme::scaled_px(ROW_H))
-                .flex()
-                .flex_row()
-                .items_center()
-                .px_3()
-                .text_xs()
-                .cursor_pointer()
-                .when(selected_commit.is_none(), |el| el.bg(rgb(theme().selected)))
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .on_click(all_click)
-                .child(
-                    div()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(rgb(theme().text_muted))
-                        .child(SharedString::from(format!(
-                            "{} ({})",
-                            Msg::PrModeAllChanges.t(),
-                            commits.len()
-                        ))),
-                ),
-        );
+    let commits_focused = app.pr_mode.as_ref().map(|m| m.focus) == Some(PrFocus::Commits);
+    let commits_focus_click =
+        cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
+            this.pr_mode_focus(PrFocus::Commits, cx);
+        });
+    let mut strip = focus_border(
+        div()
+            .id("pr-mode-commits")
+            .flex_shrink_0()
+            .h(theme::scaled_px(COMMIT_STRIP_H))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .border_b_1()
+            .border_color(rgb(theme().surface))
+            .on_mouse_down(gpui::MouseButton::Left, commits_focus_click),
+        commits_focused,
+    )
+    .child(
+        div()
+            .id("pr-mode-commits-all")
+            .h(theme::scaled_px(ROW_H))
+            .flex()
+            .flex_row()
+            .items_center()
+            .px_3()
+            .text_xs()
+            .cursor_pointer()
+            .when(selected_commit.is_none(), |el| el.bg(rgb(theme().selected)))
+            .hover(|s| s.bg(rgb(theme().surface)))
+            .on_click(all_click)
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(format!(
+                        "{} ({})",
+                        Msg::PrModeAllChanges.t(),
+                        commits.len()
+                    ))),
+            ),
+    );
     for (i, cmt) in commits.iter().enumerate() {
         let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
             this.pr_mode_select_commit(Some(i), cx);
@@ -749,8 +965,10 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
         .pr_mode
         .as_ref()
         .and_then(|m| m.active.and_then(|i| m.tabs.get(i)));
+    let right_w = app.pr_mode.as_ref().map(|m| m.right_w).unwrap_or(RIGHT_W);
+    let focus = app.pr_mode.as_ref().map(|m| m.focus);
     let mut col = div()
-        .w(theme::scaled_px(RIGHT_W))
+        .w(theme::scaled_px(right_w))
         .flex_shrink_0()
         .h_full()
         .flex()
@@ -758,12 +976,26 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
         .bg(rgb(theme().panel));
 
     // Stack: walk down through bases and up through children of the active PR.
+    let stack_focus_click = cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
+        this.pr_mode_focus(PrFocus::Stack, cx);
+    });
+    let mut stack_col = focus_border(
+        div()
+            .id("pr-mode-stack-pane")
+            .flex_shrink_0()
+            .max_h(relative(0.5))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .on_mouse_down(gpui::MouseButton::Left, stack_focus_click),
+        focus == Some(PrFocus::Stack),
+    );
     let stack: Vec<StackRow> = active
         .map(|t| stack_for(&t.pr, &app.github_prs))
         .unwrap_or_default();
-    col = col.child(section_label(Msg::PrModeStack.t().to_string()));
+    stack_col = stack_col.child(section_label(Msg::PrModeStack.t().to_string()));
     if stack.is_empty() {
-        col = col.child(
+        stack_col = stack_col.child(
             div()
                 .px_3()
                 .py_1()
@@ -782,16 +1014,27 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
                 let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
                     this.pr_mode_open(&pr_click, cx);
                 });
-                col = col.child(
+                let rv = match pr.review {
+                    ReviewState::Approved => {
+                        Some((Msg::PrReviewApproved.t(), theme().color_success))
+                    }
+                    ReviewState::ChangesRequested => {
+                        Some((Msg::PrReviewChanges.t(), theme().color_warning))
+                    }
+                    _ => None,
+                };
+                // Two-line row: `#N title` on top, `head → base · author` below —
+                // the stack pane is where a PR's identity should be readable,
+                // so it carries more than the compact left list.
+                stack_col = stack_col.child(
                     div()
                         .id(("pr-mode-stack", pr.number as usize))
-                        .h(theme::scaled_px(ROW_H))
                         .flex()
                         .flex_row()
-                        .items_center()
+                        .items_start()
                         .gap_2()
                         .px_3()
-                        .text_sm()
+                        .py_1()
                         .cursor_pointer()
                         .when(is_active, |el| el.bg(rgb(theme().selected)))
                         .hover(|s| s.bg(rgb(theme().surface)))
@@ -799,36 +1042,83 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
                         .child(
                             div()
                                 .flex_shrink_0()
-                                .text_color(rgb(theme().color_branch))
+                                .pt_px()
+                                .text_sm()
+                                .text_color(rgb(if is_active {
+                                    theme().color_branch
+                                } else {
+                                    theme().text_sub
+                                }))
                                 .child(SharedString::from("\u{25CF}")),
                         )
                         .child(
                             div()
                                 .flex_1()
                                 .min_w(px(0.))
-                                .truncate()
-                                .text_color(rgb(theme().text_main))
-                                .child(SharedString::from(format!("#{} {}", pr.number, pr.head))),
-                        )
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .text_color(rgb(c))
-                                .child(SharedString::from(g)),
-                        )
-                        .when(is_active, |el| {
-                            el.child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_xs()
-                                    .text_color(rgb(theme().text_muted))
-                                    .child(SharedString::from("\u{2190}")),
-                            )
-                        }),
+                                .flex()
+                                .flex_col()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap_1()
+                                        .child(
+                                            div()
+                                                .flex_shrink_0()
+                                                .text_sm()
+                                                .text_color(rgb(theme().color_branch))
+                                                .child(SharedString::from(format!(
+                                                    "#{}",
+                                                    pr.number
+                                                ))),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w(px(0.))
+                                                .truncate()
+                                                .text_sm()
+                                                .text_color(rgb(theme().text_main))
+                                                .child(SharedString::from(pr.title.clone())),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_shrink_0()
+                                                .text_color(rgb(c))
+                                                .child(SharedString::from(g)),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap_2()
+                                        .text_xs()
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w(px(0.))
+                                                .truncate()
+                                                .text_color(rgb(theme().text_muted))
+                                                .child(SharedString::from(format!(
+                                                    "{} \u{2192} {} \u{00B7} @{}",
+                                                    pr.head, pr.base, pr.author
+                                                ))),
+                                        )
+                                        .children(rv.map(|(t, c)| {
+                                            div()
+                                                .flex_shrink_0()
+                                                .text_color(rgb(c))
+                                                .child(SharedString::from(t.to_string()))
+                                        })),
+                                ),
+                        ),
                 );
             }
             StackRow::Trunk(name) => {
-                col = col.child(
+                stack_col = stack_col.child(
                     div()
                         .h(theme::scaled_px(ROW_H))
                         .flex()
@@ -853,6 +1143,8 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
         }
     }
 
+    col = col.child(stack_col);
+
     // Files
     let (files, selected_file) = active
         .map(|t| (t.files.clone(), t.selected_file))
@@ -862,13 +1154,20 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
             .border_t_1()
             .border_color(rgb(theme().surface)),
     );
-    let mut list = div()
-        .id("pr-mode-files")
-        .flex_1()
-        .min_h(px(0.))
-        .overflow_y_scroll()
-        .flex()
-        .flex_col();
+    let files_focus_click = cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
+        this.pr_mode_focus(PrFocus::Files, cx);
+    });
+    let mut list = focus_border(
+        div()
+            .id("pr-mode-files")
+            .flex_1()
+            .min_h(px(0.))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .on_mouse_down(gpui::MouseButton::Left, files_focus_click),
+        focus == Some(PrFocus::Files),
+    );
     for (i, f) in files.iter().enumerate() {
         let (badge, color, _) = status_badge(Some(&f.change), false);
         let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {

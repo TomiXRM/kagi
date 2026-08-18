@@ -614,6 +614,8 @@ impl Render for KagiApp {
                 // list + diff pane — navigate that, not the main commit list.
                 if this.file_history.is_some() {
                     this.step_file_history_selection(-1, cx);
+                } else if this.pr_mode.is_some() {
+                    this.pr_mode_step(-1, cx);
                 } else if this.ecosystem.is_none() && this.editor_workspace.is_some() {
                     // T-WS-EDITOR-001 feedback: Editor mode steps its file
                     // tree — but only when it's actually the visible center
@@ -634,6 +636,8 @@ impl Render for KagiApp {
                 }
                 if this.file_history.is_some() {
                     this.step_file_history_selection(1, cx);
+                } else if this.pr_mode.is_some() {
+                    this.pr_mode_step(1, cx);
                 } else if this.ecosystem.is_none() && this.editor_workspace.is_some() {
                     this.step_editor_ws_selection(1, window, cx);
                 } else if this.main_diff.is_some() {
@@ -642,6 +646,16 @@ impl Render for KagiApp {
                     this.step_commit_selection(1);
                 }
                 cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &PrModePrevPane, window, cx| {
+                if this.root_has_focus(window) && this.pr_mode.is_some() {
+                    this.pr_mode_cycle_focus(-1, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &PrModeNextPane, window, cx| {
+                if this.root_has_focus(window) && this.pr_mode.is_some() {
+                    this.pr_mode_cycle_focus(1, cx);
+                }
             }))
             .on_action(cx.listener(|this, _: &CheckoutSelected, window, cx| {
                 this.checkout_selected_commit(window, cx);

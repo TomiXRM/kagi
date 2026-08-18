@@ -17,9 +17,49 @@ use super::{CompareTarget, CompareView, FooterStatus, KagiApp};
 const GITHUB_REFRESH_SECS: u64 = 60;
 
 impl KagiApp {
+    /// One-shot `gh pr list` refresh for the current repo. Safe to call
+    /// often: results are stamped with the repo they were fetched for and
+    /// dropped if the tab switched mid-flight. Called by the ticker and on
+    /// every tab switch (`switch_repo`) — without the latter, a switch left
+    /// the new tab at 0 PRs until the ticker's next 60s tick (user report).
+    pub fn refresh_github_prs(&mut self, cx: &mut Context<Self>) {
+        let Some(repo) = self.repo_path.clone() else {
+            return;
+        };
+        if !kagi_git::github::gh_available() {
+            return;
+        }
+        cx.spawn(async move |this, acx| {
+            let repo_for_task = repo.clone();
+            let result = acx
+                .background_executor()
+                .spawn(async move { kagi_git::github::list_open_prs(&repo_for_task) })
+                .await;
+            let _ = this.update(acx, |app, cx| {
+                // The tab may have switched while we were fetching.
+                if app.repo_path.as_ref() != Some(&repo) {
+                    return;
+                }
+                match result {
+                    Ok(prs) => {
+                        if app.github_prs != prs || app.github_prs_for.as_ref() != Some(&repo) {
+                            klog!("github: prs={}", prs.len());
+                            app.github_prs = prs;
+                            app.github_prs_for = Some(repo.clone());
+                            app.github_prs_epoch = app.github_prs_epoch.wrapping_add(1);
+                            cx.notify();
+                        }
+                    }
+                    Err(e) => klog!("github: error: {}", e),
+                }
+            });
+        })
+        .detach();
+    }
+
     /// Lazily spawn the PR refresh ticker (called from `render`, like the
-    /// auto-fetch ticker). Runs one refresh immediately, then every
-    /// `GITHUB_REFRESH_SECS`. Exits when the repo closes. No-op without `gh`.
+    /// auto-fetch ticker). Fetches the login once, refreshes immediately,
+    /// then every `GITHUB_REFRESH_SECS`. Exits when the repo closes.
     pub fn ensure_github_ticker(&mut self, cx: &mut Context<Self>) {
         if self.github_ticker_alive || self.repo_path.is_none() {
             return;
@@ -42,32 +82,11 @@ impl KagiApp {
                 cx.notify();
             });
             loop {
-                let repo = match this.read_with(acx, |app, _| app.repo_path.clone()) {
-                    Ok(Some(p)) => p,
-                    _ => break,
-                };
-                let repo_for_task = repo.clone();
-                let result = acx
-                    .background_executor()
-                    .spawn(async move { kagi_git::github::list_open_prs(&repo_for_task) })
-                    .await;
                 let keep = this.update(acx, |app, cx| {
-                    // The tab may have switched while we were fetching.
-                    if app.repo_path.as_ref() != Some(&repo) {
-                        return true;
+                    if app.repo_path.is_none() {
+                        return false;
                     }
-                    match result {
-                        Ok(prs) => {
-                            if app.github_prs != prs || app.github_prs_for.as_ref() != Some(&repo) {
-                                klog!("github: prs={}", prs.len());
-                                app.github_prs = prs;
-                                app.github_prs_for = Some(repo.clone());
-                                app.github_prs_epoch = app.github_prs_epoch.wrapping_add(1);
-                                cx.notify();
-                            }
-                        }
-                        Err(e) => klog!("github: error: {}", e),
-                    }
+                    app.refresh_github_prs(cx);
                     true
                 });
                 if !matches!(keep, Ok(true)) {

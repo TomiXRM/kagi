@@ -27,8 +27,22 @@ pub fn gh_available() -> bool {
     })
 }
 
-const FIELDS: &str =
-    "number,title,headRefName,baseRefName,isDraft,reviewDecision,statusCheckRollup,url,author";
+const FIELDS: &str = "number,title,headRefName,baseRefName,isDraft,reviewDecision,\
+statusCheckRollup,url,author,reviewRequests";
+
+/// The authenticated `gh` user's login, or `None` when logged out. One call;
+/// callers cache it (the sidebar's "Mine" grouping keys on it).
+pub fn current_login() -> Option<String> {
+    let out = Command::new("gh")
+        .args(["api", "user", "--jq", ".login"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!s.is_empty()).then_some(s)
+}
 
 /// Open PRs for the repository at `workdir`, newest-updated first.
 ///
@@ -101,6 +115,16 @@ fn pr_from_value(v: &serde_json::Value) -> Option<PullRequest> {
             .and_then(|x| x.as_str())
             .unwrap_or("")
             .to_string(),
+        reviewers: v
+            .get("reviewRequests")
+            .and_then(|x| x.as_array())
+            .map(|rs| {
+                rs.iter()
+                    .filter_map(|r| r.get("login").and_then(|x| x.as_str()))
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -115,7 +139,8 @@ mod tests {
        "statusCheckRollup":[
          {"__typename":"CheckRun","conclusion":"SUCCESS","status":"COMPLETED"},
          {"__typename":"CheckRun","conclusion":null,"status":"IN_PROGRESS"}],
-       "url":"https://github.com/o/r/pull/236","author":{"login":"tomixrm"}},
+       "url":"https://github.com/o/r/pull/236","author":{"login":"tomixrm"},
+       "reviewRequests":[{"login":"bob"}]},
       {"number":240,"title":"wip","headRefName":"feat/b","baseRefName":"feat/stash-peek",
        "isDraft":true,"reviewDecision":"APPROVED",
        "statusCheckRollup":[{"__typename":"StatusContext","state":"FAILURE"}],
@@ -138,6 +163,7 @@ mod tests {
         );
         assert_eq!(prs[1].review, ReviewState::Approved);
         assert!(prs[1].is_stacked_on(&prs));
+        assert_eq!(prs[0].reviewers, vec!["bob".to_string()]);
     }
 
     #[test]

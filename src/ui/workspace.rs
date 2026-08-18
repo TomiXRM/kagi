@@ -395,6 +395,23 @@ fn render_inspector_body(
         .and_then(|i| app.active_view.rows.get(i))
         .map(|r| r.badges.clone())
         .unwrap_or_default();
+    // GitHub Phase 1: PRs whose head branch (local or origin/) points at this
+    // commit — rendered as clickable `#N ✓` chips next to the ref badges.
+    let prs_here: Vec<kagi_domain::github::PullRequest> = app
+        .github_prs
+        .iter()
+        .filter(|pr| {
+            let local_tip = app.active_view.branch_targets.get(&pr.head);
+            let remote_tip = app
+                .active_view
+                .remote_branches
+                .iter()
+                .find(|rb| rb.name == pr.head)
+                .map(|rb| &rb.target);
+            local_tip == Some(&at) || remote_tip == Some(&at)
+        })
+        .cloned()
+        .collect();
     // Active file (for list highlight) derived from the open main diff.
     let active_commit_file: Option<usize> = match app
         .main_diff
@@ -410,6 +427,7 @@ fn render_inspector_body(
             d,
             at,
             selected_badges,
+            prs_here,
             files,
             diffstat,
             compare,

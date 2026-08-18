@@ -35,6 +35,34 @@ pub struct PullRequest {
     pub url: String,
     /// Login of the PR author.
     pub author: String,
+    /// Logins with a pending review request.
+    pub reviewers: Vec<String>,
+}
+
+/// Which sidebar group a PR belongs to, from the viewer's perspective.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrGroup {
+    /// Authored by me, or its head branch exists locally.
+    Mine,
+    /// My review was requested.
+    ReviewRequested,
+    Others,
+}
+
+impl PullRequest {
+    /// Classify for the viewer `me` (login, if known) given the local branch
+    /// names. Pure; the sidebar groups on this.
+    pub fn group_for(&self, me: Option<&str>, local_branches: &[String]) -> PrGroup {
+        let mine = me.is_some_and(|m| m.eq_ignore_ascii_case(&self.author))
+            || local_branches.iter().any(|b| b == &self.head);
+        if mine {
+            PrGroup::Mine
+        } else if me.is_some_and(|m| self.reviewers.iter().any(|r| r.eq_ignore_ascii_case(m))) {
+            PrGroup::ReviewRequested
+        } else {
+            PrGroup::Others
+        }
+    }
 }
 
 impl PullRequest {
@@ -102,9 +130,38 @@ mod tests {
             review: ReviewState::None,
             url: String::new(),
             author: String::new(),
+            reviewers: Vec::new(),
         };
         let prs = vec![mk(1, "feat/a", "main"), mk(2, "feat/b", "feat/a")];
         assert!(!prs[0].is_stacked_on(&prs));
         assert!(prs[1].is_stacked_on(&prs));
+    }
+
+    #[test]
+    fn grouping_is_by_author_local_branch_then_review_request() {
+        let mut pr = PullRequest {
+            number: 1,
+            title: String::new(),
+            head: "feat/x".into(),
+            base: "main".into(),
+            is_draft: false,
+            ci: CiState::None,
+            review: ReviewState::None,
+            url: String::new(),
+            author: "alice".into(),
+            reviewers: vec!["bob".into()],
+        };
+        let local = vec!["main".to_string()];
+        assert_eq!(pr.group_for(Some("alice"), &local), PrGroup::Mine);
+        assert_eq!(pr.group_for(Some("bob"), &local), PrGroup::ReviewRequested);
+        assert_eq!(pr.group_for(Some("carol"), &local), PrGroup::Others);
+        // A local branch of the same name makes it mine regardless of author.
+        assert_eq!(
+            pr.group_for(Some("carol"), &["feat/x".to_string()]),
+            PrGroup::Mine
+        );
+        // Unknown viewer: only the local-branch rule can say "mine".
+        pr.author = "someone".into();
+        assert_eq!(pr.group_for(None, &local), PrGroup::Others);
     }
 }

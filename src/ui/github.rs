@@ -30,6 +30,17 @@ impl KagiApp {
         self.github_ticker_alive = true;
         klog!("github: ticker start ({}s)", GITHUB_REFRESH_SECS);
         cx.spawn(async move |this, acx| {
+            // Who am I? Once per ticker; the grouping is best-effort without it.
+            let login = acx
+                .background_executor()
+                .spawn(async { kagi_git::github::current_login() })
+                .await;
+            let _ = this.update(acx, |app, cx| {
+                app.github_login = login;
+                // The Mine/Others split depends on it — rebuild the rows.
+                app.github_prs_epoch = app.github_prs_epoch.wrapping_add(1);
+                cx.notify();
+            });
             loop {
                 let repo = match this.read_with(acx, |app, _| app.repo_path.clone()) {
                     Ok(Some(p)) => p,

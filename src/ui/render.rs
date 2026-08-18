@@ -361,6 +361,7 @@ impl Render for KagiApp {
             self.sidebar.rows = sidebar::build_sidebar_rows(
                 &self.active_view.branches,
                 &self.github_prs,
+                self.github_login.as_deref(),
                 &self.active_view.remote_branches,
                 &self.active_view.tags,
                 &self.active_view.stashes,

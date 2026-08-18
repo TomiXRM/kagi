@@ -39,6 +39,7 @@ pub mod file_history;
 mod file_menu;
 mod fonts;
 mod github;
+pub mod pr_pane;
 pub use kagi_ui_core::file_tree; // ADR-0121: was a shim file
 mod graph_solo;
 pub mod graph_view;
@@ -1132,6 +1133,9 @@ pub struct KagiApp {
     /// The authenticated `gh` login (fetched once by the ticker); drives the
     /// sidebar's Mine / Review requested / Others grouping.
     pub github_login: Option<String>,
+    /// GitHub Phase 1b: the Pull Requests takeover pane.
+    pub pr_pane_open: bool,
+    pub pr_pane_filter: pr_pane::PrFilter,
     /// Right-click menu on a sidebar PR row: `Some((pr, cursor))` while open.
     pub pr_menu: Option<(kagi_domain::github::PullRequest, gpui::Point<gpui::Pixels>)>,
     /// When `Some`, the refresh icon spins (set on click; cleared after one
@@ -1425,6 +1429,8 @@ impl KagiApp {
             github_prs_epoch: 0,
             github_ticker_alive: false,
             github_login: None,
+            pr_pane_open: false,
+            pr_pane_filter: pr_pane::PrFilter::default(),
             pr_menu: None,
             busy_op: None,
             modal_replan_gen: 0,
@@ -1546,6 +1552,8 @@ impl KagiApp {
             github_prs_epoch: 0,
             github_ticker_alive: false,
             github_login: None,
+            pr_pane_open: false,
+            pr_pane_filter: pr_pane::PrFilter::default(),
             pr_menu: None,
             busy_op: None,
             modal_replan_gen: 0,

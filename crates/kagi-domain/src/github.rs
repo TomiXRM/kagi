@@ -75,6 +75,45 @@ impl PullRequest {
     }
 }
 
+/// Order PRs as a stack forest for display: roots (base is not another open
+/// PR's head) in input order, each followed by its stacked children
+/// depth-first. Returns `(index into prs, depth)`. Cycles (impossible on
+/// GitHub, but the data is external) are broken by the visited set.
+pub fn stack_order(prs: &[PullRequest]) -> Vec<(usize, usize)> {
+    let mut out = Vec::with_capacity(prs.len());
+    let mut visited = vec![false; prs.len()];
+    fn walk(
+        prs: &[PullRequest],
+        i: usize,
+        depth: usize,
+        visited: &mut [bool],
+        out: &mut Vec<(usize, usize)>,
+    ) {
+        if visited[i] {
+            return;
+        }
+        visited[i] = true;
+        out.push((i, depth));
+        for (j, child) in prs.iter().enumerate() {
+            if !visited[j] && child.base == prs[i].head {
+                walk(prs, j, depth + 1, visited, out);
+            }
+        }
+    }
+    for i in 0..prs.len() {
+        if !prs[i].is_stacked_on(prs) {
+            walk(prs, i, 0, &mut visited, &mut out);
+        }
+    }
+    // Anything left is part of a cycle: emit flat.
+    for i in 0..prs.len() {
+        if !visited[i] {
+            walk(prs, i, 0, &mut visited, &mut out);
+        }
+    }
+    out
+}
+
 /// Fold per-check conclusions into one [`CiState`]: any failure wins, then
 /// any pending, then success; no checks → `None`.
 pub fn fold_ci(conclusions: &[Option<&str>]) -> CiState {
@@ -135,6 +174,34 @@ mod tests {
         let prs = vec![mk(1, "feat/a", "main"), mk(2, "feat/b", "feat/a")];
         assert!(!prs[0].is_stacked_on(&prs));
         assert!(prs[1].is_stacked_on(&prs));
+    }
+
+    #[test]
+    fn stack_order_puts_children_under_their_base() {
+        let mk = |n, head: &str, base: &str| PullRequest {
+            number: n,
+            title: String::new(),
+            head: head.into(),
+            base: base.into(),
+            is_draft: false,
+            ci: CiState::None,
+            review: ReviewState::None,
+            url: String::new(),
+            author: String::new(),
+            reviewers: Vec::new(),
+        };
+        // 3 stacked on 1; 2 independent; 4 stacked on 3.
+        let prs = vec![
+            mk(1, "a", "main"),
+            mk(2, "b", "main"),
+            mk(3, "c", "a"),
+            mk(4, "d", "c"),
+        ];
+        let order: Vec<(u64, usize)> = stack_order(&prs)
+            .into_iter()
+            .map(|(i, d)| (prs[i].number, d))
+            .collect();
+        assert_eq!(order, vec![(1, 0), (3, 1), (4, 2), (2, 0)]);
     }
 
     #[test]

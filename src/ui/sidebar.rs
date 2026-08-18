@@ -1475,6 +1475,7 @@ pub fn render_sidebar(
     row_count: usize,
     scroll_handle: gpui::UniformListScrollHandle,
     cleanup_count: usize,
+    pr_count: usize,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     // ── Filter input row (pinned above the virtualized list) ──────
@@ -1555,6 +1556,48 @@ pub fn render_sidebar(
             .into_any_element()
     };
 
+    // ── Pull Requests entry (GitHub Phase 1b, pinned beside cleanup) ──
+    // "Pull Requests (N)" opens the takeover pane; hidden without gh.
+    let pr_entry: Option<gpui::AnyElement> = kagi_git::github::gh_available().then(|| {
+        let n = pr_count;
+        let open_handler = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
+            this.toggle_pr_pane(cx);
+        });
+        let count_color = if n > 0 {
+            theme().color_branch
+        } else {
+            theme().text_muted
+        };
+        div()
+            .id("sidebar-pr-entry")
+            .mx_2()
+            .my_1()
+            .px_2()
+            .py_1()
+            .flex_shrink_0()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .rounded(theme::scaled_px(4.))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(theme().surface)))
+            .on_click(open_handler)
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(Msg::PrPaneTitle.t())),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(count_color))
+                    .child(SharedString::from(format!("({})", n))),
+            )
+            .into_any_element()
+    });
+
     // ── Virtualized navigator list ────────────────────────────────
     let scrollbar_handle = scroll_handle.clone();
     let list = super::with_vertical_scrollbar(
@@ -1597,6 +1640,7 @@ pub fn render_sidebar(
         .bg(rgb(theme().sidebar))
         .child(filter_area)
         .child(cleanup_entry)
+        .children(pr_entry)
         .child(list)
 }
 

@@ -299,6 +299,18 @@ impl Backend {
         self.blob_bytes_at(&id, path)
     }
 
+    /// Merge base of two commits — a PR "peek" diffs merge-base(base, head)
+    /// → head, GitHub's three-dot view, so base-branch commits since the
+    /// fork don't show as reversed changes.
+    pub fn merge_base(&self, a: &CommitId, b: &CommitId) -> Result<CommitId, GitError> {
+        let oa = git2::Oid::from_str(&a.0).map_err(|e| GitError::Other(e.message().to_string()))?;
+        let ob = git2::Oid::from_str(&b.0).map_err(|e| GitError::Other(e.message().to_string()))?;
+        self.repo
+            .merge_base(oa, ob)
+            .map(|o| CommitId(o.to_string()))
+            .map_err(|e| GitError::Other(e.message().to_string()))
+    }
+
     pub fn compare_commits(&self, a: &CommitId, b: &CommitId) -> Result<Vec<FileStatus>, GitError> {
         diff::compare_commits(&self.repo, a, b)
     }

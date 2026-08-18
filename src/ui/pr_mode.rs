@@ -44,6 +44,10 @@ pub struct PrTab {
     pub selected_file: Option<usize>,
     pub diff: Option<MainDiffView>,
     pub diff_scroll: ListState,
+    /// Show the PR description (markdown) in the diff area instead of the
+    /// selected file's diff. On by default for a fresh tab; the title toggles
+    /// it; selecting a file or commit switches to the diff.
+    pub show_description: bool,
 }
 
 /// Which list the arrow keys drive.
@@ -165,6 +169,9 @@ impl KagiApp {
             selected_file: None,
             diff: None,
             diff_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
+            // A fresh tab opens on the description — "what is this PR" first,
+            // the diff once a file/commit is picked (user request).
+            show_description: true,
         };
         if !tab.files.is_empty() {
             tab.selected_file = Some(0);
@@ -205,6 +212,7 @@ impl KagiApp {
             return;
         };
         tab.selected_commit = sel;
+        tab.show_description = false;
         tab.files = match self.repo_session.as_ref().map(|s| s.backend()) {
             Some(repo) => match sel.and_then(|i| tab.commits.get(i)) {
                 Some(c) => repo.commit_changed_files(&c.id).unwrap_or_default(),
@@ -220,12 +228,23 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// Title click: show the PR description in the diff area (toggle).
+    pub fn pr_mode_toggle_description(&mut self, cx: &mut Context<Self>) {
+        if let Some(m) = self.pr_mode.as_mut() {
+            if let Some(t) = m.active.and_then(|i| m.tabs.get_mut(i)) {
+                t.show_description = !t.show_description;
+            }
+        }
+        cx.notify();
+    }
+
     pub fn pr_mode_select_file(&mut self, ix: usize, cx: &mut Context<Self>) {
         let Some(mut tab) = self.pr_mode_take_active() else {
             return;
         };
         if ix < tab.files.len() {
             tab.selected_file = Some(ix);
+            tab.show_description = false;
             self.pr_tab_reload_diff(&mut tab);
         }
         self.pr_mode_put_active(tab);
@@ -736,21 +755,12 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         .child(bar);
 
     let Some(ix) = active else {
-        return col
-            .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_sm()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::PrModeSelectHint.t())),
-            )
-            .into_any_element();
+        // No tab: use the whole center as a PR dashboard instead of an empty
+        // hint (user request) — every open PR as a table row, click to open.
+        return col.child(render_dashboard(app, cx)).into_any_element();
     };
     // Snapshot what the renderers need from the active tab.
-    let (pr, commits, selected_commit, diff, scroll) = {
+    let (pr, commits, selected_commit, diff, scroll, show_description) = {
         let m = app.pr_mode.as_ref().unwrap();
         let t = &m.tabs[ix];
         (
@@ -759,6 +769,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             t.selected_commit,
             t.diff.clone(),
             t.diff_scroll.clone(),
+            t.show_description,
         )
     };
 
@@ -789,15 +800,32 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
                 .text_sm()
                 .child(SharedString::from(format!("#{}", pr.number))),
         )
-        .child(
+        .child({
+            // Click the title → the PR description (markdown) takes the diff
+            // area; click again (or pick a file / commit) to go back.
+            let toggle = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                this.pr_mode_toggle_description(cx);
+            });
             div()
+                .id("pr-mode-title")
                 .flex_1()
                 .min_w(px(0.))
                 .truncate()
                 .text_sm()
-                .text_color(rgb(theme().text_main))
-                .child(SharedString::from(pr.title.clone())),
-        )
+                .cursor_pointer()
+                .text_color(rgb(if show_description {
+                    theme().color_branch
+                } else {
+                    theme().text_main
+                }))
+                .hover(|s| s.text_color(rgb(theme().color_branch)))
+                .tooltip(|w, cx| {
+                    gpui_component::tooltip::Tooltip::new(Msg::PrModeShowDescription.t())
+                        .build(w, cx)
+                })
+                .on_click(toggle)
+                .child(SharedString::from(pr.title.clone()))
+        })
         .child(
             div()
                 .text_xs()
@@ -842,6 +870,8 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
             this.pr_mode_focus(PrFocus::Commits, cx);
         });
+    // The strip is its own panel (panel bg, section header) so where it ends
+    // and the description / diff begins is unmistakable (user request).
     let mut strip = focus_border(
         div()
             .id("pr-mode-commits")
@@ -850,11 +880,17 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             .overflow_y_scroll()
             .flex()
             .flex_col()
+            .bg(rgb(theme().panel))
             .border_b_1()
-            .border_color(rgb(theme().surface))
+            .border_color(rgb(theme().selected))
             .on_mouse_down(gpui::MouseButton::Left, commits_focus_click),
         commits_focused,
     )
+    .child(section_label(format!(
+        "{} ({})",
+        Msg::PrModeCommits.t(),
+        commits.len()
+    )))
     .child(
         div()
             .id("pr-mode-commits-all")
@@ -943,6 +979,9 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
     }
 
     col = col.child(header).child(strip);
+    if show_description {
+        return col.child(render_description(&pr, cx)).into_any_element();
+    }
     // Diff
     let diff_el: gpui::AnyElement = match diff {
         Some(view) => render_diff_list::<KagiApp>(view, None, None, scroll, cx).into_any_element(),
@@ -1270,4 +1309,308 @@ fn stack_for(pr: &PullRequest, all: &[PullRequest]) -> Vec<StackRow> {
     out.extend(down.into_iter().map(StackRow::Pr));
     out.push(StackRow::Trunk(trunk));
     out
+}
+
+// ── Center dashboard (no tab open): all PRs as a table ─────────
+fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let login = app.github_login.clone();
+    let local: Vec<String> = app
+        .active_view
+        .branches
+        .iter()
+        .map(|(n, _)| n.clone())
+        .collect();
+    let all = app.github_prs.clone();
+    let col_hdr = |w: f32, text: &str| {
+        div()
+            .w(theme::scaled_px(w))
+            .flex_shrink_0()
+            .overflow_hidden()
+            .text_xs()
+            .text_color(rgb(theme().text_label))
+            .child(SharedString::from(text.to_string()))
+    };
+    let header = div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .px_3()
+        .py_1()
+        .flex_shrink_0()
+        .border_b_1()
+        .border_color(rgb(theme().surface))
+        .child(col_hdr(64., "#"))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .text_xs()
+                .text_color(rgb(theme().text_label))
+                .child(SharedString::from(Msg::PrColTitle.t())),
+        )
+        .child(col_hdr(110., Msg::PrColAuthor.t()))
+        .child(col_hdr(240., Msg::PrColBranches.t()))
+        .child(col_hdr(36., "CI"))
+        .child(col_hdr(80., Msg::PrColReview.t()));
+
+    let mut list = div()
+        .id("pr-mode-dashboard")
+        .flex_1()
+        .min_h(px(0.))
+        .overflow_y_scroll()
+        .flex()
+        .flex_col();
+    if all.is_empty() {
+        list = list.child(
+            div()
+                .px_3()
+                .py_3()
+                .text_sm()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(Msg::PrPaneEmpty.t())),
+        );
+    }
+    for (group, title) in [
+        (PrGroup::Mine, Msg::PrGroupMine.t()),
+        (PrGroup::ReviewRequested, Msg::PrGroupReview.t()),
+        (PrGroup::Others, Msg::PrGroupOthers.t()),
+    ] {
+        let members: Vec<PullRequest> = all
+            .iter()
+            .filter(|p| p.group_for(login.as_deref(), &local) == group)
+            .cloned()
+            .collect();
+        if members.is_empty() {
+            continue;
+        }
+        list = list.child(section_label(format!("{} ({})", title, members.len())));
+        for (ix, depth) in stack_order(&members) {
+            list = list.child(render_dashboard_row(&members[ix], depth, cx));
+        }
+    }
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h(px(0.))
+        .child(header)
+        .child(list)
+        .into_any_element()
+}
+
+fn render_dashboard_row(
+    pr: &PullRequest,
+    depth: usize,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let (g, c) = ci_glyph(pr.ci);
+    let (rv, rvc) = match pr.review {
+        ReviewState::Approved => (Msg::PrReviewApproved.t(), theme().color_success),
+        ReviewState::ChangesRequested => (Msg::PrReviewChanges.t(), theme().color_warning),
+        ReviewState::ReviewRequired => (Msg::PrReviewRequired.t(), theme().text_sub),
+        ReviewState::None => ("", theme().text_muted),
+    };
+    let pr_open = pr.clone();
+    let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+        this.pr_mode_open(&pr_open, cx);
+    });
+    let pr_menu = pr.clone();
+    let menu = cx.listener(
+        move |this: &mut KagiApp, e: &gpui::MouseDownEvent, _w, cx| {
+            this.pr_menu = Some((pr_menu.clone(), e.position));
+            cx.stop_propagation();
+            cx.notify();
+        },
+    );
+    let title = if pr.is_draft {
+        format!("{} ({})", pr.title, Msg::PrDraft.t())
+    } else {
+        pr.title.clone()
+    };
+    let cell = |w: f32| {
+        div()
+            .w(theme::scaled_px(w))
+            .flex_shrink_0()
+            .overflow_hidden()
+            .truncate()
+    };
+    div()
+        .id(("pr-mode-dash-row", pr.number as usize))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .h(theme::scaled_px(26.))
+        .px_3()
+        .text_sm()
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(theme().surface)))
+        .on_click(click)
+        .on_mouse_down(gpui::MouseButton::Right, menu)
+        .when(pr.is_draft, |el| el.opacity(0.6))
+        .child(
+            cell(64.)
+                .text_color(rgb(theme().color_branch))
+                .child(SharedString::from(format!("#{}", pr.number))),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .flex()
+                .flex_row()
+                .items_center()
+                .pl(theme::scaled_px(depth.min(MAX_INDENT_DEPTH) as f32 * 18.))
+                .when(depth > 0, |el| {
+                    el.child(
+                        div()
+                            .flex_shrink_0()
+                            .mr_1()
+                            .text_xs()
+                            .text_color(rgb(theme().text_muted))
+                            .child(SharedString::from(if depth > MAX_INDENT_DEPTH {
+                                format!("\u{2514}{}", depth)
+                            } else {
+                                "\u{2514}".to_string()
+                            })),
+                    )
+                })
+                .child(
+                    div()
+                        .truncate()
+                        .text_color(rgb(theme().text_main))
+                        .child(SharedString::from(title)),
+                ),
+        )
+        .child(
+            cell(110.)
+                .text_color(rgb(theme().text_sub))
+                .child(SharedString::from(pr.author.clone())),
+        )
+        .child(
+            cell(240.)
+                .text_color(rgb(theme().text_sub))
+                .child(SharedString::from(format!(
+                    "{} \u{2192} {}",
+                    pr.head, pr.base
+                ))),
+        )
+        .child(cell(36.).text_color(rgb(c)).child(SharedString::from(g)))
+        .child(
+            cell(80.)
+                .text_color(rgb(rvc))
+                .child(SharedString::from(rv.to_string())),
+        )
+        .into_any_element()
+}
+
+/// The PR description as rendered markdown, in the diff area.
+fn render_description(pr: &PullRequest, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    use gpui_component::text::{TextView, TextViewStyle};
+    use gpui_component::ActiveTheme as _;
+    let body = if pr.body.trim().is_empty() {
+        format!("_{}_", Msg::PrModeNoDescription.t())
+    } else {
+        // GitHub bodies are CRLF, wrap inline code across lines and carry bot
+        // HTML footers — all of which crash gpui-component's inline layouter
+        // ("text argument should not contain newlines"). Normalise first.
+        // Thin-space padding inside `code` spans (the renderer paints the bare
+        // glyph range) — same trick as the Editor's markdown preview.
+        kagi_ui_editor::markdown::pad_inline_code(
+            &kagi_domain::message::sanitize_markdown_for_view(&pr.body),
+        )
+    };
+    // Table borders: gpui-component draws them in `theme().border`, which
+    // kagi maps to the near-background `selected` — invisible on the card.
+    // The style refinements override the container + cell borders.
+    let mut table = gpui::StyleRefinement::default();
+    let mut table_cell = gpui::StyleRefinement::default();
+    let mut grid: gpui::Hsla = rgb(theme().text_muted).into();
+    grid.a = 0.95;
+    table.border_color = Some(grid);
+    table_cell.border_color = Some(grid);
+    let style = TextViewStyle {
+        heading_base_font_size: theme::scaled_px(17.),
+        highlight_theme: cx.theme().highlight_theme.clone(),
+        is_dark: cx.theme().mode.is_dark(),
+        table,
+        table_cell,
+        ..Default::default()
+    };
+    let (g, c) = ci_glyph(pr.ci);
+    // A reading card: rounded surface floating on the base background, a
+    // measure-limited column and its own small header — visually a document,
+    // not another list, so the boundary with the commit strip is obvious.
+    let card_header = div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .pb_2()
+        .mb_3()
+        .border_b_1()
+        .border_color(rgb(theme().selected))
+        .child(
+            div()
+                .text_xs()
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(Msg::PrModeDescription.t())),
+        )
+        .child(div().flex_1())
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(theme().text_sub))
+                .child(SharedString::from(format!("@{}", pr.author))),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(c))
+                .child(SharedString::from(g)),
+        )
+        .when(pr.is_draft, |el| {
+            el.child(
+                div()
+                    .px_1()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(rgb(theme().selected))
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(Msg::PrDraft.t())),
+            )
+        });
+    div()
+        .id("pr-mode-description")
+        .flex_1()
+        .min_h(px(0.))
+        .w_full()
+        .overflow_y_scroll()
+        .bg(rgb(theme().bg_base))
+        .p_4()
+        .child(
+            div()
+                // Fill the pane (edge-aligned with the commit strip above); a
+                // measure cap left the card visibly narrower than the strip.
+                .w_full()
+                .rounded_lg()
+                .bg(rgb(theme().surface))
+                .border_1()
+                .border_color(rgb(theme().selected))
+                .px_6()
+                .py_5()
+                .text_color(rgb(theme().text_main))
+                .child(card_header)
+                .child(
+                    TextView::markdown(
+                        ("pr-mode-description-md", pr.number as usize),
+                        SharedString::from(body),
+                    )
+                    .style(style),
+                ),
+        )
+        .into_any_element()
 }

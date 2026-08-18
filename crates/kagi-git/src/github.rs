@@ -28,7 +28,7 @@ pub fn gh_available() -> bool {
 }
 
 const FIELDS: &str = "number,title,headRefName,baseRefName,isDraft,reviewDecision,\
-statusCheckRollup,url,author,reviewRequests";
+statusCheckRollup,url,author,reviewRequests,body";
 
 /// The authenticated `gh` user's login, or `None` when logged out. One call;
 /// callers cache it (the sidebar's "Mine" grouping keys on it).
@@ -125,6 +125,7 @@ fn pr_from_value(v: &serde_json::Value) -> Option<PullRequest> {
                     .collect()
             })
             .unwrap_or_default(),
+        body: s("body"),
     })
 }
 

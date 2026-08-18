@@ -618,7 +618,12 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     // ── Surfaces ────────────────────────────────────────────────
     gc.colors.background = to_hsla(k.bg_base);
     gc.colors.foreground = to_hsla(k.text_main);
-    gc.colors.border = to_hsla(k.selected);
+    // `border` is what gpui-component draws dividers with — table row lines
+    // in TextView (PR descriptions), scrollbar tracks, tabs. `selected` is a
+    // near-background neutral by design, which made markdown table rows
+    // invisible (user report); a muted-foreground tint reads on both `surface`
+    // and `bg_base` in every theme.
+    gc.colors.border = to_hsla(k.text_muted).alpha(0.85);
     gc.colors.muted = to_hsla(k.surface);
     gc.colors.muted_foreground = to_hsla(k.text_muted);
 
@@ -639,7 +644,12 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     gc.colors.primary_hover = to_hsla(k.color_branch);
     gc.colors.primary_active = to_hsla(k.color_branch);
     gc.colors.ring = to_hsla(k.color_branch);
-    gc.colors.accent = to_hsla(k.selected);
+    // `accent` is gpui-component's inline-code background (TextView) and a
+    // hover tint in a few popovers. `selected` — the row highlight, near the
+    // background by design — made `code` spans unreadable in PR descriptions
+    // (user report). A muted-foreground tint at low alpha reads as a chip on
+    // both `surface` and `bg_base`, in every theme.
+    gc.colors.accent = to_hsla(k.text_muted).alpha(0.48);
     gc.colors.accent_foreground = to_hsla(k.text_main);
     gc.colors.link = to_hsla(k.color_branch);
 

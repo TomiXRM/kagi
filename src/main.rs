@@ -9,6 +9,7 @@
 #[macro_use]
 extern crate kagi_ui_core;
 mod headless;
+mod shell_env;
 mod single_instance;
 mod ui;
 
@@ -79,6 +80,9 @@ fn headless_mode() -> bool {
 
 fn main() {
     install_panic_log_hook();
+    // GUI launches get launchd's bare PATH — resolve the login shell's before
+    // anything shells out (gh / external editor / mergetool). See shell_env.rs.
+    shell_env::ensure_login_shell_path();
 
     // Collect CLI arguments (skip argv[0]).
     let args: Vec<String> = std::env::args().skip(1).collect();

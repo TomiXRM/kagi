@@ -105,6 +105,18 @@ pub struct PopPlanModal {
     pub stash_index: usize,
 }
 
+/// State for a PR-merge confirmation (GitHub Phase 2 — the first *write*
+/// through `gh`, so it takes the same plan → confirm → execute → oplog path
+/// as every local write op).
+#[derive(Clone)]
+pub struct PrMergeModal {
+    pub plan: std::sync::Arc<OperationPlan>,
+    pub error: Option<SharedString>,
+    pub number: u64,
+    pub method: kagi_git::github::MergeMethod,
+    pub delete_branch: bool,
+}
+
 /// State for a standalone stash **drop** confirmation (ADR-0087, Destructive).
 #[derive(Clone)]
 pub struct StashDropModal {
@@ -592,6 +604,7 @@ pub enum ActiveModal {
     Amend(AmendPlanModal),
     Pop(PopPlanModal),
     StashDrop(StashDropModal),
+    PrMerge(PrMergeModal),
     Push(PushPlanModal),
     BranchPlan(BranchPlanModal),
     SetUpstream(SetUpstreamModal),

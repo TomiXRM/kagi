@@ -16,6 +16,7 @@ pub mod common;
 pub mod conflicts;
 pub mod discard;
 pub mod force_lease;
+pub mod github;
 pub mod history;
 pub mod merge;
 pub mod pull;
@@ -57,6 +58,7 @@ pub fn plan_note_text(note: &PlanNote) -> String {
             PlanNote::RemoteBranch(n) => remote_branch::note_ja(n),
             PlanNote::Reset(n) => reset::note_ja(n),
             PlanNote::ForceLease(n) => force_lease::note_ja(n),
+            PlanNote::Github(n) => github::note_ja(n),
             PlanNote::Rebase(n) => rebase::note_ja(n),
         },
     }
@@ -84,6 +86,7 @@ pub fn plan_title_text(title: &PlanTitle) -> String {
             PlanTitle::RemoteBranch(t) => remote_branch::title_ja(t),
             PlanTitle::Reset(t) => reset::title_ja(t),
             PlanTitle::ForceLease(t) => force_lease::title_ja(t),
+            PlanTitle::Github(t) => github::title_ja(t),
             PlanTitle::Rebase(t) => rebase::title_ja(t),
             PlanTitle::Discard { .. } => discard::title_ja(title),
         },
@@ -116,6 +119,7 @@ pub fn plan_recovery_text(recovery: Option<&PlanRecovery>) -> String {
             RecoveryKind::RemoteBranch(r) => remote_branch::recovery_ja(r),
             RecoveryKind::Reset(r) => reset::recovery_ja(r),
             RecoveryKind::ForceLease(r) => force_lease::recovery_ja(r),
+            RecoveryKind::Github(r) => github::recovery_ja(r),
             RecoveryKind::Rebase(r) => rebase::recovery_ja(r),
             RecoveryKind::Discard => discard::recovery_ja(),
         },

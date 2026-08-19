@@ -389,6 +389,9 @@ impl KagiApp {
         })
         .when_some(pop_modal, |el, modal| el.child(render_pop_modal(modal, cx)))
         // ── Stash drop modal overlay (ADR-0087) ─────────
+        .when_some(self.pr_merge_modal().cloned(), |el, modal| {
+            el.child(render_pr_merge_modal(modal, cx))
+        })
         .when_some(stash_drop_modal, |el, modal| {
             el.child(render_stash_drop_modal(modal, cx))
         })

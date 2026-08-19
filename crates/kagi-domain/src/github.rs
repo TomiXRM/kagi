@@ -39,6 +39,10 @@ pub struct PullRequest {
     pub reviewers: Vec<String>,
     /// PR description (markdown), possibly empty.
     pub body: String,
+    /// Individual CI checks on the head commit (folded into `ci`).
+    pub checks: Vec<Check>,
+    /// Mergeability, as GitHub computes it.
+    pub mergeable: Mergeable,
 }
 
 /// Which sidebar group a PR belongs to, from the viewer's perspective.
@@ -173,6 +177,8 @@ mod tests {
             author: String::new(),
             reviewers: Vec::new(),
             body: String::new(),
+            checks: Vec::new(),
+            mergeable: Mergeable::default(),
         };
         let prs = vec![mk(1, "feat/a", "main"), mk(2, "feat/b", "feat/a")];
         assert!(!prs[0].is_stacked_on(&prs));
@@ -193,6 +199,8 @@ mod tests {
             author: String::new(),
             reviewers: Vec::new(),
             body: String::new(),
+            checks: Vec::new(),
+            mergeable: Mergeable::default(),
         };
         // 3 stacked on 1; 2 independent; 4 stacked on 3.
         let prs = vec![
@@ -222,6 +230,8 @@ mod tests {
             author: "alice".into(),
             reviewers: vec!["bob".into()],
             body: String::new(),
+            checks: Vec::new(),
+            mergeable: Mergeable::default(),
         };
         let local = vec!["main".to_string()];
         assert_eq!(pr.group_for(Some("alice"), &local), PrGroup::Mine);
@@ -235,5 +245,414 @@ mod tests {
         // Unknown viewer: only the local-branch rule can say "mine".
         pr.author = "someone".into();
         assert_eq!(pr.group_for(None, &local), PrGroup::Others);
+    }
+}
+
+// ────────────────────────────────────────────────────────────
+// Checks, reviews, and "what should I do next" (2026-08-19)
+// ────────────────────────────────────────────────────────────
+
+/// One CI check on a PR's head commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Check {
+    pub name: String,
+    /// Workflow the check belongs to (empty for a bare status context).
+    pub workflow: String,
+    pub state: CiState,
+    pub url: String,
+}
+
+/// A review submitted on the PR (not a line comment).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Review {
+    pub author: String,
+    /// `APPROVED` / `CHANGES_REQUESTED` / `COMMENTED` …
+    pub state: String,
+    pub body: String,
+    pub submitted_at: String,
+}
+
+/// A line-level review comment — where Copilot / Codex put their code
+/// suggestions. Distinct from [`Comment`] (issue-level) and [`Review`]
+/// (the submitted verdict).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewComment {
+    pub author: String,
+    /// Repo-relative file the comment is anchored to.
+    pub path: String,
+    /// Anchor line in the new file (0 when the anchor is outdated).
+    pub line: u32,
+    /// Markdown body — may carry a ```suggestion fence.
+    pub body: String,
+    /// The diff hunk GitHub shows above the comment.
+    pub diff_hunk: String,
+    pub created_at: String,
+    /// Set when this is a reply in an existing thread.
+    pub in_reply_to: Option<u64>,
+}
+
+impl ReviewComment {
+    /// Whether the body carries a GitHub ```suggestion block (an applyable
+    /// code proposal rather than prose).
+    pub fn has_suggestion(&self) -> bool {
+        self.body
+            .lines()
+            .any(|l| l.trim_start().starts_with("```suggestion"))
+    }
+}
+
+/// An issue-level comment on the PR.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Comment {
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+}
+
+/// GitHub's `mergeable` / `mergeStateStatus`, reduced to what a merge button
+/// needs to know.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mergeable {
+    /// Not computed yet (GitHub computes asynchronously) — retry.
+    #[default]
+    Unknown,
+    Clean,
+    /// Mergeable, but blocked by branch protection (checks / reviews).
+    Blocked,
+    Conflicting,
+}
+
+/// What the viewer should do about this PR — the Focus Queue's grouping.
+/// Derived, never fetched: everything here comes from data the PR list
+/// already carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PrAttention {
+    /// Something is wrong and it is yours to fix.
+    NeedsYou,
+    /// Work is happening; nothing to do but wait.
+    InProgress,
+    /// Green and yours — merge it.
+    Ready,
+    /// Someone else's move (your review is requested, or you're waiting on one).
+    Waiting,
+    /// Everything else.
+    Dormant,
+}
+
+/// Why a PR landed in its [`PrAttention`] bucket — shown next to the state so
+/// the user never has to decode a glyph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrReason {
+    CiFailed(usize),
+    ChangesRequested,
+    Conflicting,
+    CiRunning,
+    ReadyToMerge,
+    ReviewRequested,
+    AwaitingReview,
+    Draft,
+    None,
+}
+
+impl PullRequest {
+    /// Number of failing checks (0 when none / unknown).
+    pub fn failed_checks(&self) -> usize {
+        self.checks
+            .iter()
+            .filter(|c| c.state == CiState::Failure)
+            .count()
+    }
+
+    /// Classify for the Focus Queue. `mine` is [`PullRequest::group_for`] ==
+    /// `Mine`; a PR that is not yours can never be "yours to fix".
+    pub fn attention(&self, mine: bool, review_requested: bool) -> (PrAttention, PrReason) {
+        if mine {
+            if self.mergeable == Mergeable::Conflicting {
+                return (PrAttention::NeedsYou, PrReason::Conflicting);
+            }
+            let failed = self.failed_checks();
+            if failed > 0 || self.ci == CiState::Failure {
+                return (PrAttention::NeedsYou, PrReason::CiFailed(failed.max(1)));
+            }
+            if self.review == ReviewState::ChangesRequested {
+                return (PrAttention::NeedsYou, PrReason::ChangesRequested);
+            }
+            if self.ci == CiState::Pending {
+                return (PrAttention::InProgress, PrReason::CiRunning);
+            }
+            if self.is_draft {
+                return (PrAttention::InProgress, PrReason::Draft);
+            }
+            if self.review == ReviewState::Approved || self.mergeable == Mergeable::Clean {
+                return (PrAttention::Ready, PrReason::ReadyToMerge);
+            }
+            return (PrAttention::Waiting, PrReason::AwaitingReview);
+        }
+        if review_requested {
+            return (PrAttention::Waiting, PrReason::ReviewRequested);
+        }
+        (PrAttention::Dormant, PrReason::None)
+    }
+}
+
+#[cfg(test)]
+mod attention_tests {
+    use super::*;
+
+    fn pr() -> PullRequest {
+        PullRequest {
+            number: 1,
+            title: "t".into(),
+            head: "feat".into(),
+            base: "main".into(),
+            is_draft: false,
+            ci: CiState::Success,
+            review: ReviewState::None,
+            url: String::new(),
+            author: "me".into(),
+            reviewers: Vec::new(),
+            body: String::new(),
+            checks: Vec::new(),
+            mergeable: Mergeable::Clean,
+        }
+    }
+
+    fn check(state: CiState) -> Check {
+        Check {
+            name: "test".into(),
+            workflow: "ci".into(),
+            state,
+            url: String::new(),
+        }
+    }
+
+    /// The queue is ordered by what the user must do, and every bucket
+    /// carries a concrete reason (no glyph decoding).
+    #[test]
+    fn mine_failing_ci_needs_you_with_a_count() {
+        let mut p = pr();
+        p.ci = CiState::Failure;
+        p.checks = vec![
+            check(CiState::Failure),
+            check(CiState::Success),
+            check(CiState::Failure),
+        ];
+        assert_eq!(
+            p.attention(true, false),
+            (PrAttention::NeedsYou, PrReason::CiFailed(2))
+        );
+    }
+
+    #[test]
+    fn conflicts_outrank_ci_and_reviews() {
+        let mut p = pr();
+        p.mergeable = Mergeable::Conflicting;
+        p.ci = CiState::Failure;
+        assert_eq!(
+            p.attention(true, false),
+            (PrAttention::NeedsYou, PrReason::Conflicting)
+        );
+    }
+
+    #[test]
+    fn running_ci_and_drafts_are_in_progress_not_actionable() {
+        let mut p = pr();
+        p.ci = CiState::Pending;
+        assert_eq!(p.attention(true, false).0, PrAttention::InProgress);
+        let mut d = pr();
+        d.is_draft = true;
+        assert_eq!(
+            d.attention(true, false),
+            (PrAttention::InProgress, PrReason::Draft)
+        );
+    }
+
+    #[test]
+    fn green_and_approved_is_ready_to_merge() {
+        let mut p = pr();
+        p.review = ReviewState::Approved;
+        assert_eq!(
+            p.attention(true, false),
+            (PrAttention::Ready, PrReason::ReadyToMerge)
+        );
+    }
+
+    /// Someone else's PR is never "yours to fix" — a failing CI on it is
+    /// their problem; only a review request puts it in your queue.
+    #[test]
+    fn other_peoples_prs_only_surface_when_your_review_is_requested() {
+        let mut p = pr();
+        p.ci = CiState::Failure;
+        assert_eq!(p.attention(false, false).0, PrAttention::Dormant);
+        assert_eq!(
+            p.attention(false, true),
+            (PrAttention::Waiting, PrReason::ReviewRequested)
+        );
+    }
+}
+
+// ────────────────────────────────────────────────────────────
+// Review-comment severity tags (Codex P1 badges, Copilot [MUST])
+// ────────────────────────────────────────────────────────────
+
+/// How loudly a review comment asks to be addressed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TagSeverity {
+    High,
+    Medium,
+    Low,
+}
+
+/// A severity tag lifted out of a review comment's body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommentTag {
+    /// Display text, e.g. `"P1"` / `"MUST"`.
+    pub label: String,
+    pub severity: TagSeverity,
+}
+
+/// Pull a severity tag out of `body` and return it with the body it was
+/// removed from.
+///
+/// Two producers in the wild:
+/// * **Codex** emits a shields.io image badge —
+///   `![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)`, usually
+///   wrapped in `<sub>`. The image cannot load in kagi (and would be a
+///   remote fetch anyway), so it is parsed into a native chip and stripped.
+/// * **Copilot** prefixes prose with `[MUST]` / `[SHOULD]` / `[NIT]`.
+///
+/// Unrecognised bodies come back unchanged with `None`.
+pub fn extract_comment_tag(body: &str) -> (Option<CommentTag>, String) {
+    if let Some((tag, rest)) = shields_badge(body) {
+        return (Some(tag), rest);
+    }
+    if let Some((tag, rest)) = bracket_prefix(body) {
+        return (Some(tag), rest);
+    }
+    (None, body.to_string())
+}
+
+/// `![<label> Badge](https://img.shields.io/badge/<label>-<colour>...)`
+fn shields_badge(body: &str) -> Option<(CommentTag, String)> {
+    let start = body.find("![")?;
+    let close_alt = body[start..].find("](")? + start;
+    let close_url = body[close_alt..].find(')')? + close_alt;
+    let url = &body[close_alt + 2..close_url];
+    if !url.contains("img.shields.io/badge/") {
+        return None;
+    }
+    // `.../badge/P1-orange?style=flat` → label "P1", colour "orange".
+    let seg = url.rsplit("/badge/").next()?;
+    let seg = seg.split(['?', '#']).next()?;
+    let mut parts = seg.split('-');
+    let label = parts.next()?.trim().to_string();
+    if label.is_empty() {
+        return None;
+    }
+    let colour = parts.next().unwrap_or("").to_ascii_lowercase();
+    let severity = severity_for(&label, &colour);
+    // Remove the image and the wrapper tags/whitespace it sat in.
+    let mut rest = String::with_capacity(body.len());
+    rest.push_str(&body[..start]);
+    rest.push_str(&body[close_url + 1..]);
+    let rest = rest
+        .replace("<sub>", "")
+        .replace("</sub>", "")
+        .trim_start_matches(['*', ' ', '\n'])
+        .to_string();
+    Some((CommentTag { label, severity }, rest))
+}
+
+/// `[MUST] …` / `[NIT] …` at the very start of the body.
+fn bracket_prefix(body: &str) -> Option<(CommentTag, String)> {
+    let t = body.trim_start();
+    if !t.starts_with('[') {
+        return None;
+    }
+    let close = t.find(']')?;
+    let label = t[1..close].trim().to_string();
+    // A tag, not a markdown link (`[text](url)`) or a long sentence.
+    if label.is_empty()
+        || label.len() > 12
+        || t[close + 1..].starts_with('(')
+        || !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return None;
+    }
+    let severity = severity_for(&label, "");
+    Some((
+        CommentTag {
+            label: label.to_ascii_uppercase(),
+            severity,
+        },
+        t[close + 1..].trim_start().to_string(),
+    ))
+}
+
+fn severity_for(label: &str, colour: &str) -> TagSeverity {
+    match label.to_ascii_uppercase().as_str() {
+        "P0" | "P1" | "MUST" | "BLOCKER" | "CRITICAL" => return TagSeverity::High,
+        "P2" | "SHOULD" | "WARNING" => return TagSeverity::Medium,
+        "P3" | "P4" | "NIT" | "NITPICK" | "INFO" | "note" => return TagSeverity::Low,
+        _ => {}
+    }
+    match colour {
+        "red" | "orange" | "critical" | "important" => TagSeverity::High,
+        "yellow" | "yellowgreen" => TagSeverity::Medium,
+        _ => TagSeverity::Low,
+    }
+}
+
+#[cfg(test)]
+mod comment_tag_tests {
+    use super::*;
+
+    /// Codex's real shape: a shields.io image inside nested `<sub>`.
+    #[test]
+    fn codex_shields_badge_becomes_a_tag_and_leaves_the_prose() {
+        let body = "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Preserve KEEP plates**\n\nWhen an operator…";
+        let (tag, rest) = extract_comment_tag(body);
+        let tag = tag.expect("tag");
+        assert_eq!(tag.label, "P1");
+        assert_eq!(tag.severity, TagSeverity::High);
+        assert!(!rest.contains("shields.io"), "image removed: {rest}");
+        assert!(!rest.contains("<sub>"), "wrapper removed: {rest}");
+        assert!(rest.starts_with("Preserve KEEP plates"), "{rest}");
+    }
+
+    #[test]
+    fn p2_is_medium_and_p3_is_low() {
+        let mk =
+            |p: &str| format!("![{p} Badge](https://img.shields.io/badge/{p}-yellow?style=flat) x");
+        assert_eq!(
+            extract_comment_tag(&mk("P2")).0.unwrap().severity,
+            TagSeverity::Medium
+        );
+        assert_eq!(
+            extract_comment_tag(&mk("P3")).0.unwrap().severity,
+            TagSeverity::Low
+        );
+    }
+
+    /// Copilot's shape.
+    #[test]
+    fn copilot_bracket_prefix_becomes_a_tag() {
+        let (tag, rest) = extract_comment_tag("[MUST] `f()` changed shape");
+        assert_eq!(tag.unwrap().label, "MUST");
+        assert_eq!(rest, "`f()` changed shape");
+    }
+
+    /// A markdown link or ordinary prose must not be mistaken for a tag.
+    #[test]
+    fn links_and_prose_are_left_alone() {
+        for body in [
+            "[see docs](https://x) then fix",
+            "plain prose",
+            "[a very long bracketed phrase] no",
+        ] {
+            let (tag, rest) = extract_comment_tag(body);
+            assert!(tag.is_none(), "{body} → {tag:?}");
+            assert_eq!(rest, body);
+        }
     }
 }

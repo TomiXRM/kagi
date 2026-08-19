@@ -569,6 +569,13 @@ impl Render for KagiApp {
         // R1: ⌘C — copy the diff line selection (kept across the copy so the
         // user sees what was taken; Esc clears it).
         let copy_diff_selection = cx.listener(|this, _: &CopyDiffSelection, _window, cx| {
+            // No diff-row selection: let the event reach gpui-component's
+            // Root, which copies the TextView window selection (PR
+            // description / review bodies / diff hunks).
+            if diff_selection::selected_text().is_none() {
+                cx.propagate();
+                return;
+            }
             if let Some(text) = diff_selection::selected_text() {
                 let lines = text.lines().count();
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));

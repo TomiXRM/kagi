@@ -6,6 +6,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::*;
+use crate::ui::workspace_mode::WorkspaceMode;
 
 // ── AppShell layout slots ────────────────────────────────────────────────────
 // ADR-0007 / T-BP-001: KagiApp::render is decomposed into four vertical
@@ -59,6 +60,7 @@ impl KagiApp {
             "view.toggleEditorWorkspace"
         );
         let el = menu_act!(el, cmds::TogglePrMode, "view.togglePrMode");
+        let el = menu_act!(el, cmds::ShowGraph, "view.showGraph");
         let el = menu_act!(el, cmds::Fetch, "repo.fetch");
         let el = menu_act!(el, cmds::Pull, "repo.pull");
         let el = menu_act!(el, cmds::Push, "repo.push");
@@ -177,13 +179,34 @@ impl KagiApp {
             this.handle_menu_command("view.toggleEditorWorkspace", window, cx);
             cx.notify();
         });
-        // GitHub Phase 1c: PR mode toggle, just left of Editor. Same
-        // handle_menu_command route as the View menu item / Cmd-Shift-P.
+        // ── Workspace mode switcher: Graph | PRs | Editor ──────────────
+        // Three mutually exclusive modes, one button each. Every button names
+        // the mode it selects and lights up while that mode is on screen.
+        // (They used to be two toggles that each morphed into a "Graph"
+        // button; with two takeovers open at once both read "Graph" and
+        // neither said which one you'd land in — user report.)
         let pr_mode_on = self.repo_path.is_some() && kagi_git::github::gh_available();
+        let mode = self.workspace_mode();
+        let graph_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
+            this.handle_menu_command("view.showGraph", window, cx);
+            cx.notify();
+        });
         let pr_mode_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
             this.handle_menu_command("view.togglePrMode", window, cx);
             cx.notify();
         });
+
+        // Active-mode highlight for the Graph/PRs/Editor group: a wash in the
+        // theme's primary colour, distinct from the neutral `selected` hover
+        // so "hovered" never reads as "current mode". `color_branch` is that
+        // primary (apple-dark yellow, catppuccin blue, dracula purple …) and
+        // is already what the toolbar's count chips use — `accent` is the
+        // cherry-pick mauve, purple in most themes regardless of the theme.
+        let mode_on = |el: gpui::Stateful<gpui::Div>| {
+            let mut c: gpui::Hsla = rgb(theme().color_branch).into();
+            c.a = if theme().dark { 0.26 } else { 0.18 };
+            el.bg(c)
+        };
 
         // Branch — always enabled; use selected commit if any, else HEAD.
         let branch_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
@@ -698,50 +721,46 @@ impl KagiApp {
                             )
                         },
                     )
-                    // PR mode toggle (GitHub Phase 1c) — just left of Editor.
-                    // Same "shows what it switches TO" rule as the Editor
-                    // button: the pull-request glyph in Graph mode, the
-                    // waypoints "Graph" glyph while PR mode is open. Hidden
-                    // when gh isn't installed (the mode has nothing to show).
+                    // Graph — the default mode; always available.
+                    .child(
+                        make_btn(
+                            "tb-graph-mode",
+                            "Graph",
+                            gpui_component::Icon::default().path("icons/waypoints.svg"),
+                            true,
+                            0,
+                        )
+                        .when(mode == WorkspaceMode::Graph, mode_on)
+                        .on_click(graph_click),
+                    )
+                    .child(div().w(theme::scaled_px(2.0)))
+                    // PRs — hidden when gh isn't installed (nothing to show).
                     .when(pr_mode_on, |el| {
-                        let pr_open = self.pr_mode.is_some();
                         el.child(
                             make_btn(
                                 "tb-pr-mode",
-                                if pr_open { "Graph" } else { "PRs" },
-                                gpui_component::Icon::default().path(if pr_open {
-                                    "icons/waypoints.svg"
-                                } else {
-                                    "icons/git-pull-request.svg"
-                                }),
+                                "PRs",
+                                gpui_component::Icon::default().path("icons/git-pull-request.svg"),
                                 true,
                                 0,
                             )
+                            .when(mode == WorkspaceMode::Prs, mode_on)
                             .on_click(pr_mode_click),
                         )
                         .child(div().w(theme::scaled_px(2.0)))
                     })
-                    // Editor Workspace toggle (T-WS-EDITOR-004) — just left of
-                    // Analyze. Shows what it switches TO (user request): the
-                    // square-pen "Editor" glyph in Graph mode, the waypoints
-                    // "Graph" glyph while the Editor workspace is open. Both
-                    // are embedded lucide SVGs via custom `Icon` paths
-                    // (gpui-component 0.5.1 has no pencil/graph IconName).
-                    .child({
-                        let editor_open = self.editor_workspace.is_some();
+                    // Editor
+                    .child(
                         make_btn(
                             "tb-editor-ws",
-                            if editor_open { "Graph" } else { "Editor" },
-                            gpui_component::Icon::default().path(if editor_open {
-                                "icons/waypoints.svg"
-                            } else {
-                                "icons/square-pen.svg"
-                            }),
+                            "Editor",
+                            gpui_component::Icon::default().path("icons/square-pen.svg"),
                             editor_ws_on,
                             0,
                         )
-                        .on_click(editor_ws_click)
-                    })
+                        .when(mode == WorkspaceMode::Editor, mode_on)
+                        .on_click(editor_ws_click),
+                    )
                     .child(div().w(theme::scaled_px(2.0)))
                     // Analyze / Code Ecosystem (ADR-0119) — read-only hot-spot
                     // analysis; placed just left of Settings.

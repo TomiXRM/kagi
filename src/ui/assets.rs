@@ -29,6 +29,22 @@ const ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../../assets/icons/arrow-up.svg"),
     ),
     (
+        "icons/git-merge.svg",
+        include_bytes!("../../assets/icons/git-merge.svg"),
+    ),
+    (
+        "icons/file-text.svg",
+        include_bytes!("../../assets/icons/file-text.svg"),
+    ),
+    (
+        "icons/message-square.svg",
+        include_bytes!("../../assets/icons/message-square.svg"),
+    ),
+    (
+        "icons/git-compare.svg",
+        include_bytes!("../../assets/icons/git-compare.svg"),
+    ),
+    (
         "icons/cloud.svg",
         include_bytes!("../../assets/icons/cloud.svg"),
     ),

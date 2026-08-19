@@ -26,6 +26,7 @@ pub mod common;
 pub mod conflicts;
 pub mod discard;
 pub mod force_lease;
+pub mod github;
 pub mod history;
 pub mod merge;
 pub mod pull;
@@ -48,6 +49,7 @@ pub use common::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
 pub use conflicts::{ConflictsNote, ConflictsRecovery, ConflictsTitle};
 pub use discard::DiscardNote;
 pub use force_lease::{ForceLeaseNote, ForceLeaseRecovery, ForceLeaseTitle};
+pub use github::{GithubNote, GithubRecovery, GithubTitle};
 pub use history::{HistoryNote, HistoryOp, HistoryRecovery, HistoryTitle};
 pub use merge::{MergeNote, MergeRecovery, MergeTitle};
 pub use pull::{PullNote, PullRecovery, PullTitle};
@@ -88,6 +90,7 @@ pub enum PlanNote {
     RemoteBranch(RemoteBranchNote),
     Reset(ResetNote),
     ForceLease(ForceLeaseNote),
+    Github(GithubNote),
     Rebase(RebaseNote),
 }
 
@@ -117,6 +120,7 @@ impl PlanNote {
             PlanNote::RemoteBranch(n) => n.message_en(),
             PlanNote::Reset(n) => n.message_en(),
             PlanNote::ForceLease(n) => n.message_en(),
+            PlanNote::Github(n) => n.message_en(),
             PlanNote::Rebase(n) => n.message_en(),
         }
     }
@@ -155,6 +159,7 @@ pub enum PlanTitle {
     RemoteBranch(RemoteBranchTitle),
     Reset(ResetTitle),
     ForceLease(ForceLeaseTitle),
+    Github(GithubTitle),
     Rebase(RebaseTitle),
 }
 
@@ -179,6 +184,7 @@ impl PlanTitle {
             PlanTitle::RemoteBranch(t) => t.message_en(),
             PlanTitle::Reset(t) => t.message_en(),
             PlanTitle::ForceLease(t) => t.message_en(),
+            PlanTitle::Github(t) => t.message_en(),
             PlanTitle::Rebase(t) => t.message_en(),
             PlanTitle::Discard {
                 single: Some(path), ..
@@ -232,6 +238,7 @@ impl PlanRecovery {
             RecoveryKind::RemoteBranch(r) => r.message_en(),
             RecoveryKind::Reset(r) => r.message_en(),
             RecoveryKind::ForceLease(r) => r.message_en(),
+            RecoveryKind::Github(r) => r.message_en(),
             RecoveryKind::Rebase(r) => r.message_en(),
             RecoveryKind::Discard => {
                 "This discards your unstaged changes to the selected file(s): \
@@ -266,6 +273,7 @@ pub enum RecoveryKind {
     RemoteBranch(RemoteBranchRecovery),
     Reset(ResetRecovery),
     ForceLease(ForceLeaseRecovery),
+    Github(GithubRecovery),
     Rebase(RebaseRecovery),
 }
 

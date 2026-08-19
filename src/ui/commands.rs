@@ -45,7 +45,7 @@ const AUTO_FETCH_INTERVAL_SECS: u64 = 180;
 use super::context_menu::CommitAction;
 use super::i18n::{self, Lang, Msg};
 use super::theme::{self, theme};
-use super::{BottomTab, EditorPendingIntent, FooterStatus, KagiApp, ToastKind, ToggleBottomPanel};
+use super::{BottomTab, FooterStatus, KagiApp, ToastKind, ToggleBottomPanel};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Actions — one gpui Action per command (1:1, ADR-0029).
@@ -80,6 +80,7 @@ actions!(
         // T-WS-EDITOR-001: Graph ⇄ Editor workspace mode.
         ToggleEditorWorkspace,
         TogglePrMode,
+        ShowGraph,
         // Repository
         Fetch,
         Pull,
@@ -272,6 +273,7 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Command("view.toggleDiffView"),
             MenuNode::Command("view.toggleEditorWorkspace"),
             MenuNode::Command("view.togglePrMode"),
+            MenuNode::Command("view.showGraph"),
             MenuNode::Separator,
             // W9-THEME / W22-I18N: dynamic submenus (active item gets "✓ ").
             MenuNode::Submenu(DynSubmenu::Theme),
@@ -522,8 +524,14 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         id: "view.togglePrMode",
-        label: "Toggle Pull Request Mode",
+        label: "Pull Request Mode",
         keystroke: Some("secondary-shift-p"),
+        dangerous: false,
+    },
+    Command {
+        id: "view.showGraph",
+        label: "Graph Mode",
+        keystroke: Some("secondary-shift-g"),
         dangerous: false,
     },
     Command {
@@ -831,7 +839,10 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         }
 
         // ── View toggles tied to view state ──────────────────────────────
-        "view.toggleCommitDetails" | "view.toggleEditorWorkspace" | "view.togglePrMode" => {
+        "view.toggleCommitDetails"
+        | "view.toggleEditorWorkspace"
+        | "view.togglePrMode"
+        | "view.showGraph" => {
             if has_repo {
                 Enabled
             } else {
@@ -898,6 +909,7 @@ fn action_menu_item(id: &str) -> MenuItem {
         "view.toggleDiffView" => MenuItem::action(label, ToggleDiffView),
         "view.toggleEditorWorkspace" => MenuItem::action(label, ToggleEditorWorkspace),
         "view.togglePrMode" => MenuItem::action(label, TogglePrMode),
+        "view.showGraph" => MenuItem::action(label, ShowGraph),
         // Repository
         "repo.fetch" => MenuItem::action(label, Fetch),
         "repo.pull" => MenuItem::action(label, Pull),
@@ -1134,6 +1146,7 @@ pub fn register_keybindings(cx: &mut App) {
         // against every other `KeyBinding::new` in the app.
         "view.toggleEditorWorkspace" => ToggleEditorWorkspace,
         "view.togglePrMode" => TogglePrMode,
+        "view.showGraph" => ShowGraph,
         "repo.fetch" => Fetch,
         "repo.pull" => Pull,
         "repo.push" => Push,
@@ -1387,24 +1400,13 @@ impl KagiApp {
                     self.close_main_diff();
                 }
             }
-            "view.togglePrMode" => self.toggle_pr_mode(cx),
-            "view.toggleEditorWorkspace" => {
-                // T-WS-EDITOR-002 §5: don't silently discard dirty buffers —
-                // this dispatch is shared by the View menu item, Cmd-Shift-E,
-                // and the header toolbar button (all three route through
-                // `handle_menu_command`), so guarding here covers all three.
-                // `any_dirty` includes backgrounded editor tabs.
-                if let Some(ev) = self.editor_workspace.clone() {
-                    if ev.read(cx).any_dirty() {
-                        self.open_editor_dirty_guard(EditorPendingIntent::Close, cx);
-                    } else {
-                        self.close_editor_workspace();
-                    }
-                } else {
-                    self.open_editor_workspace(cx);
-                }
-                klog!("menu: editor_workspace={}", self.editor_workspace.is_some());
-            }
+            // ── Workspace modes: Graph | PRs | Editor, mutually exclusive ──
+            // Each button names the mode it selects (not what it toggles to)
+            // and highlights while active — two morphing toggles could both
+            // read "Graph" at once, which is what made this confusing.
+            "view.showGraph" => self.show_graph_mode(cx),
+            "view.togglePrMode" => self.show_pr_mode(cx),
+            "view.toggleEditorWorkspace" => self.show_editor_mode(cx),
 
             // ── Repository ──────────────────────────────────────────
             "repo.fetch" => self.menu_fetch(cx),

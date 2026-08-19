@@ -39,6 +39,7 @@ pub mod file_history;
 mod file_menu;
 mod fonts;
 mod github;
+pub mod pr_conversation;
 pub mod pr_mode;
 pub use kagi_ui_core::file_tree; // ADR-0121: was a shim file
 mod graph_solo;
@@ -84,6 +85,7 @@ pub mod types;
 pub mod view_models;
 pub mod watcher;
 pub mod workspace;
+pub mod workspace_mode;
 pub mod worktree_menu;
 
 pub use compare_pane::ComparePane;
@@ -3022,6 +3024,8 @@ impl KagiApp {
             self.start_cherry_pick(cx);
         } else if self.revert_modal().is_some() {
             self.start_revert(cx);
+        } else if self.pr_merge_modal().is_some() {
+            self.start_pr_merge(cx);
         } else if self.stash_apply_modal().is_some() {
             self.confirm_stash_apply(cx);
         } else if self.stash_push_modal().is_some() {
@@ -3094,6 +3098,8 @@ impl KagiApp {
             self.cancel_amend_modal();
         } else if self.undo_modal().is_some() {
             self.cancel_undo_modal();
+        } else if self.pr_merge_modal().is_some() {
+            self.cancel_pr_merge_modal();
         } else if self.cherry_pick_modal().is_some() {
             self.cancel_cherry_pick_modal();
         } else if self.revert_modal().is_some() {

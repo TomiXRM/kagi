@@ -12,10 +12,10 @@ use super::super::modals::{
     ConflictContinuePlanModal, CreateBranchModal, CreateTagModal, CreateWorktreeModal,
     DeleteBranchModal, DeleteRemoteBranchModal, DiscardModal, EditorDeleteConfirmModal,
     EditorDirtyGuardModal, EditorFsPromptModal, ForceLeasePushModal, HistoryPlanModal,
-    MergePlanModal, PopPlanModal, PullPlanModal, PushPlanModal, RebaseCurrentOntoModal,
-    RenameBranchModal, ResetCurrentModal, RevertModal, SetUpstreamModal, StashApplyModal,
-    StashDropModal, StashPushModal, SwitchToLatestPlanModal, TrackingCheckoutPlanModal,
-    UndoPlanModal, UnlockWorktreeModal,
+    MergePlanModal, PopPlanModal, PrMergeModal, PullPlanModal, PushPlanModal,
+    RebaseCurrentOntoModal, RenameBranchModal, ResetCurrentModal, RevertModal, SetUpstreamModal,
+    StashApplyModal, StashDropModal, StashPushModal, SwitchToLatestPlanModal,
+    TrackingCheckoutPlanModal, UndoPlanModal, UnlockWorktreeModal,
 };
 use super::super::KagiApp;
 use gpui::{AppContext as _, Context, Window};
@@ -120,6 +120,23 @@ impl KagiApp {
         }
     }
     #[inline]
+    pub fn pr_merge_modal(&self) -> Option<&PrMergeModal> {
+        match &self.active_modal {
+            Some(ActiveModal::PrMerge(m)) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn set_pr_merge_modal(&mut self, m: PrMergeModal) {
+        self.active_modal = Some(ActiveModal::PrMerge(m));
+    }
+
+    pub fn clear_pr_merge_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::PrMerge(_))) {
+            self.active_modal = None;
+        }
+    }
+
     pub fn stash_drop_modal(&self) -> Option<&StashDropModal> {
         match &self.active_modal {
             Some(ActiveModal::StashDrop(m)) => Some(m),

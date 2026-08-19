@@ -156,6 +156,28 @@ pub(crate) fn render_stash_drop_modal(
     )
 }
 
+/// PR-merge confirmation overlay (GitHub Phase 2). Same plan wrapper as every
+/// other write op — the blockers/warnings/recovery the user sees are the
+/// `plan_pr_merge` output.
+pub(crate) fn render_pr_merge_modal(
+    modal: PrMergeModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    render_plan_modal_wrapper_styled(
+        modal.plan,
+        modal.error,
+        Msg::PrModeMerge.t(),
+        None,
+        Some((
+            ModalIcon::Path("icons/git-pull-request.svg"),
+            theme().color_success,
+        )),
+        |this, _cx| this.cancel_pr_merge_modal(),
+        |this, cx| this.start_pr_merge(cx),
+        cx,
+    )
+}
+
 /// Unlock-worktree confirmation overlay — the plan warning carries the
 /// recorded lock reason; confirming removes the lock (admin-only, never
 /// touches any working tree).

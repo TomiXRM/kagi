@@ -765,6 +765,47 @@ mod tests {
         assert_eq!(l.right, RightPane::Inspector);
     }
 
+    /// The contract `KagiApp::leave_takeovers` encodes. Each mode button has to
+    /// close everything that outranks the pane it is selecting, or the click
+    /// changes nothing on screen while the toolbar lights that button up as the
+    /// active mode (user report: Graph/PRs/Editor were all dead while Branch
+    /// Cleanup was open). If this precedence changes, that list has to change
+    /// with it — this test is what makes that fail loudly.
+    #[test]
+    fn a_mode_is_only_visible_once_everything_above_it_is_closed() {
+        let open_all = WorkspaceInputs {
+            file_history_open: true,
+            ecosystem_open: true,
+            branch_cleanup_open: true,
+            pr_mode: true,
+            editor_mode: true,
+            ..base()
+        };
+        // PR mode is invisible until all three takeovers above it are closed.
+        assert_eq!(resolve_workspace(&open_all).center, CenterPane::FileHistory);
+        let i = WorkspaceInputs {
+            file_history_open: false,
+            ecosystem_open: false,
+            ..open_all
+        };
+        assert_eq!(
+            resolve_workspace(&i).center,
+            CenterPane::BranchCleanup,
+            "Branch Cleanup outranks PR mode — the one the mode buttons forgot"
+        );
+        let i = WorkspaceInputs {
+            branch_cleanup_open: false,
+            ..i
+        };
+        assert_eq!(resolve_workspace(&i).center, CenterPane::PrMode);
+        // And Editor needs PR mode closed on top of that.
+        let i = WorkspaceInputs {
+            pr_mode: false,
+            ..i
+        };
+        assert_eq!(resolve_workspace(&i).center, CenterPane::Editor);
+    }
+
     #[test]
     fn center_precedence_chain() {
         // FileHistory beats everything.

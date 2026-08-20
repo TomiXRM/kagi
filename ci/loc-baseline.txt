@@ -14,7 +14,7 @@ crates/kagi-ui-core/src/i18n/mod.rs 1996
 crates/kagi-ui-core/src/theme.rs 1992
 crates/kagi-ui-editor/src/lib.rs 3205
 src/ui/blocking_ops.rs 906
-src/ui/branch_cleanup.rs 805
+src/ui/branch_cleanup.rs 811
 src/ui/branch_menu.rs 915
 src/ui/commands.rs 1987
 src/ui/commit_panel_render.rs 1295
@@ -32,4 +32,4 @@ src/ui/pr_mode.rs 1799
 src/ui/render.rs 864
 src/ui/sidebar.rs 1967
 src/ui/tabs.rs 1155
-src/ui/workspace.rs 1006
+src/ui/workspace.rs 1047

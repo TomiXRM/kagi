@@ -48,6 +48,12 @@ impl KagiApp {
         if self.repo_path.is_none() {
             return;
         }
+        // Same reason as Analyze: File History and Analyze both outrank the
+        // cleanup table, so opening it under one of them looked like nothing
+        // happened.
+        self.close_file_history();
+        self.close_ecosystem_view();
+        self.pr_mode = None;
         self.branch_cleanup_open = true;
         klog!("branch-cleanup: opened");
         cx.notify();

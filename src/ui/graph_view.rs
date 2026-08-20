@@ -31,6 +31,7 @@ use gpui::{canvas, point, px, App, Bounds, Canvas, PathBuilder, Pixels, Window};
 
 use kagi::graph::{EdgeKind, GraphEdge};
 
+use crate::ui::graph_squash::GHOST_COLOR;
 use crate::ui::theme::{self, theme};
 
 // ──────────────────────────────────────────────────────────────
@@ -227,6 +228,35 @@ fn draw_shift(builder: &mut PathBuilder, x_from: f32, y_top: f32, x_to: f32, y_b
 ///   When true a thin horizontal connector line is drawn from lane 0's left
 ///   edge to the node centre (W2-GRAPH item 5: label→node connection).
 #[allow(clippy::too_many_arguments)]
+/// Paint a vertical dashed segment. Used for ghost connectors (ADR-0139),
+/// which stand for patch-id equivalence rather than a parent link — a solid
+/// line there would claim a relationship git does not have.
+///
+/// Each dash is its own path: `PathBuilder::stroke` is used for one stroke at
+/// a time everywhere else in this file, and four short paints per row is
+/// cheaper than reasoning about multi-subpath strokes.
+fn paint_dashed_vertical(
+    window: &mut Window,
+    x: f32,
+    y_top: f32,
+    y_bottom: f32,
+    color: gpui::Hsla,
+) {
+    let dash = theme::scaled(4.0);
+    let gap = theme::scaled(3.0);
+    let mut y = y_top;
+    while y < y_bottom {
+        let y2 = (y + dash).min(y_bottom);
+        let mut b = PathBuilder::stroke(theme::scaled_px(EDGE_W));
+        b.move_to(point(px(x), px(y)));
+        b.line_to(point(px(x), px(y2)));
+        if let Ok(path) = b.build() {
+            window.paint_path(path, color);
+        }
+        y = y2 + gap;
+    }
+}
+
 pub fn graph_canvas(
     node_lane: usize,
     // Stable colour index for this node's lane (carried with the branch). Used
@@ -249,6 +279,13 @@ pub fn graph_canvas(
     stash_lanes: Vec<usize>,
 ) -> Canvas<()> {
     let stash_color: gpui::Hsla = gpui::rgb(theme().color_warning).into();
+    // ADR-0139: ghost connectors are drawn back, not loud — the real history is
+    // the thing being read; this only explains a gap in it.
+    let ghost_color: gpui::Hsla = {
+        let mut c: gpui::Hsla = gpui::rgb(theme().text_muted).into();
+        c.a = 0.55;
+        c
+    };
     let is_stash_lane = move |lane: usize| stash_lanes.contains(&lane);
     canvas(
         // prepaint: nothing to measure
@@ -284,14 +321,43 @@ pub fn graph_canvas(
 
                 // ── Draw edges (mask does the clipping) ─────────
                 for edge in &edges {
+                    // A ghost connector is marked on the edge, not the lane: it
+                    // deliberately reuses a real column (the tip's dead one), so
+                    // the stash-style per-lane test cannot express it.
+                    let ghost = edge.color == GHOST_COLOR;
                     // Colour comes from the edge's carried (branch-stable) colour
                     // index — not the column index — so a branch keeps its colour
                     // even when compaction shifts its lane.
-                    let color = if is_stash_lane(edge.from_lane) || is_stash_lane(edge.to_lane) {
+                    let color = if ghost {
+                        ghost_color
+                    } else if is_stash_lane(edge.from_lane) || is_stash_lane(edge.to_lane) {
                         stash_color
                     } else {
                         lane_color(edge.color)
                     };
+
+                    // Every straight run of a connector is dashed, so it never
+                    // reads as a parent link. Its two end arcs stay solid — a
+                    // dashed curve is not worth the arc-length maths — but keep
+                    // the muted colour.
+                    if ghost {
+                        let seg = match edge.kind {
+                            EdgeKind::Pass if edge.from_lane == edge.to_lane => {
+                                Some((lane_x(edge.from_lane), oy, oy + row_h))
+                            }
+                            EdgeKind::IntoNode if edge.from_lane == node_lane => {
+                                Some((lane_x(edge.from_lane), oy, mid_y))
+                            }
+                            EdgeKind::OutOfNode if edge.to_lane == node_lane => {
+                                Some((lane_x(edge.to_lane), mid_y, oy + row_h))
+                            }
+                            _ => None,
+                        };
+                        if let Some((x, y0, y1)) = seg {
+                            paint_dashed_vertical(window, x, y0, y1, color);
+                            continue;
+                        }
+                    }
 
                     let mut builder = PathBuilder::stroke(theme::scaled_px(EDGE_W));
 

@@ -270,6 +270,30 @@ pub struct CommitRow {
     pub is_merge: bool,
 }
 
+impl CommitRow {
+    /// A blank row carrying only an id — for tests that exercise graph-edge
+    /// post-passes (`graph_squash`) and care about lanes, not display strings.
+    #[cfg(test)]
+    pub fn empty_for_test(id: CommitId) -> Self {
+        Self {
+            id,
+            short_id: SharedString::default(),
+            summary: SharedString::default(),
+            author: SharedString::default(),
+            author_email: String::new(),
+            date: SharedString::default(),
+            badges: Vec::new(),
+            lane: 0,
+            node_color: 0,
+            edges: Vec::new(),
+            lane_count: 1,
+            parents: Vec::new(),
+            is_head: false,
+            is_merge: false,
+        }
+    }
+}
+
 /// Build the full list of [`CommitRow`]s from a snapshot, pre-computing all
 /// display strings.  This is called once when the snapshot is ingested; the
 /// render closure only clones SharedStrings.

@@ -1,4 +1,4 @@
-//! Squash-merge detection by patch-id equivalence.
+//! Squash-merge detection by change equivalence.
 //!
 //! Two entry points over the same idea:
 //!
@@ -9,6 +9,19 @@
 //!   connectors. Running the single-branch scan per branch would be N×M tree
 //!   diffs; this inverts the loop into one patch-id index over the candidate
 //!   window plus one diff per branch, i.e. N+M.
+//!
+//! # Why patch-id is a filter and not the answer
+//!
+//! `git patch-id` **strips whitespace**. Two diffs that differ only in
+//! indentation hash the same — verified: indenting a line by four spaces and
+//! by two tabs both produce patch-id `62d419e8…`. In Python that is a
+//! behaviour change, and `git branch -d` correctly refuses to delete such a
+//! branch. A tool whose reason to exist is being safer than git must not be
+//! looser than git on an irreversible delete that has no `-D` escape hatch.
+//!
+//! So patch-id is used only as a cheap index, and every hit is then confirmed
+//! byte-exactly by [`exact_change_key`]. The confirmation runs once per hit,
+//! not once per candidate, so it costs nothing measurable.
 
 use std::collections::HashMap;
 
@@ -24,23 +37,67 @@ use git2::Repository;
 /// forked years ago.
 const SQUASH_SCAN_LIMIT: usize = 500;
 
-/// The diff a whole branch introduces, as a patch-id: `merge_base(a, tip) → tip`.
-fn combined_patch_id(
-    repo: &Repository,
-    base: git2::Oid,
-    tip: git2::Oid,
-) -> Result<git2::Oid, git2::Error> {
-    let base_tree = repo.find_commit(base)?.tree()?;
-    let tip_tree = repo.find_commit(tip)?.tree()?;
-    repo.diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), None)?
-        .patchid(None)
+/// Hard bound on the revwalk itself. `SQUASH_SCAN_LIMIT` only counts the
+/// commits that reach the diff, so a filter that rejects most of them would
+/// otherwise let the traversal run to the root of the history for free.
+const SQUASH_WALK_LIMIT: usize = 20_000;
+
+/// The tree-to-tree diff between two commits.
+fn tree_diff<'r>(
+    repo: &'r Repository,
+    from: git2::Oid,
+    to: git2::Oid,
+) -> Result<git2::Diff<'r>, git2::Error> {
+    let from_tree = repo.find_commit(from)?.tree()?;
+    let to_tree = repo.find_commit(to)?.tree()?;
+    repo.diff_tree_to_tree(Some(&from_tree), Some(&to_tree), None)
 }
 
-/// The diff one single-parent commit introduces, as a patch-id.
-fn commit_patch_id(repo: &Repository, commit: &git2::Commit) -> Result<git2::Oid, git2::Error> {
-    let parent_tree = commit.parent(0)?.tree()?;
-    repo.diff_tree_to_tree(Some(&parent_tree), Some(&commit.tree()?), None)?
-        .patchid(None)
+/// Patch-id of a diff, refusing an **empty** one.
+///
+/// An empty diff hashes to a fixed value, so without this guard every net-zero
+/// branch (added a file then removed it; experimented then reverted) matches
+/// every `--allow-empty` CI-retrigger commit — and each other. Two unrelated
+/// branches were observed being declared squash-merged by the same unrelated
+/// commit. Nothing is lost by deleting such a branch, but the claim is false
+/// and the named squash commit is nonsense, so refuse to make it.
+fn patch_id_of(diff: &git2::Diff) -> Result<git2::Oid, git2::Error> {
+    if diff.deltas().len() == 0 {
+        return Err(git2::Error::from_str(
+            "empty diff has no meaningful patch-id",
+        ));
+    }
+    diff.patchid(None)
+}
+
+/// A byte-exact fingerprint of the change a diff makes.
+///
+/// Deliberately *not* the raw patch text: that carries `index abc..def` blob
+/// OIDs and hunk line numbers, which differ whenever the target branch moved
+/// between the fork point and the squash — the normal case. This keeps what
+/// patch-id keeps (paths, and every `+`/`-`/context line) and drops what it
+/// drops, minus the one thing that makes patch-id unsafe here: it does not
+/// strip whitespace.
+fn exact_change_key(diff: &git2::Diff) -> Result<Vec<u8>, git2::Error> {
+    let mut key: Vec<u8> = Vec::new();
+    for delta in diff.deltas() {
+        for file in [delta.old_file(), delta.new_file()] {
+            if let Some(p) = file.path() {
+                key.extend_from_slice(p.to_string_lossy().as_bytes());
+            }
+            key.push(0);
+        }
+    }
+    let mut lines: Vec<u8> = Vec::new();
+    diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+        if matches!(line.origin(), '+' | '-' | ' ') {
+            lines.push(line.origin() as u8);
+            lines.extend_from_slice(line.content());
+        }
+        true
+    })?;
+    key.extend_from_slice(&lines);
+    Ok(key)
 }
 
 /// Whether `tip` was **squash-merged** into `head`.
@@ -81,29 +138,40 @@ fn squash_merged_as_inner(
         // Already an ancestor — the plain reachability check covers this.
         return Ok(None);
     }
-    let tip_commit = repo.find_commit(tip_oid)?;
-    let want = combined_patch_id(repo, base, tip_oid)?;
+    let branch_diff = tree_diff(repo, base, tip_oid)?;
+    let want = patch_id_of(&branch_diff)?;
+    let want_exact = exact_change_key(&branch_diff)?;
 
-    // The squash commit is created after the branch's last commit, so anything
-    // older cannot be it. Cheap prune before the expensive per-commit diffs.
-    let earliest = tip_commit.time().seconds();
-
+    // `hide(base)` already restricts the walk to commits the branch does not
+    // contain, so no commit from before the fork point can be reached — which
+    // is why this needs no timestamp prune. It used to have one, and it made
+    // the whole feature stop working after a `git commit --amend` or a rebase
+    // pushed the tip's committer time past the squash commit's.
     let mut walk = repo.revwalk()?;
     walk.push(head_oid)?;
     walk.hide(base)?;
     let mut scanned = 0usize;
+    let mut visited = 0usize;
     for oid in walk {
         let oid = oid?;
-        if scanned >= SQUASH_SCAN_LIMIT {
+        // Two bounds: `scanned` caps the expensive diffs, `visited` caps the
+        // walk itself. Without the second, a filter that rejects nearly
+        // everything lets the traversal run to the root of a million-commit
+        // history for free.
+        if scanned >= SQUASH_SCAN_LIMIT || visited >= SQUASH_WALK_LIMIT {
             break;
         }
+        visited += 1;
         let commit = repo.find_commit(oid)?;
         // Merge commits have no single "the change it introduces".
-        if commit.parent_count() != 1 || commit.time().seconds() < earliest {
+        if commit.parent_count() != 1 {
             continue;
         }
         scanned += 1;
-        if commit_patch_id(repo, &commit)? == want {
+        let candidate = tree_diff(repo, commit.parent(0)?.id(), oid)?;
+        // patch-id first (cheap, whitespace-blind), then the byte-exact
+        // confirmation that makes this safe to gate a delete on.
+        if patch_id_of(&candidate)? == want && exact_change_key(&candidate)? == want_exact {
             return Ok(Some(oid));
         }
     }
@@ -162,35 +230,38 @@ pub fn collect_squash_links(repo: &Repository) -> Result<Vec<SquashLink>, git2::
         return Ok(Vec::new());
     }
 
-    // The oldest candidate bounds the walk: a squash commit is always created
-    // after the work it replays, so nothing older than that can be one.
-    let oldest = candidates
-        .iter()
-        .filter_map(|(_, tip)| repo.find_commit(*tip).ok().map(|c| c.time().seconds()))
-        .min()
-        .unwrap_or(i64::MIN);
-
-    // patch-id → (commit, time). Newest wins: the revwalk yields newest first,
-    // and a re-applied change should point at the most recent copy.
-    let mut index: HashMap<git2::Oid, (git2::Oid, i64)> = HashMap::new();
+    // patch-id → squash commit. Newest wins: the revwalk yields newest first,
+    // and a change applied more than once should point at the latest copy.
+    //
+    // No timestamp prune here either — see `squash_merged_as_inner`. This walk
+    // cannot `hide(base)` (each candidate has its own base), so the ancestry
+    // check at accept time below is what keeps a pre-fork commit from
+    // matching.
+    let mut index: HashMap<git2::Oid, git2::Oid> = HashMap::new();
     let mut walk = repo.revwalk()?;
     walk.push(head_oid)?;
     let mut scanned = 0usize;
+    let mut visited = 0usize;
     for oid in walk {
-        if scanned >= SQUASH_SCAN_LIMIT {
+        if scanned >= SQUASH_SCAN_LIMIT || visited >= SQUASH_WALK_LIMIT {
             break;
         }
+        visited += 1;
         let Ok(commit) = repo.find_commit(oid?) else {
             continue;
         };
-        if commit.parent_count() != 1 || commit.time().seconds() < oldest {
+        if commit.parent_count() != 1 {
             continue;
         }
         scanned += 1;
-        if let Ok(pid) = commit_patch_id(repo, &commit) {
-            index
-                .entry(pid)
-                .or_insert((commit.id(), commit.time().seconds()));
+        let Ok(parent) = commit.parent(0) else {
+            continue;
+        };
+        let Ok(diff) = tree_diff(repo, parent.id(), commit.id()) else {
+            continue;
+        };
+        if let Ok(pid) = patch_id_of(&diff) {
+            index.entry(pid).or_insert(commit.id());
         }
     }
 
@@ -199,21 +270,37 @@ pub fn collect_squash_links(repo: &Repository) -> Result<Vec<SquashLink>, git2::
         let Ok(base) = repo.merge_base(head_oid, tip) else {
             continue;
         };
-        let Ok(want) = combined_patch_id(repo, base, tip) else {
+        let Ok(branch_diff) = tree_diff(repo, base, tip) else {
             continue;
         };
-        let tip_time = repo
-            .find_commit(tip)
-            .map(|c| c.time().seconds())
-            .unwrap_or(0);
-        if let Some((squash, time)) = index.get(&want) {
-            if *time >= tip_time {
-                links.push(SquashLink {
-                    branch,
-                    tip: tip.to_string(),
-                    squash: squash.to_string(),
-                });
-            }
+        let (Ok(want), Ok(want_exact)) =
+            (patch_id_of(&branch_diff), exact_change_key(&branch_diff))
+        else {
+            continue;
+        };
+        let Some(&squash) = index.get(&want) else {
+            continue;
+        };
+        // The squash must be *newer* than the fork point. Reachability says so
+        // exactly; a timestamp comparison only approximates it, and gets the
+        // answer wrong after an amend, a rebase, or clock skew between
+        // machines.
+        if repo.graph_descendant_of(base, squash).unwrap_or(true) {
+            continue;
+        }
+        // Confirm byte-exactly before claiming these are the same change.
+        let Ok(parent) = repo.find_commit(squash).and_then(|c| c.parent(0)) else {
+            continue;
+        };
+        let matches_exactly = tree_diff(repo, parent.id(), squash)
+            .and_then(|d| exact_change_key(&d))
+            .is_ok_and(|k| k == want_exact);
+        if matches_exactly {
+            links.push(SquashLink {
+                branch,
+                tip: tip.to_string(),
+                squash: squash.to_string(),
+            });
         }
     }
     Ok(links)

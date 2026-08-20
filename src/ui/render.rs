@@ -81,7 +81,7 @@ impl KagiApp {
     ) -> Option<gpui::AnyElement> {
         let detail = self.active_view.details.get(state.row_index)?;
         let target = self.commit_id_for_row(state.row_index)?;
-        let ctx = self.menu_context(state.row_index)?;
+        let ctx = self.menu_context_at(state.row_index, state.is_ancestor_of_head)?;
         let groups = context_menu::build_commit_menu(&ctx);
         let title = detail.full_message.as_ref().lines().next().unwrap_or("");
         let header = context_menu::short_title_header(detail.full_sha.as_ref(), title);
@@ -154,6 +154,15 @@ impl Render for KagiApp {
             let h = f32::from(b.size.height).round().max(0.0) as u32;
             super::LAST_WIN_W.store(w, std::sync::atomic::Ordering::Relaxed);
             super::LAST_WIN_H.store(h, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        // The per-tab view was replaced (reload, tab switch, load-more, an
+        // external git change): re-arm the background scans that decorate it.
+        // Both are generation-guarded no-ops when nothing changed.
+        if self.scans_stale {
+            self.scans_stale = false;
+            self.start_branch_cleanup_scan(cx);
+            self.start_squash_link_scan(cx);
         }
 
         // W27-UIPOLISH: apply the global UI zoom by scaling the window's rem

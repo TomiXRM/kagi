@@ -466,24 +466,18 @@ fn highlight_side_rows(rows: &[SideRow], path: &std::path::Path) -> Vec<RowHl> {
     let rope = Rope::from_str(&combined);
     highlighter.update(None, &rope, None);
     let hl_theme = theme::highlight_theme(theme::theme());
-    let all_styles = highlighter.styles(&(0..combined.len()), &hl_theme);
+    let mut all_styles = highlighter.styles(&(0..combined.len()), &hl_theme);
 
-    for k in 0..line_offsets.len() {
-        let (row_i, start) = line_offsets[k];
-        let end = if k + 1 < line_offsets.len() {
-            line_offsets[k + 1].1
-        } else {
-            combined.len()
-        };
-        let content_end = end.saturating_sub(1); // strip the \n
-        for (range, style) in &all_styles {
-            let s0 = range.start.max(start);
-            let s1 = range.end.min(content_end);
-            if s0 < s1 {
-                out[row_i].push((s0 - start..s1 - start, *style));
-            }
-        }
-    }
+    // Shared with the diff pane — see `distribute_highlights` for why the
+    // obvious nested loop is not usable here. No sigil on these rows, so the
+    // local offset is 0.
+    super::diff_view::distribute_highlights(
+        &mut all_styles,
+        &line_offsets,
+        combined.len(),
+        0,
+        |row_i, row_highlights| out[row_i] = row_highlights,
+    );
     out
 }
 

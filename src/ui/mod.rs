@@ -1284,6 +1284,10 @@ pub struct KagiApp {
     /// graph's ghost connectors. A result whose token no longer matches is
     /// dropped — its row indices belong to a graph that has been rebuilt.
     pub squash_gen: u64,
+    /// Set by `apply_tab_view`, cleared by the next `render`: the per-tab view
+    /// was replaced, so the background scans that decorate it (Branch Cleanup
+    /// rows, squash ghost connectors) need re-arming. See `apply_tab_view`.
+    pub scans_stale: bool,
     /// ADR-0119: cached completed mine so reopening the Ecosystem view reuses
     /// the slow `git log` scan. Invalidated on reload / repo switch.
     pub ecosystem_cache: ecosystem::EcosystemCache,
@@ -1479,6 +1483,7 @@ impl KagiApp {
             cleanup_scroll: UniformListScrollHandle::new(),
             cleanup_gen: 0,
             squash_gen: 0,
+            scans_stale: true,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,
@@ -1602,6 +1607,7 @@ impl KagiApp {
             cleanup_scroll: UniformListScrollHandle::new(),
             cleanup_gen: 0,
             squash_gen: 0,
+            scans_stale: true,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,
@@ -1645,8 +1651,6 @@ impl KagiApp {
         // for it. Every other case (post-operation reload, tab switch) is
         // already covered by `reload_checked`'s call — this one is cheap and
         // generation-guarded, so the redundant call there is harmless.
-        self.start_branch_cleanup_scan(cx);
-        self.start_squash_link_scan(cx);
     }
 
     /// Detect (or clear) Conflict Mode for the currently-open repository.
@@ -2819,6 +2823,7 @@ impl KagiApp {
         self.commit_menu = Some(CommitMenuState {
             row_index,
             position,
+            is_ancestor_of_head: self.compute_is_ancestor_of_head(row_index),
         });
         klog!("context-menu: open row={}", row_index);
         self.log_commit_menu(row_index);
@@ -2857,18 +2862,35 @@ impl KagiApp {
             })
     }
 
-    fn menu_context(&self, row_index: usize) -> Option<MenuContext> {
-        let row = self.active_view.rows.get(row_index)?;
-        let target = self.commit_id_for_row(row_index)?;
-        let is_ancestor_of_head = if row.is_head {
-            true
-        } else {
-            self.repo_path
-                .as_ref()
-                .and_then(|repo_path| kagi_git::Backend::open(repo_path).ok())
-                .and_then(|repo| repo.is_ancestor_of_head(&target).ok())
-                .unwrap_or(false)
+    /// Is this row's commit reachable from HEAD? Opens the repo and walks the
+    /// ancestry, so callers that render every frame must not ask again — see
+    /// `CommitMenuState::is_ancestor_of_head`.
+    pub(crate) fn compute_is_ancestor_of_head(&self, row_index: usize) -> bool {
+        let Some(row) = self.active_view.rows.get(row_index) else {
+            return false;
         };
+        if row.is_head {
+            return true;
+        }
+        let Some(target) = self.commit_id_for_row(row_index) else {
+            return false;
+        };
+        self.repo_path
+            .as_ref()
+            .and_then(|repo_path| kagi_git::Backend::open(repo_path).ok())
+            .and_then(|repo| repo.is_ancestor_of_head(&target).ok())
+            .unwrap_or(false)
+    }
+
+    fn menu_context(&self, row_index: usize) -> Option<MenuContext> {
+        let is_ancestor_of_head = self.compute_is_ancestor_of_head(row_index);
+        self.menu_context_at(row_index, is_ancestor_of_head)
+    }
+
+    /// `menu_context` with the ancestry answer supplied — the render path uses
+    /// this so it does not re-walk the graph on every frame.
+    fn menu_context_at(&self, row_index: usize, is_ancestor_of_head: bool) -> Option<MenuContext> {
+        let row = self.active_view.rows.get(row_index)?;
 
         Some(MenuContext {
             is_head: row.is_head,

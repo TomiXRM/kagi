@@ -234,6 +234,14 @@ impl KagiApp {
         // T-PERF-RENDER-002: a fresh view may change branches/tags/stashes/
         // worktrees, so invalidate the sidebar-rows cache fingerprint.
         self.view_epoch = self.view_epoch.wrapping_add(1);
+        // The background scans write into `active_view` (cleanup rows, squash
+        // ghost edges) and a fresh view has neither — `build_tab_view` copies
+        // `snap.cleanup_rows`, which the snapshot always leaves empty. Every
+        // apply therefore erases whatever the last scan produced. Flagging it
+        // here rather than at the call sites means no future apply site can
+        // forget; `render` re-arms the scans on the next frame. (This method
+        // has no `cx`, and one of its callers runs before a `cx` exists.)
+        self.scans_stale = true;
 
         // Tie a worktree tab's colour to its WIP-row colour: the WIP row uses
         // lane_color(rank-in-worktrees-list), so record the same rank on the tab.

@@ -161,7 +161,8 @@ fn test_execute_overwrites_remote_after_amend() {
     let new_local_sha = head_sha(&r.local);
 
     let repo = Repository::open(&r.local).expect("open local");
-    execute_force_with_lease_push(&repo, &r.local).expect("execute failed");
+    let plan = plan_force_with_lease_push(&repo).expect("plan");
+    execute_force_with_lease_push(&repo, &r.local, &plan).expect("execute failed");
 
     assert_eq!(
         remote_head_sha(&r.remote, "main"),
@@ -188,7 +189,8 @@ fn test_execute_rejects_when_remote_moved_since_last_fetch() {
     git(&r.local, &["commit", "-qam", "--amend", "--no-edit"]);
 
     let repo = Repository::open(&r.local).expect("open local");
-    let result = execute_force_with_lease_push(&repo, &r.local);
+    let plan = plan_force_with_lease_push(&repo).expect("plan");
+    let result = execute_force_with_lease_push(&repo, &r.local, &plan);
 
     assert!(
         result.is_err(),
@@ -198,5 +200,45 @@ fn test_execute_rejects_when_remote_moved_since_last_fetch() {
         remote_head_sha(&r.remote, "main"),
         concurrent_sha,
         "the concurrent change on the remote must survive the rejected push"
+    );
+}
+
+/// The bug this guard exists for: kagi's own auto-fetch ticker updates
+/// `refs/remotes/origin/main` in the background. Execute used to re-read that
+/// ref, so a colleague's push that landed while the confirm modal was open got
+/// fetched, adopted as the new lease, and then overwritten — with the plan
+/// still displaying the old value. The preflight cannot catch it: it compares
+/// local HEAD, which a fetch does not move.
+#[test]
+fn a_fetch_between_plan_and_execute_does_not_refresh_the_lease() {
+    let r = setup();
+
+    // Plan while the remote is still where the user can see it.
+    write_file(&r.local, "base.txt", "base amended locally\n");
+    git(&r.local, &["add", "-A"]);
+    git(&r.local, &["commit", "-qam", "--amend", "--no-edit"]);
+    let repo = Repository::open(&r.local).expect("open local");
+    let plan = plan_force_with_lease_push(&repo).expect("plan");
+    assert!(plan.blockers.is_empty(), "plan should be executable");
+
+    // A colleague pushes, and kagi's auto-fetch picks it up before the user
+    // presses confirm.
+    write_file(&r.other, "other.txt", "other\n");
+    git(&r.other, &["add", "-A"]);
+    git(&r.other, &["commit", "-qm", "concurrent change"]);
+    git(&r.other, &["push", "-q", "origin", "main"]);
+    let concurrent_sha = remote_head_sha(&r.remote, "main");
+    git(&r.local, &["fetch", "-q", "origin"]);
+
+    let result = execute_force_with_lease_push(&repo, &r.local, &plan);
+
+    assert!(
+        result.is_err(),
+        "the lease must still be the plan's value, so the push is rejected"
+    );
+    assert_eq!(
+        remote_head_sha(&r.remote, "main"),
+        concurrent_sha,
+        "the colleague's commit must survive"
     );
 }

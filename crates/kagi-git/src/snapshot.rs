@@ -90,7 +90,10 @@ pub fn snapshot(repo: &mut Repository, commit_limit: usize) -> Result<RepoSnapsh
     let remote_branches = collect_remote_branches(repo)?;
     let tags = collect_tags(repo)?;
     let stashes = collect_stashes(repo)?;
-    let worktrees = collect_worktrees(repo)?;
+    // `status` is the *current* worktree's status, already paid for above —
+    // handing it over saves `collect_worktrees` from scanning that tree twice
+    // (~150ms on a large repo).
+    let worktrees = collect_worktrees(repo, &status)?;
     // ADR-0128 follow-up (user report 2026-07-22): cleanup classification used
     // to ride along with the snapshot, but it walks main's first-parent
     // history plus one `merge_base` per branch — on repos with many
@@ -338,7 +341,10 @@ fn collect_stashes(repo: &mut Repository) -> Result<Vec<Stash>, GitError> {
 }
 
 /// Collect the primary worktree plus registered linked worktrees.
-fn collect_worktrees(repo: &Repository) -> Result<Vec<Worktree>, GitError> {
+fn collect_worktrees(
+    repo: &Repository,
+    current_status: &WorkingTreeStatus,
+) -> Result<Vec<Worktree>, GitError> {
     let current_path = repo.workdir().map(|p| p.to_path_buf()).unwrap_or_default();
     let main_path = if repo.is_worktree() {
         repo.commondir()
@@ -356,14 +362,13 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<Worktree>, GitError> {
     let current_canon = canon(&current_path);
 
     let mut worktrees = Vec::new();
-    let main_branch = worktree_branch_name(&main_path);
     worktrees.push(Worktree {
         name: "main".to_string(),
-        path: main_path.clone(),
-        branch: main_branch,
         is_current: canon(&main_path) == current_canon,
+        path: main_path.clone(),
+        branch: None,
         is_main: true,
-        wip: worktree_wip(&main_path),
+        wip: None,
         locked: false,
         lock_reason: None,
     });
@@ -380,8 +385,6 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<Worktree>, GitError> {
             Err(_) => continue,
         };
         let path = wt.path().to_path_buf();
-        let branch = worktree_branch_name(&path);
-        let wip = worktree_wip(&path);
         let (locked, lock_reason) = match wt.is_locked() {
             Ok(git2::WorktreeLockStatus::Locked(reason)) => {
                 (true, reason.filter(|r| !r.trim().is_empty()))
@@ -392,12 +395,49 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<Worktree>, GitError> {
             name: name.to_string(),
             is_current: canon(&path) == current_canon,
             path,
-            branch,
+            branch: None,
             is_main: false,
-            wip,
+            wip: None,
             locked,
             lock_reason,
         });
+    }
+
+    // Branch name + WIP counts, one thread per worktree.
+    //
+    // Each of these opens the worktree as its own repository and runs a full
+    // `git status` over it, so serially this was the single most expensive
+    // part of a snapshot — and a snapshot runs synchronously on the UI thread
+    // after *every* git operation. Measured on a 10k-commit repo with four
+    // worktrees: 660ms serial, 243ms across threads. They share nothing but a
+    // `&Path` (git2's `Repository` is not `Sync`, and each thread opens its
+    // own), so `thread::scope` needs no dependency and no locking.
+    let scans: Vec<(Option<String>, Option<WorktreeWip>)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = worktrees
+            .iter()
+            .map(|w| {
+                let path = w.path.clone();
+                // The current worktree's status is already computed — rescanning
+                // it here would pay for the same `git status` twice.
+                let own = w.is_current.then_some(current_status);
+                scope.spawn(move || {
+                    let branch = worktree_branch_name(&path);
+                    let wip = match own {
+                        Some(st) => wip_from_status(st),
+                        None => worktree_wip(&path),
+                    };
+                    (branch, wip)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or((None, None)))
+            .collect()
+    });
+    for (w, (branch, wip)) in worktrees.iter_mut().zip(scans) {
+        w.branch = branch;
+        w.wip = wip;
     }
 
     worktrees.sort_by(|a, b| {
@@ -427,13 +467,16 @@ fn worktree_branch_name(path: &std::path::Path) -> Option<String> {
 /// working tree (each linked worktree has an independent index + workdir).
 /// Returns `None` when the worktree is clean or its status cannot be read, so
 /// the UI only draws a WIP row for worktrees that actually have changes.
-fn worktree_wip(path: &std::path::Path) -> Option<WorktreeWip> {
-    let repo = Repository::open(path).ok()?;
-    let status = working_tree_status(&repo).ok()?;
+fn wip_from_status(status: &WorkingTreeStatus) -> Option<WorktreeWip> {
     let wip = WorktreeWip {
         staged: status.staged.len(),
         unstaged: status.unstaged.len(),
         untracked: status.untracked.len(),
     };
     wip.is_dirty().then_some(wip)
+}
+
+fn worktree_wip(path: &std::path::Path) -> Option<WorktreeWip> {
+    let repo = Repository::open(path).ok()?;
+    wip_from_status(&working_tree_status(&repo).ok()?)
 }

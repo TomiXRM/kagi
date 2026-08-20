@@ -142,20 +142,46 @@ pub fn plan_force_with_lease_push(repo: &Repository) -> Result<OperationPlan, Gi
 // ────────────────────────────────────────────────────────────
 
 /// Push the current branch with `--force-with-lease=<branch>:<lease-oid>`,
-/// where `lease-oid` is the local record of the remote-tracking ref
-/// (`refs/remotes/<remote>/<branch>`) as of right now — deliberately **not**
-/// refreshed by an automatic fetch first. This is the entire safety
-/// property: if the user hasn't fetched recently and someone else pushed in
-/// the meantime, the lease is stale on purpose, and the remote rejects the
-/// push outright instead of silently overwriting the unseen work. A
-/// preceding fetch would erase that protection by always leasing against
-/// whatever is on the remote *right now* — indistinguishable from a blind
-/// `--force`. Staying current is the user's job (the "Fetch remote branch"
-/// action, or the plan's `LeaseValue` note showing exactly what's leased).
+/// where `lease-oid` is **the value the plan captured and showed the user**
+/// (the `LeaseValue` note), not a fresh read.
+///
+/// That distinction is the entire safety property. If someone else pushed in
+/// the meantime, the lease is stale on purpose and the remote rejects the push
+/// instead of silently overwriting unseen work. Leasing against whatever the
+/// remote holds at execute time is indistinguishable from a blind `--force`.
+///
+/// This used to re-read the remote-tracking ref here, and the module doc
+/// claimed an automatic fetch could not interfere. It could: kagi's own
+/// auto-fetch ticker updates `refs/remotes/<remote>/<branch>` in the
+/// background, so a colleague's push landing while the confirm modal sat open
+/// was fetched, adopted as the new lease, and overwritten. The preflight does
+/// not catch it — it compares local HEAD, which a fetch does not move.
+/// `a_fetch_between_plan_and_execute_does_not_refresh_the_lease` in
+/// `tests/force_lease_push_test.rs` is the guard.
 ///
 /// This is the **only** call site in the codebase that passes
 /// `--force-with-lease` (or any force flag) to `git push`.
-pub fn execute_force_with_lease_push(repo: &Repository, repo_path: &Path) -> Result<(), GitError> {
+///
+/// The lease comes from `plan`, so git enforces the exact remote tip the user
+/// was shown. If the remote moved since, the push is rejected by git rather
+/// than silently re-leased against the newer value.
+/// The remote tip the plan recorded, i.e. what the confirm modal told the user
+/// it would lease against.
+fn plan_lease_sha(plan: &OperationPlan) -> Option<&str> {
+    match &plan.recovery.as_ref()?.kind {
+        RecoveryKind::ForceLease(ForceLeaseRecovery::ForceLeasePush {
+            previous_remote_sha,
+            ..
+        }) => Some(previous_remote_sha.as_str()),
+        _ => None,
+    }
+}
+
+pub fn execute_force_with_lease_push(
+    repo: &Repository,
+    repo_path: &Path,
+    plan: &OperationPlan,
+) -> Result<(), GitError> {
     let head_ref = repo
         .head()
         .map_err(|e| GitError::Other(format!("HEAD lookup failed: {}", e.message())))?;
@@ -170,7 +196,20 @@ pub fn execute_force_with_lease_push(repo: &Repository, repo_path: &Path) -> Res
         .to_string();
 
     let (_, remote, _) = resolve_upstream_info(repo, &branch)?;
-    let lease_oid = resolve_upstream_oid(repo, &branch, &remote)?;
+
+    // The lease is the value the plan showed the user — never a fresh read.
+    //
+    // This used to call `resolve_upstream_oid` again here, which quietly
+    // undid the entire point of `--force-with-lease`: kagi's own auto-fetch
+    // ticker updates `refs/remotes/<remote>/<branch>` in the background, so a
+    // colleague's push landing while the confirm modal sat open was fetched,
+    // adopted as the new lease, and then overwritten. The preflight cannot
+    // catch it — it compares local HEAD, which a fetch does not move.
+    let lease_oid = plan_lease_sha(plan).ok_or_else(|| {
+        GitError::Other(
+            "force-with-lease: the plan carries no lease value — re-plan the push".to_string(),
+        )
+    })?;
 
     let lease_arg = format!("--force-with-lease={}:{}", branch, lease_oid);
     let out = run_git(repo_path, &["push", &lease_arg, &remote, &branch])

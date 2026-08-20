@@ -645,7 +645,7 @@ impl Backend {
                 .execute_reset_current_to_head(target)
                 .map(|()| OperationOutcome::Unit),
             Operation::ForceWithLeasePush => self
-                .execute_force_with_lease_push()
+                .execute_force_with_lease_push(plan)
                 .map(|()| OperationOutcome::Unit),
             Operation::RebaseCurrentOnto { onto } => self
                 .execute_rebase_current_onto(onto)
@@ -1193,8 +1193,9 @@ impl Backend {
         ops::plan_force_with_lease_push(&self.repo)
     }
 
-    pub fn execute_force_with_lease_push(&self) -> Result<(), GitError> {
-        ops::execute_force_with_lease_push(&self.repo, &self.path)
+    /// `plan` supplies the lease value — see `ops::execute_force_with_lease_push`.
+    pub fn execute_force_with_lease_push(&self, plan: &OperationPlan) -> Result<(), GitError> {
+        ops::execute_force_with_lease_push(&self.repo, &self.path, plan)
     }
 
     pub fn plan_rebase_current_onto(&self, onto: &str) -> Result<OperationPlan, GitError> {

@@ -3088,8 +3088,6 @@ impl KagiApp {
             self.confirm_history(cx);
         } else if self.amend_modal().is_some() {
             self.confirm_amend(cx);
-        } else if self.undo_modal().is_some() {
-            self.confirm_undo(cx);
         } else if self.cherry_pick_modal().is_some() {
             self.start_cherry_pick(cx);
         } else if self.revert_modal().is_some() {
@@ -3166,8 +3164,6 @@ impl KagiApp {
             self.clear_history_modal();
         } else if self.amend_modal().is_some() {
             self.cancel_amend_modal();
-        } else if self.undo_modal().is_some() {
-            self.cancel_undo_modal();
         } else if self.pr_merge_modal().is_some() {
             self.cancel_pr_merge_modal();
         } else if self.cherry_pick_modal().is_some() {

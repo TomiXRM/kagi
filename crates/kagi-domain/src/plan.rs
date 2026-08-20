@@ -199,16 +199,6 @@ pub enum AmendMode {
 }
 
 impl AmendMode {
-    /// Parse the `KAGI_AMEND=<mode>` headless value (`message` / `staged` / `both`).
-    pub fn from_env_str(s: &str) -> Option<AmendMode> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "message" | "message-only" | "messageonly" | "msg" => Some(AmendMode::MessageOnly),
-            "staged" => Some(AmendMode::Staged),
-            "both" => Some(AmendMode::Both),
-            _ => None,
-        }
-    }
-
     /// Whether this mode folds the staged index into the new tree.
     pub fn includes_staged(self) -> bool {
         matches!(self, AmendMode::Staged | AmendMode::Both)

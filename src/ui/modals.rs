@@ -44,13 +44,6 @@ pub struct PullPlanModal {
     pub error: Option<SharedString>,
 }
 
-/// State for an in-progress undo-commit confirmation (T-HT-009).
-#[derive(Clone)]
-pub struct UndoPlanModal {
-    pub plan: std::sync::Arc<OperationPlan>,
-    pub error: Option<SharedString>,
-}
-
 /// State for an in-progress operation-history Undo/Redo confirmation
 /// (T-UNDOREDO-001, ADR-0081). Carries the previewed plan plus the
 /// [`HistoryEntry`] being moved and whether the move is an undo or a redo.
@@ -600,7 +593,6 @@ pub struct BranchCleanupModal {
 pub enum ActiveModal {
     Checkout(CheckoutPlanModal),
     Pull(PullPlanModal),
-    Undo(UndoPlanModal),
     Amend(AmendPlanModal),
     Pop(PopPlanModal),
     StashDrop(StashDropModal),

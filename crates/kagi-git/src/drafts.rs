@@ -330,7 +330,7 @@ fn parse_draft_json(content: &str) -> Option<Draft> {
 
 /// Compute the SHA-1 digest of `data` and render it as a 40-char lowercase hex
 /// string. Self-contained (RFC 3174); used only as a stable filename key.
-fn sha1_hex(data: &[u8]) -> String {
+pub(crate) fn sha1_hex(data: &[u8]) -> String {
     let mut h0: u32 = 0x6745_2301;
     let mut h1: u32 = 0xEFCD_AB89;
     let mut h2: u32 = 0x98BA_DCFE;

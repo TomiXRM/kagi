@@ -123,7 +123,6 @@ impl KagiApp {
         // and discarded a ~minute-long Analyze mine.
         self.clear_plan_modal();
         self.clear_pull_modal();
-        self.clear_undo_modal();
         self.clear_amend_modal();
         self.clear_pop_modal();
         self.clear_stash_drop_modal();

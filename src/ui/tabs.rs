@@ -372,7 +372,6 @@ impl KagiApp {
         // loop below (MainDiffItem), like the other registered panes.
         self.clear_plan_modal();
         self.clear_pull_modal();
-        self.clear_undo_modal();
         self.clear_pop_modal();
         self.clear_push_modal();
         self.clear_create_branch_modal();
@@ -582,7 +581,6 @@ impl KagiApp {
         self.active_view.toolbar_state = blank.active_view.toolbar_state;
         self.clear_plan_modal();
         self.clear_pull_modal();
-        self.clear_undo_modal();
         self.clear_pop_modal();
         self.clear_push_modal();
         self.clear_create_branch_modal();

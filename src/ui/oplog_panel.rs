@@ -66,11 +66,6 @@ impl OpLogPanel {
         self.entries.len()
     }
 
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
     /// The currently-expanded row index, if any.
     pub fn expanded(&self) -> Option<usize> {
         self.expanded

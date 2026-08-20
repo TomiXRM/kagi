@@ -321,7 +321,6 @@ impl KagiApp {
         el: gpui::Div,
         plan_modal: Option<CheckoutPlanModal>,
         pull_modal: Option<PullPlanModal>,
-        undo_modal: Option<UndoPlanModal>,
         history_modal: Option<HistoryPlanModal>,
         conflict_continue_modal: Option<ConflictContinuePlanModal>,
         amend_modal: Option<AmendPlanModal>,
@@ -373,9 +372,6 @@ impl KagiApp {
             el.child(render_pull_modal(modal, cx))
         })
         // ── Undo / Pop plan modal overlays ───────────────
-        .when_some(undo_modal, |el, modal| {
-            el.child(render_undo_modal(modal, cx))
-        })
         // ── Operation Undo / Redo modal (T-UNDOREDO-001) ──
         .when_some(history_modal, |el, modal| {
             el.child(render_history_modal(modal, cx))

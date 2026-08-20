@@ -58,23 +58,6 @@ pub(crate) fn render_pull_modal(
     )
 }
 
-/// Undo-commit confirmation overlay (T-HT-009).
-pub(crate) fn render_undo_modal(
-    modal: UndoPlanModal,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    render_plan_modal_wrapper_styled(
-        modal.plan,
-        modal.error,
-        "Undo",
-        None,
-        Some((IconName::Undo2.into(), theme().color_branch)),
-        |this, _cx| this.cancel_undo_modal(),
-        |this, cx| this.confirm_undo(cx),
-        cx,
-    )
-}
-
 /// Operation-history Undo / Redo confirmation overlay (T-UNDOREDO-001,
 /// ADR-0081). Confirming runs the safe ref move through the standard pipeline
 /// and advances/retreats the history cursor.

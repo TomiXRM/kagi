@@ -11,7 +11,7 @@
 //! The session is also the natural owner of future caches (snapshot, diff,
 //! graph layout) that Phase 3+ perf work hangs off it.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 
 use super::worker::RepoWorker;
@@ -45,12 +45,6 @@ impl RepoSession {
     /// The workdir path of the open repository (same as `Backend::path()`).
     pub fn path(&self) -> &Path {
         self.backend.path()
-    }
-
-    /// The workdir path as an owned `PathBuf` (convenience for callers that
-    /// need to move it into a background task).
-    pub fn path_buf(&self) -> PathBuf {
-        self.backend.path().to_path_buf()
     }
 
     /// Shared handle to the `Backend` for read paths. Cloning the `Rc` is O(1).

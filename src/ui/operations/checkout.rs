@@ -512,7 +512,6 @@ impl KagiApp {
             || self.rename_branch_modal().is_some()
             || self.merge_modal().is_some()
             || self.tracking_checkout_modal().is_some()
-            || self.undo_modal().is_some()
             || self.history_modal().is_some()
             || self.amend_modal().is_some()
             || self.pop_modal().is_some()

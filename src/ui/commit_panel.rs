@@ -226,14 +226,6 @@ impl CommitPanelState {
             .get(path)
             .and_then(|&i| self.staged_stats.get(i))
     }
-
-    /// Return true if commit is possible (staged > 0 and message non-empty).
-    /// NOTE: T026 moves can_commit logic to render_commit_panel which reads InputState.
-    /// This method is kept for the headless path.
-    #[allow(dead_code)]
-    pub fn can_commit(&self) -> bool {
-        !self.staged.is_empty() && !self.commit_msg.trim().is_empty()
-    }
 }
 
 // ──────────────────────────────────────────────────────────────

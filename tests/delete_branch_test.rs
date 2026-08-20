@@ -550,3 +550,97 @@ fn locked_worktree_blocks_delete() {
         plan.blockers
     );
 }
+
+// ────────────────────────────────────────────────────────────
+// Squash-merge: the tip is never an ancestor of main, so the
+// reachability check alone blocks the delete forever (user report:
+// "squash merge済みのローカルブランチをkagiでは消せなかった").
+// ────────────────────────────────────────────────────────────
+
+/// `git merge --squash` + commit is what `gh pr merge --squash` produces:
+/// the branch's whole diff lands as one new commit whose parent is main.
+fn setup_squash_repo() -> TestRepo {
+    let tmp = TempDir::new().expect("tempdir");
+    let path = tmp.path().to_path_buf();
+
+    git(&path, &["init", "-q", "-b", "main", "."]);
+    git(&path, &["config", "user.name", "Test"]);
+    git(&path, &["config", "user.email", "test@example.com"]);
+    git(&path, &["config", "commit.gpgsign", "false"]);
+
+    write_file(&path, "README.md", "# test\n");
+    git(&path, &["add", "-A"]);
+    git(&path, &["commit", "-qm", "initial commit"]);
+
+    // A feature branch with two commits — a squash folds both into one.
+    git(&path, &["checkout", "-q", "-b", "feat"]);
+    write_file(&path, "feat.txt", "one\n");
+    git(&path, &["add", "-A"]);
+    git(&path, &["commit", "-qm", "feat: one"]);
+    write_file(&path, "feat.txt", "one\ntwo\n");
+    git(&path, &["add", "-A"]);
+    git(&path, &["commit", "-qm", "feat: two"]);
+
+    // A branch that is genuinely unmerged, to prove the check still blocks.
+    git(&path, &["checkout", "-q", "main"]);
+    git(&path, &["checkout", "-q", "-b", "orphan"]);
+    write_file(&path, "orphan.txt", "nothing merged this\n");
+    git(&path, &["add", "-A"]);
+    git(&path, &["commit", "-qm", "orphan commit"]);
+
+    git(&path, &["checkout", "-q", "main"]);
+    git(&path, &["merge", "--squash", "feat"]);
+    git(&path, &["commit", "-qm", "feat: one and two (#1)"]);
+
+    TestRepo { _tmp: tmp, path }
+}
+
+#[test]
+fn squash_merged_branch_is_deletable_with_a_warning() {
+    let r = setup_squash_repo();
+    let repo = Repository::open(&r.path).unwrap();
+
+    // Precondition: the tip really is NOT reachable from HEAD, so the plain
+    // ancestor check would call this unmerged.
+    let head = repo.head().unwrap().target().unwrap();
+    let tip = repo
+        .find_branch("feat", git2::BranchType::Local)
+        .unwrap()
+        .get()
+        .target()
+        .unwrap();
+    assert!(
+        !repo.graph_descendant_of(head, tip).unwrap(),
+        "squash-merged tip must not be an ancestor of HEAD"
+    );
+
+    let plan = plan_delete_branch(&repo, "feat").expect("plan should succeed");
+    assert!(
+        plan.blockers.is_empty(),
+        "squash-merged branch must not be blocked, got: {:?}",
+        plan.blockers
+    );
+    assert!(
+        plan.warnings
+            .iter()
+            .any(|w| w.message_en().contains("squash-merged")),
+        "the plan must explain why a dead-end branch is safe, got: {:?}",
+        plan.warnings
+    );
+
+    execute_delete_branch(&repo, &plan, "feat").expect("delete should succeed");
+    assert!(repo.find_branch("feat", git2::BranchType::Local).is_err());
+}
+
+#[test]
+fn a_genuinely_unmerged_branch_is_still_blocked() {
+    let r = setup_squash_repo();
+    let repo = Repository::open(&r.path).unwrap();
+
+    let plan = plan_delete_branch(&repo, "orphan").expect("plan should succeed");
+    assert!(
+        !plan.blockers.is_empty(),
+        "an unmerged branch must still be blocked — patch-id equivalence must \
+         not become a back door to force delete"
+    );
+}

@@ -44,6 +44,11 @@ pub enum BranchNote {
     /// warning (`plan_delete_branch`) — the branch has an upstream that is not
     /// deleted by this operation.
     DeleteKeepsRemote { name: String },
+    /// warning (`plan_delete_branch`) — the branch tip is not an ancestor of
+    /// HEAD, but its whole diff is already in HEAD as one squashed commit.
+    /// Worth saying out loud: the graph shows the branch as a dead-end leaf,
+    /// so "safe to delete" looks wrong until you know why.
+    DeleteSquashMerged { name: String, squash: String },
 }
 
 impl BranchNote {
@@ -83,6 +88,10 @@ impl BranchNote {
             BranchNote::DeleteUnmerged { name, tip } => format!(
                 "Branch '{}' has unmerged commits (tip {} is not reachable from HEAD). Merge or discard the branch manually before deleting. Force delete is not provided.",
                 name, tip
+            ),
+            BranchNote::DeleteSquashMerged { name, squash } => format!(
+                "Branch '{}' was squash-merged as {}: its commits are not ancestors of HEAD (the graph shows it as a dead end), but the identical change is already there. Nothing is lost by deleting it.",
+                name, squash
             ),
             BranchNote::DeleteKeepsRemote { name } => format!(
                 "Branch '{}' has an upstream tracking branch. Only the local branch will be deleted; the remote branch is NOT removed.",

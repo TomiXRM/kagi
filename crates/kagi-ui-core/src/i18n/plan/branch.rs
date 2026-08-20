@@ -44,6 +44,10 @@ pub fn note_ja(note: &BranchNote) -> String {
             "ブランチ '{}' には未マージのコミットがあります(先端 {} は HEAD から到達できません)。削除する前に手動でマージするか破棄してください。強制削除はサポートされていません。",
             name, tip
         ),
+        BranchNote::DeleteSquashMerged { name, squash } => format!(
+            "ブランチ '{}' は {} として squash マージ済みです。コミット自体は HEAD の祖先ではない(グラフ上は行き止まりに見えます)ものの、同一の変更はすでに取り込まれています。削除しても失われるものはありません。",
+            name, squash
+        ),
         BranchNote::DeleteKeepsRemote { name } => format!(
             "ブランチ '{}' にはアップストリームの追跡ブランチが設定されています。削除されるのはローカルブランチのみで、リモートブランチは削除されません。",
             name

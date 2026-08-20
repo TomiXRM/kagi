@@ -619,29 +619,34 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
         }
     }
 
-    // Merged check: branch tip must be reachable from HEAD.
-    // graph_descendant_of(a, b) returns true when a is a descendant of b,
-    // i.e. b is reachable FROM a.  We want: HEAD can reach tip.
-    // So: graph_descendant_of(head_oid, tip_oid) OR head_oid == tip_oid.
-    //
-    // This check is only meaningful when HEAD has a commit (Attached or Detached).
-    let is_merged = match &head {
+    // HEAD's commit, if it has one. An unborn HEAD can have merged nothing.
+    let head_oid = match &head {
         Head::Attached { target, .. } | Head::Detached { target } => {
-            match git2::Oid::from_str(target) {
-                Ok(head_oid) => {
-                    head_oid == tip_oid
-                        || repo.graph_descendant_of(head_oid, tip_oid).unwrap_or(false)
-                }
-                Err(_) => false,
-            }
+            git2::Oid::from_str(target).ok()
         }
-        Head::Unborn { .. } => {
-            // No commits at all: the branch cannot have been merged.
-            false
-        }
+        Head::Unborn { .. } => None,
     };
 
-    if !is_merged {
+    // Merged check: the branch tip must be reachable from HEAD.
+    // graph_descendant_of(a, b) is true when a descends from b, i.e. b is
+    // reachable FROM a — here: HEAD can reach tip.
+    let is_merged = head_oid
+        .is_some_and(|h| h == tip_oid || repo.graph_descendant_of(h, tip_oid).unwrap_or(false));
+
+    // A squash merge replays the branch as one new commit, so the tip is never
+    // an ancestor and the check above says "unmerged" forever — the branch sits
+    // in the graph as a dead-end leaf and could not be deleted at all (user
+    // report). Prove the change is already in HEAD by patch-id instead.
+    let squash_merge = (!is_merged)
+        .then(|| head_oid.and_then(|h| squash_merged_as(repo, tip_oid, h)))
+        .flatten();
+
+    if let Some(squash) = squash_merge {
+        warnings.push(PlanNote::Branch(BranchNote::DeleteSquashMerged {
+            name: name.to_string(),
+            squash: short_oid(squash),
+        }));
+    } else if !is_merged {
         blockers.push(PlanNote::Branch(BranchNote::DeleteUnmerged {
             name: name.to_string(),
             tip: tip_short.clone(),

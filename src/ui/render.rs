@@ -549,7 +549,14 @@ impl Render for KagiApp {
                 return;
             }
             if this.pr_mode.is_some() {
-                this.toggle_pr_mode(cx);
+                // One step back, like every other branch of this cascade: an
+                // open PR returns to the dashboard, and only a second Esc
+                // leaves PR mode.
+                if this.pr_mode.as_ref().is_some_and(|m| m.active.is_some()) {
+                    this.pr_mode_home(cx);
+                } else {
+                    this.toggle_pr_mode(cx);
+                }
                 return;
             }
             if this.commit_menu.is_some() {

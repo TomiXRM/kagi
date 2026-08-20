@@ -2516,6 +2516,34 @@ impl KagiApp {
             .map(|s| Self::wip_diffstat_from_backend(s.backend()));
     }
 
+    /// Same value, computed off the UI thread.
+    ///
+    /// It is two full tree diffs for a "+N −M" badge — measured at 157ms on a
+    /// large repo, and it used to run *before the window existed*, so the app
+    /// showed nothing at all while it ran. Nothing depends on the badge being
+    /// present in the first frame.
+    pub fn start_wip_diffstat_scan(&mut self, cx: &mut Context<Self>) {
+        let Some(repo_path) = self.repo_path.clone() else {
+            self.wip_diffstat = None;
+            return;
+        };
+        let task = cx.background_spawn(async move {
+            kagi_git::Backend::open(&repo_path)
+                .ok()
+                .map(|b| Self::wip_diffstat_from_backend(&b))
+        });
+        cx.spawn(async move |app, acx| {
+            let stat = task.await;
+            let _ = app.update(acx, |app, cx| {
+                if app.wip_diffstat != stat {
+                    app.wip_diffstat = stat;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
     pub fn close_compare_view(&mut self) {
         self.compare_view = None;
         // ADR-0121 B2: also drop a not-yet-promoted headless staging view.

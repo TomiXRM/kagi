@@ -163,6 +163,7 @@ impl Render for KagiApp {
             self.scans_stale = false;
             self.start_branch_cleanup_scan(cx);
             self.start_squash_link_scan(cx);
+            self.start_wip_diffstat_scan(cx);
         }
 
         // W27-UIPOLISH: apply the global UI zoom by scaling the window's rem

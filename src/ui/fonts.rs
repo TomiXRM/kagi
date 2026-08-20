@@ -26,8 +26,17 @@ pub(super) fn load_bundled_fonts(cx: &mut App) {
         return;
     }
 
-    // Preserve the existing contract line and append fallback diagnostics.
+    // Preserve the existing contract line.
     klog!("fonts: loaded Inter + JetBrains Mono");
+
+    // The fallback check is opt-in: `all_font_names()` enumerates every font
+    // installed on the machine, measured at 83-93ms on the main thread before
+    // the first frame — 32% of a small repo's cold start — to print one line
+    // nothing reads and no test asserts. Set `KAGI_FONT_DIAG=1` when
+    // investigating a CJK rendering report (ADR-0130).
+    if std::env::var("KAGI_FONT_DIAG").as_deref() != Ok("1") {
+        return;
+    }
     let cjk_ready = cx
         .text_system()
         .all_font_names()

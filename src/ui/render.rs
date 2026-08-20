@@ -81,7 +81,7 @@ impl KagiApp {
     ) -> Option<gpui::AnyElement> {
         let detail = self.active_view.details.get(state.row_index)?;
         let target = self.commit_id_for_row(state.row_index)?;
-        let ctx = self.menu_context(state.row_index)?;
+        let ctx = self.menu_context_at(state.row_index, state.is_ancestor_of_head)?;
         let groups = context_menu::build_commit_menu(&ctx);
         let title = detail.full_message.as_ref().lines().next().unwrap_or("");
         let header = context_menu::short_title_header(detail.full_sha.as_ref(), title);

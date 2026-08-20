@@ -18,6 +18,11 @@ const MENU_W: f32 = 280.0;
 pub struct CommitMenuState {
     pub row_index: usize,
     pub position: Point<Pixels>,
+    /// Computed once when the menu opens, because it cannot change while the
+    /// menu is up and answering it costs a `Backend::open` plus an ancestry
+    /// walk — 158ms per frame at 20k commits deep, which pinned the window at
+    /// ~6fps for as long as the menu stayed open.
+    pub is_ancestor_of_head: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

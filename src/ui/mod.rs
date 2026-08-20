@@ -2819,6 +2819,7 @@ impl KagiApp {
         self.commit_menu = Some(CommitMenuState {
             row_index,
             position,
+            is_ancestor_of_head: self.compute_is_ancestor_of_head(row_index),
         });
         klog!("context-menu: open row={}", row_index);
         self.log_commit_menu(row_index);
@@ -2857,18 +2858,35 @@ impl KagiApp {
             })
     }
 
-    fn menu_context(&self, row_index: usize) -> Option<MenuContext> {
-        let row = self.active_view.rows.get(row_index)?;
-        let target = self.commit_id_for_row(row_index)?;
-        let is_ancestor_of_head = if row.is_head {
-            true
-        } else {
-            self.repo_path
-                .as_ref()
-                .and_then(|repo_path| kagi_git::Backend::open(repo_path).ok())
-                .and_then(|repo| repo.is_ancestor_of_head(&target).ok())
-                .unwrap_or(false)
+    /// Is this row's commit reachable from HEAD? Opens the repo and walks the
+    /// ancestry, so callers that render every frame must not ask again — see
+    /// `CommitMenuState::is_ancestor_of_head`.
+    pub(crate) fn compute_is_ancestor_of_head(&self, row_index: usize) -> bool {
+        let Some(row) = self.active_view.rows.get(row_index) else {
+            return false;
         };
+        if row.is_head {
+            return true;
+        }
+        let Some(target) = self.commit_id_for_row(row_index) else {
+            return false;
+        };
+        self.repo_path
+            .as_ref()
+            .and_then(|repo_path| kagi_git::Backend::open(repo_path).ok())
+            .and_then(|repo| repo.is_ancestor_of_head(&target).ok())
+            .unwrap_or(false)
+    }
+
+    fn menu_context(&self, row_index: usize) -> Option<MenuContext> {
+        let is_ancestor_of_head = self.compute_is_ancestor_of_head(row_index);
+        self.menu_context_at(row_index, is_ancestor_of_head)
+    }
+
+    /// `menu_context` with the ancestry answer supplied — the render path uses
+    /// this so it does not re-walk the graph on every frame.
+    fn menu_context_at(&self, row_index: usize, is_ancestor_of_head: bool) -> Option<MenuContext> {
+        let row = self.active_view.rows.get(row_index)?;
 
         Some(MenuContext {
             is_head: row.is_head,

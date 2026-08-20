@@ -232,10 +232,9 @@ impl KagiApp {
         // along with the snapshot (it was blocking the UI thread on repos
         // with many branches) — kick it off on a background thread so
         // `active_view.cleanup_rows` catches up a beat after this reload.
-        self.start_branch_cleanup_scan(cx);
-        // ADR-0139: ghost connectors for squash-merged branches. Same
-        // background shape, and it depends on the rows this reload just built.
-        self.start_squash_link_scan(cx);
+        // The scans are re-armed by `render` off `scans_stale`, which
+        // `apply_tab_view` set a few lines above — every path that replaces the
+        // view is covered, including the ones that have no `cx` here.
 
         Ok(())
     }

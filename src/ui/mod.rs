@@ -1284,6 +1284,10 @@ pub struct KagiApp {
     /// graph's ghost connectors. A result whose token no longer matches is
     /// dropped — its row indices belong to a graph that has been rebuilt.
     pub squash_gen: u64,
+    /// Set by `apply_tab_view`, cleared by the next `render`: the per-tab view
+    /// was replaced, so the background scans that decorate it (Branch Cleanup
+    /// rows, squash ghost connectors) need re-arming. See `apply_tab_view`.
+    pub scans_stale: bool,
     /// ADR-0119: cached completed mine so reopening the Ecosystem view reuses
     /// the slow `git log` scan. Invalidated on reload / repo switch.
     pub ecosystem_cache: ecosystem::EcosystemCache,
@@ -1479,6 +1483,7 @@ impl KagiApp {
             cleanup_scroll: UniformListScrollHandle::new(),
             cleanup_gen: 0,
             squash_gen: 0,
+            scans_stale: true,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,
@@ -1602,6 +1607,7 @@ impl KagiApp {
             cleanup_scroll: UniformListScrollHandle::new(),
             cleanup_gen: 0,
             squash_gen: 0,
+            scans_stale: true,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,
@@ -1645,8 +1651,6 @@ impl KagiApp {
         // for it. Every other case (post-operation reload, tab switch) is
         // already covered by `reload_checked`'s call — this one is cheap and
         // generation-guarded, so the redundant call there is harmless.
-        self.start_branch_cleanup_scan(cx);
-        self.start_squash_link_scan(cx);
     }
 
     /// Detect (or clear) Conflict Mode for the currently-open repository.

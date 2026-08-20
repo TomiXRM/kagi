@@ -77,6 +77,7 @@ impl KagiApp {
             return;
         };
         self.cleanup_gen += 1;
+        self.cleanup_scanning = true;
         let my_gen = self.cleanup_gen;
         let now = now_secs();
 
@@ -97,6 +98,7 @@ impl KagiApp {
                 if !still_ours {
                     return;
                 }
+                app.cleanup_scanning = false;
                 match result {
                     Ok(rows) => {
                         // Same contract line ADR-0128 originally emitted from
@@ -150,7 +152,13 @@ impl KagiApp {
         targets: Vec<CleanupDeleteTarget>,
         cx: &mut Context<Self>,
     ) {
-        if self.busy_op.is_some() || targets.is_empty() {
+        if targets.is_empty() {
+            return;
+        }
+        if self.busy_op.is_some() {
+            // Was a bare `return`: no modal, no toast, no oplog — a dead
+            // button. The toolbar disables its actions with this same reason.
+            self.push_toast(ToastKind::Info, Msg::OpInProgress.t(), cx);
             return;
         }
         let repo = match self.repo_session.as_ref() {
@@ -595,7 +603,9 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
             .p_4()
             .text_sm()
             .text_color(rgb(theme().text_muted))
-            .child(SharedString::from(if app.repo_path.is_some() {
+            .child(SharedString::from(if app.cleanup_scanning {
+                Msg::CleanupScanning.t()
+            } else if app.repo_path.is_some() {
                 Msg::CleanupEmpty.t()
             } else {
                 Msg::CleanupNoRepo.t()

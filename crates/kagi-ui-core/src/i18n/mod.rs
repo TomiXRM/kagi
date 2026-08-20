@@ -572,6 +572,8 @@ pub enum Msg {
     CleanupGrownHint,
     /// Empty-table body message.
     CleanupEmpty,
+    /// Branch Cleanup: shown while the background scan is still running.
+    CleanupScanning,
     /// Body message when no repository is open.
     CleanupNoRepo,
 
@@ -1382,6 +1384,8 @@ impl Msg {
             (Ja, CleanupBadgeStale) => "ストール",
             (En, CleanupGrownHint) => "new commits since merge:",
             (Ja, CleanupGrownHint) => "マージ後の新規コミット:",
+            (En, CleanupScanning) => "Scanning branches…",
+            (Ja, CleanupScanning) => "ブランチを調べています…",
             (En, CleanupEmpty) => "No merged or stale branches — all clean.",
             (Ja, CleanupEmpty) => "マージ済み・休眠ブランチはありません — クリーンです。",
             (En, CleanupNoRepo) => "Open a repository to see merged branches.",

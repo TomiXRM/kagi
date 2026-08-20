@@ -676,13 +676,15 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         id: "theme.xcodeDark",
-        label: "Xcode Dark",
+        // The theme was renamed to Apple Dark; the id stays so an existing
+        // `keybinding.theme.xcodeDark` override keeps working.
+        label: "Apple Dark",
         keystroke: None,
         dangerous: false,
     },
     Command {
         id: "theme.xcodeLight",
-        label: "Xcode Light",
+        label: "Apple Light",
         keystroke: None,
         dangerous: false,
     },
@@ -779,7 +781,6 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
 
         // ── Placeholders (feature not implemented; greyed with a reason) ──
         "file.cloneRepository" => Disabled(Msg::CloneUnimplemented.t()),
-        "branch.rename" => Disabled(Msg::RenameBranchUnimplemented.t()),
         "window.new" => Disabled(Msg::MultiWindowUnsupported.t()),
         // Reset stays disabled per ADR-0024 (no reset in MVP).
         "commit.reset" => Disabled(Msg::ResetUnimplemented.t()),
@@ -810,7 +811,7 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
 
         // ── Repo required + not busy (state-changing git) ────────────────
         "repo.fetch" | "repo.pull" | "repo.push" | "branch.new"
-        | "branch.checkout" | "branch.delete" => {
+        | "branch.checkout" | "branch.delete" | "branch.rename" => {
             if !has_repo {
                 Disabled(Msg::NoRepoOpen.t())
             } else if busy {
@@ -997,20 +998,32 @@ pub fn build_menus() -> Vec<Menu> {
 /// unlike the disabled/enabled mechanism, which is purely dispatch-tree based.
 fn theme_submenu() -> Menu {
     let active = theme::active_index();
-    let mut items: Vec<MenuItem> = Vec::with_capacity(theme::THEMES.len());
-    for (i, t) in theme::THEMES.iter().enumerate() {
-        let label = if i == active {
-            format!("\u{2713} {}", t.name)
-        } else {
-            format!("   {}", t.name)
+    // Driven by `THEME_COMMAND_IDS`, the same list the Linux dropdown expands.
+    // This used to be a hand-written match on `theme.slug` that covered four of
+    // the six commands and `continue`d the rest, so the macOS menu offered four
+    // themes, the Linux menu six, and Settings all eleven.
+    let mut items: Vec<MenuItem> = Vec::with_capacity(THEME_COMMAND_IDS.len());
+    for id in THEME_COMMAND_IDS {
+        let Some(slug) = theme_slug_for_command(id) else {
+            continue;
         };
-        let label = SharedString::from(label);
+        let Some(t) = theme::THEMES.iter().find(|t| t.slug == slug) else {
+            continue;
+        };
+        let marker = if theme::index_of(slug) == Some(active) {
+            "\u{2713} "
+        } else {
+            "   "
+        };
+        let label = SharedString::from(format!("{marker}{}", t.name));
         // Each theme has a distinct action so dispatch is 1:1.
-        let item = match t.slug {
-            "catppuccin" => MenuItem::action(label, ThemeCatppuccin),
-            "one-dark" => MenuItem::action(label, ThemeOneDark),
-            "one-light" => MenuItem::action(label, ThemeOneLight),
-            "monokai" => MenuItem::action(label, ThemeMonokai),
+        let item = match *id {
+            "theme.catppuccin" => MenuItem::action(label, ThemeCatppuccin),
+            "theme.xcodeDark" => MenuItem::action(label, ThemeXcodeDark),
+            "theme.xcodeLight" => MenuItem::action(label, ThemeXcodeLight),
+            "theme.oneDark" => MenuItem::action(label, ThemeOneDark),
+            "theme.oneLight" => MenuItem::action(label, ThemeOneLight),
+            "theme.monokai" => MenuItem::action(label, ThemeMonokai),
             _ => continue,
         };
         items.push(item);
@@ -1265,6 +1278,10 @@ pub enum BranchPickerMode {
     Checkout,
     /// Pick a branch to delete → routes to the existing delete-branch plan modal.
     Delete,
+    /// Pick a branch to rename → routes to the existing rename modal. The
+    /// sidebar's context menu has offered this all along; the menu bar used to
+    /// grey it out as unimplemented.
+    Rename,
 }
 
 /// Transient overlay opened from the menu bar.
@@ -1427,6 +1444,7 @@ impl KagiApp {
             }
             "branch.checkout" => self.open_branch_picker(BranchPickerMode::Checkout),
             "branch.delete" => self.open_branch_picker(BranchPickerMode::Delete),
+            "branch.rename" => self.open_branch_picker(BranchPickerMode::Rename),
 
             // ── Commit (selected commit → dispatch_commit_action) ────
             "commit.copyHash"
@@ -1783,6 +1801,7 @@ impl KagiApp {
         let title = match mode {
             BranchPickerMode::Checkout => "Checkout Branch",
             BranchPickerMode::Delete => "Delete Branch",
+            BranchPickerMode::Rename => "Rename Branch",
         };
 
         let mut panel = div()
@@ -1828,6 +1847,9 @@ impl KagiApp {
                     BranchPickerMode::Checkout => this.open_plan_modal(name_for_click.clone()),
                     BranchPickerMode::Delete => {
                         this.open_delete_branch_modal(name_for_click.clone())
+                    }
+                    BranchPickerMode::Rename => {
+                        this.open_rename_branch_modal(name_for_click.clone())
                     }
                 }
                 cx.notify();

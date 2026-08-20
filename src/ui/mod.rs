@@ -1283,6 +1283,10 @@ pub struct KagiApp {
     /// `KagiApp::start_branch_cleanup_scan`) and can now be superseded by a
     /// newer reload before it finishes.
     pub cleanup_gen: u64,
+    /// True while the background Branch Cleanup scan is running. Without it the
+    /// pane rendered `CleanupEmpty` — a confident "nothing to clean up" — for
+    /// the second or more the scan takes on a real repo.
+    pub cleanup_scanning: bool,
     /// ADR-0139: same guard for the background squash-link scan that draws the
     /// graph's ghost connectors. A result whose token no longer matches is
     /// dropped — its row indices belong to a graph that has been rebuilt.
@@ -1486,6 +1490,7 @@ impl KagiApp {
             cleanup_cols: branch_cleanup::CleanupCols::load(),
             cleanup_scroll: UniformListScrollHandle::new(),
             cleanup_gen: 0,
+            cleanup_scanning: false,
             squash_gen: 0,
             scans_stale: true,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
@@ -1611,6 +1616,7 @@ impl KagiApp {
             cleanup_cols: branch_cleanup::CleanupCols::load(),
             cleanup_scroll: UniformListScrollHandle::new(),
             cleanup_gen: 0,
+            cleanup_scanning: false,
             squash_gen: 0,
             scans_stale: true,
             ecosystem_cache: ecosystem::EcosystemCache::new(),

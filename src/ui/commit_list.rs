@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use gpui::SharedString;
 
-use kagi::graph::{layout_with, EdgeKind, GraphEdge, GraphLayoutMode};
+use kagi::graph::{layout, EdgeKind, GraphEdge};
 use kagi_git::{Commit, CommitId, Head, RepoSnapshot};
 
 // ──────────────────────────────────────────────────────────────
@@ -307,15 +307,13 @@ pub fn build_commit_rows(snap: &RepoSnapshot) -> Vec<CommitRow> {
     let head_sha: Option<&str> = head_target(&snap.head);
 
     // Compute commit graph layout once up-front (T009). Lanes use the gitk
-    // `Stable` layout (ADR-0122): a branch keeps its column until it ends and
-    // freed columns are reused by *new* lanes (never by shifting existing
-    // ones), so long branch lines run straight and bend only where they fork
-    // or join — the Fork/GitKraken look. `Compact` reclaims columns by
-    // shifting live lanes sideways mid-history, which made branch lines
-    // wobble far from any fork point. The "Avatar commit nodes" setting
+    // layout (ADR-0122): a branch keeps its column until it ends and freed
+    // columns are reused by *new* lanes (never by shifting existing ones), so
+    // long branch lines run straight and bend only where they fork or join —
+    // the Fork/GitKraken look. The "Avatar commit nodes" setting
     // (`graph_lane_compact`) only changes how nodes/rows are drawn, not the
     // lane layout.
-    let graph = layout_with(&snap.commits, GraphLayoutMode::Stable);
+    let graph = layout(&snap.commits);
     let lane_count = graph.lane_count;
 
     snap.commits

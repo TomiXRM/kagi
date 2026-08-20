@@ -410,7 +410,7 @@ pub fn init_diff_split() {
 ///
 /// This flag drives the swimlane *visuals* only — avatar commit nodes, the
 /// lane tint band, and the graph lane padding (bin crate `render_helpers.rs`).
-/// The lane *layout* is always `GraphLayoutMode::Stable` (ADR-0122) and does
+/// The lane *layout* is always the gitk-style `graph::layout` (ADR-0122) and does
 /// not read this flag. Backed by an atomic (like `graph_compact`) so the
 /// Settings-screen toggle can flip it live; the loaded value is logged here so
 /// the startup state is debuggable alongside the other settings lines.

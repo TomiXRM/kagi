@@ -10,7 +10,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi::graph::{layout, layout_with, EdgeKind, GraphLayout, GraphLayoutMode};
+use kagi::graph::{layout, EdgeKind, GraphLayout};
 use kagi_git::{commit_log, Commit, CommitId, Signature};
 
 // ────────────────────────────────────────────────────────────
@@ -862,7 +862,7 @@ fn test_two_roots_lane_concurrent_then_reuse() {
 // ────────────────────────────────────────────────────────────
 // Case 13: stacked branches — Stable keeps every branch in its own column
 //
-// The shipped layout (`build_commit_rows` uses `GraphLayoutMode::Stable`,
+// The shipped layout (`build_commit_rows` uses `layout`,
 // ADR-0122). Three merges into a mainline, each merging a segment of one
 // branch chain:
 //
@@ -893,7 +893,7 @@ fn test_stable_stacked_branches_staircase() {
         c("T5", &["P4"]),
         c("P4", &[]),
     ];
-    let gl = layout_with(&commits, GraphLayoutMode::Stable);
+    let gl = layout(&commits);
     check_invariants(&commits, &gl);
 
     // Staircase: each branch segment keeps the column its merge line opened
@@ -938,251 +938,4 @@ fn test_stable_stacked_branches_staircase() {
         has_edge("P4", EdgeKind::IntoNode, 3, 0),
         "the branch line must bend into P4 at P4's own row"
     );
-}
-
-// ════════════════════════════════════════════════════════════
-// Compact (Gitru swimlane) mode — ADR-0104
-// ════════════════════════════════════════════════════════════
-
-/// Relaxed invariant checker for `GraphLayoutMode::Compact`.
-///
-/// Identical to [`check_invariants`] except invariant 2 allows a `Pass` edge to
-/// shift columns (`from_lane != to_lane`) — that is exactly how compaction
-/// expresses a lane being reclaimed. Continuity (inv 3), lane-count bounds
-/// (inv 4) and no-duplicate-edges (inv 5) must still hold.
-fn check_invariants_compact(commits: &[Commit], gl: &GraphLayout) {
-    // Inv 1: row/commit correspondence.
-    assert_eq!(gl.rows.len(), commits.len(), "compact inv1: row count");
-    for (i, (row, commit)) in gl.rows.iter().zip(commits.iter()).enumerate() {
-        assert_eq!(row.commit, commit.id, "compact inv1 at row {i}");
-    }
-
-    // Inv 2 (relaxed): directed edges must touch the node lane; Pass may shift.
-    for (i, row) in gl.rows.iter().enumerate() {
-        for edge in &row.edges {
-            match edge.kind {
-                EdgeKind::IntoNode => {
-                    assert_eq!(edge.to_lane, row.lane, "compact inv2 IntoNode @{i}")
-                }
-                EdgeKind::OutOfNode => {
-                    assert_eq!(edge.from_lane, row.lane, "compact inv2 OutOfNode @{i}")
-                }
-                EdgeKind::Pass => {} // shift edges are allowed in Compact
-            }
-        }
-    }
-
-    // Inv 3: edge continuity between adjacent rows (column-aware, so shifts OK).
-    for i in 0..gl.rows.len().saturating_sub(1) {
-        let bottom_open: HashSet<usize> = gl.rows[i]
-            .edges
-            .iter()
-            .filter_map(|e| match e.kind {
-                EdgeKind::Pass | EdgeKind::OutOfNode => Some(e.to_lane),
-                EdgeKind::IntoNode => None,
-            })
-            .collect();
-        let top_open: HashSet<usize> = gl.rows[i + 1]
-            .edges
-            .iter()
-            .filter_map(|e| match e.kind {
-                EdgeKind::Pass | EdgeKind::IntoNode => Some(e.from_lane),
-                EdgeKind::OutOfNode => None,
-            })
-            .collect();
-        assert_eq!(
-            bottom_open,
-            top_open,
-            "compact inv3 between rows {i} and {}: {bottom_open:?} != {top_open:?}",
-            i + 1
-        );
-    }
-
-    // Inv 4: lane_count bounds every lane used.
-    for (i, row) in gl.rows.iter().enumerate() {
-        assert!(row.lane < gl.lane_count, "compact inv4 row.lane @{i}");
-        for edge in &row.edges {
-            assert!(edge.from_lane < gl.lane_count, "compact inv4 from @{i}");
-            assert!(edge.to_lane < gl.lane_count, "compact inv4 to @{i}");
-        }
-    }
-
-    // Inv 5: no duplicate (from, to, kind) edges within a row.
-    for (i, row) in gl.rows.iter().enumerate() {
-        let mut seen: HashSet<(usize, usize, &str)> = HashSet::new();
-        for edge in &row.edges {
-            let kind_str = match edge.kind {
-                EdgeKind::Pass => "pass",
-                EdgeKind::IntoNode => "into",
-                EdgeKind::OutOfNode => "out",
-            };
-            assert!(
-                seen.insert((edge.from_lane, edge.to_lane, kind_str)),
-                "compact inv5: duplicate edge @{i}"
-            );
-        }
-    }
-}
-
-#[test]
-fn test_compact_invariants_on_branch_merge_chain() {
-    // M(A,B), A(C), C(D), D(), B()  — exercises lane reclaim + a shift edge.
-    let commits = vec![
-        c("M", &["A", "B"]),
-        c("A", &["C"]),
-        c("C", &["D"]),
-        c("D", &[]),
-        c("B", &[]),
-    ];
-    let stable = layout_with(&commits, GraphLayoutMode::Stable);
-    let compact = layout_with(&commits, GraphLayoutMode::Compact);
-
-    // Stable still satisfies the strict checker; Compact the relaxed one.
-    check_invariants(&commits, &stable);
-    check_invariants_compact(&commits, &compact);
-
-    // Compaction must not widen the graph beyond the stable layout here.
-    assert!(compact.lane_count <= stable.lane_count);
-
-    // A shift edge (Pass with from != to) must be present somewhere.
-    let has_shift = compact.rows.iter().any(|r| {
-        r.edges
-            .iter()
-            .any(|e| e.kind == EdgeKind::Pass && e.from_lane != e.to_lane)
-    });
-    assert!(
-        has_shift,
-        "compact mode must emit a shift edge for this DAG"
-    );
-}
-
-// ────────────────────────────────────────────────────────────
-// Compact: first-parent join — a commit is approached by at most one lane
-//
-// Repro of the "long line bends at the very end" artifact (stacked branches
-// merged into a mainline). Pre-fix, T3's first-parent continuation opened a
-// SECOND lane targeting T4 — duplicating the lane already opened by P2's
-// merge edge — so both lines ran in parallel and only converged (with a
-// sideways bend) at T4's own row. With the first-parent join (Stable's
-// step-4 exception ported to Compact), T3's line joins the existing lane at
-// T3's row instead.
-// ────────────────────────────────────────────────────────────
-
-#[test]
-fn test_compact_first_parent_joins_existing_lane() {
-    let commits = vec![
-        c("P1", &["P2", "T1"]),
-        c("P2", &["P3", "T4"]),
-        c("P3", &["P4", "T5"]),
-        c("T1", &["T2"]),
-        c("T2", &["T3"]),
-        c("T3", &["T4"]),
-        c("T4", &["T5"]),
-        c("T5", &["P4"]),
-        c("P4", &[]),
-    ];
-    let gl = layout_with(&commits, GraphLayoutMode::Compact);
-    check_invariants_compact(&commits, &gl);
-
-    // No duplicate lanes: every commit is reached by at most one lane, so no
-    // row carries two IntoNode edges.
-    for row in &gl.rows {
-        let into = row
-            .edges
-            .iter()
-            .filter(|e| e.kind == EdgeKind::IntoNode)
-            .count();
-        assert!(
-            into <= 1,
-            "row {} has {} IntoNode edges (duplicate lanes waiting for it)",
-            row.commit,
-            into
-        );
-    }
-
-    // T4 continues P2's merge line: same colour as the merge-out edge, and
-    // the line arrives vertically (no bend at the target row).
-    let row_p2 = gl.rows.iter().find(|r| r.commit == cid("P2")).unwrap();
-    let merge_color = row_p2
-        .edges
-        .iter()
-        .find(|e| e.kind == EdgeKind::OutOfNode && e.from_lane != e.to_lane)
-        .expect("P2 must have a merge-parent edge")
-        .color;
-    let row_t4 = gl.rows.iter().find(|r| r.commit == cid("T4")).unwrap();
-    assert_eq!(row_t4.color, merge_color, "T4 sits on P2's merge line");
-    let into_t4 = row_t4
-        .edges
-        .iter()
-        .find(|e| e.kind == EdgeKind::IntoNode)
-        .expect("T4 has an incoming lane");
-    assert_eq!(
-        into_t4.from_lane, into_t4.to_lane,
-        "the merge line must arrive at T4 vertically, not bend into it"
-    );
-
-    // T3 closes its lane by joining the merge line (join edge in the
-    // existing lane's colour).
-    let row_t3 = gl.rows.iter().find(|r| r.commit == cid("T3")).unwrap();
-    assert!(
-        row_t3
-            .edges
-            .iter()
-            .any(|e| e.kind == EdgeKind::OutOfNode && e.color == merge_color),
-        "T3 must join P2's merge lane at its own row"
-    );
-}
-
-#[test]
-fn test_compact_tip_joins_existing_lane() {
-    // Y and X both point at A. X (the later tip) must not open a second lane
-    // targeting A; it bends into Y's lane at its own row.
-    let commits = vec![c("Y", &["A"]), c("X", &["A"]), c("A", &[])];
-    let gl = layout_with(&commits, GraphLayoutMode::Compact);
-    check_invariants_compact(&commits, &gl);
-
-    let row_x = &gl.rows[1];
-    assert_eq!(row_x.lane, 1, "X sits on its own column");
-    assert!(
-        row_x
-            .edges
-            .iter()
-            .any(|e| e.kind == EdgeKind::OutOfNode && e.from_lane == 1 && e.to_lane == 0),
-        "X must join Y's lane (OutOfNode 1→0)"
-    );
-
-    let row_a = &gl.rows[2];
-    assert_eq!(
-        row_a
-            .edges
-            .iter()
-            .filter(|e| e.kind == EdgeKind::IntoNode)
-            .count(),
-        1,
-        "A must be reached by exactly one lane"
-    );
-    assert_eq!(gl.lane_count, 2);
-}
-
-#[test]
-fn test_compact_invariants_on_octopus_and_multiroot() {
-    // A diamond + an octopus merge + a second root, to stress lane packing.
-    let commits = vec![
-        c("T", &["O", "R"]),         // merge of octopus result O and root R
-        c("O", &["P0", "P1", "P2"]), // octopus merge (3 parents)
-        c("P0", &["Z"]),
-        c("P1", &["Z"]),
-        c("P2", &["Z"]),
-        c("Z", &[]),
-        c("R", &[]),
-    ];
-    let compact = layout_with(&commits, GraphLayoutMode::Compact);
-    check_invariants_compact(&commits, &compact);
-    // Every branch keeps a stable colour index within NUM_COLORS.
-    for row in &compact.rows {
-        assert!(row.color < kagi::graph::NUM_COLORS);
-        for e in &row.edges {
-            assert!(e.color < kagi::graph::NUM_COLORS);
-        }
-    }
 }

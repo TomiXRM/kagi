@@ -19,7 +19,7 @@
 //! as a post-pass over built rows. The layout algorithm in `kagi-domain` is not
 //! touched.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use gpui::{AppContext, Context};
 use kagi::graph::{EdgeKind, GraphEdge};
@@ -81,8 +81,16 @@ pub fn inject_squash_edges(
     let mut next_lane = rows[0].lane_count;
     let start_lane_count = next_lane;
     let mut drawn = 0usize;
+    // Two branches can point at the same tip (`feat` and `feat-backup`), and
+    // the links are per branch — without this the second one finds the tip's
+    // lane busy with the first connector and takes a whole new column to draw
+    // the identical line.
+    let mut seen: HashSet<(&str, &str)> = HashSet::new();
 
     for link in links {
+        if !seen.insert((link.tip.as_str(), link.squash.as_str())) {
+            continue;
+        }
         let (Some(&top), Some(&bottom)) = (
             index.get(&CommitId(link.squash.clone())),
             index.get(&CommitId(link.tip.clone())),
@@ -91,7 +99,9 @@ pub fn inject_squash_edges(
         };
         // The squash commit is created after the work it replays, so it sits
         // above the tip. Anything else is not a shape we can draw.
-        if top >= bottom {
+        // `rows` and `index` are separate fields reconciled across an async
+        // boundary, so bound-check rather than trusting they agree.
+        if top >= bottom || bottom >= rows.len() {
             continue;
         }
         let tip_lane = rows[bottom].lane;

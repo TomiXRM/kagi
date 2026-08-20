@@ -57,6 +57,24 @@ Two choices worth recording:
   set. Because the connector deliberately shares a column with a real branch
   line, "is this lane a ghost" is not answerable the way `stash_lanes` is.
 
+## Correction (2026-08-21)
+
+The detection this depends on was tightened — see ADR-0138's correction. Two
+knock-on changes here:
+
+- The connector uses the same byte-exact confirmation as the delete gate. It
+  could have kept the loose patch-id test (a line is not an irreversible
+  action), but a graph that says "merged here" while the delete says
+  "unmerged" is worse than either answer alone.
+- Dropping the timestamp prune costs time: `collect_squash_links` now always
+  scans up to `SQUASH_SCAN_LIMIT` commits instead of stopping early when every
+  candidate branch is recent. Measured 604ms → 1.57s on this repo. It is a
+  background job with a supersede token, so the trade is worth it.
+
+`inject_squash_edges` also dedupes by `(tip, squash)`: links are per branch, so
+two branches at the same tip drew the identical line twice and the second one
+took a whole new column.
+
 ## Consequences
 
 - The graph gains ~600ms of background work per reload. It is off the UI

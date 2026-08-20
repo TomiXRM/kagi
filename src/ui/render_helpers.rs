@@ -556,7 +556,8 @@ pub(crate) fn render_diff_list<V: 'static>(
     let title = view.title.clone();
     let stats = view.stats.clone();
     let images = view.images.clone();
-    let rows = std::sync::Arc::new(view.rows);
+    // Already an `Arc` on the view — this is a refcount bump, not a copy.
+    let rows = view.rows;
     let rows_for_list = rows.clone();
     // R1: one selection surface per diff (title+count identity).
     let sel_key = super::diff_selection::surface_key(view.title.as_ref(), rows.len());

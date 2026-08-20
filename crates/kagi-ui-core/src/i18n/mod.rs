@@ -279,6 +279,10 @@ pub enum Msg {
     ConflictContinue,
     ConflictAbort,
     ConflictSkip,
+    /// Conflict dashboard: armed label on the two-stage Skip button.
+    ConflictConfirmSkip,
+    /// Conflict dashboard: what the armed Skip is about to discard.
+    ConflictConfirmSkipHint,
     ConflictResolved,
     // File list.
     ConflictUnresolved,
@@ -454,6 +458,8 @@ pub enum Msg {
     PrAllPrs,
     /// PR mode: manual PR-list fetch button.
     PrRefresh,
+    /// PR mode: the PR fetch failed, shown instead of the empty inbox.
+    PrFetchFailed,
     /// PR mode: header of a grouped stack of dependent PRs.
     PrStack,
     /// PR mode: toast shown while that fetch runs.
@@ -1029,6 +1035,14 @@ impl Msg {
             (Ja, ConflictSectionConflicted) => "Conflicted ファイル",
             (En, ConflictSectionResolved) => "Resolved Files",
             (Ja, ConflictSectionResolved) => "Resolved ファイル",
+            (En, ConflictConfirmSkip) => "Confirm skip",
+            (Ja, ConflictConfirmSkip) => "スキップを確定",
+            (En, ConflictConfirmSkipHint) => {
+                "Skip drops this step's changes and your in-progress resolution.                  Click again to confirm."
+            }
+            (Ja, ConflictConfirmSkipHint) => {
+                "スキップするとこのステップの変更と編集中の解決内容が失われます。                 もう一度クリックすると確定します。"
+            }
             (En, ConflictConfirmAbort) => "Confirm abort",
             (Ja, ConflictConfirmAbort) => "中止を確定",
             (En, ConflictConfirmAbortHint) => {
@@ -1215,6 +1229,8 @@ impl Msg {
             (Ja, PrAllPrs) => "PR 一覧",
             (En, PrStack) => "STACK",
             (Ja, PrStack) => "スタック",
+            (En, PrFetchFailed) => "Couldn't reach GitHub — this is not an empty list.",
+            (Ja, PrFetchFailed) => "GitHub に接続できませんでした（PR が 0 件なのではありません）。",
             (En, PrRefresh) => "Refresh",
             (Ja, PrRefresh) => "更新",
             (En, PrRefreshing) => "Refreshing pull requests…",

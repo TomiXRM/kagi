@@ -359,6 +359,11 @@ pub struct ConflictMode {
     pub editing_file: Option<usize>,
     /// Whether the destructive Abort is armed (two-stage confirm, ADR-0067).
     pub abort_armed: bool,
+    /// Same for Skip. It permanently drops the current step's changes *and*
+    /// the in-progress resolution buffer, and it used to execute on a single
+    /// click with no confirm at all — the only destructive conflict action
+    /// without one.
+    pub skip_armed: bool,
 }
 
 impl ConflictMode {
@@ -774,6 +779,23 @@ impl ConflictView {
                 c.abort_armed = true;
             }
             klog!("conflict-mode: abort armed (second confirm required)");
+            false
+        } else {
+            true
+        }
+    }
+
+    /// Two-stage Skip arming — the same shape as `abort_request_arm`. Returns
+    /// `true` when already armed (the caller should EXECUTE the skip, which
+    /// reloads, so it must defer to the parent); `false` when this click only
+    /// ARMED it.
+    pub fn skip_request_arm(&mut self) -> bool {
+        let armed = self.mode.as_ref().map(|c| c.skip_armed).unwrap_or(false);
+        if !armed {
+            if let Some(c) = self.mode.as_mut() {
+                c.skip_armed = true;
+            }
+            klog!("conflict-mode: skip armed (second confirm required)");
             false
         } else {
             true
@@ -1198,6 +1220,12 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
             theme().color_warning,
         ));
     }
+    if mode.skip_armed {
+        col = col.child(dash_note(
+            Msg::ConflictConfirmSkipHint.t(),
+            theme().color_warning,
+        ));
+    }
 
     // Secondary row: Next-conflict (while blocked) and Skip (sequencer ops).
     let mut row = div().flex().flex_row().flex_wrap().gap_2();
@@ -1219,6 +1247,10 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
         // Skip reloads → defer to the parent.
         let skip = cx.listener(
             |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
+                if !view.skip_request_arm() {
+                    cx.notify();
+                    return;
+                }
                 let weak_app = view.app.clone();
                 cx.spawn_in(window, async move |_view, acx| {
                     let _ = weak_app.update_in(acx, |app, _window, cx| app.conflict_skip(cx));
@@ -1228,7 +1260,11 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
         );
         row = row.child(secondary_button(
             "conflict-skip".to_string(),
-            Msg::ConflictSkip.t(),
+            if mode.skip_armed {
+                Msg::ConflictConfirmSkip.t()
+            } else {
+                Msg::ConflictSkip.t()
+            },
             true,
             Some(skip),
         ));
@@ -1863,6 +1899,7 @@ mod tests {
             selected_file: Some(0),
             editing_file: None,
             abort_armed: false,
+            skip_armed: false,
         }
     }
 

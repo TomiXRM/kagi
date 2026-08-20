@@ -171,9 +171,25 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 .child(
                     div()
                         .text_sm()
+                        .text_color(rgb(if app.github_error.is_some() {
+                            theme().color_blocker
+                        } else {
+                            theme().text_muted
+                        }))
+                        .child(SharedString::from(if app.github_error.is_some() {
+                            Msg::PrFetchFailed.t()
+                        } else {
+                            Msg::PrPaneEmpty.t()
+                        })),
+                )
+                .children(app.github_error.clone().map(|e| {
+                    div()
+                        .max_w(theme::scaled_px(420.))
+                        .text_xs()
                         .text_color(rgb(theme().text_muted))
-                        .child(SharedString::from(Msg::PrPaneEmpty.t())),
-                ),
+                        .child(e)
+                }))
+                .child(refresh_button(cx)),
         );
     } else {
         body = body.child(render_tiles(&buckets));

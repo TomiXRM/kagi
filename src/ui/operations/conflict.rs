@@ -410,10 +410,17 @@ impl KagiApp {
                 self.record_op(
                     &op_name,
                     plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg },
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
                     &repo_path,
                     cx,
                 );
+                // Without this the failure only reached the oplog: no toast, no
+                // modal, no reload — so the UI kept rendering the pre-failure
+                // conflict state and the user believed the abort/skip had
+                // happened. CLAUDE.md: errors surface via the oplog *and* the UI.
+                self.push_toast(ToastKind::Error, SharedString::from(err_msg), cx);
             }
         }
         cx.notify();
@@ -483,10 +490,17 @@ impl KagiApp {
                 self.record_op(
                     &op_name,
                     plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg },
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
                     &repo_path,
                     cx,
                 );
+                // Without this the failure only reached the oplog: no toast, no
+                // modal, no reload — so the UI kept rendering the pre-failure
+                // conflict state and the user believed the abort/skip had
+                // happened. CLAUDE.md: errors surface via the oplog *and* the UI.
+                self.push_toast(ToastKind::Error, SharedString::from(err_msg), cx);
             }
         }
         cx.notify();
@@ -787,6 +801,7 @@ impl KagiApp {
                     selected_file,
                     editing_file,
                     abort_armed: false,
+                    skip_armed: false,
                 };
                 let files = mode.session.files.clone();
 

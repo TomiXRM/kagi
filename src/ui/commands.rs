@@ -1603,6 +1603,7 @@ impl KagiApp {
             None => return,
         };
         self.fetch_in_flight = true;
+        let repo_path_guard = repo_path.clone();
         if !silent {
             self.refresh_spin_started = Some(Instant::now());
             klog!("fetch: start");
@@ -1616,6 +1617,14 @@ impl KagiApp {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
                 app.fetch_in_flight = false;
+                // A fetch takes seconds; the user may have switched tabs. The
+                // apply below stamps `last_fetch_secs` and can trigger a full
+                // reload, both of which would land on the wrong repo — falsely
+                // silencing the fetch-age warning (ADR-0127) for a repo that
+                // was never fetched, and closing that tab's commit panel.
+                if app.repo_path.as_deref() != Some(repo_path_guard.as_path()) {
+                    return;
+                }
                 match result {
                     Ok(outcome) => {
                         // ADR-0127: a no-op fetch skips the reload below, so the

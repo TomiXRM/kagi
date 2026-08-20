@@ -97,3 +97,16 @@ swimlane コンパクション）を導入した際、既定は `Stable`・設�
   マージ線の垂直到達・join エッジ色）、`test_compact_tip_joins_existing_lane`。
 - `cargo test --workspace` 全緑 / `cargo fmt --check` / `cargo clippy`（自 diff に
   新規警告なし）。
+
+## 追記 (2026-08-21): `Compact` を削除
+
+ADR-0104 が「削除容易」と書き、本 ADR が「到達不能コードになるが API は維持」と
+決めた `GraphLayoutMode::Compact` を、実際に削除した。維持していた API に本番の
+呼び出し元は一度も現れず（`build_commit_rows` と `graph_solo` はどちらも
+`Stable` を渡すだけ）、生きていたのはテストだけだった。到達しないコードパスの
+テストは、動いていることの証明ではなく維持コストである。
+
+`GraphLayoutMode` と `layout_with` ごと削除し、入口は `layout()` 一本にした。
+`crates/kagi-domain/src/graph.rs` は 1043 → 714 行、
+`tests/graph_layout_test.rs` は 1188 → 945 行。`Stable` の挙動は無変更で、
+既存の 13 テストはそのまま通る。復活が必要になれば git 履歴にある。

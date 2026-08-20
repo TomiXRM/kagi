@@ -484,10 +484,17 @@ impl Render for ConflictView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // entity-exists ⟺ mode-is-some in practice (the parent drops the entity on
         // clear), but guard defensively so a transient empty entity paints nothing.
-        match self.mode.clone() {
+        // `as_ref`, not `clone`: `ConflictMode` owns the whole `ResolutionBuffer`
+        // — every conflicted file's current/incoming text, its resolved lines,
+        // and the full undo *and* redo stacks, each entry another owned
+        // `Vec<ResolvedLine>`. Cloning that per frame is megabytes of `String`
+        // allocation on the one screen where the user types, so every keystroke
+        // paid for it. `render_body` already takes a reference, and `cx` is a
+        // separate parameter from `self`, so the borrow is fine.
+        match self.mode.as_ref() {
             Some(mode) => {
                 let chrome = self.editor_chrome();
-                render_body(&mode, &chrome, cx)
+                render_body(mode, &chrome, cx)
             }
             None => div().into_any_element(),
         }

@@ -255,7 +255,8 @@ fn main() {
     // continue/abort, checkout, commit, …) require the session and otherwise
     // fail with "session unavailable". Failure stays non-fatal (`.ok()`).
     app_state.repo_session = kagi_git::session::RepoSession::open(&repo_path).ok();
-    app_state.refresh_wip_diffstat();
+    // The WIP diffstat is filled by the first render's background scan — two
+    // tree diffs for a badge is not worth delaying the window for.
 
     // W4-TABS / ADR-0027: the CLI argument becomes the initial tab.
     app_state.tabs.push(ui::tabs::RepoTab {

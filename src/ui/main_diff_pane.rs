@@ -60,9 +60,12 @@ impl MainDiffPane {
             } if row_index == row && file_index == file => {}
             _ => return,
         }
+        // The only writer of `rows`, and the pane owns the sole strong handle
+        // at this point, so `make_mut` is a no-copy in-place edit.
+        let rows = std::sync::Arc::make_mut(&mut self.view.rows);
         for (row_i, row_highlights) in highlights {
             if let Some(super::diff_view::DiffRow::Line { highlights: hl, .. }) =
-                self.view.rows.get_mut(row_i)
+                rows.get_mut(row_i)
             {
                 *hl = row_highlights;
             }

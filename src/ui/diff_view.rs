@@ -153,7 +153,14 @@ pub struct MainDiffView {
     /// Stats string: "+N −M".
     pub stats: SharedString,
     /// All displayable rows (hunk headers + content lines).
-    pub rows: Vec<DiffRow>,
+    ///
+    /// `Arc` because the three panes that show a diff (`MainDiffPane`,
+    /// File History, PR mode) clone the whole `MainDiffView` on every frame,
+    /// and `DiffRow::Line` carries a `highlights: Vec<…>` — a real allocation
+    /// per line, not a refcount bump. A 3000-line diff was ~3000 mallocs per
+    /// frame for the length of a reading session. `render_diff_list` wrapped
+    /// this in an `Arc` immediately anyway, so the deep copy bought nothing.
+    pub rows: std::sync::Arc<Vec<DiffRow>>,
     /// Where this diff was opened from (for re-load / back navigation).
     #[allow(dead_code)]
     pub source: MainDiffSource,
@@ -485,7 +492,7 @@ pub(crate) fn build_main_diff_view(
     MainDiffView {
         title,
         stats,
-        rows,
+        rows: std::sync::Arc::new(rows),
         source,
         images: None,
     }
@@ -928,7 +935,7 @@ impl KagiApp {
                     MainDiffView {
                         title,
                         stats,
-                        rows,
+                        rows: std::sync::Arc::new(rows),
                         source,
                         images,
                     },
@@ -1086,7 +1093,7 @@ impl KagiApp {
                     MainDiffView {
                         title,
                         stats,
-                        rows,
+                        rows: std::sync::Arc::new(rows),
                         source,
                         images,
                     },
@@ -1192,7 +1199,7 @@ impl KagiApp {
                     MainDiffView {
                         title,
                         stats,
-                        rows,
+                        rows: std::sync::Arc::new(rows),
                         source,
                         images,
                     },

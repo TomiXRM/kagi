@@ -17,6 +17,12 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
+        // File History outranks Analyze in `resolve_workspace`, so opening
+        // Analyze underneath it changed nothing on screen and the button read
+        // as dead. Close everything Analyze has to displace.
+        self.close_file_history();
+        self.branch_cleanup_open = false;
+        self.pr_mode = None;
         let head = self.active_view.head_oid.clone();
         // Reuse a cached mine only if it reflects the current HEAD (instant
         // reopen, even after switching to another repo tab and back). A cache

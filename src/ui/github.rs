@@ -64,12 +64,22 @@ impl KagiApp {
         if self.github_ticker_alive || self.repo_path.is_none() {
             return;
         }
-        if !kagi_git::github::gh_available() {
-            return;
-        }
+        // `gh_available()` spawns `gh --version` — 18-24ms of process fork on
+        // the UI thread, and this runs from `ensure_startup_repo_io` before the
+        // first frame. The check moved inside the task; the flag is still set
+        // here so a second call cannot start a second ticker while the first is
+        // still deciding.
         self.github_ticker_alive = true;
-        klog!("github: ticker start ({}s)", GITHUB_REFRESH_SECS);
         cx.spawn(async move |this, acx| {
+            let available = acx
+                .background_executor()
+                .spawn(async { kagi_git::github::gh_available() })
+                .await;
+            if !available {
+                let _ = this.update(acx, |app, _| app.github_ticker_alive = false);
+                return;
+            }
+            klog!("github: ticker start ({}s)", GITHUB_REFRESH_SECS);
             // Who am I? Once per ticker; the grouping is best-effort without it.
             let login = acx
                 .background_executor()

@@ -41,26 +41,16 @@
 //! 5. **Trim trailing `None` lanes** — `lane_count` is the maximum number of
 //!    occupied lanes seen across all rows (1-based).
 //!
-//! The 5 steps above describe the **`Stable`** ([`GraphLayoutMode::Stable`])
-//! layout. [`GraphLayoutMode::Compact`] additionally *compacts* freed lanes
-//! (Gitru-style swimlanes): columns shift left when a lane is reclaimed, which
-//! is emitted as a `Pass` edge with `from_lane != to_lane`. Both modes carry a
-//! **stable colour** on each lane ([`GraphRow::color`] / [`GraphEdge::color`]),
-//! so a branch keeps its colour across rows and column shifts.
+//! Each lane carries a **stable colour** ([`GraphRow::color`] /
+//! [`GraphEdge::color`]), so a branch keeps its colour across rows.
 //!
-//! The two modes handle a first parent that is *already awaited by another
-//! lane* differently:
+//! A first parent that is *already awaited by another lane* keeps both lines
+//! open: they run straight down their own columns and converge at the parent
+//! commit's own row, so forks fan out of the parent node (Fork/GitKraken
+//! look). Which line the node sits on is decided in step 2 (merge-born waiter
+//! first).
 //!
-//! - `Stable` (the shipped layout) keeps both lines open: they run straight
-//!   down their own columns and converge at the parent commit's own row, so
-//!   forks fan out of the parent node (Fork/GitKraken look). Which line the
-//!   node sits on is decided in step 2 (merge-born waiter first).
-//! - `Compact` applies a *first-parent join* instead: the node's line merges
-//!   into the existing lane at the node's own row and its lane closes. Open
-//!   lane targets stay unique there (any commit is approached by at most one
-//!   lane), keeping the packed layout narrow.
-//!
-//! Public entry points: [`layout`] (Stable) and [`layout_with`].
+//! Public entry point: [`layout`].
 
 use crate::commit::{Commit, CommitId};
 
@@ -79,30 +69,6 @@ use crate::commit::{Commit, CommitId};
 /// over-cycling (lanes are short-lived, so same-colour coexistence is rare).
 /// The UI palette in `src/ui/theme.rs` matches this length 1:1.
 pub const NUM_COLORS: usize = 8;
-
-/// Which lane-assignment strategy [`layout_with`] uses.
-///
-/// `Stable` reproduces the historical gitk-style layout (ADR-0003): lane columns
-/// never shift — a freed lane becomes a gap that is reused leftmost-first.
-///
-/// `Compact` ports Gitru's VS Code-style swimlane **compaction**: freed lanes are
-/// removed and the lanes to their right shift left, keeping the graph narrow.
-/// Compaction can therefore move a lane between columns from one row to the next,
-/// which is expressed as a [`EdgeKind::Pass`] edge with `from_lane != to_lane`
-/// (a "shift" edge). Lane colours are carried on the lane, so a branch keeps its
-/// colour even as its column shifts.
-///
-/// The two modes are intentionally separable: `Compact` is opt-in and the whole
-/// path can be removed later by deleting the compaction branch + its tests, with
-/// `Stable` (and the stable-colour work) untouched.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum GraphLayoutMode {
-    /// Historical gitk-style layout — columns never shift. The default.
-    #[default]
-    Stable,
-    /// Gitru-style swimlane compaction — freed lanes are reclaimed.
-    Compact,
-}
 
 /// An open branch line ("swimlane"): the commit it is next waiting for plus the
 /// stable colour carried with the lane across rows / column shifts.
@@ -173,10 +139,7 @@ pub struct GraphEdge {
 pub enum EdgeKind {
     /// The edge passes through this row without touching the node.
     ///
-    /// In `Stable` mode `from_lane == to_lane` always (a straight vertical). In
-    /// `Compact` mode a lane that shifts column between rows is also a `Pass`
-    /// with `from_lane != to_lane` (a "shift" edge); the renderer draws it as a
-    /// short S-curve from the top column to the bottom column.
+    /// `from_lane == to_lane` always: a straight vertical.
     Pass,
     /// The edge comes **into** the node from a lane above
     /// (`to_lane == row.lane`).
@@ -203,19 +166,7 @@ pub enum EdgeKind {
 /// O(commits × active\_lanes).  For repositories with ≤ 10 000 commits and
 /// typical lane counts (< 50) this runs in well under a millisecond.
 pub fn layout(commits: &[Commit]) -> GraphLayout {
-    layout_with(commits, GraphLayoutMode::Stable)
-}
-
-/// Compute the [`GraphLayout`] using the chosen [`GraphLayoutMode`].
-///
-/// `Stable` is the historical gitk-style layout (identical lane indices to the
-/// pre-colour `layout`, now also carrying stable per-lane colours). `Compact`
-/// applies Gitru-style swimlane compaction. See [`GraphLayoutMode`].
-pub fn layout_with(commits: &[Commit], mode: GraphLayoutMode) -> GraphLayout {
-    match mode {
-        GraphLayoutMode::Stable => layout_stable(commits),
-        GraphLayoutMode::Compact => layout_compact(commits),
-    }
+    layout_stable(commits)
 }
 
 /// Allocate the next stable colour index (monotonic counter, `% NUM_COLORS`).
@@ -388,205 +339,6 @@ fn layout_stable(commits: &[Commit]) -> GraphLayout {
             color: node_color,
             edges,
         });
-    }
-
-    GraphLayout {
-        rows,
-        lane_count: max_lanes,
-    }
-}
-
-// ────────────────────────────────────────────────────────────
-// Compact (Gitru swimlane) layout — freed lanes are reclaimed
-// ────────────────────────────────────────────────────────────
-
-/// Gitru-style swimlane compaction. Lane positions are *packed* (no gaps):
-/// `lanes[i]` is the branch line in column `i`. When a lane is consumed by a
-/// merge (or a branch ends) the lanes to its right shift one column left, so the
-/// graph never grows wider than it must. A column shift between rows is emitted
-/// as a `Pass` edge with `from_lane != to_lane` (top column → bottom column).
-fn layout_compact(commits: &[Commit]) -> GraphLayout {
-    if commits.is_empty() {
-        return GraphLayout {
-            rows: Vec::new(),
-            lane_count: 0,
-        };
-    }
-
-    // Packed lane vector — position is the column, no `None` gaps.
-    let mut lanes: Vec<Lane> = Vec::new();
-    let mut color_counter: usize = 0;
-
-    let mut rows: Vec<GraphRow> = Vec::with_capacity(commits.len());
-    let mut max_lanes: usize = 0;
-
-    for commit in commits {
-        let input = lanes.clone();
-
-        // Incoming lanes = input columns waiting for this commit.
-        let incoming: Vec<usize> = input
-            .iter()
-            .enumerate()
-            .filter_map(|(i, l)| if l.target == commit.id { Some(i) } else { None })
-            .collect();
-        let first_in = incoming.first().copied();
-        let is_tip = incoming.is_empty();
-
-        // Node colour: continue the first incoming lane's colour, or mint one.
-        let node_color: usize = match first_in {
-            Some(i) => input[i].color,
-            None => alloc_color(&mut color_counter),
-        };
-
-        // First-parent join (Stable's step-4 exception): if another surviving
-        // lane already waits for `parents[0]`, the node's line merges into that
-        // lane at THIS row instead of opening a duplicate lane. Without this,
-        // two lanes run in parallel toward the same commit and only converge —
-        // with a sideways bend — at the target commit's own row.
-        let p0_join: Option<usize> = commit.parents.first().and_then(|p0| {
-            input
-                .iter()
-                .enumerate()
-                .find(|(i, l)| !incoming.contains(i) && &l.target == p0)
-                .map(|(i, _)| i)
-        });
-
-        // ── Build the output (next-row) lane vector, packed ─────────────
-        // `old_to_new[i]` = output column of input lane i (None if consumed).
-        let mut new_lanes: Vec<Lane> = Vec::new();
-        let mut old_to_new: Vec<Option<usize>> = vec![None; input.len()];
-        // Output column where the node's continuing (first-parent) line sits.
-        let mut node_lane: usize = 0;
-
-        for (i, lane) in input.iter().enumerate() {
-            if first_in == Some(i) {
-                // The node's own lane — continues as the first parent.
-                node_lane = new_lanes.len();
-                old_to_new[i] = Some(new_lanes.len());
-                if !commit.parents.is_empty() && p0_join.is_none() {
-                    new_lanes.push(Lane {
-                        target: commit.parents[0].clone(),
-                        color: node_color,
-                        merge_born: false,
-                    });
-                }
-                // Root (no parents) or first-parent join: the lane closes —
-                // push nothing.
-            } else if incoming.contains(&i) {
-                // Secondary incoming lane — merged into the node, reclaimed.
-            } else {
-                // Unrelated lane — survives, possibly shifted left.
-                old_to_new[i] = Some(new_lanes.len());
-                new_lanes.push(lane.clone());
-            }
-        }
-
-        // A tip opens a brand-new lane at the right for its first parent —
-        // unless that parent is already awaited by an existing lane (join).
-        if is_tip {
-            node_lane = new_lanes.len();
-            if !commit.parents.is_empty() && p0_join.is_none() {
-                new_lanes.push(Lane {
-                    target: commit.parents[0].clone(),
-                    color: node_color,
-                    merge_born: false,
-                });
-            }
-            // Isolated commit (tip + root) or first-parent join: node occupies
-            // a column but no lane persists — nothing pushed.
-        }
-
-        // Merge parents (parents[1..]): reuse an open lane or append a new one.
-        let mut merge_targets: Vec<(usize, usize)> = Vec::new(); // (column, colour)
-        for p in commit.parents.iter().skip(1) {
-            if let Some(idx) = new_lanes.iter().position(|l| &l.target == p) {
-                merge_targets.push((idx, new_lanes[idx].color));
-            } else {
-                let color = alloc_color(&mut color_counter);
-                let idx = new_lanes.len();
-                new_lanes.push(Lane {
-                    target: p.clone(),
-                    color,
-                    merge_born: true,
-                });
-                merge_targets.push((idx, color));
-            }
-        }
-
-        // ── Emit row-local edges (top column → bottom column) ───────────
-        let mut edges: Vec<GraphEdge> = Vec::new();
-
-        // Surviving lanes: Pass straight, or a shift if the column moved.
-        for (i, lane) in input.iter().enumerate() {
-            if incoming.contains(&i) {
-                continue; // handled as IntoNode below
-            }
-            if let Some(no) = old_to_new[i] {
-                edges.push(GraphEdge {
-                    from_lane: i,
-                    to_lane: no,
-                    kind: EdgeKind::Pass,
-                    color: lane.color,
-                });
-            }
-        }
-
-        // Incoming lanes converge into the node (each keeps its colour).
-        for &j in &incoming {
-            edges.push(GraphEdge {
-                from_lane: j,
-                to_lane: node_lane,
-                kind: EdgeKind::IntoNode,
-                color: input[j].color,
-            });
-        }
-
-        // Outgoing first-parent + merge edges. On a join, the first-parent
-        // edge bends into the existing lane's (possibly shifted) column and
-        // takes that lane's colour, exactly like Stable's exception.
-        if !commit.parents.is_empty() {
-            let (p0_col, p0_color) = match p0_join {
-                Some(k) => (
-                    old_to_new[k].expect("join target lane survives this row"),
-                    input[k].color,
-                ),
-                None => (node_lane, node_color),
-            };
-            edges.push(GraphEdge {
-                from_lane: node_lane,
-                to_lane: p0_col,
-                kind: EdgeKind::OutOfNode,
-                color: p0_color,
-            });
-            for (idx, color) in &merge_targets {
-                edges.push(GraphEdge {
-                    from_lane: node_lane,
-                    to_lane: *idx,
-                    kind: EdgeKind::OutOfNode,
-                    color: *color,
-                });
-            }
-        }
-
-        let highest_used = input.len().max(new_lanes.len()).max(node_lane + 1).max(
-            edges
-                .iter()
-                .map(|e| e.from_lane.max(e.to_lane) + 1)
-                .max()
-                .unwrap_or(0),
-        );
-        max_lanes = max_lanes.max(highest_used);
-
-        debug_assert!(directed_edges_touch_node(&edges, node_lane));
-
-        rows.push(GraphRow {
-            commit: commit.id.clone(),
-            lane: node_lane,
-            color: node_color,
-            edges,
-        });
-
-        lanes = new_lanes;
     }
 
     GraphLayout {
@@ -926,7 +678,7 @@ mod tests {
     #[test]
     fn test_stable_color_carried_along_branch() {
         let commits = vec![c("C", &["B"]), c("B", &["A"]), c("A", &[])];
-        let gl = layout_with(&commits, GraphLayoutMode::Stable);
+        let gl = layout(&commits);
 
         // One branch → one colour the whole way down.
         let color = gl.rows[0].color;
@@ -948,7 +700,7 @@ mod tests {
             c("D", &["A"]),
             c("A", &[]),
         ];
-        let gl = layout_with(&commits, GraphLayoutMode::Stable);
+        let gl = layout(&commits);
 
         // Mainline (M,B,A on lane 0) share colour 0; the feature lane (D) gets 1.
         assert_eq!(gl.rows[0].color, 0, "M mainline colour");
@@ -958,86 +710,4 @@ mod tests {
     }
 
     // ── test 8: compact linear history ───────────────────────────────────
-    #[test]
-    fn test_compact_linear() {
-        let commits = vec![c("C", &["B"]), c("B", &["A"]), c("A", &[])];
-        let gl = layout_with(&commits, GraphLayoutMode::Compact);
-
-        assert_eq!(gl.lane_count, 1);
-        for row in &gl.rows {
-            assert_eq!(row.lane, 0, "compact linear: all nodes on lane 0");
-            assert_eq!(row.color, 0, "compact linear: one stable colour");
-        }
-    }
-
-    // ── test 8b/8c: compact first-parent join (no duplicate lanes) ────────
-    // Exhaustive coverage lives in `tests/graph_layout_test.rs`
-    // (`test_compact_first_parent_joins_existing_lane`,
-    // `test_compact_tip_joins_existing_lane`, T007 conventions).
-
-    // ── test 9: compact emits a shift edge + reclaims the column ──────────
-    //
-    //  M(A,B)  opens A@0, B@1
-    //  A(C) → C(D) → D()   (mainline on lane 0, ending at root D)
-    //  B()                  (the other branch, a root)
-    //
-    // When D (root) closes lane 0, the still-open B lane shifts from column 1
-    // to column 0 — a `Pass` edge with from_lane=1, to_lane=0.
-    #[test]
-    fn test_compact_shift_edge_and_reclaim() {
-        let commits = vec![
-            c("M", &["A", "B"]),
-            c("A", &["C"]),
-            c("C", &["D"]),
-            c("D", &[]),
-            c("B", &[]),
-        ];
-        let gl = layout_with(&commits, GraphLayoutMode::Compact);
-
-        // A shift edge (Pass with from != to) must appear somewhere.
-        let has_shift = gl.rows.iter().any(|r| {
-            r.edges
-                .iter()
-                .any(|e| e.kind == EdgeKind::Pass && e.from_lane != e.to_lane)
-        });
-        assert!(has_shift, "compaction must emit at least one shift edge");
-
-        // The B branch keeps its colour across the shift.
-        let row_d = gl.rows.iter().find(|r| r.commit == cid("D")).unwrap();
-        let shift = row_d
-            .edges
-            .iter()
-            .find(|e| e.kind == EdgeKind::Pass && e.from_lane != e.to_lane)
-            .expect("D row carries the shift edge");
-        assert_eq!(shift.from_lane, 1);
-        assert_eq!(
-            shift.to_lane, 0,
-            "B reclaims column 0 after D closes lane 0"
-        );
-    }
-
-    // ── test 10: compact never widens beyond stable on a typical graph ───
-    #[test]
-    fn test_compact_lane_count_not_worse() {
-        let commits = vec![
-            c("M", &["A", "B"]),
-            c("A", &["C"]),
-            c("C", &["D"]),
-            c("D", &[]),
-            c("B", &[]),
-        ];
-        let stable = layout_with(&commits, GraphLayoutMode::Stable);
-        let compact = layout_with(&commits, GraphLayoutMode::Compact);
-        assert_eq!(stable.rows.len(), compact.rows.len());
-        assert!(
-            compact.lane_count <= stable.lane_count,
-            "compact lane_count {} must not exceed stable {}",
-            compact.lane_count,
-            stable.lane_count
-        );
-        // Row/commit correspondence preserved in both modes.
-        for (i, row) in compact.rows.iter().enumerate() {
-            assert_eq!(row.commit, commits[i].id);
-        }
-    }
 }

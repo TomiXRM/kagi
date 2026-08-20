@@ -233,6 +233,9 @@ impl KagiApp {
         // with many branches) — kick it off on a background thread so
         // `active_view.cleanup_rows` catches up a beat after this reload.
         self.start_branch_cleanup_scan(cx);
+        // ADR-0139: ghost connectors for squash-merged branches. Same
+        // background shape, and it depends on the rows this reload just built.
+        self.start_squash_link_scan(cx);
 
         Ok(())
     }

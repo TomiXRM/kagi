@@ -44,6 +44,7 @@ pub mod pr_dashboard;
 pub mod pr_mode;
 pub use kagi_ui_core::file_tree; // ADR-0121: was a shim file
 mod graph_solo;
+pub mod graph_squash;
 pub mod graph_view;
 pub use kagi_ui_core::i18n; // ADR-0121: was a shim file
 pub mod inspector;
@@ -1279,6 +1280,10 @@ pub struct KagiApp {
     /// `KagiApp::start_branch_cleanup_scan`) and can now be superseded by a
     /// newer reload before it finishes.
     pub cleanup_gen: u64,
+    /// ADR-0139: same guard for the background squash-link scan that draws the
+    /// graph's ghost connectors. A result whose token no longer matches is
+    /// dropped — its row indices belong to a graph that has been rebuilt.
+    pub squash_gen: u64,
     /// ADR-0119: cached completed mine so reopening the Ecosystem view reuses
     /// the slow `git log` scan. Invalidated on reload / repo switch.
     pub ecosystem_cache: ecosystem::EcosystemCache,
@@ -1473,6 +1478,7 @@ impl KagiApp {
             cleanup_cols: branch_cleanup::CleanupCols::load(),
             cleanup_scroll: UniformListScrollHandle::new(),
             cleanup_gen: 0,
+            squash_gen: 0,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,
@@ -1595,6 +1601,7 @@ impl KagiApp {
             cleanup_cols: branch_cleanup::CleanupCols::load(),
             cleanup_scroll: UniformListScrollHandle::new(),
             cleanup_gen: 0,
+            squash_gen: 0,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
             ecosystem_inflight: None,
             ecosystem_gen: 0,
@@ -1639,6 +1646,7 @@ impl KagiApp {
         // already covered by `reload_checked`'s call — this one is cheap and
         // generation-guarded, so the redundant call there is harmless.
         self.start_branch_cleanup_scan(cx);
+        self.start_squash_link_scan(cx);
     }
 
     /// Detect (or clear) Conflict Mode for the currently-open repository.

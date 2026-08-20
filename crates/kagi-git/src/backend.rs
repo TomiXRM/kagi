@@ -1220,6 +1220,14 @@ impl Backend {
         ops::collect_branch_cleanup(&self.repo, now)
     }
 
+    /// Every local branch that is squash-merged into HEAD, paired with the
+    /// commit carrying its change (ADR-0139). Drives the graph's ghost
+    /// connectors. Like `collect_branch_cleanup`, far too slow for the
+    /// snapshot path — the app layer runs it on a background thread.
+    pub fn collect_squash_links(&self) -> Result<Vec<ops::SquashLink>, GitError> {
+        ops::collect_squash_links(&self.repo).map_err(|e| GitError::Other(e.to_string()))
+    }
+
     /// Branch Cleanup (ADR-0128): validate a selection of delete targets and
     /// build the confirmation plan. `now` is Unix seconds (staleness input).
     pub fn plan_delete_merged_branches(

@@ -537,9 +537,13 @@ const COMMIT_STRIP_MAX_H: f32 = 210.0;
 const ROW_H: f32 = 24.0;
 
 pub fn render_pr_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    // The right rail is STACK + FILES *of the open PR*. On the dashboard
+    // there is no open PR, so it stood there empty — drop it and give the
+    // width to the home screen (user request).
+    let has_tab = app.pr_mode.as_ref().is_some_and(|m| m.active.is_some());
     let left = render_pr_list(app, cx);
     let center = render_center(app, cx);
-    let right = render_right(app, cx);
+    let right = has_tab.then(|| render_right(app, cx));
     div()
         .flex()
         .flex_row()
@@ -551,8 +555,8 @@ pub fn render_pr_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::Any
         .child(left)
         .child(vdivider(DividerKind::PrModeLeft))
         .child(center)
-        .child(vdivider(DividerKind::PrModeRight))
-        .child(right)
+        .when(has_tab, |el| el.child(vdivider(DividerKind::PrModeRight)))
+        .children(right)
         .into_any_element()
 }
 

@@ -22,11 +22,44 @@ use kagi_domain::github::{stack_order, PrAttention, PrGroup, PrReason, PullReque
 
 use super::i18n::Msg;
 use super::pr_mode::{
-    attention_color, card_bg, card_border, card_pane_bg, ci_glyph, focus_queue, queue_bucket_label,
-    reason_text, MAX_INDENT_DEPTH,
+    attention_color, card_border, ci_glyph, focus_queue, queue_bucket_label, reason_text,
+    MAX_INDENT_DEPTH,
 };
 use super::theme::{self, theme};
 use super::KagiApp;
+
+/// The dashboard's page: the app's own base background, not the chrome grey.
+/// It reads as a *page*, and `surface` there was a muddy mid-tone that made
+/// the whole screen look washed out (user report). The reading cards in
+/// `pr_mode` keep their own inverted relationship — this is the home screen
+/// only.
+fn page_bg() -> u32 {
+    theme().bg_base
+}
+
+/// A card on that page. No grey anywhere (user request): solid white in light
+/// themes, and in dark ones plain black over the page. A partly transparent
+/// white still mixed with what was behind it and came out grey, which is why
+/// the light theme kept looking washed out.
+fn dash_card_bg() -> gpui::Hsla {
+    if theme().dark {
+        gpui::hsla(0., 0., 0., 0.35)
+    } else {
+        gpui::hsla(0., 0., 1., 1.)
+    }
+}
+
+/// The stack frame's interior. In dark themes it recesses below the page with
+/// plain black; in light themes it is solid white like the cards, and the
+/// 2px border alone marks the group — a black wash there was literally grey,
+/// and it tinted everything sitting on it (user report).
+fn well_bg() -> gpui::Hsla {
+    if theme().dark {
+        gpui::hsla(0., 0., 0., 0.16)
+    } else {
+        gpui::hsla(0., 0., 1., 1.)
+    }
+}
 
 /// A header-bar button: icon + label, the same weight as the existing
 /// `GitHub ↗` one so the row reads as one set of controls.
@@ -160,13 +193,28 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
             continue;
         }
         body = body.child(group_header(title, members.len()));
-        for (ix, depth) in stack_order(&members) {
-            let pr = &members[ix];
-            let (bucket, why) = att
-                .get(&pr.number)
-                .cloned()
-                .unwrap_or((PrAttention::Dormant, PrReason::None));
-            body = body.child(render_card(pr, depth, bucket, &why, cx));
+        // `stack_order` emits each root followed by its chain, so a run that
+        // starts at depth 0 and has children IS one stack. Runs of length 1
+        // are lone PRs and stay plain cards — a box around a single PR says
+        // "stack" about something that isn't one.
+        for run in stack_runs(&stack_order(&members)) {
+            let card = |(ix, depth): (usize, usize), nested, cx: &mut Context<KagiApp>| {
+                let pr = &members[ix];
+                let (bucket, why) = att
+                    .get(&pr.number)
+                    .cloned()
+                    .unwrap_or((PrAttention::Dormant, PrReason::None));
+                render_card(pr, depth, bucket, &why, nested, cx)
+            };
+            if run.len() == 1 {
+                body = body.child(card(run[0], false, cx));
+                continue;
+            }
+            let mut group = stack_frame(&members[run[0].0], run.len());
+            for row in run {
+                group = group.child(card(row, true, cx));
+            }
+            body = body.child(group);
         }
     }
 
@@ -175,7 +223,7 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
         .flex_col()
         .flex_1()
         .min_h(px(0.))
-        .bg(rgb(card_pane_bg()))
+        .bg(rgb(page_bg()))
         .child(render_hero(app, cx))
         .child(body)
         .into_any_element()
@@ -254,7 +302,7 @@ fn render_tiles(buckets: &[(PrAttention, Vec<(PullRequest, PrReason)>)]) -> gpui
                 .rounded_md()
                 .border_1()
                 .border_color(card_border())
-                .bg(rgb(card_bg()))
+                .bg(dash_card_bg())
                 .text_sm()
                 .child(
                     div()
@@ -276,6 +324,69 @@ fn render_tiles(buckets: &[(PrAttention, Vec<(PullRequest, PrReason)>)]) -> gpui
         );
     }
     row
+}
+
+/// Split `stack_order`'s flat (index, depth) list back into its chains: a new
+/// run begins at every depth-0 row.
+fn stack_runs(rows: &[(usize, usize)]) -> Vec<Vec<(usize, usize)>> {
+    let mut runs: Vec<Vec<(usize, usize)>> = Vec::new();
+    for &row in rows {
+        if row.1 == 0 || runs.is_empty() {
+            runs.push(vec![row]);
+        } else {
+            runs.last_mut().unwrap().push(row);
+        }
+    }
+    runs
+}
+
+/// The box a stack's cards sit in: one border around the chain, headed by how
+/// many PRs it is and what the bottom of it merges into. Indentation alone
+/// left it ambiguous where one stack ended and the next PR began (user
+/// request).
+fn stack_frame(root: &PullRequest, count: usize) -> gpui::Div {
+    // Three levels, all neutral: the page, the recessed well, and the cards
+    // lifted back out of it.
+    div()
+        .flex()
+        .flex_col()
+        .flex_shrink_0()
+        .mx_4()
+        .mb_2()
+        .p_2()
+        .rounded_lg()
+        .bg(well_bg())
+        .border_2()
+        .border_color(card_border())
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .pb_1()
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .child(
+                    gpui::svg()
+                        .path("icons/waypoints.svg")
+                        .flex_shrink_0()
+                        .w(theme::scaled_px(11.))
+                        .h(theme::scaled_px(11.))
+                        .text_color(rgb(theme().text_muted)),
+                )
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(theme().text_label))
+                        .child(SharedString::from(Msg::PrStack.t())),
+                )
+                .child(SharedString::from(format!(
+                    "{} \u{00B7} \u{2192} {}",
+                    count, root.base
+                ))),
+        )
 }
 
 fn group_header(title: &str, count: usize) -> gpui::Div {
@@ -314,6 +425,8 @@ fn render_card(
     depth: usize,
     bucket: PrAttention,
     why: &PrReason,
+    // Inside a `stack_frame`, which already supplies the outer margin.
+    nested: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let accent = attention_color(bucket);
@@ -350,13 +463,13 @@ fn render_card(
     };
     div()
         .id(("pr-dash-card", pr.number as usize))
-        // Indent marks a stack; the cap stops a deep chain from squeezing the
-        // card into nothing.
+        // Indent marks position in the chain; the cap stops a deep stack from
+        // squeezing the card into nothing.
         .ml(theme::scaled_px(
-            16. + depth.min(MAX_INDENT_DEPTH) as f32 * 18.,
+            if nested { 0. } else { 16. } + depth.min(MAX_INDENT_DEPTH) as f32 * 14.,
         ))
-        .mr_4()
-        .mb_2()
+        .when(!nested, |el| el.mr_4().mb_2())
+        .when(nested, |el| el.mb_1())
         .flex()
         .flex_row()
         // A flex child in a column shrinks below its own content by default,
@@ -368,7 +481,7 @@ fn render_card(
         .rounded_md()
         .border_1()
         .border_color(card_border())
-        .bg(rgb(card_bg()))
+        .bg(dash_card_bg())
         .cursor_pointer()
         .hover(|s| s.bg(rgb(theme().selected)))
         .on_click(click)
@@ -470,4 +583,22 @@ fn render_card(
                 ),
         )
         .into_any_element()
+}
+
+#[cfg(test)]
+mod stack_run_tests {
+    use super::stack_runs;
+
+    /// `stack_order` emits root-then-chain; the splitter has to cut at every
+    /// depth-0 row and nowhere else, or two adjacent stacks merge into one box.
+    #[test]
+    fn splits_at_every_root() {
+        let rows = [(0, 0), (1, 1), (2, 2), (3, 0), (4, 0), (5, 1)];
+        let runs = stack_runs(&rows);
+        assert_eq!(runs.len(), 3);
+        assert_eq!(runs[0], vec![(0, 0), (1, 1), (2, 2)]);
+        assert_eq!(runs[1], vec![(3, 0)]);
+        assert_eq!(runs[2], vec![(4, 0), (5, 1)]);
+        assert!(stack_runs(&[]).is_empty());
+    }
 }

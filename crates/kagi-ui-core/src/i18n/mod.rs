@@ -454,6 +454,8 @@ pub enum Msg {
     PrAllPrs,
     /// PR mode: manual PR-list fetch button.
     PrRefresh,
+    /// PR mode: header of a grouped stack of dependent PRs.
+    PrStack,
     /// PR mode: toast shown while that fetch runs.
     PrRefreshing,
     /// Commit panel: tooltip on the commit.template toggle.
@@ -1211,6 +1213,8 @@ impl Msg {
             (Ja, PrModeNoDescription) => "説明文はありません。",
             (En, PrAllPrs) => "All PRs",
             (Ja, PrAllPrs) => "PR 一覧",
+            (En, PrStack) => "STACK",
+            (Ja, PrStack) => "スタック",
             (En, PrRefresh) => "Refresh",
             (Ja, PrRefresh) => "更新",
             (En, PrRefreshing) => "Refreshing pull requests…",

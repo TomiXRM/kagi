@@ -183,12 +183,6 @@ impl KagiTerminalSession {
             paste_writer: None,
         }
     }
-
-    /// Whether the session currently has a live terminal view.
-    #[allow(dead_code)]
-    pub fn is_running(&self) -> bool {
-        self.view.is_some()
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

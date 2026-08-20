@@ -332,37 +332,3 @@ pub(crate) fn merge_dirty_warnings_notes(
     }
     warnings
 }
-
-/// Legacy string-returning form, superseded by [`merge_dirty_warnings_notes`]
-/// (ADR-0129 Phase 2). `ops/merge.rs` was its only caller and has switched;
-/// kept (not deleted) until Phase 3 removes `Verbatim`/string-plan-text
-/// wholesale, in case another Phase 2 fan-out PR still needs it meanwhile.
-#[allow(dead_code)]
-pub(crate) fn merge_dirty_warnings(
-    status: &super::status::WorkingTreeStatus,
-    op: &str,
-) -> Vec<String> {
-    let mut warnings = Vec::new();
-    if !status.staged.is_empty() || !status.unstaged.is_empty() {
-        let mut parts = Vec::new();
-        if !status.staged.is_empty() {
-            parts.push(format!("{} staged", status.staged.len()));
-        }
-        if !status.unstaged.is_empty() {
-            parts.push(format!("{} modified", status.unstaged.len()));
-        }
-        warnings.push(format!(
-            "Working tree has {}. Stash or commit before {} if you want a clean rollback point.",
-            parts.join(", "),
-            op
-        ));
-        warnings.push("Suggested command: git stash push -u".to_string());
-    }
-    if !status.untracked.is_empty() {
-        warnings.push(format!(
-            "{} untracked file(s) will remain untouched.",
-            status.untracked.len()
-        ));
-    }
-    warnings
-}

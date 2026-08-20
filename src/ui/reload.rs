@@ -123,7 +123,6 @@ impl KagiApp {
         // and discarded a ~minute-long Analyze mine.
         self.clear_plan_modal();
         self.clear_pull_modal();
-        self.clear_undo_modal();
         self.clear_amend_modal();
         self.clear_pop_modal();
         self.clear_stash_drop_modal();
@@ -464,6 +463,7 @@ impl KagiApp {
             return;
         };
         let bg_path = repo_path.clone();
+        let guard_path = repo_path.clone();
         let task = cx.background_spawn(async move {
             let backend = kagi_git::Backend::open(&bg_path).ok()?;
             let status = backend.working_tree_status().ok()?;
@@ -473,6 +473,12 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let refreshed = task.await;
             let _ = this.update(acx, |app, cx| {
+                // The watcher event was for `bg_path`; if the user switched
+                // tabs while we read it, these counts belong to another repo
+                // and would be written into this tab's status bar and WIP row.
+                if app.repo_path.as_deref() != Some(guard_path.as_path()) {
+                    return;
+                }
                 let Some((new_status, wip_diffstat)) = refreshed else {
                     return;
                 };

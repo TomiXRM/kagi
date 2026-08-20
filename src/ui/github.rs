@@ -42,6 +42,7 @@ impl KagiApp {
                 }
                 match result {
                     Ok(prs) => {
+                        app.github_error = None;
                         if app.github_prs != prs || app.github_prs_for.as_ref() != Some(&repo) {
                             klog!("github: prs={}", prs.len());
                             app.github_prs = prs;
@@ -50,7 +51,16 @@ impl KagiApp {
                             cx.notify();
                         }
                     }
-                    Err(e) => klog!("github: error: {}", e),
+                    Err(e) => {
+                        // Recorded, not toasted: this also runs on a 60s ticker,
+                        // and a toast per tick would be its own bug. The PR home
+                        // screen reads it so a failed fetch stops looking like
+                        // "you have no pull requests" (user-visible lie when the
+                        // token expires or the machine is offline).
+                        klog!("github: error: {}", e);
+                        app.github_error = Some(SharedString::from(e.to_string()));
+                        cx.notify();
+                    }
                 }
             });
         })

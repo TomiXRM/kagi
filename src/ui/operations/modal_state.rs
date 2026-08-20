@@ -15,7 +15,7 @@ use super::super::modals::{
     MergePlanModal, PopPlanModal, PrMergeModal, PullPlanModal, PushPlanModal,
     RebaseCurrentOntoModal, RenameBranchModal, ResetCurrentModal, RevertModal, SetUpstreamModal,
     StashApplyModal, StashDropModal, StashPushModal, SwitchToLatestPlanModal,
-    TrackingCheckoutPlanModal, UndoPlanModal, UnlockWorktreeModal,
+    TrackingCheckoutPlanModal, UnlockWorktreeModal,
 };
 use super::super::KagiApp;
 use gpui::{AppContext as _, Context, Window};
@@ -65,23 +65,6 @@ impl KagiApp {
     #[inline]
     pub fn clear_pull_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::Pull(_))) {
-            self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn undo_modal(&self) -> Option<&UndoPlanModal> {
-        match &self.active_modal {
-            Some(ActiveModal::Undo(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn set_undo_modal(&mut self, m: UndoPlanModal) {
-        self.active_modal = Some(ActiveModal::Undo(m));
-    }
-    #[inline]
-    pub fn clear_undo_modal(&mut self) {
-        if matches!(self.active_modal, Some(ActiveModal::Undo(_))) {
             self.active_modal = None;
         }
     }

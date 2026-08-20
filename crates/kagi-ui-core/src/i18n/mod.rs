@@ -167,7 +167,6 @@ pub enum Msg {
 
     // ── Placeholder / unimplemented menu reasons ────────────────────
     CloneUnimplemented,
-    RenameBranchUnimplemented,
     MultiWindowUnsupported,
     ResetUnimplemented,
 
@@ -269,16 +268,14 @@ pub enum Msg {
     // ── W30-CONFLICT-UI: Conflict Mode (banner / list / choose / preview) ──
     // Operation headings (domain words rebase/merge/cherry-pick/revert kept
     // English per ADR-0048; only the surrounding prose is localized).
-    ConflictRebasing,
-    ConflictOnto,
-    ConflictCommit,
-    ConflictMerging,
-    ConflictCherryPicking,
-    ConflictReverting,
     // Banner buttons + progress.
     ConflictContinue,
     ConflictAbort,
     ConflictSkip,
+    /// Conflict dashboard: armed label on the two-stage Skip button.
+    ConflictConfirmSkip,
+    /// Conflict dashboard: what the armed Skip is about to discard.
+    ConflictConfirmSkipHint,
     ConflictResolved,
     // File list.
     ConflictUnresolved,
@@ -407,10 +404,6 @@ pub enum Msg {
     PrGroupMine,
     PrGroupReview,
     PrGroupOthers,
-    PrColTitle,
-    PrColAuthor,
-    PrColBranches,
-    PrColReview,
     PrReviewApproved,
     PrReviewChanges,
     PrReviewRequired,
@@ -442,10 +435,7 @@ pub enum Msg {
     PrModeOverview,
     PrModeNoReview,
     PrModeMerge,
-    PrModeMergeTitle,
-    PrModeMergeBlocked,
     PrModeMergeDone,
-    PrModeDeleteBranch,
     PrSuggestion,
     PrHunkCopy,
     PrHunkCopied,
@@ -454,6 +444,8 @@ pub enum Msg {
     PrAllPrs,
     /// PR mode: manual PR-list fetch button.
     PrRefresh,
+    /// PR mode: the PR fetch failed, shown instead of the empty inbox.
+    PrFetchFailed,
     /// PR mode: header of a grouped stack of dependent PRs.
     PrStack,
     /// PR mode: toast shown while that fetch runs.
@@ -565,7 +557,29 @@ pub enum Msg {
     /// Tooltip/hint for WARN rows (prefix; ahead count appended).
     CleanupGrownHint,
     /// Empty-table body message.
+    // ── Plan-modal confirm labels (destructive ops get an armed variant) ──
+    /// Confirm button on the set-upstream modal, `{}` = branch.
+    PlanSetUpstreamFor,
+    /// Confirm button on the rename-branch modal, `{}` = old name.
+    PlanRenameBranch,
+    /// Confirm button on the merge modal.
+    PlanMerge,
+    /// Confirm button on the rebase modal, `{}` = branch.
+    PlanRebaseOnto,
+    /// Delete-remote-branch confirm, and its armed second stage.
+    PlanDeleteRemoteBranch,
+    PlanDeleteRemoteBranchArmed,
+    /// Reset-current confirm, and its armed second stage.
+    PlanResetCurrent,
+    PlanResetCurrentArmed,
+    /// Force-with-lease push confirm, and its armed second stage.
+    PlanForcePush,
+    PlanForcePushArmed,
+    /// Cancel button, shared by every modal.
+    PlanCancel,
     CleanupEmpty,
+    /// Branch Cleanup: shown while the background scan is still running.
+    CleanupScanning,
     /// Body message when no repository is open.
     CleanupNoRepo,
 
@@ -758,8 +772,6 @@ impl Msg {
             // ── Placeholders ────────────────────────────────────────
             (En, CloneUnimplemented) => "clone is not implemented yet",
             (Ja, CloneUnimplemented) => "clone は未実装です",
-            (En, RenameBranchUnimplemented) => "rename branch is not implemented yet",
-            (Ja, RenameBranchUnimplemented) => "rename branch は未実装です",
             (En, MultiWindowUnsupported) => "multiple windows are not supported",
             (Ja, MultiWindowUnsupported) => "複数ウィンドウは未対応です",
             (En, ResetUnimplemented) => "reset is not implemented (ADR-0024)",
@@ -917,18 +929,6 @@ impl Msg {
             (Ja, OpenedInFinder) => "Finder で開きました",
 
             // ── W30-CONFLICT-UI: Conflict Mode ──────────────────────
-            (En, ConflictRebasing) => "Rebasing",
-            (Ja, ConflictRebasing) => "rebase 中:",
-            (En, ConflictOnto) => "onto",
-            (Ja, ConflictOnto) => "→",
-            (En, ConflictCommit) => "commit",
-            (Ja, ConflictCommit) => "commit",
-            (En, ConflictMerging) => "Merging",
-            (Ja, ConflictMerging) => "merge 中",
-            (En, ConflictCherryPicking) => "Cherry-picking",
-            (Ja, ConflictCherryPicking) => "cherry-pick 中",
-            (En, ConflictReverting) => "Reverting",
-            (Ja, ConflictReverting) => "revert 中",
             (En, ConflictContinue) => "Continue",
             (Ja, ConflictContinue) => "続行",
             (En, ConflictAbort) => "Abort",
@@ -1029,6 +1029,14 @@ impl Msg {
             (Ja, ConflictSectionConflicted) => "Conflicted ファイル",
             (En, ConflictSectionResolved) => "Resolved Files",
             (Ja, ConflictSectionResolved) => "Resolved ファイル",
+            (En, ConflictConfirmSkip) => "Confirm skip",
+            (Ja, ConflictConfirmSkip) => "スキップを確定",
+            (En, ConflictConfirmSkipHint) => {
+                "Skip drops this step's changes and your in-progress resolution.                  Click again to confirm."
+            }
+            (Ja, ConflictConfirmSkipHint) => {
+                "スキップするとこのステップの変更と編集中の解決内容が失われます。                 もう一度クリックすると確定します。"
+            }
             (En, ConflictConfirmAbort) => "Confirm abort",
             (Ja, ConflictConfirmAbort) => "中止を確定",
             (En, ConflictConfirmAbortHint) => {
@@ -1133,14 +1141,6 @@ impl Msg {
             (Ja, PrGroupReview) => "レビュー依頼",
             (En, PrGroupOthers) => "Others",
             (Ja, PrGroupOthers) => "その他",
-            (En, PrColTitle) => "Title",
-            (Ja, PrColTitle) => "タイトル",
-            (En, PrColAuthor) => "Author",
-            (Ja, PrColAuthor) => "作成者",
-            (En, PrColBranches) => "Branches",
-            (Ja, PrColBranches) => "ブランチ",
-            (En, PrColReview) => "Review",
-            (Ja, PrColReview) => "レビュー",
             (En, PrReviewApproved) => "approved",
             (Ja, PrReviewApproved) => "承認済",
             (En, PrReviewChanges) => "changes",
@@ -1194,20 +1194,14 @@ impl Msg {
             (Ja, PrModeNoReview) => "レビュー・コメントはまだありません。",
             (En, PrModeMerge) => "Merge",
             (Ja, PrModeMerge) => "マージ",
-            (En, PrModeMergeTitle) => "Merge pull request",
-            (Ja, PrModeMergeTitle) => "プルリクエストをマージ",
-            (En, PrModeMergeBlocked) => "GitHub reports this PR as not mergeable.",
-            (Ja, PrModeMergeBlocked) => "GitHub 上でマージ可能になっていません。",
             (En, PrModeMergeDone) => "Merged",
             (Ja, PrModeMergeDone) => "マージしました",
-            (En, PrModeDeleteBranch) => "Delete branch after merge",
             (En, PrSuggestion) => "suggestion",
             (En, PrHunkCopy) => "Copy this hunk",
             (Ja, PrHunkCopy) => "このコードをコピー",
             (En, PrHunkCopied) => "Hunk copied",
             (Ja, PrHunkCopied) => "コードをコピーしました",
             (Ja, PrSuggestion) => "コード提案",
-            (Ja, PrModeDeleteBranch) => "マージ後にブランチを削除",
             (Ja, PrModeShowDescription) => "説明文を表示",
             (En, PrModeNoDescription) => "No description.",
             (Ja, PrModeNoDescription) => "説明文はありません。",
@@ -1215,6 +1209,8 @@ impl Msg {
             (Ja, PrAllPrs) => "PR 一覧",
             (En, PrStack) => "STACK",
             (Ja, PrStack) => "スタック",
+            (En, PrFetchFailed) => "Couldn't reach GitHub — this is not an empty list.",
+            (Ja, PrFetchFailed) => "GitHub に接続できませんでした（PR が 0 件なのではありません）。",
             (En, PrRefresh) => "Refresh",
             (Ja, PrRefresh) => "更新",
             (En, PrRefreshing) => "Refreshing pull requests…",
@@ -1366,6 +1362,30 @@ impl Msg {
             (Ja, CleanupBadgeStale) => "ストール",
             (En, CleanupGrownHint) => "new commits since merge:",
             (Ja, CleanupGrownHint) => "マージ後の新規コミット:",
+            (En, PlanSetUpstreamFor) => "Set upstream for {}",
+            (Ja, PlanSetUpstreamFor) => "{} の upstream を設定",
+            (En, PlanRenameBranch) => "Rename {}",
+            (Ja, PlanRenameBranch) => "{} をリネーム",
+            (En, PlanMerge) => "Merge",
+            (Ja, PlanMerge) => "マージ",
+            (En, PlanRebaseOnto) => "Rebase {}",
+            (Ja, PlanRebaseOnto) => "{} へリベース",
+            (En, PlanDeleteRemoteBranch) => "Delete remote branch",
+            (Ja, PlanDeleteRemoteBranch) => "リモートブランチを削除",
+            (En, PlanDeleteRemoteBranchArmed) => "\u{26a0} Really delete — cannot be undone",
+            (Ja, PlanDeleteRemoteBranchArmed) => "\u{26a0} 本当に削除しますか — 取り消せません",
+            (En, PlanResetCurrent) => "Reset current branch",
+            (Ja, PlanResetCurrent) => "現在のブランチをリセット",
+            (En, PlanResetCurrentArmed) => "\u{26a0} Really reset — cannot be undone",
+            (Ja, PlanResetCurrentArmed) => "\u{26a0} 本当にリセットしますか — 取り消せません",
+            (En, PlanForcePush) => "Force-with-lease push",
+            (Ja, PlanForcePush) => "force-with-lease で push",
+            (En, PlanForcePushArmed) => "\u{26a0} Really force-push — cannot be undone",
+            (Ja, PlanForcePushArmed) => "\u{26a0} 本当に force push しますか — 取り消せません",
+            (En, PlanCancel) => "Cancel",
+            (Ja, PlanCancel) => "キャンセル",
+            (En, CleanupScanning) => "Scanning branches…",
+            (Ja, CleanupScanning) => "ブランチを調べています…",
             (En, CleanupEmpty) => "No merged or stale branches — all clean.",
             (Ja, CleanupEmpty) => "マージ済み・休眠ブランチはありません — クリーンです。",
             (En, CleanupNoRepo) => "Open a repository to see merged branches.",

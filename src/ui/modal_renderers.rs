@@ -13,6 +13,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
+use super::i18n::Msg;
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
 use gpui::{div, prelude::*, relative, rgb, Context, Entity, SharedString, Window};
@@ -170,7 +171,7 @@ pub(crate) fn render_input_plan_modal(
 
     let mut buttons = div().flex().flex_row().gap_2().justify_end().child(
         Button::new("branch-input-cancel")
-            .label("Cancel")
+            .label(Msg::PlanCancel.t())
             .ghost()
             .small()
             .on_click(cancel_handler),
@@ -672,7 +673,7 @@ fn render_plan_modal_card_styled(
         // Cancel button (always present — safe default)
         .child(
             Button::new("plan-cancel")
-                .label("Cancel")
+                .label(Msg::PlanCancel.t())
                 .ghost()
                 .small()
                 .on_click(cancel_handler),

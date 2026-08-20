@@ -327,6 +327,12 @@ impl KagiApp {
 
         let (host_load, root_load) = (host.clone(), root.clone());
         let commit_limit = self.commit_limit;
+        // An SSH snapshot takes seconds, and `enter_remote_view` switches the
+        // active tab and tears down the local repo session. Landing that after
+        // the user moved to a local tab yanked them back and dropped their
+        // session mid-work. Same guard `load_repo_async` uses.
+        self.switch_generation = self.switch_generation.wrapping_add(1);
+        let generation = self.switch_generation;
         let task = cx.background_spawn(async move {
             kagi::remote::remote_snapshot(&host_load, &root_load, commit_limit)
                 .map_err(|e| e.to_string())
@@ -334,6 +340,7 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| match result {
+                _ if app.switch_generation != generation => {}
                 Ok(snap) => app.enter_remote_view(host, root, snap, cx),
                 Err(e) => {
                     app.status_footer = FooterStatus::Failed(SharedString::from(e));
@@ -357,11 +364,14 @@ impl KagiApp {
         self.pr_menu = None;
         self.diff_caches.clear();
         self.wip_diffstat = None;
+        // The watcher's "status unchanged → nothing to do" short-circuit
+        // compares against this; leaving the previous repo's status here made
+        // it compare against a foreign tree.
+        self.last_working_status = None;
         // ADR-0121 B2: `main_diff` is dropped via the CENTER_ITEMS dispose
         // loop below (MainDiffItem), like the other registered panes.
         self.clear_plan_modal();
         self.clear_pull_modal();
-        self.clear_undo_modal();
         self.clear_pop_modal();
         self.clear_push_modal();
         self.clear_create_branch_modal();
@@ -571,7 +581,6 @@ impl KagiApp {
         self.active_view.toolbar_state = blank.active_view.toolbar_state;
         self.clear_plan_modal();
         self.clear_pull_modal();
-        self.clear_undo_modal();
         self.clear_pop_modal();
         self.clear_push_modal();
         self.clear_create_branch_modal();

@@ -386,7 +386,6 @@ impl Render for KagiApp {
         let sidebar_scroll_handle = self.sidebar.scroll_handle.clone();
         let plan_modal = self.plan_modal().cloned();
         let pull_modal = self.pull_modal().cloned();
-        let undo_modal = self.undo_modal().cloned();
         let history_modal = self.history_modal().cloned();
         let amend_modal = self.amend_modal().cloned();
         let pop_modal = self.pop_modal().cloned();
@@ -812,7 +811,6 @@ impl Render for KagiApp {
             root,
             plan_modal,
             pull_modal,
-            undo_modal,
             history_modal,
             conflict_continue_modal,
             amend_modal,

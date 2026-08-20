@@ -6,6 +6,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::button_style::KagiButton;
+use super::i18n::Msg;
 use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box,
 };
@@ -182,7 +183,7 @@ pub(crate) fn render_create_branch_modal(
     // ── Buttons ───────────────────────────────────────────
     let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
         Button::new("create-branch-cancel")
-            .label("Cancel")
+            .label(Msg::PlanCancel.t())
             .ghost()
             .small()
             .on_click(cancel_handler),
@@ -362,7 +363,7 @@ pub(crate) fn render_create_worktree_modal(
 
     let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
         Button::new("create-worktree-cancel")
-            .label("Cancel")
+            .label(Msg::PlanCancel.t())
             .ghost()
             .small()
             .on_click(cancel_handler),
@@ -518,7 +519,7 @@ pub(crate) fn render_create_tag_modal(
 
     let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
         Button::new("create-tag-cancel")
-            .label("Cancel")
+            .label(Msg::PlanCancel.t())
             .ghost()
             .small()
             .on_click(cancel_handler),

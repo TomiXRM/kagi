@@ -780,35 +780,6 @@ impl KagiApp {
         self.open_main_diff_wip(file_ref, cx);
     }
 
-    /// Handle a key-down event for the commit message input.
-    ///
-    /// Uses the T014 simple pattern: printable chars appended, backspace removes last.
-    #[allow(dead_code)]
-    pub fn handle_commit_msg_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        let Some(entity) = self.commit_panel.clone() else {
-            return;
-        };
-        let key = &event.keystroke.key;
-        let modifiers = &event.keystroke.modifiers;
-
-        if modifiers.platform || modifiers.control || modifiers.alt {
-            return;
-        }
-
-        entity.update(cx, |v, _| {
-            if key == "backspace" {
-                v.state.commit_msg.pop();
-            } else if key == "space" {
-                v.state.commit_msg.push(' ');
-            } else if key.len() == 1 {
-                let ch = key.chars().next().unwrap();
-                if !ch.is_control() {
-                    v.state.commit_msg.push(ch);
-                }
-            }
-        });
-    }
-
     /// Open the commit plan modal for the current staged files and message.
     ///
     /// Uses `plan_commit` from T024.

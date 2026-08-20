@@ -6,6 +6,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::commit_panel::{status_badge, CommitPlanModal};
+use super::i18n::Msg;
 use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box,
 };
@@ -232,7 +233,7 @@ pub(crate) fn render_cherry_pick_modal(
     // ── Buttons ───────────────────────────────────────────
     let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
         Button::new("cherry-pick-cancel")
-            .label("Cancel")
+            .label(Msg::PlanCancel.t())
             .ghost()
             .small()
             .on_click(cancel_handler),
@@ -432,7 +433,7 @@ pub(crate) fn render_commit_plan_modal(
 
     let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
         Button::new("commit-plan-cancel")
-            .label("Cancel")
+            .label(Msg::PlanCancel.t())
             .ghost()
             .small()
             .on_click(cancel_handler),

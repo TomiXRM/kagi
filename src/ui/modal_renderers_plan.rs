@@ -58,23 +58,6 @@ pub(crate) fn render_pull_modal(
     )
 }
 
-/// Undo-commit confirmation overlay (T-HT-009).
-pub(crate) fn render_undo_modal(
-    modal: UndoPlanModal,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    render_plan_modal_wrapper_styled(
-        modal.plan,
-        modal.error,
-        "Undo",
-        None,
-        Some((IconName::Undo2.into(), theme().color_branch)),
-        |this, _cx| this.cancel_undo_modal(),
-        |this, cx| this.confirm_undo(cx),
-        cx,
-    )
-}
-
 /// Operation-history Undo / Redo confirmation overlay (T-UNDOREDO-001,
 /// ADR-0081). Confirming runs the safe ref move through the standard pipeline
 /// and advances/retreats the history cursor.
@@ -259,7 +242,9 @@ pub(crate) fn render_set_upstream_modal(
         cx.notify();
     });
     render_input_plan_modal(
-        format!("Set upstream for {}", modal.branch_name),
+        Msg::PlanSetUpstreamFor
+            .t()
+            .replace("{}", &modal.branch_name),
         "Upstream",
         modal.input_state,
         modal.plan,
@@ -291,7 +276,7 @@ pub(crate) fn render_rename_branch_modal(
         cx.notify();
     });
     render_input_plan_modal(
-        format!("Rename {}", modal.old_name),
+        Msg::PlanRenameBranch.t().replace("{}", &modal.old_name),
         "New branch name",
         modal.input_state,
         modal.plan,
@@ -329,7 +314,7 @@ pub(crate) fn render_merge_modal(
                 std::sync::Arc::new(plan),
             )
         } else {
-            (SharedString::from("Merge"), modal.plan)
+            (SharedString::from(Msg::PlanMerge.t()), modal.plan)
         };
     render_plan_modal_wrapper_styled(
         plan,
@@ -403,9 +388,9 @@ pub(crate) fn render_delete_remote_branch_modal(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let confirm_label: SharedString = if modal.confirm_armed {
-        SharedString::from("\u{26a0} Really delete — cannot be undone")
+        SharedString::from(Msg::PlanDeleteRemoteBranchArmed.t())
     } else {
-        SharedString::from("Delete remote branch")
+        SharedString::from(Msg::PlanDeleteRemoteBranch.t())
     };
     render_plan_modal_wrapper_styled(
         modal.plan,
@@ -427,9 +412,9 @@ pub(crate) fn render_reset_current_modal(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let confirm_label: SharedString = if modal.confirm_armed {
-        SharedString::from("\u{26a0} Really reset — cannot be undone")
+        SharedString::from(Msg::PlanResetCurrentArmed.t())
     } else {
-        SharedString::from("Reset current branch")
+        SharedString::from(Msg::PlanResetCurrent.t())
     };
     render_plan_modal_wrapper_styled(
         modal.plan,
@@ -454,9 +439,9 @@ pub(crate) fn render_force_lease_push_modal(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let confirm_label: SharedString = if modal.confirm_armed {
-        SharedString::from("\u{26a0} Really force-push — cannot be undone")
+        SharedString::from(Msg::PlanForcePushArmed.t())
     } else {
-        SharedString::from("Force-with-lease push")
+        SharedString::from(Msg::PlanForcePush.t())
     };
     render_plan_modal_wrapper_styled(
         modal.plan,
@@ -481,7 +466,7 @@ pub(crate) fn render_rebase_modal(
     render_plan_modal_wrapper_styled(
         modal.plan,
         modal.error,
-        format!("Rebase {}", modal.branch),
+        Msg::PlanRebaseOnto.t().replace("{}", &modal.branch),
         None,
         Some((
             ModalIcon::Path("icons/refresh-cw.svg"),

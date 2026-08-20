@@ -1132,6 +1132,9 @@ pub struct KagiApp {
     /// first refresh for the new one is in flight.
     pub github_prs: Vec<kagi_domain::github::PullRequest>,
     pub github_prs_for: Option<PathBuf>,
+    /// Last `gh pr list` failure, cleared by the next success. Rendered by the
+    /// PR home screen so a failed fetch is not shown as an empty inbox.
+    pub github_error: Option<SharedString>,
     /// Bumped whenever `github_prs` changes — folded into the sidebar rows
     /// fingerprint so the list rebuilds exactly when the data does.
     pub github_prs_epoch: u64,
@@ -1280,6 +1283,10 @@ pub struct KagiApp {
     /// `KagiApp::start_branch_cleanup_scan`) and can now be superseded by a
     /// newer reload before it finishes.
     pub cleanup_gen: u64,
+    /// True while the background Branch Cleanup scan is running. Without it the
+    /// pane rendered `CleanupEmpty` — a confident "nothing to clean up" — for
+    /// the second or more the scan takes on a real repo.
+    pub cleanup_scanning: bool,
     /// ADR-0139: same guard for the background squash-link scan that draws the
     /// graph's ghost connectors. A result whose token no longer matches is
     /// dropped — its row indices belong to a graph that has been rebuilt.
@@ -1439,6 +1446,7 @@ impl KagiApp {
             auto_fetch_ticker_alive: false,
             github_prs: Vec::new(),
             github_prs_for: None,
+            github_error: None,
             github_prs_epoch: 0,
             github_ticker_alive: false,
             github_login: None,
@@ -1482,6 +1490,7 @@ impl KagiApp {
             cleanup_cols: branch_cleanup::CleanupCols::load(),
             cleanup_scroll: UniformListScrollHandle::new(),
             cleanup_gen: 0,
+            cleanup_scanning: false,
             squash_gen: 0,
             scans_stale: true,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
@@ -1563,6 +1572,7 @@ impl KagiApp {
             auto_fetch_ticker_alive: false,
             github_prs: Vec::new(),
             github_prs_for: None,
+            github_error: None,
             github_prs_epoch: 0,
             github_ticker_alive: false,
             github_login: None,
@@ -1606,6 +1616,7 @@ impl KagiApp {
             cleanup_cols: branch_cleanup::CleanupCols::load(),
             cleanup_scroll: UniformListScrollHandle::new(),
             cleanup_gen: 0,
+            cleanup_scanning: false,
             squash_gen: 0,
             scans_stale: true,
             ecosystem_cache: ecosystem::EcosystemCache::new(),
@@ -3077,8 +3088,6 @@ impl KagiApp {
             self.confirm_history(cx);
         } else if self.amend_modal().is_some() {
             self.confirm_amend(cx);
-        } else if self.undo_modal().is_some() {
-            self.confirm_undo(cx);
         } else if self.cherry_pick_modal().is_some() {
             self.start_cherry_pick(cx);
         } else if self.revert_modal().is_some() {
@@ -3155,8 +3164,6 @@ impl KagiApp {
             self.clear_history_modal();
         } else if self.amend_modal().is_some() {
             self.cancel_amend_modal();
-        } else if self.undo_modal().is_some() {
-            self.cancel_undo_modal();
         } else if self.pr_merge_modal().is_some() {
             self.cancel_pr_merge_modal();
         } else if self.cherry_pick_modal().is_some() {

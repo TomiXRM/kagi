@@ -557,6 +557,26 @@ pub enum Msg {
     /// Tooltip/hint for WARN rows (prefix; ahead count appended).
     CleanupGrownHint,
     /// Empty-table body message.
+    // ── Plan-modal confirm labels (destructive ops get an armed variant) ──
+    /// Confirm button on the set-upstream modal, `{}` = branch.
+    PlanSetUpstreamFor,
+    /// Confirm button on the rename-branch modal, `{}` = old name.
+    PlanRenameBranch,
+    /// Confirm button on the merge modal.
+    PlanMerge,
+    /// Confirm button on the rebase modal, `{}` = branch.
+    PlanRebaseOnto,
+    /// Delete-remote-branch confirm, and its armed second stage.
+    PlanDeleteRemoteBranch,
+    PlanDeleteRemoteBranchArmed,
+    /// Reset-current confirm, and its armed second stage.
+    PlanResetCurrent,
+    PlanResetCurrentArmed,
+    /// Force-with-lease push confirm, and its armed second stage.
+    PlanForcePush,
+    PlanForcePushArmed,
+    /// Cancel button, shared by every modal.
+    PlanCancel,
     CleanupEmpty,
     /// Branch Cleanup: shown while the background scan is still running.
     CleanupScanning,
@@ -1342,6 +1362,28 @@ impl Msg {
             (Ja, CleanupBadgeStale) => "ストール",
             (En, CleanupGrownHint) => "new commits since merge:",
             (Ja, CleanupGrownHint) => "マージ後の新規コミット:",
+            (En, PlanSetUpstreamFor) => "Set upstream for {}",
+            (Ja, PlanSetUpstreamFor) => "{} の upstream を設定",
+            (En, PlanRenameBranch) => "Rename {}",
+            (Ja, PlanRenameBranch) => "{} をリネーム",
+            (En, PlanMerge) => "Merge",
+            (Ja, PlanMerge) => "マージ",
+            (En, PlanRebaseOnto) => "Rebase {}",
+            (Ja, PlanRebaseOnto) => "{} へリベース",
+            (En, PlanDeleteRemoteBranch) => "Delete remote branch",
+            (Ja, PlanDeleteRemoteBranch) => "リモートブランチを削除",
+            (En, PlanDeleteRemoteBranchArmed) => "\u{26a0} Really delete — cannot be undone",
+            (Ja, PlanDeleteRemoteBranchArmed) => "\u{26a0} 本当に削除しますか — 取り消せません",
+            (En, PlanResetCurrent) => "Reset current branch",
+            (Ja, PlanResetCurrent) => "現在のブランチをリセット",
+            (En, PlanResetCurrentArmed) => "\u{26a0} Really reset — cannot be undone",
+            (Ja, PlanResetCurrentArmed) => "\u{26a0} 本当にリセットしますか — 取り消せません",
+            (En, PlanForcePush) => "Force-with-lease push",
+            (Ja, PlanForcePush) => "force-with-lease で push",
+            (En, PlanForcePushArmed) => "\u{26a0} Really force-push — cannot be undone",
+            (Ja, PlanForcePushArmed) => "\u{26a0} 本当に force push しますか — 取り消せません",
+            (En, PlanCancel) => "Cancel",
+            (Ja, PlanCancel) => "キャンセル",
             (En, CleanupScanning) => "Scanning branches…",
             (Ja, CleanupScanning) => "ブランチを調べています…",
             (En, CleanupEmpty) => "No merged or stale branches — all clean.",

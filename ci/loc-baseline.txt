@@ -9,7 +9,7 @@ crates/kagi-git/src/ops/pull.rs 813
 crates/kagi-git/src/ops/stash.rs 857
 crates/kagi-git/src/resolution.rs 1450
 crates/kagi-git/src/staging.rs 844
-crates/kagi-ui-core/src/i18n/mod.rs 1974
+crates/kagi-ui-core/src/i18n/mod.rs 2016
 crates/kagi-ui-core/src/theme.rs 1992
 crates/kagi-ui-editor/src/lib.rs 3205
 src/ui/blocking_ops.rs 906

@@ -86,7 +86,7 @@ pub(crate) fn render_smart_commit_modal(
                         .justify_end()
                         .child(
                             Button::new("smart-consent-cancel")
-                                .label("Cancel")
+                                .label(Msg::PlanCancel.t())
                                 .ghost()
                                 .small()
                                 .on_click(cancel),
@@ -152,7 +152,7 @@ pub(crate) fn render_smart_commit_modal(
                 .child(
                     div().flex().flex_row().justify_end().child(
                         Button::new("smart-model-cancel")
-                            .label("Cancel")
+                            .label(Msg::PlanCancel.t())
                             .ghost()
                             .small()
                             .on_click(cancel),

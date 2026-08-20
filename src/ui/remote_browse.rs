@@ -15,6 +15,7 @@
 //! summary. Remote *writes* will go through the `OperationController` pipeline in
 //! a later phase, never directly from here.
 
+use super::i18n::Msg;
 use gpui::{
     div, prelude::*, rgb, App, ClickEvent, Context, Entity, FocusHandle, KeyDownEvent,
     SharedString, Window,
@@ -386,7 +387,7 @@ pub(crate) fn render_remote_browse_modal(
                     .justify_end()
                     .child(
                         Button::new("remote-connect-cancel")
-                            .label("Cancel")
+                            .label(Msg::PlanCancel.t())
                             .ghost()
                             .small()
                             .on_click(cancel),

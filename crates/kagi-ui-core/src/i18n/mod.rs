@@ -450,6 +450,12 @@ pub enum Msg {
     PrHunkCopy,
     PrHunkCopied,
     PrModeNoDescription,
+    /// PR mode: dashboard "back to the home screen" button.
+    PrAllPrs,
+    /// PR mode: manual PR-list fetch button.
+    PrRefresh,
+    /// PR mode: toast shown while that fetch runs.
+    PrRefreshing,
     /// Commit panel: tooltip on the commit.template toggle.
     ToggleCommitTemplate,
     /// Commit panel: label on the commit.template toggle.
@@ -1203,6 +1209,12 @@ impl Msg {
             (Ja, PrModeShowDescription) => "説明文を表示",
             (En, PrModeNoDescription) => "No description.",
             (Ja, PrModeNoDescription) => "説明文はありません。",
+            (En, PrAllPrs) => "All PRs",
+            (Ja, PrAllPrs) => "PR 一覧",
+            (En, PrRefresh) => "Refresh",
+            (Ja, PrRefresh) => "更新",
+            (En, PrRefreshing) => "Refreshing pull requests…",
+            (Ja, PrRefreshing) => "プルリクエストを更新中…",
             (Ja, OpenInExternalEditor) => "外部エディタで開く",
             (Ja, MenuShowFileHistory) => "ファイルの履歴を表示",
             (Ja, EditorUseAll) => "すべて採用",

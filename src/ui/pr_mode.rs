@@ -259,6 +259,24 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// Back to the dashboard. Deactivates the tab without closing it, so its
+    /// loaded commits / files / conversation survive the round trip.
+    pub fn pr_mode_home(&mut self, cx: &mut Context<Self>) {
+        if let Some(m) = self.pr_mode.as_mut() {
+            m.active = None;
+            m.focus = PrFocus::List;
+        }
+        klog!("pr-mode: home");
+        cx.notify();
+    }
+
+    /// Fetch the PR list now rather than waiting out the 60s ticker.
+    pub fn pr_mode_refresh(&mut self, cx: &mut Context<Self>) {
+        klog!("pr-mode: refresh");
+        self.push_toast(ToastKind::Info, Msg::PrRefreshing.t(), cx);
+        self.refresh_github_prs(cx);
+    }
+
     pub fn pr_mode_close_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
         if let Some(m) = self.pr_mode.as_mut() {
             if ix < m.tabs.len() {
@@ -508,7 +526,7 @@ const LEFT_W: f32 = 345.0;
 const RIGHT_W: f32 = 320.0;
 /// Deepest indent level drawn in the left list; beyond it depth is shown by
 /// the └ marker only, so a tall stack can never push rows out of the pane.
-const MAX_INDENT_DEPTH: usize = 3;
+pub(super) const MAX_INDENT_DEPTH: usize = 3;
 /// Card height: two rows (18 + 15) plus breathing room. Tighter line boxes
 /// than this clipped the descenders of the title against the meta row.
 const CARD_H: f32 = 42.0;
@@ -603,7 +621,7 @@ pub(super) fn ci_glyph(ci: CiState) -> (&'static str, u32) {
 /// The Focus Queue: PRs bucketed by *what the user should do*, not by owner.
 /// Everything is derived from data the list already carries (checks, review
 /// decision, mergeable) — no extra API calls.
-fn focus_queue(app: &KagiApp) -> Vec<(PrAttention, Vec<(PullRequest, PrReason)>)> {
+pub(super) fn focus_queue(app: &KagiApp) -> Vec<(PrAttention, Vec<(PullRequest, PrReason)>)> {
     let login = app.github_login.clone();
     let local: Vec<String> = app
         .active_view
@@ -823,7 +841,9 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
     let Some(ix) = active else {
         // No tab: use the whole center as a PR dashboard instead of an empty
         // hint (user request) — every open PR as a table row, click to open.
-        return col.child(render_dashboard(app, cx)).into_any_element();
+        return col
+            .child(super::pr_dashboard::render_dashboard(app, cx))
+            .into_any_element();
     };
     // Snapshot what the renderers need from the active tab.
     let (pr, commits, selected_commit, diff, scroll) = {
@@ -871,6 +891,10 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         .flex_shrink_0()
         .px_3()
         .py_2()
+        // Leaving a PR: back to the dashboard, and a manual fetch so CI state
+        // can be refreshed without waiting out the ticker (user request).
+        .child(super::pr_dashboard::home_button(cx))
+        .child(super::pr_dashboard::refresh_button(cx))
         .child(
             div()
                 .text_color(rgb(theme().color_branch))
@@ -1631,200 +1655,6 @@ fn stack_for(pr: &PullRequest, all: &[PullRequest]) -> Vec<StackRow> {
     out.extend(down.into_iter().map(StackRow::Pr));
     out.push(StackRow::Trunk(trunk));
     out
-}
-
-// ── Center dashboard (no tab open): all PRs as a table ─────────
-fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let login = app.github_login.clone();
-    let local: Vec<String> = app
-        .active_view
-        .branches
-        .iter()
-        .map(|(n, _)| n.clone())
-        .collect();
-    let all = app.github_prs.clone();
-    let col_hdr = |w: f32, text: &str| {
-        div()
-            .w(theme::scaled_px(w))
-            .flex_shrink_0()
-            .overflow_hidden()
-            .text_xs()
-            .text_color(rgb(theme().text_label))
-            .child(SharedString::from(text.to_string()))
-    };
-    let header = div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .px_3()
-        .py_1()
-        .flex_shrink_0()
-        .border_b_1()
-        .border_color(rgb(theme().surface))
-        .child(col_hdr(64., "#"))
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .text_xs()
-                .text_color(rgb(theme().text_label))
-                .child(SharedString::from(Msg::PrColTitle.t())),
-        )
-        .child(col_hdr(110., Msg::PrColAuthor.t()))
-        .child(col_hdr(240., Msg::PrColBranches.t()))
-        .child(col_hdr(36., "CI"))
-        .child(col_hdr(80., Msg::PrColReview.t()));
-
-    let mut list = div()
-        .id("pr-mode-dashboard")
-        .flex_1()
-        .min_h(px(0.))
-        .overflow_y_scroll()
-        .flex()
-        .flex_col();
-    if all.is_empty() {
-        list = list.child(
-            div()
-                .px_3()
-                .py_3()
-                .text_sm()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(Msg::PrPaneEmpty.t())),
-        );
-    }
-    for (group, title) in [
-        (PrGroup::Mine, Msg::PrGroupMine.t()),
-        (PrGroup::ReviewRequested, Msg::PrGroupReview.t()),
-        (PrGroup::Others, Msg::PrGroupOthers.t()),
-    ] {
-        let members: Vec<PullRequest> = all
-            .iter()
-            .filter(|p| p.group_for(login.as_deref(), &local) == group)
-            .cloned()
-            .collect();
-        if members.is_empty() {
-            continue;
-        }
-        list = list.child(section_label(format!("{} ({})", title, members.len())));
-        for (ix, depth) in stack_order(&members) {
-            list = list.child(render_dashboard_row(&members[ix], depth, cx));
-        }
-    }
-    div()
-        .flex()
-        .flex_col()
-        .flex_1()
-        .min_h(px(0.))
-        .child(header)
-        .child(list)
-        .into_any_element()
-}
-
-fn render_dashboard_row(
-    pr: &PullRequest,
-    depth: usize,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    let (g, c) = ci_glyph(pr.ci);
-    let (rv, rvc) = match pr.review {
-        ReviewState::Approved => (Msg::PrReviewApproved.t(), theme().color_success),
-        ReviewState::ChangesRequested => (Msg::PrReviewChanges.t(), theme().color_warning),
-        ReviewState::ReviewRequired => (Msg::PrReviewRequired.t(), theme().text_sub),
-        ReviewState::None => ("", theme().text_muted),
-    };
-    let pr_open = pr.clone();
-    let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.pr_mode_open(&pr_open, cx);
-    });
-    let pr_menu = pr.clone();
-    let menu = cx.listener(
-        move |this: &mut KagiApp, e: &gpui::MouseDownEvent, _w, cx| {
-            this.pr_menu = Some((pr_menu.clone(), e.position));
-            cx.stop_propagation();
-            cx.notify();
-        },
-    );
-    let title = if pr.is_draft {
-        format!("{} ({})", pr.title, Msg::PrDraft.t())
-    } else {
-        pr.title.clone()
-    };
-    let cell = |w: f32| {
-        div()
-            .w(theme::scaled_px(w))
-            .flex_shrink_0()
-            .overflow_hidden()
-            .truncate()
-    };
-    div()
-        .id(("pr-mode-dash-row", pr.number as usize))
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .h(theme::scaled_px(26.))
-        .px_3()
-        .text_sm()
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().surface)))
-        .on_click(click)
-        .on_mouse_down(gpui::MouseButton::Right, menu)
-        .when(pr.is_draft, |el| el.opacity(0.6))
-        .child(
-            cell(64.)
-                .text_color(rgb(theme().color_branch))
-                .child(SharedString::from(format!("#{}", pr.number))),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .flex()
-                .flex_row()
-                .items_center()
-                .pl(theme::scaled_px(depth.min(MAX_INDENT_DEPTH) as f32 * 18.))
-                .when(depth > 0, |el| {
-                    el.child(
-                        div()
-                            .flex_shrink_0()
-                            .mr_1()
-                            .text_xs()
-                            .text_color(rgb(theme().text_muted))
-                            .child(SharedString::from(if depth > MAX_INDENT_DEPTH {
-                                format!("\u{2514}{}", depth)
-                            } else {
-                                "\u{2514}".to_string()
-                            })),
-                    )
-                })
-                .child(
-                    div()
-                        .truncate()
-                        .text_color(rgb(theme().text_main))
-                        .child(SharedString::from(title)),
-                ),
-        )
-        .child(
-            cell(110.)
-                .text_color(rgb(theme().text_sub))
-                .child(SharedString::from(pr.author.clone())),
-        )
-        .child(
-            cell(240.)
-                .text_color(rgb(theme().text_sub))
-                .child(SharedString::from(format!(
-                    "{} \u{2192} {}",
-                    pr.head, pr.base
-                ))),
-        )
-        .child(cell(36.).text_color(rgb(c)).child(SharedString::from(g)))
-        .child(
-            cell(80.)
-                .text_color(rgb(rvc))
-                .child(SharedString::from(rv.to_string())),
-        )
-        .into_any_element()
 }
 
 /// A Focus-Queue card: identity, size, and — the point — the one line that

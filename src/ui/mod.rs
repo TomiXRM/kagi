@@ -172,15 +172,19 @@ fn draggable_branch_name(badge: &commit_list::RefBadge) -> Option<String> {
     }
 }
 
-/// Extract a branch ref name from a graph badge for context-menu actions.
-fn context_branch_name(badge: &commit_list::RefBadge) -> Option<String> {
+/// Extract a ref name from a graph badge for context-menu actions.
+///
+/// Every badge kind yields a name — returning `None` for tags is what left tag
+/// pills in the graph with no right-click menu at all, so the only way to push
+/// a tag was the sidebar (ADR-0140).
+fn context_ref_name(badge: &commit_list::RefBadge) -> Option<String> {
     match badge.kind {
         BadgeKind::HeadBranch => Some(badge.label.trim_end_matches(" ✓").trim_end().to_string()),
         // Strip the worktree marker (see draggable_branch_name).
         BadgeKind::Branch | BadgeKind::Remote => {
             Some(badge.label.trim_start_matches("🌲 ").to_string())
         }
-        BadgeKind::Tag => None,
+        BadgeKind::Tag => Some(badge.label.to_string()),
     }
 }
 
@@ -3946,7 +3950,7 @@ mod drag_merge_validation_tests {
 // ── T-DNDMERGE-001: graph ref-badge → drag payload name extraction ──
 #[cfg(test)]
 mod draggable_branch_name_tests {
-    use super::{context_branch_name, draggable_branch_name};
+    use super::{context_ref_name, draggable_branch_name};
     use crate::ui::commit_list::{BadgeKind, RefBadge};
 
     fn badge(kind: BadgeKind, label: &str) -> RefBadge {
@@ -3986,7 +3990,7 @@ mod draggable_branch_name_tests {
             "worktree marker must not leak into the drag payload"
         );
         assert_eq!(
-            context_branch_name(&badge(BadgeKind::Branch, "🌲 feat-wt")),
+            context_ref_name(&badge(BadgeKind::Branch, "🌲 feat-wt")),
             Some("feat-wt".to_string())
         );
         assert_eq!(
@@ -4002,17 +4006,22 @@ mod draggable_branch_name_tests {
     #[test]
     fn context_menu_branch_names_include_head_and_remote_refs() {
         assert_eq!(
-            context_branch_name(&badge(BadgeKind::HeadBranch, "main ✓")),
+            context_ref_name(&badge(BadgeKind::HeadBranch, "main ✓")),
             Some("main".to_string())
         );
         assert_eq!(
-            context_branch_name(&badge(BadgeKind::Branch, "feature")),
+            context_ref_name(&badge(BadgeKind::Branch, "feature")),
             Some("feature".to_string())
         );
         assert_eq!(
-            context_branch_name(&badge(BadgeKind::Remote, "origin/feature")),
+            context_ref_name(&badge(BadgeKind::Remote, "origin/feature")),
             Some("origin/feature".to_string())
         );
-        assert_eq!(context_branch_name(&badge(BadgeKind::Tag, "v0.1.0")), None);
+        // A tag yields its own name — the graph's tag pill needs it to open
+        // the tag menu (ADR-0140).
+        assert_eq!(
+            context_ref_name(&badge(BadgeKind::Tag, "v0.1.0")),
+            Some("v0.1.0".to_string())
+        );
     }
 }

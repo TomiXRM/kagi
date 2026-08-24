@@ -271,7 +271,7 @@ pub(crate) fn render_badges_column(
             }
             BadgeKind::HeadBranch | BadgeKind::Tag => chip,
         };
-        let chip = if let Some(branch_name) = context_branch_name(badge) {
+        let chip = if let Some(ref_name) = context_ref_name(badge) {
             let badge_kind = badge.kind.clone();
             chip.on_mouse_down(
                 MouseButton::Right,
@@ -279,16 +279,18 @@ pub(crate) fn render_badges_column(
                     move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
                         match badge_kind {
                             BadgeKind::HeadBranch | BadgeKind::Branch => {
-                                this.open_local_branch_menu(branch_name.clone(), event.position);
+                                this.open_local_branch_menu(ref_name.clone(), event.position);
                             }
                             BadgeKind::Remote => {
                                 this.open_remote_branch_menu(
-                                    branch_name.clone(),
+                                    ref_name.clone(),
                                     target.clone(),
                                     event.position,
                                 );
                             }
-                            BadgeKind::Tag => {}
+                            BadgeKind::Tag => {
+                                this.open_tag_menu(ref_name.clone(), event.position);
+                            }
                         }
                         cx.stop_propagation();
                         cx.notify();

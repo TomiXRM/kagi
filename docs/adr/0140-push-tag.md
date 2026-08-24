@@ -14,8 +14,14 @@ all.
 ## Decision
 
 Add the `plan_push_tag` / `execute_push_tag` pair to
-`crates/kagi-git/src/ops/tag.rs`, reachable from a new tag context menu
-(right-click a tag in the sidebar).
+`crates/kagi-git/src/ops/tag.rs`, reachable from a new tag context menu —
+right-click a tag either in the sidebar **or on its pill in the graph**.
+
+The graph path was a one-line gap: `context_ref_name` (then
+`context_branch_name`) returned `None` for `BadgeKind::Tag`, so the badge's
+existing right-click handler was never attached and its dispatch carried a
+`BadgeKind::Tag => {}` no-op. Both now yield the tag name and open the same
+menu, so the two surfaces cannot drift.
 
 **Guarded, not Destructive.** The push adds a ref on the remote; it never
 moves or removes one. So it gets a single confirm rather than the armed

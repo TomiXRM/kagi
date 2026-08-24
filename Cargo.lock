@@ -3399,6 +3399,7 @@ dependencies = [
  "gpui-component",
  "gpui_wgpu",
  "kagi-domain",
+ "markdown",
  "serde",
  "serde_json",
  "tempfile",

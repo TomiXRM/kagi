@@ -874,11 +874,11 @@ pub static THEMES: &[Theme] = &[
     crate::theme_apple::APPLE_LIGHT,
     CATPPUCCIN_LATTE,
     DRACULA,
+    FLOWER_ROAD,
     IBM_PC,
     MONOKAI,
     ONE_DARK,
     ONE_LIGHT,
-    PERIWINKLE,
     PINKY_BOO,
     TOKYO_NIGHT,
 ];
@@ -1754,7 +1754,7 @@ const DRACULA: Theme = Theme {
     },
 };
 
-// ── Periwinkle ───────────────────────────────────────────────────────────────
+// ── Flower Road ──────────────────────────────────────────────────────────────
 //
 // Built from a supplied palette: backgrounds #ffffff / #f8faff (the commit
 // list's zebra pair), label colours #d699ba / #95c0aa / #d1d48c / #000, text
@@ -1771,9 +1771,9 @@ const DRACULA: Theme = Theme {
 // sum) from `diff_added_bg`, and with both now green there is no hue left to
 // tell "selected row" from "added line" in a diff. At L=0.82 the gap is 61 and
 // text still reads at 10.6:1 — the same as the old navy.
-const PERIWINKLE: Theme = Theme {
-    slug: "periwinkle",
-    name: "Periwinkle",
+const FLOWER_ROAD: Theme = Theme {
+    slug: "flower-road",
+    name: "Flower Road",
     dark: false,
 
     // The two supplied backgrounds are the commit list's zebra pair: BG1 on
@@ -1795,8 +1795,13 @@ const PERIWINKLE: Theme = Theme {
     text_muted: 0x6a7592,
     text_label: 0x566180,
 
-    color_head: 0xa5276b,   // pink label, darkened to 4.7:1
-    color_branch: 0x2e549e, // blue drawn out of the #172540 text navy
+    // The accent runs pink throughout: the mode switcher, branch names, the
+    // hunk rule and the text-selection tint all take `color_branch`, and it is
+    // the supplied #d698ba verbatim rather than a darkened derivative. That is
+    // 2.1:1 on white — chosen for the colour, not for the contrast. `color_head`
+    // stays deep so HEAD still separates from the branches around it.
+    color_head: 0x6f204b,   // deepest — HEAD is the anchor
+    color_branch: 0xd698ba, // the supplied pink, verbatim
     color_remote: 0x318259, // green label, darkened
     color_tag: 0x70741b,    // olive label, darkened
 
@@ -1805,12 +1810,12 @@ const PERIWINKLE: Theme = Theme {
     // This palette has no red: the "red" family is the #d699ba pink, darkened
     // to 4.5:1 so a refusal still reads as one. It shares a hue with
     // `color_head` by necessity — the two are separated by lightness, not hue.
-    color_blocker: 0xc73d88,
+    color_blocker: 0xc73d88, // brightest of the three — an alarm should shout
     color_blocker_muted: 0xdfa6c6,
 
     diff_added_bg: 0xdfece5,   // #95c0aa at L=0.90
     diff_removed_bg: 0xf0dbe6, // #d699ba at L=0.90
-    diff_hunk: 0x2e549e,
+    diff_hunk: 0xd698ba,
 
     change_added: 0x318259,
     change_modified: 0x8a5a10,
@@ -1819,7 +1824,7 @@ const PERIWINKLE: Theme = Theme {
     change_typechange: 0x87419f,
     change_dir: 0x566180,
 
-    accent: 0xa5276b, // pink
+    accent: 0xd698ba, // matches color_branch
 
     // The palette's own hues at a lightness that reads on the base (every lane
     // >= 4.4:1), ordered so adjacent indices stay distinct. Lane 7 is the
@@ -2111,7 +2116,7 @@ mod tests {
         let light = THEMES.iter().filter(|t| !t.dark).count();
         // catppuccin, one-dark, monokai, tokyo-night, ibm-pc, dracula, apple-dark
         assert_eq!(dark, 7);
-        // one-light, pinky-boo, catppuccin-latte, apple-light, periwinkle
+        // one-light, pinky-boo, catppuccin-latte, apple-light, flower-road
         assert_eq!(light, 5);
     }
 }

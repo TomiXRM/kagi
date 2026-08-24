@@ -9,13 +9,13 @@
 
 use kagi_domain::plan_note::{CheckoutNote, CheckoutRecovery, CheckoutTitle, DirtyParts};
 
-/// `「ステージ済み 2 件、変更 1 件」` — the dirty-parts fragment in JA
+/// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA
 /// (mirrors `plan/common.rs::parts_ja`; kept local since `CheckoutNote` is
 /// the only checkout-category note that needs it).
 fn parts_ja(parts: &DirtyParts) -> String {
     let mut out: Vec<String> = Vec::new();
     if parts.staged > 0 {
-        out.push(format!("ステージ済み {} 件", parts.staged));
+        out.push(format!("stage 済み {} 件", parts.staged));
     }
     if parts.modified > 0 {
         out.push(format!("変更 {} 件", parts.modified));
@@ -27,21 +27,21 @@ fn parts_ja(parts: &DirtyParts) -> String {
 pub fn note_ja(note: &CheckoutNote) -> String {
     match note {
         CheckoutNote::AlreadyCurrent { branch } => {
-            format!("ブランチ '{}' はすでに現在の HEAD ブランチです。", branch)
+            format!("branch '{}' はすでに現在の HEAD branch です。", branch)
         }
-        CheckoutNote::CommitAlreadyHead => "このコミットはすでに HEAD です。".to_string(),
+        CheckoutNote::CommitAlreadyHead => "この commit はすでに HEAD です。".to_string(),
         CheckoutNote::CheckoutOverlap { count, files } => format!(
             "作業ツリーに、切り替え先も変更する {} 件のファイルへのローカルな変更があります: {}。\
-             安全なチェックアウトは拒否されます(この競合がチェックアウトを妨げます)。\
-             先に stash するかコミットしてください。",
+             安全な checkout は拒否されます(この競合が checkout を妨げます)。\
+             先に stash するか commit してください。",
             count, files
         ),
         CheckoutNote::DirtyCarriedOver { parts, branch } => {
             format!("{}は '{}' に引き継がれます。", parts_ja(parts), branch)
         }
         CheckoutNote::DirtyMayFail { display } => format!(
-            "作業ツリーが dirty です({})。安全なチェックアウトが失敗する場合があります。\
-             先に stash するかコミットしてください。",
+            "作業ツリーが dirty です({})。安全な checkout が失敗する場合があります。\
+             先に stash するか commit してください。",
             display
         ),
         // §G-1 exception: current Japanese wording preserved byte-for-byte.
@@ -58,11 +58,10 @@ pub fn note_ja(note: &CheckoutNote) -> String {
 /// Japanese rendering of one checkout title.
 pub fn title_ja(title: &CheckoutTitle) -> String {
     match title {
-        CheckoutTitle::Checkout { branch } => format!("ブランチ '{}' をチェックアウト", branch),
-        CheckoutTitle::CheckoutCommit { sha, summary } => format!(
-            "コミット {} '{}' をチェックアウト(detached HEAD)",
-            sha, summary
-        ),
+        CheckoutTitle::Checkout { branch } => format!("branch '{}' を checkout", branch),
+        CheckoutTitle::CheckoutCommit { sha, summary } => {
+            format!("commit {} '{}' を checkout(detached HEAD)", sha, summary)
+        }
     }
 }
 
@@ -76,7 +75,7 @@ pub fn recovery_ja(recovery: &CheckoutRecovery) -> String {
         ),
         CheckoutRecovery::CheckoutCommit { previous } => format!(
             "誤って実行した場合は次のコマンドで戻れます:\n  git checkout {}\n\
-             detached 状態からの新しい作業を残したい場合は、ブランチを作成してください:\n  git switch -c <name>\n\
+             detached 状態からの新しい作業を残したい場合は、branch を作成してください:\n  git switch -c <name>\n\
              HEAD の移動はすべて reflog に記録されます:\n  git reflog",
             previous
         ),

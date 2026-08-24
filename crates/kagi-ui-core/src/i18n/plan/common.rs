@@ -7,27 +7,27 @@ use crate::i18n::{branch_name_error, worktree_path_error};
 /// JA rendering of the op phrase embedded in the common sentences.
 fn phrase_ja(p: OpPhrase) -> &'static str {
     match p {
-        OpPhrase::UndoingACommit => "コミットの取り消し",
+        OpPhrase::UndoingACommit => "commit の取り消し",
         OpPhrase::Amending => "amend",
         OpPhrase::Undo => "undo",
         OpPhrase::Redo => "redo",
-        OpPhrase::Checkout => "チェックアウト",
-        OpPhrase::Switching => "ブランチ切り替え",
+        OpPhrase::Checkout => "checkout",
+        OpPhrase::Switching => "branch 切り替え",
         OpPhrase::CherryPicking => "cherry-pick",
         OpPhrase::Reverting => "revert",
         OpPhrase::Pulling => "pull",
         OpPhrase::Merging => "merge",
-        OpPhrase::SwitchingBranches => "ブランチ切り替え",
+        OpPhrase::SwitchingBranches => "branch 切り替え",
         OpPhrase::Stashing => "stash",
         OpPhrase::ApplyingAStash => "stash の適用",
-        OpPhrase::CheckingOutTheNewBranch => "新しいブランチのチェックアウト",
+        OpPhrase::CheckingOutTheNewBranch => "新しい branch の checkout",
     }
 }
 
 /// JA rendering of the op name in the HEAD-state sentences.
 fn op_ja(op: PlanOp) -> &'static str {
     match op {
-        PlanOp::Undo => "コミットの取り消し",
+        PlanOp::Undo => "commit の取り消し",
         PlanOp::Amend => "amend",
         PlanOp::CherryPick => "cherry-pick",
         PlanOp::Revert => "revert",
@@ -37,11 +37,11 @@ fn op_ja(op: PlanOp) -> &'static str {
     }
 }
 
-/// `「ステージ済み 2 件、変更 1 件」` — the dirty-parts fragment in JA.
+/// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA.
 fn parts_ja(parts: &DirtyParts) -> String {
     let mut out: Vec<String> = Vec::new();
     if parts.staged > 0 {
-        out.push(format!("ステージ済み {} 件", parts.staged));
+        out.push(format!("stage 済み {} 件", parts.staged));
     }
     if parts.modified > 0 {
         out.push(format!("変更 {} 件", parts.modified));
@@ -58,14 +58,14 @@ pub fn note_ja(note: &CommonNote) -> String {
             phrase_ja(*before)
         ),
         CommonNote::DirtyBlocksOp { parts, before } => format!(
-            "作業ツリーに{}があります — {}の前に stash するかコミットしてください。",
+            "作業ツリーに{}があります — {}の前に stash するか commit してください。",
             parts_ja(parts),
             phrase_ja(*before)
         ),
         CommonNote::SuggestStashPush => "推奨コマンド: git stash push -u".to_string(),
         CommonNote::UntrackedRemain { count, ctx } => match ctx {
             UntrackedCtx::AfterCheckout => format!(
-                "未追跡ファイル {} 件はチェックアウト後もそのまま残ります。",
+                "未追跡ファイル {} 件は checkout 後もそのまま残ります。",
                 count
             ),
             UntrackedCtx::AfterSwitching => format!(
@@ -73,7 +73,7 @@ pub fn note_ja(note: &CommonNote) -> String {
                 count
             ),
             UntrackedCtx::AfterSwitchingBranches => format!(
-                "未追跡ファイル {} 件はブランチ切り替え後もそのまま残ります。",
+                "未追跡ファイル {} 件は branch 切り替え後もそのまま残ります。",
                 count
             ),
             UntrackedCtx::AfterCherryPick => format!(
@@ -93,28 +93,28 @@ pub fn note_ja(note: &CommonNote) -> String {
             }
         },
         CommonNote::DirtyRollbackHint { parts, op } => format!(
-            "作業ツリーに{}があります。クリーンな復帰点を残したい場合は {} の前に stash かコミットをしてください。",
+            "作業ツリーに{}があります。クリーンな復帰点を残したい場合は {} の前に stash か commit をしてください。",
             parts_ja(parts),
             phrase_ja(*op)
         ),
         CommonNote::HeadDetached { op } => format!(
-            "HEAD が detached 状態です。{} はブランチ上でのみ実行できます。",
+            "HEAD が detached 状態です。{} は branch 上でのみ実行できます。",
             op_ja(*op)
         ),
         CommonNote::HeadUnborn { op } => {
             let tail = match op {
-                PlanOp::Undo => "取り消すコミットがありません。",
-                PlanOp::Amend => "amend するコミットがありません。",
-                PlanOp::CherryPick => "空のブランチには cherry-pick できません。",
-                PlanOp::Revert => "空のブランチでは revert できません。",
-                PlanOp::Pull => "空のブランチには pull できません。",
-                PlanOp::Push => "空のブランチは push できません。",
-                PlanOp::Merge => "空のブランチには merge できません。",
+                PlanOp::Undo => "取り消す commit がありません。",
+                PlanOp::Amend => "amend する commit がありません。",
+                PlanOp::CherryPick => "空の branch には cherry-pick できません。",
+                PlanOp::Revert => "空の branch では revert できません。",
+                PlanOp::Pull => "空の branch には pull できません。",
+                PlanOp::Push => "空の branch は push できません。",
+                PlanOp::Merge => "空の branch には merge できません。",
             };
-            format!("HEAD が unborn(コミットが存在しません)です。{}", tail)
+            format!("HEAD が unborn(commit が存在しません)です。{}", tail)
         }
         CommonNote::BranchMissing { name, .. } => {
-            format!("ブランチ '{}' は存在しません。", name)
+            format!("branch '{}' は存在しません。", name)
         }
         // Error messages stay untranslated (error keying is out of scope).
         CommonNote::GitErrorPassthrough { message } => message.clone(),

@@ -14,18 +14,18 @@ pub fn note_ja(note: &PushNote) -> String {
             "fast-forward できない push は失敗します(force は使用しません)。".to_string()
         }
         PushNote::NoUpstreamNoRemotes { branch } => format!(
-            "ブランチ '{}' に upstream が設定されておらず、remote も存在しません。\
+            "branch '{}' に upstream が設定されておらず、remote も存在しません。\
              `git remote add origin <url>` で remote を追加してください。",
             branch
         ),
         PushNote::NoUpstreamWithErr { branch, err } => {
             format!(
-                "ブランチ '{}' に upstream が設定されていません: {}。",
+                "branch '{}' に upstream が設定されていません: {}。",
                 branch, err
             )
         }
         PushNote::AlreadyUpToDate { branch, .. } => format!(
-            "ブランチ '{}' は upstream に対してすでに最新です — push する内容がありません。",
+            "branch '{}' は upstream に対してすでに最新です — push する内容がありません。",
             branch
         ),
         PushNote::UpstreamFormatInvalid => {
@@ -69,18 +69,18 @@ pub fn title_ja(title: &PushTitle) -> String {
 pub fn recovery_ja(recovery: &PushRecovery) -> String {
     match recovery {
         PushRecovery::Push => {
-            "push はリモートへコミットを送るだけで、ローカルリポジトリは変更されません。\n\
+            "push はリモートへ commit を送るだけで、ローカルリポジトリは変更されません。\n\
              push が拒否された場合(non-fast-forward)は、先に pull してから再度プランしてください:\n  \
              git pull\n  git push\n\
              reflog にはすべての HEAD 移動が記録されます:\n  git reflog"
                 .to_string()
         }
         PushRecovery::PushBlocked => {
-            "push にはブランチが必要です。`git checkout <branch>` で HEAD をブランチに紐付けてください。"
+            "push には branch が必要です。`git checkout <branch>` で HEAD を branch に紐付けてください。"
                 .to_string()
         }
         PushRecovery::PushBranch => {
-            "push はリモートへコミットを送るだけで、作業ツリーは変更しません。\
+            "push はリモートへ commit を送るだけで、作業ツリーは変更しません。\
              push が拒否された場合は、先に fetch または pull してから再度プランしてください。"
                 .to_string()
         }

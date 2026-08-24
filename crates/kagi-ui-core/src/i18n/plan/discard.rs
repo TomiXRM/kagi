@@ -13,7 +13,7 @@ pub fn note_ja(note: &DiscardNote) -> String {
             path
         ),
         DiscardNote::NoUnstagedChanges { path } => {
-            format!("'{}' には破棄できる未ステージの変更がありません。", path)
+            format!("'{}' には破棄できる未 stage の変更がありません。", path)
         }
         DiscardNote::UntrackedWillBeDeleted { count } => format!(
             "⚠️ 未追跡ファイル {} 件がディスクから完全に削除されます(空になったフォルダも削除されます)。\
@@ -44,7 +44,7 @@ pub fn title_ja(title: &PlanTitle) -> String {
 
 /// Japanese rendering of the discard recovery block.
 pub fn recovery_ja() -> String {
-    "選択したファイルの未ステージ変更を破棄します: 追跡ファイルはインデックスから復元、\
+    "選択したファイルの未 stage 変更を破棄します: 追跡ファイルはインデックスから復元、\
      未追跡ファイルはディスクから削除されます。いずれの場合も、実行前に各ファイルの現内容の\
      バックアップ blob が oplog(op=\"discard\")に記録されます。\
      `git cat-file -p <blob-sha>` で復元できます。"

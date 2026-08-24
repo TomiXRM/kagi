@@ -7,11 +7,11 @@ use kagi_domain::plan_note::{RemoteBranchNote, RemoteBranchRecovery, RemoteBranc
 pub fn note_ja(note: &RemoteBranchNote) -> String {
     match note {
         RemoteBranchNote::NotFound { remote, branch } => format!(
-            "リモート追跡ブランチ '{}/{}' がローカルに見つかりませんでした。既に削除されているか、まだフェッチされていない可能性があります。",
+            "リモート追跡 branch '{}/{}' がローカルに見つかりませんでした。既に削除されているか、まだ fetch されていない可能性があります。",
             remote, branch
         ),
         RemoteBranchNote::LocalBranchUntouched { local_name } => format!(
-            "この操作はリモート上のブランチのみを削除します。ローカルブランチ '{}' には影響せず、アップストリーム未設定の状態になります。",
+            "この操作はリモート上の branch のみを削除します。local branch '{}' には影響せず、アップストリーム未設定の状態になります。",
             local_name
         ),
     }
@@ -21,7 +21,7 @@ pub fn note_ja(note: &RemoteBranchNote) -> String {
 pub fn title_ja(title: &RemoteBranchTitle) -> String {
     match title {
         RemoteBranchTitle::DeleteRemoteBranch { remote, branch } => {
-            format!("リモートブランチ '{}/{}' を削除", remote, branch)
+            format!("remote branch '{}/{}' を削除", remote, branch)
         }
     }
 }
@@ -34,7 +34,7 @@ pub fn recovery_ja(recovery: &RemoteBranchRecovery) -> String {
             branch,
             sha,
         } => format!(
-            "コミット '{sha}' がまだ存在する場合(ローカル、またはリモートのreflogがGCされる前なら)、ブランチを復元できます:\n  git push {remote} {sha}:refs/heads/{branch}\nそれ以外の場合、kagiからは元に戻せません。"
+            "commit '{sha}' がまだ存在する場合(ローカル、またはリモートのreflogがGCされる前なら)、branch を復元できます:\n  git push {remote} {sha}:refs/heads/{branch}\nそれ以外の場合、kagiからは元に戻せません。"
         ),
     }
 }

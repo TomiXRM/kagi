@@ -12,44 +12,44 @@ use kagi_domain::plan_note::{BranchNote, BranchRecovery, BranchTitle};
 pub fn note_ja(note: &BranchNote) -> String {
     match note {
         BranchNote::CommitMissing { sha } => {
-            format!("コミット '{}' はこのリポジトリに存在しません。", sha)
+            format!("commit '{}' はこのリポジトリに存在しません。", sha)
         }
         BranchNote::RenameRefOnlyDirty => {
-            "作業ツリーが dirty ですが、ブランチのリネームは ref のみを変更するためファイルには影響しません。".to_string()
+            "作業ツリーが dirty ですが、branch のリネームは ref のみを変更するためファイルには影響しません。".to_string()
         }
         BranchNote::RenameRemoteNotRenamed => {
-            "リモートブランチ名は自動的にはリネームされません。ローカルのブランチ設定のみが引き継がれます。".to_string()
+            "remote branch 名は自動的にはリネームされません。ローカルの branch 設定のみが引き継がれます。".to_string()
         }
         BranchNote::DeleteCurrentBranch { name } => format!(
-            "ブランチ '{}' は現在チェックアウト中のブランチです。削除する前に別のブランチにチェックアウトしてください。",
+            "branch '{}' は現在 checkout 中の branch です。削除する前に別の branch に checkout してください。",
             name
         ),
         BranchNote::DeleteBranchInLockedWorktree { name, path } => format!(
-            "ブランチ '{}' はロックされた worktree '{}' でチェックアウトされています。ブランチを削除する前に、まずロックを解除してください(サイドバーの worktree を右クリック → Unlock worktree)。",
+            "branch '{}' はロックされた worktree '{}' で checkout されています。branch を削除する前に、まずロックを解除してください(サイドバーの worktree を右クリック → Unlock worktree)。",
             name, path
         ),
         BranchNote::DeleteBranchInDirtyWorktree { name, path } => format!(
-            "ブランチ '{}' は worktree '{}' でチェックアウトされており、そこには未コミットの変更があります。まずそこでコミットするか変更を破棄してください — 作業が残っている間、worktree は削除されません。",
+            "branch '{}' は worktree '{}' で checkout されており、そこには未 commit の変更があります。まずそこで commit するか変更を破棄してください — 作業が残っている間、worktree は削除されません。",
             name, path
         ),
         BranchNote::DeleteRemovesPinningWorktree { name, path } => format!(
-            "ブランチ '{}' はクリーンな worktree '{}' でチェックアウトされています。この worktree を削除してから、ブランチを削除します。",
+            "branch '{}' はクリーンな worktree '{}' で checkout されています。この worktree を削除してから、branch を削除します。",
             name, path
         ),
         BranchNote::DeleteDetachedAtTip { name } => format!(
-            "HEAD は detached 状態で、'{}' と同じコミットを指しています。HEAD がその先端にある間、このブランチは削除できません。",
+            "HEAD は detached 状態で、'{}' と同じ commit を指しています。HEAD がその先端にある間、この branch は削除できません。",
             name
         ),
         BranchNote::DeleteUnmerged { name, tip } => format!(
-            "ブランチ '{}' には未マージのコミットがあります(先端 {} は HEAD から到達できません)。削除する前に手動でマージするか破棄してください。強制削除はサポートされていません。",
+            "branch '{}' には未 merge の commit があります(先端 {} は HEAD から到達できません)。削除する前に手動で merge するか破棄してください。強制削除はサポートされていません。",
             name, tip
         ),
         BranchNote::DeleteSquashMerged { name, squash } => format!(
-            "ブランチ '{}' は {} として squash マージ済みです。コミット自体は HEAD の祖先ではない(グラフ上は行き止まりに見えます)ものの、同一の変更はすでに取り込まれています。削除しても失われるものはありません。",
+            "branch '{}' は {} として squash merge 済みです。commit 自体は HEAD の祖先ではない(グラフ上は行き止まりに見えます)ものの、同一の変更はすでに取り込まれています。削除しても失われるものはありません。",
             name, squash
         ),
         BranchNote::DeleteKeepsRemote { name } => format!(
-            "ブランチ '{}' にはアップストリームの追跡ブランチが設定されています。削除されるのはローカルブランチのみで、リモートブランチは削除されません。",
+            "branch '{}' にはアップストリームの追跡 branch が設定されています。削除されるのは local branch のみで、remote branch は削除されません。",
             name
         ),
     }
@@ -60,19 +60,19 @@ pub fn title_ja(title: &BranchTitle) -> String {
     match title {
         BranchTitle::CreateBranch { name, at, checkout } => {
             if *checkout {
-                format!("ブランチ '{}' を {} に作成してチェックアウト", name, at)
+                format!("branch '{}' を {} に作成して checkout", name, at)
             } else {
-                format!("ブランチ '{}' を {} に作成", name, at)
+                format!("branch '{}' を {} に作成", name, at)
             }
         }
         BranchTitle::RenameBranch { old, new } => {
-            format!("ブランチ '{}' を '{}' にリネーム", old, new)
+            format!("branch '{}' を '{}' にリネーム", old, new)
         }
         BranchTitle::DeleteBranch {
             name,
             tip: Some(tip),
-        } => format!("ブランチ '{}' を削除(先端 {})", name, tip),
-        BranchTitle::DeleteBranch { name, tip: None } => format!("ブランチ '{}' を削除", name),
+        } => format!("branch '{}' を削除(先端 {})", name, tip),
+        BranchTitle::DeleteBranch { name, tip: None } => format!("branch '{}' を削除", name),
     }
 }
 
@@ -80,7 +80,7 @@ pub fn title_ja(title: &BranchTitle) -> String {
 pub fn recovery_ja(recovery: &BranchRecovery) -> String {
     match recovery {
         BranchRecovery::CreateBranch { name } => format!(
-            "新しいブランチ '{}' は副作用なく削除できます:\n  git branch -d {}\n(ブランチの作成は HEAD を移動せず、作業ツリーも変更しません。)",
+            "新しい branch '{}' は副作用なく削除できます:\n  git branch -d {}\n(branch の作成は HEAD を移動せず、作業ツリーも変更しません。)",
             name, name
         ),
         BranchRecovery::RenameBranch { old, new } => format!(
@@ -91,11 +91,11 @@ pub fn recovery_ja(recovery: &BranchRecovery) -> String {
             name,
             tip: Some(tip),
         } => format!(
-            "削除したブランチを復元するには:\n  git branch {} {}\nブランチの先端コミット '{}' は GC されるまでオブジェクトストアに残ります。",
+            "削除した branch を復元するには:\n  git branch {} {}\nbranch の先端 commit '{}' は GC されるまでオブジェクトストアに残ります。",
             name, tip, tip
         ),
         BranchRecovery::DeleteBranch { name, tip: None } => format!(
-            "ブランチ '{}' が見つかりませんでした。`git branch` でローカルブランチの一覧を確認してください。",
+            "branch '{}' が見つかりませんでした。`git branch` で local branch の一覧を確認してください。",
             name
         ),
     }

@@ -6,20 +6,20 @@ use kagi_domain::plan_note::{RebaseNote, RebaseRecovery, RebaseTitle};
 pub fn note_ja(note: &RebaseNote) -> String {
     match note {
         RebaseNote::DetachedHead => {
-            "HEAD が detached 状態です。rebase にはアタッチされたブランチが必要です。".to_string()
+            "HEAD が detached 状態です。rebase にはアタッチされた branch が必要です。".to_string()
         }
         RebaseNote::DirtyWorkingTree => {
-            "作業ツリーに未コミットの変更があります。rebase する前にコミット・stash・破棄のいずれかを行ってください。".to_string()
+            "作業ツリーに未 commit の変更があります。rebase する前に commit・stash・破棄のいずれかを行ってください。".to_string()
         }
         RebaseNote::InvalidOnto { onto } => {
-            format!("'{}' はブランチまたはコミットとして解決できません。", onto)
+            format!("'{}' は branch または commit として解決できません。", onto)
         }
         RebaseNote::AlreadyUpToDate { branch, onto } => format!(
             "'{}' は既に '{}' に追従しています。rebase する内容がありません。",
             branch, onto
         ),
         RebaseNote::MayConflict => {
-            "rebase は途中でコンフリクトにより停止することがあります。コンフリクトエディタでコミットごとに解決してから Continue してください。完了するまでシーケンスが継続します。".to_string()
+            "rebase は途中でコンフリクトにより停止することがあります。コンフリクトエディタで commit ごとに解決してから Continue してください。完了するまでシーケンスが継続します。".to_string()
         }
     }
 }

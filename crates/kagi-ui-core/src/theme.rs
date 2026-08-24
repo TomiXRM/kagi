@@ -1756,26 +1756,29 @@ const DRACULA: Theme = Theme {
 
 // ── Periwinkle ───────────────────────────────────────────────────────────────
 //
-// Built from a six-colour palette supplied as-is: background #d4d6e9, label
-// colours #d699ba / #95c0aa / #d1d48c / #000, text #172540.
+// Built from a supplied palette: background #f8faff, label colours
+// #d699ba / #95c0aa / #d1d48c / #000, text #172540.
 //
-// The three pastel labels measure 1.1-1.6:1 on that background, so they are
-// unusable as text — they are kept at full strength only where they are a
-// *fill* (graph lanes, filled badges) and darkened along their own hue for
+// The three pastel labels measure 1.1-1.6:1 against the periwinkle they came
+// with, so they cannot carry text. They stay at full strength where they are a
+// *fill* (graph lanes, diff washes) and are darkened along their own hue for
 // every text role. That split is the whole design: the palette's character
 // lives in the lane colours, its legibility in the derived text ramp.
+//
+// The original #d4d6e9 background is now `selected` — on a near-white base it
+// reads as a highlight, and keeps the periwinkle visible in the chrome.
 const PERIWINKLE: Theme = Theme {
     slug: "periwinkle",
     name: "Periwinkle",
     dark: false,
 
-    bg_base: 0xd4d6e9,    // supplied background
-    bg_row_alt: 0xcbcee2, // zebra: one step down
-    surface: 0xdee0ef,    // chips/hover sit *above* the base
-    selected: 0xbcc0dc,
-    panel: 0xc9cce1,
-    sidebar: 0xc0c4da,
-    modal: 0xe6e8f3,
+    bg_base: 0xf8faff,    // supplied background
+    bg_row_alt: 0xeef1fa, // zebra: one step down
+    surface: 0xe8ebf7,    // chips/hover, one step further
+    selected: 0xd4d6e9,   // the supplied periwinkle
+    panel: 0xeaedf8,
+    sidebar: 0xe2e5f2,
+    modal: 0xffffff,
     modal_overlay: 0x172540,
 
     text_main: 0x172540, // supplied font colour
@@ -1793,8 +1796,8 @@ const PERIWINKLE: Theme = Theme {
     color_blocker: 0xa32233,
     color_blocker_muted: 0xb08088,
 
-    diff_added_bg: 0xc3ddcd,   // the sage label as a wash
-    diff_removed_bg: 0xe8c8d6, // the pink label as a wash
+    diff_added_bg: 0xdfeee5,   // the sage label as a wash
+    diff_removed_bg: 0xf6e2ea, // the pink label as a wash
     diff_hunk: 0x2e549e,
 
     change_added: 0x277c51,
@@ -1806,8 +1809,8 @@ const PERIWINKLE: Theme = Theme {
 
     accent: 0xa5276b, // pink
 
-    // The palette's own hues at a lightness that reads on #d4d6e9 (every lane
-    // >= 3.2:1), ordered so adjacent indices stay distinct. Lane 7 is the
+    // The palette's own hues at a lightness that reads on the base (every lane
+    // >= 4.4:1), ordered so adjacent indices stay distinct. Lane 7 is the
     // supplied #000 — the one label colour that needed no adjustment.
     lane_hsl: [
         (0.910, 0.62, 0.40), // pink   #a5276b
@@ -1823,7 +1826,7 @@ const PERIWINKLE: Theme = Theme {
     avatar_sat: 0.42,
     avatar_light: 0.46,
 
-    term_bg: (0xd4, 0xd6, 0xe9),
+    term_bg: (0xf8, 0xfa, 0xff),
     term_fg: (0x17, 0x25, 0x40),
     term_cursor: (0xa5, 0x27, 0x6b),
     term_black: (0x17, 0x25, 0x40),
@@ -1844,10 +1847,10 @@ const PERIWINKLE: Theme = Theme {
     term_bright_white: (0x17, 0x25, 0x40),
     term_selection: (0x2e, 0x54, 0x9e, 0x40),
 
-    // Each token takes one of the palette's hues, darkened until it clears the
-    // 3.0:1 floor on #d4d6e9 (measured: lowest is `variable` at 3.2). Operators
-    // and punctuation are the plain foreground — flat by choice, matching how
-    // the supplied palette has no colour to spare for them.
+    // Each token takes one of the palette's hues, darkened well clear of the
+    // 3.0:1 floor (measured: lowest is `variable` at 4.4:1). Operators and
+    // punctuation are the plain foreground — flat by choice, matching how the
+    // supplied palette has no colour to spare for them.
     syntax: SyntaxPalette {
         keyword: 0xa5276b,     // pink
         string: 0x277c51,      // green

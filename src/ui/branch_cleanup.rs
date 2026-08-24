@@ -59,9 +59,48 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// Tick / untick one row.
+    pub fn toggle_cleanup_selection(&mut self, name: String, cx: &mut Context<Self>) {
+        if !self.cleanup_selected.remove(&name) {
+            self.cleanup_selected.insert(name);
+        }
+        cx.notify();
+    }
+
+    /// Header checkbox: tick every deletable row, or clear the selection when
+    /// everything already is.
+    pub fn toggle_cleanup_select_all(&mut self, cx: &mut Context<Self>) {
+        let all: Vec<String> = self
+            .active_view
+            .cleanup_rows
+            .iter()
+            .filter(|r| r.delete_target().is_some())
+            .map(|r| r.name.clone())
+            .collect();
+        if all.iter().all(|n| self.cleanup_selected.contains(n)) {
+            self.cleanup_selected.clear();
+        } else {
+            self.cleanup_selected = all.into_iter().collect();
+        }
+        cx.notify();
+    }
+
+    /// Plan a delete for exactly the ticked rows.
+    pub fn delete_selected_cleanup_branches(&mut self, cx: &mut Context<Self>) {
+        let targets: Vec<CleanupDeleteTarget> = self
+            .active_view
+            .cleanup_rows
+            .iter()
+            .filter(|r| self.cleanup_selected.contains(&r.name))
+            .filter_map(|r| r.delete_target())
+            .collect();
+        self.open_branch_cleanup_plan(targets, cx);
+    }
+
     /// Close the Branch Cleanup table.
     pub fn close_branch_cleanup_view(&mut self, cx: &mut Context<Self>) {
         self.branch_cleanup_open = false;
+        self.cleanup_selected.clear();
         cx.notify();
     }
 
@@ -83,9 +122,20 @@ impl KagiApp {
 
         let bg_path = repo_path.clone();
         let task = cx.background_spawn(async move {
-            kagi_git::Backend::open(&bg_path)
-                .map_err(|e| e.to_string())
-                .and_then(|b| b.collect_branch_cleanup(now).map_err(|e| e.to_string()))
+            let backend = kagi_git::Backend::open(&bg_path).map_err(|e| e.to_string())?;
+            let rows = backend
+                .collect_branch_cleanup(now)
+                .map_err(|e| e.to_string())?;
+            // Merged PRs ride along on the same background thread. The rows are
+            // branches that are already merged, so their PRs are never in the
+            // sidebar's *open* list — the two questions need two calls. Empty
+            // when `gh` is unavailable, which just leaves the columns blank.
+            let prs = if kagi_git::github::gh_available() {
+                backend.list_merged_prs(MERGED_PR_LIMIT).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            Ok::<_, String>((rows, prs))
         });
 
         cx.spawn(async move |app, acx| {
@@ -100,7 +150,14 @@ impl KagiApp {
                 }
                 app.cleanup_scanning = false;
                 match result {
-                    Ok(rows) => {
+                    Ok((rows, prs)) => {
+                        app.cleanup_prs = prs;
+                        // Drop ticks for branches that are no longer listed:
+                        // a stale name would either do nothing or, worse,
+                        // match a re-created branch the user never ticked.
+                        let live: std::collections::HashSet<&str> =
+                            rows.iter().map(|r| r.name.as_str()).collect();
+                        app.cleanup_selected.retain(|n| live.contains(n.as_str()));
                         // Same contract line ADR-0128 originally emitted from
                         // build_tab_view — moved here since this is where the
                         // counts are actually known now.
@@ -355,19 +412,33 @@ const CLEANUP_ACTIONS_W: f32 = 40.0;
 const CLEANUP_ROW_H: f32 = 26.0;
 
 /// `(settings key, default, min, max)` per resizable column, indexed by
-/// [`DividerKind::CleanupCol`]'s payload (0 = name, 1 = where, 2 = merged-at,
-/// 3 = status).
-const CLEANUP_COL_SPECS: [(&str, f32, f32, f32); 4] = [
-    ("cleanup_name_w", 260.0, 80.0, 600.0),
-    ("cleanup_where_w", 110.0, 56.0, 240.0),
+/// [`DividerKind::CleanupCol`]'s payload (0 = name, 1 = PR, 2 = author,
+/// 3 = where, 4 = merged-at, 5 = status).
+///
+/// PR sits right after the branch name on purpose: a merged branch almost
+/// always has a pull request, and `#248 chore: bump to 0.22.0` says what the
+/// branch was for in a way `chore/bump-0.22.0` only hints at (user request).
+const CLEANUP_COL_SPECS: [(&str, f32, f32, f32); 6] = [
+    ("cleanup_name_w", 220.0, 80.0, 600.0),
+    ("cleanup_pr_w", 280.0, 80.0, 700.0),
+    ("cleanup_author_w", 110.0, 56.0, 260.0),
+    ("cleanup_where_w", 100.0, 56.0, 240.0),
     ("cleanup_merged_w", 90.0, 60.0, 240.0),
-    ("cleanup_status_w", 170.0, 80.0, 420.0),
+    ("cleanup_status_w", 150.0, 80.0, 420.0),
 ];
+
+/// Width of the leading selection-checkbox column.
+const CLEANUP_CHECK_W: f32 = 26.0;
+
+/// How many merged PRs to pull for the PR / author columns. Cleanup rows are
+/// branches that still exist locally, so they are recent by construction —
+/// this is generous, and it is one `gh` call regardless of the number.
+const MERGED_PR_LIMIT: usize = 200;
 
 /// Branch Cleanup column widths (logical px), persisted to `settings.json`
 /// via `theme::set_col_width` like the commit-list columns (T030).
 #[derive(Clone, Copy, Debug)]
-pub struct CleanupCols(pub [f32; 4]);
+pub struct CleanupCols(pub [f32; 6]);
 
 impl Default for CleanupCols {
     fn default() -> Self {
@@ -378,7 +449,7 @@ impl Default for CleanupCols {
 impl CleanupCols {
     /// Read the persisted widths (clamped), falling back to the defaults.
     pub fn load() -> Self {
-        let mut w = [0.0f32; 4];
+        let mut w = [0.0f32; 6];
         for (i, (key, default, min, max)) in CLEANUP_COL_SPECS.iter().enumerate() {
             w[i] = theme::read_col_width(key)
                 .map(|v| v.clamp(*min, *max))
@@ -403,9 +474,9 @@ impl KagiApp {
         cursor_rel_x: f32,
         cx: &mut Context<Self>,
     ) {
-        let idx = (idx as usize).min(3);
+        let idx = (idx as usize).min(CLEANUP_COL_SPECS.len() - 1);
         let (key, _, min, max) = CLEANUP_COL_SPECS[idx];
-        let left = CLEANUP_PAD + self.cleanup_cols.left_of(idx);
+        let left = CLEANUP_PAD + CLEANUP_CHECK_W + self.cleanup_cols.left_of(idx);
         let new_w = (cursor_rel_x - left - CLEANUP_GAP / 2.0).clamp(min, max);
         if (new_w - self.cleanup_cols.0[idx]).abs() > 0.5 {
             self.cleanup_cols.0[idx] = new_w;
@@ -433,6 +504,37 @@ fn format_date(secs: i64) -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     format!("{:04}-{:02}-{:02}", y, m, d)
+}
+
+/// A tick box for one table row.
+///
+/// `gpui_component::checkbox::Checkbox` — the same widget the create-branch
+/// modal adopted in W12-GCADOPT, rather than a hand-drawn one. This started as
+/// the ☐/☑ glyph pair and the box visibly changed size when ticked (user
+/// report): they are two different characters with different advance widths.
+/// Drawing a box by hand would have fixed that too, but the app already has a
+/// checkbox and a second one would only drift from it.
+///
+/// `Checkbox::on_click` hands back the new state and takes `&mut App`, not
+/// `&mut Context`, so the caller routes it through the `KagiApp` entity — same
+/// shape as `modal_renderers_create.rs`.
+fn check_box(
+    id: impl Into<gpui::SharedString>,
+    checked: bool,
+    on_click: impl Fn(&bool, &mut gpui::Window, &mut gpui::App) + 'static,
+) -> gpui::AnyElement {
+    div()
+        .w(theme::scaled_px(CLEANUP_CHECK_W))
+        .flex_shrink_0()
+        .flex()
+        .flex_row()
+        .items_center()
+        .child(
+            gpui_component::checkbox::Checkbox::new(id.into())
+                .checked(checked)
+                .on_click(on_click),
+        )
+        .into_any_element()
 }
 
 /// Small clickable header/action button.
@@ -463,26 +565,55 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
     let rows = app.active_view.cleanup_rows.clone();
     let cols = app.cleanup_cols;
     let bulk_count = rows.iter().filter(|r| r.bulk_deletable).count();
+    let selected_count = app.cleanup_selected.len();
+    let selectable: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.delete_target().is_some())
+        .map(|r| r.name.as_str())
+        .collect();
+    let all_selected =
+        !selectable.is_empty() && selectable.iter().all(|n| app.cleanup_selected.contains(*n));
 
-    // ── Header: title + bulk delete + copy-all + close ──────────
-    let bulk_button: Option<gpui::AnyElement> = (bulk_count > 0).then(|| {
+    // ── Header: title + delete + copy-all + close ───────────────
+    //
+    // One button, two meanings: with rows ticked it deletes exactly those,
+    // otherwise it falls back to the bulk "every fully-merged branch". Before
+    // the checkboxes the only options were all-or-one-at-a-time, with nothing
+    // in between (user request).
+    let bulk_button: Option<gpui::AnyElement> = if selected_count > 0 {
         let handler = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-            let targets: Vec<CleanupDeleteTarget> = this
-                .active_view
-                .cleanup_rows
-                .iter()
-                .filter(|r| r.bulk_deletable)
-                .filter_map(|r| r.delete_target())
-                .collect();
-            this.open_branch_cleanup_plan(targets, cx);
+            this.delete_selected_cleanup_branches(cx);
         });
-        action_button(
-            "cleanup-bulk-delete",
-            SharedString::from(format!("{} ({})", Msg::CleanupDeleteMerged.t(), bulk_count)),
+        Some(action_button(
+            "cleanup-delete-selected",
+            SharedString::from(format!(
+                "{} ({})",
+                Msg::CleanupDeleteSelected.t(),
+                selected_count
+            )),
             theme().color_blocker,
             handler,
-        )
-    });
+        ))
+    } else {
+        (bulk_count > 0).then(|| {
+            let handler = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                let targets: Vec<CleanupDeleteTarget> = this
+                    .active_view
+                    .cleanup_rows
+                    .iter()
+                    .filter(|r| r.bulk_deletable)
+                    .filter_map(|r| r.delete_target())
+                    .collect();
+                this.open_branch_cleanup_plan(targets, cx);
+            });
+            action_button(
+                "cleanup-bulk-delete",
+                SharedString::from(format!("{} ({})", Msg::CleanupDeleteMerged.t(), bulk_count)),
+                theme().color_blocker,
+                handler,
+            )
+        })
+    };
     let copy_all_button = {
         let handler = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
             this.copy_branch_cleanup_names(cx);
@@ -585,14 +716,24 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
         .text_color(rgb(theme().text_muted))
         .border_b_1()
         .border_color(rgb(theme().surface))
+        .child(check_box("cleanup-select-all", all_selected, {
+            let app_entity = cx.entity();
+            move |_new: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {
+                app_entity.update(cx, |this, cx| this.toggle_cleanup_select_all(cx));
+            }
+        }))
         .child(col_label(cols.0[0], Msg::CleanupColBranch))
         .child(col_divider(0))
-        .child(col_label(cols.0[1], Msg::CleanupColWhere))
+        .child(col_label(cols.0[1], Msg::CleanupColPr))
         .child(col_divider(1))
-        .child(col_label(cols.0[2], Msg::CleanupColMergedAt))
+        .child(col_label(cols.0[2], Msg::CleanupColAuthor))
         .child(col_divider(2))
-        .child(col_label(cols.0[3], Msg::CleanupColStatus))
+        .child(col_label(cols.0[3], Msg::CleanupColWhere))
         .child(col_divider(3))
+        .child(col_label(cols.0[4], Msg::CleanupColMergedAt))
+        .child(col_divider(4))
+        .child(col_label(cols.0[5], Msg::CleanupColStatus))
+        .child(col_divider(5))
         .child(div().w(theme::scaled_px(CLEANUP_ACTIONS_W)).flex_shrink_0());
 
     // ── Rows: uniform_list — fixed row height + real vertical scroll ────
@@ -622,13 +763,15 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
                 row_count,
                 cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
                     let cols = this.cleanup_cols;
+                    let prs = this.cleanup_prs.clone();
+                    let selected = this.cleanup_selected.clone();
                     range
                         .filter_map(|i| {
-                            this.active_view
-                                .cleanup_rows
-                                .get(i)
-                                .cloned()
-                                .map(|row| build_cleanup_row(&row, i, cols, cx))
+                            this.active_view.cleanup_rows.get(i).cloned().map(|row| {
+                                let pr = prs.iter().find(|p| p.head == row.name);
+                                let ticked = selected.contains(&row.name);
+                                build_cleanup_row(&row, i, cols, pr, ticked, cx)
+                            })
                         })
                         .collect::<Vec<_>>()
                 }),
@@ -659,6 +802,9 @@ fn build_cleanup_row(
     row: &BranchCleanupRow,
     i: usize,
     cols: CleanupCols,
+    // The merged PR whose head is this branch, when one was found.
+    pr: Option<&kagi_domain::github::PullRequest>,
+    selected: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     // Plain (non-draggable) spacer matching the header divider width, so row
@@ -695,6 +841,58 @@ fn build_cleanup_row(
         )
         .child(div().truncate().child(full_name));
 
+    // PR: `#248 chore: bump to 0.22.0`. A merged branch nearly always has one,
+    // and its title explains the branch better than the branch name does
+    // (user request). Click opens it on GitHub.
+    let pr_cell = match pr {
+        Some(pr) => {
+            let label = SharedString::from(format!("#{} {}", pr.number, pr.title));
+            let tip = label.clone();
+            let pr_open = pr.clone();
+            div()
+                .id(("cleanup-pr", i))
+                .w(theme::scaled_px(cols.0[1]))
+                .flex_shrink_0()
+                .min_w(px(0.))
+                .overflow_hidden()
+                .text_xs()
+                .text_color(rgb(theme().text_main))
+                .cursor_pointer()
+                .hover(|s| s.text_color(rgb(theme().color_branch)))
+                .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                .on_click(
+                    cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                        this.open_pr_in_browser(&pr_open);
+                        cx.notify();
+                    }),
+                )
+                .child(div().truncate().child(label))
+                .into_any_element()
+        }
+        None => div()
+            .w(theme::scaled_px(cols.0[1]))
+            .flex_shrink_0()
+            .overflow_hidden()
+            .text_xs()
+            .text_color(rgb(theme().text_muted))
+            .child(SharedString::from("\u{2014}"))
+            .into_any_element(),
+    };
+
+    // Author: the PR's, when known. Blank rather than guessed — the branch tip's
+    // committer is often a bot or a rebase artifact, not who wrote the work.
+    let author_cell = div()
+        .w(theme::scaled_px(cols.0[2]))
+        .flex_shrink_0()
+        .min_w(px(0.))
+        .overflow_hidden()
+        .text_xs()
+        .text_color(rgb(theme().text_sub))
+        .child(div().truncate().child(SharedString::from(match pr {
+            Some(pr) if !pr.author.is_empty() => format!("@{}", pr.author),
+            _ => "\u{2014}".to_string(),
+        })));
+
     // Where: plain text, no chips (user request: no badge noise).
     let where_text = match (row.local_tip.is_some(), row.remote_tip.is_some()) {
         (true, true) => "local, origin",
@@ -703,7 +901,7 @@ fn build_cleanup_row(
         (false, false) => "",
     };
     let where_cell = div()
-        .w(theme::scaled_px(cols.0[1]))
+        .w(theme::scaled_px(cols.0[3]))
         .flex_shrink_0()
         .overflow_hidden()
         .text_xs()
@@ -712,7 +910,7 @@ fn build_cleanup_row(
 
     // Merged-at cell.
     let merged_cell = div()
-        .w(theme::scaled_px(cols.0[2]))
+        .w(theme::scaled_px(cols.0[4]))
         .flex_shrink_0()
         .overflow_hidden()
         .text_xs()
@@ -748,7 +946,7 @@ fn build_cleanup_row(
     };
     let mut status_cell = div()
         .id(("cleanup-status", i))
-        .w(theme::scaled_px(cols.0[3]))
+        .w(theme::scaled_px(cols.0[5]))
         .flex_shrink_0()
         .overflow_hidden()
         .flex()
@@ -808,7 +1006,30 @@ fn build_cleanup_row(
         .px(theme::scaled_px(CLEANUP_PAD))
         .overflow_hidden()
         .hover(|s| s.bg(rgb(theme().surface)))
+        // Only rows that can actually build a delete target get a tick box —
+        // ticking one that cannot be deleted would promise something the
+        // delete plan then quietly drops.
+        .children(row.delete_target().is_some().then(|| {
+            let name = row.name.clone();
+            check_box(format!("cleanup-check-{i}"), selected, {
+                let app_entity = cx.entity();
+                move |_new: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {
+                    let name = name.clone();
+                    app_entity.update(cx, |this, cx| this.toggle_cleanup_selection(name, cx));
+                }
+            })
+        }))
+        .children((row.delete_target().is_none()).then(|| {
+            div()
+                .w(theme::scaled_px(CLEANUP_CHECK_W))
+                .flex_shrink_0()
+                .into_any_element()
+        }))
         .child(name_cell)
+        .child(gap())
+        .child(pr_cell)
+        .child(gap())
+        .child(author_cell)
         .child(gap())
         .child(where_cell)
         .child(gap())

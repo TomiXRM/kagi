@@ -115,7 +115,7 @@ pub(super) fn render_description(pr: &PullRequest, cx: &mut Context<KagiApp>) ->
                 .child(
                     TextView::markdown(
                         ("pr-mode-description-md", pr.number as usize),
-                        SharedString::from(body),
+                        SharedString::from(kagi_ui_core::markdown::flatten_html_blocks(&body)),
                     )
                     .plugin(kagi_ui_core::markdown::MarkdownImages::remote())
                     // Drag to select, ⌘C to copy — gpui-component's Root
@@ -341,7 +341,7 @@ pub(super) fn render_conversation(
                     el.child(
                         TextView::markdown(
                             ("pr-convo-md", pr.number as usize * 1000 + i),
-                            SharedString::from(body),
+                            SharedString::from(kagi_ui_core::markdown::flatten_html_blocks(&body)),
                         )
                         .plugin(kagi_ui_core::markdown::MarkdownImages::remote())
                         .selectable(true)

@@ -290,6 +290,51 @@ fn html_attribute(attrs: &str, wanted: &str) -> Option<String> {
     None
 }
 
+/// Rewrite a Markdown document so no raw HTML block spans multiple lines.
+///
+/// GPUI's text system panics rather than wrapping when asked to shape text
+/// containing a newline, and `gpui-component` feeds a raw HTML block's own text
+/// straight through. A README that writes
+///
+/// ```text
+/// <div align="center">
+/// <img src="docs/images/hero.png" />
+/// </div>
+/// ```
+///
+/// — or any `<details>` disclosure, which is the same shape — therefore
+/// **crashed the Markdown preview**. It is not this crate's bug, but it is
+/// this crate's crash: every Kagi Markdown surface runs its source through
+/// here first.
+///
+/// Newlines inside an HTML block become spaces. HTML is whitespace-insensitive
+/// between tags, so the rendering is unchanged, and replacing a byte with a
+/// byte keeps every later node's source offsets valid.
+pub fn flatten_html_blocks(source: &str) -> String {
+    use markdown::mdast::Node;
+
+    let Ok(root) = markdown::to_mdast(source, &markdown::ParseOptions::gfm()) else {
+        return source.to_string();
+    };
+    let mut out = source.as_bytes().to_vec();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if let Node::Html(html) = &node {
+            if let Some(position) = html.position.as_ref() {
+                for byte in &mut out[position.start.offset..position.end.offset] {
+                    if *byte == b'\n' || *byte == b'\r' {
+                        *byte = b' ';
+                    }
+                }
+            }
+        }
+        if let Some(children) = node.children() {
+            stack.extend(children.iter().cloned());
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| source.to_string())
+}
+
 /// Collapse a string to something safe to shape as one line.
 ///
 /// Every run of whitespace containing a newline becomes a single space, and
@@ -569,6 +614,43 @@ Some prose with an ![inline image](docs/images/shot.png) inside it.
         }
     }
 
+    /// The crash the preview actually hit, on `main` as well as here: GPUI
+    /// panics on a newline, and `gpui-component` renders a raw HTML block's own
+    /// text. README's centred screenshots and `<details>` disclosures are both
+    /// multi-line HTML blocks, so previewing one aborted the process.
+    #[test]
+    fn no_html_block_survives_with_a_newline() {
+        let flattened = flatten_html_blocks(SAMPLE);
+        for node in nodes(&flattened) {
+            if let Node::Html(html) = &node {
+                assert!(
+                    !html.value.contains('\n') && !html.value.contains('\r'),
+                    "HTML block still spans lines: {:?}",
+                    html.value
+                );
+            }
+        }
+        // Byte-for-byte the same length, so every other node's source offsets
+        // still point where they did.
+        assert_eq!(flattened.len(), SAMPLE.len());
+        // And the surrounding Markdown is untouched.
+        assert!(flattened.contains("## Screenshots"));
+        assert!(flattened.contains("![Repo-relative screenshot](docs/images/shot.png)"));
+    }
+
+    /// A `<details>` disclosure is the same shape and just as common.
+    #[test]
+    fn flattens_a_details_block() {
+        let md = "<details>\n<summary><b>macOS</b></summary>\n\nbody text\n\n</details>\n";
+        let flat = flatten_html_blocks(md);
+        for node in nodes(&flat) {
+            if let Node::Html(html) = &node {
+                assert!(!html.value.contains('\n'), "{:?}", html.value);
+            }
+        }
+        assert!(flat.contains("body text"), "prose must survive: {flat:?}");
+    }
+
     /// The paths a README uses resolve where a reader expects, and nothing
     /// resolves outside the repository.
     #[test]
@@ -584,5 +666,43 @@ Some prose with an ![inline image](docs/images/shot.png) inside it.
         );
         assert_eq!(base.resolve("../../../etc/passwd"), None);
         assert_eq!(base.resolve("https://example.com/a.png"), None);
+    }
+}
+
+#[cfg(test)]
+mod real_readme {
+    use super::*;
+    use markdown::mdast::Node;
+    use markdown::{to_mdast, ParseOptions};
+
+    /// The actual file that crashed the preview.
+    #[test]
+    #[ignore]
+    fn flattens_the_repository_readme() {
+        let src = std::fs::read_to_string(std::env::var("KAGI_MD_FILE").unwrap()).unwrap();
+        let before = count_multiline_html(&src);
+        let after = count_multiline_html(&flatten_html_blocks(&src));
+        println!("multi-line HTML blocks: {before} -> {after}");
+        assert!(before > 0, "README should exercise this");
+        assert_eq!(after, 0);
+    }
+
+    fn count_multiline_html(md: &str) -> usize {
+        fn walk(n: &Node, out: &mut usize) {
+            if let Node::Html(h) = n {
+                if h.value.contains('\n') {
+                    *out += 1;
+                }
+            }
+            if let Some(c) = n.children() {
+                for x in c {
+                    walk(x, out);
+                }
+            }
+        }
+        let root = to_mdast(md, &ParseOptions::gfm()).unwrap();
+        let mut n = 0;
+        walk(&root, &mut n);
+        n
     }
 }

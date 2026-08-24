@@ -10,6 +10,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
+use kagi_domain::plan_note::{ForceLeaseNote, PlanNote};
 use kagi_git::ops::{execute_force_with_lease_push, plan_force_with_lease_push};
 
 fn git(dir: &Path, args: &[&str]) {
@@ -147,8 +148,12 @@ fn test_plan_nothing_to_push_blocker() {
     let repo = Repository::open(&r.local).expect("open local");
     let plan = plan_force_with_lease_push(&repo).expect("plan failed");
     assert!(
-        !plan.blockers.is_empty(),
-        "local == remote tip should block (nothing to force-push)"
+        plan.blockers.iter().any(|b| matches!(
+            b,
+            PlanNote::ForceLease(ForceLeaseNote::NothingToPush { .. })
+        )),
+        "expected ForceLeaseNote::NothingToPush, got: {:?}",
+        plan.blockers
     );
 }
 

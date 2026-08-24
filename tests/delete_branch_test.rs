@@ -18,6 +18,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
+use kagi_domain::plan_note::{BranchNote, PlanNote};
 use kagi_git::{execute_delete_branch, plan_delete_branch};
 
 // ────────────────────────────────────────────────────────────
@@ -639,8 +640,96 @@ fn a_genuinely_unmerged_branch_is_still_blocked() {
 
     let plan = plan_delete_branch(&repo, "orphan").expect("plan should succeed");
     assert!(
-        !plan.blockers.is_empty(),
-        "an unmerged branch must still be blocked — patch-id equivalence must \
-         not become a back door to force delete"
+        plan.blockers.iter().any(|b| matches!(
+            b,
+            PlanNote::Branch(BranchNote::DeleteUnmerged { name, .. }) if name == "orphan"
+        )),
+        "an unmerged branch must still be blocked as unmerged — patch-id \
+         equivalence must not become a back door to force delete. Got: {:?}",
+        plan.blockers
+    );
+}
+
+/// `git patch-id` normalises whitespace away, so a branch whose only
+/// difference from what landed on main is indentation has an *identical*
+/// patch-id — in Python (and every whitespace-significant language) that is a
+/// real behaviour difference, and `git branch -d` refuses to delete it.
+///
+/// The squash-merge detector therefore confirms each patch-id hit
+/// byte-exactly before downgrading the unmerged blocker to a warning
+/// (ADR-0138). Drop that confirmation and this branch becomes deletable —
+/// irreversibly, with no `-D` escape hatch in kagi. Fixture mirrors
+/// `squash_links_test.rs::a_whitespace_only_difference_is_not_a_squash_merge`.
+#[test]
+fn a_whitespace_only_difference_must_not_unblock_the_delete() {
+    let tmp = TempDir::new().expect("tempdir");
+    let path = tmp.path().to_path_buf();
+
+    git(&path, &["init", "-q", "-b", "main", "."]);
+    git(&path, &["config", "user.name", "Test"]);
+    git(&path, &["config", "user.email", "test@example.com"]);
+    git(&path, &["config", "commit.gpgsign", "false"]);
+
+    write_file(&path, "m.py", "def f(a):\n    if a:\n        return 1\n");
+    git(&path, &["add", "-A"]);
+    git(&path, &["commit", "-qm", "root"]);
+
+    // The branch adds the line INSIDE the `if` (eight spaces).
+    git(&path, &["checkout", "-q", "-b", "ws"]);
+    write_file(
+        &path,
+        "m.py",
+        "def f(a):\n    if a:\n        return 1\n        return 2\n",
+    );
+    git(&path, &["commit", "-qam", "add return 2"]);
+
+    // main gets the same line OUTSIDE the `if` (four spaces) — different
+    // behaviour, identical patch-id.
+    git(&path, &["checkout", "-q", "main"]);
+    write_file(
+        &path,
+        "m.py",
+        "def f(a):\n    if a:\n        return 1\n    return 2\n",
+    );
+    git(&path, &["commit", "-qam", "add return 2 (outside the if)"]);
+
+    let repo = Repository::open(&path).unwrap();
+
+    // Precondition: patch-id alone cannot tell the two changes apart, so the
+    // cheap index really does report a hit here.
+    let patch_id = |from: git2::Oid, to: git2::Oid| {
+        let a = repo.find_commit(from).unwrap().tree().unwrap();
+        let b = repo.find_commit(to).unwrap().tree().unwrap();
+        repo.diff_tree_to_tree(Some(&a), Some(&b), None)
+            .unwrap()
+            .patchid(None)
+            .unwrap()
+    };
+    let head = repo.head().unwrap().target().unwrap();
+    let tip = repo
+        .find_branch("ws", git2::BranchType::Local)
+        .unwrap()
+        .get()
+        .target()
+        .unwrap();
+    let base = repo.merge_base(head, tip).unwrap();
+    let head_parent = repo.find_commit(head).unwrap().parent(0).unwrap().id();
+    assert_eq!(
+        patch_id(base, tip),
+        patch_id(head_parent, head),
+        "fixture is stale: the two changes must share a patch-id for this test \
+         to exercise the exact-match confirmation"
+    );
+
+    let plan = plan_delete_branch(&repo, "ws").expect("plan should succeed");
+    assert!(
+        plan.blockers.iter().any(|b| matches!(
+            b,
+            PlanNote::Branch(BranchNote::DeleteUnmerged { name, .. }) if name == "ws"
+        )),
+        "a whitespace-only patch-id collision is NOT a squash merge — the \
+         delete must stay blocked. Got blockers: {:?}, warnings: {:?}",
+        plan.blockers,
+        plan.warnings
     );
 }

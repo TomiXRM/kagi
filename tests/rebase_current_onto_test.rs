@@ -9,6 +9,7 @@ use std::path::Path;
 use git2::Repository;
 use tempfile::TempDir;
 
+use kagi_domain::plan_note::{PlanNote, RebaseNote};
 use kagi_git::ops::{execute_rebase_current_onto, plan_rebase_current_onto, RebaseOutcome};
 
 fn git(dir: &Path, args: &[&str]) {
@@ -107,6 +108,27 @@ fn test_plan_invalid_onto_blocker() {
 
     let plan = plan_rebase_current_onto(&repo, "no-such-branch").expect("plan failed");
     assert!(!plan.blockers.is_empty(), "invalid onto should block");
+}
+
+/// A detached HEAD has no branch ref to move, so there is nothing to rebase
+/// and no recovery ref to record. This must block before the `git` CLI is
+/// ever invoked.
+#[test]
+fn test_plan_detached_head_blocker() {
+    let (_tmp, dir) = clean_rebase_repo();
+    let side_tip = head_sha(&dir);
+    git(&dir, &["checkout", "-q", "--detach", &side_tip]);
+    let repo = Repository::open(&dir).expect("open");
+
+    let plan = plan_rebase_current_onto(&repo, "main").expect("plan failed");
+
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|b| matches!(b, PlanNote::Rebase(RebaseNote::DetachedHead))),
+        "expected RebaseNote::DetachedHead, got: {:?}",
+        plan.blockers
+    );
 }
 
 #[test]

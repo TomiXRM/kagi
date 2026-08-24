@@ -16,6 +16,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
+use kagi_domain::plan_note::{DiscardNote, PlanNote};
 use kagi_git::{execute_discard, plan_discard, working_tree_status};
 
 // ────────────────────────────────────────────────────────────
@@ -410,7 +411,13 @@ fn discard_empty_selection_is_blocked() {
 
     let paths: Vec<String> = Vec::new();
     let plan = plan_discard(&repo, &paths).expect("plan");
-    assert!(!plan.blockers.is_empty(), "empty selection must be blocked");
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|b| matches!(b, PlanNote::Discard(DiscardNote::NothingSelected))),
+        "expected DiscardNote::NothingSelected, got: {:?}",
+        plan.blockers
+    );
 }
 
 // ────────────────────────────────────────────────────────────

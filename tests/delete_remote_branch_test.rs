@@ -10,6 +10,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
+use kagi_domain::plan_note::{CommonNote, PlanNote, RemoteBranchNote};
 use kagi_git::ops::{execute_delete_remote_branch, plan_delete_remote_branch};
 
 fn git(dir: &Path, args: &[&str]) {
@@ -128,8 +129,35 @@ fn test_plan_not_found_blocker() {
         .expect("plan_delete_remote_branch failed");
 
     assert!(
-        !plan.blockers.is_empty(),
-        "a remote-tracking ref that doesn't exist locally should block"
+        plan.blockers.iter().any(|b| matches!(
+            b,
+            PlanNote::RemoteBranch(RemoteBranchNote::NotFound { remote, branch })
+                if remote == "origin" && branch == "does-not-exist"
+        )),
+        "expected RemoteBranchNote::NotFound, got: {:?}",
+        plan.blockers
+    );
+}
+
+/// A name with no `/` cannot be split into remote + branch, so kagi has no
+/// idea what it would be asked to delete. It must block rather than push a
+/// guess at a remote.
+#[test]
+fn test_plan_unsplittable_name_blocker() {
+    let r = setup();
+    let repo = Repository::open(&r.local).expect("open local");
+
+    let plan = plan_delete_remote_branch(&repo, "just-a-branch")
+        .expect("plan_delete_remote_branch failed");
+
+    assert!(
+        plan.blockers.iter().any(|b| matches!(
+            b,
+            PlanNote::Common(CommonNote::GitErrorPassthrough { message })
+                if message.contains("is not a <remote>/<branch> name")
+        )),
+        "expected CommonNote::GitErrorPassthrough, got: {:?}",
+        plan.blockers
     );
 }
 

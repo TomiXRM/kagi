@@ -283,6 +283,7 @@ pub(crate) fn render_update_modal(
                         "update-notes-md",
                         SharedString::from(plan.notes.clone()),
                     )
+                    .plugin(kagi_ui_core::markdown::MarkdownImages::remote())
                     .scrollable(true)
                     .style(tv_style),
                 ),

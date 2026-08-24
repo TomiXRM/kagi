@@ -16,6 +16,7 @@ pub mod divider;
 pub mod file_tree;
 pub mod fonts;
 pub mod i18n;
+pub mod markdown;
 pub mod settings;
 pub mod theme;
 pub mod theme_apple;

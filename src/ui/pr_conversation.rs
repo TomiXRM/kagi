@@ -117,6 +117,7 @@ pub(super) fn render_description(pr: &PullRequest, cx: &mut Context<KagiApp>) ->
                         ("pr-mode-description-md", pr.number as usize),
                         SharedString::from(body),
                     )
+                    .plugin(kagi_ui_core::markdown::MarkdownImages::remote())
                     // Drag to select, ⌘C to copy — gpui-component's Root
                     // collects the window selection across every selectable
                     // TextView (user request: all text, code included).
@@ -342,6 +343,7 @@ pub(super) fn render_conversation(
                             ("pr-convo-md", pr.number as usize * 1000 + i),
                             SharedString::from(body),
                         )
+                        .plugin(kagi_ui_core::markdown::MarkdownImages::remote())
                         .selectable(true)
                         .style(style.clone()),
                     )

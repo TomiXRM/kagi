@@ -140,13 +140,21 @@ pub(crate) fn render_badges_column(
         // when the column is narrow — the badge column's scarcest pixels go
         // to "which branch am I on" (user request).
         let is_head = suffix_glyph.is_some();
-        let where_icons: Vec<&'static str> = [
-            (wh.local && !is_head).then_some("icons/laptop.svg"),
-            wh.remote.then_some("icons/cloud.svg"),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        // Leading icons: for a branch, where it lives (local / remote); for a
+        // tag, that it *is* a tag. Tags previously read as a bare name in a
+        // coloured pill, which is only distinguishable from a branch if you
+        // already know the theme's tag colour.
+        let lead_icons: Vec<&'static str> = if badge.kind == BadgeKind::Tag {
+            vec!["icons/tag.svg"]
+        } else {
+            [
+                (wh.local && !is_head).then_some("icons/laptop.svg"),
+                wh.remote.then_some("icons/cloud.svg"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect()
+        };
         let name: SharedString = SharedString::from(name);
         let tooltip_label: SharedString =
             SharedString::from(super::commit_list::badge_tooltip(badge));
@@ -187,7 +195,7 @@ pub(crate) fn render_badges_column(
             .when(is_head, |c| {
                 c.child(div().flex_shrink_0().child(SharedString::from("\u{2713}")))
             })
-            .children(where_icons.into_iter().map(|path| {
+            .children(lead_icons.into_iter().map(|path| {
                 gpui::svg()
                     .path(path)
                     .flex_shrink_0()

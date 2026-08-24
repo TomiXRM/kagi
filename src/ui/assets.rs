@@ -29,6 +29,10 @@ const ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../../assets/icons/arrow-up.svg"),
     ),
     (
+        "icons/tag.svg",
+        include_bytes!("../../assets/icons/tag.svg"),
+    ),
+    (
         "icons/git-merge.svg",
         include_bytes!("../../assets/icons/git-merge.svg"),
     ),
@@ -236,5 +240,17 @@ mod tests {
     fn kagi_assets_still_resolve() {
         let got = KagiAssets.load("icons/refresh-cw.svg").expect("load");
         assert!(got.is_some(), "kagi's own icons must still resolve");
+    }
+
+    /// Every `include_bytes!`d icon must actually resolve through `load`.
+    /// A path added to a renderer but not to `ASSETS` fails *silently* — gpui
+    /// draws nothing and the chip just looks like it has a gap.
+    #[test]
+    fn every_embedded_icon_resolves_and_is_nonempty() {
+        for (path, _) in ASSETS {
+            let got = KagiAssets.load(path).expect("load");
+            let bytes = got.unwrap_or_else(|| panic!("{path} is registered but did not resolve"));
+            assert!(!bytes.is_empty(), "{path} resolved but is empty");
+        }
     }
 }

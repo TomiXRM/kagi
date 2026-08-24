@@ -153,6 +153,14 @@ pub fn run_repo_flow(mut app_state: KagiApp, env_open_repo: Option<PathBuf>) {
         app_state.open_main_diff_commit_headless(0);
     }
 
+    // KAGI_MD_PREVIEW=<repo-relative path>: open that Markdown file in the
+    // Editor with preview on. The preview had no headless entry point, and it
+    // is where a document with an inline image next to a soft line break used
+    // to abort the process — reproducing that needed a way in.
+    if let Ok(path) = std::env::var("KAGI_MD_PREVIEW") {
+        app_state.pending_headless_md_preview = Some(std::path::PathBuf::from(path));
+    }
+
     // ── W2-GRAPH: KAGI_COMPACT=1 — enable compact row mode ─────
     if std::env::var("KAGI_COMPACT").as_deref() == Ok("1") {
         app_state.graph_compact = true;

@@ -6,7 +6,7 @@
 //! loading on GPUI's asset loader and maps standalone local images to a real
 //! filesystem `PathBuf` rooted in the repository.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use gpui::{
     div, img, prelude::*, px, App, ImageSource, ObjectFit, SharedString, StyledImage, Window,
@@ -18,40 +18,12 @@ use gpui_component::text::{markdown_ast, MarkdownNode, MarkdownParseContext, Mar
 /// the screen.
 const MAX_IMAGE_H: f32 = 360.0;
 
-/// Filesystem context for resolving image paths in a repository Markdown file.
-#[derive(Clone, Debug)]
-pub struct MarkdownImageBase {
-    repo_root: PathBuf,
-    document_dir: PathBuf,
-}
+mod extract;
+mod resolve;
 
-impl MarkdownImageBase {
-    /// Build a base from the repository root and the Markdown file's repo-relative path.
-    pub fn repo_file(repo_root: impl Into<PathBuf>, document: &Path) -> Self {
-        Self {
-            repo_root: repo_root.into(),
-            document_dir: document
-                .parent()
-                .unwrap_or_else(|| Path::new(""))
-                .to_path_buf(),
-        }
-    }
+pub use resolve::MarkdownImageBase;
 
-    fn resolve(&self, url: &str) -> Option<PathBuf> {
-        let raw = url.split(['?', '#']).next().unwrap_or(url);
-        if raw.is_empty() || has_uri_scheme(raw) {
-            return None;
-        }
-
-        let relative = if let Some(repo_relative) = raw.strip_prefix('/') {
-            PathBuf::from(repo_relative)
-        } else {
-            self.document_dir.join(raw)
-        };
-        let relative = normalize_repo_relative(&relative)?;
-        Some(self.repo_root.join(relative))
-    }
-}
+use extract::{has_uri_scheme, single_line, standalone_images};
 
 /// Plugin applied to every Kagi Markdown `TextView`.
 ///
@@ -77,6 +49,13 @@ impl MarkdownImages {
 
 #[derive(Clone, Debug)]
 struct ImageBlock {
+    /// Usually one. A README that stacks screenshots inside a single centring
+    /// `<div>` yields several, and they render as a column.
+    images: Vec<BlockImage>,
+}
+
+#[derive(Clone, Debug)]
+struct BlockImage {
     source: ImageBlockSource,
     alt: SharedString,
     title: Option<SharedString>,
@@ -89,7 +68,7 @@ enum ImageBlockSource {
     Local(PathBuf),
 }
 
-impl ImageBlock {
+impl BlockImage {
     fn image_source(&self) -> ImageSource {
         match &self.source {
             ImageBlockSource::Remote(url) => ImageSource::from(url.clone()),
@@ -112,20 +91,31 @@ impl MarkdownPlugin for MarkdownImages {
         node: &markdown_ast::Node,
         cx: &MarkdownParseContext<'_>,
     ) -> Option<MarkdownNode> {
-        let image = standalone_image(node)?;
-        let source = if has_uri_scheme(&image.url) {
-            ImageBlockSource::Remote(image.url.clone().into())
-        } else {
-            ImageBlockSource::Local(self.base.as_ref()?.resolve(&image.url)?)
-        };
-        // Sanitized here, not just at `.text()`: `alt` reaches the fallback
-        // element and `title` the tooltip, and both are shaped as one line too.
-        let block = ImageBlock {
-            source,
-            alt: single_line(&image.alt).into(),
-            title: image.title.as_deref().map(|t| single_line(t).into()),
-            link: image.link.map(Into::into),
-        };
+        let parsed = standalone_images(node);
+        if parsed.is_empty() {
+            return None;
+        }
+        let mut images = Vec::with_capacity(parsed.len());
+        for image in &parsed {
+            let source = if has_uri_scheme(&image.url) {
+                ImageBlockSource::Remote(image.url.clone().into())
+            } else {
+                // One unresolvable image forfeits the whole block rather than
+                // rendering a partial one — the HTML renderer at least shows
+                // something for the rest.
+                ImageBlockSource::Local(self.base.as_ref()?.resolve(&image.url)?)
+            };
+            // Sanitized here, not just at `.text()`: `alt` reaches the fallback
+            // element and `title` the tooltip, both shaped as one line too.
+            images.push(BlockImage {
+                source,
+                alt: single_line(&image.alt).into(),
+                title: image.title.as_deref().map(|t| single_line(t).into()),
+                link: image.link.clone().map(Into::into),
+            });
+        }
+        let image = &parsed[0];
+        let block = ImageBlock { images };
         // Both of these are shaped as a single line by GPUI, which panics on a
         // newline ("text argument should not contain newlines"). A standalone
         // `<img …/>` HTML block reaches us with its trailing newline attached —
@@ -142,152 +132,50 @@ impl MarkdownPlugin for MarkdownImages {
         let block = node
             .data::<ImageBlock>()
             .expect("MarkdownImages only renders its own typed nodes");
-        let alt = block.alt.clone();
-        let tooltip = block.title.clone().unwrap_or_else(|| alt.clone());
-        let link = block.link.clone();
-        div().w_full().flex().justify_center().child(
-            img(block.image_source())
-                .object_fit(ObjectFit::Contain)
-                // Constrain, never force — the same shape the diff pane's
-                // image viewer uses. A fixed height would letterbox a wide
-                // screenshot correctly but scale a small image *up* to match
-                // it: `ObjectFit::Contain` fills the box in both directions,
-                // so a standalone shields.io badge on its own line would
-                // render 360px tall. The zero-height-before-load worry that
-                // motivated a fixed box is covered by `with_fallback`, which
-                // gives the block its alt text until the async cache lands.
-                .max_h(px(MAX_IMAGE_H))
-                .max_w_full()
-                .with_fallback(move || {
-                    div()
-                        .text_sm()
-                        .child(SharedString::from(format!("[{}]", alt)))
-                        .into_any_element()
-                })
-                .when(!tooltip.is_empty(), |image| {
-                    image.tooltip(move |window, cx| {
-                        gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-                    })
-                })
-                .when_some(link, |image, link| {
-                    image.cursor_pointer().on_click(move |_, _, cx| {
-                        cx.stop_propagation();
-                        cx.open_url(&link);
-                    })
-                }),
-        )
+        // A column, because the one case with several images is a centring
+        // `<div>` stacking screenshots — which is how it reads on GitHub.
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_2()
+            .children(block.images.iter().cloned().map(render_block_image))
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-struct ParsedImage {
-    url: String,
-    alt: String,
-    title: Option<String>,
-    link: Option<String>,
-}
-
-fn standalone_image(node: &markdown_ast::Node) -> Option<ParsedImage> {
-    match node {
-        markdown_ast::Node::Paragraph(paragraph) => {
-            let [child] = paragraph.children.as_slice() else {
-                return None;
-            };
-            match child {
-                markdown_ast::Node::Image(image) => Some(ParsedImage {
-                    url: image.url.clone(),
-                    alt: image.alt.clone(),
-                    title: image.title.clone(),
-                    link: None,
-                }),
-                markdown_ast::Node::Link(link) => {
-                    let [markdown_ast::Node::Image(image)] = link.children.as_slice() else {
-                        return None;
-                    };
-                    Some(ParsedImage {
-                        url: image.url.clone(),
-                        alt: image.alt.clone(),
-                        title: image.title.clone(),
-                        link: Some(link.url.clone()),
-                    })
-                }
-                _ => None,
-            }
-        }
-        markdown_ast::Node::Html(html) => html_image(&html.value),
-        _ => None,
-    }
-}
-
-/// Parse a standalone HTML `<img …>` block, which is common in READMEs that
-/// need an explicit width. The full HTML renderer remains responsible for all
-/// other HTML; this only extracts the image attributes needed by our loader.
-fn html_image(value: &str) -> Option<ParsedImage> {
-    let tag = value.trim();
-    if !tag.starts_with("<img") || !tag.ends_with('>') {
-        return None;
-    }
-    let attrs = &tag[4..tag.len() - 1];
-    Some(ParsedImage {
-        url: html_attribute(attrs, "src")?,
-        alt: html_attribute(attrs, "alt").unwrap_or_default(),
-        title: html_attribute(attrs, "title"),
-        link: None,
-    })
-}
-
-fn html_attribute(attrs: &str, wanted: &str) -> Option<String> {
-    let bytes = attrs.as_bytes();
-    let mut at = 0;
-    while at < bytes.len() {
-        while at < bytes.len() && (bytes[at].is_ascii_whitespace() || bytes[at] == b'/') {
-            at += 1;
-        }
-        let name_start = at;
-        while at < bytes.len()
-            && (bytes[at].is_ascii_alphanumeric() || matches!(bytes[at], b'-' | b'_'))
-        {
-            at += 1;
-        }
-        if name_start == at {
-            return None;
-        }
-        let name = &attrs[name_start..at];
-        while at < bytes.len() && bytes[at].is_ascii_whitespace() {
-            at += 1;
-        }
-        if at == bytes.len() || bytes[at] != b'=' {
-            continue;
-        }
-        at += 1;
-        while at < bytes.len() && bytes[at].is_ascii_whitespace() {
-            at += 1;
-        }
-        let (value_start, value_end) = match bytes.get(at).copied() {
-            Some(quote @ (b'\'' | b'"')) => {
-                at += 1;
-                let start = at;
-                while at < bytes.len() && bytes[at] != quote {
-                    at += 1;
-                }
-                let end = at;
-                at += usize::from(at < bytes.len());
-                (start, end)
-            }
-            Some(_) => {
-                let start = at;
-                while at < bytes.len() && !bytes[at].is_ascii_whitespace() {
-                    at += 1;
-                }
-                (start, at)
-            }
-            None => return None,
-        };
-        if name.eq_ignore_ascii_case(wanted) {
-            return Some(attrs[value_start..value_end].to_string());
-        }
-    }
-    None
+fn render_block_image(image: BlockImage) -> impl IntoElement {
+    let alt = image.alt.clone();
+    let tooltip = image.title.clone().unwrap_or_else(|| alt.clone());
+    let link = image.link.clone();
+    img(image.image_source())
+        .object_fit(ObjectFit::Contain)
+        // Constrain, never force — the same shape the diff pane's image viewer
+        // uses. A fixed height would letterbox a wide screenshot correctly but
+        // scale a small image *up* to match it: `ObjectFit::Contain` fills the
+        // box in both directions, so a standalone shields.io badge on its own
+        // line would render 360px tall. The zero-height-before-load worry that
+        // motivated a fixed box is covered by `with_fallback`, which gives the
+        // block its alt text until the async cache lands.
+        .max_h(px(MAX_IMAGE_H))
+        .max_w_full()
+        .with_fallback(move || {
+            div()
+                .text_sm()
+                .child(SharedString::from(format!("[{}]", alt)))
+                .into_any_element()
+        })
+        .when(!tooltip.is_empty(), |image| {
+            image.tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+            })
+        })
+        .when_some(link, |image, link| {
+            image.cursor_pointer().on_click(move |_, _, cx| {
+                cx.stop_propagation();
+                cx.open_url(&link);
+            })
+        })
 }
 
 /// Rewrite a Markdown document so nothing GPUI shapes as one line contains a
@@ -354,73 +242,9 @@ pub fn flatten_html_blocks(source: &str) -> String {
     String::from_utf8(out).unwrap_or_else(|_| source.to_string())
 }
 
-/// Collapse a string to something safe to shape as one line.
-///
-/// Every run of whitespace containing a newline becomes a single space, and
-/// the result is trimmed. GPUI's text system panics rather than wrapping, so
-/// anything handed to it has to be single-line by construction.
-fn single_line(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn has_uri_scheme(value: &str) -> bool {
-    let Some((scheme, _)) = value.split_once(':') else {
-        return false;
-    };
-    let mut chars = scheme.chars();
-    chars.next().is_some_and(|ch| ch.is_ascii_alphabetic())
-        && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
-}
-
-fn normalize_repo_relative(path: &Path) -> Option<PathBuf> {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::Normal(part) => out.push(part),
-            Component::ParentDir => {
-                if !out.pop() {
-                    return None;
-                }
-            }
-            Component::RootDir | Component::Prefix(_) => return None,
-        }
-    }
-    (!out.as_os_str().is_empty()).then_some(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn resolves_paths_relative_to_the_markdown_file() {
-        let base = MarkdownImageBase::repo_file("/repo", Path::new("docs/guide/readme.md"));
-        assert_eq!(
-            base.resolve("../images/screen.png"),
-            Some(PathBuf::from("/repo/docs/images/screen.png"))
-        );
-        assert_eq!(
-            base.resolve("/assets/logo.png#dark"),
-            Some(PathBuf::from("/repo/assets/logo.png"))
-        );
-    }
-
-    #[test]
-    fn rejects_repo_escape_and_uri_sources() {
-        let base = MarkdownImageBase::repo_file("/repo", Path::new("README.md"));
-        assert_eq!(base.resolve("../secret.png"), None);
-        assert_eq!(base.resolve("https://example.com/image.png"), None);
-        assert_eq!(base.resolve("data:image/png;base64,AAAA"), None);
-    }
-
-    #[test]
-    fn detects_uri_schemes_without_mistaking_relative_paths() {
-        assert!(has_uri_scheme("https://example.com/a.png"));
-        assert!(has_uri_scheme("data:image/png;base64,AAAA"));
-        assert!(!has_uri_scheme("images/a.png"));
-        assert!(!has_uri_scheme("./images/a.png"));
-    }
 
     /// The plugin only claims a paragraph that is *nothing but* an image, so a
     /// row of shields.io badges — consecutive lines, therefore one paragraph
@@ -444,55 +268,26 @@ mod tests {
             })
         };
 
-        assert!(standalone_image(&para(vec![image()])).is_some());
+        assert!(!standalone_images(&para(vec![image()])).is_empty());
         // Linked image, the `[![badge](img)](href)` shape.
-        assert!(standalone_image(&para(vec![Node::Link(Link {
+        assert!(!standalone_images(&para(vec![Node::Link(Link {
             url: "https://example.com".into(),
             title: None,
             children: vec![image()],
             position: None,
         })]))
-        .is_some());
+        .is_empty());
         // Two badges on consecutive lines are one paragraph — left inline.
-        assert!(standalone_image(&para(vec![image(), image()])).is_none());
+        assert!(standalone_images(&para(vec![image(), image()])).is_empty());
         // An image with prose around it is inline text, not a block.
-        assert!(standalone_image(&para(vec![
+        assert!(standalone_images(&para(vec![
             Node::Text(Text {
                 value: "see ".into(),
                 position: None,
             }),
             image(),
         ]))
-        .is_none());
-    }
-
-    /// The crash this guards: a standalone `<img …/>` block arrives with its
-    /// trailing newline, and GPUI panics when asked to shape text containing
-    /// one. Anything handed to `MarkdownNode` must survive that.
-    #[test]
-    fn single_line_strips_every_newline() {
-        assert_eq!(
-            single_line("<img src=\"a.png\" />\n"),
-            "<img src=\"a.png\" />"
-        );
-        assert_eq!(single_line("alt\nover\r\ntwo lines"), "alt over two lines");
-        assert_eq!(single_line("  padded  "), "padded");
-        assert_eq!(single_line(""), "");
-        assert!(!single_line("a\nb").contains('\n'));
-    }
-
-    #[test]
-    fn parses_standalone_html_image_attributes() {
-        assert_eq!(
-            html_image(r#"<img src="docs/images/hero.png" width="900" alt="Kagi UI" />"#),
-            Some(ParsedImage {
-                url: "docs/images/hero.png".to_string(),
-                alt: "Kagi UI".to_string(),
-                title: None,
-                link: None,
-            })
-        );
-        assert_eq!(html_image("<div><img src='nested.png'></div>"), None);
+        .is_empty());
     }
 }
 
@@ -542,6 +337,15 @@ Some prose with an ![inline image](docs/images/shot.png) inside it.
   src="docs/images/wide.png"
   alt="An img tag split over several lines"
 />
+
+<div align="center">
+<img src="docs/images/diff.png" width="900" alt="Centred screenshot, no blank lines inside the wrapper" />
+</div>
+
+<div align="center">
+<img src="docs/images/a.png" width="900" alt="First of two stacked screenshots" />
+<img src="docs/images/b.png" width="900" alt="Second of two stacked screenshots" />
+</div>
 "#;
 
     fn nodes(md: &str) -> Vec<Node> {
@@ -566,34 +370,33 @@ Some prose with an ![inline image](docs/images/shot.png) inside it.
     fn nothing_the_plugin_produces_contains_a_newline() {
         let mut claimed = 0;
         for node in nodes(SAMPLE) {
-            let Some(image) = standalone_image(&node) else {
-                continue;
-            };
-            claimed += 1;
-            // `parse` also feeds `.markdown(cx.node_source(node))`, which is
-            // the raw source slice for the node — trailing newline included.
-            // That is where the panic came from, so the test has to slice the
-            // document the same way rather than only checking AST fields.
-            let source = node
-                .position()
-                .map(|p| SAMPLE[p.start.offset..p.end.offset].to_string())
-                .unwrap_or_default();
-            assert!(
-                source.contains('\n') || !source.is_empty(),
-                "sanity: a node source was empty"
-            );
-            for field in [
-                single_line(&image.alt),
-                single_line(&image.url),
-                single_line(image.title.as_deref().unwrap_or("")),
-                single_line(image.link.as_deref().unwrap_or("")),
-                single_line(&source),
-            ] {
-                assert!(!field.contains('\n'), "newline survived in {field:?}");
+            for image in standalone_images(&node) {
+                claimed += 1;
+                // `parse` also feeds `.markdown(cx.node_source(node))`, which is
+                // the raw source slice for the node — trailing newline included.
+                // That is where the panic came from, so the test has to slice the
+                // document the same way rather than only checking AST fields.
+                let source = node
+                    .position()
+                    .map(|p| SAMPLE[p.start.offset..p.end.offset].to_string())
+                    .unwrap_or_default();
                 assert!(
-                    !field.contains('\r'),
-                    "carriage return survived in {field:?}"
+                    source.contains('\n') || !source.is_empty(),
+                    "sanity: a node source was empty"
                 );
+                for field in [
+                    single_line(&image.alt),
+                    single_line(&image.url),
+                    single_line(image.title.as_deref().unwrap_or("")),
+                    single_line(image.link.as_deref().unwrap_or("")),
+                    single_line(&source),
+                ] {
+                    assert!(!field.contains('\n'), "newline survived in {field:?}");
+                    assert!(
+                        !field.contains('\r'),
+                        "carriage return survived in {field:?}"
+                    );
+                }
             }
         }
         assert!(
@@ -609,7 +412,7 @@ Some prose with an ![inline image](docs/images/shot.png) inside it.
     fn badge_strip_and_inline_images_stay_inline() {
         let claimed: Vec<String> = nodes(SAMPLE)
             .iter()
-            .filter_map(standalone_image)
+            .flat_map(|n| standalone_images(n))
             .map(|i| i.alt)
             .collect();
 
@@ -625,6 +428,14 @@ Some prose with an ![inline image](docs/images/shot.png) inside it.
             "Root-relative screenshot",
             "Linked screenshot",
             "remote",
+            // The centred-wrapper shape a README uses for screenshots. Without
+            // blank lines inside the wrapper the whole `<div>…</div>` is ONE
+            // html node — the case that silently rendered nothing until the
+            // wrapper was matched (user report).
+            "Centred screenshot, no blank lines inside the wrapper",
+            // And a wrapper stacking two of them, which a README also does.
+            "First of two stacked screenshots",
+            "Second of two stacked screenshots",
         ] {
             assert!(
                 claimed.iter().any(|a| a == block),
@@ -755,5 +566,42 @@ mod real_readme {
         let mut n = 0;
         walk(&root, &mut n);
         n
+    }
+}
+
+#[cfg(test)]
+mod readme_coverage {
+    use super::*;
+    use markdown::mdast::Node;
+    use markdown::{to_mdast, ParseOptions};
+
+    /// How many of the repository README's images the plugin claims, after
+    /// flattening. Reads the README by path, so it is `#[ignore]`d — the
+    /// `readme_shapes` sample covers the same ground in CI.
+    #[test]
+    #[ignore]
+    fn count_claimed_in_the_repository_readme() {
+        let src = std::fs::read_to_string(std::env::var("KAGI_MD_FILE").unwrap()).unwrap();
+        let flat = flatten_html_blocks(&src);
+        fn walk(n: &Node, out: &mut Vec<Node>) {
+            out.push(n.clone());
+            if let Some(c) = n.children() {
+                for x in c {
+                    walk(x, out);
+                }
+            }
+        }
+        let root = to_mdast(&flat, &ParseOptions::gfm()).unwrap();
+        let mut all = Vec::new();
+        walk(&root, &mut all);
+        let claimed: Vec<String> = all
+            .iter()
+            .flat_map(standalone_images)
+            .map(|i| i.url)
+            .collect();
+        println!("claimed {} images:", claimed.len());
+        for u in &claimed {
+            println!("  {u}");
+        }
     }
 }

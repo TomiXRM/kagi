@@ -936,6 +936,12 @@ pub struct KagiApp {
     /// `MainDiffPane` entity. `render` promotes this into `main_diff` on the
     /// first frame. Always `None` in the GUI paths.
     pub pending_headless_diff: Option<MainDiffView>,
+    /// `KAGI_MD_PREVIEW=<repo-relative path>`: open that file in the Editor
+    /// with Markdown preview on, promoted on the first frame (the headless
+    /// hooks run before any `cx` exists). The preview is the one render path
+    /// with no other headless entry point, and it is where a malformed
+    /// document aborts the process — see `kagi_ui_core::markdown`.
+    pub pending_headless_md_preview: Option<PathBuf>,
     /// ADR-0026: read-only compare mode shown in the inspector changed-files area.
     /// Cleared on selection change or reload to avoid stale path/diff state.
     /// ADR-0121 B2: now an entity (`compare_pane.rs`) that owns the
@@ -1399,6 +1405,7 @@ impl KagiApp {
             wip_diffstat: None,
             main_diff: None,
             pending_headless_diff: None,
+            pending_headless_md_preview: None,
             compare_view: None,
             pending_headless_compare: None,
             active_modal: None,

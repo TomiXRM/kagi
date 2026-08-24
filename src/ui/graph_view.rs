@@ -596,23 +596,30 @@ mod tests {
     /// touches the developer's real `~/.kagi`.
     #[test]
     fn geometry_scales_uniformly_with_zoom() {
+        let _g = crate::ui::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().expect("tempdir");
         std::env::set_var("KAGI_LOG_DIR", tmp.path());
 
-        // Base (1.0×) reference values straight from the unscaled constants.
-        // ── 1.0× : everything equals the base constants ────────────
+        // ── 1.0× baseline, with a NON-ZERO origin and scroll so both
+        // parameters actually reach the result (expecting a restatement of the
+        // function body would pass even with `ox` / `scroll_x` / `oy` dropped).
         theme::set_zoom(1.0);
         assert!(close(lane_w(), LANE_W), "lane_w @1.0 == LANE_W");
         assert!(close(node_radius(), NODE_R), "node_radius @1.0 == NODE_R");
-        assert!(close(theme::scaled(EDGE_W), EDGE_W));
-        assert!(close(theme::scaled(CORNER_R), CORNER_R));
-        // Node centre x in lane 1 (ox = 0, no scroll): 1*14 + 7 = 21.
-        assert!(close(
-            lane_center_x(0.0, 1, 0.0),
-            LANE_W * 1.0 + LANE_W / 2.0
-        ));
-        // Node centre y for a 29px row: 0 + 29/2 = 14.5.
-        assert!(close(node_center_y(0.0, ROW_H), ROW_H / 2.0));
+        // ox=30, lane 2, scroll_x=12 → 30 + 2*22 + 11 - 12 = 73.
+        assert!(
+            close(lane_center_x(30.0, 2, 12.0), 73.0),
+            "lane_center_x must add ox and subtract scroll_x, got {}",
+            lane_center_x(30.0, 2, 12.0)
+        );
+        // oy=100, ROW_H=29 → 100 + 14.5 = 114.5.
+        assert!(
+            close(node_center_y(100.0, ROW_H), 114.5),
+            "node_center_y must add oy, got {}",
+            node_center_y(100.0, ROW_H)
+        );
 
         // ── 0.8× : every dimension shrinks by exactly 0.8 ──────────
         theme::set_zoom(0.8);

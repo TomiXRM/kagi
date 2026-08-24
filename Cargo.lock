@@ -3401,6 +3401,7 @@ dependencies = [
  "kagi-domain",
  "serde",
  "serde_json",
+ "tempfile",
  "ttf-parser",
 ]
 

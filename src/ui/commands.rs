@@ -2000,19 +2000,48 @@ mod keybinding_tests {
         }
     }
 
-    /// The new defaults are wired: registry says what the shortcut listing
-    /// and the effective lookup say (no override present in tests).
+    /// `effective_keystroke` is what actually builds the keymap, so all three
+    /// of its branches need covering - reading `COMMANDS[..].keystroke` back out
+    /// of the table proves nothing about the bindings the app registers.
+    ///
+    /// NOTE: the override map is a `OnceLock` filled on the FIRST call in the
+    /// process, so this must stay the only test that calls
+    /// `effective_keystroke`.
     #[test]
-    fn view_and_repo_defaults_present() {
-        for (id, key) in [
-            ("view.toggleSidebar", "secondary-b"),
-            ("view.toggleCommitDetails", "secondary-alt-b"),
-            ("view.toggleDiffView", "secondary-shift-d"),
-            ("repo.fetch", "secondary-shift-f"),
-            ("repo.pull", "secondary-shift-l"),
-            ("repo.push", "secondary-shift-k"),
-        ] {
-            assert_eq!(command(id).and_then(|c| c.keystroke), Some(key), "{id}");
-        }
+    fn effective_keystroke_layers_settings_over_defaults() {
+        let _g = crate::ui::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            tmp.path().join("settings.json"),
+            "{\n  \"keybinding.view.toggleSidebar\": \"secondary-alt-1\",\n\
+             \"keybinding.repo.fetch\": \"\"\n}\n",
+        )
+        .expect("write settings.json");
+        std::env::set_var("KAGI_LOG_DIR", tmp.path());
+
+        // 1. a non-empty override replaces the registry default.
+        assert_eq!(
+            effective_keystroke("view.toggleSidebar").as_deref(),
+            Some("secondary-alt-1"),
+            "settings.json override must win"
+        );
+        // 2. an EMPTY override means unbound - not "fall back to the default".
+        assert_eq!(
+            effective_keystroke("repo.fetch"),
+            None,
+            "empty override must unbind, not restore the default"
+        );
+        // 3. no override at all -> the registry default is used.
+        assert_eq!(
+            effective_keystroke("repo.pull").as_deref(),
+            Some("secondary-shift-l"),
+            "un-overridden command keeps its default"
+        );
+        // An unknown id resolves to nothing rather than panicking.
+        assert_eq!(effective_keystroke("no.such.command"), None);
+
+        std::env::remove_var("KAGI_LOG_DIR");
     }
 }

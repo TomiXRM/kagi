@@ -1773,11 +1773,14 @@ const PERIWINKLE: Theme = Theme {
     dark: false,
 
     bg_base: 0xf8faff,    // supplied background
-    bg_row_alt: 0xeef1fa, // zebra: one step down
-    surface: 0xe8ebf7,    // chips/hover, one step further
+    bg_row_alt: 0xf3f5fc, // zebra: a hair down, nothing more
+    surface: 0xeef1fa,    // chips/hover
     selected: 0xd4d6e9,   // the supplied periwinkle
-    panel: 0xeaedf8,
-    sidebar: 0xe2e5f2,
+    // Chrome is the base colour exactly: the sidebar and tab strip are meant
+    // to read as one sheet with the commit list, not as darker panels. The
+    // edges that need to show are drawn as `selected`-coloured borders.
+    panel: 0xf8faff,
+    sidebar: 0xf8faff,
     modal: 0xffffff,
     modal_overlay: 0x172540,
 
@@ -1788,21 +1791,24 @@ const PERIWINKLE: Theme = Theme {
 
     color_head: 0xa5276b,   // pink label, darkened to 4.7:1
     color_branch: 0x2e549e, // blue drawn out of the #172540 text navy
-    color_remote: 0x277c51, // green label, darkened
+    color_remote: 0x318259, // green label, darkened
     color_tag: 0x70741b,    // olive label, darkened
 
-    color_success: 0x277c51,
+    color_success: 0x318259,
     color_warning: 0x8a5a10,
-    color_blocker: 0xa32233,
-    color_blocker_muted: 0xb08088,
+    // This palette has no red: the "red" family is the #d699ba pink, darkened
+    // to 4.5:1 so a refusal still reads as one. It shares a hue with
+    // `color_head` by necessity — the two are separated by lightness, not hue.
+    color_blocker: 0xc73d88,
+    color_blocker_muted: 0xdfa6c6,
 
-    diff_added_bg: 0xdfeee5,   // the sage label as a wash
-    diff_removed_bg: 0xf6e2ea, // the pink label as a wash
+    diff_added_bg: 0xdfece5,   // #95c0aa at L=0.90
+    diff_removed_bg: 0xf0dbe6, // #d699ba at L=0.90
     diff_hunk: 0x2e549e,
 
-    change_added: 0x277c51,
+    change_added: 0x318259,
     change_modified: 0x8a5a10,
-    change_deleted: 0xa32233,
+    change_deleted: 0xc73d88,
     change_renamed: 0x2e549e,
     change_typechange: 0x87419f,
     change_dir: 0x566180,
@@ -1813,8 +1819,8 @@ const PERIWINKLE: Theme = Theme {
     // >= 4.4:1), ordered so adjacent indices stay distinct. Lane 7 is the
     // supplied #000 — the one label colour that needed no adjustment.
     lane_hsl: [
-        (0.910, 0.62, 0.40), // pink   #a5276b
-        (0.415, 0.52, 0.32), // green  #277c51
+        (0.910, 0.58, 0.59), // pink   #d05d9b
+        (0.415, 0.45, 0.41), // green  #399667
         (0.610, 0.55, 0.40), // blue   #2e549e
         (0.174, 0.62, 0.28), // olive  #70741b
         (0.500, 0.70, 0.30), // teal   #178282
@@ -1830,16 +1836,16 @@ const PERIWINKLE: Theme = Theme {
     term_fg: (0x17, 0x25, 0x40),
     term_cursor: (0xa5, 0x27, 0x6b),
     term_black: (0x17, 0x25, 0x40),
-    term_red: (0xa3, 0x22, 0x33),
-    term_green: (0x27, 0x7c, 0x51),
+    term_red: (0xc7, 0x3d, 0x88),
+    term_green: (0x31, 0x82, 0x59),
     term_yellow: (0x70, 0x74, 0x1b),
     term_blue: (0x2e, 0x54, 0x9e),
     term_magenta: (0xa5, 0x27, 0x6b),
     term_cyan: (0x17, 0x82, 0x82),
     term_white: (0x56, 0x61, 0x80),
     term_bright_black: (0x6a, 0x75, 0x92),
-    term_bright_red: (0xc4, 0x3a, 0x4c),
-    term_bright_green: (0x37, 0x9b, 0x69),
+    term_bright_red: (0xd6, 0x99, 0xba),
+    term_bright_green: (0x95, 0xc0, 0xaa),
     term_bright_yellow: (0x94, 0x99, 0x2c),
     term_bright_blue: (0x44, 0x6c, 0xbd),
     term_bright_magenta: (0xc6, 0x3f, 0x89),
@@ -1853,7 +1859,7 @@ const PERIWINKLE: Theme = Theme {
     // supplied palette has no colour to spare for them.
     syntax: SyntaxPalette {
         keyword: 0xa5276b,     // pink
-        string: 0x277c51,      // green
+        string: 0x318259,      // green
         comment: 0x6a7592,     // muted; meant to recede
         type_name: 0x70741b,   // olive
         function: 0x2e549e,    // blue

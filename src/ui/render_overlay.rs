@@ -199,8 +199,11 @@ impl gpui::Render for oplog_panel::OpLogPanel {
                                 cx.notify();
                             });
 
+                        // `bg_row_alt` is the zebra token; this used to be
+                        // `panel`, which only looked striped in themes whose
+                        // chrome happens to differ from the base.
                         let row_bg = if i % 2 == 0 {
-                            theme().panel
+                            theme().bg_row_alt
                         } else {
                             theme().bg_base
                         };

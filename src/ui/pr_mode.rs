@@ -1797,3 +1797,98 @@ fn render_pr_card(
         )
         .into_any_element()
 }
+
+#[cfg(test)]
+mod stack_tests {
+    use super::{reason_text, stack_for, StackRow};
+    use kagi_domain::github::{CiState, Mergeable, PrReason, PullRequest, ReviewState};
+
+    fn pr(number: u64, head: &str, base: &str) -> PullRequest {
+        PullRequest {
+            number,
+            title: String::new(),
+            head: head.into(),
+            base: base.into(),
+            is_draft: false,
+            ci: CiState::None,
+            review: ReviewState::None,
+            url: String::new(),
+            author: String::new(),
+            reviewers: Vec::new(),
+            body: String::new(),
+            checks: Vec::new(),
+            mergeable: Mergeable::default(),
+        }
+    }
+
+    fn chain(rows: &[StackRow]) -> Vec<String> {
+        rows.iter()
+            .map(|r| match r {
+                StackRow::Pr(p) => format!("#{}", p.number),
+                StackRow::Trunk(t) => format!("trunk:{t}"),
+            })
+            .collect()
+    }
+
+    /// Tip first, trunk last — descendants above `pr`, ancestors below.
+    #[test]
+    fn linear_chain_is_tip_first_trunk_last() {
+        let all = vec![
+            pr(1, "feat/a", "main"),
+            pr(2, "feat/b", "feat/a"),
+            pr(3, "feat/c", "feat/b"),
+        ];
+        assert_eq!(
+            chain(&stack_for(&all[1], &all)),
+            vec!["#3", "#2", "#1", "trunk:main"]
+        );
+        // Seen from the tip: no descendants, same chain.
+        assert_eq!(
+            chain(&stack_for(&all[2], &all)),
+            vec!["#3", "#2", "#1", "trunk:main"]
+        );
+        // Seen from the root: two descendants, and they must come out
+        // tip-first (the collected chain is reversed before the self row).
+        assert_eq!(
+            chain(&stack_for(&all[0], &all)),
+            vec!["#3", "#2", "#1", "trunk:main"]
+        );
+    }
+
+    /// A PR whose base is nobody's head: just itself over the trunk.
+    #[test]
+    fn pr_with_no_parent_is_itself_over_trunk() {
+        let all = vec![pr(7, "feat/solo", "main")];
+        assert_eq!(chain(&stack_for(&all[0], &all)), vec!["#7", "trunk:main"]);
+        // Unrelated PRs in the list must not join the chain.
+        let others = vec![pr(7, "feat/solo", "main"), pr(8, "feat/x", "develop")];
+        assert_eq!(
+            chain(&stack_for(&others[0], &others)),
+            vec!["#7", "trunk:main"]
+        );
+    }
+
+    /// GitHub data is untrusted: a base/head cycle must terminate on the
+    /// 50-step guard rather than loop forever.
+    #[test]
+    fn cycle_terminates_on_the_guard() {
+        let all = vec![pr(1, "a", "b"), pr(2, "b", "a")];
+        let rows = stack_for(&all[0], &all);
+        assert!(
+            rows.len() < 128,
+            "stack_for did not terminate: {} rows",
+            rows.len()
+        );
+        assert!(rows.len() > 2);
+        assert!(matches!(rows.last(), Some(StackRow::Trunk(_))));
+    }
+
+    /// The one arm of `reason_text` the compiler cannot check: the count is
+    /// interpolated and the noun is pluralised.
+    #[test]
+    fn ci_failure_count_is_pluralised() {
+        assert_eq!(reason_text(&PrReason::CiFailed(1)), "1 CI failure");
+        assert_eq!(reason_text(&PrReason::CiFailed(3)), "3 CI failures");
+        assert_eq!(reason_text(&PrReason::CiFailed(0)), "0 CI failures");
+    }
+}

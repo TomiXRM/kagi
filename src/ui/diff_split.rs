@@ -225,3 +225,119 @@ pub(crate) fn render_main_diff_split_row(
             .into_any(),
     }
 }
+
+#[cfg(test)]
+mod split_rows_tests {
+    use super::{split_rows, SplitDiffRow};
+    use crate::ui::diff_view::DiffRow;
+    use kagi_git::DiffLineKind;
+
+    fn line(kind: DiffLineKind) -> DiffRow {
+        DiffRow::Line {
+            kind,
+            text: "x".into(),
+            old_lineno: None,
+            new_lineno: None,
+            highlights: Vec::new(),
+        }
+    }
+
+    /// `Full(i)` -> `("full", i, i)`, `Pair` -> `("pair", left, right)` with
+    /// `usize::MAX` for a filler cell, so the index arithmetic is asserted
+    /// exactly (`SplitDiffRow` has no `PartialEq`).
+    fn shape(rows: &[DiffRow]) -> Vec<(&'static str, usize, usize)> {
+        const F: usize = usize::MAX;
+        split_rows(rows)
+            .into_iter()
+            .map(|r| match r {
+                SplitDiffRow::Full(i) => ("full", i, i),
+                SplitDiffRow::Pair { left, right } => {
+                    ("pair", left.unwrap_or(F), right.unwrap_or(F))
+                }
+            })
+            .collect()
+    }
+
+    const F: usize = usize::MAX;
+
+    #[test]
+    fn all_added_hunk_fills_the_left_column() {
+        let rows = vec![
+            DiffRow::HunkHeader("@@".into()),
+            line(DiffLineKind::Added),
+            line(DiffLineKind::Added),
+        ];
+        assert_eq!(
+            shape(&rows),
+            vec![("full", 0, 0), ("pair", F, 1), ("pair", F, 2)]
+        );
+    }
+
+    #[test]
+    fn all_removed_hunk_fills_the_right_column() {
+        let rows = vec![
+            DiffRow::HunkHeader("@@".into()),
+            line(DiffLineKind::Removed),
+            line(DiffLineKind::Removed),
+        ];
+        assert_eq!(
+            shape(&rows),
+            vec![("full", 0, 0), ("pair", 1, F), ("pair", 2, F)]
+        );
+    }
+
+    /// Uneven replacement: 3 removed against 1 added — the tail of the longer
+    /// side pairs against filler, and every index is still offset by `start`.
+    #[test]
+    fn mixed_hunk_with_uneven_sides() {
+        let rows = vec![
+            DiffRow::HunkHeader("@@".into()),
+            line(DiffLineKind::Context),
+            line(DiffLineKind::Removed),
+            line(DiffLineKind::Removed),
+            line(DiffLineKind::Removed),
+            line(DiffLineKind::Added),
+            line(DiffLineKind::Context),
+        ];
+        assert_eq!(
+            shape(&rows),
+            vec![
+                ("full", 0, 0),
+                ("pair", 1, 1),
+                ("pair", 2, 5),
+                ("pair", 3, F),
+                ("pair", 4, F),
+                ("pair", 6, 6),
+            ]
+        );
+    }
+
+    /// Several hunks: the `start` offset must be re-taken per run, otherwise
+    /// the second hunk's pairs point back into the first.
+    #[test]
+    fn offset_accumulates_across_hunks() {
+        let rows = vec![
+            DiffRow::HunkHeader("@@ 1 @@".into()),
+            line(DiffLineKind::Context),
+            line(DiffLineKind::Added),
+            DiffRow::HunkHeader("@@ 2 @@".into()),
+            line(DiffLineKind::Removed),
+            line(DiffLineKind::Added),
+            DiffRow::Binary,
+            line(DiffLineKind::Context),
+        ];
+        assert_eq!(
+            shape(&rows),
+            vec![
+                ("full", 0, 0),
+                ("pair", 1, 1),
+                ("pair", F, 2),
+                ("full", 3, 3),
+                ("pair", 4, 5),
+                ("full", 6, 6),
+                ("pair", 7, 7),
+            ]
+        );
+        assert!(split_rows(&[]).is_empty());
+    }
+}

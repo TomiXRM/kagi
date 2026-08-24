@@ -30,6 +30,8 @@ pub mod diff_view;
 pub mod diffstat_bar;
 pub mod ecosystem;
 pub mod editor_fs_ops;
+#[cfg(test)]
+mod env_tests;
 pub use kagi_ui_editor::markdown as editor_markdown; // ADR-0121: was a shim file
 mod diff_selection;
 pub mod editor_tree_menu;

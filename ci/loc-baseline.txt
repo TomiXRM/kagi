@@ -16,7 +16,7 @@ src/ui/blocking_ops.rs 906
 src/ui/branch_cleanup.rs 821
 src/ui/branch_menu.rs 915
 src/ui/commands.rs 2018
-src/ui/commit_panel_render.rs 1295
+src/ui/commit_panel_render.rs 1188
 src/ui/conflict_editor.rs 1328
 src/ui/conflict_view.rs 1983
 src/ui/diff_view.rs 1427

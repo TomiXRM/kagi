@@ -9,7 +9,7 @@
 //! * [`Theme`] holds **semantic** `u32` RGB fields (e.g. `bg_base`, `text_main`,
 //!   `color_branch`) plus a few non-RGB values (lane HSLA palette, avatar
 //!   saturation/lightness, terminal selection alpha) and a `dark: bool` flag.
-//! * [`THEMES`] lists the 6 built-in themes; index 0 (Catppuccin Mocha) is the
+//! * [`THEMES`] lists the built-in themes; index 0 (Catppuccin Mocha) is the
 //!   default and a byte-exact port of the previously hard-coded constants, so
 //!   the default look has zero regression.
 //! * [`ACTIVE`] is an `AtomicUsize` index into [`THEMES`].  [`set_active`]
@@ -143,7 +143,7 @@ pub struct Theme {
 /// Ten rather than forty-two because that is the honest granularity: the
 /// upstream palettes these are ported from distinguish roughly this many
 /// roles, and the rest are aliases of them (`boolean` is a `number`, `enum` is
-/// a `type`, …). Deriving keeps 11 themes maintainable and stops the table
+/// a `type`, …). Deriving keeps the theme table maintainable and stops the table
 /// filling with repeats.
 ///
 /// Where an upstream theme deliberately does NOT colour a role — Xcode gives
@@ -860,7 +860,7 @@ pub fn highlight_theme(k: &Theme) -> std::sync::Arc<gpui_component::highlighter:
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Theme registry — 6 built-in themes
+// Theme registry — the built-in themes
 // ──────────────────────────────────────────────────────────────────────────
 
 /// All built-in themes.  Index 0 (Catppuccin Mocha) is the default.
@@ -874,6 +874,7 @@ pub static THEMES: &[Theme] = &[
     crate::theme_apple::APPLE_LIGHT,
     CATPPUCCIN_LATTE,
     DRACULA,
+    crate::theme_flower_road::FLOWER_ROAD,
     IBM_PC,
     MONOKAI,
     ONE_DARK,
@@ -1987,7 +1988,7 @@ mod tests {
         let light = THEMES.iter().filter(|t| !t.dark).count();
         // catppuccin, one-dark, monokai, tokyo-night, ibm-pc, dracula, apple-dark
         assert_eq!(dark, 7);
-        // one-light, pinky-boo, catppuccin-latte, apple-light
-        assert_eq!(light, 4);
+        // one-light, pinky-boo, catppuccin-latte, apple-light, flower-road
+        assert_eq!(light, 5);
     }
 }

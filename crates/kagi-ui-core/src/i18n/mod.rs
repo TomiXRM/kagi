@@ -580,6 +580,12 @@ pub enum Msg {
     CleanupEmpty,
     /// Branch Cleanup: shown while the background scan is still running.
     CleanupScanning,
+    /// Branch Cleanup: PR column header.
+    CleanupColPr,
+    /// Branch Cleanup: author column header.
+    CleanupColAuthor,
+    /// Branch Cleanup: delete the ticked rows.
+    CleanupDeleteSelected,
     // ── Tag context menu / push (ADR-0140) ──
     /// Tag menu: push item, `{}` = remote name.
     TagPushTo,
@@ -1413,6 +1419,12 @@ impl Msg {
             (Ja, BusyPushTag) => "タグを push 中…",
             (En, PushTagDone) => "push-tag: done",
             (Ja, PushTagDone) => "タグを push しました",
+            (En, CleanupColPr) => "PR",
+            (Ja, CleanupColPr) => "PR",
+            (En, CleanupColAuthor) => "Author",
+            (Ja, CleanupColAuthor) => "作成者",
+            (En, CleanupDeleteSelected) => "Delete selected",
+            (Ja, CleanupDeleteSelected) => "選択したブランチを削除",
             (En, CleanupScanning) => "Scanning branches…",
             (Ja, CleanupScanning) => "ブランチを調べています…",
             (En, CleanupEmpty) => "No merged or stale branches — all clean.",

@@ -1242,6 +1242,14 @@ impl Backend {
     /// commit carrying its change (ADR-0139). Drives the graph's ghost
     /// connectors. Like `collect_branch_cleanup`, far too slow for the
     /// snapshot path — the app layer runs it on a background thread.
+    /// Recently merged PRs, for Branch Cleanup's PR / author columns.
+    pub fn list_merged_prs(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<kagi_domain::github::PullRequest>, GitError> {
+        crate::github::list_merged_prs(&self.path, limit)
+    }
+
     pub fn collect_squash_links(&self) -> Result<Vec<ops::SquashLink>, GitError> {
         ops::collect_squash_links(&self.repo).map_err(|e| GitError::Other(e.to_string()))
     }

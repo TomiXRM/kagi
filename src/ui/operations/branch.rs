@@ -1161,45 +1161,74 @@ impl KagiApp {
     }
 
     /// Build a delete-branch plan for `branch_name` and open the confirmation modal.
-    pub fn open_delete_branch_modal(&mut self, branch_name: impl Into<String>) {
+    ///
+    /// The plan is built **off the UI thread** (same shape as
+    /// [`open_merge_modal`]): on an unmerged branch `plan_delete_branch` runs
+    /// the squash-merge patch-id probe (ADR-0138), which walks up to
+    /// `SQUASH_SCAN_LIMIT` commits computing tree diffs — tens to hundreds of
+    /// ms on a repo with an old fork point, i.e. a visible freeze if done here.
+    ///
+    /// The modal is created only from the finished plan, so there is no window
+    /// in which a plan missing the probe is on screen and confirmable. See
+    /// ADR-0141.
+    pub fn open_delete_branch_modal(
+        &mut self,
+        branch_name: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) {
         let branch_name = branch_name.into();
-        let _repo_path = match self.repo_path.clone() {
+        if self.busy_op.is_some() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
+        let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
                 klog!("open_delete_branch_modal: no repo_path set");
                 return;
             }
         };
-        // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
-            None => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    "delete-branch: repo session unavailable",
-                ));
-                return;
-            }
-        };
-        match repo.plan_delete_branch(&branch_name) {
-            Ok(plan) => {
-                eprintln!(
-                    "[kagi] plan: delete-branch {} blockers={}",
-                    branch_name,
-                    plan.blockers.len()
-                );
-                self.set_delete_branch_modal(DeleteBranchModal {
-                    branch_name,
-                    plan: std::sync::Arc::new(plan),
-                    error: None,
-                });
-            }
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "delete-branch plan error: {}",
-                    e
-                )));
-            }
-        }
+        self.busy_op = Some("delete-branch-plan");
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranchPlan.t()));
+        klog!("async: delete-branch plan started for {}", branch_name);
+
+        let bg_path = repo_path.clone();
+        let bg_branch = branch_name.clone();
+        let task = cx.background_spawn(async move {
+            let repo =
+                kagi_git::Backend::open(&bg_path).map_err(|e| format!("repo open error: {e}"))?;
+            repo.plan_delete_branch(&bg_branch)
+                .map_err(|e| e.to_string())
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok(plan) => {
+                        eprintln!(
+                            "[kagi] plan: delete-branch {} blockers={}",
+                            branch_name,
+                            plan.blockers.len()
+                        );
+                        app.status_footer = FooterStatus::Idle(SharedString::from(""));
+                        app.set_delete_branch_modal(DeleteBranchModal {
+                            branch_name,
+                            plan: std::sync::Arc::new(plan),
+                            error: None,
+                        });
+                    }
+                    Err(e) => {
+                        app.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                            "delete-branch plan error: {}",
+                            e
+                        )));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub fn cancel_delete_branch_modal(&mut self) {
@@ -1488,7 +1517,7 @@ impl KagiApp {
             }
             BranchAction::DeleteBranch => {
                 if matches!(state.kind, BranchKind::Local) {
-                    self.open_delete_branch_modal(state.name);
+                    self.open_delete_branch_modal(state.name, cx);
                 }
             }
             BranchAction::Pull => {

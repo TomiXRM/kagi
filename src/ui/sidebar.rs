@@ -1148,7 +1148,7 @@ fn build_local_branch_leaf(
         );
         let delete_handler = cx.listener(
             move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
-                this.open_delete_branch_modal(branch_for_delete.clone());
+                this.open_delete_branch_modal(branch_for_delete.clone(), cx);
                 cx.notify();
             },
         );

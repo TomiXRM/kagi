@@ -70,6 +70,39 @@ pub fn list_open_prs(workdir: &Path) -> Result<Vec<PullRequest>, GitError> {
     parse_pr_list(&String::from_utf8_lossy(&out.stdout))
 }
 
+/// Recently **merged** PRs, keyed by their head branch by the caller.
+///
+/// A separate call from [`list_open_prs`] because Branch Cleanup asks the
+/// opposite question: its rows are branches that are already merged, so their
+/// pull requests are by definition *not* open and never appear in that list.
+///
+/// Only the fields the cleanup table shows are requested — number, title,
+/// author, head branch — so this stays one cheap call rather than the full
+/// `FIELDS` set with its per-PR check rollup.
+pub fn list_merged_prs(workdir: &Path, limit: usize) -> Result<Vec<PullRequest>, GitError> {
+    let limit = limit.to_string();
+    let out = Command::new("gh")
+        .args([
+            "pr",
+            "list",
+            "--state",
+            "merged",
+            "--limit",
+            &limit,
+            "--json",
+            "number,title,headRefName,author",
+        ])
+        .current_dir(workdir)
+        .output()
+        .map_err(|e| GitError::Other(format!("gh: {}", e)))?;
+    if !out.status.success() {
+        // Same contract as `list_open_prs`: no remote / not GitHub / logged
+        // out is "no data", not an error the user has to dismiss.
+        return Ok(Vec::new());
+    }
+    parse_pr_list(&String::from_utf8_lossy(&out.stdout))
+}
+
 /// Parse `gh pr list --json <FIELDS>` output. Pure; unit-tested below.
 pub fn parse_pr_list(json: &str) -> Result<Vec<PullRequest>, GitError> {
     let v: serde_json::Value =
@@ -540,5 +573,32 @@ mod tests {
     fn empty_and_garbage_inputs() {
         assert!(parse_pr_list("[]").unwrap().is_empty());
         assert!(parse_pr_list("not json").is_err());
+    }
+}
+
+#[cfg(test)]
+mod merged_pr_tests {
+    use super::parse_pr_list;
+
+    /// `list_merged_prs` asks for only four fields, so the shared parser has to
+    /// survive the absence of `statusCheckRollup`, `mergeable`, `url` and the
+    /// rest. Real `gh pr list --state merged` output, trimmed to two entries.
+    #[test]
+    fn parses_the_reduced_merged_field_set() {
+        let json = r#"[
+          {"author":{"id":"MDQ6VXNlcjI=","is_bot":false,"login":"TomiXRM","name":"D T"},
+           "headRefName":"chore/bump-0.24.0","number":255,"title":"chore: bump to 0.24.0"},
+          {"author":{"id":"MDQ6VXNlcjI=","is_bot":false,"login":"TomiXRM","name":"D T"},
+           "headRefName":"fix/audit-bugs","number":254,"title":"fix+refactor: races"}
+        ]"#;
+        let prs = parse_pr_list(json).expect("parse");
+        assert_eq!(prs.len(), 2);
+        assert_eq!(prs[0].number, 255);
+        assert_eq!(prs[0].title, "chore: bump to 0.24.0");
+        assert_eq!(prs[0].head, "chore/bump-0.24.0");
+        assert_eq!(prs[0].author, "TomiXRM");
+        // Fields the reduced query does not ask for must default, not panic.
+        assert!(prs[0].url.is_empty());
+        assert!(prs[0].checks.is_empty());
     }
 }

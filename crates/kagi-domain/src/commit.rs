@@ -69,3 +69,19 @@ pub struct Commit {
     /// Full commit message, including the summary line.
     pub message: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_truncates_or_falls_back_to_the_whole_id() {
+        let full = CommitId("0123456789abcdef0123456789abcdef01234567".to_string());
+        assert_eq!(full.short(), "01234567");
+        // Shorter than 8 chars (abbreviated/partial id) -> returned whole,
+        // never panicking on the slice.
+        assert_eq!(CommitId("abc".to_string()).short(), "abc");
+        assert_eq!(CommitId(String::new()).short(), "");
+        assert_eq!(CommitId("01234567".to_string()).short(), "01234567");
+    }
+}

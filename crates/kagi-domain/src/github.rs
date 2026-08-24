@@ -756,4 +756,26 @@ mod comment_tag_tests {
             assert_eq!(rest, body);
         }
     }
+
+    #[test]
+    fn has_suggestion_detects_only_real_suggestion_fences() {
+        let c = |body: &str| ReviewComment {
+            author: "copilot".into(),
+            path: "src/lib.rs".into(),
+            line: 10,
+            body: body.into(),
+            diff_hunk: String::new(),
+            created_at: String::new(),
+            in_reply_to: None,
+        };
+        assert!(c("nit\n\n```suggestion\nlet x = 1;\n```\n").has_suggestion());
+        // Indented inside a list item still counts.
+        assert!(c("- see below\n  ```suggestion\n  ok\n  ```").has_suggestion());
+        // Language-tagged suggestion fences (```suggestion rust) count too.
+        assert!(c("```suggestion rust\nok\n```").has_suggestion());
+        // Prose and plain code fences do not gate the apply affordance.
+        assert!(!c("looks good to me").has_suggestion());
+        assert!(!c("```rust\nlet x = 1;\n```").has_suggestion());
+        assert!(!c("the word suggestion appears mid-line ```suggestion").has_suggestion());
+    }
 }

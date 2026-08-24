@@ -798,6 +798,73 @@ keep bottom
     }
 
     #[test]
+    fn line_selection_seeds_from_existing_hunk_choice() {
+        // Every fill arm of `LineSelection::from_choice`.
+        let both = |c| LineSelection::from_choice(2, 2, &c);
+        assert_eq!(
+            both(HunkChoice::AcceptCurrent),
+            LineSelection {
+                current_taken: vec![true, true],
+                incoming_taken: vec![false, false],
+                order: LineOrder::CurrentFirst,
+            }
+        );
+        assert_eq!(
+            both(HunkChoice::AcceptIncoming),
+            LineSelection {
+                current_taken: vec![false, false],
+                incoming_taken: vec![true, true],
+                order: LineOrder::CurrentFirst,
+            }
+        );
+        assert_eq!(
+            both(HunkChoice::BothCurrentFirst),
+            LineSelection {
+                current_taken: vec![true, true],
+                incoming_taken: vec![true, true],
+                order: LineOrder::CurrentFirst,
+            }
+        );
+        assert_eq!(
+            both(HunkChoice::BothIncomingFirst),
+            LineSelection {
+                current_taken: vec![true, true],
+                incoming_taken: vec![true, true],
+                order: LineOrder::IncomingFirst,
+            }
+        );
+        for empty in [HunkChoice::Unresolved, HunkChoice::Manual(String::new())] {
+            assert_eq!(
+                both(empty),
+                LineSelection::empty(2, 2, LineOrder::CurrentFirst)
+            );
+        }
+    }
+
+    #[test]
+    fn line_edit_preserves_the_previous_hunk_choice() {
+        // Hunk-level AcceptCurrent, then tick one Incoming line: the Current
+        // line stays in, because ensure_line_selection seeds from the choice.
+        let mut m = HunkModel::from_marker_text(TWO_HUNK_ZDIFF3);
+        m.set_choice(0, HunkChoice::AcceptCurrent);
+        m.set_choice(1, HunkChoice::AcceptCurrent);
+        assert!(m.set_hunk_line(0, SelectionSide::Incoming, 0, true));
+
+        let texts: Vec<String> = m.assemble().into_iter().map(|l| l.text).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "keep top".to_string(),
+                "a-current".to_string(),
+                "a-incoming".to_string(),
+                "keep middle".to_string(),
+                "b-current".to_string(),
+                "keep bottom".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn line_selection_order_is_explicit() {
         let mut m = HunkModel::from_marker_text(TWO_HUNK_ZDIFF3);
         assert!(m.set_hunk_side(0, SelectionSide::Current, true));

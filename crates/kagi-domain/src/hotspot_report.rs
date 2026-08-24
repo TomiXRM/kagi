@@ -307,6 +307,10 @@ mod tests {
         assert!(md.contains("# Code hot-spots"));
         assert!(md.contains("| 1 | `src/a.rs` |"));
         assert!(md.contains("all time"));
+        // The `n` limit really truncates the table.
+        let one = render(&sample(), 1, ReportFormat::Markdown);
+        assert_eq!(one.matches("| `src/").count(), 1);
+        assert!(!one.contains("src/b.rs"));
     }
 
     #[test]
@@ -314,6 +318,8 @@ mod tests {
         let js = render(&sample(), 1, ReportFormat::Json);
         assert!(js.contains("\"total_files\": 2"));
         assert!(js.contains("\"path\": \"src/a.rs\""));
+        // `n = 1` of 2 files → exactly one row.
+        assert_eq!(js.matches("\"path\"").count(), 1);
         // Only one hotspot row → no trailing comma before the closing bracket.
         assert!(!js.contains("},\n  ]"));
         assert!(js.trim_end().ends_with('}'));

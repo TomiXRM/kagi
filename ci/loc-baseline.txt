@@ -1,5 +1,5 @@
 crates/kagi-domain/src/message_gen.rs 895
-crates/kagi-domain/src/resolution.rs 905
+crates/kagi-domain/src/resolution.rs 972
 crates/kagi-git/src/backend.rs 1289
 crates/kagi-git/src/conflicts.rs 1803
 crates/kagi-git/src/message_gen.rs 807

@@ -535,6 +535,16 @@ mod tests {
             Some("d4f1e2a3b4c5d6e7f80911223344556677889900aabbccddeeff001122334455")
         );
         assert!(find_checksum(sums, "missing.zip").is_none());
+        // The hex guard, not the filename compare, must reject these: right
+        // asset name, bad hash. Without it kagi would install an unverified
+        // binary against a truncated/garbage "checksum".
+        let truncated = "d4f1e2a3  kagi-0.3.4-x86_64.tar.gz\n";
+        assert!(find_checksum(truncated, "kagi-0.3.4-x86_64.tar.gz").is_none());
+        let non_hex = "d4f1e2a3b4c5d6e7f80911223344556677889900aabbccddeeff0011223344zz  kagi-0.3.4-x86_64.tar.gz\n";
+        assert!(find_checksum(non_hex, "kagi-0.3.4-x86_64.tar.gz").is_none());
+        // 65 hex digits is not a SHA-256 either.
+        let too_long = "d4f1e2a3b4c5d6e7f80911223344556677889900aabbccddeeff0011223344556  kagi-0.3.4-x86_64.tar.gz\n";
+        assert!(find_checksum(too_long, "kagi-0.3.4-x86_64.tar.gz").is_none());
         // binary-mode '*' prefix tolerated
         let star = "aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899 *kagi.exe\n";
         assert!(find_checksum(star, "kagi.exe").is_some());

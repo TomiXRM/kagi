@@ -652,4 +652,21 @@ mod tests {
             "Undo moves branch 'feat/x' from aaaaaaaa to bbbbbbbb via a safe ref move (no reset --hard, no clean). The commit commit is NOT deleted — it stays in the object store and reflog:\n  git reflog\nTo restore manually:\n  git update-ref refs/heads/feat/x aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         );
     }
+
+    #[test]
+    fn move_dir_labels_and_phrase() {
+        assert_eq!(HistoryMoveDir::Undo.label_en(), "Undo");
+        assert_eq!(HistoryMoveDir::Redo.label_en(), "Redo");
+        assert_eq!(HistoryMoveDir::Undo.label_en_lower(), "undo");
+        assert_eq!(HistoryMoveDir::Redo.label_en_lower(), "redo");
+        // phrase() must not collapse the two directions onto one OpPhrase.
+        assert_eq!(
+            HistoryMoveDir::Undo.phrase(),
+            super::super::common::OpPhrase::Undo
+        );
+        assert_eq!(
+            HistoryMoveDir::Redo.phrase(),
+            super::super::common::OpPhrase::Redo
+        );
+    }
 }

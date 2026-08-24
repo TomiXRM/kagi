@@ -143,39 +143,3 @@ pub enum OperationOutcome {
     Rebase(RebaseOutcome),
     Unit,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn operation_fields_are_accessible_without_repo() {
-        let op = Operation::CreateBranch {
-            name: "feature/domain-op".to_string(),
-            at: CommitId("0123456789abcdef0123456789abcdef01234567".to_string()),
-        };
-
-        match op {
-            Operation::CreateBranch { name, at } => {
-                assert_eq!(name, "feature/domain-op");
-                assert_eq!(at.short(), "01234567");
-            }
-            _ => panic!("unexpected operation variant"),
-        }
-    }
-
-    #[test]
-    fn operation_can_carry_collection_inputs() {
-        let op = Operation::Discard {
-            paths: vec!["src/lib.rs".to_string(), "README.md".to_string()],
-        };
-
-        match op {
-            Operation::Discard { paths } => {
-                assert_eq!(paths.len(), 2);
-                assert_eq!(paths[0], "src/lib.rs");
-            }
-            _ => panic!("unexpected operation variant"),
-        }
-    }
-}

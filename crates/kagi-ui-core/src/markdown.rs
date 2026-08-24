@@ -290,7 +290,8 @@ fn html_attribute(attrs: &str, wanted: &str) -> Option<String> {
     None
 }
 
-/// Rewrite a Markdown document so no raw HTML block spans multiple lines.
+/// Rewrite a Markdown document so nothing GPUI shapes as one line contains a
+/// newline.
 ///
 /// GPUI's text system panics rather than wrapping when asked to shape text
 /// containing a newline, and `gpui-component` feeds a raw HTML block's own text
@@ -313,20 +314,38 @@ fn html_attribute(attrs: &str, wanted: &str) -> Option<String> {
 pub fn flatten_html_blocks(source: &str) -> String {
     use markdown::mdast::Node;
 
+    fn has_image(node: &Node) -> bool {
+        if matches!(node, Node::Image(_) | Node::ImageReference(_)) {
+            return true;
+        }
+        node.children().is_some_and(|c| c.iter().any(has_image))
+    }
+
     let Ok(root) = markdown::to_mdast(source, &markdown::ParseOptions::gfm()) else {
         return source.to_string();
     };
     let mut out = source.as_bytes().to_vec();
-    let mut stack = vec![root];
-    while let Some(node) = stack.pop() {
-        if let Node::Html(html) = &node {
-            if let Some(position) = html.position.as_ref() {
-                for byte in &mut out[position.start.offset..position.end.offset] {
-                    if *byte == b'\n' || *byte == b'\r' {
-                        *byte = b' ';
-                    }
+    let mut flatten = |position: Option<&markdown::unist::Position>| {
+        if let Some(p) = position {
+            for byte in &mut out[p.start.offset..p.end.offset] {
+                if *byte == b'\n' || *byte == b'\r' {
+                    *byte = b' ';
                 }
             }
+        }
+    };
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        match &node {
+            // Raw HTML: its own text is rendered verbatim, newlines included.
+            Node::Html(html) => flatten(html.position.as_ref()),
+            // A paragraph holding an inline image: `inline_flow` slices the
+            // paragraph's text around the image and hands a slice containing
+            // the soft line break to the shaper. A soft break renders as a
+            // space anyway, so joining the lines changes nothing on screen —
+            // it is how GitHub lays a badge strip out too.
+            Node::Paragraph(p) if has_image(&node) => flatten(p.position.as_ref()),
+            _ => {}
         }
         if let Some(children) = node.children() {
             stack.extend(children.iter().cloned());
@@ -636,6 +655,38 @@ Some prose with an ![inline image](docs/images/shot.png) inside it.
         // And the surrounding Markdown is untouched.
         assert!(flattened.contains("## Screenshots"));
         assert!(flattened.contains("![Repo-relative screenshot](docs/images/shot.png)"));
+    }
+
+    /// The construct that actually crashed the preview, found by bisecting the
+    /// repository README down to two lines: an inline image and a soft line
+    /// break in one paragraph. `inline_flow` slices the paragraph around the
+    /// image and hands the shaper a slice containing the newline.
+    ///
+    /// A soft break renders as a space, so joining the lines is a no-op on
+    /// screen — GitHub lays a badge strip out the same way.
+    #[test]
+    fn flattens_a_paragraph_holding_an_inline_image() {
+        let badge_strip = "[![A](https://img.shields.io/badge/a-b-blue)](https://e.com)\n\
+                           [![B](https://img.shields.io/badge/c-d-red)](https://e.com)\n";
+        for md in [
+            badge_strip,
+            "![A](https://img.shields.io/badge/a-b-blue)\ntrailing text\n",
+        ] {
+            let flat = flatten_html_blocks(md);
+            assert!(
+                !flat.trim_end().contains('\n'),
+                "the image paragraph must be one line: {flat:?}"
+            );
+            assert_eq!(flat.len(), md.len(), "offsets must stay valid");
+        }
+    }
+
+    /// Prose without an image keeps its soft breaks: the bug needs an inline
+    /// image, and rewriting every paragraph would be scope this does not need.
+    #[test]
+    fn leaves_an_ordinary_paragraph_alone() {
+        let md = "hello world\nsecond line here\n";
+        assert_eq!(flatten_html_blocks(md), md);
     }
 
     /// A `<details>` disclosure is the same shape and just as common.

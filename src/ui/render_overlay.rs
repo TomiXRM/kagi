@@ -346,6 +346,7 @@ impl KagiApp {
         delete_remote_branch_modal: Option<DeleteRemoteBranchModal>,
         reset_current_modal: Option<ResetCurrentModal>,
         force_lease_push_modal: Option<ForceLeasePushModal>,
+        push_tag_modal: Option<PushTagModal>,
         rebase_current_onto_modal: Option<RebaseCurrentOntoModal>,
         branch_cleanup_modal: Option<BranchCleanupModal>,
         discard_modal: Option<DiscardModal>,
@@ -461,6 +462,9 @@ impl KagiApp {
         })
         .when_some(force_lease_push_modal, |el, modal| {
             el.child(render_force_lease_push_modal(modal, cx))
+        })
+        .when_some(push_tag_modal, |el, modal| {
+            el.child(render_push_tag_modal(modal, cx))
         })
         .when_some(rebase_current_onto_modal, |el, modal| {
             el.child(render_rebase_modal(modal, cx))

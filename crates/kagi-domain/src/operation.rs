@@ -43,6 +43,12 @@ pub enum Operation {
         name: String,
         at: CommitId,
     },
+    /// Publish an existing local tag to a remote. Never forced — see
+    /// `ops::tag::plan_push_tag`.
+    PushTag {
+        name: String,
+        remote: String,
+    },
     CreateWorktree {
         branch: String,
         path: String,

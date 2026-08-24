@@ -117,6 +117,19 @@ impl KagiApp {
         ))
     }
 
+    fn render_tag_menu_overlay(
+        &self,
+        state: tag_menu::TagMenuState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        let groups = tag_menu::build_tag_menu(state.remote.as_deref());
+        let header = SharedString::from(state.name.clone());
+        Some(tag_menu::render_tag_menu_overlay(
+            state, header, groups, window, cx,
+        ))
+    }
+
     fn render_stash_menu_overlay(
         &self,
         state: stash_menu::StashMenuState,
@@ -406,6 +419,7 @@ impl Render for KagiApp {
         let delete_remote_branch_modal = self.delete_remote_branch_modal().cloned();
         let reset_current_modal = self.reset_current_modal().cloned();
         let force_lease_push_modal = self.force_lease_push_modal().cloned();
+        let push_tag_modal = self.push_tag_modal().cloned();
         let rebase_current_onto_modal = self.rebase_current_onto_modal().cloned();
         let branch_cleanup_modal = self.branch_cleanup_modal().cloned();
         let discard_modal = self.discard_modal().cloned();
@@ -439,6 +453,10 @@ impl Render for KagiApp {
             .branch_menu
             .clone()
             .and_then(|state| self.render_branch_menu_overlay(state, window, cx));
+        let tag_menu_overlay = self
+            .tag_menu
+            .clone()
+            .and_then(|state| self.render_tag_menu_overlay(state, window, cx));
         let stash_menu_overlay = self
             .stash_menu
             .clone()
@@ -554,6 +572,11 @@ impl Render for KagiApp {
             }
             if this.pr_menu.is_some() {
                 this.pr_menu = None;
+                cx.notify();
+                return;
+            }
+            if this.tag_menu.is_some() {
+                this.tag_menu = None;
                 cx.notify();
                 return;
             }
@@ -798,6 +821,7 @@ impl Render for KagiApp {
             .children(branch_menu_overlay)
             // ── Stash context menu overlay (below modals) ──────
             .children(stash_menu_overlay)
+            .children(tag_menu_overlay)
             .children(worktree_menu_overlay)
             // ── Conflict per-file "…" overflow menu overlay ────
             .children(conflict_file_menu_overlay)
@@ -836,6 +860,7 @@ impl Render for KagiApp {
             delete_remote_branch_modal,
             reset_current_modal,
             force_lease_push_modal,
+            push_tag_modal,
             rebase_current_onto_modal,
             branch_cleanup_modal,
             discard_modal,

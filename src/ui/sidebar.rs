@@ -1314,6 +1314,16 @@ fn build_tag_row(
     let tag_label = SharedString::from(tag_name.to_string());
     let full_name = SharedString::from(tag_name.to_string());
     let can_jump = this.active_view.commit_row_index.contains_key(&tag_target);
+    // Right-click → the tag menu (ADR-0140). Tags were the only sidebar ref
+    // with no menu, so publishing one meant leaving kagi for a terminal.
+    let menu_name = tag_name.to_string();
+    let menu = cx.listener(
+        move |this: &mut KagiApp, e: &gpui::MouseDownEvent, _w, cx| {
+            this.open_tag_menu(menu_name.clone(), e.position);
+            cx.stop_propagation();
+            cx.notify();
+        },
+    );
     let base = div()
         .id(SharedString::from(format!("sidebar-tag-{}", tag_name)))
         .h(theme::scaled_px(SIDEBAR_ROW_H))
@@ -1325,6 +1335,7 @@ fn build_tag_row(
         .text_color(rgb(theme().color_tag))
         .overflow_hidden()
         .tooltip(name_tooltip(full_name))
+        .on_mouse_down(gpui::MouseButton::Right, menu)
         .child(div().flex_1().truncate().child(tag_label));
     if can_jump {
         let click_handler = cx.listener(

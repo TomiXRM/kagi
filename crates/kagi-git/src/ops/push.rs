@@ -473,7 +473,9 @@ fn build_push_preview(
     Ok(result)
 }
 
-fn choose_push_remote(repo: &Repository) -> Result<String, GitError> {
+/// The remote a push targets when the caller has not named one: `origin` if it
+/// exists, otherwise the first configured remote.
+pub(crate) fn choose_push_remote(repo: &Repository) -> Result<String, GitError> {
     let remotes = repo
         .remotes()
         .map_err(|e| GitError::Other(format!("failed to list remotes: {}", e.message())))?;

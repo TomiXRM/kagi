@@ -80,6 +80,7 @@ pub mod smart_commit;
 pub mod stash_menu;
 mod tab_view;
 pub mod tabs;
+pub mod tag_menu;
 pub mod terminal;
 pub use kagi_ui_core::theme; // ADR-0121: was a shim file
 pub mod toast_stack;
@@ -1164,6 +1165,8 @@ pub struct KagiApp {
     /// Branch sidebar context menu state (right-click anchor + target branch).
     pub branch_menu: Option<BranchMenuState>,
     pub stash_menu: Option<stash_menu::StashMenuState>,
+    /// ADR-0140: open tag context menu (right-click on a sidebar tag row).
+    pub tag_menu: Option<tag_menu::TagMenuState>,
     pub worktree_menu: Option<worktree_menu::WorktreeMenuState>,
     /// Unstaged file-row context menu (right-click): (unstaged index, anchor).
     /// Offers Discard for eligible (tracked, non-conflicted) rows.
@@ -1459,6 +1462,7 @@ impl KagiApp {
             commit_menu: None,
             branch_menu: None,
             stash_menu: None,
+            tag_menu: None,
             worktree_menu: None,
             file_menu: None,
             inspector_file_menu: None,
@@ -1585,6 +1589,7 @@ impl KagiApp {
             commit_menu: None,
             branch_menu: None,
             stash_menu: None,
+            tag_menu: None,
             worktree_menu: None,
             file_menu: None,
             inspector_file_menu: None,
@@ -3088,6 +3093,8 @@ impl KagiApp {
             self.confirm_history(cx);
         } else if self.amend_modal().is_some() {
             self.confirm_amend(cx);
+        } else if self.push_tag_modal().is_some() {
+            self.start_push_tag(cx);
         } else if self.cherry_pick_modal().is_some() {
             self.start_cherry_pick(cx);
         } else if self.revert_modal().is_some() {
@@ -3164,6 +3171,8 @@ impl KagiApp {
             self.clear_history_modal();
         } else if self.amend_modal().is_some() {
             self.cancel_amend_modal();
+        } else if self.push_tag_modal().is_some() {
+            self.cancel_push_tag_modal();
         } else if self.pr_merge_modal().is_some() {
             self.cancel_pr_merge_modal();
         } else if self.cherry_pick_modal().is_some() {

@@ -455,6 +455,25 @@ pub(crate) fn render_force_lease_push_modal(
     )
 }
 
+/// Push-tag confirmation overlay (tag context menu, ADR-0140). Single confirm:
+/// publishing a tag only ever *adds* a ref on the remote — the push is never
+/// forced, so a tag that moved is refused by the remote rather than overwritten.
+pub(crate) fn render_push_tag_modal(
+    modal: PushTagModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    render_plan_modal_wrapper_styled(
+        modal.plan,
+        modal.error,
+        SharedString::from(Msg::PushTagConfirm.t()),
+        None,
+        Some((IconName::ArrowUp.into(), theme().color_tag)),
+        |this, _cx| this.cancel_push_tag_modal(),
+        |this, cx| this.start_push_tag(cx),
+        cx,
+    )
+}
+
 /// Rebase-current-onto confirmation overlay (branch-menu "Integrate" group).
 /// Single confirm, no armed second stage — see `operations/rebase.rs`'s
 /// module doc for why (Guarded, not Destructive; a conflict routes into the

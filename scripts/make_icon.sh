@@ -7,6 +7,7 @@
 #   assets/icon/icon_256x256.png    Linux hicolor 256
 #   assets/icon/icon_128x128.png    Linux hicolor 128
 #   assets/icon/icon-rounded-1024.png  the rounded master (intermediate, kept)
+#   assets/icon/icon.ico            Windows exe icon (embedded by build.rs)
 #
 # Apple-style continuous rounded corners are baked in via scripts/round_icon.swift
 # (CoreGraphics; no ImageMagick / third-party deps). macOS-stock tools only:
@@ -27,7 +28,7 @@ INPUT="${1:-$ROOT_DIR/assets/icon-512x512.png}"
 OUT_DIR="$ROOT_DIR/assets/icon"
 ROUNDED="$OUT_DIR/icon-rounded-1024.png"
 
-for tool in swift sips iconutil; do
+for tool in swift sips iconutil python3; do
   command -v "$tool" >/dev/null 2>&1 || { echo "error: '$tool' not found (macOS-stock tool required)" >&2; exit 1; }
 done
 
@@ -56,8 +57,32 @@ for s in 512 256 128; do
   sips -z "$s" "$s" "$ROUNDED" --out "$OUT_DIR/icon_${s}x${s}.png" >/dev/null
 done
 
+# 4) Windows .ico (16/32/48/64/128/256) from the rounded master.
+#    build.rs embeds this into kagi.exe, so it must be regenerated with the
+#    rest of the set — it used to be a hand-made file and went stale silently.
+#    ponytail: PNG-compressed entries (Vista+); switch to BMP entries only if
+#    a pre-Vista tool ever needs to read it.
+ICO_TMP="$(mktemp -d)"
+for s in 16 32 48 64 128 256; do
+  sips -z "$s" "$s" "$ROUNDED" --out "$ICO_TMP/$s.png" >/dev/null
+done
+python3 - "$OUT_DIR/icon.ico" "$ICO_TMP" <<'PY'
+import struct, sys
+out, tmp = sys.argv[1], sys.argv[2]
+sizes = [16, 32, 48, 64, 128, 256]
+blobs = [open(f"{tmp}/{s}.png", "rb").read() for s in sizes]
+offset = 6 + 16 * len(sizes)
+entries = b""
+for s, b in zip(sizes, blobs):
+    entries += struct.pack("<BBBBHHII", s % 256, s % 256, 0, 0, 1, 32, len(b), offset)
+    offset += len(b)
+open(out, "wb").write(struct.pack("<HHH", 0, 1, len(sizes)) + entries + b"".join(blobs))
+PY
+rm -rf "$ICO_TMP"
+
 echo "make_icon: wrote:"
 echo "  $OUT_DIR/AppIcon.icns"
+echo "  $OUT_DIR/icon.ico"
 echo "  $OUT_DIR/icon_512x512.png"
 echo "  $OUT_DIR/icon_256x256.png"
 echo "  $OUT_DIR/icon_128x128.png"

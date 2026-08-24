@@ -59,27 +59,6 @@ fn standalone_image(node: &markdown_ast::Node) -> Option<ParsedImage> {
     }
 }
 
-/// Parse an HTML block whose entire content is one `<img …>`, which is how a
-/// README states an explicit width — usually wrapped for centring:
-///
-/// ```text
-/// <div align="center">
-/// <img src="docs/images/diff.png" width="900" alt="…" />
-/// </div>
-/// ```
-///
-/// The wrapper is matched too, not just a bare tag. Without that, the most
-/// common screenshot shape in a README fell through to the generic HTML
-/// renderer, which resolves `src` as a URI and so drew nothing for a
-/// repository-relative path (user report). Our own renderer centres the image
-/// anyway, so the `<div align="center">` is honoured rather than lost.
-///
-/// A block with any visible text of its own, or more than one image, is left
-/// to the full HTML renderer.
-fn html_image(value: &str) -> Option<ParsedImage> {
-    html_images(value).into_iter().next()
-}
-
 /// Every `<img>` in an HTML block whose visible content is nothing but images.
 fn html_images(value: &str) -> Vec<ParsedImage> {
     let tag = value.trim();
@@ -227,28 +206,28 @@ mod tests {
     #[test]
     fn parses_standalone_html_image_attributes() {
         assert_eq!(
-            html_image(r#"<img src="docs/images/hero.png" width="900" alt="Kagi UI" />"#),
-            Some(ParsedImage {
+            html_images(r#"<img src="docs/images/hero.png" width="900" alt="Kagi UI" />"#),
+            vec![ParsedImage {
                 url: "docs/images/hero.png".to_string(),
                 alt: "Kagi UI".to_string(),
                 title: None,
                 link: None,
-            })
+            }]
         );
         // A centring wrapper is the common README shape and IS claimed — it
         // used to be rejected, which is why those screenshots never appeared.
         assert_eq!(
-            html_image("<div align=\"center\"> <img src='nested.png'> </div>"),
-            Some(ParsedImage {
+            html_images("<div align=\"center\"> <img src='nested.png'> </div>"),
+            vec![ParsedImage {
                 url: "nested.png".to_string(),
                 alt: String::new(),
                 title: None,
                 link: None,
-            })
+            }]
         );
         // Prose of its own means this is text that contains an image, so the
         // full HTML renderer keeps it.
-        assert_eq!(html_image("<p>See <img src='a.png'> here</p>"), None);
+        assert!(html_images("<p>See <img src='a.png'> here</p>").is_empty());
         // Two stacked screenshots in one centring div is a normal README
         // shape; both are claimed and render as a column.
         assert_eq!(

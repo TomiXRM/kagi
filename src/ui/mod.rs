@@ -1372,25 +1372,16 @@ pub struct WipDiffStat {
 }
 
 impl KagiApp {
-    /// Construct from a successful [`RepoSnapshot`].
-    ///
-    /// W6-TABSPEED: the snapshot-derived display data is now produced by the
-    /// pure [`build_tab_view`] free function; this constructor just folds that
-    /// `TabViewState` into a fresh `KagiApp` together with the non-snapshot
-    /// (handle / modal / preference) defaults.  Behaviour and log output are
-    /// identical to the previous inline version.
-    pub fn from_snapshot(repo_name: &str, snap: &RepoSnapshot) -> Self {
-        let view = build_tab_view(snap, repo_name);
-
-        // T-BP-004: load up to 100 entries from the oplog file at startup.
-        let op_entries: VecDeque<OpLogEntry> = read_oplog_tail(OP_ENTRIES_LOAD).into();
-
+    /// The single place a `KagiApp` is constructed: every field default lives
+    /// here exactly once, so adding a field means touching one place.  The two
+    /// public constructors below differ only in the arguments they pass in.
+    fn new_common(active_view: TabViewState, op_log_seed: VecDeque<OpLogEntry>) -> Self {
         KagiApp {
             // Created in `open_main_window`'s `cx.new` closure from this seed.
             op_log: None,
-            op_log_seed: op_entries,
+            op_log_seed,
+            active_view,
             root_focus: None,
-            active_view: view,
             view_epoch: 0,
             selected: None,
             error: None,
@@ -1508,131 +1499,28 @@ impl KagiApp {
         }
     }
 
+    /// Construct from a successful [`RepoSnapshot`].
+    ///
+    /// W6-TABSPEED: the snapshot-derived display data is produced by the pure
+    /// [`build_tab_view`] free function; this constructor just folds that
+    /// `TabViewState` into a fresh `KagiApp`.
+    pub fn from_snapshot(repo_name: &str, snap: &RepoSnapshot) -> Self {
+        // T-BP-004: load up to 100 entries from the oplog file at startup.
+        let op_entries: VecDeque<OpLogEntry> = read_oplog_tail(OP_ENTRIES_LOAD).into();
+        Self::new_common(build_tab_view(snap, repo_name), op_entries)
+    }
+
     /// Construct a placeholder for the no-argument / error case.
     pub fn with_error(message: impl Into<String>) -> Self {
-        KagiApp {
-            root_focus: None,
-            active_view: TabViewState {
+        let mut app = Self::new_common(
+            TabViewState {
                 header: SharedString::from("kagi"),
                 ..Default::default()
             },
-            view_epoch: 0,
-            selected: None,
-            error: Some(SharedString::from(message.into())),
-            repo_path: None,
-            repo_session: None,
-            diff_caches: diff_cache::DiffCaches::default(),
-            wip_diffstat: None,
-            main_diff: None,
-            pending_headless_diff: None,
-            compare_view: None,
-            pending_headless_compare: None,
-            active_modal: None,
-            remote_browse_modal: None,
-            remote_view: None,
-            modal_focus: None,
-            stash_push_focus: None,
-            status_footer: FooterStatus::Idle(SharedString::from("Ready")),
-            sidebar: sidebar::SidebarState::new(),
-            panel_width: PANEL_DEFAULT,
-            badge_col_w: theme::read_col_width("badge_col_w")
-                .map(|w| w.clamp(BADGE_COL_MIN, BADGE_COL_MAX))
-                .unwrap_or(BADGE_COL_DEFAULT),
-            graph_col_w: theme::read_col_width("graph_col_w")
-                .map(|w| w.clamp(GRAPH_COL_MIN, GRAPH_COL_MAX))
-                .unwrap_or(GRAPH_COL_DEFAULT),
-            bottom_panel_open: true, // user request: terminal visible by default
-            bottom_panel_height: BOTTOM_PANEL_H_UNSET,
-            bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
-            activity_granularity: kagi_domain::activity::Granularity::Week,
-            activity_hover: None,
-            commit_panel_open: false,
-            commit_panel: None,
-            smart_commit: smart_commit::SmartCommitState::load(),
-            smart_commit_detected_for: None,
-            commit_scroll_handle: UniformListScrollHandle::new(),
-            commit_limit: DEFAULT_COMMIT_LIMIT,
-            op_log: None,
-            op_log_seed: VecDeque::new(),
-            operation_history: kagi_git::OperationHistory::new(),
-            history_seed_attempted: false,
-            terminal_sessions: HashMap::new(),
-            tabs: Vec::new(),
-            active_tab: 0,
-            watcher_generation: 0,
-            inspector_tree_view: true,
-            inspector_split: INSPECTOR_SPLIT_DEFAULT,
-            inspector_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
-            file_history_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
-            graph_compact: theme::compact_graph(),
-            theme_select: None,
-            analyze_ignore_input: None,
-            graph_scroll_x: 0.0,
-            // W2-SIDEBAR
-            // GitHub Phase 1: the "Others" PR sub-group starts collapsed — a
-            // busy repo has dozens of other people's PRs and they'd bury the
-            // sections below.
-            branch_groups_collapsed: HashSet::from([sidebar::PR_GROUP_OTHERS.to_string()]),
-            // W3-NOTIFY
-            // Created in `open_main_window`'s `cx.new` closure (needs `cx`).
-            toast_stack: None,
-            fetch_in_flight: false,
-            auto_fetch_ticker_alive: false,
-            github_prs: Vec::new(),
-            github_prs_for: None,
-            github_error: None,
-            github_prs_epoch: 0,
-            github_ticker_alive: false,
-            github_login: None,
-            pr_mode: None,
-            pr_menu: None,
-            busy_op: None,
-            modal_replan_gen: 0,
-            refresh_spin_started: None,
-            // W2-DELETE
-            commit_menu: None,
-            branch_menu: None,
-            stash_menu: None,
-            tag_menu: None,
-            worktree_menu: None,
-            file_menu: None,
-            inspector_file_menu: None,
-            // W5-MENU
-            inspector_visible: true,
-            menu_overlay: None,
-            platform_menu_open: None,
-            // W6-TABSPEED
-            tab_cache: HashMap::new(),
-            switch_generation: 0,
-            loading_tab: None,
-            // W11-AVATAR
-            avatars: avatar::AvatarStore::default(),
-            // W30-CONFLICT-UI
-            conflict: None,
-            conflict_detected_for: None,
-            conflict_merge_pending: false,
-            merge_commit_ready: false,
-            update_available: None,
-            update_checked: false,
-            update_modal_open: false,
-            update_installing: false,
-            update_status: None,
-            last_working_status: None,
-            file_history: None,
-            file_history_head: None,
-            ecosystem: None,
-            branch_cleanup_open: false,
-            cleanup_cols: branch_cleanup::CleanupCols::load(),
-            cleanup_scroll: UniformListScrollHandle::new(),
-            cleanup_gen: 0,
-            cleanup_scanning: false,
-            squash_gen: 0,
-            scans_stale: true,
-            ecosystem_cache: ecosystem::EcosystemCache::new(),
-            ecosystem_inflight: None,
-            ecosystem_gen: 0,
-            editor_workspace: None,
-        }
+            VecDeque::new(),
+        );
+        app.error = Some(SharedString::from(message.into()));
+        app
     }
 
     // ── W30-CONFLICT-UI: Conflict Mode (ADR-0056) ────────────────────────

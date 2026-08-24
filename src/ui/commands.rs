@@ -1846,7 +1846,7 @@ impl KagiApp {
                 match mode {
                     BranchPickerMode::Checkout => this.open_plan_modal(name_for_click.clone()),
                     BranchPickerMode::Delete => {
-                        this.open_delete_branch_modal(name_for_click.clone())
+                        this.open_delete_branch_modal(name_for_click.clone(), cx)
                     }
                     BranchPickerMode::Rename => {
                         this.open_rename_branch_modal(name_for_click.clone())

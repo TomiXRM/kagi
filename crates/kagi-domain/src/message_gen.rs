@@ -833,6 +833,9 @@ mod tests {
             models,
             vec!["gemma:2b".to_string(), "llama3:8b".to_string()]
         );
+        // No models / no JSON at all → empty, never a panic.
+        assert!(parse_ollama_tags(r#"{"models":[]}"#).is_empty());
+        assert!(parse_ollama_tags("").is_empty());
     }
 
     #[test]

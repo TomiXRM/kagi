@@ -9,7 +9,7 @@
 //! * [`Theme`] holds **semantic** `u32` RGB fields (e.g. `bg_base`, `text_main`,
 //!   `color_branch`) plus a few non-RGB values (lane HSLA palette, avatar
 //!   saturation/lightness, terminal selection alpha) and a `dark: bool` flag.
-//! * [`THEMES`] lists the 6 built-in themes; index 0 (Catppuccin Mocha) is the
+//! * [`THEMES`] lists the built-in themes; index 0 (Catppuccin Mocha) is the
 //!   default and a byte-exact port of the previously hard-coded constants, so
 //!   the default look has zero regression.
 //! * [`ACTIVE`] is an `AtomicUsize` index into [`THEMES`].  [`set_active`]
@@ -143,7 +143,7 @@ pub struct Theme {
 /// Ten rather than forty-two because that is the honest granularity: the
 /// upstream palettes these are ported from distinguish roughly this many
 /// roles, and the rest are aliases of them (`boolean` is a `number`, `enum` is
-/// a `type`, …). Deriving keeps 11 themes maintainable and stops the table
+/// a `type`, …). Deriving keeps the theme table maintainable and stops the table
 /// filling with repeats.
 ///
 /// Where an upstream theme deliberately does NOT colour a role — Xcode gives
@@ -860,7 +860,7 @@ pub fn highlight_theme(k: &Theme) -> std::sync::Arc<gpui_component::highlighter:
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Theme registry — 6 built-in themes
+// Theme registry — the built-in themes
 // ──────────────────────────────────────────────────────────────────────────
 
 /// All built-in themes.  Index 0 (Catppuccin Mocha) is the default.
@@ -878,6 +878,7 @@ pub static THEMES: &[Theme] = &[
     MONOKAI,
     ONE_DARK,
     ONE_LIGHT,
+    PERIWINKLE,
     PINKY_BOO,
     TOKYO_NIGHT,
 ];
@@ -1753,6 +1754,114 @@ const DRACULA: Theme = Theme {
     },
 };
 
+// ── Periwinkle ───────────────────────────────────────────────────────────────
+//
+// Built from a six-colour palette supplied as-is: background #d4d6e9, label
+// colours #d699ba / #95c0aa / #d1d48c / #000, text #172540.
+//
+// The three pastel labels measure 1.1-1.6:1 on that background, so they are
+// unusable as text — they are kept at full strength only where they are a
+// *fill* (graph lanes, filled badges) and darkened along their own hue for
+// every text role. That split is the whole design: the palette's character
+// lives in the lane colours, its legibility in the derived text ramp.
+const PERIWINKLE: Theme = Theme {
+    slug: "periwinkle",
+    name: "Periwinkle",
+    dark: false,
+
+    bg_base: 0xd4d6e9,    // supplied background
+    bg_row_alt: 0xcbcee2, // zebra: one step down
+    surface: 0xdee0ef,    // chips/hover sit *above* the base
+    selected: 0xbcc0dc,
+    panel: 0xc9cce1,
+    sidebar: 0xc0c4da,
+    modal: 0xe6e8f3,
+    modal_overlay: 0x172540,
+
+    text_main: 0x172540, // supplied font colour
+    text_sub: 0x3b4767,
+    text_muted: 0x6a7592,
+    text_label: 0x566180,
+
+    color_head: 0xa5276b,   // pink label, darkened to 4.7:1
+    color_branch: 0x2e549e, // blue drawn out of the #172540 text navy
+    color_remote: 0x277c51, // green label, darkened
+    color_tag: 0x70741b,    // olive label, darkened
+
+    color_success: 0x277c51,
+    color_warning: 0x8a5a10,
+    color_blocker: 0xa32233,
+    color_blocker_muted: 0xb08088,
+
+    diff_added_bg: 0xc3ddcd,   // the sage label as a wash
+    diff_removed_bg: 0xe8c8d6, // the pink label as a wash
+    diff_hunk: 0x2e549e,
+
+    change_added: 0x277c51,
+    change_modified: 0x8a5a10,
+    change_deleted: 0xa32233,
+    change_renamed: 0x2e549e,
+    change_typechange: 0x87419f,
+    change_dir: 0x566180,
+
+    accent: 0xa5276b, // pink
+
+    // The palette's own hues at a lightness that reads on #d4d6e9 (every lane
+    // >= 3.2:1), ordered so adjacent indices stay distinct. Lane 7 is the
+    // supplied #000 — the one label colour that needed no adjustment.
+    lane_hsl: [
+        (0.910, 0.62, 0.40), // pink   #a5276b
+        (0.415, 0.52, 0.32), // green  #277c51
+        (0.610, 0.55, 0.40), // blue   #2e549e
+        (0.174, 0.62, 0.28), // olive  #70741b
+        (0.500, 0.70, 0.30), // teal   #178282
+        (0.790, 0.42, 0.44), // purple #87419f
+        (0.065, 0.70, 0.36), // orange #9c4e1c
+        (0.000, 0.00, 0.00), // black  #000000
+    ],
+
+    avatar_sat: 0.42,
+    avatar_light: 0.46,
+
+    term_bg: (0xd4, 0xd6, 0xe9),
+    term_fg: (0x17, 0x25, 0x40),
+    term_cursor: (0xa5, 0x27, 0x6b),
+    term_black: (0x17, 0x25, 0x40),
+    term_red: (0xa3, 0x22, 0x33),
+    term_green: (0x27, 0x7c, 0x51),
+    term_yellow: (0x70, 0x74, 0x1b),
+    term_blue: (0x2e, 0x54, 0x9e),
+    term_magenta: (0xa5, 0x27, 0x6b),
+    term_cyan: (0x17, 0x82, 0x82),
+    term_white: (0x56, 0x61, 0x80),
+    term_bright_black: (0x6a, 0x75, 0x92),
+    term_bright_red: (0xc4, 0x3a, 0x4c),
+    term_bright_green: (0x37, 0x9b, 0x69),
+    term_bright_yellow: (0x94, 0x99, 0x2c),
+    term_bright_blue: (0x44, 0x6c, 0xbd),
+    term_bright_magenta: (0xc6, 0x3f, 0x89),
+    term_bright_cyan: (0x24, 0xa0, 0xa0),
+    term_bright_white: (0x17, 0x25, 0x40),
+    term_selection: (0x2e, 0x54, 0x9e, 0x40),
+
+    // Each token takes one of the palette's hues, darkened until it clears the
+    // 3.0:1 floor on #d4d6e9 (measured: lowest is `variable` at 3.2). Operators
+    // and punctuation are the plain foreground — flat by choice, matching how
+    // the supplied palette has no colour to spare for them.
+    syntax: SyntaxPalette {
+        keyword: 0xa5276b,     // pink
+        string: 0x277c51,      // green
+        comment: 0x6a7592,     // muted; meant to recede
+        type_name: 0x70741b,   // olive
+        function: 0x2e549e,    // blue
+        number: 0x9c4e1c,      // orange
+        operator: 0x172540,    // foreground
+        punctuation: 0x172540, // foreground
+        variable: 0x178282,    // teal
+        attribute: 0x87419f,   // purple
+    },
+};
+
 // ──────────────────────────────────────────────────────────────────────────
 // Tests
 // ──────────────────────────────────────────────────────────────────────────
@@ -1987,7 +2096,7 @@ mod tests {
         let light = THEMES.iter().filter(|t| !t.dark).count();
         // catppuccin, one-dark, monokai, tokyo-night, ibm-pc, dracula, apple-dark
         assert_eq!(dark, 7);
-        // one-light, pinky-boo, catppuccin-latte, apple-light
-        assert_eq!(light, 4);
+        // one-light, pinky-boo, catppuccin-latte, apple-light, periwinkle
+        assert_eq!(light, 5);
     }
 }

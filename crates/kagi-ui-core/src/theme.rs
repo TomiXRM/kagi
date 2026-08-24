@@ -1756,8 +1756,9 @@ const DRACULA: Theme = Theme {
 
 // ── Periwinkle ───────────────────────────────────────────────────────────────
 //
-// Built from a supplied palette: background #f8faff, label colours
-// #d699ba / #95c0aa / #d1d48c / #000, text #172540.
+// Built from a supplied palette: backgrounds #ffffff / #f8faff (the commit
+// list's zebra pair), label colours #d699ba / #95c0aa / #d1d48c / #000, text
+// #172540.
 //
 // The three pastel labels measure 1.1-1.6:1 against the periwinkle they came
 // with, so they cannot carry text. They stay at full strength where they are a
@@ -1765,22 +1766,24 @@ const DRACULA: Theme = Theme {
 // every text role. That split is the whole design: the palette's character
 // lives in the lane colours, its legibility in the derived text ramp.
 //
-// The original #d4d6e9 background is now `selected` — on a near-white base it
-// reads as a highlight, and keeps the periwinkle visible in the chrome.
+// The palette's original #d4d6e9 background is now `selected` — on a white
+// base it reads as a highlight, and keeps the periwinkle visible in the UI.
 const PERIWINKLE: Theme = Theme {
     slug: "periwinkle",
     name: "Periwinkle",
     dark: false,
 
-    bg_base: 0xf8faff,    // supplied background
-    bg_row_alt: 0xf3f5fc, // zebra: a hair down, nothing more
-    surface: 0xeef1fa,    // chips/hover
+    // The two supplied backgrounds are the commit list's zebra pair: BG1 on
+    // the even rows, BG2 on the odd ones. Everything else is built off BG1.
+    bg_base: 0xffffff,    // BG1
+    bg_row_alt: 0xf8faff, // BG2
+    surface: 0xeef1fa,    // chips/hover — one step past BG2 so it still reads
     selected: 0xd4d6e9,   // the supplied periwinkle
-    // Chrome is the base colour exactly: the sidebar and tab strip are meant
-    // to read as one sheet with the commit list, not as darker panels. The
-    // edges that need to show are drawn as `selected`-coloured borders.
-    panel: 0xf8faff,
-    sidebar: 0xf8faff,
+    // Chrome is BG1 exactly: the sidebar and tab strip are meant to read as
+    // one sheet with the commit list, not as darker panels. The edges that
+    // need to show are drawn as `selected`-coloured borders.
+    panel: 0xffffff,
+    sidebar: 0xffffff,
     modal: 0xffffff,
     modal_overlay: 0x172540,
 

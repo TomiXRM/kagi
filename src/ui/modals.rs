@@ -112,6 +112,17 @@ pub struct PrMergeModal {
 
 /// State for a standalone stash **drop** confirmation (ADR-0087, Destructive).
 #[derive(Clone)]
+pub struct PushTagModal {
+    pub plan: std::sync::Arc<OperationPlan>,
+    pub error: Option<SharedString>,
+    /// Tag the plan was built for.
+    pub name: String,
+    /// Remote it will be published to.
+    pub remote: String,
+}
+
+/// State for a stash-drop confirmation.
+#[derive(Clone, Debug)]
 pub struct StashDropModal {
     pub plan: std::sync::Arc<OperationPlan>,
     pub error: Option<SharedString>,
@@ -596,6 +607,7 @@ pub enum ActiveModal {
     Amend(AmendPlanModal),
     Pop(PopPlanModal),
     StashDrop(StashDropModal),
+    PushTag(PushTagModal),
     PrMerge(PrMergeModal),
     Push(PushPlanModal),
     BranchPlan(BranchPlanModal),

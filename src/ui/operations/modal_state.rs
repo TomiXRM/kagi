@@ -12,7 +12,7 @@ use super::super::modals::{
     ConflictContinuePlanModal, CreateBranchModal, CreateTagModal, CreateWorktreeModal,
     DeleteBranchModal, DeleteRemoteBranchModal, DiscardModal, EditorDeleteConfirmModal,
     EditorDirtyGuardModal, EditorFsPromptModal, ForceLeasePushModal, HistoryPlanModal,
-    MergePlanModal, PopPlanModal, PrMergeModal, PullPlanModal, PushPlanModal,
+    MergePlanModal, PopPlanModal, PrMergeModal, PullPlanModal, PushPlanModal, PushTagModal,
     RebaseCurrentOntoModal, RenameBranchModal, ResetCurrentModal, RevertModal, SetUpstreamModal,
     StashApplyModal, StashDropModal, StashPushModal, SwitchToLatestPlanModal,
     TrackingCheckoutPlanModal, UnlockWorktreeModal,
@@ -116,6 +116,23 @@ impl KagiApp {
 
     pub fn clear_pr_merge_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::PrMerge(_))) {
+            self.active_modal = None;
+        }
+    }
+
+    pub fn push_tag_modal(&self) -> Option<&PushTagModal> {
+        match &self.active_modal {
+            Some(ActiveModal::PushTag(m)) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn set_push_tag_modal(&mut self, m: PushTagModal) {
+        self.active_modal = Some(ActiveModal::PushTag(m));
+    }
+
+    pub fn clear_push_tag_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::PushTag(_))) {
             self.active_modal = None;
         }
     }

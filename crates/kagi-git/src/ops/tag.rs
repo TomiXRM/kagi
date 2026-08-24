@@ -2,6 +2,12 @@ use super::*;
 use kagi_domain::plan_note::tag::TagNameError;
 use kagi_domain::plan_note::{TagNote, TagRecovery, TagTitle};
 
+/// The remote a tag push targets. `origin` when it exists, else the first
+/// configured remote — the same rule `plan_push` uses, so the two agree.
+fn tag_push_remote(repo: &Repository) -> Option<String> {
+    super::push::choose_push_remote(repo).ok()
+}
+
 // ────────────────────────────────────────────────────────────
 // plan_create_tag
 // ────────────────────────────────────────────────────────────
@@ -140,4 +146,119 @@ pub fn execute_create_tag(repo: &Repository, name: &str, at: &CommitId) -> Resul
     repo.tag_lightweight(name, &object, false)
         .map_err(|e| GitError::Other(format!("tag creation failed: {}", e.message())))?;
     Ok(())
+}
+
+// ────────────────────────────────────────────────────────────
+// plan_push_tag / execute_push_tag
+// ────────────────────────────────────────────────────────────
+
+/// Analyse publishing the local tag `name` to a remote.
+///
+/// **Guarded-class**: it does not touch HEAD, the index or the working tree,
+/// but it is the one tag action with an effect outside this machine, so the
+/// plan says so and the UI confirms it like any other write.
+///
+/// Not destructive, and deliberately not force: `git push <remote> <tag>`
+/// without `--force` is refused by the remote when the tag already exists
+/// there pointing elsewhere. That refusal is the safety property — kagi has no
+/// way to know what a moved tag would break for everyone who already fetched
+/// it, so the answer is to let the remote say no.
+///
+/// # Blocker conditions
+///
+/// - No local tag named `name`.
+/// - The repository has no remote configured.
+pub fn plan_push_tag(repo: &Repository, name: &str) -> Result<OperationPlan, GitError> {
+    let head = resolve_head(repo)?;
+    let status = working_tree_status(repo)?;
+    let head_display = head.display();
+    let dirty_display = if status.is_dirty() {
+        "dirty".to_string()
+    } else {
+        "clean".to_string()
+    };
+    let current = StateSummary {
+        head: head_display.clone(),
+        dirty: dirty_display.clone(),
+    };
+    let predicted = StateSummary {
+        head: head_display,
+        dirty: dirty_display,
+    };
+
+    let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
+
+    if repo.find_reference(&format!("refs/tags/{}", name)).is_err() {
+        blockers.push(PlanNote::Tag(TagNote::NotFound {
+            name: name.to_string(),
+        }));
+    }
+
+    let remote = tag_push_remote(repo);
+    if remote.is_none() {
+        blockers.push(PlanNote::Tag(TagNote::NoRemote));
+    }
+    let remote_name = remote.clone().unwrap_or_default();
+
+    if blockers.is_empty() {
+        warnings.push(PlanNote::Tag(TagNote::PushRemoteSideEffect {
+            remote: remote_name.clone(),
+            name: name.to_string(),
+        }));
+        warnings.push(PlanNote::Tag(TagNote::PushRejectedIfMoved {
+            name: name.to_string(),
+        }));
+    }
+
+    let recovery = remote.as_ref().map(|r| PlanRecovery {
+        kind: RecoveryKind::Tag(TagRecovery::PushTag {
+            name: name.to_string(),
+            remote: r.clone(),
+        }),
+        commands: vec![format!("git push {} --delete {}", r, name)],
+    });
+
+    Ok(OperationPlan {
+        disposition: PlanDisposition::for_blockers(&blockers),
+        title: PlanTitle::Tag(TagTitle::PushTag {
+            name: name.to_string(),
+            remote: remote_name,
+        }),
+        current,
+        predicted,
+        warnings,
+        blockers,
+        recovery,
+        head_at_plan: head,
+        stash_count_at_plan: 0,
+        preview_files: Vec::new(),
+        preview_commits: Vec::new(),
+        destructive: false,
+    })
+}
+
+/// Publish the local tag `name` to `remote` via `git push <remote> refs/tags/<name>`.
+///
+/// Shelled out through `run_git` like every other remote write, so the user's
+/// credential helper and SSH agent apply. The refspec is fully qualified so a
+/// branch of the same name can never be pushed by accident, and **no force
+/// flag is ever passed** — see `plan_push_tag`.
+pub fn execute_push_tag(repo_path: &Path, remote: &str, name: &str) -> Result<(), GitError> {
+    let refspec = format!("refs/tags/{}", name);
+    let out = run_git(repo_path, &["push", remote, &refspec])
+        .map_err(|e| GitError::Other(format!("push tag failed: {}", e)))?;
+    if out.status != 0 {
+        return Err(GitError::Other(format!(
+            "push tag failed (exit {}): {}",
+            out.status,
+            out.stderr.trim()
+        )));
+    }
+    Ok(())
+}
+
+/// The remote `plan_push_tag` would target, for the UI's menu label.
+pub fn push_tag_remote(repo: &Repository) -> Option<String> {
+    tag_push_remote(repo)
 }

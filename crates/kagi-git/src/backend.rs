@@ -433,6 +433,7 @@ impl Backend {
                 checkout_after,
             } => self.plan_create_branch_with_checkout(name, at, *checkout_after),
             Operation::CreateTag { name, at } => self.plan_create_tag(name, at),
+            Operation::PushTag { name, .. } => self.plan_push_tag(name),
             Operation::CreateWorktree {
                 branch,
                 path,
@@ -566,6 +567,9 @@ impl Backend {
             }
             Operation::CreateTag { name, at } => self
                 .execute_create_tag(name, at)
+                .map(|()| OperationOutcome::Unit),
+            Operation::PushTag { name, remote } => self
+                .execute_push_tag(remote, name)
                 .map(|()| OperationOutcome::Unit),
             Operation::CreateWorktree {
                 branch,
@@ -823,6 +827,19 @@ impl Backend {
 
     pub fn execute_create_tag(&self, name: &str, at: &CommitId) -> Result<(), GitError> {
         ops::execute_create_tag(&self.repo, name, at)
+    }
+
+    pub fn plan_push_tag(&self, name: &str) -> Result<OperationPlan, GitError> {
+        ops::plan_push_tag(&self.repo, name)
+    }
+
+    pub fn execute_push_tag(&self, remote: &str, name: &str) -> Result<(), GitError> {
+        ops::execute_push_tag(&self.path, remote, name)
+    }
+
+    /// The remote a tag push would target, for the menu label.
+    pub fn push_tag_remote(&self) -> Option<String> {
+        ops::push_tag_remote(&self.repo)
     }
 
     pub fn plan_create_branch_with_checkout(

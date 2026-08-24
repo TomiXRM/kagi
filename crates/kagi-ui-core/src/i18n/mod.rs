@@ -580,6 +580,21 @@ pub enum Msg {
     CleanupEmpty,
     /// Branch Cleanup: shown while the background scan is still running.
     CleanupScanning,
+    // ── Tag context menu / push (ADR-0140) ──
+    /// Tag menu: push item, `{}` = remote name.
+    TagPushTo,
+    /// Tag menu: push item when no remote is configured.
+    TagPush,
+    /// Tag menu: why the push item is disabled.
+    TagNoRemote,
+    /// Tag menu: copy the tag name.
+    TagCopyName,
+    /// Confirm button on the push-tag modal.
+    PushTagConfirm,
+    /// Status bar while the push runs.
+    BusyPushTag,
+    /// Status bar after it succeeds.
+    PushTagDone,
     /// Body message when no repository is open.
     CleanupNoRepo,
 
@@ -1384,6 +1399,20 @@ impl Msg {
             (Ja, PlanForcePushArmed) => "\u{26a0} 本当に force push しますか — 取り消せません",
             (En, PlanCancel) => "Cancel",
             (Ja, PlanCancel) => "キャンセル",
+            (En, TagPushTo) => "Push tag to {}",
+            (Ja, TagPushTo) => "タグを {} に push",
+            (En, TagPush) => "Push tag",
+            (Ja, TagPush) => "タグを push",
+            (En, TagNoRemote) => "no remote configured",
+            (Ja, TagNoRemote) => "リモートが設定されていません",
+            (En, TagCopyName) => "Copy tag name",
+            (Ja, TagCopyName) => "タグ名をコピー",
+            (En, PushTagConfirm) => "Push tag",
+            (Ja, PushTagConfirm) => "タグを push",
+            (En, BusyPushTag) => "Pushing tag…",
+            (Ja, BusyPushTag) => "タグを push 中…",
+            (En, PushTagDone) => "push-tag: done",
+            (Ja, PushTagDone) => "タグを push しました",
             (En, CleanupScanning) => "Scanning branches…",
             (Ja, CleanupScanning) => "ブランチを調べています…",
             (En, CleanupEmpty) => "No merged or stale branches — all clean.",

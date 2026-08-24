@@ -550,52 +550,16 @@ mod real_readme {
     use markdown::mdast::Node;
     use markdown::{to_mdast, ParseOptions};
 
-    /// The actual file that crashed the preview.
-    #[test]
-    #[ignore]
-    fn flattens_the_repository_readme() {
-        let src = std::fs::read_to_string(std::env::var("KAGI_MD_FILE").unwrap()).unwrap();
-        let before = count_multiline_html(&src);
-        let after = count_multiline_html(&flatten_html_blocks(&src));
-        println!("multi-line HTML blocks: {before} -> {after}");
-        assert!(before > 0, "README should exercise this");
-        assert_eq!(after, 0);
+    /// This repository's own README — the document that crashed the preview and
+    /// the one whose screenshots did not appear. Resolved from the manifest
+    /// directory so these run in CI; keying them off an env var made them
+    /// `#[ignore]`d, and an ignored test protects nothing.
+    fn readme() -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../README.md");
+        std::fs::read_to_string(path).expect("repository README")
     }
 
-    fn count_multiline_html(md: &str) -> usize {
-        fn walk(n: &Node, out: &mut usize) {
-            if let Node::Html(h) = n {
-                if h.value.contains('\n') {
-                    *out += 1;
-                }
-            }
-            if let Some(c) = n.children() {
-                for x in c {
-                    walk(x, out);
-                }
-            }
-        }
-        let root = to_mdast(md, &ParseOptions::gfm()).unwrap();
-        let mut n = 0;
-        walk(&root, &mut n);
-        n
-    }
-}
-
-#[cfg(test)]
-mod readme_coverage {
-    use super::*;
-    use markdown::mdast::Node;
-    use markdown::{to_mdast, ParseOptions};
-
-    /// How many of the repository README's images the plugin claims, after
-    /// flattening. Reads the README by path, so it is `#[ignore]`d — the
-    /// `readme_shapes` sample covers the same ground in CI.
-    #[test]
-    #[ignore]
-    fn count_claimed_in_the_repository_readme() {
-        let src = std::fs::read_to_string(std::env::var("KAGI_MD_FILE").unwrap()).unwrap();
-        let flat = flatten_html_blocks(&src);
+    fn nodes(md: &str) -> Vec<Node> {
         fn walk(n: &Node, out: &mut Vec<Node>) {
             out.push(n.clone());
             if let Some(c) = n.children() {
@@ -604,17 +568,64 @@ mod readme_coverage {
                 }
             }
         }
-        let root = to_mdast(&flat, &ParseOptions::gfm()).unwrap();
-        let mut all = Vec::new();
-        walk(&root, &mut all);
-        let claimed: Vec<String> = all
+        let root = to_mdast(md, &ParseOptions::gfm()).expect("parse");
+        let mut out = Vec::new();
+        walk(&root, &mut out);
+        out
+    }
+
+    /// No raw HTML block reaches the shaper with a newline in it.
+    #[test]
+    fn the_repository_readme_has_no_multiline_html_left() {
+        let src = readme();
+        let before = nodes(&src)
+            .iter()
+            .filter(|n| matches!(n, Node::Html(h) if h.value.contains('\n')))
+            .count();
+        assert!(
+            before > 0,
+            "the README no longer exercises this — re-point the test"
+        );
+        let after = nodes(&flatten_html_blocks(&src))
+            .iter()
+            .filter(|n| matches!(n, Node::Html(h) if h.value.contains('\n')))
+            .count();
+        assert_eq!(after, 0, "{before} multi-line HTML blocks survived");
+    }
+
+    /// Every local image the README declares is actually claimed by the plugin.
+    ///
+    /// This is the test that would have caught the centring wrapper: before it
+    /// was handled, 9 of the README's `<img>` tags were parsed by the generic
+    /// HTML renderer, which resolves `src` as a URI and so drew nothing for a
+    /// repository-relative path. Counting was not enough — the old version of
+    /// this test printed a number and asserted nothing.
+    #[test]
+    fn every_local_image_in_the_repository_readme_is_claimed() {
+        let src = readme();
+        let declared: Vec<String> = src
+            .match_indices("<img src=\"")
+            .map(|(i, m)| {
+                let rest = &src[i + m.len()..];
+                rest[..rest.find('"').unwrap_or(0)].to_string()
+            })
+            .filter(|u| !has_uri_scheme(u))
+            .collect();
+        assert!(
+            !declared.is_empty(),
+            "the README no longer exercises this — re-point the test"
+        );
+
+        let claimed: Vec<String> = nodes(&flatten_html_blocks(&src))
             .iter()
             .flat_map(standalone_images)
             .map(|i| i.url)
             .collect();
-        println!("claimed {} images:", claimed.len());
-        for u in &claimed {
-            println!("  {u}");
+        for url in &declared {
+            assert!(
+                claimed.contains(url),
+                "{url} is declared in the README but never claimed, so it renders as a gap"
+            );
         }
     }
 }

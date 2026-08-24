@@ -23,6 +23,7 @@ mod resolve;
 
 pub use resolve::MarkdownImageBase;
 
+use crate::theme;
 use extract::{has_uri_scheme, single_line, standalone_images};
 
 /// Plugin applied to every Kagi Markdown `TextView`.
@@ -60,6 +61,9 @@ struct BlockImage {
     alt: SharedString,
     title: Option<SharedString>,
     link: Option<SharedString>,
+    /// `width` / `height` the document asked for, in CSS pixels.
+    width: Option<f32>,
+    height: Option<f32>,
 }
 
 #[derive(Clone, Debug)]
@@ -112,6 +116,8 @@ impl MarkdownPlugin for MarkdownImages {
                 alt: single_line(&image.alt).into(),
                 title: image.title.as_deref().map(|t| single_line(t).into()),
                 link: image.link.clone().map(Into::into),
+                width: image.width,
+                height: image.height,
             });
         }
         let image = &parsed[0];
@@ -150,6 +156,13 @@ fn render_block_image(image: BlockImage) -> impl IntoElement {
     let link = image.link.clone();
     img(image.image_source())
         .object_fit(ObjectFit::Contain)
+        // Honour `<img width=…>`: the icon a README sizes to 120px should be
+        // 120px, not scaled up to fill the box. Scaled with the UI so it keeps
+        // its proportion to the surrounding text at any zoom, and still capped
+        // by the constraints below, so `width="900"` in a narrow pane shrinks
+        // rather than overflowing.
+        .when_some(image.width, |el, w| el.w(theme::scaled_px(w)))
+        .when_some(image.height, |el, h| el.h(theme::scaled_px(h)))
         // Constrain, never force — the same shape the diff pane's image viewer
         // uses. A fixed height would letterbox a wide screenshot correctly but
         // scale a small image *up* to match it: `ObjectFit::Contain` fills the

@@ -7,12 +7,16 @@
 
 use gpui_component::text::markdown_ast;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub(super) struct ParsedImage {
     pub url: String,
     pub alt: String,
     pub title: Option<String>,
     pub link: Option<String>,
+    /// `width` / `height` from an HTML `<img>`, in CSS pixels. Markdown's own
+    /// `![]()` syntax has nowhere to put them, so they are `None` there.
+    pub width: Option<f32>,
+    pub height: Option<f32>,
 }
 
 /// Every image in a block that is *only* images — empty when the node is
@@ -40,6 +44,8 @@ fn standalone_image(node: &markdown_ast::Node) -> Option<ParsedImage> {
                     alt: image.alt.clone(),
                     title: image.title.clone(),
                     link: None,
+                    width: None,
+                    height: None,
                 }),
                 markdown_ast::Node::Link(link) => {
                     let [markdown_ast::Node::Image(image)] = link.children.as_slice() else {
@@ -50,6 +56,8 @@ fn standalone_image(node: &markdown_ast::Node) -> Option<ParsedImage> {
                         alt: image.alt.clone(),
                         title: image.title.clone(),
                         link: Some(link.url.clone()),
+                        width: None,
+                        height: None,
                     })
                 }
                 _ => None,
@@ -80,6 +88,8 @@ fn html_images(value: &str) -> Vec<ParsedImage> {
                 alt: html_attribute(attrs, "alt").unwrap_or_default(),
                 title: html_attribute(attrs, "title"),
                 link: None,
+                width: html_length(attrs, "width"),
+                height: html_length(attrs, "height"),
             }),
             // An `<img>` with no `src` is not something we can draw; leave the
             // whole block to the HTML renderer rather than dropping one image.
@@ -88,6 +98,19 @@ fn html_images(value: &str) -> Vec<ParsedImage> {
         at = end;
     }
     out
+}
+
+/// An HTML length attribute in CSS pixels.
+///
+/// `width="120"` and `width="120px"` are the forms a README uses. A percentage
+/// is deliberately ignored: it means "of the container", and the image is
+/// already capped to the container width, so honouring it would need layout
+/// this extractor does not have.
+fn html_length(attrs: &str, wanted: &str) -> Option<f32> {
+    let raw = html_attribute(attrs, wanted)?;
+    let value = raw.trim().strip_suffix("px").unwrap_or(raw.trim());
+    let parsed = value.parse::<f32>().ok()?;
+    (parsed.is_finite() && parsed > 0.0).then_some(parsed)
 }
 
 /// Whether anything outside `<…>` tags is more than whitespace.
@@ -203,6 +226,25 @@ mod tests {
         assert!(!single_line("a\nb").contains('\n'));
     }
 
+    /// `<img width="120">` is how a README sizes an icon, and ignoring it
+    /// meant `ObjectFit::Contain` scaled that icon up to fill the box instead
+    /// (user request).
+    #[test]
+    fn reads_width_and_height_attributes() {
+        let one = |html: &str| html_images(html).into_iter().next().unwrap();
+        let img = one(r#"<img src="a.png" width="120" height="60" />"#);
+        assert_eq!((img.width, img.height), (Some(120.0), Some(60.0)));
+        // The `px` suffix is accepted; a percentage is not, because it means
+        // "of the container" and the image is already capped to that.
+        assert_eq!(one(r#"<img src="a.png" width="80px" />"#).width, Some(80.0));
+        assert_eq!(one(r#"<img src="a.png" width="50%" />"#).width, None);
+        // Nonsense and non-positive values fall back to the natural size.
+        assert_eq!(one(r#"<img src="a.png" width="wide" />"#).width, None);
+        assert_eq!(one(r#"<img src="a.png" width="0" />"#).width, None);
+        assert_eq!(one(r#"<img src="a.png" width="-5" />"#).width, None);
+        assert_eq!(one(r#"<img src="a.png" />"#).width, None);
+    }
+
     #[test]
     fn parses_standalone_html_image_attributes() {
         assert_eq!(
@@ -212,6 +254,8 @@ mod tests {
                 alt: "Kagi UI".to_string(),
                 title: None,
                 link: None,
+                width: Some(900.0),
+                height: None,
             }]
         );
         // A centring wrapper is the common README shape and IS claimed — it
@@ -223,6 +267,8 @@ mod tests {
                 alt: String::new(),
                 title: None,
                 link: None,
+                width: None,
+                height: None,
             }]
         );
         // Prose of its own means this is text that contains an image, so the

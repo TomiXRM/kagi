@@ -281,8 +281,11 @@ pub(crate) fn render_update_modal(
                 .child(
                     gpui_component::text::TextView::markdown(
                         "update-notes-md",
-                        SharedString::from(plan.notes.clone()),
+                        SharedString::from(kagi_ui_core::markdown::flatten_html_blocks(
+                            &plan.notes,
+                        )),
                     )
+                    .plugin(kagi_ui_core::markdown::MarkdownImages::remote())
                     .scrollable(true)
                     .style(tv_style),
                 ),

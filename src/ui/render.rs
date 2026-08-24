@@ -149,6 +149,16 @@ impl Render for KagiApp {
         // ADR-0121 B2: promote a headless-staged diff (KAGI_OPEN_FIRST_FILE
         // runs before any gpui context exists) into the pane entity on the
         // first frame. Always `None` in the GUI paths.
+        // KAGI_MD_PREVIEW: open the Editor on a Markdown file with preview on.
+        if let Some(path) = self.pending_headless_md_preview.take() {
+            self.open_editor_workspace(cx);
+            if let Some(ev) = self.editor_workspace.clone() {
+                ev.update(cx, |v, cx| {
+                    v.open_tab(path, cx);
+                    v.set_markdown_preview(true, cx);
+                });
+            }
+        }
         if let Some(view) = self.pending_headless_diff.take() {
             let weak = cx.weak_entity();
             self.main_diff = Some(cx.new(|_| MainDiffPane::new(view, weak)));

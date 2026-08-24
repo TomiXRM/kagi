@@ -195,6 +195,9 @@ pub fn render_markdown_preview(
     use gpui_component::ActiveTheme as _;
 
     let content = view.content.clone().unwrap_or_default();
+    let image_plugin = view.open_path.as_deref().map(|path| {
+        kagi_ui_core::markdown::MarkdownImages::for_repo_file(view.repo_path.clone(), path)
+    });
     let dark = theme().dark;
     // One text size for the whole preview, tracking kagi's zoom
     // (`rem_size_px` = 16 × zoom). Out of the box the three size sources
@@ -238,10 +241,20 @@ pub fn render_markdown_preview(
                 // refinement) lets the segment take its intrinsic height so
                 // the outer `overflow_y_scroll` works.
                 col = col.child(
-                    TextView::markdown(("ews-md-seg", ix), SharedString::from(pad_inline_code(&t)))
-                        .selectable(true)
-                        .style(tv_style.clone())
-                        .h(gpui::Length::Auto),
+                    TextView::markdown(
+                        ("ews-md-seg", ix),
+                        // Flatten first: a multi-line raw HTML block —
+                        // README's centred screenshots, any `<details>` —
+                        // reaches GPUI's shaper with its newlines and
+                        // aborts the process. See `flatten_html_blocks`.
+                        SharedString::from(kagi_ui_core::markdown::flatten_html_blocks(
+                            &pad_inline_code(&t),
+                        )),
+                    )
+                    .when_some(image_plugin.clone(), |view, plugin| view.plugin(plugin))
+                    .selectable(true)
+                    .style(tv_style.clone())
+                    .h(gpui::Length::Auto),
                 );
             }
             MdSegment::Mermaid(code) => {

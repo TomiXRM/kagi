@@ -21,13 +21,13 @@ src/ui/conflict_editor.rs 1328
 src/ui/conflict_view.rs 1983
 src/ui/diff_view.rs 1427
 src/ui/inspector.rs 1053
-src/ui/mod.rs 3925
+src/ui/mod.rs 3932
 src/ui/operations/branch.rs 1635
 src/ui/operations/commit.rs 1233
 src/ui/operations/conflict.rs 843
 src/ui/operations/modal_state.rs 953
 src/ui/pr_mode.rs 1799
-src/ui/render.rs 888
+src/ui/render.rs 898
 src/ui/sidebar.rs 1978
 src/ui/tabs.rs 1164
 src/ui/workspace.rs 1047

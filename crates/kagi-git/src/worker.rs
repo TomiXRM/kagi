@@ -238,5 +238,10 @@ mod tests {
             "stale plan should be rejected by preflight: {:?}",
             result
         );
+        // …and the refusal must be a real no-op: the branch was never created.
+        assert!(
+            !backend.local_branch_exists("before-stale"),
+            "a rejected plan must not create the branch"
+        );
     }
 }

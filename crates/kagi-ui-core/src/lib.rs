@@ -20,5 +20,6 @@ pub mod markdown;
 pub mod settings;
 pub mod theme;
 pub mod theme_apple;
+pub mod theme_flower_road;
 pub mod time;
 pub mod time_parse;

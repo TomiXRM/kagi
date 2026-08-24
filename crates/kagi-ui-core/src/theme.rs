@@ -1766,8 +1766,11 @@ const DRACULA: Theme = Theme {
 // every text role. That split is the whole design: the palette's character
 // lives in the lane colours, its legibility in the derived text ramp.
 //
-// The palette's original #d4d6e9 background is now `selected` — on a white
-// base it reads as a highlight, and keeps the periwinkle visible in the UI.
+// Selection is the #95c0aa green. It sits deeper than a straight hue-swap of
+// the periwinkle it replaced would: at equal lightness it landed 21 (channel
+// sum) from `diff_added_bg`, and with both now green there is no hue left to
+// tell "selected row" from "added line" in a diff. At L=0.82 the gap is 61 and
+// text still reads at 10.6:1 — the same as the old navy.
 const PERIWINKLE: Theme = Theme {
     slug: "periwinkle",
     name: "Periwinkle",
@@ -1778,7 +1781,7 @@ const PERIWINKLE: Theme = Theme {
     bg_base: 0xffffff,    // BG1
     bg_row_alt: 0xf8faff, // BG2
     surface: 0xeef1fa,    // chips/hover — one step past BG2 so it still reads
-    selected: 0xd4d6e9,   // the supplied periwinkle
+    selected: 0xc5ddd1,   // #95c0aa at L=0.82
     // Chrome is BG1 exactly: the sidebar and tab strip are meant to read as
     // one sheet with the commit list, not as darker panels. The edges that
     // need to show are drawn as `selected`-coloured borders.

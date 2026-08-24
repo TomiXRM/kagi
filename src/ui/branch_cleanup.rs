@@ -506,34 +506,34 @@ fn format_date(secs: i64) -> String {
     format!("{:04}-{:02}-{:02}", y, m, d)
 }
 
-/// A tick box. Deliberately a glyph rather than a real control: the table is
-/// dense and uniform-height, and the two states have to read at 26px.
+/// A tick box for one table row.
+///
+/// `gpui_component::checkbox::Checkbox` — the same widget the create-branch
+/// modal adopted in W12-GCADOPT, rather than a hand-drawn one. This started as
+/// the ☐/☑ glyph pair and the box visibly changed size when ticked (user
+/// report): they are two different characters with different advance widths.
+/// Drawing a box by hand would have fixed that too, but the app already has a
+/// checkbox and a second one would only drift from it.
+///
+/// `Checkbox::on_click` hands back the new state and takes `&mut App`, not
+/// `&mut Context`, so the caller routes it through the `KagiApp` entity — same
+/// shape as `modal_renderers_create.rs`.
 fn check_box(
-    id: impl Into<gpui::ElementId>,
+    id: impl Into<gpui::SharedString>,
     checked: bool,
-    handler: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+    on_click: impl Fn(&bool, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> gpui::AnyElement {
     div()
-        .id(id)
         .w(theme::scaled_px(CLEANUP_CHECK_W))
         .flex_shrink_0()
         .flex()
         .flex_row()
         .items_center()
-        .text_xs()
-        .cursor_pointer()
-        .text_color(rgb(if checked {
-            theme().color_branch
-        } else {
-            theme().text_muted
-        }))
-        .hover(|s| s.text_color(rgb(theme().color_branch)))
-        .on_click(handler)
-        .child(SharedString::from(if checked {
-            "\u{2611}"
-        } else {
-            "\u{2610}"
-        }))
+        .child(
+            gpui_component::checkbox::Checkbox::new(id.into())
+                .checked(checked)
+                .on_click(on_click),
+        )
         .into_any_element()
 }
 
@@ -717,9 +717,10 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
         .border_b_1()
         .border_color(rgb(theme().surface))
         .child(check_box("cleanup-select-all", all_selected, {
-            cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-                this.toggle_cleanup_select_all(cx);
-            })
+            let app_entity = cx.entity();
+            move |_new: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {
+                app_entity.update(cx, |this, cx| this.toggle_cleanup_select_all(cx));
+            }
         }))
         .child(col_label(cols.0[0], Msg::CleanupColBranch))
         .child(col_divider(0))
@@ -1010,10 +1011,12 @@ fn build_cleanup_row(
         // delete plan then quietly drops.
         .children(row.delete_target().is_some().then(|| {
             let name = row.name.clone();
-            check_box(("cleanup-check", i), selected, {
-                cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-                    this.toggle_cleanup_selection(name.clone(), cx);
-                })
+            check_box(format!("cleanup-check-{i}"), selected, {
+                let app_entity = cx.entity();
+                move |_new: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {
+                    let name = name.clone();
+                    app_entity.update(cx, |this, cx| this.toggle_cleanup_selection(name, cx));
+                }
             })
         }))
         .children((row.delete_target().is_none()).then(|| {

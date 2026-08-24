@@ -377,7 +377,7 @@ mod badge_priority_tests {
     /// Order is HeadBranch → Branch → Tag → Remote, rendered left-to-right.
     #[test]
     fn priority_orders_head_branch_first_remote_last() {
-        let mut kinds = vec![
+        let mut kinds = [
             BadgeKind::Remote,
             BadgeKind::Tag,
             BadgeKind::HeadBranch,

@@ -1045,8 +1045,6 @@ fn stat_for_index<'a>(
     find_stat(stats?, &fs.path)
 }
 
-/// Change-kind badge char and colour. `None` (T-WS-EDITOR-004: an unmodified
-
 #[cfg(test)]
 mod parse_author_tests {
     use super::parse_author;

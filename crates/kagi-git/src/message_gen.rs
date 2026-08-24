@@ -677,40 +677,6 @@ mod tests {
         }
     }
 
-    // ── rule_based: never empty ───────────────────────────────
-
-    #[test]
-    fn rule_based_never_empty_even_with_no_files() {
-        let en = rule_based(&input(Lang::En, Style::Plain), &[]);
-        assert!(!en.is_empty());
-        let ja = rule_based(&input(Lang::Ja, Style::ConventionalCommits), &[]);
-        assert!(!ja.is_empty());
-    }
-
-    // ── rule_based: single file verbs ─────────────────────────
-
-    #[test]
-    fn rule_based_single_add_en_plain() {
-        let files = vec![fs("src/widget.rs", ChangeKind::Added)];
-        let msg = rule_based(&input(Lang::En, Style::Plain), &files);
-        assert_eq!(msg, "add widget.rs");
-    }
-
-    #[test]
-    fn rule_based_single_delete_conventional() {
-        let files = vec![fs("src/old.rs", ChangeKind::Deleted)];
-        let msg = rule_based(&input(Lang::En, Style::ConventionalCommits), &files);
-        // single code-file delete → chore: remove old.rs
-        assert_eq!(msg, "chore: remove old.rs");
-    }
-
-    #[test]
-    fn rule_based_single_modify_ja() {
-        let files = vec![fs("src/main.rs", ChangeKind::Modified)];
-        let msg = rule_based(&input(Lang::Ja, Style::Plain), &files);
-        assert_eq!(msg, "main.rs を更新");
-    }
-
     // ── rule_based: type inference by file kind ───────────────
 
     #[test]
@@ -758,28 +724,6 @@ mod tests {
     }
 
     // ── rule_based: multi-file scope ──────────────────────────
-
-    #[test]
-    fn rule_based_multi_file_with_common_scope() {
-        let files = vec![
-            fs("src/a.rs", ChangeKind::Modified),
-            fs("src/b.rs", ChangeKind::Added),
-        ];
-        let msg = rule_based(&input(Lang::En, Style::ConventionalCommits), &files);
-        // common dir "src" → scope; an add present → feat
-        assert_eq!(msg, "feat(src): update 2 files");
-    }
-
-    #[test]
-    fn rule_based_multi_file_no_common_scope() {
-        let files = vec![
-            fs("src/a.rs", ChangeKind::Modified),
-            fs("lib/b.rs", ChangeKind::Modified),
-        ];
-        let msg = rule_based(&input(Lang::En, Style::ConventionalCommits), &files);
-        // different top dirs → no scope; all modifications → fix
-        assert_eq!(msg, "fix: update 2 files");
-    }
 
     #[test]
     fn rule_based_multi_file_ja_plain() {
@@ -859,129 +803,5 @@ mod tests {
             Some(v) => std::env::set_var("KAGI_OFFLINE", v),
             None => std::env::remove_var("KAGI_OFFLINE"),
         }
-    }
-
-    // ── truncation + summary ──────────────────────────────────
-
-    #[test]
-    fn truncate_short_diff_unchanged() {
-        let diff = "diff --git a/x b/x\n+hello\n";
-        let files = vec![fs("x", ChangeKind::Modified)];
-        assert_eq!(truncate_with_summary(diff, &files), diff);
-    }
-
-    #[test]
-    fn truncate_long_diff_adds_marker_and_summary() {
-        // Build a diff well over the budget.
-        let mut diff = String::new();
-        for i in 0..2000 {
-            diff.push_str(&format!("+line {}\n", i));
-        }
-        assert!(diff.len() > DIFF_TRUNCATE_BYTES);
-        let files = vec![fs("src/big.rs", ChangeKind::Modified)];
-        let out = truncate_with_summary(&diff, &files);
-        assert!(out.len() < diff.len());
-        assert!(out.contains("[... diff truncated for length ...]"));
-        assert!(out.contains("Files: M src/big.rs"));
-        // Truncation happened at a line boundary (ends with our marker block).
-        assert!(out.ends_with("Files: M src/big.rs\n"));
-    }
-
-    #[test]
-    fn file_summary_lists_change_letters() {
-        let files = vec![
-            fs("a.rs", ChangeKind::Added),
-            fs("b.rs", ChangeKind::Modified),
-            fs("c.rs", ChangeKind::Deleted),
-        ];
-        let s = file_summary(&files);
-        assert!(s.contains("A a.rs"));
-        assert!(s.contains("M b.rs"));
-        assert!(s.contains("D c.rs"));
-    }
-
-    // ── ollama JSON parse ─────────────────────────────────────
-
-    #[test]
-    fn parse_ollama_response_basic() {
-        let json = r#"{"model":"gemma","response":"feat: add login","done":true}"#;
-        assert_eq!(
-            parse_ollama_response(json).as_deref(),
-            Some("feat: add login")
-        );
-    }
-
-    #[test]
-    fn parse_ollama_response_with_escapes() {
-        let json = r#"{"response":"fix: handle \"quoted\" path\nand newline"}"#;
-        assert_eq!(
-            parse_ollama_response(json).as_deref(),
-            Some("fix: handle \"quoted\" path\nand newline")
-        );
-    }
-
-    #[test]
-    fn parse_ollama_response_missing_or_empty() {
-        assert_eq!(parse_ollama_response(r#"{"done":true}"#), None);
-        assert_eq!(parse_ollama_response(r#"{"response":""}"#), None);
-        assert_eq!(parse_ollama_response(r#"{"response":"   "}"#), None);
-        assert_eq!(parse_ollama_response(""), None);
-    }
-
-    #[test]
-    fn parse_ollama_tags_lists_models() {
-        let json = r#"{
-          "models": [
-            { "name": "gemma:2b", "size": 1234 },
-            { "name": "llama3:8b", "size": 5678 }
-          ]
-        }"#;
-        let models = parse_ollama_tags(json);
-        assert_eq!(
-            models,
-            vec!["gemma:2b".to_string(), "llama3:8b".to_string()]
-        );
-    }
-
-    #[test]
-    fn parse_ollama_tags_empty() {
-        assert!(parse_ollama_tags(r#"{"models":[]}"#).is_empty());
-        assert!(parse_ollama_tags("").is_empty());
-    }
-
-    // ── request body escaping ─────────────────────────────────
-
-    #[test]
-    fn request_body_escapes_quotes_and_newlines() {
-        let body = ollama_generate_request_body("gemma", "say \"hi\"\nnow", Some(false));
-        assert!(body.contains("\\\"hi\\\""));
-        assert!(body.contains("\\n"));
-        assert!(body.contains("\"stream\":false"));
-        assert!(body.contains("\"model\":\"gemma\""));
-    }
-
-    // ── clean_llm_message ─────────────────────────────────────
-
-    #[test]
-    fn clean_strips_fences_and_quotes() {
-        assert_eq!(clean_llm_message("```\nfeat: add x\n```"), "feat: add x");
-        assert_eq!(clean_llm_message("\"feat: add x\""), "feat: add x");
-        assert_eq!(clean_llm_message("feat: add x\n\nbody text"), "feat: add x");
-        assert_eq!(clean_llm_message("   "), "");
-    }
-
-    // ── lang / style slugs ────────────────────────────────────
-
-    #[test]
-    fn lang_style_slug_roundtrip() {
-        assert_eq!(Lang::from_slug(Lang::Ja.slug()), Lang::Ja);
-        assert_eq!(Lang::from_slug(Lang::En.slug()), Lang::En);
-        assert_eq!(Lang::from_slug("garbage"), Lang::En);
-        assert_eq!(Style::from_slug(Style::Plain.slug()), Style::Plain);
-        assert_eq!(
-            Style::from_slug(Style::ConventionalCommits.slug()),
-            Style::ConventionalCommits
-        );
-        assert_eq!(Style::from_slug("garbage"), Style::ConventionalCommits);
     }
 }

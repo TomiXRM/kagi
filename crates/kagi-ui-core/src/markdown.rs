@@ -118,16 +118,23 @@ impl MarkdownPlugin for MarkdownImages {
         } else {
             ImageBlockSource::Local(self.base.as_ref()?.resolve(&image.url)?)
         };
+        // Sanitized here, not just at `.text()`: `alt` reaches the fallback
+        // element and `title` the tooltip, and both are shaped as one line too.
         let block = ImageBlock {
             source,
-            alt: image.alt.clone().into(),
-            title: image.title.map(Into::into),
+            alt: single_line(&image.alt).into(),
+            title: image.title.as_deref().map(|t| single_line(t).into()),
             link: image.link.map(Into::into),
         };
+        // Both of these are shaped as a single line by GPUI, which panics on a
+        // newline ("text argument should not contain newlines"). A standalone
+        // `<img …/>` HTML block reaches us with its trailing newline attached —
+        // `html_image` trims before matching, `node_source` does not — so
+        // previewing a README that centres its hero image crashed the app.
         Some(
             MarkdownNode::new(self.name(), block)
-                .text(image.alt.clone())
-                .markdown(cx.node_source(node).unwrap_or_default().to_string()),
+                .text(single_line(&image.alt))
+                .markdown(single_line(cx.node_source(node).unwrap_or_default())),
         )
     }
 
@@ -283,6 +290,15 @@ fn html_attribute(attrs: &str, wanted: &str) -> Option<String> {
     None
 }
 
+/// Collapse a string to something safe to shape as one line.
+///
+/// Every run of whitespace containing a newline becomes a single space, and
+/// the result is trimmed. GPUI's text system panics rather than wrapping, so
+/// anything handed to it has to be single-line by construction.
+fn single_line(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn has_uri_scheme(value: &str) -> bool {
     let Some((scheme, _)) = value.split_once(':') else {
         return false;
@@ -386,6 +402,21 @@ mod tests {
         .is_none());
     }
 
+    /// The crash this guards: a standalone `<img …/>` block arrives with its
+    /// trailing newline, and GPUI panics when asked to shape text containing
+    /// one. Anything handed to `MarkdownNode` must survive that.
+    #[test]
+    fn single_line_strips_every_newline() {
+        assert_eq!(
+            single_line("<img src=\"a.png\" />\n"),
+            "<img src=\"a.png\" />"
+        );
+        assert_eq!(single_line("alt\nover\r\ntwo lines"), "alt over two lines");
+        assert_eq!(single_line("  padded  "), "padded");
+        assert_eq!(single_line(""), "");
+        assert!(!single_line("a\nb").contains('\n'));
+    }
+
     #[test]
     fn parses_standalone_html_image_attributes() {
         assert_eq!(
@@ -398,5 +429,160 @@ mod tests {
             })
         );
         assert_eq!(html_image("<div><img src='nested.png'></div>"), None);
+    }
+}
+
+/// Markdown-image behaviour against a document shaped like a real README.
+///
+/// The plugin's own `parse` needs a `MarkdownParseContext` only the renderer
+/// can build, so these drive the same AST through the same `standalone_image`
+/// / `single_line` / `resolve` functions that `parse` calls. That is enough to
+/// catch the class of bug that crashed the preview: a node whose text carries
+/// a newline into GPUI's shaper.
+#[cfg(test)]
+mod readme_shapes {
+    use super::*;
+    use markdown::{to_mdast, ParseOptions};
+    use markdown_ast::Node;
+
+    /// Every construct a README actually uses, including the ones that bit us.
+    const SAMPLE: &str = r#"<div align="center">
+
+<img src="assets/icon/icon_256x256.png" width="120" alt="Kagi icon" />
+
+# kagi
+
+[![Release](https://img.shields.io/github/v/release/o/r)](https://github.com/o/r/releases)
+[![Stars](https://img.shields.io/github/stars/o/r)](https://github.com/o/r/stargazers)
+![Platform](https://img.shields.io/badge/platform-macOS-blue)
+
+<img src="docs/images/hero.png" width="900" alt="A very long alt describing the screenshot in one line" />
+
+</div>
+
+## Screenshots
+
+![Repo-relative screenshot](docs/images/shot.png)
+
+![Root-relative screenshot](/docs/images/shot.png "With a title")
+
+[![Linked screenshot](docs/images/shot.png)](https://example.com)
+
+Some prose with an ![inline image](docs/images/shot.png) inside it.
+
+- ![in a list](docs/images/shot.png)
+
+![remote](https://example.com/a.png)
+
+<img
+  src="docs/images/wide.png"
+  alt="An img tag split over several lines"
+/>
+"#;
+
+    fn nodes(md: &str) -> Vec<Node> {
+        fn walk(node: &Node, out: &mut Vec<Node>) {
+            out.push(node.clone());
+            if let Some(children) = node.children() {
+                for c in children {
+                    walk(c, out);
+                }
+            }
+        }
+        let root = to_mdast(md, &ParseOptions::gfm()).expect("parse");
+        let mut out = Vec::new();
+        walk(&root, &mut out);
+        out
+    }
+
+    /// The regression. A standalone `<img …/>` block arrives with its trailing
+    /// newline; handing that to GPUI panicked with "text argument should not
+    /// contain newlines" the moment a README was previewed.
+    #[test]
+    fn nothing_the_plugin_produces_contains_a_newline() {
+        let mut claimed = 0;
+        for node in nodes(SAMPLE) {
+            let Some(image) = standalone_image(&node) else {
+                continue;
+            };
+            claimed += 1;
+            // `parse` also feeds `.markdown(cx.node_source(node))`, which is
+            // the raw source slice for the node — trailing newline included.
+            // That is where the panic came from, so the test has to slice the
+            // document the same way rather than only checking AST fields.
+            let source = node
+                .position()
+                .map(|p| SAMPLE[p.start.offset..p.end.offset].to_string())
+                .unwrap_or_default();
+            assert!(
+                source.contains('\n') || !source.is_empty(),
+                "sanity: a node source was empty"
+            );
+            for field in [
+                single_line(&image.alt),
+                single_line(&image.url),
+                single_line(image.title.as_deref().unwrap_or("")),
+                single_line(image.link.as_deref().unwrap_or("")),
+                single_line(&source),
+            ] {
+                assert!(!field.contains('\n'), "newline survived in {field:?}");
+                assert!(
+                    !field.contains('\r'),
+                    "carriage return survived in {field:?}"
+                );
+            }
+        }
+        assert!(
+            claimed >= 6,
+            "sample should exercise the block path: {claimed}"
+        );
+    }
+
+    /// A badge strip is consecutive lines, so Markdown makes it ONE paragraph
+    /// with several children — the plugin must leave it to the inline renderer
+    /// or a README's header turns into a column of 360px blocks.
+    #[test]
+    fn badge_strip_and_inline_images_stay_inline() {
+        let claimed: Vec<String> = nodes(SAMPLE)
+            .iter()
+            .filter_map(standalone_image)
+            .map(|i| i.alt)
+            .collect();
+
+        for inline_only in ["Release", "Stars", "Platform", "inline image"] {
+            assert!(
+                !claimed.iter().any(|a| a == inline_only),
+                "{inline_only:?} is inline and must not become a block: {claimed:?}"
+            );
+        }
+        for block in [
+            "Kagi icon",
+            "Repo-relative screenshot",
+            "Root-relative screenshot",
+            "Linked screenshot",
+            "remote",
+        ] {
+            assert!(
+                claimed.iter().any(|a| a == block),
+                "{block:?} should be a block: {claimed:?}"
+            );
+        }
+    }
+
+    /// The paths a README uses resolve where a reader expects, and nothing
+    /// resolves outside the repository.
+    #[test]
+    fn readme_paths_resolve_inside_the_repository() {
+        let base = MarkdownImageBase::repo_file("/repo", Path::new("docs/guide/readme.md"));
+        assert_eq!(
+            base.resolve("images/shot.png"),
+            Some(PathBuf::from("/repo/docs/guide/images/shot.png"))
+        );
+        assert_eq!(
+            base.resolve("/assets/logo.png"),
+            Some(PathBuf::from("/repo/assets/logo.png"))
+        );
+        assert_eq!(base.resolve("../../../etc/passwd"), None);
+        assert_eq!(base.resolve("https://example.com/a.png"), None);
     }
 }

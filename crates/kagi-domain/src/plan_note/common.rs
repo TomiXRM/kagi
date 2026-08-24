@@ -283,35 +283,38 @@ mod tests {
 
     #[test]
     fn conflicted_files_all_phrases() {
+        // `count` varies across rows so it stays observable — a hardcoded
+        // count would pass a uniform table.
         let cases = [
-            (OpPhrase::UndoingACommit, "undoing a commit"),
-            (OpPhrase::Amending, "amending"),
-            (OpPhrase::Undo, "undo"),
-            (OpPhrase::Redo, "redo"),
-            (OpPhrase::Checkout, "checkout"),
-            (OpPhrase::Switching, "switching"),
-            (OpPhrase::CherryPicking, "cherry-picking"),
-            (OpPhrase::Reverting, "reverting"),
-            (OpPhrase::Pulling, "pulling"),
-            (OpPhrase::Merging, "merging"),
-            (OpPhrase::SwitchingBranches, "switching branches"),
-            (OpPhrase::Stashing, "stashing"),
-            (OpPhrase::ApplyingAStash, "applying a stash"),
+            (1, OpPhrase::UndoingACommit, "undoing a commit"),
+            (2, OpPhrase::Amending, "amending"),
+            (2, OpPhrase::Undo, "undo"),
+            (2, OpPhrase::Redo, "redo"),
+            (2, OpPhrase::Checkout, "checkout"),
+            (2, OpPhrase::Switching, "switching"),
+            (2, OpPhrase::CherryPicking, "cherry-picking"),
+            (2, OpPhrase::Reverting, "reverting"),
+            (2, OpPhrase::Pulling, "pulling"),
+            (17, OpPhrase::Merging, "merging"),
+            (2, OpPhrase::SwitchingBranches, "switching branches"),
+            (2, OpPhrase::Stashing, "stashing"),
+            (2, OpPhrase::ApplyingAStash, "applying a stash"),
             (
+                0,
                 OpPhrase::CheckingOutTheNewBranch,
                 "checking out the new branch",
             ),
         ];
-        for (phrase, word) in cases {
+        for (count, phrase, word) in cases {
             assert_eq!(
                 CommonNote::ConflictedFiles {
-                    count: 2,
+                    count,
                     before: phrase
                 }
                 .message_en(),
                 format!(
-                    "Repository has 2 conflicted file(s). Resolve conflicts before {}.",
-                    word
+                    "Repository has {} conflicted file(s). Resolve conflicts before {}.",
+                    count, word
                 )
             );
         }
@@ -364,39 +367,47 @@ mod tests {
 
     #[test]
     fn untracked_remain_all_ctx() {
+        // `count` varies across rows so it stays observable.
         let cases = [
             (
+                1,
                 UntrackedCtx::AfterCheckout,
-                "3 untracked file(s) will remain after checkout.",
+                "1 untracked file(s) will remain after checkout.",
             ),
             (
+                3,
                 UntrackedCtx::AfterSwitching,
                 "3 untracked file(s) will remain after switching.",
             ),
             (
+                3,
                 UntrackedCtx::AfterSwitchingBranches,
                 "3 untracked file(s) will remain after switching branches.",
             ),
             (
+                3,
                 UntrackedCtx::AfterCherryPick,
                 "3 untracked file(s) will remain untouched after cherry-pick.",
             ),
             (
+                3,
                 UntrackedCtx::AfterRevert,
                 "3 untracked file(s) will remain untouched after revert.",
             ),
             (
+                42,
                 UntrackedCtx::PullFetchMayTouch,
-                "3 untracked file(s) will remain untouched unless fetched changes need the same path.",
+                "42 untracked file(s) will remain untouched unless fetched changes need the same path.",
             ),
             (
+                3,
                 UntrackedCtx::Untouched,
                 "3 untracked file(s) will remain untouched.",
             ),
         ];
-        for (ctx, want) in cases {
+        for (count, ctx, want) in cases {
             assert_eq!(
-                CommonNote::UntrackedRemain { count: 3, ctx }.message_en(),
+                CommonNote::UntrackedRemain { count, ctx }.message_en(),
                 want
             );
         }

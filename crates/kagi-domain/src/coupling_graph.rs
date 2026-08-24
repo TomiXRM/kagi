@@ -242,6 +242,83 @@ mod tests {
         assert_eq!(g1, g2);
     }
 
+    fn dist(a: &GraphNode, b: &GraphNode) -> f64 {
+        ((a.x - b.x).powi(2) + (a.y - b.y).powi(2)).sqrt()
+    }
+
+    /// The whole point of the force simulation: coupled files end up near each
+    /// other and uncoupled ones do not. Two disconnected triangles must each
+    /// stay tighter than the gap between them — a layout that skips the
+    /// simulation (or only seeds the circle) fails this.
+    #[test]
+    fn connected_components_cluster_apart() {
+        let g = build_graph(
+            &[
+                pair("a", "b", 5),
+                pair("b", "c", 5),
+                pair("c", "a", 5),
+                pair("x", "y", 5),
+                pair("y", "z", 5),
+                pair("z", "x", 5),
+            ],
+            10,
+        );
+        let node = |f: &str| g.nodes.iter().find(|n| n.file == f).unwrap();
+        let comp1 = ["a", "b", "c"];
+        let comp2 = ["x", "y", "z"];
+        let mut max_intra: f64 = 0.0;
+        for c in [comp1, comp2] {
+            for i in 0..3 {
+                for j in (i + 1)..3 {
+                    max_intra = max_intra.max(dist(node(c[i]), node(c[j])));
+                }
+            }
+        }
+        let mut min_inter = f64::INFINITY;
+        for p in comp1 {
+            for q in comp2 {
+                min_inter = min_inter.min(dist(node(p), node(q)));
+            }
+        }
+        assert!(
+            max_intra < min_inter,
+            "components not separated: max intra {max_intra} >= min inter {min_inter}"
+        );
+    }
+
+    /// Golden layout: pins the exact simulation output so any change to the
+    /// force model, iteration count, or normalization is a deliberate,
+    /// visible edit rather than a silent drift.
+    #[test]
+    fn golden_positions() {
+        // Deliberately asymmetric ("d" hangs off "c"): a symmetric fixture
+        // would land on the same normalized points with zero iterations.
+        let g = build_graph(
+            &[
+                pair("a", "b", 5),
+                pair("b", "c", 4),
+                pair("c", "a", 3),
+                pair("c", "d", 2),
+            ],
+            10,
+        );
+        let got: Vec<(String, String, String)> = g
+            .nodes
+            .iter()
+            .map(|n| (n.file.clone(), format!("{:.6}", n.x), format!("{:.6}", n.y)))
+            .collect();
+        let want: Vec<(String, String, String)> = [
+            ("a", "0.940000", "0.748471"),
+            ("b", "0.429187", "0.940000"),
+            ("c", "0.400204", "0.487155"),
+            ("d", "0.060000", "0.060000"),
+        ]
+        .iter()
+        .map(|(f, x, y)| (f.to_string(), x.to_string(), y.to_string()))
+        .collect();
+        assert_eq!(got, want);
+    }
+
     #[test]
     fn max_edges_caps_the_graph() {
         let pairs = [pair("a", "b", 5), pair("c", "d", 4), pair("e", "f", 3)];

@@ -84,7 +84,7 @@ impl KagiApp {
             None => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("Repo open error: {}", "session unavailable")),
+                    SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, "session unavailable")),
                     cx,
                 );
                 return;
@@ -179,7 +179,7 @@ impl KagiApp {
             None => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("Repo open error: {}", "session unavailable")),
+                    SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, "session unavailable")),
                     cx,
                 );
                 return;
@@ -299,7 +299,7 @@ impl KagiApp {
             None => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("Repo open error: {}", "session unavailable")),
+                    SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, "session unavailable")),
                     cx,
                 );
                 return;
@@ -368,7 +368,7 @@ impl KagiApp {
             None => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("Repo open error: {}", "session unavailable")),
+                    SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, "session unavailable")),
                     cx,
                 );
                 return;
@@ -380,7 +380,7 @@ impl KagiApp {
             Err(e) => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("abort plan error: {}", e)),
+                    SharedString::from(i18n::op_plan_failed(i18n::Op::Abort, e)),
                     cx,
                 );
                 return;
@@ -448,7 +448,7 @@ impl KagiApp {
             None => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("Repo open error: {}", "session unavailable")),
+                    SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, "session unavailable")),
                     cx,
                 );
                 return;
@@ -460,7 +460,7 @@ impl KagiApp {
             Err(e) => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("skip plan error: {}", e)),
+                    SharedString::from(i18n::op_plan_failed(i18n::Op::Skip, e)),
                     cx,
                 );
                 return;
@@ -558,7 +558,7 @@ impl KagiApp {
             ),
             Err(e) => self.push_toast(
                 ToastKind::Error,
-                SharedString::from(format!("external tool failed: {}", e)),
+                SharedString::from(i18n::op_failed(i18n::Op::ExternalTool, e)),
                 cx,
             ),
         }

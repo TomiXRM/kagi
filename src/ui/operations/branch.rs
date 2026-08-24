@@ -133,7 +133,7 @@ impl KagiApp {
         let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                let err_msg = format!("Repo open error: {}", e);
+                let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
                 self.record_op(
                     "create-branch",
                     plan.current.clone(),
@@ -158,7 +158,7 @@ impl KagiApp {
             at: modal.at.clone(),
         };
         if let Err(e) = repo.run(&op, &plan) {
-            let err_msg = format!("Create branch failed: {}", e);
+            let err_msg = i18n::op_failed(i18n::Op::CreateBranch, e);
             self.record_op(
                 "create-branch",
                 plan.current.clone(),
@@ -219,7 +219,7 @@ impl KagiApp {
             let checkout_plan = match repo2.plan_checkout(&modal.input) {
                 Ok(plan) => plan,
                 Err(e) => {
-                    let err_msg = format!("Checkout plan failed after branch creation: {}", e);
+                    let err_msg = i18n::op_plan_failed(i18n::Op::Checkout, e);
                     self.record_op(
                         "checkout",
                         create_after,
@@ -263,7 +263,7 @@ impl KagiApp {
                 branch: modal.input.clone(),
             };
             if let Err(e) = repo2.run(&checkout_op, &checkout_plan) {
-                let err_msg = format!("Checkout failed: {}", e);
+                let err_msg = i18n::op_failed(i18n::Op::Checkout, e);
                 self.record_op(
                     "checkout",
                     checkout_plan.current.clone(),
@@ -595,7 +595,10 @@ impl KagiApp {
             Err(e) => {
                 if let Some(m) = self.rename_branch_modal_mut() {
                     m.validation = validation;
-                    m.error = Some(SharedString::from(format!("Rename plan error: {}", e)));
+                    m.error = Some(SharedString::from(i18n::op_plan_failed(
+                        i18n::Op::Rename,
+                        e,
+                    )));
                 }
             }
         }
@@ -701,8 +704,8 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_target = target.clone();
         let task = cx.background_spawn(async move {
-            let repo =
-                kagi_git::Backend::open(&bg_path).map_err(|e| format!("repo open error: {e}"))?;
+            let repo = kagi_git::Backend::open(&bg_path)
+                .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
             repo.plan_merge_branch(&bg_target)
                 .map_err(|e| format!("{e}"))
         });
@@ -1266,7 +1269,7 @@ impl KagiApp {
         let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                let err_msg = format!("Repo open error: {}", e);
+                let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
                 self.record_op(
                     "delete-branch",
                     modal.plan.current.clone(),
@@ -1320,7 +1323,7 @@ impl KagiApp {
                 self.reload(cx);
             }
             Err(e) => {
-                let err_msg = format!("Delete failed: {}", e);
+                let err_msg = i18n::op_failed(i18n::Op::Delete, e);
                 self.record_op(
                     "delete-branch",
                     modal.plan.current.clone(),

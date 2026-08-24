@@ -420,11 +420,11 @@ impl KagiApp {
         let bg_name = name.clone();
         let commit_limit = self.commit_limit;
         let task = cx.background_spawn(async move {
-            let mut backend =
-                kagi_git::Backend::open(&bg_path).map_err(|e| format!("repo open error: {}", e))?;
+            let mut backend = kagi_git::Backend::open(&bg_path)
+                .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
             let snap = backend
                 .snapshot(commit_limit)
-                .map_err(|e| format!("snapshot error: {e}"))?;
+                .map_err(|e| i18n::op_failed(i18n::Op::Snapshot, e))?;
             let repo_name = bg_path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())

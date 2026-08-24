@@ -78,8 +78,9 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("discard plan error: {}", e)));
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    i18n::op_plan_failed(i18n::Op::Discard, e),
+                ));
             }
         }
     }
@@ -122,8 +123,9 @@ impl KagiApp {
                 cx.notify();
             }
             Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("discard plan error: {}", e)));
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    i18n::op_plan_failed(i18n::Op::Discard, e),
+                ));
             }
         }
     }
@@ -163,8 +165,9 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("discard plan error: {}", e)));
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    i18n::op_plan_failed(i18n::Op::Discard, e),
+                ));
             }
         }
     }

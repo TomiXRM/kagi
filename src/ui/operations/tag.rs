@@ -95,7 +95,7 @@ impl KagiApp {
         let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                let err_msg = format!("Repo open error: {}", e);
+                let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
                 self.record_op(
                     "create-tag",
                     plan.current.clone(),
@@ -119,7 +119,7 @@ impl KagiApp {
             at: modal.at.clone(),
         };
         if let Err(e) = repo.run(&op, &plan) {
-            let err_msg = format!("Create tag failed: {}", e);
+            let err_msg = i18n::op_failed(i18n::Op::CreateTag, e);
             self.record_op(
                 "create-tag",
                 plan.current.clone(),
@@ -219,8 +219,9 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("push-tag plan error: {}", e)));
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    i18n::op_plan_failed(i18n::Op::PushTag, e),
+                ));
             }
         }
         cx.notify();
@@ -273,13 +274,13 @@ impl KagiApp {
         let task = cx.background_spawn(async move {
             let run = || -> Result<kagi_git::StateSummary, String> {
                 let mut repo = kagi_git::Backend::open(&bg_path)
-                    .map_err(|e| format!("Repo open error: {}", e))?;
+                    .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
                 let op = kagi_git::Operation::PushTag {
                     name: name.clone(),
                     remote: remote.clone(),
                 };
                 repo.run(&op, &bg_plan)
-                    .map_err(|e| format!("Push tag failed: {}", e))?;
+                    .map_err(|e| i18n::op_failed(i18n::Op::PushTag, e))?;
 
                 klog!("executed: push-tag {} -> {}", name, remote);
                 Ok(kagi_git::StateSummary {

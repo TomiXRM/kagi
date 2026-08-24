@@ -23,7 +23,7 @@ use gpui::{Context, Entity, SharedString, Window};
 
 pub use kagi_ui_editor::*;
 
-use super::i18n::Msg;
+use super::i18n::{self, Msg};
 use super::render_helpers::render_diff_list;
 use super::{
     build_main_diff_view, EditorDirtyGuardModal, EditorPendingIntent, FooterStatus, KagiApp,
@@ -151,7 +151,7 @@ impl KagiApp {
                 // established precedent for a background op outside the
                 // plan pipeline — e.g. `repo.fetch`'s failure path,
                 // `commands.rs`), not a git plan modal.
-                let msg = format!("Save failed: {}: {}", path.display(), error);
+                let msg = i18n::op_failed(i18n::Op::Save, format!("{}: {}", path.display(), error));
                 self.push_toast(ToastKind::Error, msg.clone(), cx);
                 self.status_footer = FooterStatus::Failed(SharedString::from(msg));
                 cx.notify();

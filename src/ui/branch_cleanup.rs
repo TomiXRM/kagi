@@ -302,7 +302,7 @@ impl KagiApp {
                     Err(e) => {
                         // Global refusal (HEAD moved / repo open failure) —
                         // nothing was deleted.
-                        let err_msg = format!("Cleanup failed: {}", e);
+                        let err_msg = i18n::op_failed(i18n::Op::Cleanup, e);
                         app.record_op(
                             "branch-cleanup",
                             modal.plan.current.clone(),

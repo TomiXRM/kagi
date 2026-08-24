@@ -135,7 +135,7 @@ impl KagiApp {
             Ok(r) => r,
             Err(e) => {
                 if let Some(m) = self.plan_modal_mut() {
-                    m.error = Some(SharedString::from(format!("stash: repo open error: {}", e)));
+                    m.error = Some(SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, e)));
                 }
                 return false;
             }
@@ -145,7 +145,7 @@ impl KagiApp {
             Ok(p) => p,
             Err(e) => {
                 if let Some(m) = self.plan_modal_mut() {
-                    m.error = Some(SharedString::from(format!("stash plan error: {}", e)));
+                    m.error = Some(SharedString::from(i18n::op_plan_failed(i18n::Op::Stash, e)));
                 }
                 return false;
             }
@@ -196,7 +196,7 @@ impl KagiApp {
                 true
             }
             Err(e) => {
-                let err = format!("stash failed: {}", e);
+                let err = i18n::op_failed(i18n::Op::Stash, e);
                 self.record_op(
                     "stash-push",
                     plan.current.clone(),
@@ -256,7 +256,7 @@ impl KagiApp {
         let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                let err_msg = format!("Repo open error: {}", e);
+                let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
                 self.record_op(
                     op_name,
                     modal.plan.current.clone(),
@@ -278,7 +278,7 @@ impl KagiApp {
 
         // Preflight check.
         if let Err(e) = repo.preflight_check(&modal.plan) {
-            let err_msg = format!("Preflight failed: {}", e);
+            let err_msg = i18n::op_failed(i18n::Op::Preflight, e);
             self.record_op(
                 op_name,
                 modal.plan.current.clone(),
@@ -308,7 +308,7 @@ impl KagiApp {
             },
         };
         if let Err(e) = repo.run(&checkout_op, &modal.plan) {
-            let err_msg = format!("Checkout failed: {}", e);
+            let err_msg = i18n::op_failed(i18n::Op::Checkout, e);
             self.record_op(
                 op_name,
                 modal.plan.current.clone(),

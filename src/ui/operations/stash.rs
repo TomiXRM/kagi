@@ -233,7 +233,7 @@ impl KagiApp {
         let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                let err_msg = format!("Repo open error: {}", e);
+                let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
                 self.record_op(
                     "stash-apply",
                     plan.current.clone(),
@@ -256,7 +256,7 @@ impl KagiApp {
         // collapses into run().
         let op = kagi_git::Operation::StashApply { index: modal.index };
         if let Err(e) = repo.run(&op, &plan) {
-            let err_msg = format!("Stash apply failed: {}", e);
+            let err_msg = i18n::op_failed(i18n::Op::StashApply, e);
             self.record_op(
                 "stash-apply",
                 plan.current.clone(),
@@ -366,8 +366,9 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("pop plan error: {}", e)));
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    i18n::op_plan_failed(i18n::Op::Pop, e),
+                ));
             }
         }
     }
@@ -427,8 +428,9 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("drop plan error: {}", e)));
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    i18n::op_plan_failed(i18n::Op::Drop, e),
+                ));
             }
         }
     }
@@ -631,7 +633,7 @@ impl KagiApp {
         let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                let err_msg = format!("Repo open error: {}", e);
+                let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
                 self.record_op(
                     "stash-pop",
                     modal.plan.current.clone(),
@@ -674,7 +676,7 @@ impl KagiApp {
                 self.reload(cx);
             }
             Err(e) => {
-                let err_msg = format!("Pop failed: {}", e);
+                let err_msg = i18n::op_failed(i18n::Op::Pop, e);
                 self.record_op(
                     "stash-pop",
                     modal.plan.current.clone(),

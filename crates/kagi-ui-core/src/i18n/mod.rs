@@ -36,7 +36,9 @@ use crate::settings::{read_setting, write_setting};
 // ──────────────────────────────────────────────────────────────────────────
 
 /// UI language.  `En` is index 0 (the default), `Ja` is index 1.
+pub mod op;
 pub mod plan;
+pub use op::{op_failed, op_plan_failed, Op};
 pub use plan::{plan_note_text, plan_recovery_text, plan_title_text};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1967,6 +1969,36 @@ mod tests {
         );
         set_lang_no_persist(Lang::Ja);
         assert!(wip_row_note(2).contains("クリックで commit panel"));
+        set_lang_no_persist(Lang::En);
+    }
+
+    #[test]
+    fn op_failed_switches_and_keeps_domain_words() {
+        let _g = LOCK.lock().unwrap();
+        set_lang_no_persist(Lang::En);
+        assert_eq!(op_failed(Op::Pull, "boom"), "Pull failed: boom");
+        assert_eq!(op_failed(Op::RepoOpen, "boom"), "Repo open failed: boom");
+        assert_eq!(op_plan_failed(Op::Push, "boom"), "Push plan failed: boom");
+        set_lang_no_persist(Lang::Ja);
+        assert_eq!(
+            op_failed(Op::Pull, "boom"),
+            "pull \u{306b}\u{5931}\u{6557}\u{3057}\u{307e}\u{3057}\u{305f}: boom"
+        );
+        // ADR-0048: git domain words stay English in the Japanese label too.
+        for op in [
+            Op::Pull,
+            Op::Push,
+            Op::Merge,
+            Op::Commit,
+            Op::Rebase,
+            Op::Stash,
+        ] {
+            assert!(
+                op.t().is_ascii(),
+                "{:?} japanese label must keep the domain word in English",
+                op
+            );
+        }
         set_lang_no_persist(Lang::En);
     }
 

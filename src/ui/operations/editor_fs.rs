@@ -110,7 +110,9 @@ impl KagiApp {
                             ev.update(cx, |v, cx| v.remap_renamed_path(&old_rel, &new_rel, cx));
                         }
                     }
-                    Err(e) => self.fail_editor_fs_prompt(modal, &format!("Rename failed: {e}"), cx),
+                    Err(e) => {
+                        self.fail_editor_fs_prompt(modal, &i18n::op_failed(i18n::Op::Rename, e), cx)
+                    }
                 }
             }
             EditorFsPromptKind::NewFile => {
@@ -132,7 +134,9 @@ impl KagiApp {
                             ev.update(cx, |v, cx| v.open_tab(rel.clone(), cx));
                         }
                     }
-                    Err(e) => self.fail_editor_fs_prompt(modal, &format!("Create failed: {e}"), cx),
+                    Err(e) => {
+                        self.fail_editor_fs_prompt(modal, &i18n::op_failed(i18n::Op::Create, e), cx)
+                    }
                 }
             }
             EditorFsPromptKind::NewDir => {
@@ -151,7 +155,9 @@ impl KagiApp {
                         klog!("editor-ws: fs-created {}", rel.display());
                         self.clear_editor_fs_prompt_modal();
                     }
-                    Err(e) => self.fail_editor_fs_prompt(modal, &format!("Create failed: {e}"), cx),
+                    Err(e) => {
+                        self.fail_editor_fs_prompt(modal, &i18n::op_failed(i18n::Op::Create, e), cx)
+                    }
                 }
             }
         }
@@ -280,7 +286,7 @@ impl KagiApp {
             Err(e) => {
                 self.push_toast(
                     ToastKind::Error,
-                    format!(".gitignore write failed: {e}"),
+                    i18n::op_failed(i18n::Op::GitignoreWrite, e),
                     cx,
                 );
             }
@@ -336,7 +342,7 @@ impl KagiApp {
             }
             Err(e) => {
                 self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("reveal failed: {e}")));
+                    FooterStatus::Failed(SharedString::from(i18n::op_failed(i18n::Op::Reveal, e)));
             }
         }
     }

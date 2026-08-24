@@ -9,6 +9,7 @@ use std::time::Instant;
 
 use kagi_git::{AmendMode, CommitId, Head, MergeKind, OperationPlan, PullOutcome, StateSummary};
 
+use crate::ui::i18n;
 use crate::ui::{BranchPlanKind, BranchPlanModal, CheckoutPlanTarget};
 
 // W3-NOTIFY: blocking cores for pull / push
@@ -29,7 +30,7 @@ pub(crate) fn stash_push_blocking(
 ) -> Result<(String, StateSummary), String> {
     let t0 = Instant::now();
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
     // (run uses preflight_check_stash for stash ops: HEAD + stash-count guard).
     let op = kagi_git::Operation::StashPush {
@@ -37,7 +38,7 @@ pub(crate) fn stash_push_blocking(
         include_untracked: true,
     };
     repo.run(&op, plan)
-        .map_err(|e| format!("Stash push failed: {}", e))?;
+        .map_err(|e| i18n::op_failed(i18n::Op::StashPush, e))?;
     let t_stash = t0.elapsed();
     eprintln!(
         "[kagi] executed: stash-push message={:?}",
@@ -87,12 +88,12 @@ pub(crate) fn pull_blocking(
     plan: &OperationPlan,
 ) -> Result<(String, StateSummary), String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let outcome = match repo.run(&kagi_git::Operation::Pull, plan) {
         Ok(kagi_git::OperationOutcome::Pull(o)) => o,
         Ok(_) => return Err("pull: unexpected outcome".to_string()),
-        Err(e) => return Err(format!("Pull failed: {}", e)),
+        Err(e) => return Err(i18n::op_failed(i18n::Op::Pull, e)),
     };
     let summary = match &outcome {
         PullOutcome::UpToDate => "already up to date".to_string(),
@@ -114,12 +115,12 @@ pub(crate) fn push_blocking(
     plan: &OperationPlan,
 ) -> Result<(String, StateSummary), String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let outcome = match repo.run(&kagi_git::Operation::Push, plan) {
         Ok(kagi_git::OperationOutcome::Push(o)) => o,
         Ok(_) => return Err("push: unexpected outcome".to_string()),
-        Err(e) => return Err(format!("Push failed: {}", e)),
+        Err(e) => return Err(i18n::op_failed(i18n::Op::Push, e)),
     };
     let summary = if outcome.set_upstream {
         format!("pushed {} commit(s), set upstream", outcome.pushed)
@@ -173,7 +174,7 @@ pub(crate) fn checkout_blocking(
     target: &CheckoutPlanTarget,
 ) -> Result<(String, StateSummary), String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
     // in one place (run() calls preflight_check as its first line).
     let op = match target {
@@ -185,7 +186,7 @@ pub(crate) fn checkout_blocking(
         },
     };
     repo.run(&op, plan)
-        .map_err(|e| format!("Checkout failed: {}", e))?;
+        .map_err(|e| i18n::op_failed(i18n::Op::Checkout, e))?;
 
     let summary = match target {
         CheckoutPlanTarget::Branch(branch) => {
@@ -253,7 +254,7 @@ pub(crate) fn merge_blocking(
     kind: &MergeKind,
 ) -> Result<(String, StateSummary), String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     match kind {
         MergeKind::Conflicts(_) => {
@@ -266,7 +267,7 @@ pub(crate) fn merge_blocking(
             let files = match repo.run(&op, plan) {
                 Ok(kagi_git::OperationOutcome::MergeIntoConflict(f)) => f,
                 Ok(_) => return Err("merge-into-conflict: unexpected outcome".to_string()),
-                Err(e) => return Err(format!("Merge failed: {}", e)),
+                Err(e) => return Err(i18n::op_failed(i18n::Op::Merge, e)),
             };
             eprintln!(
                 "[kagi] executed: merge-into-conflict {} -> {} conflict(s)",
@@ -286,7 +287,7 @@ pub(crate) fn merge_blocking(
             let _new_head = match repo.run(&op, plan) {
                 Ok(kagi_git::OperationOutcome::Commit(c)) => c,
                 Ok(_) => return Err("merge: unexpected outcome".to_string()),
-                Err(e) => return Err(format!("Merge failed: {}", e)),
+                Err(e) => return Err(i18n::op_failed(i18n::Op::Merge, e)),
             };
             klog!("executed: merge {} -> {}", target, _new_head.short());
 
@@ -304,14 +305,14 @@ pub(crate) fn checkout_tracking_blocking(
     local_branch: &str,
 ) -> Result<(String, StateSummary), String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = kagi_git::Operation::CheckoutTrackingBranch {
         remote_branch: remote_branch.to_string(),
         local_branch: local_branch.to_string(),
     };
     repo.run(&op, plan)
-        .map_err(|e| format!("Checkout tracking failed: {}", e))?;
+        .map_err(|e| i18n::op_failed(i18n::Op::CheckoutTracking, e))?;
     eprintln!(
         "[kagi] executed: checkout-tracking {} -> {}",
         remote_branch, local_branch
@@ -329,14 +330,14 @@ pub(crate) fn switch_to_latest_blocking(
     remote_branch: &str,
 ) -> Result<(String, StateSummary), String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = kagi_git::Operation::SwitchToLatestBranch {
         branch_name: branch_name.to_string(),
         remote_branch: remote_branch.to_string(),
     };
     repo.run(&op, plan)
-        .map_err(|e| format!("Switch to latest failed: {}", e))?;
+        .map_err(|e| i18n::op_failed(i18n::Op::SwitchToLatest, e))?;
     klog!(
         "executed: switch-to-latest {} <- {}",
         branch_name,
@@ -356,7 +357,7 @@ pub(crate) fn cherry_pick_blocking(
     commit_id: &CommitId,
 ) -> Result<(String, StateSummary), String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = kagi_git::Operation::CherryPick {
         id: commit_id.clone(),
@@ -364,7 +365,7 @@ pub(crate) fn cherry_pick_blocking(
     let new_id = match repo.run(&op, plan) {
         Ok(kagi_git::OperationOutcome::Commit(c)) => c,
         Ok(_) => return Err("cherry-pick: unexpected outcome".to_string()),
-        Err(e) => return Err(format!("Cherry-pick failed: {}", e)),
+        Err(e) => return Err(i18n::op_failed(i18n::Op::CherryPick, e)),
     };
     eprintln!(
         "[kagi] executed: cherry-pick {} -> {}",
@@ -384,7 +385,7 @@ pub(crate) fn revert_blocking(
     commit_id: &CommitId,
 ) -> Result<(String, StateSummary), String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = kagi_git::Operation::Revert {
         id: commit_id.clone(),
@@ -392,7 +393,7 @@ pub(crate) fn revert_blocking(
     let new_id = match repo.run(&op, plan) {
         Ok(kagi_git::OperationOutcome::Commit(c)) => c,
         Ok(_) => return Err("revert: unexpected outcome".to_string()),
-        Err(e) => return Err(format!("Revert failed: {}", e)),
+        Err(e) => return Err(i18n::op_failed(i18n::Op::Revert, e)),
     };
     eprintln!(
         "[kagi] executed: revert {} -> {}",
@@ -413,7 +414,7 @@ pub(crate) fn commit_blocking(
     message: &str,
 ) -> Result<(String, StateSummary), String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     // (Commit's plan is a HEAD snapshot; preflight detects a checkout/commit
     // between plan and execute.)
@@ -423,7 +424,7 @@ pub(crate) fn commit_blocking(
     let new_id = match repo.run(&op, plan) {
         Ok(kagi_git::OperationOutcome::Commit(c)) => c,
         Ok(_) => return Err("commit: unexpected outcome".to_string()),
-        Err(e) => return Err(format!("Commit failed: {}", e)),
+        Err(e) => return Err(i18n::op_failed(i18n::Op::Commit, e)),
     };
     klog!("executed: commit {}", new_id.short());
 
@@ -481,14 +482,14 @@ pub(crate) fn stash_pop_blocking(
     stash_index: usize,
 ) -> Result<(String, StateSummary), String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
     // in one place. run() runs preflight_check_stash (HEAD + stash count) for
     // StashPop, so a concurrent stash push between plan and execute can't shift
     // indices and pop the WRONG entry.
     let op = kagi_git::Operation::StashPop { index: stash_index };
     repo.run(&op, plan)
-        .map_err(|e| format!("Pop failed: {}", e))?;
+        .map_err(|e| i18n::op_failed(i18n::Op::Pop, e))?;
     klog!("executed: stash-pop index={}", stash_index);
 
     let after = StateSummary {
@@ -512,13 +513,13 @@ pub(crate) fn stash_drop_blocking(
     // for StashPop/StashApply. When StashDrop joins Operation, this becomes a
     // plain run() call.
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     repo.preflight_check_stash(plan, plan.stash_count_at_plan())
-        .map_err(|e| format!("Preflight failed: {}", e))?;
+        .map_err(|e| i18n::op_failed(i18n::Op::Preflight, e))?;
 
     let dropped_oid = repo
         .execute_stash_drop(stash_index)
-        .map_err(|e| format!("Drop failed: {}", e))?;
+        .map_err(|e| i18n::op_failed(i18n::Op::Drop, e))?;
     eprintln!(
         "[kagi] executed: stash-drop index={} oid={}",
         stash_index, dropped_oid
@@ -541,7 +542,7 @@ pub(crate) fn discard_blocking(
     paths: &[String],
 ) -> Result<(String, StateSummary), String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
 
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     // run() returns OperationOutcome::Discard(DiscardOutcome) which carries the
@@ -552,7 +553,7 @@ pub(crate) fn discard_blocking(
     let outcome = match repo.run(&op, plan) {
         Ok(kagi_git::OperationOutcome::Discard(d)) => d,
         Ok(_) => return Err("discard: unexpected outcome variant".to_string()),
-        Err(e) => return Err(format!("Discard failed: {}", e)),
+        Err(e) => return Err(i18n::op_failed(i18n::Op::Discard, e)),
     };
     let summary = outcome.oplog_summary();
     klog!("executed: {}", summary);
@@ -605,7 +606,7 @@ pub(crate) fn amend_blocking(
     message: &str,
 ) -> Result<(StateSummary, CommitId, CommitId), String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = kagi_git::Operation::Amend {
         mode,
@@ -618,7 +619,7 @@ pub(crate) fn amend_blocking(
     let outcome = match repo.run(&op, plan) {
         Ok(kagi_git::OperationOutcome::Amend(o)) => o,
         Ok(_) => return Err("amend: unexpected outcome".to_string()),
-        Err(e) => return Err(format!("Amend failed: {}", e)),
+        Err(e) => return Err(i18n::op_failed(i18n::Op::Amend, e)),
     };
     eprintln!(
         "[kagi] executed: amend {} -> {}",
@@ -645,13 +646,13 @@ pub(crate) fn delete_branch_blocking(
     branch_name: &str,
 ) -> Result<StateSummary, String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = kagi_git::Operation::DeleteBranch {
         name: branch_name.to_string(),
     };
     repo.run(&op, plan)
-        .map_err(|e| format!("Delete failed: {}", e))?;
+        .map_err(|e| i18n::op_failed(i18n::Op::Delete, e))?;
     klog!("executed: delete-branch {}", branch_name);
 
     Ok(StateSummary {
@@ -666,12 +667,12 @@ pub(crate) fn delete_remote_branch_blocking(
     remote_branch: &str,
 ) -> Result<StateSummary, String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::DeleteRemoteBranch {
         remote_branch: remote_branch.to_string(),
     };
     repo.run(&op, plan)
-        .map_err(|e| format!("Delete failed: {}", e))?;
+        .map_err(|e| i18n::op_failed(i18n::Op::Delete, e))?;
     klog!("executed: delete-remote-branch {}", remote_branch);
 
     Ok(StateSummary {
@@ -685,7 +686,7 @@ pub(crate) fn branch_plan_blocking(
     modal: &BranchPlanModal,
 ) -> Result<StateSummary, String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     match modal.kind {
         BranchPlanKind::PullFfOnly => {
@@ -695,7 +696,7 @@ pub(crate) fn branch_plan_blocking(
             let outcome = match repo.run(&op, &modal.plan) {
                 Ok(kagi_git::OperationOutcome::Pull(o)) => o,
                 Ok(_) => return Err("pull-ff: unexpected outcome".to_string()),
-                Err(e) => return Err(format!("Pull failed: {}", e)),
+                Err(e) => return Err(i18n::op_failed(i18n::Op::Pull, e)),
             };
             let dirty = match outcome {
                 PullOutcome::UpToDate => {
@@ -724,7 +725,7 @@ pub(crate) fn branch_plan_blocking(
             let outcome = match repo.run(&op, &modal.plan) {
                 Ok(kagi_git::OperationOutcome::Push(o)) => o,
                 Ok(_) => return Err("push-branch: unexpected outcome".to_string()),
-                Err(e) => return Err(format!("Push failed: {}", e)),
+                Err(e) => return Err(i18n::op_failed(i18n::Op::Push, e)),
             };
             Ok(StateSummary {
                 head: modal.plan.current.head.clone(),
@@ -750,14 +751,14 @@ pub(crate) fn set_upstream_blocking(
     upstream: &str,
 ) -> Result<StateSummary, String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = kagi_git::Operation::SetUpstream {
         branch_name: branch_name.to_string(),
         upstream: upstream.to_string(),
     };
     repo.run(&op, plan)
-        .map_err(|e| format!("Set upstream failed: {}", e))?;
+        .map_err(|e| i18n::op_failed(i18n::Op::SetUpstream, e))?;
     Ok(StateSummary {
         head: plan.current.head.clone(),
         dirty: format!("branch '{}' upstream set to '{}'", branch_name, upstream),
@@ -771,14 +772,14 @@ pub(crate) fn rename_branch_blocking(
     new_name: &str,
 ) -> Result<StateSummary, String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = kagi_git::Operation::RenameBranch {
         old_name: old_name.to_string(),
         new_name: new_name.to_string(),
     };
     repo.run(&op, plan)
-        .map_err(|e| format!("Rename failed: {}", e))?;
+        .map_err(|e| i18n::op_failed(i18n::Op::Rename, e))?;
     Ok(StateSummary {
         head: plan.predicted.head.clone(),
         dirty: format!("branch '{}' renamed to '{}'", old_name, new_name),
@@ -796,7 +797,7 @@ pub(crate) fn create_worktree_blocking(
     allow_existing_branch: bool,
 ) -> Result<StateSummary, String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = if allow_existing_branch {
         kagi_git::Operation::OpenWorktreeForBranch {
@@ -812,9 +813,9 @@ pub(crate) fn create_worktree_blocking(
     };
     repo.run(&op, plan).map_err(|e| {
         if allow_existing_branch {
-            format!("Open worktree failed: {}", e)
+            i18n::op_failed(i18n::Op::OpenWorktree, e)
         } else {
-            format!("Create worktree failed: {}", e)
+            i18n::op_failed(i18n::Op::CreateWorktree, e)
         }
     })?;
     eprintln!(

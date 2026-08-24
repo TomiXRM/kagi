@@ -146,10 +146,10 @@ fn force_lease_push_blocking(
     plan: &kagi_git::ops::OperationPlan,
 ) -> Result<kagi_git::ops::StateSummary, String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::ForceWithLeasePush;
     repo.run(&op, plan)
-        .map_err(|e| format!("Push failed: {}", e))?;
+        .map_err(|e| i18n::op_failed(i18n::Op::Push, e))?;
     klog!("executed: force-with-lease-push");
 
     Ok(kagi_git::ops::StateSummary {

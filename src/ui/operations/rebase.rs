@@ -48,8 +48,9 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("rebase plan error: {}", e)));
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    i18n::op_plan_failed(i18n::Op::Rebase, e),
+                ));
             }
         }
     }
@@ -160,13 +161,13 @@ fn rebase_blocking(
     onto: &str,
 ) -> Result<String, String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::RebaseCurrentOnto {
         onto: onto.to_string(),
     };
     let outcome = repo
         .run(&op, plan)
-        .map_err(|e| format!("Rebase failed: {}", e))?;
+        .map_err(|e| i18n::op_failed(i18n::Op::Rebase, e))?;
     match outcome {
         kagi_git::OperationOutcome::Rebase(kagi_git::ops::RebaseOutcome::Completed { head }) => {
             klog!(

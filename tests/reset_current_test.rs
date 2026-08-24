@@ -10,6 +10,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
+use kagi_domain::plan_note::{PlanNote, ResetNote};
 use kagi_git::{
     ops::{execute_reset_current_to_head, plan_reset_current_to_head},
     CommitId,
@@ -124,8 +125,12 @@ fn test_plan_missing_commit_blocker() {
 
     let plan = plan_reset_current_to_head(&repo, &target).expect("plan failed");
     assert!(
-        !plan.blockers.is_empty(),
-        "a nonexistent commit should block"
+        plan.blockers.iter().any(|b| matches!(
+            b,
+            PlanNote::Reset(ResetNote::CommitMissing { sha }) if sha.starts_with('0')
+        )),
+        "expected ResetNote::CommitMissing, got: {:?}",
+        plan.blockers
     );
 }
 

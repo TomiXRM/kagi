@@ -95,3 +95,71 @@ impl GithubRecovery {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blocker_notes() {
+        assert_eq!(
+            GithubNote::NotMergeable { number: 42 }.message_en(),
+            "GitHub reports #42 as not mergeable. Resolve conflicts (or satisfy branch protection) first."
+        );
+        assert_eq!(
+            GithubNote::IsDraft { number: 42 }.message_en(),
+            "#42 is a draft. Mark it ready for review before merging."
+        );
+    }
+
+    #[test]
+    fn ci_and_review_warnings() {
+        assert_eq!(
+            GithubNote::ChecksFailing {
+                number: 7,
+                failed: 3
+            }
+            .message_en(),
+            "#7 has 3 failing check(s). Merging now lands code its CI rejected."
+        );
+        assert_eq!(
+            GithubNote::ChecksPending { number: 7 }.message_en(),
+            "#7's checks have not finished yet."
+        );
+        assert_eq!(
+            GithubNote::ChangesRequested { number: 7 }.message_en(),
+            "A reviewer requested changes on #7."
+        );
+    }
+
+    #[test]
+    fn side_effect_warnings() {
+        assert_eq!(
+            GithubNote::RemoteSideEffect.message_en(),
+            "This merges on GitHub. Your local clone is unchanged until the next fetch."
+        );
+        assert_eq!(
+            GithubNote::DeletesBranch {
+                branch: "feat/x".into()
+            }
+            .message_en(),
+            "The head branch 'feat/x' will be deleted on the remote (and locally if it is not checked out)."
+        );
+    }
+
+    #[test]
+    fn merge_title_and_recovery() {
+        assert_eq!(
+            GithubTitle::MergePr {
+                number: 42,
+                method: "squash".into()
+            }
+            .message_en(),
+            "Merge pull request #42 (squash)"
+        );
+        assert_eq!(
+            GithubRecovery::MergePr { number: 42 }.message_en(),
+            "GitHub keeps a 'Revert' button on #42 after the merge. Locally, the merge commit can be undone with:\n  git revert -m 1 <merge-sha>\nThe branch itself is restorable from the PR page if it was deleted."
+        );
+    }
+}

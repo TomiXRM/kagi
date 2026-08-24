@@ -136,6 +136,14 @@ mod tests {
     }
 
     #[test]
+    fn single_segment_goes_to_the_majority_side() {
+        // max=1 can't show both sides: majority wins, ties go green.
+        assert_eq!(bar_segments(5, 5, 1), (1, 0));
+        assert_eq!(bar_segments(9, 1, 1), (1, 0));
+        assert_eq!(bar_segments(1, 9, 1), (0, 1));
+    }
+
+    #[test]
     fn never_exceeds_max() {
         for a in 0..50 {
             for d in 0..50 {

@@ -2025,41 +2025,20 @@ mod tests {
         std::env::remove_var("KAGI_LANG");
     }
 
-    // W29-I18N-WAVE2: the keyed git-layer validation errors must `Display` the
-    // exact English wording the git-layer tests pin, and the i18n mapping must
-    // switch with the active language.
+    // Wording lock for the GIT-LAYER test fixtures: those tests pin the exact
+    // English `Display` text of these errors. It is NOT a UI guarantee - the UI
+    // never calls `Display`, it goes through `branch_name_error` (covered by
+    // `keyed_validation_localizes` below). Three representative variants:
+    // unit, one-arg, and the multi-line one.
     #[test]
     fn keyed_validation_display_is_exact_english() {
         use kagi_domain::plan::{BranchNameError as B, WorktreePathError as W};
         assert_eq!(B::EmptyCreate.to_string(), "Branch name must not be empty.");
-        assert_eq!(B::Required.to_string(), "Branch name is required.");
-        assert_eq!(
-            B::Whitespace.to_string(),
-            "Branch name must not start or end with whitespace."
-        );
-        assert_eq!(B::SameName.to_string(), "Branch already has that name.");
-        assert_eq!(
-            B::RenameExists("x".into()).to_string(),
-            "Branch 'x' already exists."
-        );
-        assert_eq!(
-            B::RenameInvalid("x y".into()).to_string(),
-            "'x y' is not a valid branch name."
-        );
         assert_eq!(
             B::CreateInvalidRef("x y".into()).to_string(),
             "Branch name 'x y' is not a valid git ref name \
              (no spaces, '..', or other invalid characters)."
         );
-        assert_eq!(
-            B::CreateLeadingDash("-x".into()).to_string(),
-            "Branch name '-x' must not start with '-'."
-        );
-        assert_eq!(
-            B::CreateExists("main".into()).to_string(),
-            "A branch named 'main' already exists in this repository."
-        );
-        assert_eq!(W::Empty.to_string(), "Worktree path must not be empty.");
         assert_eq!(
             W::Exists("/p".into()).to_string(),
             "Worktree path '/p' already exists."

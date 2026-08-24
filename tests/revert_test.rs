@@ -210,3 +210,37 @@ fn revert_preflight_fails_when_head_moves_after_plan() {
         err
     );
 }
+
+/// Safe-mode pin: revert's working-tree sync uses `CheckoutBuilder::safe()`.
+/// If that ever became `force()`, this dirty `file.txt` would be silently
+/// overwritten with the reverted content instead of the operation refusing.
+#[test]
+fn revert_dirty_file_safe_checkout_refuses_and_preserves_user_content() {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir);
+
+    commit_file(dir, "file.txt", "base\n", "initial");
+    let target = commit_file(dir, "file.txt", "base\nfeature\n", "add feature");
+    let head_before = git_output(dir, &["rev-parse", "HEAD"]);
+    let repo = Repository::open(dir).unwrap();
+
+    // Uncommitted work on the exact file the revert would rewrite.
+    write_file(dir, "file.txt", "base\nfeature\nUNSAVED USER WORK\n");
+
+    let result = execute_revert(&repo, &target);
+    assert!(
+        result.is_err(),
+        "safe-mode revert must refuse to overwrite a dirty file"
+    );
+    assert_eq!(
+        read_file(dir, "file.txt"),
+        "base\nfeature\nUNSAVED USER WORK\n",
+        "the user's uncommitted content must survive the refused revert"
+    );
+    assert_eq!(
+        git_output(dir, &["rev-parse", "HEAD"]),
+        head_before,
+        "HEAD must not move when the revert refuses"
+    );
+}

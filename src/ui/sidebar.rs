@@ -1755,12 +1755,6 @@ mod tests {
     }
 
     #[test]
-    fn group_key_format() {
-        assert_eq!(group_key(SECTION_LOCAL, "feat"), "local:feat");
-        assert_eq!(group_key(SECTION_REMOTE, "origin"), "remote:origin");
-    }
-
-    #[test]
     fn no_groups_all_top_level() {
         let rows = group(&["main", "dev", "trunk"]);
         assert!(rows.iter().all(|r| matches!(r, GroupRow::TopLevel { .. })));

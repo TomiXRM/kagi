@@ -366,3 +366,29 @@ pub(crate) fn render_badges_column(
             )
         })
 }
+
+#[cfg(test)]
+mod badge_priority_tests {
+    use super::badge_priority;
+    use crate::ui::commit_list::BadgeKind;
+
+    /// The badge column and the inspector sort on this one key (the inspector
+    /// used to hold a byte-identical copy — deleted, it now imports this one).
+    /// Order is HeadBranch → Branch → Tag → Remote, rendered left-to-right.
+    #[test]
+    fn priority_orders_head_branch_first_remote_last() {
+        let mut kinds = [
+            BadgeKind::Remote,
+            BadgeKind::Tag,
+            BadgeKind::HeadBranch,
+            BadgeKind::Branch,
+        ];
+        kinds.sort_by_key(badge_priority);
+        assert_eq!(
+            kinds.iter().map(badge_priority).collect::<Vec<_>>(),
+            vec![0, 1, 2, 3]
+        );
+        assert!(matches!(kinds[0], BadgeKind::HeadBranch));
+        assert!(matches!(kinds[3], BadgeKind::Remote));
+    }
+}

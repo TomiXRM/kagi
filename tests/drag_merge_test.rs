@@ -261,3 +261,78 @@ fn drag_merge_remote_only_branch_produces_plan() {
     assert_eq!(kind, MergeKind::FastForward);
     assert_eq!(plan.title.message_en(), "Merge origin/feature into main");
 }
+
+/// The one path the drag tests above never take: actually confirming the plan.
+/// A diverged merge must produce a real merge commit — two parents, both
+/// sides' content in the tree and on disk, and the current branch advanced to
+/// it (the target branch left where it was).
+#[test]
+fn execute_merge_branch_creates_a_two_parent_merge_commit() {
+    let tmp = init_repo();
+    let dir = tmp.path();
+
+    git(dir, &["checkout", "-qb", "feature"]);
+    write_file(dir, "feature.txt", "feature\n");
+    git(dir, &["add", "feature.txt"]);
+    git(dir, &["commit", "-qm", "feature"]);
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "main.txt", "main\n");
+    git(dir, &["add", "main.txt"]);
+    git(dir, &["commit", "-qm", "main"]);
+
+    let backend = Backend::open(dir).expect("open backend");
+    let (plan, kind) = backend.plan_merge_branch("feature").expect("plan merge");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+    assert_eq!(kind, MergeKind::MergeCommit);
+
+    let main_before = rev_parse(dir, "main");
+    let feature_before = rev_parse(dir, "feature");
+
+    let merged = backend
+        .execute_merge_branch("feature")
+        .expect("execute_merge_branch");
+
+    // The current branch advanced to the new commit; HEAD is still on main.
+    assert_eq!(rev_parse(dir, "HEAD"), merged.0);
+    assert_eq!(rev_parse(dir, "main"), merged.0);
+    assert_eq!(
+        rev_parse(dir, "feature"),
+        feature_before,
+        "merging must not move the target branch"
+    );
+
+    // A real merge commit: both sides are parents, in first-parent order.
+    let repo = git2::Repository::open(dir).expect("open repo");
+    let commit = repo
+        .find_commit(git2::Oid::from_str(&merged.0).unwrap())
+        .expect("merge commit");
+    assert_eq!(commit.parent_count(), 2, "a merge commit has two parents");
+    assert_eq!(commit.parent_id(0).unwrap().to_string(), main_before);
+    assert_eq!(commit.parent_id(1).unwrap().to_string(), feature_before);
+
+    // The merged content is in the tree AND checked out on disk.
+    let tree = commit.tree().expect("tree");
+    for name in ["base.txt", "main.txt", "feature.txt"] {
+        assert!(
+            tree.get_name(name).is_some(),
+            "{} must be in the merge tree",
+            name
+        );
+        assert!(dir.join(name).exists(), "{} must be checked out", name);
+    }
+    assert_eq!(
+        std::fs::read_to_string(dir.join("feature.txt")).unwrap(),
+        "feature\n",
+        "the merged-in side's content must land in the working tree"
+    );
+}
+
+fn rev_parse(dir: &Path, rev: &str) -> String {
+    let out = Command::new("git")
+        .args(["rev-parse", rev])
+        .current_dir(dir)
+        .output()
+        .expect("rev-parse");
+    assert!(out.status.success(), "git rev-parse {} failed", rev);
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}

@@ -306,9 +306,24 @@ mod tests {
         let all = a.get(Granularity::All);
         assert_eq!(all.total_commits, 2); // All includes the >1y-old commit
         assert_eq!(all.buckets.len(), 52);
-        assert!(all.start_label.starts_with("20")); // a YYYY-.. date
-                                                    // Year window excludes the >1y-old one.
+        // start_label is the earliest commit's UTC date, exactly.
+        assert_eq!(all.start_label, "2022-10-10");
+        // Year window excludes the >1y-old one.
         assert_eq!(a.get(Granularity::Year).total_commits, 1);
+    }
+
+    /// `fmt_ymd`/`civil_from_days` (Hinnant's calendar algorithm) pinned on
+    /// the epoch, a leap day, and the day after a century non-leap year.
+    #[test]
+    fn fmt_ymd_calendar_conversion() {
+        assert_eq!(fmt_ymd(0), "1970-01-01");
+        assert_eq!(fmt_ymd(86_399), "1970-01-01"); // same day, last second
+        assert_eq!(fmt_ymd(86_400), "1970-01-02");
+        assert_eq!(fmt_ymd(-1), "1969-12-31"); // negative epoch (div_euclid)
+        assert_eq!(fmt_ymd(1_709_164_800), "2024-02-29"); // leap day
+        assert_eq!(fmt_ymd(1_709_251_200), "2024-03-01");
+        assert_eq!(fmt_ymd(951_782_400), "2000-02-29"); // 2000 IS a leap year
+        assert_eq!(fmt_ymd(1_700_000_000), "2023-11-14");
     }
 
     #[test]
@@ -333,6 +348,69 @@ mod tests {
         // But the Week/Month windows include the older one.
         let month = aggregate(&commits, NOW).get(Granularity::Month).clone();
         assert_eq!(month.total_commits, 2);
+    }
+
+    /// The window's *upper* bound matters too: clock skew (or a rewritten
+    /// author date) puts commits in the future, and they must not be counted
+    /// or land in the last bucket.
+    #[test]
+    fn future_dated_commits_are_excluded() {
+        let commits = vec![
+            commit(NOW - 3600, 1, "A", "a@x"),   // in
+            commit(NOW + 1, 1, "F", "f@x"),      // 1s in the future — out
+            commit(NOW + 86_400, 1, "G", "g@x"), // a day ahead — out
+        ];
+        for g in Granularity::ALL {
+            let d = aggregate(&commits, NOW).get(g).clone();
+            assert_eq!(
+                d.total_commits,
+                1,
+                "{:?} counted a future commit",
+                g.label()
+            );
+            assert_eq!(d.contributors.len(), 1, "{:?}", g.label());
+            assert_eq!(d.contributors[0].email, "a@x", "{:?}", g.label());
+            assert_eq!(
+                d.buckets.iter().map(|b| b.commits).sum::<u32>(),
+                1,
+                "{:?} bucketed a future commit",
+                g.label()
+            );
+        }
+    }
+
+    /// `contributors` is documented "sorted by commit count desc", with ties
+    /// broken by merges then name.
+    #[test]
+    fn contributors_sorted_by_commit_count_desc_with_tie_break() {
+        let mut commits = Vec::new();
+        for _ in 0..3 {
+            commits.push(commit(NOW - 100, 1, "Carol", "c@x"));
+        }
+        for _ in 0..5 {
+            commits.push(commit(NOW - 200, 1, "Alice", "a@x"));
+        }
+        commits.push(commit(NOW - 300, 1, "Bob", "b@x"));
+        // Dave ties Carol on commits (3) but has one merge → ranks above her.
+        commits.push(commit(NOW - 400, 2, "Dave", "d@x"));
+        for _ in 0..2 {
+            commits.push(commit(NOW - 500, 1, "Dave", "d@x"));
+        }
+        let d = aggregate(&commits, NOW).get(Granularity::Day).clone();
+        let ranking: Vec<(&str, u32, u32)> = d
+            .contributors
+            .iter()
+            .map(|c| (c.name.as_str(), c.commits, c.merges))
+            .collect();
+        assert_eq!(
+            ranking,
+            vec![
+                ("Alice", 5, 0),
+                ("Dave", 3, 1),  // tie on commits, more merges
+                ("Carol", 3, 0), // tie on commits and merges → name order
+                ("Bob", 1, 0),
+            ]
+        );
     }
 
     #[test]

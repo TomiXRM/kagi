@@ -452,3 +452,210 @@ fn checkout_tracking_branch_name_collision_is_blocker() {
         plan.blockers
     );
 }
+
+// ── Safe-mode pins: every checkout below must stay `CheckoutBuilder::safe()` ──
+// Each test dirties the exact file the operation would rewrite and asserts the
+// operation refuses AND the user's content survives. Flipping any `safe()` to
+// `force()` makes these fail.
+
+/// `execute_merge_branch` fast-forward path (merge.rs FF checkout).
+#[test]
+fn merge_fast_forward_refuses_to_overwrite_dirty_file() {
+    let tmp = TempDir::new().unwrap();
+    let repo = init_repo(&tmp);
+    let dir = tmp.path();
+
+    git(dir, &["checkout", "-qb", "feature"]);
+    write_file(dir, "base.txt", "base\nfeature\n");
+    git(dir, &["add", "base.txt"]);
+    git(dir, &["commit", "-qm", "feature edits base"]);
+    git(dir, &["checkout", "-q", "main"]);
+
+    let head_before = git_rev_parse(dir, "HEAD");
+    write_file(dir, "base.txt", "base\nUNSAVED USER WORK\n");
+
+    let result = kagi_git::execute_merge_branch(&repo, "feature");
+    assert!(
+        result.is_err(),
+        "safe-mode FF merge must refuse to overwrite a dirty file"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("base.txt")).unwrap(),
+        "base\nUNSAVED USER WORK\n",
+        "the user's uncommitted content must survive the refused merge"
+    );
+    assert_eq!(
+        git_rev_parse(dir, "HEAD"),
+        head_before,
+        "HEAD must not move when the merge refuses"
+    );
+}
+
+/// `execute_merge_branch` true-merge path (merge.rs post-merge-commit checkout).
+#[test]
+fn merge_commit_refuses_to_overwrite_dirty_file() {
+    let tmp = TempDir::new().unwrap();
+    let repo = init_repo(&tmp);
+    let dir = tmp.path();
+
+    git(dir, &["checkout", "-qb", "feature"]);
+    write_file(dir, "base.txt", "base\nfeature\n");
+    git(dir, &["add", "base.txt"]);
+    git(dir, &["commit", "-qm", "feature edits base"]);
+
+    // Diverge main so the merge is a real (non-FF) merge, touching base.txt.
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "other.txt", "other\n");
+    git(dir, &["add", "other.txt"]);
+    git(dir, &["commit", "-qm", "main adds other"]);
+
+    let head_before = git_rev_parse(dir, "HEAD");
+    write_file(dir, "base.txt", "base\nUNSAVED USER WORK\n");
+
+    let result = kagi_git::execute_merge_branch(&repo, "feature");
+    assert!(
+        result.is_err(),
+        "safe-mode merge must refuse to overwrite a dirty file"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("base.txt")).unwrap(),
+        "base\nUNSAVED USER WORK\n",
+        "the user's uncommitted content must survive the refused merge"
+    );
+    assert_eq!(
+        git_rev_parse(dir, "HEAD"),
+        head_before,
+        "HEAD must not move when the merge refuses"
+    );
+}
+
+/// `execute_merge_into_conflict` (merge.rs merge-with-conflicts checkout):
+/// even the deliberately conflicting merge must not stomp uncommitted work.
+#[test]
+fn merge_into_conflict_refuses_to_overwrite_dirty_file() {
+    let (tmp, repo) = conflicting_merge_repo();
+    let dir = tmp.path();
+
+    let head_before = git_rev_parse(dir, "HEAD");
+    write_file(dir, "same.txt", "UNSAVED USER WORK\n");
+
+    let result = execute_merge_into_conflict(&repo, "feature");
+    assert!(
+        result.is_err(),
+        "safe-mode merge-into-conflict must refuse to overwrite a dirty file"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("same.txt")).unwrap(),
+        "UNSAVED USER WORK\n",
+        "the user's uncommitted content must survive the refused merge"
+    );
+    assert_eq!(
+        git_rev_parse(dir, "HEAD"),
+        head_before,
+        "HEAD must not move when the merge refuses"
+    );
+}
+
+/// `execute_checkout_tracking_branch` (switch.rs tracking-branch checkout).
+#[test]
+fn checkout_tracking_branch_refuses_to_overwrite_dirty_file() {
+    let repo_tmp = TempDir::new().unwrap();
+    let remote_tmp = TempDir::new().unwrap();
+    let repo = init_repo(&repo_tmp);
+    let dir = repo_tmp.path();
+    let remote_url = format!("file://{}", remote_tmp.path().display());
+
+    git(remote_tmp.path(), &["init", "-q", "--bare", "."]);
+    git(dir, &["remote", "add", "origin", &remote_url]);
+    git(dir, &["push", "-q", "-u", "origin", "main"]);
+    git(dir, &["checkout", "-qb", "remote-only"]);
+    write_file(dir, "base.txt", "base\nremote\n");
+    git(dir, &["add", "base.txt"]);
+    git(dir, &["commit", "-qm", "remote edits base"]);
+    git(dir, &["push", "-q", "origin", "remote-only"]);
+    git(dir, &["checkout", "-q", "main"]);
+    git(dir, &["branch", "-D", "remote-only"]);
+    git(dir, &["fetch", "-q", "origin"]);
+
+    let head_before = git_rev_parse(dir, "HEAD");
+    write_file(dir, "base.txt", "base\nUNSAVED USER WORK\n");
+
+    let result = execute_checkout_tracking_branch(&repo, "origin/remote-only", "remote-only");
+    assert!(
+        result.is_err(),
+        "safe-mode tracking-branch checkout must refuse to overwrite a dirty file"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("base.txt")).unwrap(),
+        "base\nUNSAVED USER WORK\n",
+        "the user's uncommitted content must survive the refused checkout"
+    );
+    assert_eq!(
+        git_rev_parse(dir, "HEAD"),
+        head_before,
+        "HEAD must not move when the checkout refuses"
+    );
+}
+
+/// `execute_switch_to_latest` (switch.rs `checkout_branch_tree`).
+#[test]
+fn switch_to_latest_refuses_to_overwrite_dirty_file() {
+    let repo_tmp = TempDir::new().unwrap();
+    let remote_tmp = TempDir::new().unwrap();
+    let repo = init_repo(&repo_tmp);
+    let dir = repo_tmp.path();
+    let remote_url = format!("file://{}", remote_tmp.path().display());
+
+    git(remote_tmp.path(), &["init", "-q", "--bare", "."]);
+    git(dir, &["remote", "add", "origin", &remote_url]);
+    git(dir, &["push", "-q", "-u", "origin", "main"]);
+    git(dir, &["checkout", "-qb", "topic"]);
+    write_file(dir, "base.txt", "base\ntopic\n");
+    git(dir, &["add", "base.txt"]);
+    git(dir, &["commit", "-qm", "topic edits base"]);
+    git(dir, &["push", "-q", "-u", "origin", "topic"]);
+    git(dir, &["checkout", "-q", "main"]);
+
+    let plan = plan_switch_to_latest(&repo, "topic", "origin/topic").expect("plan");
+    let head_before = git_rev_parse(dir, "HEAD");
+    write_file(dir, "base.txt", "base\nUNSAVED USER WORK\n");
+
+    let result = execute_switch_to_latest(&repo, dir, &plan, "topic", "origin/topic");
+    assert!(
+        result.is_err(),
+        "safe-mode switch-to-latest must refuse to overwrite a dirty file"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("base.txt")).unwrap(),
+        "base\nUNSAVED USER WORK\n",
+        "the user's uncommitted content must survive the refused switch"
+    );
+    assert_eq!(
+        git_rev_parse(dir, "HEAD"),
+        head_before,
+        "HEAD must not move when the switch refuses"
+    );
+}
+
+/// `execute_merge_into_conflict` again, from the other side: the deliberate
+/// conflict merge must leave a dirty file it does NOT touch alone. A force-mode
+/// checkout there would reset `base.txt` to the committed content.
+#[test]
+fn merge_into_conflict_keeps_unrelated_dirty_file() {
+    let (tmp, repo) = conflicting_merge_repo();
+    let dir = tmp.path();
+
+    write_file(dir, "base.txt", "UNSAVED USER WORK\n");
+
+    let files = execute_merge_into_conflict(&repo, "feature").expect("merge into conflict");
+    assert!(
+        files.iter().any(|f| f == "same.txt"),
+        "expected same.txt conflicted, got {:?}",
+        files
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("base.txt")).unwrap(),
+        "UNSAVED USER WORK\n",
+        "safe-mode merge checkout must not discard uncommitted work"
+    );
+}

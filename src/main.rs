@@ -284,6 +284,10 @@ mod panic_log_tests {
 
     #[test]
     fn panic_is_appended_to_panic_log() {
+        // Shares the process-global KAGI_LOG_DIR with the ui tests.
+        let _g = crate::ui::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("kagi-panic-log-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         // SAFETY: single-threaded test process, no concurrent env readers.

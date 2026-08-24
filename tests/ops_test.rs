@@ -1775,3 +1775,52 @@ fn test_cherry_pick_updates_modified_existing_file() {
     let st = kagi_git::working_tree_status(&git2::Repository::open(dir).unwrap()).unwrap();
     assert!(!st.is_dirty(), "WT must be clean after cherry-pick");
 }
+
+/// Safe-mode pin: cherry-pick's working-tree sync uses `CheckoutBuilder::safe()`.
+/// With `force()` the dirty `base.txt` would be silently replaced by the picked
+/// content instead of the cherry-pick refusing.
+#[test]
+fn test_cherry_pick_dirty_safe_checkout_refuses_and_preserves_user_content() {
+    let tmp = TempDir::new().unwrap();
+    let d = tmp.path();
+    git(d, &["init", "-q", "-b", "main", "."]);
+    git(d, &["config", "user.name", "Test"]);
+    git(d, &["config", "user.email", "test@example.com"]);
+    git(d, &["config", "commit.gpgsign", "false"]);
+    write_file(d, "base.txt", "base content\n");
+    git(d, &["add", "base.txt"]);
+    git(d, &["commit", "-qm", "initial commit"]);
+
+    // feature/pick edits base.txt — the cherry-pick will rewrite that file.
+    git(d, &["checkout", "-qb", "feature/pick"]);
+    write_file(d, "base.txt", "base content\npicked line\n");
+    git(d, &["add", "base.txt"]);
+    git(d, &["commit", "-qm", "edit base.txt"]);
+    let repo_tmp = Repository::open(d).expect("open repo");
+    let pick_id = CommitId(repo_tmp.head().unwrap().target().unwrap().to_string());
+    drop(repo_tmp);
+    git(d, &["checkout", "-q", "main"]);
+
+    let repo = Repository::open(d).expect("re-open repo on main");
+    let head_before = repo.head().unwrap().target().unwrap();
+
+    // Uncommitted work on the exact file the cherry-pick would rewrite.
+    write_file(d, "base.txt", "base content\nUNSAVED USER WORK\n");
+
+    let result = execute_cherry_pick(&repo, &pick_id);
+    assert!(
+        result.is_err(),
+        "safe-mode cherry-pick must refuse to overwrite a dirty file"
+    );
+    assert_eq!(
+        read_file(d, "base.txt"),
+        "base content\nUNSAVED USER WORK\n",
+        "the user's uncommitted content must survive the refused cherry-pick"
+    );
+    let repo2 = Repository::open(d).expect("re-open repo");
+    assert_eq!(
+        repo2.head().unwrap().target().unwrap(),
+        head_before,
+        "HEAD must not move when the cherry-pick refuses"
+    );
+}

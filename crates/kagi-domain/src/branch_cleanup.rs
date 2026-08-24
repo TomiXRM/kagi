@@ -393,6 +393,20 @@ mod tests {
     }
 
     #[test]
+    fn same_class_and_merged_at_falls_back_to_name() {
+        // Both FullyMerged with no merge date -> only the name tiebreak can
+        // order them, and the inputs are deliberately out of order.
+        let mut zeta = input("zeta");
+        zeta.tip_is_ancestor_of_main = true;
+        let mut alpha = input("alpha");
+        alpha.tip_is_ancestor_of_main = true;
+
+        let rows = build_rows(&[zeta, alpha], NOW);
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["alpha", "zeta"]);
+    }
+
+    #[test]
     fn warn_rows_cannot_produce_a_delete_target() {
         let mut grown = input("develop");
         grown.grown_ahead = Some(4);

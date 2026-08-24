@@ -6,8 +6,12 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
+use kagi_domain::plan_note::{CommonNote, PlanNote, WorktreeNote};
 use kagi_git::{
-    ops::{execute_create_worktree, plan_create_worktree, preflight_check, validate_worktree_path},
+    ops::{
+        execute_create_worktree, execute_open_worktree_for_branch, plan_create_worktree,
+        plan_open_worktree_for_branch, preflight_check, validate_worktree_path,
+    },
     CommitId,
 };
 
@@ -266,5 +270,134 @@ fn unlock_missing_worktree_is_blocked() {
             .any(|b| b.message_en().contains("does not exist")),
         "missing worktree must be a blocker: {:?}",
         plan.blockers
+    );
+}
+
+/// A worktree whose `locked` metadata cannot be read is neither "locked" nor
+/// "unlocked" — kagi must not guess, it must block. Making `locked` a
+/// directory is the cheapest way to make libgit2's read of it fail.
+#[test]
+fn unlock_plan_reports_an_unreadable_lock_state() {
+    let tmp = TempDir::new().expect("tempdir");
+    let repo = build_repo(&tmp);
+    add_worktree(tmp.path(), "wt-broken");
+
+    std::fs::create_dir(tmp.path().join(".git/worktrees/wt-broken/locked"))
+        .expect("create locked dir");
+
+    let plan = kagi_git::ops::plan_unlock_worktree(&repo, "wt-broken").expect("plan");
+    assert!(
+        plan.blockers.iter().any(|b| matches!(
+            b,
+            PlanNote::Worktree(WorktreeNote::LockStateUnreadable { name, .. }) if name == "wt-broken"
+        )),
+        "expected WorktreeNote::LockStateUnreadable, got: {:?}",
+        plan.blockers
+    );
+}
+
+// ────────────────────────────────────────────────────────────
+// open-worktree-for-an-existing-branch triple
+// ────────────────────────────────────────────────────────────
+
+/// `plan_open_worktree_for_branch` resolves the name through the same
+/// `resolve_branch_commit` fallback every op uses, so a tag resolves to a
+/// commit and never reaches `find_branch(.., Local)`. "Open a worktree for
+/// this branch" on a name that is not a local branch must be a blocker.
+#[test]
+fn open_worktree_for_a_name_that_is_not_a_local_branch_is_blocked() {
+    let repo_tmp = TempDir::new().unwrap();
+    let worktrees_tmp = TempDir::new().unwrap();
+    let repo = build_repo(&repo_tmp);
+    git(repo_tmp.path(), &["tag", "v1"]);
+
+    let plan = plan_open_worktree_for_branch(&repo, "v1", worktrees_tmp.path().join("wt-v1"))
+        .expect("plan_open_worktree_for_branch");
+
+    assert!(
+        plan.blockers.iter().any(|b| matches!(
+            b,
+            PlanNote::Common(CommonNote::BranchMissing { name, in_repo: true }) if name == "v1"
+        )),
+        "expected CommonNote::BranchMissing for the tag name, got: {:?}",
+        plan.blockers
+    );
+}
+
+/// Git allows one worktree per branch. Opening a second worktree on a branch
+/// that is already checked out elsewhere must block, and name the worktree
+/// that holds it so the user can go there instead.
+#[test]
+fn open_worktree_for_a_branch_checked_out_elsewhere_is_blocked() {
+    let repo_tmp = TempDir::new().unwrap();
+    let worktrees_tmp = TempDir::new().unwrap();
+    let repo = build_repo(&repo_tmp);
+    let first = add_worktree(repo_tmp.path(), "taken");
+
+    let plan =
+        plan_open_worktree_for_branch(&repo, "taken", worktrees_tmp.path().join("taken-again"))
+            .expect("plan_open_worktree_for_branch");
+
+    let hit = plan.blockers.iter().find_map(|b| match b {
+        PlanNote::Worktree(WorktreeNote::BranchInOtherWorktree { branch, path }) => {
+            Some((branch, path))
+        }
+        _ => None,
+    });
+    let (branch, path) = hit.unwrap_or_else(|| {
+        panic!(
+            "expected WorktreeNote::BranchInOtherWorktree, got: {:?}",
+            plan.blockers
+        )
+    });
+    assert_eq!(branch, "taken");
+    assert!(
+        path.contains("taken"),
+        "the blocker must name the worktree holding the branch ({}), got {}",
+        first.display(),
+        path
+    );
+}
+
+/// The execute side of "open a worktree for this existing branch": a real
+/// directory on disk, checked out on the branch, holding the branch's own
+/// content — and no new branch invented.
+#[test]
+fn execute_open_worktree_for_branch_checks_out_the_existing_branch() {
+    let repo_tmp = TempDir::new().unwrap();
+    let worktrees_tmp = TempDir::new().unwrap();
+    let d = repo_tmp.path();
+    let repo = build_repo(&repo_tmp);
+
+    git(d, &["checkout", "-q", "-b", "existing"]);
+    write_file(d, "only-on-branch.txt", "branch content\n");
+    git(d, &["add", "-A"]);
+    git(d, &["commit", "-qm", "branch commit"]);
+    let branch_tip = repo
+        .find_branch("existing", git2::BranchType::Local)
+        .unwrap()
+        .get()
+        .target()
+        .unwrap();
+    git(d, &["checkout", "-q", "main"]);
+
+    let path = worktrees_tmp.path().join("wt-existing");
+    let plan = plan_open_worktree_for_branch(&repo, "existing", &path).expect("plan");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+
+    execute_open_worktree_for_branch(&repo, "existing", &path)
+        .expect("execute_open_worktree_for_branch");
+
+    assert!(path.is_dir(), "worktree directory must exist");
+    assert_eq!(
+        std::fs::read_to_string(path.join("only-on-branch.txt")).expect("branch file in worktree"),
+        "branch content\n"
+    );
+    let linked = Repository::open(&path).expect("open linked worktree");
+    assert_eq!(linked.head().unwrap().shorthand().ok(), Some("existing"));
+    assert_eq!(
+        linked.head().unwrap().target().unwrap(),
+        branch_tip,
+        "the worktree must sit on the existing branch tip, not a new branch"
     );
 }

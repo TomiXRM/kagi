@@ -158,7 +158,7 @@ mod tests {
     }
 
     #[test]
-    fn checkout_overlap_single_and_multi_file() {
+    fn checkout_overlap_renders_count_and_file_list_independently() {
         assert_eq!(
             CheckoutNote::CheckoutOverlap {
                 count: 1,
@@ -178,6 +178,18 @@ mod tests {
             "Working tree has local changes to 2 file(s) that the target also modifies: \
              a b.rs, src/c.rs. Safe checkout would be refused (the conflict prevents checkout). \
              Stash or commit these changes first."
+        );
+        // `count` is the real overlap total; `files` is the producer's
+        // (possibly elided) display list — neither is derived from the other.
+        assert_eq!(
+            CheckoutNote::CheckoutOverlap {
+                count: 12,
+                files: "a.rs, b.rs, c.rs, ...".into()
+            }
+            .message_en(),
+            "Working tree has local changes to 12 file(s) that the target also modifies: \
+             a.rs, b.rs, c.rs, .... Safe checkout would be refused (the conflict prevents \
+             checkout). Stash or commit these changes first."
         );
     }
 

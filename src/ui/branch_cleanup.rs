@@ -1040,3 +1040,25 @@ fn build_cleanup_row(
         .child(actions_cell)
         .into_any_element()
 }
+
+#[cfg(test)]
+mod format_date_tests {
+    use super::format_date;
+
+    /// Same ground as `detail_panel`'s `format_civil` tests (the other
+    /// civil-date formatter in the tree): the epoch, a known timestamp, the
+    /// 2000 leap day, a pre-1970 (negative) epoch, and the 1900 non-leap-year
+    /// boundary. The two formatters agree on the date part for all of them.
+    #[test]
+    fn civil_dates_match_the_other_formatter() {
+        assert_eq!(format_date(0), "1970-01-01");
+        assert_eq!(format_date(1_705_311_000), "2024-01-15");
+        assert_eq!(format_date(951_782_400), "2000-02-29");
+        assert_eq!(format_date(-60), "1969-12-31");
+        // 1900 is not a leap year: 1900-02-28 + 1 day is 1900-03-01.
+        assert_eq!(format_date(-25_509 * 86_400), "1900-02-28");
+        assert_eq!(format_date(-25_508 * 86_400), "1900-03-01");
+        // The doc-comment's own example.
+        assert_eq!(format_date(1_768_003_200), "2026-01-10");
+    }
+}

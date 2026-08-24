@@ -193,6 +193,37 @@ mod tests {
         );
     }
 
+    /// `count` is its own field, not `modified + untracked`: the producer
+    /// counts every file left out of the commit, while `parts` only breaks
+    /// down the two categories it names (a staged-but-excluded file lands in
+    /// the count and in neither part).
+    #[test]
+    fn leftover_count_is_independent_of_the_parts_breakdown() {
+        assert_eq!(
+            CommitNote::LeftoverNotIncluded {
+                count: 7,
+                parts: CommitLeftoverParts {
+                    modified: 2,
+                    untracked: 1
+                },
+            }
+            .message_en(),
+            "7 file(s) (2 modified, 1 untracked) will NOT be included in this commit."
+        );
+        // …and a count that is *smaller* than the breakdown still renders as-is.
+        assert_eq!(
+            CommitNote::LeftoverNotIncluded {
+                count: 1,
+                parts: CommitLeftoverParts {
+                    modified: 4,
+                    untracked: 4
+                },
+            }
+            .message_en(),
+            "1 file(s) (4 modified, 4 untracked) will NOT be included in this commit."
+        );
+    }
+
     #[test]
     fn title_commit_with_quotes_and_path_like_summary() {
         assert_eq!(

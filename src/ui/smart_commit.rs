@@ -226,9 +226,12 @@ impl SmartCommitState {
 mod tests {
     use super::*;
 
+    /// Wording lock ONLY: this pins the ADR-0044 text of the `CONSENT_LINES`
+    /// constant so a reword is a deliberate edit. It does NOT prove the user
+    /// ever sees them - that lives in the consent modal's render path, which
+    /// needs a window and is not covered here.
     #[test]
     fn consent_lines_match_adr() {
-        // The four ADR-0044 statements must be present verbatim.
         assert_eq!(CONSENT_LINES.len(), 4);
         assert!(CONSENT_LINES.contains(&"Only staged diff will be sent"));
         assert!(CONSENT_LINES.contains(&"Unstaged changes will not be included"));

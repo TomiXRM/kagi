@@ -163,6 +163,39 @@ mod tests {
         );
     }
 
+    /// Every conclusion GitHub can report, and the case-normalisation `gh`
+    /// forces on us (the REST API lower-cases what GraphQL upper-cases).
+    #[test]
+    fn ci_folds_every_github_conclusion_case_insensitively() {
+        // Failure-ish conclusions all fail the fold.
+        for c in ["FAILURE", "TIMED_OUT", "CANCELLED", "ERROR"] {
+            assert_eq!(fold_ci(&[Some(c)]), CiState::Failure, "{c}");
+            assert_eq!(
+                fold_ci(&[Some(&c.to_ascii_lowercase() as &str)]),
+                CiState::Failure,
+                "{c} (lowercase)"
+            );
+        }
+        // Non-blocking conclusions leave the fold green.
+        for c in ["SUCCESS", "NEUTRAL", "SKIPPED"] {
+            assert_eq!(fold_ci(&[Some(c)]), CiState::Success, "{c}");
+            assert_eq!(
+                fold_ci(&[Some(&c.to_ascii_lowercase() as &str)]),
+                CiState::Success,
+                "{c} (lowercase)"
+            );
+        }
+        // Anything unrecognised (in-flight checks report e.g. ACTION_REQUIRED
+        // or nothing at all) counts as still pending.
+        assert_eq!(fold_ci(&[Some("ACTION_REQUIRED")]), CiState::Pending);
+        assert_eq!(fold_ci(&[None]), CiState::Pending);
+        // A failure still outranks a pending.
+        assert_eq!(
+            fold_ci(&[Some("neutral"), None, Some("timed_out")]),
+            CiState::Failure
+        );
+    }
+
     #[test]
     fn stacked_detection_uses_head_of_another_open_pr() {
         let mk = |n, head: &str, base: &str| PullRequest {
@@ -214,6 +247,49 @@ mod tests {
             .map(|(i, d)| (prs[i].number, d))
             .collect();
         assert_eq!(order, vec![(1, 0), (3, 1), (4, 2), (2, 0)]);
+    }
+
+    /// The PR data is external: a base cycle (A's base is B's head and vice
+    /// versa) means no PR is a root, so the root pass emits nothing. The
+    /// cycle-recovery pass is what keeps those PRs on the dashboard instead
+    /// of silently dropping them.
+    #[test]
+    fn stack_order_never_drops_prs_in_a_base_cycle() {
+        let mk = |n, head: &str, base: &str| PullRequest {
+            number: n,
+            title: String::new(),
+            head: head.into(),
+            base: base.into(),
+            is_draft: false,
+            ci: CiState::None,
+            review: ReviewState::None,
+            url: String::new(),
+            author: String::new(),
+            reviewers: Vec::new(),
+            body: String::new(),
+            checks: Vec::new(),
+            mergeable: Mergeable::default(),
+        };
+        // 1 ← 2 ← 1: a two-PR cycle, no root at all.
+        let cycle = vec![mk(1, "a", "b"), mk(2, "b", "a")];
+        let order = stack_order(&cycle);
+        assert_eq!(order.len(), 2, "cycle dropped PRs: {order:?}");
+        let mut nums: Vec<u64> = order.iter().map(|(i, _)| cycle[*i].number).collect();
+        nums.sort_unstable();
+        assert_eq!(nums, vec![1, 2]);
+
+        // A cycle sitting alongside a normal stack: every PR still appears
+        // exactly once.
+        let mixed = vec![
+            mk(1, "root", "main"),
+            mk(2, "child", "root"),
+            mk(3, "x", "y"),
+            mk(4, "y", "x"),
+        ];
+        let order = stack_order(&mixed);
+        let mut nums: Vec<u64> = order.iter().map(|(i, _)| mixed[*i].number).collect();
+        nums.sort_unstable();
+        assert_eq!(nums, vec![1, 2, 3, 4], "every PR listed once");
     }
 
     #[test]
@@ -634,6 +710,31 @@ mod comment_tag_tests {
         );
     }
 
+    /// With a label `severity_for` does not know, the badge **colour** decides
+    /// — the only arm that exercises the colour heuristic at all, since a
+    /// known label matches first and returns.
+    #[test]
+    fn unknown_label_falls_back_to_the_badge_colour() {
+        let sev = |url_label: &str, colour: &str| {
+            let body = format!("![X Badge](https://img.shields.io/badge/{url_label}-{colour})");
+            extract_comment_tag(&body).0.unwrap().severity
+        };
+        assert_eq!(sev("X", "red"), TagSeverity::High);
+        assert_eq!(sev("X", "orange"), TagSeverity::High);
+        assert_eq!(sev("X", "critical"), TagSeverity::High);
+        assert_eq!(sev("X", "important"), TagSeverity::High);
+        assert_eq!(sev("X", "yellow"), TagSeverity::Medium);
+        assert_eq!(sev("X", "yellowgreen"), TagSeverity::Medium);
+        assert_eq!(sev("X", "green"), TagSeverity::Low);
+        assert_eq!(sev("X", "blue"), TagSeverity::Low);
+        // The label wins over a contradicting colour.
+        assert_eq!(sev("NIT", "red"), TagSeverity::Low);
+        assert_eq!(sev("P1", "green"), TagSeverity::High);
+        assert_eq!(sev("SHOULD", "green"), TagSeverity::Medium);
+        // Colour matching is case-insensitive (`to_ascii_lowercase`).
+        assert_eq!(sev("X", "RED"), TagSeverity::High);
+    }
+
     /// Copilot's shape.
     #[test]
     fn copilot_bracket_prefix_becomes_a_tag() {
@@ -654,5 +755,27 @@ mod comment_tag_tests {
             assert!(tag.is_none(), "{body} → {tag:?}");
             assert_eq!(rest, body);
         }
+    }
+
+    #[test]
+    fn has_suggestion_detects_only_real_suggestion_fences() {
+        let c = |body: &str| ReviewComment {
+            author: "copilot".into(),
+            path: "src/lib.rs".into(),
+            line: 10,
+            body: body.into(),
+            diff_hunk: String::new(),
+            created_at: String::new(),
+            in_reply_to: None,
+        };
+        assert!(c("nit\n\n```suggestion\nlet x = 1;\n```\n").has_suggestion());
+        // Indented inside a list item still counts.
+        assert!(c("- see below\n  ```suggestion\n  ok\n  ```").has_suggestion());
+        // Language-tagged suggestion fences (```suggestion rust) count too.
+        assert!(c("```suggestion rust\nok\n```").has_suggestion());
+        // Prose and plain code fences do not gate the apply affordance.
+        assert!(!c("looks good to me").has_suggestion());
+        assert!(!c("```rust\nlet x = 1;\n```").has_suggestion());
+        assert!(!c("the word suggestion appears mid-line ```suggestion").has_suggestion());
     }
 }

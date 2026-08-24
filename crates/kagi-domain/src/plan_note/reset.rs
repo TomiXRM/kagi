@@ -163,4 +163,16 @@ mod tests {
             "To undo, move the branch back to its previous tip:\n  git update-ref refs/heads/main e5f6a7b8\n(Ref-only — the working tree and index are untouched either way.)"
         );
     }
+
+    #[test]
+    fn ref_only_soft_reset_promises_no_file_loss() {
+        // Safety-relevant: the whole point is telling the user their working
+        // tree and index survive the ref move.
+        assert_eq!(
+            ResetNote::RefOnlySoftReset.message_en(),
+            "This only moves the branch pointer (like `git reset --soft`): the working tree \
+             and staged changes are left exactly as they are, so this will show up as a \
+             large diff against the new HEAD, not lost files."
+        );
+    }
 }

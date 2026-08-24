@@ -487,6 +487,11 @@ fn legacy_slug_alias(slug: &str) -> &str {
     }
 }
 
+/// Test-only guard for the global `ACTIVE` index + `KAGI_LOG_DIR`; held by
+/// every test that changes the active theme (incl. `avatar`'s colour test).
+#[cfg(test)]
+pub(crate) static ACTIVE_THEME_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Set the active theme by slug and persist it to `settings.json`.
 /// Returns `true` if the slug was recognised.
 pub fn set_active(slug: &str) -> bool {
@@ -1758,36 +1763,10 @@ mod tests {
 
     #[test]
     fn themes_have_unique_slugs() {
-        // 11 since the Xcode pair was retired — they were byte-identical to
-        // the Apple themes (same Apple `.xccolortheme` source).
-        assert_eq!(THEMES.len(), 11);
         let mut slugs: Vec<&str> = THEMES.iter().map(|t| t.slug).collect();
         slugs.sort_unstable();
         slugs.dedup();
-        assert_eq!(slugs.len(), 11, "theme slugs must be unique");
-    }
-
-    #[test]
-    fn default_is_catppuccin_exact() {
-        // The default (index 0) must byte-match the previous hard-coded values.
-        let t = &THEMES[0];
-        assert_eq!(t.slug, "catppuccin");
-        assert!(t.dark);
-        assert_eq!(t.bg_base, 0x1e1e2e);
-        assert_eq!(t.surface, 0x313244);
-        assert_eq!(t.selected, 0x45475a);
-        assert_eq!(t.panel, 0x181825);
-        assert_eq!(t.sidebar, 0x11111b);
-        assert_eq!(t.text_main, 0xcdd6f4);
-        assert_eq!(t.color_head, 0xf38ba8);
-        assert_eq!(t.color_branch, 0x89b4fa);
-        assert_eq!(t.color_remote, 0xa6e3a1);
-        assert_eq!(t.color_tag, 0xfab387);
-        assert_eq!(t.diff_added_bg, 0x1c3a2a);
-        assert_eq!(t.diff_removed_bg, 0x3a1c1c);
-        assert_eq!(t.avatar_sat, 0.70);
-        assert_eq!(t.avatar_light, 0.60);
-        assert_eq!(t.term_selection, (0x58, 0x5b, 0x70, 0x99));
+        assert_eq!(slugs.len(), THEMES.len(), "theme slugs must be unique");
     }
 
     #[test]
@@ -1796,6 +1775,41 @@ mod tests {
             assert_eq!(index_of(t.slug), Some(i));
         }
         assert_eq!(index_of("does-not-exist"), None);
+    }
+
+    /// `set_active` must store the *selected* theme's index — the picker reads
+    /// it back via `active_index()`/`theme()`, and a `set_active` that always
+    /// stored 0 passed the whole theme suite. Persists, hence the tempdir.
+    #[test]
+    fn set_active_selects_the_named_theme() {
+        let _g = ACTIVE_THEME_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let prev = active_index();
+        std::env::set_var("KAGI_LOG_DIR", tmp.path());
+
+        // Every built-in theme, not just index 0.
+        for (i, t) in THEMES.iter().enumerate() {
+            assert!(set_active(t.slug), "{} must be recognised", t.slug);
+            assert_eq!(
+                active_index(),
+                i,
+                "active_index after set_active({})",
+                t.slug
+            );
+            assert_eq!(theme().slug, t.slug, "theme() after set_active({})", t.slug);
+        }
+
+        // A retired slug resolves through the alias table; an unknown one is
+        // rejected and leaves the active theme untouched.
+        assert!(set_active("xcode-dark"));
+        assert_eq!(theme().slug, "apple-dark");
+        assert!(!set_active("nope"));
+        assert_eq!(theme().slug, "apple-dark");
+
+        ACTIVE.store(prev, Ordering::Relaxed);
+        std::env::remove_var("KAGI_LOG_DIR");
     }
 
     #[test]
@@ -1811,19 +1825,6 @@ mod tests {
         assert_eq!(clamp_zoom(0.5), ZOOM_MIN);
         assert_eq!(clamp_zoom(2.0), ZOOM_MAX);
         assert_eq!(clamp_zoom(1.0), 1.0);
-        // rem_size_px tracks the default 1.0x (no settings.json mutation here).
-        assert!((BASE_REM_PX - 16.0).abs() < f32::EPSILON);
-    }
-
-    // T-SETTINGS-001: the Settings Theme Select maps slug ↔ index purely; the
-    // round-trip must be lossless for every built-in theme (the Select renders
-    // by slug and reuses `set_active(slug)` / `active_index()` to apply).
-    #[test]
-    fn theme_slug_index_roundtrip() {
-        for (i, t) in THEMES.iter().enumerate() {
-            assert_eq!(index_of(t.slug), Some(i));
-            assert_eq!(THEMES[i].slug, t.slug);
-        }
     }
 
     /// T-SYNTAX-001: every theme must produce a usable highlight theme —

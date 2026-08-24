@@ -26,6 +26,10 @@ use kagi_git::{find_stat, parse_coauthors, ChangeKind, CommitId, FileDiffStat, F
 
 use kagi_ui_core::file_tree::status_badge;
 
+// Badge sort order is shared with the graph column — one definition only
+// (a second copy silently drifts and the two views disagree).
+use super::badges::badge_priority;
+
 use super::{
     avatar::{avatar_color, avatar_initial},
     commit_list::{BadgeKind, RefBadge},
@@ -1041,13 +1045,40 @@ fn stat_for_index<'a>(
     find_stat(stats?, &fs.path)
 }
 
-/// Change-kind badge char and colour. `None` (T-WS-EDITOR-004: an unmodified
-/// Sort key for badge priority: HeadBranch=0, Branch=1, Tag=2, Remote=3.
-fn badge_priority(kind: &BadgeKind) -> u8 {
-    match kind {
-        BadgeKind::HeadBranch => 0,
-        BadgeKind::Branch => 1,
-        BadgeKind::Tag => 2,
-        BadgeKind::Remote => 3,
+#[cfg(test)]
+mod parse_author_tests {
+    use super::parse_author;
+
+    /// The split marker is the literal **two-space** `"  <"` that
+    /// `detail_panel` writes. A one-space line has no marker, so the whole
+    /// line becomes the name and the email is empty — documented here so the
+    /// producer and the parser cannot drift apart unnoticed.
+    #[test]
+    fn splits_only_on_the_two_space_marker() {
+        assert_eq!(
+            parse_author("Ada Lovelace  <ada@example.com>  2026-01-10"),
+            ("Ada Lovelace".to_string(), "ada@example.com".to_string())
+        );
+        // One space: no marker -> whole line is the name.
+        assert_eq!(
+            parse_author("Ada Lovelace <ada@example.com>"),
+            ("Ada Lovelace <ada@example.com>".to_string(), String::new())
+        );
+        // No angle brackets at all.
+        assert_eq!(
+            parse_author("  Ada Lovelace  "),
+            ("Ada Lovelace".to_string(), String::new())
+        );
+        assert_eq!(parse_author(""), (String::new(), String::new()));
+        // A `<` inside the name: the first `  <` still wins.
+        assert_eq!(
+            parse_author("A <B  <a@b>"),
+            ("A <B".to_string(), "a@b".to_string())
+        );
+        // Marker present but no closing `>`: email empty, name still split.
+        assert_eq!(
+            parse_author("Ada  <ada@example.com"),
+            ("Ada".to_string(), String::new())
+        );
     }
 }

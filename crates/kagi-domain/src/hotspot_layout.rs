@@ -152,6 +152,23 @@ mod tests {
     }
 
     #[test]
+    fn tiles_stay_close_to_square() {
+        // The reason the algorithm splits the *longer* side: proportional
+        // areas hold for any split direction, but only longer-side splitting
+        // keeps the tiles square-ish. Always splitting one axis produces
+        // slivers with aspect ratios far past this bound.
+        let weights = [10.0, 5.0, 5.0, 2.0, 1.0, 1.0, 8.0];
+        for (i, r) in treemap(&weights).iter().enumerate() {
+            let (long, short) = if r.w >= r.h { (r.w, r.h) } else { (r.h, r.w) };
+            assert!(
+                long / short < 4.0,
+                "rect {i} aspect ratio {} too elongated: {r:?}",
+                long / short
+            );
+        }
+    }
+
+    #[test]
     fn index_alignment_is_preserved() {
         // Largest weight is at index 2; its tile must be the biggest.
         let out = treemap(&[1.0, 2.0, 9.0, 3.0]);

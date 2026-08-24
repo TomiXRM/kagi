@@ -96,18 +96,6 @@ mod tests {
 
     // ── avatar_color tests ───────────────────────────────────
 
-    /// Same email always produces the same colour (stability).
-    #[test]
-    fn test_color_stable() {
-        let c1 = avatar_color("alice@example.com");
-        let c2 = avatar_color("alice@example.com");
-        // Compare via hue (f32 exact equality is fine here — same computation).
-        assert_eq!(c1.h, c2.h);
-        assert_eq!(c1.s, c2.s);
-        assert_eq!(c1.l, c2.l);
-        assert_eq!(c1.a, c2.a);
-    }
-
     /// Different emails spread across multiple hues (collision on 12 buckets
     /// is unlikely for 4 very different inputs).
     #[test]
@@ -141,19 +129,45 @@ mod tests {
                 s,
                 c.h
             );
-            assert_eq!(c.s, 0.70);
-            assert_eq!(c.l, 0.60);
-            assert_eq!(c.a, 1.0);
         }
     }
 
-    /// Saturation, lightness and alpha are fixed regardless of input.
+    /// W9-THEME: saturation/lightness come from the ACTIVE theme, not from
+    /// hard-coded constants - that is the whole point of the theme fields, and
+    /// hard-coding 0.70/0.60 back into `avatar_color` must fail here.
+    /// Mutates the global active theme, so it holds the theme test lock.
     #[test]
-    fn test_color_fixed_saturation_lightness() {
-        let c = avatar_color("test@example.com");
-        assert_eq!(c.s, 0.70, "saturation must be 0.70");
-        assert_eq!(c.l, 0.60, "lightness must be 0.60");
-        assert_eq!(c.a, 1.0, "alpha must be 1.0");
+    fn test_color_follows_active_theme() {
+        let _g = crate::theme::ACTIVE_THEME_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let prev = crate::theme::theme().slug;
+        std::env::set_var("KAGI_LOG_DIR", tmp.path());
+
+        // Two themes with deliberately different avatar_sat / avatar_light.
+        for slug in ["catppuccin", "one-light"] {
+            assert!(crate::theme::set_active(slug));
+            let t = crate::theme::theme();
+            let c = avatar_color("test@example.com");
+            assert_eq!(c.s, t.avatar_sat, "{slug} saturation");
+            assert_eq!(c.l, t.avatar_light, "{slug} lightness");
+            assert_eq!(c.a, 1.0);
+        }
+        // Guard against the two themes accidentally converging (which would
+        // make the loop above tautological).
+        let a = crate::theme::THEMES
+            .iter()
+            .find(|t| t.slug == "catppuccin")
+            .unwrap();
+        let b = crate::theme::THEMES
+            .iter()
+            .find(|t| t.slug == "one-light")
+            .unwrap();
+        assert_ne!(a.avatar_light, b.avatar_light);
+
+        crate::theme::set_active(prev);
+        std::env::remove_var("KAGI_LOG_DIR");
     }
 
     // ── avatar_initial tests ─────────────────────────────────

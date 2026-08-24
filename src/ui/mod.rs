@@ -30,6 +30,8 @@ pub mod diff_view;
 pub mod diffstat_bar;
 pub mod ecosystem;
 pub mod editor_fs_ops;
+#[cfg(test)]
+mod env_tests;
 pub use kagi_ui_editor::markdown as editor_markdown; // ADR-0121: was a shim file
 mod diff_selection;
 pub mod editor_tree_menu;
@@ -637,6 +639,12 @@ impl ToolbarState {
 // ──────────────────────────────────────────────────────────────
 // W2-HEADER: unit tests for ToolbarState / ADR-0013
 // ──────────────────────────────────────────────────────────────
+/// Test-only guard for the process-global `KAGI_LOG_DIR` env var: unit tests
+/// that redirect settings.json into a tempdir must hold this, or a sibling test
+/// swapping the var mid-read makes them flaky.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod toolbar_tests {
     use super::*;
@@ -765,12 +773,13 @@ mod toolbar_tests {
         assert!(!t.undo_on, "feature/two (ahead=0) must have undo=off");
     }
 
-    /// log_headless format includes (behind=N) and (ahead=N).
+    /// Every toolbar flag on at once (ahead+behind+dirty+stash).
+    /// This is a plain `toolbar_state()` field check - the `[kagi]` log format
+    /// is verified by the headless harness, not here.
     #[test]
-    fn toolbar_log_format_behind_ahead() {
+    fn toolbar_state_all_flags_on() {
         let s = make_summary(2, 3, true, 1);
         let t = s.toolbar_state();
-        // Verify fields are correct (can't easily capture stderr; just verify struct values).
         assert_eq!(t.behind, 3);
         assert_eq!(t.ahead, 2);
         assert!(t.pull_on);

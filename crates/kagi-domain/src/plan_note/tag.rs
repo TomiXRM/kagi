@@ -178,6 +178,61 @@ mod tests {
     }
 
     #[test]
+    fn push_tag_blockers() {
+        assert_eq!(
+            TagNote::NotFound {
+                name: "v1.0.0".into()
+            }
+            .message_en(),
+            "No local tag named 'v1.0.0'."
+        );
+        assert_eq!(
+            TagNote::NoRemote.message_en(),
+            "This repository has no remote configured, so there is nowhere to push a tag to."
+        );
+    }
+
+    #[test]
+    fn push_tag_warnings() {
+        assert_eq!(
+            TagNote::PushRemoteSideEffect {
+                remote: "origin".into(),
+                name: "v1.0.0".into()
+            }
+            .message_en(),
+            "This publishes tag 'v1.0.0' to 'origin'. Unlike every other tag action in kagi, it leaves this machine and others will see it."
+        );
+        // kagi never force-pushes a tag — the note must say so.
+        assert_eq!(
+            TagNote::PushRejectedIfMoved {
+                name: "v1.0.0".into()
+            }
+            .message_en(),
+            "If 'v1.0.0' already exists on the remote pointing at a different commit, the remote rejects the push rather than moving it. kagi never force-pushes a tag."
+        );
+    }
+
+    #[test]
+    fn push_tag_title_and_recovery() {
+        assert_eq!(
+            TagTitle::PushTag {
+                name: "v1.0.0".into(),
+                remote: "origin".into()
+            }
+            .message_en(),
+            "Push tag 'v1.0.0' to 'origin'"
+        );
+        assert_eq!(
+            TagRecovery::PushTag {
+                name: "v1.0.0".into(),
+                remote: "origin".into()
+            }
+            .message_en(),
+            "The tag can be removed from the remote:\n  git push origin --delete v1.0.0\nThis only helps until someone else fetches it — a published tag that others have pulled cannot be recalled."
+        );
+    }
+
+    #[test]
     fn create_tag_recovery() {
         assert_eq!(
             TagRecovery::CreateTag {

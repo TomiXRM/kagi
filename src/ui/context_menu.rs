@@ -604,8 +604,23 @@ mod tests {
 
     #[test]
     fn truncates_header_by_chars() {
-        let header = short_title_header("1234567890", "日本語メッセージがとても長いので切り詰める");
-        assert!(header.as_ref().starts_with("12345678 日本語"));
+        // 60 multibyte chars > the 54-char limit, so truncation must fire and
+        // must cut on a CHAR boundary (a byte-based cut would split a UTF-8
+        // sequence - each of these chars is 3 bytes).
+        let title: String = "日本語メッセージがとても長いので切り詰める".repeat(3);
+        assert_eq!(title.chars().count(), 63);
+        let header = short_title_header("1234567890", &title);
+        let (sha, body) = header.as_ref().split_at(9);
+        assert_eq!(sha, "12345678 ");
+        assert_eq!(body.chars().count(), 54, "53 chars + the ellipsis");
+        assert!(body.ends_with('…'));
+        assert!(title.starts_with(&body[..body.len() - '…'.len_utf8()]));
+
+        // At or under the limit the title is passed through untouched.
+        let short: String = "あ".repeat(54);
+        assert!(short_title_header("1234567890", &short)
+            .as_ref()
+            .ends_with(&short));
     }
 
     fn has_tracking_checkout(groups: &[MenuGroup], remote: &str) -> bool {

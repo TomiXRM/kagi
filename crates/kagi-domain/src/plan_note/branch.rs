@@ -390,4 +390,18 @@ mod tests {
             "Branch 'feat/x' could not be found. Use `git branch` to list local branches."
         );
     }
+
+    #[test]
+    fn delete_squash_merged_explains_the_dead_end() {
+        // Safety-relevant: this is the note that justifies deleting a branch
+        // whose commits are NOT ancestors of HEAD.
+        assert_eq!(
+            BranchNote::DeleteSquashMerged {
+                name: "feat/x".into(),
+                squash: "a1b2c3d4".into()
+            }
+            .message_en(),
+            "Branch 'feat/x' was squash-merged as a1b2c3d4: its commits are not ancestors of HEAD (the graph shows it as a dead end), but the identical change is already there. Nothing is lost by deleting it."
+        );
+    }
 }

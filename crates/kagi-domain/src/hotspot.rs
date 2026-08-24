@@ -437,9 +437,12 @@ mod tests {
         assert_eq!(eco.files[0].path, "hot"); // wins on both axes
         assert_eq!(eco.files[0].commits, 3);
         assert!(eco.files[0].risk > eco.files[1].risk);
-        // "big" (loc 1000, churn 1) and "busy" (loc 10, churn 3) both rank
-        // below "hot"; neither dominates the other trivially but both < hot.
-        assert!(eco.files.iter().all(|f| f.risk <= eco.files[0].risk));
+        // risk = (commits / max_churn) * (loc / max_loc), so the two runners-up
+        // land on known values: big = 1/3 * 1.0, busy = 1.0 * 10/1000.
+        let risk = |p: &str| eco.files.iter().find(|f| f.path == p).unwrap().risk;
+        assert!((risk("hot") - 1.0).abs() < 1e-9);
+        assert!((risk("big") - 1.0 / 3.0).abs() < 1e-9);
+        assert!((risk("busy") - 0.01).abs() < 1e-9);
     }
 
     #[test]
@@ -542,6 +545,35 @@ mod tests {
         assert_eq!((pairs[0].a.as_str(), pairs[0].b.as_str()), ("a", "b"));
         assert_eq!(pairs[0].together, 2);
         assert_eq!(pairs.iter().find(|p| p.b == "c").unwrap().together, 1);
+        // Jaccard degree: changes a=3, b=2, c=1.
+        // (a,b): 2 / (3 + 2 - 2) = 2/3.  (a,c): 1 / (3 + 1 - 1) = 1/3.
+        assert!((pairs[0].degree - 2.0 / 3.0).abs() < 1e-9);
+        let ac = pairs.iter().find(|p| p.b == "c").unwrap();
+        assert!((ac.degree - 1.0 / 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn top_couplings_skips_sweeping_commits() {
+        // A vendored drop / mass refactor touching > COUPLING_MAX_FILES_PER_COMMIT
+        // files must not manufacture coupling pairs (the O(k²) blow-up guard),
+        // though it still counts toward each file's change total.
+        let sweep: Vec<String> = ["a".to_string(), "b".to_string()]
+            .into_iter()
+            .chain((0..COUPLING_MAX_FILES_PER_COMMIT).map(|i| format!("v{i}")))
+            .collect();
+        let sweep: Vec<&str> = sweep.iter().map(|s| s.as_str()).collect();
+        let r = raw(
+            vec![commit(NOW - 100, &["a", "b"]), commit(NOW - 200, &sweep)],
+            &[],
+        );
+        let pairs = top_couplings(&r, NOW, Granularity::All, 100);
+        // Only the small commit pairs a with b — no v* pair anywhere.
+        assert_eq!(pairs.len(), 1);
+        assert_eq!((pairs[0].a.as_str(), pairs[0].b.as_str()), ("a", "b"));
+        assert_eq!(pairs[0].together, 1);
+        // …but the sweep still counted toward both change totals:
+        // 1 / (2 + 2 - 1) = 1/3, not 1 / (1 + 1 - 1) = 1.0.
+        assert!((pairs[0].degree - 1.0 / 3.0).abs() < 1e-9);
     }
 
     #[test]

@@ -16,6 +16,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
+use kagi_domain::plan_note::{DiscardNote, PlanNote};
 use kagi_git::{execute_discard, plan_discard, working_tree_status};
 
 // ────────────────────────────────────────────────────────────
@@ -356,6 +357,46 @@ fn discard_conflicted_is_blocked() {
         "blocker should mention conflict: {:?}",
         plan.blockers
     );
+
+    // The blocked plan must also be refused at EXECUTE time (defence in depth):
+    // execute_discard has its own blocker gate + preflight, and the module doc
+    // promises "no working-tree change" for a blocked discard.
+    let before = read_file(&d, "conflict.txt");
+    assert!(
+        before.contains("<<<<<<<"),
+        "precondition: conflict markers present: {}",
+        before
+    );
+
+    let err = execute_discard(&repo, &plan, &paths)
+        .expect_err("execute_discard must refuse a plan with blockers");
+    let msg = format!("{:?}", err);
+    assert!(
+        msg.contains("blocker"),
+        "error should name the blocker gate: {}",
+        msg
+    );
+
+    // No working-tree change: the conflict markers are still there.
+    let after = read_file(&d, "conflict.txt");
+    assert_eq!(
+        before, after,
+        "a refused discard must not touch the working tree"
+    );
+    assert!(
+        after.contains("<<<<<<<") && after.contains(">>>>>>>"),
+        "conflict markers must survive the refused discard: {}",
+        after
+    );
+    // And the file is still conflicted in the index.
+    let status_after = working_tree_status(&repo).unwrap();
+    assert!(
+        status_after
+            .conflicted
+            .iter()
+            .any(|p| p == Path::new("conflict.txt")),
+        "conflict.txt must still be conflicted"
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -370,7 +411,13 @@ fn discard_empty_selection_is_blocked() {
 
     let paths: Vec<String> = Vec::new();
     let plan = plan_discard(&repo, &paths).expect("plan");
-    assert!(!plan.blockers.is_empty(), "empty selection must be blocked");
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|b| matches!(b, PlanNote::Discard(DiscardNote::NothingSelected))),
+        "expected DiscardNote::NothingSelected, got: {:?}",
+        plan.blockers
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -413,4 +460,64 @@ fn discard_multi_file_one_outcome() {
     // Both restored.
     assert_eq!(read_file(&d, "tracked.txt"), "committed\n");
     assert_eq!(read_file(&d, "second.txt"), "two\n");
+}
+
+// ────────────────────────────────────────────────────────────
+// TC-DISCARD-8: verify step — a target that cannot be restored errors
+// ────────────────────────────────────────────────────────────
+
+/// A CRLF blob in the index plus `text eol=lf` makes the file *permanently*
+/// unstaged: checkout smudges the CRLF blob to LF, and status cleans that LF
+/// back to LF, which still differs from the CRLF blob. So step 2 "succeeds"
+/// while the target never leaves the unstaged set — exactly what step 3
+/// (verify) exists to catch.
+#[test]
+fn discard_verify_catches_unrestorable_target() {
+    let tmp = TempDir::new().unwrap();
+    let d = build_repo(&tmp);
+
+    // Commit a blob that keeps its CRLF bytes.
+    write_file(&d, "crlf.txt", "one\r\ntwo\r\n");
+    git(&d, &["config", "core.autocrlf", "false"]);
+    git(&d, &["add", "crlf.txt"]);
+    git(&d, &["commit", "-qm", "add crlf.txt"]);
+
+    // Now declare it LF-in-worktree: the committed CRLF blob can never round-trip.
+    write_file(&d, ".gitattributes", "crlf.txt text eol=lf\n");
+    git(&d, &["add", ".gitattributes"]);
+    git(&d, &["commit", "-qm", "add gitattributes"]);
+
+    // Rewrite the same bytes so the file's mtime is newer than the index: git's
+    // stat cache would otherwise be free to call it clean (identical size and
+    // an older mtime), which would make this test racy.
+    write_file(&d, "crlf.txt", "one\r\ntwo\r\n");
+
+    let repo = Repository::open(&d).unwrap();
+    let status = working_tree_status(&repo).unwrap();
+    assert!(
+        status
+            .unstaged
+            .iter()
+            .any(|f| f.path == Path::new("crlf.txt")),
+        "precondition: crlf.txt must be unstaged, got {:?}",
+        status.unstaged
+    );
+
+    let paths = vec!["crlf.txt".to_string()];
+    let plan = plan_discard(&repo, &paths).expect("plan");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+
+    let err = execute_discard(&repo, &plan, &paths)
+        .expect_err("a target that cannot be restored must fail verify");
+    let msg = format!("{:?}", err);
+    assert!(
+        msg.contains("discard verify failed"),
+        "expected the verify-step error, got: {}",
+        msg
+    );
+    assert!(
+        msg.contains("crlf.txt"),
+        "error should name the target: {}",
+        msg
+    );
 }

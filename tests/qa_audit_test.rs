@@ -27,6 +27,7 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
+use kagi_domain::plan_note::{HistoryNote, PlanNote};
 use kagi_git::{
     execute_checkout_commit, execute_stash_push, execute_undo_commit, plan_amend,
     plan_checkout_commit, plan_stash_pop, plan_stash_push, snapshot, AmendMode, CommitId,
@@ -388,7 +389,11 @@ fn amend_pushed_commit_is_blocked() {
 
     let plan = plan_amend(&repo, AmendMode::Staged, None).unwrap();
     assert!(
-        !plan.blockers.is_empty(),
-        "amending a pushed commit must be blocked (published history)"
+        plan.blockers.iter().any(|b| matches!(
+            b,
+            PlanNote::History(HistoryNote::PushedHistoryRewrite { .. })
+        )),
+        "expected HistoryNote::PushedHistoryRewrite, got: {:?}",
+        plan.blockers
     );
 }

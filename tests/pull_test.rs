@@ -444,3 +444,78 @@ fn test_pull_ff_refuses_dirty_overlapping_staged_rename_source() {
     assert_eq!(head_sha(&r.local), head_before, "HEAD must not move");
     assert_eq!(read_file(&r.local, "renamed-local.txt"), "base\n");
 }
+
+// ── Safe-mode pins: pull's checkouts must stay `CheckoutBuilder::safe()` ─────
+
+/// Pull refuses when the incoming change overlaps a dirty file, and the user's
+/// uncommitted content survives.
+#[test]
+fn test_pull_dirty_overlap_refuses_and_preserves_user_content() {
+    let r = setup();
+    remote_commit(&r, "base.txt", "from remote\n", "remote edits base");
+
+    write_file(&r.local, "base.txt", "UNSAVED USER WORK\n");
+    let head_before = head_sha(&r.local);
+
+    let repo = Repository::open(&r.local).unwrap();
+    let result = execute_pull(&repo, &r.local);
+    assert!(
+        result.is_err(),
+        "pull must refuse to overwrite a dirty file it would rewrite"
+    );
+    assert_eq!(
+        read_file(&r.local, "base.txt"),
+        "UNSAVED USER WORK\n",
+        "the user's uncommitted content must survive the refused pull"
+    );
+    assert_eq!(head_sha(&r.local), head_before, "HEAD must not move");
+}
+
+/// Fast-forward pull leaves an unrelated dirty file alone. A force-mode
+/// checkout would reset it to the committed content.
+#[test]
+fn test_pull_fast_forward_keeps_unrelated_dirty_file() {
+    let r = setup();
+    remote_commit(&r, "remote.txt", "from remote\n", "remote work");
+
+    write_file(&r.local, "base.txt", "UNSAVED USER WORK\n");
+
+    let repo = Repository::open(&r.local).unwrap();
+    let outcome = execute_pull(&repo, &r.local).expect("pull should fast-forward");
+    match outcome {
+        PullOutcome::FastForward { .. } => {}
+        other => panic!("expected FastForward, got {:?}", other),
+    }
+    assert_eq!(read_file(&r.local, "remote.txt"), "from remote\n");
+    assert_eq!(
+        read_file(&r.local, "base.txt"),
+        "UNSAVED USER WORK\n",
+        "safe-mode FF checkout must not discard uncommitted work"
+    );
+}
+
+/// Merge pull leaves an unrelated dirty file alone (same pin, merge path).
+#[test]
+fn test_pull_merge_keeps_unrelated_dirty_file() {
+    let r = setup();
+    remote_commit(&r, "remote.txt", "from remote\n", "remote work");
+
+    write_file(&r.local, "local.txt", "from local\n");
+    git(&r.local, &["add", "-A"]);
+    git(&r.local, &["commit", "-qm", "local work"]);
+
+    write_file(&r.local, "base.txt", "UNSAVED USER WORK\n");
+
+    let repo = Repository::open(&r.local).unwrap();
+    let outcome = execute_pull(&repo, &r.local).expect("pull should merge cleanly");
+    match outcome {
+        PullOutcome::Merged { .. } => {}
+        other => panic!("expected Merged, got {:?}", other),
+    }
+    assert_eq!(read_file(&r.local, "remote.txt"), "from remote\n");
+    assert_eq!(
+        read_file(&r.local, "base.txt"),
+        "UNSAVED USER WORK\n",
+        "safe-mode merge checkout must not discard uncommitted work"
+    );
+}

@@ -382,6 +382,85 @@ mod tests {
         );
     }
 
+    /// Every `PlanNote` category arm must forward to its own enum's
+    /// `message_en()`. Without this, a mis-wired (or stubbed) dispatch arm is
+    /// invisible: the category enums are golden-tested in their own files,
+    /// but nothing checks that `PlanNote` actually calls them.
+    ///
+    /// Add a row here when a `PlanNote` variant is added — the `match` below
+    /// is exhaustive, so the compiler fails until you do.
+    #[test]
+    fn every_plan_note_arm_delegates_to_its_category() {
+        let cases: Vec<PlanNote> = vec![
+            PlanNote::Common(CommonNote::SuggestStashPush),
+            PlanNote::Discard(DiscardNote::NothingSelected),
+            PlanNote::Branch(BranchNote::RenameRefOnlyDirty),
+            PlanNote::Stash(StashNote::NothingToStash),
+            PlanNote::History(HistoryNote::EmptyMessage),
+            PlanNote::Pull(PullNote::MergePrediction),
+            PlanNote::Push(PushNote::UpstreamFormatInvalid),
+            PlanNote::Switch(SwitchNote::NameEmpty),
+            PlanNote::Checkout(CheckoutNote::CommitAlreadyHead),
+            PlanNote::Merge(MergeNote::NoChanges {
+                target: "main".into(),
+            }),
+            PlanNote::Worktree(WorktreeNote::WorktreeMissing { name: "wt".into() }),
+            PlanNote::CherryRevert(CherryRevertNote::NotInCurrentBranch { sha: "abc".into() }),
+            PlanNote::Cleanup(CleanupNote::NoSelection),
+            PlanNote::Conflicts(ConflictsNote::EmptyMergeMessage),
+            PlanNote::Commit(CommitNote::EmptyMessage),
+            PlanNote::Checklist(ChecklistNote::ConflictMarkerFound {
+                path: "src/a.rs".into(),
+            }),
+            PlanNote::Tag(TagNote::NoRemote),
+            PlanNote::RemoteBranch(RemoteBranchNote::LocalBranchUntouched {
+                local_name: "feat".into(),
+            }),
+            PlanNote::Reset(ResetNote::DetachedHead),
+            PlanNote::ForceLease(ForceLeaseNote::NoUpstream {
+                branch: "feat".into(),
+            }),
+            PlanNote::Github(GithubNote::RemoteSideEffect),
+            PlanNote::Rebase(RebaseNote::DetachedHead),
+        ];
+
+        for note in &cases {
+            // The arm must return exactly what the category enum renders …
+            let inner = match note {
+                PlanNote::Common(n) => n.message_en(),
+                PlanNote::Discard(n) => n.message_en(),
+                PlanNote::Branch(n) => n.message_en(),
+                PlanNote::Stash(n) => n.message_en(),
+                PlanNote::History(n) => n.message_en(),
+                PlanNote::Pull(n) => n.message_en(),
+                PlanNote::Push(n) => n.message_en(),
+                PlanNote::Switch(n) => n.message_en(),
+                PlanNote::Checkout(n) => n.message_en(),
+                PlanNote::Merge(n) => n.message_en(),
+                PlanNote::Worktree(n) => n.message_en(),
+                PlanNote::CherryRevert(n) => n.message_en(),
+                PlanNote::Cleanup(n) => n.message_en(),
+                PlanNote::Conflicts(n) => n.message_en(),
+                PlanNote::Commit(n) => n.message_en(),
+                PlanNote::Checklist(n) => n.message_en(),
+                PlanNote::Tag(n) => n.message_en(),
+                PlanNote::RemoteBranch(n) => n.message_en(),
+                PlanNote::Reset(n) => n.message_en(),
+                PlanNote::ForceLease(n) => n.message_en(),
+                PlanNote::Github(n) => n.message_en(),
+                PlanNote::Rebase(n) => n.message_en(),
+            };
+            assert_eq!(note.message_en(), inner, "dispatch arm for {note:?}");
+            // … which is never empty, and reaches Display unchanged.
+            assert!(!inner.trim().is_empty(), "empty message for {note:?}");
+            assert_eq!(note.to_string(), inner, "Display for {note:?}");
+        }
+
+        // One fixture per `PlanNote` variant — bump this when a category is
+        // added (and add its row above).
+        assert_eq!(cases.len(), 22, "one fixture per PlanNote variant");
+    }
+
     #[test]
     fn disposition_for_blockers() {
         assert_eq!(

@@ -242,7 +242,7 @@ impl KagiApp {
         };
 
         if let Err(e) = repo.preflight_check(&modal.plan) {
-            let err_msg = format!("Preflight failed: {}", e);
+            let err_msg = i18n::op_failed(i18n::Op::Preflight, e);
             self.record_op(
                 &op_name,
                 modal.plan.current.clone(),
@@ -380,8 +380,9 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("amend plan error: {}", e)));
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    i18n::op_plan_failed(i18n::Op::Amend, e),
+                ));
             }
         }
     }
@@ -432,7 +433,7 @@ impl KagiApp {
         let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                let err_msg = format!("Repo open error: {}", e);
+                let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
                 self.record_op(
                     "amend",
                     modal.plan.current.clone(),
@@ -450,7 +451,7 @@ impl KagiApp {
             }
         };
         if let Err(e) = repo.preflight_check(&modal.plan) {
-            let err_msg = format!("Preflight failed: {}", e);
+            let err_msg = i18n::op_failed(i18n::Op::Preflight, e);
             self.record_op(
                 "amend",
                 modal.plan.current.clone(),
@@ -527,7 +528,7 @@ impl KagiApp {
                 klog!("amend: unexpected outcome variant");
             }
             Err(e) => {
-                let err_msg = format!("Amend failed: {}", e);
+                let err_msg = i18n::op_failed(i18n::Op::Amend, e);
                 self.record_op(
                     "amend",
                     modal.plan.current.clone(),

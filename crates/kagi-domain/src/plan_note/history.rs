@@ -28,6 +28,46 @@ pub enum HistoryOp {
     Amend,
 }
 
+/// Direction of an undo/redo **history move** (the ref-move family, distinct
+/// from [`HistoryOp`]'s undo-commit/amend axis).
+///
+/// The four history-move templates below used to carry this as a `label:
+/// String` holding "Undo" / "Redo" / "undo" / "redo", which forced the JA
+/// renderer into a stringly-typed lookup with a lossy `_ => "操作"` fallback —
+/// the one untyped hole in the ADR-0129 pipeline. Typed, the JA match is
+/// exhaustive and a new direction is a compile error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryMoveDir {
+    Undo,
+    Redo,
+}
+
+impl HistoryMoveDir {
+    /// `"Undo"` / `"Redo"` — capitalized, as the legacy producer wrote it.
+    pub fn label_en(self) -> &'static str {
+        match self {
+            HistoryMoveDir::Undo => "Undo",
+            HistoryMoveDir::Redo => "Redo",
+        }
+    }
+
+    /// `"undo"` / `"redo"` — lowercased.
+    pub fn label_en_lower(self) -> &'static str {
+        match self {
+            HistoryMoveDir::Undo => "undo",
+            HistoryMoveDir::Redo => "redo",
+        }
+    }
+
+    /// The matching [`super::common::OpPhrase`] discriminant.
+    pub fn phrase(self) -> super::common::OpPhrase {
+        match self {
+            HistoryMoveDir::Undo => super::common::OpPhrase::Undo,
+            HistoryMoveDir::Redo => super::common::OpPhrase::Redo,
+        }
+    }
+}
+
 /// Plan notes for the history op family (undo-commit / amend / undo·redo).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HistoryNote {
@@ -49,17 +89,13 @@ pub enum HistoryNote {
     WrongBranch {
         branch: String,
         current: String,
-        /// Already lowercased ("undo"/"redo").
-        label: String,
+        label: HistoryMoveDir,
     },
     /// blocker (undo/redo, §A16) — HEAD is detached, so there is no branch to
     /// move. Constructed like a `common` template (op-generic shape) but the
     /// wording ("… requires the operation's branch to be checked out.") is
     /// history-specific, so it lives here rather than in `CommonNote`.
-    HeadNotOnBranch {
-        /// "Undo" / "Redo" (capitalized, as written by the caller).
-        label: String,
-    },
+    HeadNotOnBranch { label: HistoryMoveDir },
     /// blocker (undo/redo) — the branch has moved since the entry was recorded.
     EntryStaleBranchMoved {
         branch: String,
@@ -123,11 +159,11 @@ impl HistoryNote {
                 label,
             } => format!(
                 "Operation was on branch '{}', but the current branch is '{}'. Switch back to '{}' to {} it.",
-                branch, current, branch, label
+                branch, current, branch, label.label_en_lower()
             ),
             HistoryNote::HeadNotOnBranch { label } => format!(
                 "HEAD is not on a branch. {} requires the operation's branch to be checked out.",
-                label
+                label.label_en()
             ),
             HistoryNote::EntryStaleBranchMoved {
                 branch,
@@ -174,7 +210,7 @@ pub enum HistoryTitle {
     },
     /// Undo/redo ref move: `{label} {kind_slug} on '{branch}' — {from} → {to}`.
     HistoryMove {
-        label: String,
+        label: HistoryMoveDir,
         kind_slug: String,
         branch: String,
         from: String,
@@ -225,7 +261,11 @@ impl HistoryTitle {
                 to,
             } => format!(
                 "{} {} on '{}' — {} → {}",
-                label, kind_slug, branch, from, to
+                label.label_en(),
+                kind_slug,
+                branch,
+                from,
+                to
             ),
         }
     }
@@ -240,7 +280,7 @@ pub enum HistoryRecovery {
     Amend { sha: String, blocked: bool },
     /// undo/redo: the safe ref-move explanation.
     HistoryMove {
-        label: String,
+        label: HistoryMoveDir,
         branch: String,
         from_short: String,
         to_short: String,
@@ -285,7 +325,13 @@ impl HistoryRecovery {
                 "{} moves branch '{}' from {} to {} via a safe ref move (no reset --hard, no clean). \
                  The {} commit is NOT deleted — it stays in the object store and reflog:\n  git reflog\n\
                  To restore manually:\n  git update-ref refs/heads/{} {}",
-                label, branch, from_short, to_short, kind_slug, branch, from_full
+                label.label_en(),
+                branch,
+                from_short,
+                to_short,
+                kind_slug,
+                branch,
+                from_full
             ),
         }
     }
@@ -382,7 +428,7 @@ mod tests {
             HistoryNote::WrongBranch {
                 branch: "feat/x".into(),
                 current: "main".into(),
-                label: "undo".into()
+                label: HistoryMoveDir::Undo
             }
             .message_en(),
             "Operation was on branch 'feat/x', but the current branch is 'main'. Switch back to 'feat/x' to undo it."
@@ -391,7 +437,7 @@ mod tests {
             HistoryNote::WrongBranch {
                 branch: "feat/x".into(),
                 current: "main".into(),
-                label: "redo".into()
+                label: HistoryMoveDir::Redo
             }
             .message_en(),
             "Operation was on branch 'feat/x', but the current branch is 'main'. Switch back to 'feat/x' to redo it."
@@ -402,14 +448,14 @@ mod tests {
     fn head_not_on_branch() {
         assert_eq!(
             HistoryNote::HeadNotOnBranch {
-                label: "Undo".into()
+                label: HistoryMoveDir::Undo
             }
             .message_en(),
             "HEAD is not on a branch. Undo requires the operation's branch to be checked out."
         );
         assert_eq!(
             HistoryNote::HeadNotOnBranch {
-                label: "Redo".into()
+                label: HistoryMoveDir::Redo
             }
             .message_en(),
             "HEAD is not on a branch. Redo requires the operation's branch to be checked out."
@@ -540,7 +586,7 @@ mod tests {
     fn title_history_move() {
         assert_eq!(
             HistoryTitle::HistoryMove {
-                label: "Undo".into(),
+                label: HistoryMoveDir::Undo,
                 kind_slug: "commit".into(),
                 branch: "feat/x".into(),
                 from: "aaaaaaaa".into(),
@@ -595,7 +641,7 @@ mod tests {
     fn recovery_history_move() {
         assert_eq!(
             HistoryRecovery::HistoryMove {
-                label: "Undo".into(),
+                label: HistoryMoveDir::Undo,
                 branch: "feat/x".into(),
                 from_short: "aaaaaaaa".into(),
                 to_short: "bbbbbbbb".into(),

@@ -16,7 +16,7 @@ pub fn note_ja(note: &ConflictsNote) -> String {
             files.join(", ")
         ),
         ConflictsNote::IndexUnmerged { files } => format!(
-            "インデックスにこのセッションが把握していない未マージのエントリがあります: {}。リポジトリを再スキャンしてください。",
+            "インデックスにこのセッションが把握していない未 merge のエントリがあります: {}。リポジトリを再スキャンしてください。",
             files.join(", ")
         ),
         ConflictsNote::BinaryUnresolved { files } => format!(
@@ -28,7 +28,7 @@ pub fn note_ja(note: &ConflictsNote) -> String {
             files.join(", ")
         ),
         ConflictsNote::EmptyMergeMessage => {
-            "マージコミットのメッセージが空です。続行する前にコミットメッセージを入力してください。".to_string()
+            "merge commit のメッセージが空です。続行する前に commit メッセージを入力してください。".to_string()
         }
         // Checklist prose stays untranslated (error/checklist keying is out of
         // scope for this migration — mirrors CommonNote::GitErrorPassthrough).
@@ -43,7 +43,7 @@ pub fn note_ja(note: &ConflictsNote) -> String {
                 .to_string()
         }
         ConflictsNote::SkipDiscardsStep => {
-            "Skip は現在のステップの変更を破棄します(コンフリクトを起こしたコミットは適用されません)。\
+            "Skip は現在のステップの変更を破棄します(コンフリクトを起こした commit は適用されません)。\
              部分的な解決内容はオートセーブディレクトリに保存されます。"
                 .to_string()
         }

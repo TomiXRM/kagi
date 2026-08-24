@@ -319,7 +319,7 @@ impl KagiApp {
             Ok(r) => r,
             Err(e) => {
                 if let Some(m) = self.unlock_worktree_modal_mut() {
-                    m.error = Some(SharedString::from(format!("Repo open error: {}", e)));
+                    m.error = Some(SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, e)));
                 }
                 return;
             }
@@ -344,7 +344,7 @@ impl KagiApp {
                 self.reload(cx);
             }
             Err(e) => {
-                let err_msg = format!("Unlock worktree failed: {}", e);
+                let err_msg = i18n::op_failed(i18n::Op::UnlockWorktree, e);
                 self.record_op(
                     "unlock-worktree",
                     modal.plan.current.clone(),

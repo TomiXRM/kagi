@@ -50,7 +50,7 @@ pub use conflicts::{ConflictsNote, ConflictsRecovery, ConflictsTitle};
 pub use discard::DiscardNote;
 pub use force_lease::{ForceLeaseNote, ForceLeaseRecovery, ForceLeaseTitle};
 pub use github::{GithubNote, GithubRecovery, GithubTitle};
-pub use history::{HistoryNote, HistoryOp, HistoryRecovery, HistoryTitle};
+pub use history::{HistoryMoveDir, HistoryNote, HistoryOp, HistoryRecovery, HistoryTitle};
 pub use merge::{MergeNote, MergeRecovery, MergeTitle};
 pub use pull::{PullNote, PullRecovery, PullTitle};
 pub use push::{PushNote, PushRecovery, PushTitle};

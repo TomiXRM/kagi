@@ -1,4 +1,5 @@
 use super::*;
+use kagi_domain::plan_note::HistoryMoveDir;
 use kagi_domain::plan_note::{
     CommonNote, HistoryNote, HistoryOp, HistoryRecovery, HistoryTitle, OpPhrase, PlanOp,
 };
@@ -776,7 +777,7 @@ fn undo_redo_state(repo: &Repository) -> Result<(StateSummary, Vec<String>), Git
 
 /// Shared planner for undo/redo: plan a move of `branch` from `from` → `to`.
 ///
-/// `label` is a human verb ("Undo"/"Redo"); `kind_slug` is the operation kind.
+/// `dir` is the move direction (typed, ADR-0129); `kind_slug` is the operation kind.
 /// Blockers are raised when the move cannot be performed safely:
 /// - the branch is not the current HEAD branch (MVP: only the checked-out branch),
 /// - the branch ref is no longer at `from` (stale entry — external change),
@@ -788,7 +789,7 @@ fn undo_redo_state(repo: &Repository) -> Result<(StateSummary, Vec<String>), Git
 /// underneath them.
 fn plan_history_move(
     repo: &Repository,
-    label: &str,
+    dir: HistoryMoveDir,
     kind_slug: &str,
     branch: &str,
     from: &CommitId,
@@ -801,13 +802,9 @@ fn plan_history_move(
     let mut blockers: Vec<PlanNote> = Vec::new();
     let mut warnings: Vec<PlanNote> = Vec::new();
 
-    // Common's ConflictedFiles op-phrase for this label ("undo"/"redo" are
-    // both already `OpPhrase` discriminants — §A1).
-    let conflicted_phrase = if label == "Undo" {
-        OpPhrase::Undo
-    } else {
-        OpPhrase::Redo
-    };
+    // Common's ConflictedFiles op-phrase for this direction ("undo"/"redo"
+    // are both already `OpPhrase` discriminants — §A1).
+    let conflicted_phrase = dir.phrase();
 
     // Only support the currently checked-out branch in MVP (the ref move must
     // not strand a different branch's working tree).
@@ -817,12 +814,12 @@ fn plan_history_move(
             blockers.push(PlanNote::History(HistoryNote::WrongBranch {
                 branch: branch.to_string(),
                 current: cur.clone(),
-                label: label.to_lowercase(),
+                label: dir,
             }));
         }
         _ => {
             blockers.push(PlanNote::History(HistoryNote::HeadNotOnBranch {
-                label: label.to_string(),
+                label: dir,
             }));
         }
     }
@@ -889,7 +886,7 @@ fn plan_history_move(
 
     let recovery = PlanRecovery {
         kind: RecoveryKind::History(HistoryRecovery::HistoryMove {
-            label: label.to_string(),
+            label: dir,
             branch: branch.to_string(),
             from_short: from_short.clone(),
             to_short: to_short.clone(),
@@ -905,7 +902,7 @@ fn plan_history_move(
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::History(HistoryTitle::HistoryMove {
-            label: label.to_string(),
+            label: dir,
             kind_slug: kind_slug.to_string(),
             branch: branch.to_string(),
             from: from_short,
@@ -933,7 +930,7 @@ pub fn plan_undo(
     before: &CommitId,
     after: &CommitId,
 ) -> Result<OperationPlan, GitError> {
-    plan_history_move(repo, "Undo", kind_slug, branch, after, before)
+    plan_history_move(repo, HistoryMoveDir::Undo, kind_slug, branch, after, before)
 }
 
 /// Plan a **redo** of a recorded operation: move `branch` forward from
@@ -945,7 +942,7 @@ pub fn plan_redo(
     before: &CommitId,
     after: &CommitId,
 ) -> Result<OperationPlan, GitError> {
-    plan_history_move(repo, "Redo", kind_slug, branch, before, after)
+    plan_history_move(repo, HistoryMoveDir::Redo, kind_slug, branch, before, after)
 }
 
 /// Perform the safe ref move shared by undo and redo.
@@ -1073,7 +1070,7 @@ pub fn execute_undo(
     before: &CommitId,
     after: &CommitId,
 ) -> Result<HistoryMoveOutcome, GitError> {
-    execute_history_move(repo, "Undo", branch, after, before)
+    execute_history_move(repo, HistoryMoveDir::Undo.label_en(), branch, after, before)
 }
 
 /// Execute a **redo**: move `branch` forward from `before` to `after`.
@@ -1083,7 +1080,7 @@ pub fn execute_redo(
     before: &CommitId,
     after: &CommitId,
 ) -> Result<HistoryMoveOutcome, GitError> {
-    execute_history_move(repo, "Redo", branch, before, after)
+    execute_history_move(repo, HistoryMoveDir::Redo.label_en(), branch, before, after)
 }
 
 /// Maximum number of reflog entries to seed the undo/redo history with.

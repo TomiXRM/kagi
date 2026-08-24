@@ -7,7 +7,7 @@
 //! - `KAGI_COMMIT_PANEL=1`       起動時に Commit Panel を開き件数をログ
 //! - `KAGI_STAGE_FILE=<path>`    起動時に1ファイル stage
 //! - `KAGI_UNSTAGE_FILE=<path>`  起動時に1ファイル unstage
-//! - `KAGI_COMMIT_MSG=<msg>`     コミットメッセージ設定 + KAGI_AUTO_CONFIRM=1 で実際にコミット
+//! - `KAGI_COMMIT_MSG=<msg>`     commit メッセージ設定 + KAGI_AUTO_CONFIRM=1 で実際に commit
 
 use std::path::{Path, PathBuf};
 

@@ -6,20 +6,20 @@ use kagi_domain::plan_note::ChecklistNote;
 pub fn note_ja(note: &ChecklistNote) -> String {
     match note {
         ChecklistNote::PossibleSecretFileStaged { path } => format!(
-            "シークレットの可能性があるファイルがステージされています: {} — コミット前に確認してください。",
+            "シークレットの可能性があるファイルが stage されています: {} — commit 前に確認してください。",
             path
         ),
         ChecklistNote::LargeBinaryStaged { path, size } => format!(
-            "大きなバイナリファイルがステージされています: {} ({})。コミット前に確認してください。",
+            "大きなバイナリファイルが stage されています: {} ({})。commit 前に確認してください。",
             path, size
         ),
         ChecklistNote::ConflictMarkerFound { path } => format!(
-            "ステージされたファイルにコンフリクトマーカーが残っています: {}。\
-             コミット前にマージコンフリクトを解決してください。",
+            "stage されたファイルにコンフリクトマーカーが残っています: {}。\
+             commit 前に merge コンフリクトを解決してください。",
             path
         ),
         ChecklistNote::PossibleSecretContentStaged { path } => format!(
-            "ステージされたファイルの内容にシークレットの可能性があります: {} — コミット前に確認してください。",
+            "stage されたファイルの内容にシークレットの可能性があります: {} — commit 前に確認してください。",
             path
         ),
     }

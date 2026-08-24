@@ -5,13 +5,13 @@ use kagi_domain::plan_note::{
     CherryRevertNote, CherryRevertRecovery, CherryRevertTitle, DirtyParts, PlanOp,
 };
 
-/// `「ステージ済み 2 件、変更 1 件」` — the dirty-parts fragment in JA (mirrors
+/// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA (mirrors
 /// `i18n::plan::common::parts_ja`; kept local since that helper is private to
 /// its own module).
 fn parts_ja(parts: &DirtyParts) -> String {
     let mut out: Vec<String> = Vec::new();
     if parts.staged > 0 {
-        out.push(format!("ステージ済み {} 件", parts.staged));
+        out.push(format!("stage 済み {} 件", parts.staged));
     }
     if parts.modified > 0 {
         out.push(format!("変更 {} 件", parts.modified));
@@ -24,12 +24,12 @@ pub fn note_ja(note: &CherryRevertNote) -> String {
     match note {
         CherryRevertNote::MergeCommitNeedsMainline { sha, parents, op } => match op {
             PlanOp::CherryPick => format!(
-                "コミット {} はマージコミットです({} 個の親)。マージコミットの cherry-pick には \
+                "commit {} は merge commit です({} 個の親)。merge commit の cherry-pick には \
                  mainline の明示的な指定が必要ですが、MVP では未対応です。",
                 sha, parents
             ),
             PlanOp::Revert => format!(
-                "コミット {} はマージコミットです({} 個の親)。マージコミットの revert には \
+                "commit {} は merge commit です({} 個の親)。merge commit の revert には \
                  mainline の明示的な指定が必要ですが、MVP では未対応です。",
                 sha, parents
             ),
@@ -38,7 +38,7 @@ pub fn note_ja(note: &CherryRevertNote) -> String {
             ),
         },
         CherryRevertNote::NothingToCherryPickHead { sha } => format!(
-            "コミット {} は現在の HEAD コミットです。cherry-pick する対象がありません。",
+            "commit {} は現在の HEAD commit です。cherry-pick する対象がありません。",
             sha
         ),
         CherryRevertNote::WouldConflict { count, files, op } => {
@@ -66,12 +66,12 @@ pub fn note_ja(note: &CherryRevertNote) -> String {
             _ => unreachable!("CherryRevertNote::NoChanges only uses CherryPick/Revert"),
         },
         CherryRevertNote::NotInCurrentBranch { sha } => format!(
-            "コミット {} は現在のブランチに含まれていません。revert は現在のブランチ上のコミット\
+            "commit {} は現在の branch に含まれていません。revert は現在の branch 上の commit\
              のみを対象とします。",
             sha
         ),
         CherryRevertNote::DirtyMayRefuse { parts } => format!(
-            "作業ツリーに{}があります。対象ファイルが revert と重複する場合、安全なチェックアウトが\
+            "作業ツリーに{}があります。対象ファイルが revert と重複する場合、安全な checkout が\
              拒否されることがあります。",
             parts_ja(parts)
         ),
@@ -108,7 +108,7 @@ pub fn recovery_ja(recovery: &CherryRevertRecovery) -> String {
                 .to_string()
         }
         CherryRevertRecovery::AfterRevert => {
-            "実行後にこの revert を取り消したい場合は、新しく作成された revert コミットをさらに \
+            "実行後にこの revert を取り消したい場合は、新しく作成された revert commit をさらに \
              revert してください:\n  git revert <new-revert-commit-sha>\n以前の HEAD の sha は \
              reflog に記録されています:\n  git reflog"
                 .to_string()

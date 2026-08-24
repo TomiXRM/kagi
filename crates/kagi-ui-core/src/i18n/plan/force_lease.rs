@@ -7,19 +7,19 @@ use kagi_domain::plan_note::{ForceLeaseNote, ForceLeaseRecovery, ForceLeaseTitle
 pub fn note_ja(note: &ForceLeaseNote) -> String {
     match note {
         ForceLeaseNote::NoUpstream { branch } => format!(
-            "ブランチ '{}' にはアップストリームが設定されていません。force-with-lease にはリース対象となるリモートの既知の先端が必要です。",
+            "branch '{}' にはアップストリームが設定されていません。force-with-lease にはリース対象となるリモートの既知の先端が必要です。",
             branch
         ),
         ForceLeaseNote::NothingToPush { branch } => format!(
-            "ブランチ '{}' は既にリモート追跡refと一致しています。force-push する内容がありません。",
+            "branch '{}' は既にリモート追跡refと一致しています。force-push する内容がありません。",
             branch
         ),
         ForceLeaseNote::RewritesRemoteHistory { branch } => format!(
-            "リモートブランチ '{}' の履歴が上書きされます。既に古い履歴をpullした人は調整(古いtipへのrebase等)が必要になります。",
+            "remote branch '{}' の履歴が上書きされます。既に古い履歴をpullした人は調整(古いtipへのrebase等)が必要になります。",
             branch
         ),
         ForceLeaseNote::LeaseValue { remote, sha } => format!(
-            "リースにより保護されています: 最後にフェッチした時点から '{}' が {} より先に進んでいた場合(=他の誰かがその間にpushしていた場合)、このpushは拒否されます。",
+            "リースにより保護されています: 最後に fetch した時点から '{}' が {} より先に進んでいた場合(=他の誰かがその間にpushしていた場合)、このpushは拒否されます。",
             remote, sha
         ),
     }

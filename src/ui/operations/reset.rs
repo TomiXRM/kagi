@@ -158,12 +158,12 @@ fn reset_current_blocking(
     target: &CommitId,
 ) -> Result<kagi_git::ops::StateSummary, String> {
     let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| format!("Repo open error: {}", e))?;
+        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::ResetCurrentToHead {
         target: target.clone(),
     };
     repo.run(&op, plan)
-        .map_err(|e| format!("Reset failed: {}", e))?;
+        .map_err(|e| i18n::op_failed(i18n::Op::Reset, e))?;
     klog!("executed: reset-current-to-head {}", target.short());
 
     Ok(kagi_git::ops::StateSummary {

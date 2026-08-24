@@ -7,13 +7,13 @@ use kagi_domain::plan_note::{MergeNote, MergeRecovery, MergeTitle};
 pub fn note_ja(note: &MergeNote) -> String {
     match note {
         MergeNote::TargetIsCurrent { target } => {
-            format!("ブランチ '{}' はすでに現在のブランチです。", target)
+            format!("branch '{}' はすでに現在の branch です。", target)
         }
         MergeNote::TargetIsHead { target } => {
-            format!("{} はすでに HEAD です。マージ対象がありません。", target)
+            format!("{} はすでに HEAD です。merge 対象がありません。", target)
         }
         MergeNote::AlreadyContains { current, target } => format!(
-            "現在のブランチ '{}' はすでに '{}' を含んでいます。マージ対象がありません。",
+            "現在の branch '{}' はすでに '{}' を含んでいます。merge 対象がありません。",
             current, target
         ),
         MergeNote::WillConflict { count, files } => {
@@ -23,12 +23,12 @@ pub fn note_ja(note: &MergeNote) -> String {
                 files.join(", ")
             };
             format!(
-                "マージすると {} 件のコンフリクトが発生します: {}。Conflict Mode で解決してください。",
+                "merge すると {} 件のコンフリクトが発生します: {}。Conflict Mode で解決してください。",
                 count, files_label
             )
         }
         MergeNote::NoChanges { target } => {
-            format!("'{}' をマージしても変更は発生しません。", target)
+            format!("'{}' を merge しても変更は発生しません。", target)
         }
     }
 }
@@ -39,11 +39,11 @@ pub fn title_ja(title: &MergeTitle) -> String {
         MergeTitle::Into {
             target,
             current: Some(current),
-        } => format!("{} を {} にマージ", target, current),
+        } => format!("{} を {} に merge", target, current),
         MergeTitle::Into {
             target,
             current: None,
-        } => format!("{} を現在のブランチにマージ", target),
+        } => format!("{} を現在の branch に merge", target),
     }
 }
 
@@ -51,8 +51,8 @@ pub fn title_ja(title: &MergeTitle) -> String {
 pub fn recovery_ja(recovery: &MergeRecovery) -> String {
     match recovery {
         MergeRecovery::AfterMerge => {
-            "このマージを実行後に取り消したい場合は、git reflog で以前の HEAD を確認してください。\n\
-             fast-forward マージはブランチを元に戻すことで取り消せます。マージコミットは \
+            "この merge を実行後に取り消したい場合は、git reflog で以前の HEAD を確認してください。\n\
+             fast-forward merge は branch を元に戻すことで取り消せます。merge commit は \
              git revert -m 1 <merge-commit> で revert できます。"
                 .to_string()
         }

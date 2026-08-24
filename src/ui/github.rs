@@ -8,7 +8,7 @@ use std::time::Duration;
 use gpui::{Context, SharedString};
 use kagi_domain::github::PullRequest;
 
-use super::i18n::Msg;
+use super::i18n::{self, Msg};
 use super::types::ToastKind;
 use super::{CompareTarget, CompareView, FooterStatus, KagiApp, OpOutcome};
 
@@ -197,7 +197,7 @@ impl KagiApp {
             Err(e) => {
                 klog!("pr-peek: error: {}", e);
                 self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("PR peek failed: {}", e)));
+                    FooterStatus::Failed(SharedString::from(i18n::op_failed(i18n::Op::PrPeek, e)));
             }
         }
     }

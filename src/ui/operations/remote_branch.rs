@@ -171,8 +171,8 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_remote_branch = remote_branch.clone();
         let task = cx.background_spawn(async move {
-            let backend =
-                kagi_git::Backend::open(&bg_path).map_err(|e| format!("repo open error: {e}"))?;
+            let backend = kagi_git::Backend::open(&bg_path)
+                .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
             backend
                 .fetch_remote_branch(&bg_remote_branch)
                 .map_err(|e| format!("{e}"))
@@ -198,9 +198,9 @@ impl KagiApp {
                     }
                     Err(e) => {
                         klog!("fetch-remote-branch: failed {} — {}", remote_branch, e);
-                        app.status_footer =
-                            FooterStatus::Failed(SharedString::from(format!("Fetch failed: {e}")));
-                        app.push_toast(ToastKind::Error, format!("Fetch failed: {e}"), cx);
+                        let msg = i18n::op_failed(i18n::Op::Fetch, e);
+                        app.status_footer = FooterStatus::Failed(SharedString::from(msg.clone()));
+                        app.push_toast(ToastKind::Error, msg, cx);
                     }
                 }
                 cx.notify();

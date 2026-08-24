@@ -4,13 +4,13 @@
 use kagi_domain::plan_note::stash::StashDirtyOp;
 use kagi_domain::plan_note::{DirtyParts, StashNote, StashRecovery, StashTitle};
 
-/// `「ステージ済み 2 件、変更 1 件」` — the dirty-parts fragment in JA
+/// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA
 /// (mirrors `plan/common.rs::parts_ja`; stash has its own module so it stays
 /// local rather than reaching into a sibling category file).
 fn parts_ja(parts: &DirtyParts) -> String {
     let mut out: Vec<String> = Vec::new();
     if parts.staged > 0 {
-        out.push(format!("ステージ済み {} 件", parts.staged));
+        out.push(format!("stage 済み {} 件", parts.staged));
     }
     if parts.modified > 0 {
         out.push(format!("変更 {} 件", parts.modified));
@@ -21,11 +21,9 @@ fn parts_ja(parts: &DirtyParts) -> String {
 /// Japanese rendering of one stash note.
 pub fn note_ja(note: &StashNote) -> String {
     match note {
-        StashNote::NothingToStash => {
-            "作業ツリーはすでにクリーンです\
-             (ステージ済み・変更・未追跡ファイルのいずれもありません)。stash する対象がありません。"
-                .to_string()
-        }
+        StashNote::NothingToStash => "作業ツリーはすでにクリーンです\
+             (stage 済み・変更・未追跡ファイルのいずれもありません)。stash する対象がありません。"
+            .to_string(),
         StashNote::UntrackedIncluded { count } => format!(
             "未追跡ファイル {} 件が stash に含まれます(`git stash push -u` と同等)。",
             count

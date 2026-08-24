@@ -577,8 +577,10 @@ impl KagiApp {
                 self.refresh_wip_diffstat();
             }
             Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("stage all failed: {}", e)));
+                self.status_footer = FooterStatus::Failed(SharedString::from(i18n::op_failed(
+                    i18n::Op::StageAll,
+                    e,
+                )));
             }
         }
     }
@@ -616,8 +618,10 @@ impl KagiApp {
                 self.refresh_wip_diffstat();
             }
             Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("unstage all failed: {}", e)));
+                self.status_footer = FooterStatus::Failed(SharedString::from(i18n::op_failed(
+                    i18n::Op::UnstageAll,
+                    e,
+                )));
             }
         }
     }
@@ -967,8 +971,10 @@ impl KagiApp {
                 // Surface commit failures in the status footer too, so the
                 // error is visible even for the smooth (no-popup) commit path
                 // where the plan modal isn't shown.
-                app.status_footer =
-                    FooterStatus::Failed(SharedString::from(format!("commit failed: {}", err_msg)));
+                app.status_footer = FooterStatus::Failed(SharedString::from(i18n::op_failed(
+                    i18n::Op::Commit,
+                    err_msg,
+                )));
             }
         });
     }
@@ -992,7 +998,7 @@ impl KagiApp {
             Err(e) => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("Repo open error: {}", e)),
+                    SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, e)),
                     cx,
                 );
                 return;
@@ -1010,7 +1016,7 @@ impl KagiApp {
             Err(e) => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(format!("Merge-commit plan failed: {}", e)),
+                    SharedString::from(i18n::op_plan_failed(i18n::Op::MergeCommit, e)),
                     cx,
                 );
                 return;

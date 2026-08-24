@@ -7,6 +7,7 @@
 //! `KagiApp` entry points that call these) so the validation / collision-suffix
 //! / gitignore logic stays unit-testable without a `Context`.
 
+use crate::ui::i18n;
 use std::path::{Path, PathBuf};
 
 /// Validate a bare filename/dirname component typed into the Rename / New
@@ -137,7 +138,7 @@ pub fn trash_path(full_path: &Path) -> Result<PathBuf, String> {
         n += 1;
     }
     std::fs::rename(full_path, &candidate)
-        .map_err(|e| format!("move to Trash failed (same-volume only): {e}"))?;
+        .map_err(|e| i18n::op_failed(i18n::Op::MoveToTrash, format!("{e} (same-volume only)")))?;
     Ok(candidate)
 }
 

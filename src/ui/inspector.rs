@@ -859,12 +859,33 @@ pub fn render_inspector(
         .child(cherry_pick_button);
 
     // ── Message box (independent scroll, top of the split) ────────────────
+    // Click = copy the full message, the same idiom the hash chip uses for the
+    // SHA. GPUI has no text selection for a plain text run, so without this the
+    // one part of a commit people most often want to quote is the one part
+    // they cannot get out of the app.
+    let copy_target_msg = at.clone();
+    let copy_message_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+        this.dispatch_commit_action(
+            CommitAction::CopyMessage,
+            copy_target_msg.clone(),
+            _window,
+            cx,
+        );
+    });
     let message_inner = div()
+        .id("inspector-message")
         .w_full()
         .min_w(px(0.))
+        .rounded_sm()
         .text_color(rgb(theme().text_main))
         .text_sm()
         .whitespace_normal()
+        .hover(|s| s.bg(rgb(theme().surface)).cursor_pointer())
+        .on_click(copy_message_click)
+        .tooltip(move |_window, cx| {
+            gpui_component::tooltip::Tooltip::new(Msg::ClickToCopyMessage.t().to_string())
+                .build(_window, cx)
+        })
         .child(message_text);
     // The scroll lives on an inner size_full child, NOT on the flex-sized box:
     // with overflow_y_scroll directly on the flex_basis box, the wrapped-text

@@ -45,7 +45,7 @@ git2 でどう実装するか(in-memory 主義・ref-order 規則に整合)を�
   amend 後に GUI から push できない「詰み」状態を作るため。
 - **案 B(pushed amend は blocker)**: **通常モードで採用(MVP)**。
   「push 済みは履歴改変になるため amend 不可。新しい commit で修正してください」。
-- **案 C(Advanced force-with-lease flow)**: **将来実装候補として採用**。
+- **案 C(Advanced force-with-lease flow)**: **採用。ADR-0130(push 側)と ADR-0143(amend 側)で実装済み**。
   Advanced mode で **amend + `git push --force-with-lease` までを安全確認付きの一連の操作**として提供する。
 
 ### 案 C: Advanced force-with-lease flow の設計

@@ -44,10 +44,14 @@ pub fn note_ja(note: &HistoryNote) -> String {
                 sha
             ),
             HistoryOp::Amend => format!(
-                "commit {} は upstream の追跡 branch に push 済みです。公開済み履歴の amend は許可されていません(ADR-0040)。修正は新しい commit として行ってください。",
+                "commit {} は push 済みで、この branch は他の人が土台にしているものです。履歴を書き換えると、既に fetch 済みの clone がすべて取り残されます。確認の有無にかかわらず amend は拒否されます。修正は新しい commit として行ってください。",
                 sha
             ),
         },
+        HistoryNote::AmendDivergesFromRemote { sha, branch } => format!(
+            "commit {} は既に remote にあります。amend は新しい commit で置き換えるため、'{}' は upstream から分岐し、通常の push は拒否されます。branch メニューの 'Force-with-lease push...' で反映してください(最後の fetch 以降に誰かが push していれば失敗します)。",
+            sha, branch
+        ),
         HistoryNote::EmptyMessage => "commit メッセージを空にすることはできません。".to_string(),
         HistoryNote::NothingStagedForAmend => {
             "commit に取り込む stage 済みの変更がありません。先に変更を stage するか、メッセージのみの amend を使用してください。".to_string()

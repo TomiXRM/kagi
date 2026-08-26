@@ -588,6 +588,8 @@ pub fn clamp_menu_pos(
 
 /// Alpha for the text-selection tint. Matches the cap gpui-component applies to
 /// its own bundled themes (`theme/schema.rs`), so text stays legible through it.
+/// Alpha the selection tint is painted at. Reach it through
+/// [`selection_overlay`] rather than re-applying it at a call site.
 const SELECTION_ALPHA: f32 = 0.30;
 
 #[inline]
@@ -611,6 +613,17 @@ fn to_hsla(rgb_u32: u32) -> Hsla {
 /// ~70 `ThemeColor` fields keep their gpui-component defaults (the audit doc
 /// confirms full coverage is unnecessary).  `mode` is set from `theme().dark`
 /// so any dark/light-conditional logic inside gpui-component matches kagi.
+/// The selection wash, ready to paint.
+///
+/// The diff panes draw their own line selection instead of going through
+/// gpui-component's text selection, so they need this colour too. They used to
+/// rebuild it inline from `color_branch` at a hardcoded `0.30` — and when the
+/// token moved, they silently kept the old colour. One function, one place to
+/// change.
+pub fn selection_overlay() -> Hsla {
+    to_hsla(theme().selection_tint).alpha(SELECTION_ALPHA)
+}
+
 pub fn sync_gpui_component_theme(cx: &mut App) {
     let k = theme();
     let gc = gpui_component::Theme::global_mut(cx);
@@ -1778,6 +1791,33 @@ const DRACULA: Theme = Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The diff panes paint their own line selection; this is the one colour
+    /// they share with gpui-component's text selection. It used to be rebuilt
+    /// inline from `color_branch`, so moving `selection_tint` changed text
+    /// selection and left the diff panes on the old colour — the whole bug.
+    #[test]
+    fn selection_overlay_follows_the_active_theme_token() {
+        let _guard = ACTIVE_THEME_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        // SAFETY: single-threaded under the lock above.
+        unsafe { std::env::set_var("KAGI_LOG_DIR", dir.path()) };
+        let restore = active_index();
+        for t in THEMES {
+            assert!(set_active(t.slug), "{}", t.slug);
+            let got = selection_overlay();
+            assert_eq!(
+                got,
+                to_hsla(t.selection_tint).alpha(SELECTION_ALPHA),
+                "{}: selection_overlay must be selection_tint, not another token",
+                t.slug
+            );
+        }
+        ACTIVE.store(restore, Ordering::Relaxed);
+        unsafe { std::env::remove_var("KAGI_LOG_DIR") };
+    }
 
     /// Selected text must not look like a diff line.
     ///

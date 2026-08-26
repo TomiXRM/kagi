@@ -166,9 +166,7 @@ fn split_cell(
         .py_px()
         .map(|el| {
             if selected {
-                let mut c: gpui::Hsla = rgb(theme::theme().color_branch).into();
-                c.a = 0.30;
-                el.bg(c)
+                el.bg(theme::selection_overlay())
             } else {
                 el.bg(rgb(bg))
             }

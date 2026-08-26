@@ -655,12 +655,13 @@ pub(crate) fn render_main_diff_row(
                 .items_start()
                 .py_px()
                 .map(|el| {
-                    // R1: selection tint wins over the added/removed row bg —
-                    // the same accent-alpha idiom as text selection (#224).
+                    // R1: selection tint wins over the added/removed row bg.
+                    // Via `selection_overlay` so this pane cannot drift from
+                    // gpui-component's text selection: it used to rebuild the
+                    // wash inline from `color_branch`, and when the theme moved
+                    // its selection off the accent this kept the old colour.
                     if selected {
-                        let mut c: gpui::Hsla = rgb(theme::theme().color_branch).into();
-                        c.a = 0.30;
-                        el.bg(c)
+                        el.bg(theme::selection_overlay())
                     } else {
                         el.bg(rgb(bg))
                     }

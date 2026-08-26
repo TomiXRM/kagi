@@ -69,6 +69,27 @@ fn head_sha(dir: &Path) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+fn rev_parse(dir: &Path, rev: &str) -> String {
+    let out = Command::new("git")
+        .args(["rev-parse", rev])
+        .current_dir(dir)
+        .output()
+        .expect("rev-parse failed");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+fn rev_count(dir: &Path) -> usize {
+    let out = Command::new("git")
+        .args(["rev-list", "--count", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .expect("rev-list failed");
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .expect("count")
+}
+
 fn head_tree_sha(dir: &Path) -> String {
     let out = Command::new("git")
         .args(["rev-parse", "HEAD^{tree}"])
@@ -142,6 +163,12 @@ struct RepoWithRemote {
 }
 
 fn setup_with_remote() -> RepoWithRemote {
+    setup_with_remote_on("main")
+}
+
+/// Same, but the pushed branch is `branch`. The branch *name* is the whole
+/// variable under test: `main` is protected and `feat/x` is not.
+fn setup_with_remote_on(branch: &str) -> RepoWithRemote {
     let tmp = TempDir::new().expect("tempdir");
     let remote = tmp.path().join("remote.git");
     let local = tmp.path().join("local");
@@ -153,13 +180,13 @@ fn setup_with_remote() -> RepoWithRemote {
             "-q",
             "--bare",
             "-b",
-            "main",
+            branch,
             remote.to_str().unwrap(),
         ],
     );
 
     std::fs::create_dir(&local).unwrap();
-    git(&local, &["init", "-q", "-b", "main", "."]);
+    git(&local, &["init", "-q", "-b", branch, "."]);
     git(&local, &["config", "user.name", "Test"]);
     git(&local, &["config", "user.email", "test@example.com"]);
     git(&local, &["config", "commit.gpgsign", "false"]);
@@ -174,7 +201,7 @@ fn setup_with_remote() -> RepoWithRemote {
     write_file(&local, "second.txt", "second\n");
     git(&local, &["add", "-A"]);
     git(&local, &["commit", "-qm", "second"]);
-    git(&local, &["push", "-q", "-u", "origin", "main"]);
+    git(&local, &["push", "-q", "-u", "origin", branch]);
 
     RepoWithRemote {
         _tmp: tmp,
@@ -613,4 +640,91 @@ fn test_amend_no_upstream_allowed() {
     let outcome = execute_amend(&repo2, AmendMode::MessageOnly, Some("reword on local")).unwrap();
     assert_eq!(head_sha(&r.path), outcome.new.0);
     assert_eq!(head_message(&r.path), "reword on local");
+}
+
+// ────────────────────────────────────────────────────────────
+// Test 14/15: pushed amend on an ordinary branch (ADR-0040 案C)
+// ────────────────────────────────────────────────────────────
+
+/// A pushed commit on an ordinary branch may be amended: the plan warns that
+/// the branch will diverge and names the way to publish it, but does not
+/// refuse. The identical fixture on `main` (test 5) still refuses — the branch
+/// name is the only difference, which is what makes this pair meaningful.
+#[test]
+fn test_plan_amend_pushed_on_ordinary_branch_warns_but_allows() {
+    let r = setup_with_remote_on("feat/x");
+
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_amend(&repo, AmendMode::MessageOnly, Some("reword")).unwrap();
+
+    assert!(
+        plan.blockers.is_empty(),
+        "a pushed commit on an ordinary branch must not block amend, got: {:?}",
+        plan.blockers
+    );
+    let warn = plan
+        .warnings
+        .iter()
+        .map(|n| n.message_en())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        warn.contains("diverge"),
+        "the plan must say the branch will diverge: {warn}"
+    );
+    assert!(
+        warn.contains("Force-with-lease"),
+        "the plan must name the way to publish the result: {warn}"
+    );
+}
+
+/// …and it actually runs, replacing the commit rather than adding one.
+#[test]
+fn test_execute_amend_pushed_on_ordinary_branch_rewrites_head() {
+    let r = setup_with_remote_on("feat/x");
+
+    let before = head_sha(&r.local);
+    let count_before = rev_count(&r.local);
+
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_amend(&repo, AmendMode::MessageOnly, Some("reworded")).unwrap();
+    preflight_check(&repo, &plan).expect("preflight");
+    execute_amend(&repo, AmendMode::MessageOnly, Some("reworded")).expect("amend");
+
+    let after = head_sha(&r.local);
+    assert_ne!(before, after, "amend must produce a new commit");
+    assert_eq!(
+        count_before,
+        rev_count(&r.local),
+        "amend must replace the tip, not stack a commit on it"
+    );
+    assert_eq!(head_message(&r.local), "reworded");
+    // The remote still points at the old commit — that divergence is exactly
+    // what the warning is about, and why a plain push would now be refused.
+    assert_eq!(
+        rev_parse(&r.local, "refs/remotes/origin/feat/x"),
+        before,
+        "the remote must be untouched by a local amend"
+    );
+}
+
+/// Test 5's counterpart: the refusal on a protected branch has to be *about*
+/// the protection, not merely present.
+#[test]
+fn test_plan_amend_pushed_on_protected_branch_says_why() {
+    let r = setup_with_remote_on("main");
+
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_amend(&repo, AmendMode::MessageOnly, Some("reword")).unwrap();
+
+    let msg = plan
+        .blockers
+        .iter()
+        .map(|n| n.message_en())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        msg.contains("other people build on"),
+        "the refusal must explain that the branch is shared: {msg}"
+    );
 }

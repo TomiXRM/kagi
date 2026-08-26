@@ -80,7 +80,14 @@ pub enum HistoryNote {
     /// blocker — HEAD is the root commit; op-specific tail.
     RootCommit { sha: String, op: HistoryOp },
     /// blocker — HEAD has been pushed to its upstream; op-specific tail.
+    ///
+    /// For `Amend` this fires only on a protected branch (ADR-0040 案C's hard
+    /// exclusion). On an ordinary branch a pushed amend is allowed and warns
+    /// with [`HistoryNote::AmendDivergesFromRemote`] instead.
     PushedHistoryRewrite { sha: String, op: HistoryOp },
+    /// warning (amend) — the commit is already on the remote, so amending it
+    /// makes the branch diverge and a plain push will be refused.
+    AmendDivergesFromRemote { sha: String, branch: String },
     /// blocker (amend) — the new commit message is empty.
     EmptyMessage,
     /// blocker (amend) — nothing staged to fold into the commit.
@@ -143,10 +150,14 @@ impl HistoryNote {
                     sha
                 ),
                 HistoryOp::Amend => format!(
-                    "Commit {} has been pushed to its upstream tracking branch. Amending published history is not allowed (ADR-0040). Create a new commit to make the correction instead.",
+                    "Commit {} has been pushed, and this branch is one other people build on. Rewriting its history would strand every clone that has already fetched it, so amend is refused here regardless of confirmation. Create a new commit to make the correction instead.",
                     sha
                 ),
             },
+            HistoryNote::AmendDivergesFromRemote { sha, branch } => format!(
+                "Commit {} is already on the remote. Amending replaces it with a new commit, so '{}' will diverge from its upstream and a plain push will be refused. Publish the result with 'Force-with-lease push...' from the branch menu, which fails if anyone else has pushed since your last fetch.",
+                sha, branch
+            ),
             HistoryNote::EmptyMessage => "Commit message must not be empty.".to_string(),
             HistoryNote::NothingStagedForAmend => {
                 "Nothing staged to fold into the commit. Stage changes first, or use \
@@ -402,7 +413,23 @@ mod tests {
                 op: HistoryOp::Amend
             }
             .message_en(),
-            "Commit a1b2c3d4 has been pushed to its upstream tracking branch. Amending published history is not allowed (ADR-0040). Create a new commit to make the correction instead."
+            "Commit a1b2c3d4 has been pushed, and this branch is one other people build on. Rewriting its history would strand every clone that has already fetched it, so amend is refused here regardless of confirmation. Create a new commit to make the correction instead."
+        );
+    }
+
+    /// ADR-0143: on an ordinary branch the same situation is a warning, and it
+    /// has to carry both halves — that the branch diverges, and how to publish
+    /// it — or the user is left exactly as stuck as the old blocker left them.
+    #[test]
+    fn amend_diverges_from_remote_names_the_branch_and_the_way_out() {
+        let msg = HistoryNote::AmendDivergesFromRemote {
+            sha: "a1b2c3d4".into(),
+            branch: "feat/x".into(),
+        }
+        .message_en();
+        assert_eq!(
+            msg,
+            "Commit a1b2c3d4 is already on the remote. Amending replaces it with a new commit, so 'feat/x' will diverge from its upstream and a plain push will be refused. Publish the result with 'Force-with-lease push...' from the branch menu, which fails if anyone else has pushed since your last fetch."
         );
     }
 

@@ -4,7 +4,7 @@ crates/kagi-git/src/backend.rs 1289
 crates/kagi-git/src/conflicts.rs 1803
 crates/kagi-git/src/message_gen.rs 807
 crates/kagi-git/src/ops/cherry_revert.rs 966
-crates/kagi-git/src/ops/history.rs 1198
+crates/kagi-git/src/ops/history.rs 1215
 crates/kagi-git/src/ops/pull.rs 813
 crates/kagi-git/src/ops/stash.rs 857
 crates/kagi-git/src/resolution.rs 1254

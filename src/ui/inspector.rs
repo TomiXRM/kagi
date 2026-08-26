@@ -117,8 +117,13 @@ pub fn render_inspector(
     // soft-wrapping itself. Hard-wrapped bodies (git's 72-col convention) are
     // reflowed first — otherwise the soft wrap stacks on the hard breaks and
     // orphan fragments (a lone ")" line) flap in and out while resizing.
-    let message_text = SharedString::from(kagi_domain::message::reflow_message(
-        d.full_message.as_ref(),
+    // Rendered as escaped HTML through a selectable `TextView`, not as a plain
+    // text run: GPUI has no text selection for a plain run, and `TextView` —
+    // the one element that does — parses only Markdown or HTML. Markdown would
+    // misread the message itself (`* fix` as a bullet, `#123` as a heading), so
+    // `message_to_html` escapes everything and keeps the author's line breaks.
+    let message_html = SharedString::from(kagi_domain::message::message_to_html(
+        &kagi_domain::message::reflow_message(d.full_message.as_ref()),
     ));
 
     // ── Tree rows ─────────────────────────────────────────────────────────
@@ -865,7 +870,15 @@ pub fn render_inspector(
         .text_color(rgb(theme().text_main))
         .text_sm()
         .whitespace_normal()
-        .child(message_text);
+        .child(
+            // Keyed by SHA so switching commits resets the view's own state
+            // instead of carrying the previous commit's selection over.
+            gpui_component::text::TextView::html(
+                SharedString::from(format!("inspector-message-{}", d.full_sha)),
+                message_html,
+            )
+            .selectable(true),
+        );
     // The scroll lives on an inner size_full child, NOT on the flex-sized box:
     // with overflow_y_scroll directly on the flex_basis box, the wrapped-text
     // content size feeds back into the flex solve and the layout flip-flops

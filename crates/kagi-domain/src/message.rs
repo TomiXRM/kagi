@@ -305,3 +305,108 @@ mod reflow_tests {
         );
     }
 }
+
+/// Render a commit message as HTML that displays **literally**.
+///
+/// The only selectable text element available is `TextView`, and it parses
+/// either Markdown or HTML — there is no plain-text mode. Markdown is wrong
+/// for a commit message: `* fix foo` becomes a bullet list, `#123` becomes a
+/// heading, `_x_` goes italic and the underscores vanish. HTML with every
+/// special character escaped is the only faithful option.
+///
+/// Blank lines become paragraph breaks; single newlines become `<br>`, so the
+/// author's line breaks survive.
+pub fn message_to_html(msg: &str) -> String {
+    fn escape(s: &str, out: &mut String) {
+        for c in s.chars() {
+            match c {
+                '&' => out.push_str("&amp;"),
+                '<' => out.push_str("&lt;"),
+                '>' => out.push_str("&gt;"),
+                _ => out.push(c),
+            }
+        }
+    }
+    let text = msg.replace("\r\n", "\n").replace('\r', "\n");
+    let mut out = String::with_capacity(text.len() + 16);
+    // A run of blank lines separates paragraphs; collapsing them here keeps an
+    // over-spaced message from rendering as a column of empty paragraphs.
+    for para in text
+        .split("\n\n")
+        .map(|p| p.trim_matches('\n'))
+        .filter(|p| !p.trim().is_empty())
+    {
+        out.push_str("<p>");
+        for (j, line) in para.split('\n').enumerate() {
+            if j > 0 {
+                out.push_str("<br>");
+            }
+            escape(line, &mut out);
+        }
+        out.push_str("</p>");
+    }
+    out
+}
+
+#[cfg(test)]
+mod message_to_html_tests {
+    use super::message_to_html;
+
+    /// The whole reason this exists: a commit message is not Markdown. Each of
+    /// these renders as something else entirely if handed to a Markdown parser
+    /// — a bullet list, a heading, italics with the underscores eaten.
+    #[test]
+    fn markdown_syntax_survives_as_literal_text() {
+        for src in [
+            "* fix the thing",
+            "#123 follow-up",
+            "snake_case_name stays whole",
+            "a * b * c",
+            "1. not a list",
+            "` backtick",
+        ] {
+            let html = message_to_html(src);
+            let inner = html
+                .trim_start_matches("<p>")
+                .trim_end_matches("</p>")
+                .to_string();
+            assert_eq!(inner, src, "{src:?} was altered");
+        }
+    }
+
+    #[test]
+    fn html_special_characters_are_escaped() {
+        assert_eq!(
+            message_to_html("fix <script> & \"quotes\" > here"),
+            "<p>fix &lt;script&gt; &amp; \"quotes\" &gt; here</p>"
+        );
+    }
+
+    /// A `<` that is not escaped would swallow everything up to the next `>`;
+    /// a bare `&` can eat the following word as an entity.
+    #[test]
+    fn an_email_in_a_trailer_is_not_swallowed() {
+        let html = message_to_html("Co-authored-by: A <a@b.example>");
+        assert!(html.contains("&lt;a@b.example&gt;"), "{html}");
+    }
+
+    #[test]
+    fn blank_lines_split_paragraphs_and_single_newlines_become_breaks() {
+        assert_eq!(
+            message_to_html("subject\n\nline one\nline two"),
+            "<p>subject</p><p>line one<br>line two</p>"
+        );
+    }
+
+    #[test]
+    fn runs_of_blank_lines_do_not_produce_empty_paragraphs() {
+        assert_eq!(message_to_html("a\n\n\n\n\nb"), "<p>a</p><p>b</p>");
+        assert_eq!(message_to_html("   \n\n  \n"), "");
+        assert_eq!(message_to_html(""), "");
+    }
+
+    #[test]
+    fn crlf_is_normalised() {
+        assert_eq!(message_to_html("a\r\n\r\nb\r\nc"), "<p>a</p><p>b<br>c</p>");
+    }
+}

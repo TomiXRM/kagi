@@ -576,7 +576,6 @@ impl CommitPanelView {
         cx: &mut Context<CommitPanelView>,
     ) -> impl IntoElement {
         let panel = &self.state;
-        let preview = panel.preview.clone();
         let title_input = self.title_input.clone();
         let body_input = self.body_input.clone();
         let coauthor_menu = self.coauthor_menu.clone();
@@ -778,13 +777,10 @@ impl CommitPanelView {
         };
 
         // ── Commit button ─────────────────────────────────────────
-        // The destination branch is on the button rather than in a preview line
-        // above it (ADR-0134) — one place to look before committing.
-        let branch_label = preview
-            .as_ref()
-            .map(|p| p.target_branch.clone())
-            .unwrap_or_default();
-        let commit_label = SharedString::from(i18n::commit_to_branch(&branch_label));
+        // No destination branch in the label: ADR-0134 put it here as "one
+        // place to look", but a real branch name overflows the button. The
+        // header shows the branch at all times and has room for a long one.
+        let commit_label = SharedString::from(i18n::commit_button());
         let commit_click = cx.listener(
             |view: &mut CommitPanelView, _event: &gpui::ClickEvent, window, cx| {
                 view.defer_open_commit_plan_modal(window, cx);

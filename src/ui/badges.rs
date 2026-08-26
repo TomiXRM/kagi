@@ -217,16 +217,42 @@ pub(crate) fn render_badges_column(
         //     shows a valid-target highlight via `.drag_over::<BranchDrag>` and
         //     dispatches to `start_merge_from_drag` on drop. The drop is a
         //     TRIGGER only — it never calls git from the view (same as sidebar).
+        //   - `BadgeKind::Branch` / `BadgeKind::Remote` are ALSO drop targets
+        //     (ADR-0144): dropping there merges into a branch that is not
+        //     checked out, moving only its ref. A remote chip resolves to the
+        //     local branch of that name, created at the remote tip if needed.
         let chip = match badge.kind {
             BadgeKind::Branch | BadgeKind::Remote => {
                 if let Some(name) = draggable_branch_name(badge) {
-                    chip.cursor_grab().on_drag(
+                    let chip = chip.cursor_grab().on_drag(
                         BranchDrag { name: name.clone() },
                         move |drag: &BranchDrag, _pos, _window, cx| {
                             let name = SharedString::from(drag.name.clone());
                             cx.new(|_| BranchDragGhost { name })
                         },
-                    )
+                    );
+                    // ADR-0144: a branch chip is also a drop target — dropping
+                    // merges into a branch that is not checked out. A remote
+                    // chip resolves to the local branch of that name, created
+                    // at the remote tip if it does not exist yet; nothing is
+                    // pushed.
+                    let target = name.clone();
+                    let drop_handler = cx.listener(
+                        move |this: &mut KagiApp, payload: &BranchDrag, _window, cx| {
+                            this.start_merge_into_from_drag(
+                                payload.name.clone(),
+                                target.clone(),
+                                cx,
+                            );
+                            cx.notify();
+                        },
+                    );
+                    chip.drag_over::<BranchDrag>(|style, _drag, _window, _cx| {
+                        style
+                            .bg(rgb(theme().selected))
+                            .border_color(rgb(theme().color_branch))
+                    })
+                    .on_drop::<BranchDrag>(drop_handler)
                 } else {
                     chip
                 }

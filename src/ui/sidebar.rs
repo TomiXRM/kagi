@@ -1159,6 +1159,16 @@ fn build_local_branch_leaf(
                 cx.notify();
             },
         );
+        // ADR-0144: a non-HEAD row is both a drag source and a drop target.
+        // Dropping here merges into a branch that is not checked out — only
+        // its ref moves, the working tree is untouched.
+        let branch_for_drop = branch_name.to_string();
+        let drop_handler = cx.listener(
+            move |this: &mut KagiApp, payload: &BranchDrag, _window, cx| {
+                this.start_merge_into_from_drag(payload.name.clone(), branch_for_drop.clone(), cx);
+                cx.notify();
+            },
+        );
         div()
             .id(SharedString::from(format!(
                 "sidebar-branch-{}",
@@ -1175,6 +1185,12 @@ fn build_local_branch_leaf(
             .overflow_hidden()
             .on_click(click_handler)
             .on_mouse_down(gpui::MouseButton::Right, menu_click)
+            .drag_over::<BranchDrag>(|style, _drag, _window, _cx| {
+                style
+                    .bg(rgb(theme().selected))
+                    .border_color(rgb(theme().color_branch))
+            })
+            .on_drop::<BranchDrag>(drop_handler)
             .on_drag(
                 BranchDrag {
                     name: branch_for_drag.clone(),

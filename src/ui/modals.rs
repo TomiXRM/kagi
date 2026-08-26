@@ -165,6 +165,11 @@ pub struct MergePlanModal {
     /// [`MergeKind::Conflicts`] the modal shows a "resolve conflicts" confirm
     /// and `start_merge` drives the real merge into Conflict Mode.
     pub kind: MergeKind,
+    /// ADR-0144: `into_branch` is a branch that is **not** checked out, so
+    /// confirming runs the off-branch merge (only that branch's ref moves)
+    /// instead of the HEAD merge. The modal is otherwise identical — its
+    /// confirm label already reads `Merge <target> into <into_branch>`.
+    pub off_branch: bool,
     pub error: Option<SharedString>,
 }
 

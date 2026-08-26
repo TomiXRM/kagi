@@ -442,8 +442,6 @@ pub enum Msg {
     PrSuggestion,
     PrHunkCopy,
     PrHunkCopied,
-    /// Inspector: tooltip on the commit message block.
-    ClickToCopyMessage,
     PrModeNoDescription,
     /// PR mode: dashboard "back to the home screen" button.
     PrAllPrs,
@@ -1227,8 +1225,6 @@ impl Msg {
             (En, PrSuggestion) => "suggestion",
             (En, PrHunkCopy) => "Copy this hunk",
             (Ja, PrHunkCopy) => "このコードをコピー",
-            (En, ClickToCopyMessage) => "Click to copy the commit message",
-            (Ja, ClickToCopyMessage) => "クリックで commit message をコピー",
             (En, PrHunkCopied) => "Hunk copied",
             (Ja, PrHunkCopied) => "コードをコピーしました",
             (Ja, PrSuggestion) => "コード提案",

@@ -25,18 +25,25 @@ pub const FLOWER_ROAD: Theme = Theme {
     name: "Flower Road",
     dark: false,
 
-    // The two supplied backgrounds are the commit list's zebra pair: BG1 on
-    // the even rows, BG2 on the odd ones. Everything else is built off BG1.
-    bg_base: 0xffffff,    // BG1
-    bg_row_alt: 0xf8faff, // BG2
-    surface: 0xeef1fa,    // chips/hover — one step past BG2 so it still reads
-    selected: 0xc5ddd1,   // #95c0aa at L=0.82
+    // A warm ivory rather than white — the palette this theme is built from is
+    // warm, and a blue-white base fought it.
+    bg_base: 0xfff9f5, // BG1
+    // BG2: the same step down from BG1, with roughly two thirds of the warmth
+    // taken out. At full saturation the stripe read as an orange band rather
+    // than an alternating row; the point of a zebra is to be noticed only when
+    // you are following a row across.
+    bg_row_alt: 0xf9f6f4,
+    // `surface` is what 28 of the app's borders are drawn in as well as the
+    // hover wash, so the supplied border colour goes here rather than into a
+    // token of its own.
+    surface: 0xeaddd8,
+    selected: 0xc5ddd1, // #95c0aa at L=0.82
     // Chrome is BG1 exactly: the sidebar and tab strip are meant to read as
     // one sheet with the commit list, not as darker panels. The edges that
     // need to show are drawn as `selected`-coloured borders.
-    panel: 0xffffff,
-    sidebar: 0xffffff,
-    modal: 0xffffff,
+    panel: 0xfff9f5,
+    sidebar: 0xfff9f5,
+    modal: 0xfffcfa,
     modal_overlay: 0x172540,
 
     text_main: 0x172540, // supplied font colour
@@ -83,21 +90,31 @@ pub const FLOWER_ROAD: Theme = Theme {
     // The palette's own hues at a lightness that reads on the base (every lane
     // >= 4.4:1), ordered so adjacent indices stay distinct. Lane 7 is the
     // supplied #000 — the one label colour that needed no adjustment.
+    // Flower Road's swimlanes. Ordered so neighbouring lane indices are as far
+    // apart as the set allows — worst adjacent pair 0.39 on a hue+chroma
+    // distance, where the naive order left Silver next to Lavender at 0.02.
+    // The supplied palette had no blue at all (hues 0.28-0.73 were empty),
+    // which is why both added flowers are blue, and why they differ in
+    // lightness so they separate from each other too.
+    //
+    // Used verbatim: they run 1.4-2.3:1 on the ivory, against the 3.5-6.5 the
+    // other light themes' lanes sit at. That is a deliberate trade of
+    // legibility for the palette, not an oversight.
     lane_hsl: [
-        (0.910, 0.58, 0.59), // pink   #d05d9b
-        (0.415, 0.45, 0.41), // green  #399667
-        (0.610, 0.55, 0.40), // blue   #2e549e
-        (0.174, 0.62, 0.28), // olive  #70741b
-        (0.500, 0.70, 0.30), // teal   #178282
-        (0.790, 0.42, 0.44), // purple #87419f
-        (0.065, 0.70, 0.36), // orange #9c4e1c
-        (0.000, 0.00, 0.00), // black  #000000
+        (0.733, 0.490, 0.800), // Lavender     #c7b3e5  1.83:1
+        (0.106, 0.768, 0.594), // Marigold     #e7ad48  1.92:1
+        (0.610, 0.483, 0.704), // Tsuyukusa    #8fa8d8  2.30:1
+        (0.269, 0.153, 0.667), // Sage Green   #a7b79d  2.03:1
+        (0.963, 0.496, 0.751), // Rose         #dfa0ae  2.06:1
+        (0.750, 0.056, 0.788), // Silver       #c9c6cc  1.62:1
+        (0.590, 0.513, 0.775), // Wasurenagusa #a8c3e3  1.74:1
+        (0.147, 0.723, 0.661), // Nanohana     #e7d86a  1.39:1
     ],
 
     avatar_sat: 0.42,
     avatar_light: 0.46,
 
-    term_bg: (0xf8, 0xfa, 0xff),
+    term_bg: (0xff, 0xf9, 0xf5),
     term_fg: (0x17, 0x25, 0x40),
     term_cursor: (0xa5, 0x27, 0x6b),
     term_black: (0x17, 0x25, 0x40),

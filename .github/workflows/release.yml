@@ -73,12 +73,18 @@ jobs:
             dpkg-dev
 
       # ── macOS: .app (ad-hoc signed) + .dmg ────────────────────────────────
-      # `hdiutil create` needs room for a second copy of the staged .app, and
-      # v0.26.0 failed here with "No space left on device" after the release
-      # build had filled the runner. Reclaim the two largest things we do not
-      # need: the Xcode versions this job never uses, and the simulator
-      # runtimes. Best-effort — a runner image without them must not fail the
-      # build, hence `|| true`.
+      # v0.26.0 failed here with `hdiutil create: No space left on device`.
+      #
+      # The `df` lines are the point of this step; the `rm`s have not been
+      # shown to do anything. On the v0.27.0 run the runner had 97Gi free
+      # before the step and 97Gi after — none of these paths existed on that
+      # image, and the disk was never tight. So the v0.26.0 failure is still
+      # unexplained, and this step is instrumentation for the next one rather
+      # than a fix that has been proven to work. Keep the `df` either side so
+      # that failure arrives with a number attached.
+      #
+      # Best-effort by design: a runner image without these paths must not
+      # fail the build, hence `|| true`.
       - name: Free disk space for the dmg
         if: matrix.kind == 'macos'
         run: |

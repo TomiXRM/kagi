@@ -592,6 +592,14 @@ pub fn clamp_menu_pos(
 /// [`selection_overlay`] rather than re-applying it at a call site.
 const SELECTION_ALPHA: f32 = 0.30;
 
+/// Alpha of the inline-code chip (gpui-component's `accent`).
+///
+/// 0.16 is the lightest single value the whole set tolerates: one step further
+/// (0.13) drops One Dark to 22, under the floor that exists because `selected`
+/// once left code spans invisible. Going lighter than this needs a per-theme
+/// value, not a smaller constant.
+const CODE_CHIP_ALPHA: f32 = 0.16;
+
 #[inline]
 fn to_hsla(rgb_u32: u32) -> Hsla {
     Hsla::from(rgb(rgb_u32))
@@ -671,11 +679,16 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     gc.colors.primary_active = to_hsla(k.color_branch);
     gc.colors.ring = to_hsla(k.color_branch);
     // `accent` is gpui-component's inline-code background (TextView) and a
-    // hover tint in a few popovers. `selected` — the row highlight, near the
-    // background by design — made `code` spans unreadable in PR descriptions
-    // (user report). A muted-foreground tint at low alpha reads as a chip on
-    // both `surface` and `bg_base`, in every theme.
-    gc.colors.accent = to_hsla(k.text_muted).alpha(0.48);
+    // hover tint in a few popovers — always a background, never a foreground.
+    //
+    // This value has been wrong in both directions. `selected` — the row
+    // highlight, near the background by design — left `code` spans invisible
+    // (user report); a muted-foreground tint at 0.48 then made them a dark
+    // block, hardest in the light themes (user report), because `text_muted`
+    // is a *foreground* colour and half of it is still most of the way to one.
+    // The alpha keeps the same hue relationship and lands every theme inside
+    // the band `code_chip_is_visible_but_not_a_block` pins.
+    gc.colors.accent = to_hsla(k.text_muted).alpha(CODE_CHIP_ALPHA);
     gc.colors.accent_foreground = to_hsla(k.text_main);
     gc.colors.link = to_hsla(k.color_branch);
 
@@ -1817,6 +1830,43 @@ mod tests {
         }
         ACTIVE.store(restore, Ordering::Relaxed);
         unsafe { std::env::remove_var("KAGI_LOG_DIR") };
+    }
+
+    /// The inline-code chip has to be visible without being a block.
+    ///
+    /// It has been wrong in both directions: first `selected`, which sits near
+    /// the background by design and left `code` spans invisible; then a
+    /// foreground colour at 0.48, which made them a dark slab. The band is
+    /// what neither end satisfied.
+    #[test]
+    fn code_chip_is_visible_but_not_a_block() {
+        for t in THEMES {
+            let chip = [16u32, 8, 0].map(|sh| {
+                let (f, b) = (
+                    ((t.text_muted >> sh) & 0xff) as f32,
+                    ((t.bg_base >> sh) & 0xff) as f32,
+                );
+                (f * CODE_CHIP_ALPHA + b * (1.0 - CODE_CHIP_ALPHA)) as i32
+            });
+            let base = [16u32, 8, 0].map(|sh| ((t.bg_base >> sh) & 0xff) as i32);
+            let delta: i32 = chip
+                .iter()
+                .zip(base.iter())
+                .map(|(a, b)| (a - b).abs())
+                .sum();
+            assert!(
+                delta >= 24,
+                "{}: the code chip is only {} from the background — invisible",
+                t.slug,
+                delta
+            );
+            assert!(
+                delta <= 100,
+                "{}: the code chip is {} from the background — reads as a block",
+                t.slug,
+                delta
+            );
+        }
     }
 
     /// Selected text must not look like a diff line.

@@ -227,6 +227,47 @@ fn validate_merge_from_drag(
     Err(format!("Branch '{}' is not a branch.", source))
 }
 
+/// Pure validation for [`KagiApp::start_merge_into_from_drag`] (ADR-0144).
+///
+/// Separate from [`validate_merge_from_drag`] because the rejections differ:
+/// here the *destination* is the dragged-onto branch rather than HEAD, so
+/// "source is HEAD" is fine and "destination is HEAD" is the case that belongs
+/// to the other path. `plan_merge_into_branch` remains the authoritative guard
+/// (worktree checkout, conflicts, already-contains).
+fn validate_merge_into_from_drag(
+    source: &str,
+    target: &str,
+    branches: &[(String, bool)],
+    remotes: &[String],
+    busy: bool,
+) -> Result<(), String> {
+    if busy {
+        return Err(Msg::OpInProgress.t().to_string());
+    }
+    if source == target {
+        return Err(format!("'{}' is already that branch.", source));
+    }
+    let is_local = |n: &str| branches.iter().any(|(b, _)| b == n);
+    if !is_local(source) {
+        return Err(format!("Branch '{}' is not a local branch.", source));
+    }
+    // The destination may be a remote-tracking ref: the planner resolves it to
+    // the local branch of that name, creating it at the remote tip if needed.
+    // Only reject a name that is neither.
+    if !is_local(target) && !remotes.iter().any(|n| n == target) {
+        return Err(format!("Branch '{}' is not a branch.", target));
+    }
+    // Dropping onto the checked-out branch is the HEAD merge, which can also
+    // enter Conflict Mode — that path owns it.
+    if branches.iter().any(|(b, is_head)| b == target && *is_head) {
+        return Err(format!(
+            "'{}' is the current branch; drop onto it to merge into HEAD.",
+            target
+        ));
+    }
+    Ok(())
+}
+
 // UI_FONT / MONO_FONT moved to kagi-ui-core::theme (ADR-0121 C1); re-exported
 // here so `super::UI_FONT` call sites keep working.
 pub use kagi_ui_core::theme::{CJK_FONT, MONO_FONT, UI_FONT};
@@ -3784,6 +3825,97 @@ mod conflict_editor_geometry_tests {
             conflict_split_ratio_from_cursor(10.0, 0.0, 4.0, 4.0, 0.2, 0.8),
             None
         );
+    }
+}
+
+// ── ADR-0144: dropping onto a branch that is not checked out ───
+#[cfg(test)]
+mod drag_merge_into_validation_tests {
+    use super::validate_merge_into_from_drag;
+
+    fn branches() -> Vec<(String, bool)> {
+        vec![
+            ("main".to_string(), true), // current (HEAD)
+            ("feature".to_string(), false),
+            ("topic/x".to_string(), false),
+        ]
+    }
+
+    fn remotes() -> Vec<String> {
+        vec!["origin/main".to_string(), "origin/release".to_string()]
+    }
+
+    #[test]
+    fn dropping_one_non_head_branch_onto_another_is_accepted() {
+        assert_eq!(
+            validate_merge_into_from_drag("feature", "topic/x", &branches(), &remotes(), false),
+            Ok(())
+        );
+        // The *source* being HEAD is fine here — it is the destination that
+        // must not be checked out.
+        assert_eq!(
+            validate_merge_into_from_drag("main", "topic/x", &branches(), &remotes(), false),
+            Ok(())
+        );
+    }
+
+    /// Dropping onto the current branch belongs to the HEAD merge, which can
+    /// also enter Conflict Mode. Routing it here would silently downgrade a
+    /// conflicting merge from "resolve it" to "refused".
+    #[test]
+    fn dropping_onto_the_current_branch_is_left_to_the_head_merge() {
+        let err = validate_merge_into_from_drag("feature", "main", &branches(), &remotes(), false)
+            .unwrap_err();
+        assert!(err.contains("current branch"), "{err}");
+    }
+
+    #[test]
+    fn same_branch_unknown_branch_and_busy_are_rejected() {
+        assert!(validate_merge_into_from_drag(
+            "feature",
+            "feature",
+            &branches(),
+            &remotes(),
+            false
+        )
+        .is_err());
+        assert!(
+            validate_merge_into_from_drag("ghost", "topic/x", &branches(), &remotes(), false)
+                .is_err()
+        );
+        assert!(
+            validate_merge_into_from_drag("feature", "ghost", &branches(), &remotes(), false)
+                .is_err()
+        );
+        assert!(
+            validate_merge_into_from_drag("feature", "topic/x", &branches(), &remotes(), true)
+                .is_err()
+        );
+    }
+
+    /// A remote-tracking ref IS a valid destination: the planner resolves it
+    /// to the local branch of that name, creating it at the remote tip when it
+    /// does not exist yet. Only a name that is neither is rejected.
+    #[test]
+    fn a_remote_ref_is_a_valid_destination() {
+        assert_eq!(
+            validate_merge_into_from_drag(
+                "feature",
+                "origin/release",
+                &branches(),
+                &remotes(),
+                false
+            ),
+            Ok(())
+        );
+        assert!(validate_merge_into_from_drag(
+            "feature",
+            "origin/nope",
+            &branches(),
+            &remotes(),
+            false
+        )
+        .is_err());
     }
 }
 

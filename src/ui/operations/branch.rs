@@ -729,6 +729,7 @@ impl KagiApp {
                             into_branch,
                             plan: std::sync::Arc::new(plan),
                             kind,
+                            off_branch: false,
                             error: None,
                         });
                     }
@@ -774,10 +775,7 @@ impl KagiApp {
             self.busy_op.is_some(),
         ) {
             Ok(()) => {
-                eprintln!(
-                    "[kagi] drag-merge: start merge from drag — source={}",
-                    source
-                );
+                klog!("drag-merge: start merge from drag — source={}", source);
                 self.open_merge_modal(source, cx);
             }
             Err(reason) => {
@@ -789,6 +787,107 @@ impl KagiApp {
             }
         }
         cx.notify();
+    }
+
+    /// Plan merging `source` into `target`, where `target` is a branch that is
+    /// **not** checked out (ADR-0144). Reuses the merge modal: its confirm
+    /// label already reads `Merge <source> into <target>`.
+    pub fn open_merge_into_modal(
+        &mut self,
+        source: String,
+        target: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.busy_op.is_some() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        self.busy_op = Some("merge-plan");
+        self.status_footer = FooterStatus::Busy(SharedString::from("Planning merge…"));
+        klog!(
+            "async: merge-into plan started for {} -> {}",
+            source,
+            target
+        );
+        let bg_path = repo_path.clone();
+        let (bg_source, bg_target) = (source.clone(), target.clone());
+        let task = cx.background_spawn(async move {
+            let repo = kagi_git::Backend::open(&bg_path)
+                .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+            repo.plan_merge_into_branch(&bg_source, &bg_target)
+                .map_err(|e| format!("{e}"))
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.busy_op = None;
+                match result {
+                    Ok((plan, _kind)) => {
+                        klog!(
+                            "plan: merge-into {} -> {} blockers={} warnings={}",
+                            source,
+                            target,
+                            plan.blockers.len(),
+                            plan.warnings.len()
+                        );
+                        app.status_footer = FooterStatus::Idle(SharedString::from(""));
+                        app.set_merge_modal(MergePlanModal {
+                            target: source,
+                            into_branch: target,
+                            plan: std::sync::Arc::new(plan),
+                            // Off-branch merges never enter Conflict Mode: a
+                            // conflicting one is a blocker at plan time.
+                            kind: kagi_git::MergeKind::MergeCommit,
+                            off_branch: true,
+                            error: None,
+                        });
+                    }
+                    Err(e) => {
+                        app.status_footer = FooterStatus::Failed(SharedString::from(e.clone()));
+                        app.push_toast(ToastKind::Error, e, cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Drop of `source` onto a branch row that is **not** the current branch
+    /// (ADR-0144).
+    pub fn start_merge_into_from_drag(
+        &mut self,
+        source: String,
+        target: String,
+        cx: &mut Context<Self>,
+    ) {
+        let remotes: Vec<String> = self
+            .active_view
+            .remote_branches
+            .iter()
+            .map(|rb| format!("{}/{}", rb.remote, rb.name))
+            .collect();
+        match crate::ui::validate_merge_into_from_drag(
+            &source,
+            &target,
+            &self.active_view.branches,
+            &remotes,
+            self.busy_op.is_some(),
+        ) {
+            Ok(()) => {
+                klog!("drag-merge: into {} from {}", target, source);
+                self.open_merge_into_modal(source, target, cx);
+            }
+            Err(reason) => {
+                klog!("drag-merge: rejected — {}", reason);
+                self.push_toast(ToastKind::Error, reason.clone(), cx);
+                self.status_footer = FooterStatus::Idle(SharedString::from(reason));
+                cx.notify();
+            }
+        }
     }
 
     pub fn start_merge(&mut self, cx: &mut Context<Self>) {
@@ -832,8 +931,17 @@ impl KagiApp {
         let history_target = modal.target.clone();
         // T-UNDOREDO-001: capture the branch + tip BEFORE the merge (main thread).
         let history_before = self.head_branch_and_sha();
-        let task =
-            cx.background_spawn(async move { merge_blocking(&bg_path, &plan, &target, &kind) });
+        let off_branch = modal.off_branch;
+        let bg_into = modal.into_branch.clone();
+        let task = cx.background_spawn(async move {
+            if off_branch {
+                crate::ui::blocking_ops::merge_into_branch_blocking(
+                    &bg_path, &plan, &target, &bg_into,
+                )
+            } else {
+                merge_blocking(&bg_path, &plan, &target, &kind)
+            }
+        });
         self.finish_op_on_main(cx, task, move |app, result, cx| match result {
             Ok((summary, after)) => {
                 klog!("async: merge finished — {}", summary);
@@ -881,6 +989,7 @@ impl KagiApp {
                     into_branch: modal.into_branch.clone(),
                     plan: modal.plan.clone(),
                     kind: modal.kind.clone(),
+                    off_branch: modal.off_branch,
                     error: Some(SharedString::from(err_msg)),
                 });
             }

@@ -464,6 +464,9 @@ impl Backend {
             Operation::MergeIntoConflict { target } => {
                 self.plan_merge_branch(target).map(|(plan, _)| plan)
             }
+            Operation::MergeIntoBranch { source, target } => self
+                .plan_merge_into_branch(source, target)
+                .map(|(plan, _)| plan),
             Operation::CheckoutTrackingBranch {
                 remote_branch,
                 local_branch,
@@ -602,6 +605,9 @@ impl Backend {
             Operation::MergeIntoConflict { target } => self
                 .execute_merge_into_conflict(target)
                 .map(OperationOutcome::MergeIntoConflict),
+            Operation::MergeIntoBranch { source, target } => self
+                .execute_merge_into_branch(source, target)
+                .map(OperationOutcome::Commit),
             Operation::CheckoutTrackingBranch {
                 remote_branch,
                 local_branch,
@@ -959,6 +965,25 @@ impl Backend {
 
     pub fn execute_merge_branch(&self, target: &str) -> Result<CommitId, GitError> {
         ops::execute_merge_branch(&self.repo, target)
+    }
+
+    /// Plan merging `source` into `target` without checking `target` out
+    /// (ADR-0144). Use [`Backend::plan_merge_branch`] when the destination is
+    /// the current branch — that path can also enter Conflict Mode.
+    pub fn plan_merge_into_branch(
+        &self,
+        source: &str,
+        target: &str,
+    ) -> Result<(OperationPlan, ops::MergeIntoKind), GitError> {
+        ops::plan_merge_into_branch(&self.repo, source, target)
+    }
+
+    pub fn execute_merge_into_branch(
+        &self,
+        source: &str,
+        target: &str,
+    ) -> Result<CommitId, GitError> {
+        ops::execute_merge_into_branch(&self.repo, source, target)
     }
 
     pub fn execute_merge_into_conflict(&self, target: &str) -> Result<Vec<String>, GitError> {

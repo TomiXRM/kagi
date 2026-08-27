@@ -10,7 +10,7 @@ crates/kagi-git/src/ops/stash.rs 857
 crates/kagi-git/src/resolution.rs 1254
 crates/kagi-git/src/staging.rs 844
 crates/kagi-ui-core/src/i18n/mod.rs 2078
-crates/kagi-ui-core/src/theme.rs 2101
+crates/kagi-ui-core/src/theme.rs 2151
 crates/kagi-ui-editor/src/lib.rs 3205
 src/ui/blocking_ops.rs 940
 src/ui/branch_cleanup.rs 1064

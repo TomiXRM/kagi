@@ -44,6 +44,7 @@ pub const APPLE_LIGHT: Theme = Theme {
     // Ref chips render solid with white text → vivid Default (light) set.
     color_head: 0xff2d55,   // pink
     color_branch: 0x0088ff, // blue
+    selection_tint: 0x0088ff,
     color_remote: 0x34c759, // green
     color_tag: 0xff8d28,    // orange
 
@@ -147,6 +148,7 @@ pub const APPLE_DARK: Theme = Theme {
     // the dark theme adopts it (ADR-0126) — the light theme keeps blue.
     color_head: 0xff375f,   // pink
     color_branch: 0xffd600, // yellow (accent)
+    selection_tint: 0xffd600,
     color_remote: 0x30d158, // green
     color_tag: 0xff9230,    // orange
 

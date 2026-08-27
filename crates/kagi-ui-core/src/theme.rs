@@ -75,6 +75,14 @@ pub struct Theme {
     pub color_branch: u32,
     pub color_remote: u32,
     pub color_tag: u32,
+    /// Tint painted under selected text (Inputs, selectable `TextView`s).
+    ///
+    /// Its own token rather than `color_branch`, which it used to borrow: in a
+    /// theme whose accent shares a hue with `diff_removed_bg`, selecting a
+    /// context line in a diff produced the exact colour of a removed line
+    /// (measured 12 apart, channel sum). Every theme but Flower Road keeps the
+    /// old value, so this is inert for them.
+    pub selection_tint: u32,
 
     // ── Status text ──────────────────────────────────────────────
     pub color_success: u32,
@@ -580,6 +588,8 @@ pub fn clamp_menu_pos(
 
 /// Alpha for the text-selection tint. Matches the cap gpui-component applies to
 /// its own bundled themes (`theme/schema.rs`), so text stays legible through it.
+/// Alpha the selection tint is painted at. Reach it through
+/// [`selection_overlay`] rather than re-applying it at a call site.
 const SELECTION_ALPHA: f32 = 0.30;
 
 #[inline]
@@ -603,6 +613,17 @@ fn to_hsla(rgb_u32: u32) -> Hsla {
 /// ~70 `ThemeColor` fields keep their gpui-component defaults (the audit doc
 /// confirms full coverage is unnecessary).  `mode` is set from `theme().dark`
 /// so any dark/light-conditional logic inside gpui-component matches kagi.
+/// The selection wash, ready to paint.
+///
+/// The diff panes draw their own line selection instead of going through
+/// gpui-component's text selection, so they need this colour too. They used to
+/// rebuild it inline from `color_branch` at a hardcoded `0.30` — and when the
+/// token moved, they silently kept the old colour. One function, one place to
+/// change.
+pub fn selection_overlay() -> Hsla {
+    to_hsla(theme().selection_tint).alpha(SELECTION_ALPHA)
+}
+
 pub fn sync_gpui_component_theme(cx: &mut App) {
     let k = theme();
     let gc = gpui_component::Theme::global_mut(cx);
@@ -641,7 +662,7 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     // it reads as "nothing happened" (user report). gpui-component paints the
     // selection *under* the text and caps its own themes at alpha 0.3, so an
     // accent tint at that alpha is both visible and safe for legibility.
-    gc.colors.selection = to_hsla(k.color_branch).alpha(SELECTION_ALPHA);
+    gc.colors.selection = to_hsla(k.selection_tint).alpha(SELECTION_ALPHA);
 
     // ── Primary / accent (Checkbox checked, focus ring, links) ──
     gc.colors.primary = to_hsla(k.color_branch);
@@ -943,6 +964,7 @@ const CATPPUCCIN_MOCHA: Theme = Theme {
 
     color_head: 0xf38ba8,
     color_branch: 0x89b4fa,
+    selection_tint: 0x89b4fa,
     color_remote: 0xa6e3a1,
     color_tag: 0xfab387,
 
@@ -1032,6 +1054,7 @@ const ONE_DARK: Theme = Theme {
 
     color_head: 0xe06c75,   // red
     color_branch: 0x61afef, // blue
+    selection_tint: 0x61afef,
     color_remote: 0x98c379, // green
     color_tag: 0xe5c07b,    // yellow
 
@@ -1120,6 +1143,7 @@ const ONE_LIGHT: Theme = Theme {
 
     color_head: 0xe45649,   // red
     color_branch: 0x4078f2, // blue
+    selection_tint: 0x4078f2,
     color_remote: 0x50a14f, // green
     color_tag: 0xc18401,    // amber
 
@@ -1235,6 +1259,7 @@ const MONOKAI: Theme = Theme {
 
     color_head: 0xff3d6f,   // vivid pink (ref keyword #ff668c, boosted)
     color_branch: 0x5a9fff, // vivid blue
+    selection_tint: 0x5a9fff,
     color_remote: 0xa8e05a, // vivid green (ref function #a4d671)
     color_tag: 0xff8c1a,    // punchy warm orange
 
@@ -1324,6 +1349,7 @@ const TOKYO_NIGHT: Theme = Theme {
 
     color_head: 0xf7768e,
     color_branch: 0x7aa2f7,
+    selection_tint: 0x7aa2f7,
     color_remote: 0x9ece6a,
     color_tag: 0xe0af68,
 
@@ -1413,6 +1439,7 @@ const IBM_PC: Theme = Theme {
 
     color_head: 0xff5555,
     color_branch: 0x5555ff,
+    selection_tint: 0x5555ff,
     color_remote: 0x55ff55,
     color_tag: 0xffff55,
 
@@ -1506,6 +1533,7 @@ const PINKY_BOO: Theme = Theme {
 
     color_head: 0xff398d,   // hot pink
     color_branch: 0x47b0e6, // blue
+    selection_tint: 0x47b0e6,
     color_remote: 0x587c0c, // olive green
     color_tag: 0xd56700,    // orange
 
@@ -1603,6 +1631,7 @@ const CATPPUCCIN_LATTE: Theme = Theme {
 
     color_head: 0xd20f39,   // red
     color_branch: 0x1e66f5, // blue
+    selection_tint: 0x1e66f5,
     color_remote: 0x40a02b, // green
     color_tag: 0xfe640b,    // peach
 
@@ -1691,6 +1720,7 @@ const DRACULA: Theme = Theme {
 
     color_head: 0xff79c6,   // pink
     color_branch: 0xbd93f9, // purple
+    selection_tint: 0xbd93f9,
     color_remote: 0x50fa7b, // green
     color_tag: 0xffb86c,    // orange
 
@@ -1761,6 +1791,83 @@ const DRACULA: Theme = Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The diff panes paint their own line selection; this is the one colour
+    /// they share with gpui-component's text selection. It used to be rebuilt
+    /// inline from `color_branch`, so moving `selection_tint` changed text
+    /// selection and left the diff panes on the old colour — the whole bug.
+    #[test]
+    fn selection_overlay_follows_the_active_theme_token() {
+        let _guard = ACTIVE_THEME_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        // SAFETY: single-threaded under the lock above.
+        unsafe { std::env::set_var("KAGI_LOG_DIR", dir.path()) };
+        let restore = active_index();
+        for t in THEMES {
+            assert!(set_active(t.slug), "{}", t.slug);
+            let got = selection_overlay();
+            assert_eq!(
+                got,
+                to_hsla(t.selection_tint).alpha(SELECTION_ALPHA),
+                "{}: selection_overlay must be selection_tint, not another token",
+                t.slug
+            );
+        }
+        ACTIVE.store(restore, Ordering::Relaxed);
+        unsafe { std::env::remove_var("KAGI_LOG_DIR") };
+    }
+
+    /// Selected text must not look like a diff line.
+    ///
+    /// The regression: Flower Road's accent is the same pink as its
+    /// `diff_removed_bg`, and the selection tint was derived from that accent —
+    /// so selecting a context line in a diff painted it 12 (channel sum) from
+    /// the colour of a removed line. Indistinguishable, and actively
+    /// misleading in the one view where "was this line removed?" is the
+    /// question being asked.
+    #[test]
+    fn selection_tint_is_not_mistakable_for_a_diff_line() {
+        /// Composite `fg` at the selection alpha over `bg`.
+        fn tinted(fg: u32, bg: u32) -> [i32; 3] {
+            [16u32, 8, 0].map(|sh| {
+                let (f, b) = (((fg >> sh) & 0xff) as f32, ((bg >> sh) & 0xff) as f32);
+                (f * SELECTION_ALPHA + b * (1.0 - SELECTION_ALPHA)) as i32
+            })
+        }
+        fn channels(c: u32) -> [i32; 3] {
+            [16u32, 8, 0].map(|sh| ((c >> sh) & 0xff) as i32)
+        }
+        fn delta(a: [i32; 3], b: [i32; 3]) -> i32 {
+            a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).sum()
+        }
+
+        for t in THEMES {
+            // A selected *context* line: the tint over the plain background.
+            let selected_context = tinted(t.selection_tint, t.bg_base);
+            for (name, wash) in [
+                ("diff_added_bg", t.diff_added_bg),
+                ("diff_removed_bg", t.diff_removed_bg),
+            ] {
+                assert!(
+                    delta(selected_context, channels(wash)) >= 24,
+                    "{}: a selected context line is only {} from {} — it reads as that kind of line",
+                    t.slug,
+                    delta(selected_context, channels(wash)),
+                    name
+                );
+                // …and the selection has to remain visible when the line it
+                // covers already has a diff wash under it.
+                assert!(
+                    delta(tinted(t.selection_tint, wash), channels(wash)) >= 24,
+                    "{}: selection is invisible on a {} line",
+                    t.slug,
+                    name
+                );
+            }
+        }
+    }
 
     #[test]
     fn themes_have_unique_slugs() {
@@ -1882,9 +1989,9 @@ mod tests {
     fn selection_tint_is_distinguishable_from_the_input_background() {
         for t in THEMES {
             let (r, g, b) = (
-                (t.color_branch >> 16) & 0xff,
-                (t.color_branch >> 8) & 0xff,
-                t.color_branch & 0xff,
+                (t.selection_tint >> 16) & 0xff,
+                (t.selection_tint >> 8) & 0xff,
+                t.selection_tint & 0xff,
             );
             let (br, bg_, bb) = (
                 (t.bg_base >> 16) & 0xff,

@@ -73,6 +73,21 @@ jobs:
             dpkg-dev
 
       # ── macOS: .app (ad-hoc signed) + .dmg ────────────────────────────────
+      # `hdiutil create` needs room for a second copy of the staged .app, and
+      # v0.26.0 failed here with "No space left on device" after the release
+      # build had filled the runner. Reclaim the two largest things we do not
+      # need: the Xcode versions this job never uses, and the simulator
+      # runtimes. Best-effort — a runner image without them must not fail the
+      # build, hence `|| true`.
+      - name: Free disk space for the dmg
+        if: matrix.kind == 'macos'
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /Applications/Xcode_1[45]*.app || true
+          sudo rm -rf ~/Library/Developer/CoreSimulator/Caches || true
+          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes || true
+          df -h / | tail -1
+
       - name: Bundle macOS app + dmg
         if: matrix.kind == 'macos'
         run: |

@@ -174,3 +174,76 @@ mod tests {
         assert!(!wip.is_dirty());
     }
 }
+
+// ────────────────────────────────────────────────────────────
+// Protected branches
+// ────────────────────────────────────────────────────────────
+
+/// Whether `name` is a branch whose published history kagi refuses to rewrite.
+///
+/// ADR-0040 案C names these as the hard exclusion for the force-with-lease
+/// flow: `main` / `master` / `develop` / `release` series. The distinction the
+/// list encodes is not "important branch" but "branch other people's work is
+/// almost certainly built on" — rewriting it strands every clone that has
+/// already fetched it, and no confirmation dialog makes that recoverable for
+/// the people who are not looking at this screen.
+///
+/// Matched case-insensitively, and any `refs/heads/` prefix is ignored so a
+/// caller can pass either form.
+pub fn is_protected_branch(name: &str) -> bool {
+    let name = name.strip_prefix("refs/heads/").unwrap_or(name);
+    let lower = name.to_ascii_lowercase();
+    const EXACT: &[&str] = &["main", "master", "develop", "development", "trunk"];
+    if EXACT.contains(&lower.as_str()) {
+        return true;
+    }
+    // `release/1.2`, `release-1.2`, and the same for the hotfix series, which
+    // is cut from and merged back into the release line.
+    ["release", "hotfix"]
+        .iter()
+        .any(|p| lower.starts_with(&format!("{p}/")) || lower.starts_with(&format!("{p}-")))
+}
+
+#[cfg(test)]
+mod protected_branch_tests {
+    use super::is_protected_branch;
+
+    #[test]
+    fn the_shared_lines_are_protected() {
+        for n in [
+            "main",
+            "master",
+            "develop",
+            "development",
+            "trunk",
+            "release/1.2",
+            "release-1.2",
+            "hotfix/urgent",
+            "hotfix-urgent",
+            "refs/heads/main",
+            "MAIN",
+            "Release/2.0",
+        ] {
+            assert!(is_protected_branch(n), "{n} must be protected");
+        }
+    }
+
+    /// The prefix match is on a *segment*, not a substring: a personal branch
+    /// that merely starts with the same letters is not someone else's base.
+    #[test]
+    fn ordinary_branches_are_not() {
+        for n in [
+            "feat/x",
+            "fix/main-menu",
+            "releases",
+            "release",
+            "released/x",
+            "mainline",
+            "my-main",
+            "hotfixes",
+            "",
+        ] {
+            assert!(!is_protected_branch(n), "{n} must not be protected");
+        }
+    }
+}

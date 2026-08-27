@@ -468,10 +468,27 @@ pub fn plan_amend(
                                 .graph_descendant_of(upstream_oid, head_oid)
                                 .unwrap_or(false);
                         if pushed {
-                            blockers.push(PlanNote::History(HistoryNote::PushedHistoryRewrite {
-                                sha: old_short.clone(),
-                                op: HistoryOp::Amend,
-                            }));
+                            // ADR-0040 案C: a pushed amend is allowed on an
+                            // ordinary branch — the result is published with
+                            // the force-with-lease push of ADR-0130 — but
+                            // never on a branch other people build on, where
+                            // no confirmation makes the rewrite recoverable
+                            // for the clones that already fetched it.
+                            if kagi_domain::refs::is_protected_branch(branch_name) {
+                                blockers.push(PlanNote::History(
+                                    HistoryNote::PushedHistoryRewrite {
+                                        sha: old_short.clone(),
+                                        op: HistoryOp::Amend,
+                                    },
+                                ));
+                            } else {
+                                warnings.push(PlanNote::History(
+                                    HistoryNote::AmendDivergesFromRemote {
+                                        sha: old_short.clone(),
+                                        branch: branch_name.clone(),
+                                    },
+                                ));
+                            }
                         }
                     }
                 }

@@ -1722,10 +1722,17 @@ pub fn diff_lines_copied(n: usize) -> String {
 
 /// Commit-button label naming its destination — the branch is on the button
 /// instead of in a separate preview line (ADR-0134).
-pub fn commit_to_branch(branch: &str) -> String {
+/// Label for the Commit button.
+///
+/// Deliberately without the destination branch, which used to be interpolated
+/// here (ADR-0134's "one place to look"): a real branch name overflowed the
+/// button. The destination is still on screen — the header carries
+/// `branch → upstream ↑A ↓B` at all times — and unlike the button it has room
+/// for a long name.
+pub fn commit_button() -> &'static str {
     match lang() {
-        Lang::En => format!("Commit to {}", branch),
-        Lang::Ja => format!("{} に commit", branch),
+        Lang::En => "Commit",
+        Lang::Ja => "commit",
     }
 }
 

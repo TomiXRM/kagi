@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use gpui::{prelude::*, Entity, SharedString, UniformListScrollHandle, WeakEntity};
 use gpui_component::input::InputState;
 
-use kagi_git::{Backend, ChangeKind, CommitPreview, FileDiffStat, FileStatus};
+use kagi_git::{Backend, ChangeKind, FileDiffStat, FileStatus};
 use kagi_ui_core::i18n::Msg;
 
 /// settings.json key: whether the body is seeded from `commit.template`.
@@ -84,11 +84,6 @@ pub struct CommitPanelState {
     pub plan_modal: Option<CommitPlanModal>,
     /// Whether the file list is in tree view (true) or flat view (false).
     pub tree_view: bool,
-    /// Cached staged-commit preview (count / A·M·D / target branch / author),
-    /// recomputed in [`Self::reload_status`]. **Must not** be recomputed every
-    /// render: `commit_preview()` runs a full `working_tree_status` (~150ms on a
-    /// large repo), which at 60fps froze the panel to ~6fps (PERF bug).
-    pub preview: Option<CommitPreview>,
     /// PERF: cached tree rows for the unstaged section, rebuilt in
     /// [`reload_status`] so the tree is NOT recomputed every frame.
     pub unstaged_tree: Vec<TreeRow>,
@@ -114,7 +109,6 @@ impl CommitPanelState {
             commit_msg: String::new(),
             plan_modal: None,
             tree_view: false,
-            preview: None,
             unstaged_tree: Vec::new(),
             staged_tree: Vec::new(),
             unstaged_stat_index: std::collections::HashMap::new(),
@@ -140,10 +134,6 @@ impl CommitPanelState {
         };
         match backend.working_tree_status() {
             Ok(status) => {
-                // Cache the staged-commit preview here (NOT per render frame),
-                // reusing this `status` so we don't run a second
-                // working_tree_status walk. Done before `status` is consumed below.
-                self.preview = backend.commit_preview_from_status(&status).ok();
                 // Track conflicted paths for UI (these cannot be staged).
                 self.conflicted_paths = status.conflicted.iter().cloned().collect();
 
@@ -258,7 +248,7 @@ impl CommitPanelState {
 /// the cross-cutting `smart_commit` / `smart_commit_detected_for` state (read by
 /// the Settings overlay + command palette, so it stays on `KagiApp`).
 pub struct CommitPanelView {
-    /// The staging lists / stats / trees / preview / selection / plan-modal data.
+    /// The staging lists / stats / trees / selection / plan-modal data.
     pub state: CommitPanelState,
     /// gpui-component `InputState` for the commit subject line (IME/focus).
     /// Created lazily in a `Window` context; kept STABLE across status reloads.

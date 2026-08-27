@@ -77,6 +77,11 @@ pub enum Operation {
     MergeIntoConflict {
         target: String,
     },
+    /// Merge `source` into `target` without checking `target` out (ADR-0144).
+    MergeIntoBranch {
+        source: String,
+        target: String,
+    },
     CheckoutTrackingBranch {
         remote_branch: String,
         local_branch: String,

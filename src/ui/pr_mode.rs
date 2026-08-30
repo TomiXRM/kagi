@@ -19,11 +19,12 @@
 //! (creating / editing a PR) deliberately go to GitHub's own UI.
 
 use gpui::{div, prelude::*, px, relative, rgb, Context, ListState, SharedString};
+use kagi_domain::github::Mergeable;
 use kagi_domain::github::{
     stack_order, CiState, Comment, PrAttention, PrGroup, PrReason, PullRequest, Review,
     ReviewComment, ReviewState,
 };
-use kagi_git::{Commit, CommitId, FileStatus};
+use kagi_git::{Commit, CommitId, FileStatus, PrConflictFile};
 use kagi_ui_core::file_tree::status_badge;
 
 use super::diff_view::{build_main_diff_view, MainDiffView};
@@ -52,6 +53,10 @@ pub struct PrTab {
     pub reviews: Vec<Review>,
     pub comments: Vec<Comment>,
     pub line_comments: Vec<ReviewComment>,
+    /// ADR-0145: conflicts a merge would produce, computed locally on first
+    /// open of the Conflicts tab. `None` = not computed yet; `Some(Ok(vec![]))`
+    /// = computed and clean, which is a different thing to say than "unknown".
+    pub conflicts: Option<Result<Vec<PrConflictFile>, String>>,
 }
 
 /// Which body the PR tab shows.
@@ -60,6 +65,8 @@ pub enum PrView {
     Overview,
     Review,
     Diff,
+    /// ADR-0145: read-only preview of what merging this PR would conflict on.
+    Conflicts,
 }
 
 /// Which list the arrow keys drive.
@@ -194,6 +201,7 @@ impl KagiApp {
             reviews: Vec::new(),
             comments: Vec::new(),
             line_comments: Vec::new(),
+            conflicts: None,
         };
         if !tab.files.is_empty() {
             tab.selected_file = Some(0);
@@ -251,12 +259,67 @@ impl KagiApp {
         .detach();
     }
 
-    /// Switch the body between Overview (description), Review and Diff.
+    /// Switch the body between Overview (description), Review, Diff and
+    /// Conflicts.
     pub fn pr_mode_show(&mut self, view: PrView, cx: &mut Context<Self>) {
         if let Some(m) = self.pr_mode.as_mut() {
             m.view = view;
         }
+        if view == PrView::Conflicts {
+            self.pr_mode_load_conflicts(cx);
+        }
         cx.notify();
+    }
+
+    /// Compute the active tab's conflict preview, once (ADR-0145).
+    ///
+    /// Off the UI thread: it is a full three-way merge of two trees, the same
+    /// work `plan_merge_branch` does, and on a large repo that is long enough
+    /// to drop frames. Cached on the tab because the answer only changes when
+    /// the PR or the base does, and re-running it on every render of a tab the
+    /// user is *looking at* would be the worst possible cadence.
+    fn pr_mode_load_conflicts(&mut self, cx: &mut Context<Self>) {
+        let Some(m) = self.pr_mode.as_ref() else {
+            return;
+        };
+        let Some(ix) = m.active else { return };
+        let Some(tab) = m.tabs.get(ix) else { return };
+        if tab.conflicts.is_some() {
+            return;
+        }
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        let (base, head, number) = (tab.base.clone(), tab.head.clone(), tab.pr.number);
+        let task = cx.background_spawn(async move {
+            let repo = kagi_git::Backend::open(&repo_path).map_err(|e| format!("{e}"))?;
+            repo.pr_conflict_preview(&base, &head)
+                .map_err(|e| format!("{e}"))
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                // The user may have closed or switched tabs while this ran;
+                // find the tab by PR number rather than by the index we had.
+                let Some(m) = app.pr_mode.as_mut() else {
+                    return;
+                };
+                let Some(t) = m.tabs.iter_mut().find(|t| t.pr.number == number) else {
+                    return;
+                };
+                klog!(
+                    "pr-conflicts: #{} {}",
+                    number,
+                    match &result {
+                        Ok(v) => format!("{} file(s)", v.len()),
+                        Err(e) => format!("error: {e}"),
+                    }
+                );
+                t.conflicts = Some(result);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Back to the dashboard. Deactivates the tab without closing it, so its
@@ -861,7 +924,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             t.diff_scroll.clone(),
         )
     };
-    let (view, reviews, comments, line_comments) = {
+    let (view, reviews, comments, line_comments, conflicts) = {
         let m = app.pr_mode.as_ref().unwrap();
         let t = &m.tabs[ix];
         (
@@ -869,6 +932,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             t.reviews.clone(),
             t.comments.clone(),
             t.line_comments.clone(),
+            t.conflicts.clone(),
         )
     };
     let show_description = view == PrView::Overview;
@@ -1228,7 +1292,20 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             view == PrView::Diff,
             PrView::Diff,
             cx,
-        ));
+        ))
+        // ADR-0145: only when GitHub says the merge conflicts. A tab that is
+        // always there but empty six times out of seven teaches people to
+        // ignore it, which is the opposite of the point.
+        .when(pr.mergeable == Mergeable::Conflicting, |el| {
+            el.child(tab_btn(
+                "pr-view-conflicts",
+                "icons/git-merge.svg",
+                Msg::PrModeConflicts.t().to_string(),
+                view == PrView::Conflicts,
+                PrView::Conflicts,
+                cx,
+            ))
+        });
 
     col = col.child(header).child(views).child(strip);
     if show_review {
@@ -1245,6 +1322,11 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
     if show_description {
         return col
             .child(super::pr_conversation::render_description(&pr, cx))
+            .into_any_element();
+    }
+    if view == PrView::Conflicts {
+        return col
+            .child(super::pr_conflicts::render_conflicts(conflicts.as_ref()))
             .into_any_element();
     }
     // Diff

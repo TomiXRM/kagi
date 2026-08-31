@@ -244,3 +244,28 @@ fn the_base_tip_and_the_merge_base_give_different_answers() {
         "merging into an ancestor is a fast-forward; got {against_merge_base:?}"
     );
 }
+
+/// A binary file conflicting on both sides.
+///
+/// Reproduction for a hard abort (not a catchable panic — it took the whole
+/// app down): libgit2 produces no merged buffer for a binary conflict, and
+/// `git2`'s `MergeFileResult::content()` hands the null pointer straight to
+/// `slice::from_raw_parts`.
+#[test]
+fn a_binary_conflict_does_not_abort() {
+    let (_t, p) = setup();
+    // Two different byte sequences, both with an embedded NUL so git calls
+    // them binary.
+    std::fs::write(p.join("blob.bin"), [0u8, 1, 2, 3, 0, 9]).unwrap();
+    git(&p, &["add", "-A"]);
+    git(&p, &["commit", "-qm", "pr adds a binary"]);
+    git(&p, &["checkout", "-q", "base"]);
+    std::fs::write(p.join("blob.bin"), [0u8, 9, 8, 7, 0, 1]).unwrap();
+    git(&p, &["add", "-A"]);
+    git(&p, &["commit", "-qm", "base adds a different binary"]);
+
+    let repo = Repository::open(&p).unwrap();
+    let files = pr_conflict_preview(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert_eq!(files[0].path, PathBuf::from("blob.bin"));
+}

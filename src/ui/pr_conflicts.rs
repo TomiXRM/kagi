@@ -51,6 +51,7 @@ pub(crate) fn conflict_diff_view(f: &PrConflictFile) -> MainDiffView {
         rows.push(DiffRow::HunkHeader(SharedString::from(match f.kind {
             PrConflictKind::DeleteModify => Msg::PrConflictDeleteModify.t().to_string(),
             PrConflictKind::BothAdded => Msg::PrConflictBothAdded.t().to_string(),
+            PrConflictKind::Binary => Msg::PrConflictBinary.t().to_string(),
             PrConflictKind::BothModified => String::new(),
         })));
     }

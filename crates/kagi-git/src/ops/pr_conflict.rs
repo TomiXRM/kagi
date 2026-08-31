@@ -37,6 +37,11 @@ pub enum PrConflictKind {
     DeleteModify,
     /// Both sides added a file at the same path.
     BothAdded,
+    /// A binary file changed on both sides. There is no text to show, and
+    /// asking libgit2 for merged content would be worse than useless: it
+    /// produces none, and `git2` reads the resulting null pointer as a slice —
+    /// a hard abort that takes the process down, not a catchable panic.
+    Binary,
 }
 
 /// Compute the conflicts merging `head` into `base` would produce.
@@ -89,6 +94,10 @@ pub fn pr_conflict_preview(
         };
 
         let (kind, marker_text) = match (&c.ancestor, &c.our, &c.their) {
+            // Binary first: the text path below must never see one.
+            (_, Some(our), Some(their)) if is_binary(repo, our.id) || is_binary(repo, their.id) => {
+                (PrConflictKind::Binary, String::new())
+            }
             (ancestor, Some(our), Some(their)) => {
                 // An ordinary content conflict: ask libgit2 for exactly the
                 // text it would have written into the working tree.
@@ -161,4 +170,15 @@ fn empty_ancestor_like(
         flags: 0,
         flags_extended: 0,
     })
+}
+
+/// Whether `oid` is a blob git would call binary.
+///
+/// Guards `merge_file_from_index`: libgit2 returns no merged buffer for a
+/// binary conflict, and `MergeFileResult::content()` passes that null pointer
+/// to `slice::from_raw_parts`, which aborts the process. Checking the inputs
+/// is the only way to avoid it — the result cannot be inspected without
+/// calling the accessor that does the aborting.
+fn is_binary(repo: &Repository, oid: git2::Oid) -> bool {
+    repo.find_blob(oid).map(|b| b.is_binary()).unwrap_or(false)
 }

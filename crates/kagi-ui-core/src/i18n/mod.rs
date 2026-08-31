@@ -452,6 +452,8 @@ pub enum Msg {
     PrConflictDeleteModify,
     /// PR pane: both sides added a file at the same path.
     PrConflictBothAdded,
+    /// PR pane: a binary file changed on both sides — nothing to show as text.
+    PrConflictBinary,
     PrModeNoDescription,
     /// PR mode: dashboard "back to the home screen" button.
     PrAllPrs,
@@ -1245,6 +1247,8 @@ impl Msg {
             (Ja, PrConflictDeleteModify) => "片方で削除、もう片方で変更",
             (En, PrConflictBothAdded) => "added on both sides",
             (Ja, PrConflictBothAdded) => "両方で追加",
+            (En, PrConflictBinary) => "binary file, changed on both sides",
+            (Ja, PrConflictBinary) => "binary ファイル、両方で変更",
             (En, PrHunkCopied) => "Hunk copied",
             (Ja, PrHunkCopied) => "コードをコピーしました",
             (Ja, PrSuggestion) => "コード提案",

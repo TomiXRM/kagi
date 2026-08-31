@@ -40,6 +40,24 @@ Conflict Mode.
   tab is that it can be opened from somewhere else, and an editor here would
   have to either move the user or lie about what it was doing.
 
+## `merge_file_from_index` aborts the process on a binary conflict
+
+libgit2 produces no merged buffer for a binary conflict, and `git2`'s
+`MergeFileResult::content()` passes that null pointer to
+`slice::from_raw_parts`. That is not a catchable panic — it is a
+non-unwinding abort, SIGABRT, the whole application gone. A safe-looking Rust
+signature with a footgun behind it.
+
+**The result cannot be inspected to avoid this**: reading anything about the
+content means calling the accessor that aborts. The only defence is to check
+the *inputs* — both blobs, via `Blob::is_binary` — and never call it for a
+binary conflict. A binary file is reported as conflicting with no text, which
+is all there was to say about it anyway.
+
+Found by a 1450-file PR in a real repository, not by the tests, which covered
+the three conflict *shapes* (both-modified / delete-modify / both-added) and
+missed that "both modified" splits again on whether the content is text.
+
 ## Consequences
 
 - The one write: the both-added case writes an **unreferenced empty blob**.

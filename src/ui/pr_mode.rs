@@ -39,6 +39,10 @@ pub struct PrTab {
     pub pr: PullRequest,
     /// merge-base(base, head) — the diff base for the whole-PR view.
     pub base: CommitId,
+    /// The base **branch's** current tip, which is what a merge would actually
+    /// be against. Distinct from `base`: merging `head` into merge-base can
+    /// never conflict, because merge-base is an ancestor of `head` (ADR-0145).
+    pub base_tip: CommitId,
     pub head: CommitId,
     pub commits: Vec<Commit>,
     /// Files of the current selection (whole PR, or the selected commit).
@@ -175,7 +179,9 @@ impl KagiApp {
             return;
         };
         let repo = session.backend();
-        let base = repo.merge_base(&base_tip, &head).unwrap_or(base_tip);
+        let base = repo
+            .merge_base(&base_tip, &head)
+            .unwrap_or_else(|_| base_tip.clone());
         let commits = repo
             .commits_between(&base, &head, COMMIT_LIMIT)
             .unwrap_or_default();
@@ -189,6 +195,7 @@ impl KagiApp {
         let mut tab = PrTab {
             pr: pr.clone(),
             base,
+            base_tip,
             head,
             commits,
             files,
@@ -290,7 +297,10 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
-        let (base, head, number) = (tab.base.clone(), tab.head.clone(), tab.pr.number);
+        // The base **tip**, not `tab.base`: that is merge-base(base, head), and
+        // merging head into its own ancestor is a fast-forward, so the preview
+        // would report "no conflicts" for every PR ever opened.
+        let (base, head, number) = (tab.base_tip.clone(), tab.head.clone(), tab.pr.number);
         let task = cx.background_spawn(async move {
             let repo = kagi_git::Backend::open(&repo_path).map_err(|e| format!("{e}"))?;
             repo.pr_conflict_preview(&base, &head)

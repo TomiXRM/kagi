@@ -207,3 +207,40 @@ fn previewing_changes_nothing_at_all() {
     // collects and no command surfaces. Everything a user can observe is
     // unchanged, which is the property being claimed.
 }
+
+/// The mistake this function invites, and the one that shipped: passing
+/// `merge-base(base, head)` instead of the base branch's tip.
+///
+/// A merge-base is by definition an ancestor of `head`, so merging into it is
+/// a fast-forward and *cannot* conflict. Handed one, the preview truthfully
+/// reports nothing — and the caller that made the substitution sees "no
+/// conflicts" on every PR in the repository, which is exactly what happened.
+/// This pins both halves so the difference stays visible.
+#[test]
+fn the_base_tip_and_the_merge_base_give_different_answers() {
+    let (_t, p) = setup();
+    write(&p, "shared.txt", "one\nPR\nthree\n");
+    git(&p, &["commit", "-qam", "pr"]);
+    git(&p, &["checkout", "-q", "base"]);
+    write(&p, "shared.txt", "one\nBASE\nthree\n");
+    git(&p, &["commit", "-qam", "base"]);
+
+    let repo = Repository::open(&p).unwrap();
+    let merge_base = CommitId(out(&p, &["merge-base", "base", "pr"]));
+    assert_ne!(
+        merge_base.0,
+        out(&p, &["rev-parse", "base"]),
+        "precondition: the branches must have diverged"
+    );
+
+    // The real question: against the branch tip, they conflict.
+    let against_tip = pr_conflict_preview(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
+    assert_eq!(against_tip.len(), 1, "{against_tip:?}");
+
+    // The vacuous one: against the merge-base, nothing ever conflicts.
+    let against_merge_base = pr_conflict_preview(&repo, &merge_base, &id(&p, "pr")).unwrap();
+    assert!(
+        against_merge_base.is_empty(),
+        "merging into an ancestor is a fast-forward; got {against_merge_base:?}"
+    );
+}

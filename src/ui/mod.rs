@@ -2302,6 +2302,8 @@ impl KagiApp {
         cx: &Context<Self>,
     ) -> Option<(PathBuf, Option<kagi_git::CommitId>)> {
         match source {
+            // Computed, with no file on disk to open or blame.
+            MainDiffSource::Synthetic => None,
             MainDiffSource::Unstaged { path } | MainDiffSource::Staged { path } => {
                 Some((path.clone(), None))
             }

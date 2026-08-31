@@ -61,6 +61,13 @@ pub struct PrTab {
     /// open of the Conflicts tab. `None` = not computed yet; `Some(Ok(vec![]))`
     /// = computed and clean, which is a different thing to say than "unknown".
     pub conflicts: Option<Result<Vec<PrConflictFile>, String>>,
+    /// Which conflicted file the Conflicts tab shows. Its own selection, not
+    /// `selected_file`: the conflicting files are a different (usually much
+    /// shorter) list than the PR's changed files, and sharing an index between
+    /// them would point at the wrong row.
+    pub conflict_selected: Option<usize>,
+    /// Scroll state for the conflict diff, one per tab like `diff_scroll`.
+    pub conflict_scroll: ListState,
 }
 
 /// Which body the PR tab shows.
@@ -209,6 +216,8 @@ impl KagiApp {
             comments: Vec::new(),
             line_comments: Vec::new(),
             conflicts: None,
+            conflict_selected: None,
+            conflict_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
         };
         if !tab.files.is_empty() {
             tab.selected_file = Some(0);
@@ -274,6 +283,16 @@ impl KagiApp {
         }
         if view == PrView::Conflicts {
             self.pr_mode_load_conflicts(cx);
+        }
+        cx.notify();
+    }
+
+    /// Select which conflicted file the Conflicts tab shows.
+    pub fn pr_mode_select_conflict(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if let Some(m) = self.pr_mode.as_mut() {
+            if let Some(t) = m.active.and_then(|a| m.tabs.get_mut(a)) {
+                t.conflict_selected = Some(ix);
+            }
         }
         cx.notify();
     }
@@ -603,6 +622,21 @@ pub(super) const MAX_INDENT_DEPTH: usize = 3;
 /// Card height: two rows (18 + 15) plus breathing room. Tighter line boxes
 /// than this clipped the descenders of the title against the meta row.
 const CARD_H: f32 = 42.0;
+/// A centred one-line note in the PR centre pane (no file selected, nothing to
+/// show yet, an error). Extracted so the Conflicts tab's three empty states
+/// look like the Diff tab's rather than approximately like it.
+fn pr_center_note(text: SharedString) -> gpui::AnyElement {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(rgb(theme().text_muted))
+        .child(text)
+        .into_any_element()
+}
+
 /// Commit-strip height CAP (≈7 rows + header). The strip fits its content and
 /// only scrolls past this — a one-commit PR gets a one-row strip rather than a
 /// mostly-empty fixed block (user request).
@@ -934,7 +968,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             t.diff_scroll.clone(),
         )
     };
-    let (view, reviews, comments, line_comments, conflicts) = {
+    let (view, reviews, comments, line_comments, conflicts, conflict_selected, conflict_scroll) = {
         let m = app.pr_mode.as_ref().unwrap();
         let t = &m.tabs[ix];
         (
@@ -943,6 +977,8 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             t.comments.clone(),
             t.line_comments.clone(),
             t.conflicts.clone(),
+            t.conflict_selected,
+            t.conflict_scroll.clone(),
         )
     };
     let show_description = view == PrView::Overview;
@@ -1335,9 +1371,21 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             .into_any_element();
     }
     if view == PrView::Conflicts {
-        return col
-            .child(super::pr_conflicts::render_conflicts(conflicts.as_ref()))
-            .into_any_element();
+        let body: gpui::AnyElement = match conflicts.as_ref() {
+            None => pr_center_note(SharedString::from("…")),
+            Some(Err(e)) => pr_center_note(SharedString::from(e.clone())),
+            Some(Ok(files)) if files.is_empty() => {
+                pr_center_note(SharedString::from(Msg::PrConflictsNone.t()))
+            }
+            Some(Ok(files)) => {
+                let ix = conflict_selected.unwrap_or(0).min(files.len() - 1);
+                // Same renderer as the Diff tab, so the unified/side-by-side
+                // toggle and everything around it work here too.
+                let dv = super::pr_conflicts::conflict_diff_view(&files[ix]);
+                render_diff_list::<KagiApp>(dv, None, None, conflict_scroll, cx).into_any_element()
+            }
+        };
+        return col.child(body).into_any_element();
     }
     // Diff
     let diff_el: gpui::AnyElement = match diff {
@@ -1626,10 +1674,37 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
         }
     }
 
-    // Files
-    let (files, selected_file) = active
-        .map(|t| (t.files.clone(), t.selected_file))
-        .unwrap_or_default();
+    // Files. In the Conflicts view this lists the conflicting files instead:
+    // they are a different, usually much shorter set, and showing the PR's
+    // whole changed-file list beside a conflict diff invites clicking a row
+    // that has nothing to do with what is on screen.
+    let conflicts_view = app
+        .pr_mode
+        .as_ref()
+        .map(|m| m.view == PrView::Conflicts)
+        .unwrap_or(false);
+    let (files, selected_file) = if conflicts_view {
+        active
+            .map(|t| {
+                let files = match t.conflicts.as_ref() {
+                    Some(Ok(c)) => c
+                        .iter()
+                        .map(|f| FileStatus {
+                            path: f.path.clone(),
+                            change: kagi_git::ChangeKind::Modified,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let sel = (!files.is_empty()).then(|| t.conflict_selected.unwrap_or(0));
+                (files, sel)
+            })
+            .unwrap_or_default()
+    } else {
+        active
+            .map(|t| (t.files.clone(), t.selected_file))
+            .unwrap_or_default()
+    };
     col = col.child(
         section_label(format!("{} ({})", Msg::PrModeFiles.t(), files.len()))
             .border_t_1()
@@ -1652,7 +1727,11 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     for (i, f) in files.iter().enumerate() {
         let (badge, color, _) = status_badge(Some(&f.change), false);
         let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-            this.pr_mode_select_file(i, cx);
+            if conflicts_view {
+                this.pr_mode_select_conflict(i, cx);
+            } else {
+                this.pr_mode_select_file(i, cx);
+            }
         });
         let sel = selected_file == Some(i);
         let name = f

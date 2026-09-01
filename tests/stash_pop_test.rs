@@ -176,7 +176,7 @@ fn test_stash_drop_removes_entry_without_touching_working_tree() {
 // ────────────────────────────────────────────────────────────
 
 #[test]
-fn test_stash_pop_conflict_prediction_blocker_stash_preserved() {
+fn test_stash_pop_conflict_prediction_warns_and_touches_nothing() {
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
     git(d, &["init", "-q", "-b", "main", "."]);
@@ -202,31 +202,25 @@ fn test_stash_pop_conflict_prediction_blocker_stash_preserved() {
     // Capture WT content before planning.
     let wt_before = std::fs::read_to_string(d.join("file.txt")).expect("read before");
 
-    // Plan pop — conflict must be predicted → blocker.
+    // Plan pop — the conflict must be predicted, as a WARNING (not a blocker:
+    // a conflicted apply keeps the stash, so the user may confirm through it —
+    // a blocker left the GUI modal with only a Cancel button).
     let plan = plan_stash_pop(&mut repo, 0).expect("plan_stash_pop failed");
 
     assert!(
-        !plan.blockers.is_empty(),
-        "conflict prediction should produce blockers, got none"
-    );
-    let has_conflict_blocker = plan
-        .blockers
-        .iter()
-        .any(|b| b.message_en().contains("conflict") || b.message_en().contains("Conflict"));
-    assert!(
-        has_conflict_blocker,
-        "blocker should mention conflict, got: {:?}",
+        plan.blockers.is_empty(),
+        "a predicted conflict must not block, got: {:?}",
         plan.blockers
     );
-    // Blocker should also recommend apply as alternative.
-    let has_apply_suggestion = plan
-        .blockers
+    let warning = plan
+        .warnings
         .iter()
-        .any(|b| b.message_en().contains("Apply") || b.message_en().contains("apply"));
+        .find(|w| w.message_en().contains("will conflict"))
+        .unwrap_or_else(|| panic!("the plan must warn about the conflict: {:?}", plan.warnings));
     assert!(
-        has_apply_suggestion,
-        "blocker should recommend 'apply' as alternative, got: {:?}",
-        plan.blockers
+        warning.message_en().contains("KEPT"),
+        "the warning must say the stash survives: {}",
+        warning.message_en()
     );
 
     // WT must be intact (plan must not touch working tree).
@@ -316,7 +310,7 @@ fn test_stash_pop_blocker_index_out_of_range() {
 // ────────────────────────────────────────────────────────────
 
 #[test]
-fn test_stash_pop_apply_failure_stash_not_dropped() {
+fn test_stash_pop_planning_a_conflicting_pop_changes_nothing() {
     // This test demonstrates the "apply failure → no drop" guarantee
     // via the conflict prediction blocker path (ADR-0009 design intent).
     let tmp = TempDir::new().unwrap();
@@ -340,22 +334,22 @@ fn test_stash_pop_apply_failure_stash_not_dropped() {
     git(d, &["add", "shared.txt"]);
     git(d, &["commit", "-qm", "head change"]);
 
-    // plan_stash_pop must block with conflict prediction.
+    // plan_stash_pop predicts the conflict as a warning, and planning alone
+    // must change nothing: no drop, no working-tree write. (This test's unique
+    // claim is the second half; the confirm-through path is covered by
+    // test_stash_pop_conflicting_apply_keeps_stash.)
     let plan = plan_stash_pop(&mut repo, 0).expect("plan_stash_pop failed");
+    assert!(plan.blockers.is_empty(), "got: {:?}", plan.blockers);
     assert!(
-        !plan.blockers.is_empty(),
-        "conflict should produce blockers (execute_stash_pop will not be called)"
+        plan.warnings
+            .iter()
+            .any(|w| w.message_en().contains("will conflict")),
+        "got: {:?}",
+        plan.warnings
     );
 
-    // Since plan is blocked, execute_stash_pop is NOT called.
-    // Stash must still be present (the "no-drop on failure" invariant holds
-    // because the plan gate prevents reaching execute).
     let snap = snapshot(&mut repo, 100).expect("snapshot");
-    assert_eq!(
-        snap.stashes.len(),
-        1,
-        "stash must survive because pop was blocked before execute"
-    );
+    assert_eq!(snap.stashes.len(), 1, "planning must not drop the stash");
 
     // WT must not have been modified.
     let wt = std::fs::read_to_string(d.join("shared.txt")).expect("read shared.txt");
@@ -610,14 +604,26 @@ fn test_stash_pop_prediction_uses_stash_parent_as_base() {
     // Branch C from X (does NOT contain B): f is still "old".
     git(d, &["checkout", "-q", "-b", "c", "main"]);
 
+    // The prediction must fire (the old merge_base(HEAD, stash) base said
+    // 'clean' for this shape) — but as a WARNING, not a blocker: a conflicted
+    // apply keeps the stash, so the user must be able to confirm through it
+    // (GUI report: a blocker left the modal with only a Cancel button).
     let plan = plan_stash_pop(&mut repo, 0).expect("plan_stash_pop failed");
     assert!(
-        !plan.blockers.is_empty(),
-        "prediction must use the stash's parent[0] as base and block this pop; \
-         merge_base(HEAD, stash) would have said 'clean'"
+        plan.blockers.is_empty(),
+        "a predicted conflict must not block the pop, got: {:?}",
+        plan.blockers
+    );
+    assert!(
+        plan.warnings
+            .iter()
+            .any(|w| w.message_en().contains("will conflict")),
+        "the plan must WARN about the predicted conflict; \
+         merge_base(HEAD, stash) as the base would have said 'clean': {:?}",
+        plan.warnings
     );
 
-    // Even if a caller ignored the blocker, the stash survives.
+    // Confirming through the warning keeps the stash.
     let outcome = execute_stash_pop(&mut repo, 0).expect("execute must not hard-error");
     assert!(
         matches!(outcome, StashPopOutcome::ConflictedStashKept { .. }),

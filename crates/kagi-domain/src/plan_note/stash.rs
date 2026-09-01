@@ -43,9 +43,10 @@ pub enum StashNote {
     /// blocker (`plan_stash_apply` / `plan_stash_pop`): the working tree has
     /// staged or unstaged changes, which apply/pop refuse to run against.
     DirtyBlocksApply { parts: DirtyParts, op: StashDirtyOp },
-    /// blocker (`plan_stash_pop`): the in-memory merge of the stash commit
-    /// with HEAD predicts conflicts; pop is refused so the stash entry is
-    /// not lost (recommends apply instead).
+    /// warning (`plan_stash_pop`): the in-memory merge of the stash commit
+    /// with HEAD predicts conflicts. Not a blocker — a conflicted apply keeps
+    /// the stash entry (`StashPopOutcome::ConflictedStashKept`), so the user
+    /// may confirm and resolve, exactly as real `git stash pop` behaves.
     PopWouldConflict { count: usize, files: Vec<String> },
     /// blocker (`plan_stash_pop`, issue #280): the conflict prediction could
     /// not be computed. Fail-closed — an unverifiable pop is refused, because
@@ -98,10 +99,9 @@ impl StashNote {
                     files.join(", ")
                 };
                 format!(
-                    "Stash pop would produce {} conflict(s): {}. \
-                     Pop is blocked to prevent losing the stash entry. \
-                     Use 'Stash Apply' instead: it applies the stash without removing it, \
-                     allowing you to resolve conflicts safely.",
+                    "Stash pop will conflict in {} file(s): {}. \
+                     The stash entry will be KEPT — resolve the conflicts, \
+                     then drop the stash manually.",
                     count, files_label
                 )
             }
@@ -307,9 +307,8 @@ mod tests {
                 files: vec!["src/a b.rs".to_string(), "src/c.rs".to_string()]
             }
             .message_en(),
-            "Stash pop would produce 2 conflict(s): src/a b.rs, src/c.rs. Pop is blocked to \
-             prevent losing the stash entry. Use 'Stash Apply' instead: it applies the stash \
-             without removing it, allowing you to resolve conflicts safely."
+            "Stash pop will conflict in 2 file(s): src/a b.rs, src/c.rs. The stash entry \
+             will be KEPT — resolve the conflicts, then drop the stash manually."
         );
     }
 
@@ -321,9 +320,8 @@ mod tests {
                 files: Vec::new()
             }
             .message_en(),
-            "Stash pop would produce 1 conflict(s): (unknown files). Pop is blocked to prevent \
-             losing the stash entry. Use 'Stash Apply' instead: it applies the stash without \
-             removing it, allowing you to resolve conflicts safely."
+            "Stash pop will conflict in 1 file(s): (unknown files). The stash entry will \
+             be KEPT — resolve the conflicts, then drop the stash manually."
         );
     }
 

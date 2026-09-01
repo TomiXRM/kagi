@@ -420,6 +420,7 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
 
     // ── 4. Check blockers ────────────────────────────────────
     let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     // Index out of range.
     if index >= stash_count {
@@ -456,10 +457,23 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
 
     // Predict conflicts via in-memory merge of stash commit with HEAD.
     // Only run when we have no blockers so far (index valid, not dirty, no conflict state).
+    //
+    // A predicted conflict is a WARNING, not a blocker (GUI report: the modal
+    // had only a Cancel button, so a conflicting stash could never be popped
+    // at all). Blocking was the right call while execute_stash_pop dropped
+    // the stash unconditionally; now a conflicted apply returns
+    // ConflictedStashKept and the entry survives, so confirming through the
+    // conflict is exactly real `git stash pop` behaviour. The prediction
+    // FAILING is still a blocker (fail-closed): an apply we cannot reason
+    // about means the repo state is not understood — re-plan.
     if blockers.is_empty() {
         if let Some(stash_oid) = stash_oid_for_index {
-            if let Some(conflict_blocker) = predict_stash_pop_conflict(repo, &head, stash_oid) {
-                blockers.push(conflict_blocker);
+            match predict_stash_pop_conflict(repo, &head, stash_oid) {
+                Some(note @ PlanNote::Stash(StashNote::PopWouldConflict { .. })) => {
+                    warnings.push(note);
+                }
+                Some(note) => blockers.push(note),
+                None => {}
             }
         }
     }
@@ -488,7 +502,7 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
         title: PlanTitle::Stash(StashTitle::Pop { index }),
         current,
         predicted,
-        warnings: Vec::new(),
+        warnings,
         blockers,
         recovery: Some(recovery),
         head_at_plan: head,

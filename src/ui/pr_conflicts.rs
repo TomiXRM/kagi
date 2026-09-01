@@ -51,13 +51,7 @@ pub(crate) fn conflict_diff_view(
         match region {
             Region::Passthrough(lines) => {
                 for l in lines {
-                    rows.push(DiffRow::Line {
-                        kind: DiffLineKind::Context,
-                        text: SharedString::from(l.clone()),
-                        old_lineno: Some(old_no),
-                        new_lineno: Some(new_no),
-                        highlights: Vec::new(),
-                    });
+                    rows.push(line(DiffLineKind::Context, l, Some(old_no), Some(new_no)));
                     old_no += 1;
                     new_no += 1;
                 }
@@ -110,6 +104,10 @@ pub(crate) fn conflict_diff_view(
         })));
     }
 
+    // Syntax highlighting, the same pass the Diff tab runs — the language is
+    // taken from the real path, so a conflict in a .rs file reads like Rust.
+    super::diff_view::highlight_diff_rows(&mut rows, &f.path);
+
     let view = MainDiffView {
         title: SharedString::from(f.path.display().to_string()),
         stats: SharedString::from(format!("{total} conflict(s)")),
@@ -120,15 +118,23 @@ pub(crate) fn conflict_diff_view(
     (view, jumps)
 }
 
+/// One row, carrying the leading sigil the diff renderer and the syntax
+/// highlighter both expect: they strip the first character to recover the
+/// source line, so a row without one loses its first character.
 fn line(
     kind: DiffLineKind,
     text: &str,
     old_lineno: Option<u32>,
     new_lineno: Option<u32>,
 ) -> DiffRow {
+    let sigil = match kind {
+        DiffLineKind::Added => '+',
+        DiffLineKind::Removed => '-',
+        DiffLineKind::Context => ' ',
+    };
     DiffRow::Line {
         kind,
-        text: SharedString::from(text.to_string()),
+        text: SharedString::from(format!("{sigil}{text}")),
         old_lineno,
         new_lineno,
         highlights: Vec::new(),
@@ -142,6 +148,7 @@ fn line(
 /// clashing line arriving with no indication of which side it is.
 pub(crate) fn render_jump_nav(
     jumps: Vec<usize>,
+    rows: std::sync::Arc<Vec<DiffRow>>,
     at: usize,
     cx: &mut gpui::Context<crate::ui::KagiApp>,
 ) -> gpui::AnyElement {
@@ -152,6 +159,7 @@ pub(crate) fn render_jump_nav(
     let at = at.min(total.saturating_sub(1));
     let step = move |delta: isize| {
         let jumps = jumps.clone();
+        let rows = rows.clone();
         move |this: &mut crate::ui::KagiApp,
               _: &gpui::ClickEvent,
               _w: &mut gpui::Window,
@@ -159,7 +167,7 @@ pub(crate) fn render_jump_nav(
             // Wraps: with several conflicts in a file, walking off the end and
             // round to the first is what you want, not a dead button.
             let next = (at as isize + delta).rem_euclid(total as isize) as usize;
-            this.pr_mode_jump_conflict(next, jumps.get(next).copied(), cx);
+            this.pr_mode_jump_conflict(next, jumps.get(next).copied(), Some(rows.clone()), cx);
         }
     };
     div()
@@ -255,6 +263,41 @@ mod tests {
                 _ => panic!("jump target {ix} is not a conflict header"),
             }
         }
+    }
+
+    /// The renderer and the syntax highlighter both strip the first character
+    /// to recover the source line. A row built without a sigil silently loses
+    /// its first character — invisible in a summary view, wrong in a real one.
+    #[test]
+    fn every_line_carries_its_sigil() {
+        let text = "keep\n<<<<<<< base\nBASE\n=======\nPR\n>>>>>>> PR\n";
+        let (view, _) = conflict_diff_view(&file(), Some(text));
+        let seen: Vec<(&str, &str)> = view
+            .rows
+            .iter()
+            .filter_map(|r| match r {
+                DiffRow::Line { kind, text, .. } => Some((
+                    match kind {
+                        DiffLineKind::Added => "+",
+                        DiffLineKind::Removed => "-",
+                        DiffLineKind::Context => " ",
+                    },
+                    text.as_ref(),
+                )),
+                _ => None,
+            })
+            .collect();
+        for (sigil, text) in &seen {
+            assert!(
+                text.starts_with(sigil),
+                "{text:?} must start with {sigil:?}"
+            );
+        }
+        // …and the content survives the sigil intact.
+        assert_eq!(
+            seen.iter().map(|(_, t)| &t[1..]).collect::<Vec<_>>(),
+            vec!["keep", "BASE", "PR"]
+        );
     }
 
     /// A file with no readable text (binary, deleted side, over the cap) still

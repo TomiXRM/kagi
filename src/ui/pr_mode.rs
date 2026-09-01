@@ -166,6 +166,7 @@ impl KagiApp {
         {
             if let Some(m) = self.pr_mode.as_mut() {
                 m.active = Some(ix);
+                reset_view_if_not_conflicting(m, pr);
             }
             cx.notify();
             return;
@@ -236,6 +237,7 @@ impl KagiApp {
         let m = self.pr_mode.get_or_insert_with(PrModeState::default);
         m.tabs.push(tab);
         m.active = Some(m.tabs.len() - 1);
+        reset_view_if_not_conflicting(m, pr);
         cx.notify();
         self.pr_mode_load_conversation(pr.number, cx);
     }
@@ -310,12 +312,29 @@ impl KagiApp {
     }
 
     /// Move the conflict cursor and scroll that conflict into view.
-    pub fn pr_mode_jump_conflict(&mut self, at: usize, row: Option<usize>, cx: &mut Context<Self>) {
+    pub fn pr_mode_jump_conflict(
+        &mut self,
+        at: usize,
+        row: Option<usize>,
+        rows: Option<std::sync::Arc<Vec<super::diff_view::DiffRow>>>,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(m) = self.pr_mode.as_mut() {
             if let Some(t) = m.active.and_then(|a| m.tabs.get_mut(a)) {
                 t.conflict_at = at;
                 if let Some(row) = row {
-                    t.conflict_scroll.scroll_to_reveal_item(row);
+                    // Side-by-side virtualizes over paired rows, so a unified
+                    // index scrolls somewhere else entirely. Map it first.
+                    let target = if super::theme::diff_split() {
+                        rows.and_then(|r| {
+                            let split = super::diff_split::split_rows(&r);
+                            super::diff_split::split_index_of(&split, row)
+                        })
+                        .unwrap_or(row)
+                    } else {
+                        row
+                    };
+                    t.conflict_scroll.scroll_to_reveal_item(target);
                 }
             }
         }
@@ -360,8 +379,23 @@ impl KagiApp {
                 let Some(t) = m.tabs.iter_mut().find(|t| t.pr.number == number) else {
                     return;
                 };
+                // Land on the first conflict rather than the top of the
+                // file: in a 2000-line file the interesting part is nowhere
+                // near where the scroll starts, and hunting for it is the work
+                // this tab exists to remove.
+                let first = t
+                    .conflicts
+                    .as_ref()
+                    .and_then(|r| r.as_ref().ok())
+                    .and_then(|files| files.get(t.conflict_selected.unwrap_or(0)))
+                    .map(|f| super::pr_conflicts::conflict_diff_view(f, text.as_deref()))
+                    .and_then(|(dv, jumps)| jumps.first().map(|&j| (j, dv.rows.clone())));
                 t.conflict_text = Some((path, text));
+                t.conflict_at = 0;
                 cx.notify();
+                if let Some((row, rows)) = first {
+                    app.pr_mode_jump_conflict(0, Some(row), Some(rows), cx);
+                }
             });
         })
         .detach();
@@ -695,6 +729,16 @@ pub(super) const MAX_INDENT_DEPTH: usize = 3;
 /// Card height: two rows (18 + 15) plus breathing room. Tighter line boxes
 /// than this clipped the descenders of the title against the meta row.
 const CARD_H: f32 = 42.0;
+/// The centre view is mode-wide so that switching PRs while reading reviews
+/// keeps showing reviews. Conflicts is the exception: it only exists for a PR
+/// that has them, so carrying it to one that does not leaves the pane on a tab
+/// with no button and nothing to say.
+fn reset_view_if_not_conflicting(m: &mut PrModeState, pr: &PullRequest) {
+    if m.view == PrView::Conflicts && pr.mergeable != Mergeable::Conflicting {
+        m.view = PrView::Overview;
+    }
+}
+
 /// A centred one-line note in the PR centre pane (no file selected, nothing to
 /// show yet, an error). Extracted so the Conflicts tab's three empty states
 /// look like the Diff tab's rather than approximately like it.
@@ -1475,8 +1519,16 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
                 let (dv, jumps) = super::pr_conflicts::conflict_diff_view(&files[ix], text);
                 // Prev/next sits in the header's `leading` slot, beside the
                 // unified/side-by-side toggle it shares a row with.
-                let nav = (jumps.len() > 1)
-                    .then(|| super::pr_conflicts::render_jump_nav(jumps.clone(), conflict_at, cx));
+                // Shown even for a single conflict: "1/1" answers "is there
+                // more of this?", which is the question the control exists for.
+                let nav = (!jumps.is_empty()).then(|| {
+                    super::pr_conflicts::render_jump_nav(
+                        jumps.clone(),
+                        dv.rows.clone(),
+                        conflict_at,
+                        cx,
+                    )
+                });
                 render_diff_list::<KagiApp>(dv, nav, None, conflict_scroll, cx).into_any_element()
             }
         };
@@ -2065,11 +2117,59 @@ fn render_pr_card(
 }
 
 #[cfg(test)]
+mod view_reset_tests {
+    use super::*;
+
+    fn pr_with(mergeable: Mergeable) -> PullRequest {
+        PullRequest {
+            mergeable,
+            ..super::stack_tests::pr(1, "h", "b")
+        }
+    }
+
+    /// The Conflicts tab exists only for a PR that has conflicts, so carrying
+    /// it across to one that does not leaves the pane on a tab with no button
+    /// and nothing to show.
+    #[test]
+    fn conflicts_view_falls_back_when_the_next_pr_is_clean() {
+        for m in [Mergeable::Clean, Mergeable::Unknown] {
+            let mut state = PrModeState {
+                view: PrView::Conflicts,
+                ..Default::default()
+            };
+            reset_view_if_not_conflicting(&mut state, &pr_with(m));
+            assert_eq!(state.view, PrView::Overview, "{m:?}");
+        }
+    }
+
+    /// …and it stays put when the next PR does conflict, and never disturbs
+    /// the other views, which are mode-wide on purpose.
+    #[test]
+    fn every_other_case_is_left_alone() {
+        let mut state = PrModeState {
+            view: PrView::Conflicts,
+            ..Default::default()
+        };
+        reset_view_if_not_conflicting(&mut state, &pr_with(Mergeable::Conflicting));
+        assert_eq!(state.view, PrView::Conflicts);
+
+        for view in [PrView::Overview, PrView::Review, PrView::Diff] {
+            let mut state = PrModeState {
+                view,
+                ..Default::default()
+            };
+            reset_view_if_not_conflicting(&mut state, &pr_with(Mergeable::Clean));
+            assert_eq!(state.view, view, "{view:?} must be untouched");
+        }
+    }
+}
+
+#[cfg(test)]
 mod stack_tests {
     use super::{reason_text, stack_for, StackRow};
     use kagi_domain::github::{CiState, Mergeable, PrReason, PullRequest, ReviewState};
 
-    fn pr(number: u64, head: &str, base: &str) -> PullRequest {
+    pub(super) fn pr(number: u64, head: &str, base: &str) -> PullRequest {
         PullRequest {
             number,
             title: String::new(),

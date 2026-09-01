@@ -1450,3 +1450,55 @@ fn skip_keeps_the_remaining_sequencer_picks() {
 
     std::env::remove_var("KAGI_LOG_DIR");
 }
+
+/// A cleanly-merged file edited DURING Conflict Mode must block the abort.
+///
+/// The abort's checkout is a pathspec-bounded force, justified by "whatever
+/// stands at a touched path is the operation's output" — true when the
+/// conflict state was entered, but the user can edit a non-conflicted file
+/// through the Editor before aborting. Real git refuses here
+/// ("Entry 'b.txt' not uptodate. Cannot merge.", verified against git 2.x);
+/// kagi must not silently destroy what git protects.
+#[test]
+fn abort_refuses_when_a_cleanly_merged_file_was_edited_mid_conflict() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let log_tmp = TempDir::new().unwrap();
+    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("merge conflict session");
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+    // The user edits a file the merge resolved cleanly.
+    std::fs::write(dir.join("b.txt"), "USER MID-MERGE EDIT\n").unwrap();
+
+    let err = execute_conflict_abort(&repo, &session, &buffer)
+        .expect_err("abort must refuse rather than overwrite the user's edit");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("b.txt"),
+        "the refusal must name the file: {msg}"
+    );
+
+    // Nothing was mutated: the edit survives and the conflict state is intact.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b.txt")).unwrap(),
+        "USER MID-MERGE EDIT\n"
+    );
+    assert!(
+        dir.join(".git/MERGE_HEAD").exists(),
+        "the refusal must leave the conflicted state fully intact"
+    );
+
+    // Reverting the edit unblocks the abort; editing the CONFLICTED file does
+    // not block it (abort discards resolution progress by design).
+    std::fs::write(dir.join("b.txt"), "FEATURE b\n").unwrap();
+    std::fs::write(dir.join("a.txt"), "half-resolved scribble\n").unwrap();
+    execute_conflict_abort(&repo, &session, &buffer).expect("abort after revert");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "MAIN a\n"
+    );
+}

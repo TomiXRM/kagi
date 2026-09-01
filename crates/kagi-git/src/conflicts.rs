@@ -1429,6 +1429,27 @@ pub fn execute_conflict_abort(
         // there leaves the conflicted state intact rather than half-restored.
         let touched = op_touched_paths(repo, &tree, session)?;
 
+        // Refuse if the user edited a *cleanly-merged* file while in Conflict
+        // Mode.  The force-checkout below is justified by "whatever stands at
+        // a touched path is the operation's own output" — which is true when
+        // the conflict state was entered, but not necessarily at abort time:
+        // Conflict Mode is an editing session, and nothing stops the user
+        // from changing a non-conflicted file through the Editor meanwhile.
+        // Real git refuses exactly here ("Entry 'b.txt' not uptodate. Cannot
+        // merge.") and this matches it.  Conflicted paths are exempt: abort
+        // discards resolution progress by design.
+        //
+        // Checked BEFORE any mutation, so the refusal leaves the conflicted
+        // state fully intact.
+        let edited = mid_conflict_edits(repo, session, &touched)?;
+        if !edited.is_empty() {
+            return Err(GitError::Other(format!(
+                "abort refused: {} file(s) were edited during conflict resolution and would be overwritten: {}. Commit, stash or revert those edits first.",
+                edited.len(),
+                edited.join(", ")
+            )));
+        }
+
         {
             let mut index = repo
                 .index()
@@ -1476,6 +1497,47 @@ pub fn execute_conflict_abort(
 /// Non-UTF-8 paths are dropped: they cannot be expressed as a libgit2
 /// pathspec.  (Tracked separately as issue #293 — the whole codebase loses
 /// non-UTF-8 paths today; this function does not make that worse.)
+/// Paths among `touched` that are NOT conflicted and whose working-tree state
+/// differs from the index — i.e. files the user edited (or re-created) during
+/// Conflict Mode on top of the operation's output.  These are the paths the
+/// abort's force-checkout would destroy, so their presence blocks the abort.
+fn mid_conflict_edits(
+    repo: &Repository,
+    session: &ConflictSession,
+    touched: &[String],
+) -> Result<Vec<String>, GitError> {
+    let conflicted: std::collections::BTreeSet<&str> = session
+        .files
+        .iter()
+        .filter_map(|f| f.path.to_str())
+        .collect();
+    let mut opts = git2::DiffOptions::new();
+    // A file the op deleted and the user re-created shows up as untracked.
+    opts.include_untracked(true);
+    opts.disable_pathspec_match(true);
+    let mut any = false;
+    for p in touched {
+        if !conflicted.contains(p.as_str()) {
+            opts.pathspec(p.as_str());
+            any = true;
+        }
+    }
+    if !any {
+        return Ok(Vec::new());
+    }
+    let diff = repo
+        .diff_index_to_workdir(None, Some(&mut opts))
+        .map_err(|e| GitError::Other(format!("diff index → workdir failed: {}", e.message())))?;
+    let mut edited: Vec<String> = diff
+        .deltas()
+        .filter_map(|d| d.new_file().path().or_else(|| d.old_file().path()))
+        .filter_map(|p| p.to_str().map(|s| s.to_string()))
+        .collect();
+    edited.sort();
+    edited.dedup();
+    Ok(edited)
+}
+
 fn op_touched_paths(
     repo: &Repository,
     tree: &git2::Tree<'_>,
